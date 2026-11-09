@@ -875,7 +875,7 @@ describe("complete managed-image publication workflow", () => {
         reference: "${{ steps.validate.outputs.local_id }}",
         barrier: "Capture exact managed image publication evidence",
       },
-    ].flatMap((lane) => [0, 23].map((exitCode) => ({ ...lane, exitCode }))),
+    ].flatMap((lane) => [0, 23, 139].map((exitCode) => ({ ...lane, exitCode }))),
   )(
     "propagates Hermes package qualification status $exitCode before $job publication",
     ({ job, reference, barrier, exitCode }) => {

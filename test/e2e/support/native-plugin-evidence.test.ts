@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   completedAgentRunId,
+  nativePluginAgentInvocationOutcome,
   nativePluginPresent,
   nativeToolCallOutcome,
 } from "../fixtures/native-plugin-evidence.ts";
@@ -136,5 +137,64 @@ describe("agent run correlation", () => {
     { ...envelope, result: { payloads: [], meta: { error: "failed" } } },
   ])("rejects an incomplete or unidentified agent run: %j", (value) => {
     expect(() => completedAgentRunId(JSON.stringify(value))).toThrow("no completed gateway run");
+  });
+});
+
+describe("native plugin agent invocation", () => {
+  const pluginTool = "nemoclaw_e2e_check_v1";
+  const turnOutput = JSON.stringify({
+    runId,
+    status: "ok",
+    summary: "completed",
+    result: { payloads: [], meta: {} },
+  });
+  const auditPage = (events: Record<string, unknown>[]) =>
+    page(events.map((entry) => ({ ...entry, toolName: pluginTool })));
+  type InvocationSandbox = Parameters<typeof nativePluginAgentInvocationOutcome>[0];
+  const fakeSandbox = (turn: { exitCode: number; stdout: string }, audits: string[]) => {
+    const calls: string[][] = [];
+    const shells: string[] = [];
+    const sandbox = {
+      exec: async (_name: string, argv: string[]) => {
+        calls.push(argv);
+        return argv[1] === "agent"
+          ? { ...turn, stderr: "" }
+          : { exitCode: 0, stdout: audits.shift() ?? auditPage([]), stderr: "" };
+      },
+      execShell: async (_name: string, script: string) => {
+        shells.push(script);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    } as unknown as InvocationSandbox;
+    return { calls, shells, sandbox };
+  };
+  const options = {
+    sandboxName: "fixture",
+    version: "v1" as const,
+    artifactName: "invoke",
+    env: {},
+    turnTimeoutMs: 1_000,
+    audit: { attempts: 3, delayMs: 0, timeoutMs: 1_000 },
+  };
+
+  it("runs one agent turn and polls only the audit page until the call completes", async () => {
+    const fake = fakeSandbox({ exitCode: 0, stdout: turnOutput }, [
+      auditPage([started]),
+      auditPage([started, finished]),
+    ]);
+    expect(await nativePluginAgentInvocationOutcome(fake.sandbox, options)).toBe("succeeded");
+    expect(fake.calls.map((argv) => argv[1])).toEqual(["agent", "audit", "audit"]);
+    expect(fake.calls[0]).toContain(`Run the local ${pluginTool} tool once with no arguments.`);
+    expect(fake.calls[1]).toEqual(
+      expect.arrayContaining(["--run", runId, "--kind", "tool_action"]),
+    );
+    expect(fake.shells).toEqual([]);
+  });
+
+  it("reports a failed turn without reading audit records and keeps readiness evidence", async () => {
+    const fake = fakeSandbox({ exitCode: 1, stdout: "" }, []);
+    expect(await nativePluginAgentInvocationOutcome(fake.sandbox, options)).toBe("failed");
+    expect(fake.calls.map((argv) => argv[1])).toEqual(["agent"]);
+    expect(fake.shells).toHaveLength(1);
   });
 });

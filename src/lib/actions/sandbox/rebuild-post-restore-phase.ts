@@ -8,7 +8,10 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
-import { settleOrdinaryOpenClawPairing } from "../../onboard/machine/finalization-deps";
+import {
+  formatOpenClawPairingMismatchField,
+  settleOrdinaryOpenClawPairing,
+} from "../../onboard/machine/finalization-deps";
 import {
   classifyPortableLifecycleReceipt,
   portableLifecycleReceiptMatchesGeneration,
@@ -19,8 +22,12 @@ import * as registry from "../../state/registry";
 import { settlePortableOpenClawPairing } from "./launch-readiness";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
-import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
-import { redactBoundedRebuildTerminalDiagnostic } from "./rebuild-preflight-confirmation";
+import {
+  DeferredRebuildCliExit,
+  redactBoundedRebuildTerminalDiagnostic,
+  type RebuildBail,
+  type RebuildLog,
+} from "./rebuild/cli-exit";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
@@ -32,6 +39,7 @@ import {
   verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
+
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   type McpRebuildPreparation,
@@ -248,29 +256,6 @@ export async function runRebuildPostRestorePhase(
   // OpenClaw is represented by a null registry agent and a null runtime definition.
   const recreatedRegistryAgentName = recreatedEntry?.agent ?? "openclaw";
   const recreatedRuntimeAgentName = recreatedAgent?.name ?? "openclaw";
-  if (
-    !recreatedEntry ||
-    recreatedRegistryAgentName !== targetAgentName ||
-    recreatedRuntimeAgentName !== targetAgentName ||
-    (targetAgentName === "hermes" &&
-      mcpRuntimeSelection &&
-      getPersistedSandboxTargetGatewayName(recreatedEntry) !== mcpRuntimeSelection.gatewayName)
-  ) {
-    console.error(
-      `  ${YW}\u26a0${R} Recreated sandbox agent identity could not be verified against the rebuild target.`,
-    );
-    if (hermesCronRestoreIdentity) {
-      return bailAfterHermesCronRestoreFailure(
-        sandboxName,
-        backupManifest,
-        "  Hermes cron dispatch remains drained because the replacement identity is unverified.",
-        "Recreated sandbox agent identity did not match the authoritative rebuild target.",
-        bail,
-      );
-    }
-    bail("Recreated sandbox agent identity did not match the authoritative rebuild target.");
-    return;
-  }
   const agentDef = loadAgent(targetAgentName);
   const rebuiltAgentName = agentDef.displayName;
   let mutableConfigPermissionsVerified = targetAgentName !== "hermes";
@@ -290,6 +275,29 @@ export async function runRebuildPostRestorePhase(
     : {};
 
   try {
+    if (
+      !recreatedEntry ||
+      recreatedRegistryAgentName !== targetAgentName ||
+      recreatedRuntimeAgentName !== targetAgentName ||
+      (targetAgentName === "hermes" &&
+        mcpRuntimeSelection &&
+        getPersistedSandboxTargetGatewayName(recreatedEntry) !== mcpRuntimeSelection.gatewayName)
+    ) {
+      console.error(
+        `  ${YW}\u26a0${R} Recreated sandbox agent identity could not be verified against the rebuild target.`,
+      );
+      if (hermesCronRestoreIdentity) {
+        return bailAfterHermesCronRestoreFailure(
+          sandboxName,
+          backupManifest,
+          "  Hermes cron dispatch remains drained because the replacement identity is unverified.",
+          "Recreated sandbox agent identity did not match the authoritative rebuild target.",
+          bail,
+        );
+      }
+      bail("Recreated sandbox agent identity did not match the authoritative rebuild target.");
+      return;
+    }
     if (targetAgentName === "openclaw") {
       // The restore phase enters this window before replacing any live state.
       // Keep that exact window through every post-restore writer and release it
@@ -351,6 +359,7 @@ export async function runRebuildPostRestorePhase(
         effectiveMessagingPlan = finalizedMessagingPlan;
       }
     } catch (error) {
+      if (error instanceof DeferredRebuildCliExit) throw error;
       bail(
         `Could not finalize pending messaging removals after rebuild: ${
           error instanceof Error ? error.message : String(error)
@@ -426,6 +435,7 @@ export async function runRebuildPostRestorePhase(
       await abortOpenClawPostRestoreWindowAfterFailure(openClawDoctorWindow, log);
     }
   }
+  if (!recreatedEntry) return;
   const hermesGatewayVerification = hermesCronRestoreIdentity
     ? await verifyHermesGatewayAfterStateRestoreForCronGate(
         sandboxName,
@@ -621,7 +631,10 @@ export async function runRebuildPostRestorePhase(
         ? await settleOrdinaryOpenClawPairing(sandboxName)
         : portablePairing;
     if (pairing.kind !== "settled") {
-      console.error(`  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}`);
+      const pairingField = "pairingField" in pairing ? pairing.pairingField : null;
+      console.error(
+        `  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}${formatOpenClawPairingMismatchField(pairingField)}`,
+      );
       if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
       console.error(
         `  Resolve the pairing failure, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,

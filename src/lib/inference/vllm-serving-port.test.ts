@@ -426,7 +426,7 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(mocks.dockerRunDetached).toHaveBeenCalled();
     expect(errSpy.mock.calls.flat().join("\n")).not.toContain("already in use");
   });
-  it("adopts its interrupted container on the default Docker context (#11426)", async () => {
+  it("recreates its bearerless public container with private bindings on the default Docker context (#14083)", async () => {
     process.env.DOCKER_HOST = "ssh://remote-builder.example.test";
     process.env.DOCKER_CONTEXT = "remote-builder";
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
@@ -476,6 +476,11 @@ describe("managed vLLM serving-port guard (#8685)", () => {
       }),
     );
     expect(mocks.dockerRunDetached).toHaveBeenCalled();
+    const runArgs = mocks.dockerRunDetached.mock.calls[0]![0] as string[];
+    expect(runArgs.flatMap((arg, i) => (arg === "-p" ? [runArgs[i + 1]] : []))).toEqual([
+      "127.0.0.1:8000:8000",
+      "172.18.0.1:8000:8000",
+    ]);
     expect(errSpy.mock.calls.flat().join("\n")).not.toContain("another process");
     const dockerOptions = [
       ...mocks.dockerImageInspectFormat.mock.calls.map((call) => call[2]),
