@@ -7,8 +7,7 @@ import { type DockerCommandResult, DockerProbe, resultText } from "../fixtures/d
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import {
   HERMES_SWITCHYARD_PACKAGE_PROBE,
-  HERMES_SWITCHYARD_ROUTED_BOOTSTRAP,
-  HERMES_SWITCHYARD_ROUTED_EVIDENCE,
+  hermesSwitchyardRoutedFixture,
 } from "../fixtures/hermes-switchyard-package.ts";
 import { captureHermesCrash, hermesCrashCaptureArgs } from "../fixtures/hermes-crash-capture.ts";
 
@@ -733,8 +732,8 @@ test(
   },
 );
 
-test(
-  "starts the routed gateway after the packaged judge qualifies production routing files",
+test.for(["reuse-capable", "dedicated"] as const)(
+  "%s judge qualifies production routing files before the routed gateway starts",
   {
     meta: {
       e2ePhases: [
@@ -743,12 +742,13 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+  async (judgeMode, { artifacts, cleanup, progress, secrets, signal, skip }) => {
     const context = { artifacts, cleanup, progress, secrets, signal, skip };
+    const fixture = hermesSwitchyardRoutedFixture(judgeMode);
     await runRootEntrypointScenario(
       context,
       {
-        id: "routed-startup",
+        id: `routed-startup-${judgeMode}`,
         assertion: "routedStartupVerified",
         contract: [
           "the real entrypoint qualifies root-owned routing files before starting the gateway",
@@ -775,18 +775,13 @@ test(
             "/bin/bash",
             image,
             "-c",
-            HERMES_SWITCHYARD_ROUTED_BOOTSTRAP,
+            fixture.bootstrap,
           ],
           { artifactName: "start-routed-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
         );
         await waitForHealth(probe, container);
         await assertGatewayProcess(probe, container);
-        await expectContainerSh(
-          probe,
-          container,
-          "switchyard-routed-startup",
-          HERMES_SWITCHYARD_ROUTED_EVIDENCE,
-        );
+        await expectContainerSh(probe, container, "switchyard-routed-startup", fixture.evidence);
       },
     );
   },

@@ -5,9 +5,69 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { expect, test } from "vitest";
 import {
+  createHermesSwitchyardRoutingIntent,
+  serializeHermesSwitchyardRouting,
+} from "../../../src/lib/hermes-switchyard-routing.ts";
+import { switchyardBindingFixture } from "../../helpers/hermes-switchyard.ts";
+import {
+  HERMES_SWITCHYARD_LOCALIZE_DEPLOYMENT,
   HERMES_SWITCHYARD_LOCAL_UPSTREAM,
   HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES,
 } from "../fixtures/hermes-switchyard-package.ts";
+
+test.each(["reuse-capable", "dedicated"] as const)(
+  "%s fixture localizes each production client without changing judge selection or credentials",
+  (judgeMode) => {
+    const intent = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "fixture-efficient" },
+      capable: { provider: "openai-api", model: "fixture-capable" },
+      ...(judgeMode === "dedicated"
+        ? { judge: { provider: "openai-api", model: "fixture-judge" } }
+        : {}),
+    });
+    const deployment = serializeHermesSwitchyardRouting(
+      intent,
+      switchyardBindingFixture(intent),
+    ).switchyardDeploymentToml;
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        HERMES_SWITCHYARD_LOCALIZE_DEPLOYMENT +
+          String.raw`
+import json
+import sys
+
+deployment = sys.stdin.read()
+endpoints = {'efficient': 'http://127.0.0.1:10001/v1',
+             'capable': 'http://127.0.0.1:10002/v1',
+             'judge': 'http://127.0.0.1:10003/v1'}
+before = tomllib.loads(deployment)
+after = tomllib.loads(localize_deployment(deployment, endpoints))
+for role, client in before['llm_clients'].items():
+    assert after['llm_clients'][role] == dict(client, base_url=endpoints[role])
+before.pop('llm_clients')
+after.pop('llm_clients')
+assert before == after
+try:
+    localize_deployment(deployment.replace('https://api.openai.com/v1', 'https://unexpected.invalid/v1'), endpoints)
+    rejected = False
+except ValueError:
+    rejected = True
+print(json.dumps({'classifier': after['routes']['switchyard']['classifier_target'],
+                  'rejectsUnexpectedEndpoint': rejected}))
+`,
+      ],
+      { input: deployment, encoding: "utf8", timeout: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      classifier: judgeMode === "dedicated" ? "judge" : "capable",
+      rejectsUnexpectedEndpoint: true,
+    });
+  },
+);
 
 test("routed fixture provisions both integrity anchors without changing file authority", () => {
   const result = spawnSync(
@@ -75,6 +135,16 @@ with TemporaryDirectory() as directory:
 });
 
 test.each([
+  {
+    role: "judge",
+    key: "OPENAI_API_KEY",
+    content: JSON.stringify({
+      crux: "bounded fixture task",
+      primary_rule: "SUP-1",
+      capability_boundary: "supported",
+      p_solve: 0.9,
+    }),
+  },
   {
     role: "capable",
     key: "OPENAI_API_KEY",

@@ -41,12 +41,16 @@ judge/answer token accounting. The qualifier's deterministic tests own evidence 
 cleanup, and both gateway launch gates. A separate routed-startup scenario installs the
 production-generated routing files at their root-owned production paths. It starts the real
 entrypoint with resolver placeholders and local provider fixtures on a network-disabled
-container. Both judge and answer calls must occur before the gateway listens. The scenario
+container. It covers both a reused capable judge and an explicitly configured dedicated
+judge. Each mode requires the selected judge and answer calls before the gateway listens,
+with no call to the unselected judge client. The scenario
 then requires gateway readiness with routing activation configured under the gateway user.
 The packaged qualifier validates classification and separate token accounting before startup
 continues. This proves the successful entrypoint handoff, not OpenShell credential rewriting
 or real provider access. Container cleanup removes the fixture processes, placeholders, and
 routing files. The clean package probe still leaves its supervised gateway unchanged.
+`support/hermes-switchyard-upstream.test.ts` owns deterministic fixture authentication,
+per-client endpoint localization, and preservation of production judge selection and credentials.
 `test/agents/hermes/hermes-switchyard-package.test.ts`
 owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.
 The Hermes jobs in `.github/workflows/managed-images.yaml` run this suite on native

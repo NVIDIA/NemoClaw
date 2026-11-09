@@ -6,6 +6,7 @@ import { switchyardBindingFixture } from "../../helpers/hermes-switchyard.ts";
 import { applyHermesManagedRoute } from "../../../src/lib/hermes-managed-route.ts";
 
 import {
+  type HermesSwitchyardRoutingIntent,
   createHermesSwitchyardRoutingIntent,
   HERMES_RELAY_PLUGINS_FILE,
   HERMES_RELAY_PLUGIN_STATE_FILE,
@@ -60,7 +61,7 @@ class LocalUpstream:
                 body = json.loads(self.rfile.read(length))
                 upstream.calls.append(body)
                 if upstream.evidence is not None:
-                    key = 'OPENAI_API_KEY' if upstream.role == 'capable' else 'NVIDIA_INFERENCE_API_KEY'
+                    key = 'OPENAI_API_KEY' if upstream.role in ('capable', 'judge') else 'NVIDIA_INFERENCE_API_KEY'
                     authorized = self.headers.get('authorization') == 'Bearer xapp-OPENSHELL-RESOLVE-ENV-' + key
                     if not authorized:
                         self.send_error(401)
@@ -72,7 +73,7 @@ class LocalUpstream:
                             'role': upstream.role, 'model': body['model'],
                             'gatewayListening': gateway_listening,
                         }) + '\n')
-                if upstream.role == 'capable':
+                if upstream.role in ('capable', 'judge'):
                     content = json.dumps({
                         'crux': 'bounded fixture task',
                         'primary_rule': 'SUP-1',
@@ -317,12 +318,36 @@ const routedUpstreamBase64 = Buffer.from(
     String.raw`
 from threading import Event
 with LocalUpstream('efficient', Path('/tmp/switchyard-efficient.jsonl')) as efficient, \
-     LocalUpstream('capable', Path('/tmp/switchyard-capable.jsonl')) as capable:
-    print(json.dumps({'efficient': efficient.base_url, 'capable': capable.base_url}), flush=True)
+     LocalUpstream('capable', Path('/tmp/switchyard-capable.jsonl')) as capable, \
+     LocalUpstream('judge', Path('/tmp/switchyard-judge.jsonl')) as judge:
+    print(json.dumps({'efficient': efficient.base_url, 'capable': capable.base_url,
+                      'judge': judge.base_url}), flush=True)
     Event().wait()
 `,
   "utf8",
 ).toString("base64");
+
+export const HERMES_SWITCHYARD_LOCALIZE_DEPLOYMENT = String.raw`
+import tomllib
+
+def localize_deployment(deployment, endpoints):
+    clients = tomllib.loads(deployment)['llm_clients']
+    for role, client in clients.items():
+        original = ('https://integrate.api.nvidia.com/v1' if role == 'efficient'
+                    else 'https://api.openai.com/v1')
+        if client['base_url'] != original:
+            raise ValueError('Unexpected Switchyard fixture endpoint')
+        start = deployment.index('[llm_clients.' + role + ']')
+        end = deployment.find('\n[', start + 1)
+        end = len(deployment) if end == -1 else end
+        section = deployment[start:end]
+        source = 'base_url = "' + original + '"'
+        if section.count(source) != 1:
+            raise ValueError('Ambiguous Switchyard fixture endpoint')
+        section = section.replace(source, 'base_url = "' + endpoints[role] + '"')
+        deployment = deployment[:start] + section + deployment[end:]
+    return deployment
+`;
 
 // Fresh-image provisioning, matching agents/hermes/Dockerfile. Runtime updates
 // must still use the production transaction and startup-owner checks.
@@ -342,7 +367,23 @@ def provision_config_hashes(hermes_dir, strict_hash):
 
 // Only transport and credentials are synthetic. The entrypoint, privilege drop,
 // production routing paths, qualifier main(), and native router remain unchanged.
-export const HERMES_SWITCHYARD_ROUTED_BOOTSTRAP = String.raw`
+export function hermesSwitchyardRoutedFixture(
+  judgeMode: HermesSwitchyardRoutingIntent["judge"]["mode"],
+): { bootstrap: string; evidence: string } {
+  const routedIntent = createHermesSwitchyardRoutingIntent({
+    efficient: intent.efficient,
+    capable: intent.capable,
+    ...(judgeMode === "dedicated"
+      ? { judge: { provider: "openai-api", model: "fixture-judge" } }
+      : {}),
+  });
+  const routedDeploymentBase64 = Buffer.from(
+    serializeHermesSwitchyardRouting(routedIntent, switchyardBindingFixture(routedIntent))
+      .switchyardDeploymentToml,
+    "utf8",
+  ).toString("base64");
+  const selectedRoles = [judgeMode === "dedicated" ? "judge" : "capable", "efficient"];
+  const bootstrap = String.raw`
 set -euo pipefail
 exec /opt/hermes/.venv/bin/python -I - <<'PY'
 import base64
@@ -353,6 +394,7 @@ import selectors
 import subprocess
 import yaml
 ${HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES}
+${HERMES_SWITCHYARD_LOCALIZE_DEPLOYMENT}
 
 upstream = subprocess.Popen([
     '/usr/bin/setpriv', '--reuid=gateway', '--regid=gateway', '--init-groups', '--',
@@ -365,13 +407,8 @@ try:
         if not selector.select(timeout=10):
             raise RuntimeError('Local Switchyard fixtures did not start')
         endpoints = json.loads(upstream.stdout.readline(4096))
-    deployment = base64.b64decode('${switchyardDeploymentBase64}').decode('utf-8')
-    for original, local in (
-        ('https://integrate.api.nvidia.com/v1', endpoints['efficient']),
-        ('https://api.openai.com/v1', endpoints['capable']),
-    ):
-        assert deployment.count(original) == 1
-        deployment = deployment.replace(original, local)
+    deployment = localize_deployment(
+        base64.b64decode('${routedDeploymentBase64}').decode('utf-8'), endpoints)
     directory = Path('${HERMES_RELAY_PLUGINS_FILE}').parent
     directory.mkdir(exist_ok=True)
     directory.chmod(0o755)
@@ -407,7 +444,7 @@ finally:
 PY
 `;
 
-export const HERMES_SWITCHYARD_ROUTED_EVIDENCE = String.raw`
+  const evidence = String.raw`
 pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')"
 test -n "$pid"
 /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I - "$pid" <<'PY'
@@ -420,10 +457,13 @@ import yaml
 
 assert yaml.safe_load(Path('/sandbox/.hermes/config.yaml').read_text())['model']['default'] == 'switchyard'
 # Only the real entrypoint can have issued these calls: this scenario never invokes
-# the qualifier itself. Both model calls must precede the gateway's listener.
-for role in ('capable', 'efficient'):
-    calls = [json.loads(line) for line in Path('/tmp/switchyard-' + role + '.jsonl').read_text().splitlines()]
-    assert calls == [{'role': role, 'model': 'fixture-' + role, 'gatewayListening': False}], calls
+# the qualifier itself. The selected judge and answer must precede the gateway listener.
+for role in ('capable', 'efficient', 'judge'):
+    evidence_path = Path('/tmp/switchyard-' + role + '.jsonl')
+    calls = ([json.loads(line) for line in evidence_path.read_text().splitlines()]
+             if evidence_path.exists() else [])
+    assert calls == ([{'role': role, 'model': 'fixture-' + role, 'gatewayListening': False}]
+                     if role in ${JSON.stringify(selectedRoles)} else []), calls
 for name in ('hermes-relay-plugins.toml', 'hermes-switchyard-v1.toml', '.dynamic-plugins.json'):
     path = Path('/usr/local/share/nemoclaw') / name
     assert path.stat().st_uid == 0 and stat.S_IMODE(path.stat().st_mode) == 0o444
@@ -435,3 +475,5 @@ assert b'HERMES_NEMO_RELAY_PLUGINS_TOML=${HERMES_RELAY_PLUGINS_FILE}' in Path(f'
 print(json.dumps({'qualificationBeforeGateway': True, 'routedGatewayConfigured': True}))
 PY
 `;
+  return { bootstrap, evidence };
+}
