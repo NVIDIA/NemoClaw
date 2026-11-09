@@ -1185,6 +1185,7 @@ describe("socket-free MXC action contract", () => {
           probeInferenceInvocation: vi.fn(async () => ({ ok: true as const })),
           updateSandbox,
           runtimeProviders: providers,
+          probeGatewayProcess: vi.fn(async () => true),
           verifyGateway: vi.fn(async () => undefined),
           log: vi.fn(),
         }),

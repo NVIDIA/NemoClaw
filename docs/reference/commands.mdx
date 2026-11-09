@@ -1728,6 +1728,11 @@ It does not use ordinary `openshell sandbox exec`, manual in-sandbox relaunch, o
 </AgentOnly>
 <AgentOnly variant="openclaw">
 
+After starting a stopped sandbox, `recover` waits up to 120 seconds for the OpenClaw gateway before ordinary process recovery and host-forward repair.
+`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` overrides this startup budget.
+If the budget expires, `recover` exits nonzero before those repairs.
+With a value of `0`, it skips the startup wait and continues ordinary recovery and verification.
+
 If the OpenClaw gateway is stopped, `recover` reports it without relaunching it.
 
 </AgentOnly>
@@ -5055,11 +5060,15 @@ Post-recovery OpenShell readiness uses 120 seconds when the recovery path does n
 
 After OpenShell reports the sandbox ready, `$$nemoclaw <sandbox-name> start` waits up to 120 seconds for the OpenClaw gateway process.
 This startup wait applies after both an intentional stop and an external Docker restart, regardless of the recorded stop intent.
+`$$nemoclaw <sandbox-name> recover` uses the same startup budget after it starts a stopped sandbox.
 The budget includes probe execution and delays; it is separate from the preceding 300-second OpenShell readiness wait.
 `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` overrides the startup budget and preserves finite, nonnegative fractional seconds.
-If the startup budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
-With a value of `0`, a sandbox not recorded as intentionally stopped skips process observation but still runs normal gateway and inference verification.
-An intentionally stopped sandbox with a zero budget exits nonzero before those checks.
+If startup observations still report a stopped gateway when the budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
+If observations remain unavailable, `start` continues ordinary gateway and inference verification.
+`recover` exits nonzero before ordinary process recovery and host-forward repair when its startup budget expires.
+With a value of `0`, `start` skips process observation for a sandbox not recorded as intentionally stopped but still runs normal gateway and inference verification.
+For an intentionally stopped sandbox, `start` with a zero budget exits nonzero before those checks.
+With a zero budget, `recover` skips the startup wait and continues ordinary recovery and verification.
 These startup settings do not change the 30-second default for OpenClaw gateway-health recovery or onboarding process observation.
 
 </AgentOnly>

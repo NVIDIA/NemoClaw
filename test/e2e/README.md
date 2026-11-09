@@ -5,6 +5,18 @@
 
 Direct E2E coverage runs through Vitest.
 
+The `sandbox-survival` target retains the raw OpenShell stop/start proof and
+also checks cold public OpenClaw recovery on Docker and native Podman. After
+public `stop`, it invokes `recover` once without warming the command transport
+or listener. One-shot native and forwarded HTTP health probes must succeed,
+and the sandbox and container IDs must remain unchanged. The existing artifact
+sink records the candidate revision, runtime, identities, command results and
+health status. Startup polling and zero-wait policy remain in deterministic
+source tests. The public recovery command allows both 300-second readiness
+waits, the 120-second OpenClaw startup wait, and five minutes for the remaining
+checks. The lifecycle phase allows 25 minutes. The target allows 125 minutes,
+including test cleanup and workflow finalization.
+
 Messaging providers, lifecycle, pairing, Hermes Discord, native Hermes inference
 switching, and token-rotation targets use a
 test-only Node preload for their synthetic Discord enrollment tokens. The
@@ -32,6 +44,21 @@ amd64 and arm64 runners against each job's built image. Both the PR build and pu
 jobs require it before exporting their validated image contracts. Their architecture-specific
 artifacts retain the probe results, including failures. Both architectures must pass for
 Switchyard release qualification; a startup-hold result alone does not qualify the package.
+
+The PR Hermes amd64 job enables passive crash diagnostics for the isolated package probe
+only after preparation succeeds. If debugger package installation fails, qualification runs
+without crash capture. Core-setting and cleanup failures still fail the job.
+Python's fault handler records Python stacks; the probe records executable identity and memory
+mappings before and after native shutdown. Only that probe raises its core soft limit, to 256 MiB.
+On exit 134 or 139, host GDB reads the core against the still-running container's executable and
+libraries. Debugger auto-loading and network symbol lookup are disabled. Artifacts contain bounded,
+redacted stack and mapping text, without frame arguments, locals, or raw memory. Missing symbols,
+unloaded libraries, or the core size limit can prevent a complete stack.
+The raw core stays in the container and a private runner temporary directory, never the artifact
+root. The collector removes its temporary copy; the workflow's always-step restores the original
+core pattern and removes remaining diagnostic containers and copies before artifact upload.
+This capture does not retry the probe, change its exit status, or establish a repair when it passes
+without crashing. Other architectures and release jobs retain the existing qualification behavior.
 
 OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
 Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
@@ -1039,14 +1066,16 @@ The Dockerfile fixture contains only a different baked model and stale limits.
 Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
 restarting the native gateway for the initial inference route, as external-image onboarding does.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
-The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
+The OpenClaw native NVIDIA switch variant starts with the public NVIDIA endpoint selected as an OpenAI-compatible provider on Balanced.
+This exercises fresh creation with the endpoint already present in OpenClaw's bundled policy (#14013), then checks inference, restart, rebuild, provider switching, and cleanup.
+The mock Anthropic switch variant starts with an authenticated OpenAI-compatible fixture.
 The Anthropic variant starts on a native OpenAI-compatible route, then switches to a native Anthropic endpoint.
 Both Anthropic-variant endpoints use public HTTPS quick tunnels from the verified cloudflared package.
 Rootless Pasta copies the runner's primary IP into its namespace, so that IP cannot identify the host fixture there.
 The local HTTP hop stays on the runner; host and sandbox probes use the same public endpoint without private-host trust overrides.
 Its mock rejects a missing or incorrect credential, and the existing sandbox request and OpenClaw model run must both succeed.
 The config probe validates the scoped Anthropic credential reference inside the sandbox before redaction.
-The native NVIDIA destination uses the public endpoint and its public credential only after switching.
+The native NVIDIA variant uses its existing public credential before and after switching from the custom provider to NVIDIA Endpoints.
 The interactive policy-preset sequencing fixture uses the same public HTTPS transport and retains its Personal shared-route assertions.
 Route assertions use JSON fields so terminal column alignment does not affect the result.
 Hermes inference-switch installation uses an authenticated local fixture before its model-only switch.
