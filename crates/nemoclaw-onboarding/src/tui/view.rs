@@ -277,10 +277,22 @@ impl JourneyWizard {
                     lines.extend(target_lines(assessment, blocked));
                     lines.push(Line::from(""));
                 }
-                for notes in [resolution.information(), resolution.credentials()] {
+                let information = resolution
+                    .information()
+                    .iter()
+                    .map(|note| (note.as_str(), MUTED));
+                // A missing credential is what the user must act on before plan.
+                let credentials = resolution
+                    .credentials()
+                    .iter()
+                    .map(|note| (note.text(), if note.is_missing() { WARNING } else { MUTED }));
+                for notes in [
+                    information.collect::<Vec<_>>(),
+                    credentials.collect::<Vec<_>>(),
+                ] {
                     if !notes.is_empty() {
-                        lines.extend(notes.iter().map(|note| {
-                            Line::from(Span::styled(terminal_text(note), Style::new().fg(MUTED)))
+                        lines.extend(notes.iter().map(|(note, color)| {
+                            Line::from(Span::styled(terminal_text(note), Style::new().fg(*color)))
                         }));
                         lines.push(Line::from(""));
                     }

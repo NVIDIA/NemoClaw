@@ -1263,7 +1263,26 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
         for (width, height) in [(160, 35), (72, 24)] {
             let text = flat(&screen(&wizard, width, height));
             assert!(text.contains(expected), "{width}x{height}: {text}");
+            let unset = status == ObservationStatus::Unavailable;
+            // The command may wrap on a narrow screen; the URL is one word.
+            let mut hints = vec!["https://build.nvidia.com/settings/api-keys"];
+            if width >= 100 {
+                hints.push("export NVIDIA_API_KEY=...");
+            }
+            for hint in hints {
+                assert_eq!(
+                    text.contains(hint),
+                    unset,
+                    "{hint} at {width}x{height}: {text}"
+                );
+            }
+            assert!(!text.contains("non-interactive"), "{text}");
         }
+        // Color is not the only signal, but an unset key is what the user must act on.
+        assert_eq!(
+            foreground_of(&wizard, expected) == super::view::WARNING,
+            status == ObservationStatus::Unavailable
+        );
     }
 }
 
