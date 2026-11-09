@@ -815,6 +815,9 @@ The host checks the token before `docker pull`, so a missing or empty token stop
 Set `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` to a JSON array of individual non-blank `vllm serve` tokens for operator-owned options and overrides.
 NemoClaw trims and validates the array before downloads, shell-quotes each token, and appends the tokens after the registry defaults.
 When the array overrides `--gpu-memory-utilization`, NemoClaw validates the last value and uses that effective value for GPU-memory preflight, matching the final `vllm serve` command.
+Extra arguments skip automatic serving-profile selection, so NemoClaw does not print the serving profile or context limit.
+On a DGX Spark, the 60 GB to 64 GB recipe does not apply, even when the host reports less than 64 GB.
+Omit the variable to keep that recipe.
 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \
