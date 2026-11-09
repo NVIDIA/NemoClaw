@@ -2,15 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { performance } from "node:perf_hooks";
+import { createSwitchyardReadinessFixture } from "../../../../test/helpers/native-launch-readiness-switchyard.ts";
 import { createHash } from "node:crypto";
 import { requireNativeInferenceHealth } from "./launch-readiness/health";
-import { createSwitchyardProviderFixture } from "../../../../test/support/switchyard-provider-adapter";
-import { createHermesSwitchyardRoutingIntent } from "../../hermes-switchyard-routing";
-import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import {
-  encodeManagedStartupProfile,
-  readStoredManagedStartupProfileMetadata,
-} from "../../onboard/managed-startup/profile";
+import { readStoredManagedStartupProfileMetadata } from "../../onboard/managed-startup/profile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
@@ -34,6 +29,8 @@ import {
   publishLaunchReadiness,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
+
+import { OpenClawPairingIncompatibleError } from "./launch-readiness/openclaw-pairing-qualification";
 
 const SANDBOX = "alpha";
 const GATEWAY_NAME = "nemoclaw";
@@ -180,46 +177,10 @@ describe("launch readiness validation", () => {
   });
 
   async function switchyardReadinessFixture() {
-    const routing = createHermesSwitchyardRoutingIntent({
-      efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
-      capable: { provider: "openai-api", model: "gpt-5" },
-    });
-    const f = createSwitchyardProviderFixture(routing, GATEWAY_NAME, SANDBOX);
-    const { bindings } = await f.setup();
-    const encodedProfile = encodeManagedStartupProfile({
-      ...managedStartupE2eProfile("hermes"),
-      agentConfig: {
-        agent: "hermes",
-        webSearch: { enabled: false, provider: "tavily" },
-        switchyardRouting: routing,
-        switchyardBindings: bindings,
-      },
-    });
-    const routedEntry = {
-      ...entry("hermes"),
-      provider: routing.capable.provider,
-      model: routing.capable.model,
-      credentialEnv: "OPENAI_API_KEY",
-      endpointUrl: "https://api.openai.com/v1",
-      hermesSwitchyard: { routing, bindings },
-      workload: {
-        schemaVersion: 1,
-        kind: "managed-image",
-        reference: `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"1".repeat(64)}`,
-        release: "v0.1.0",
-        sourceRevision: "2".repeat(40),
-        sourceCohort: "ghrun-1-1",
-        capabilityContractVersion: 1,
-        startupProfileContractVersion: 1,
-        encodedProfile,
-        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
-        credentialProxyReplayRequired: false,
-        shared: true,
-      },
-    } satisfies SandboxEntry;
-    sandbox = routedEntry;
-    const currentDeps = { ...deps(), switchyardProviderAdapter: f.input.adapter };
-    return { f, currentDeps, routedEntry };
+    const fixture = await createSwitchyardReadinessFixture(GATEWAY_NAME, SANDBOX);
+    sandbox = fixture.routedEntry;
+    const currentDeps = { ...deps(), switchyardProviderAdapter: fixture.f.input.adapter };
+    return { ...fixture, currentDeps };
   }
 
   it("rejects an unconfigured Switchyard selection before publishing a lease (#13863)", async () => {
@@ -1403,6 +1364,28 @@ describe("launch readiness validation", () => {
     ).resolves.toEqual({ kind: "validation-failed", category: "config" });
     expect(publishLease).not.toHaveBeenCalled();
   });
+
+  it.each(["paired.clientMode", "secret-token"])(
+    "reports incompatible pairing with only allowlisted field %s (#13668)",
+    async (field) => {
+      const currentDeps = deps();
+      const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      currentDeps.observeOpenClawPairingQualification = () => {
+        throw new OpenClawPairingIncompatibleError(field);
+      };
+      expect(
+        await publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+      ).toEqual({
+        kind: "evidence-failed",
+        diagnostic: {
+          stage: "publication-validation",
+          reason: "pairing-state-incompatible",
+          ...(field === "paired.clientMode" ? { pairingMismatchField: field } : {}),
+        },
+      });
+      expect(publishedIdentity).toBeNull();
+    },
+  );
 
   it("distinguishes authoritative final validation failure from evidence failure", async () => {
     const first = await inspectLaunchReadiness(SANDBOX, deps());
