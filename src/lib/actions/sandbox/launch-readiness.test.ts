@@ -27,6 +27,8 @@ import {
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 
+import { OpenClawPairingIncompatibleError } from "./launch-readiness/openclaw-pairing-qualification";
+
 const SANDBOX = "alpha";
 const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = 8080;
@@ -1306,6 +1308,28 @@ describe("launch readiness validation", () => {
           stage: "publication-validation",
           reason: "pairing-observation-failed",
           pairingFailureReason: failureReason,
+        },
+      });
+      expect(publishedIdentity).toBeNull();
+    },
+  );
+
+  it.each(["paired.clientMode", "secret-token"])(
+    "reports incompatible pairing with only allowlisted field %s (#13668)",
+    async (field) => {
+      const currentDeps = deps();
+      const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      currentDeps.observeOpenClawPairingQualification = () => {
+        throw new OpenClawPairingIncompatibleError(field);
+      };
+      expect(
+        await publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+      ).toEqual({
+        kind: "evidence-failed",
+        diagnostic: {
+          stage: "publication-validation",
+          reason: "pairing-state-incompatible",
+          ...(field === "paired.clientMode" ? { pairingMismatchField: field } : {}),
         },
       });
       expect(publishedIdentity).toBeNull();
