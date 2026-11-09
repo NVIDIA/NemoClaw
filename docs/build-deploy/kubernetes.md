@@ -17,9 +17,10 @@ No automated run covers OpenShift, and other clusters are untested; [current lim
 Confirm client access, cluster permissions, image availability, and inference reachability before applying the example. Managed model services are not supported on Kubernetes.
 
 - **A NemoClaw bundle:** [build one](build.md#build-a-native-bundle) from this revision.
-  The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
+  The bundle includes the Helm provider that installs the gateway, and the Kubernetes provider that [publishes it](#publish-the-gateway-outside-the-cluster); no Helm CLI is needed.
 - **Cluster access:** a kubeconfig file and an exact context, or, when NemoClaw [runs in a pod](#run-nemoclaw-in-a-pod), the pod's service account.
-  Either must be able to read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets, Jobs and NetworkPolicies, and port-forward to its pods (`get` and `create` on `pods/portforward`).
+  Either must be able to read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets, Jobs and NetworkPolicies.
+  Without [`gateway.kubernetes.expose`](#publish-the-gateway-outside-the-cluster), it must also port-forward to the namespace's pods (`get` and `create` on `pods/portforward`); with it, it must patch Services.
   The SDK reads nothing else outside the namespace.
   The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context or service account must be able to create a ClusterRole and a ClusterRoleBinding.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
@@ -76,7 +77,7 @@ See [Build agent images](build.md#build-agent-images) for the harnesses each pla
 ## Deploy with a Managed Gateway
 
 The SDK binds the namespace, creating it if it doesn't exist, adds a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
-The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs.
+The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs, unless you [publish the gateway](#publish-the-gateway-outside-the-cluster).
 Start from [the Kubernetes example](../../examples/kubernetes/managed-development.yaml). Replace these deployment-specific inputs before running the commands:
 
 - `metadata.uid` to a new UUID.
@@ -154,10 +155,61 @@ OpenShell accepts a token for up to 60 seconds after its `exp`, the default leew
 The gateway still requires its client certificate; the token adds user identity on top.
 With this profile, the namespace holds no development issuer, and the state directory holds no issuer keys.
 
+### Publish the Gateway Outside the Cluster
+
+Like a Docker gateway's published port, `gateway.kubernetes.expose` publishes the gateway at `gateway.endpoint` through a Kubernetes Service, so NemoClaw and the OpenShell CLI dial that address instead of port forwards.
+The Service, named after the release with `-exposure` appended, forwards the endpoint's port to the gateway's own TLS listener, so TLS and client certificates pass through unchanged.
+The gateway certificate names the endpoint's host.
+These steps have not been run on a cluster.
+
+```yaml
+spec:
+  gateway:
+    endpoint: https://gateway.agents.example.com:30851
+    kubernetes:
+      # ...the target and authentication above...
+      expose:
+        service:
+          type: NodePort
+```
+
+```yaml
+spec:
+  gateway:
+    endpoint: https://gateway.agents.example.com:443
+    kubernetes:
+      authentication: {profile: oidc, token: {env: NEMOCLAW_GATEWAY_TOKEN}}
+      expose:
+        service:
+          type: LoadBalancer
+          loadBalancerSourceRanges: [10.20.0.0/16]           # optional
+          annotations: {metallb.io/loadBalancerIPs: 10.20.0.40} # optional
+```
+
+- **Endpoint:** `https://`, a lowercase DNS name or IPv4 address, and a port. A `NodePort` endpoint's port must be in the node-port range, 30000 through 32767; ports 30000 through 30085 are the least likely to be taken.
+- **The address must exist before apply,** because plan binds the endpoint, the chart writes its host into the certificate, and apply dials it.
+  - `NodePort`: a node's address, or a DNS name for the nodes.
+  - `LoadBalancer`: a DNS name, or an IP fixed in advance. On single-node k3s, ServiceLB uses the node's IP. Elsewhere, an annotation sets the address, such as MetalLB's `metallb.io/loadBalancerIPs`, GKE's `networking.gke.io/load-balancer-ip-addresses` for an internal load balancer, AKS's `service.beta.kubernetes.io/azure-pip-name`, or the AWS Load Balancer Controller's `service.beta.kubernetes.io/aws-load-balancer-eip-allocations`.
+  - Where nothing fixes the address, such as EKS's default Classic load balancer, the first apply fails when it dials the endpoint. Point the endpoint's DNS name at the address `kubectl get service` shows, then apply again.
+- **`LoadBalancer` requires the `oidc` profile:** a load balancer may be reachable from outside the cluster, where the development profile's locally held signing key would guard the port.
+- **Fixed after the first plan:** `expose`, its Service type and its annotations select the address the endpoint names. Like the endpoint, changing them needs a new deployment. `loadBalancerSourceRanges` can change.
+- **Prerequisites:** a `LoadBalancer` needs the cluster's load-balancer implementation, which NemoClaw doesn't check. Without one, the Service stays pending and apply fails after 10 minutes. A node port another Service holds fails apply too; plan can't check it without reading the cluster's other Services.
+
+**Both types listen on every node.**
+A `LoadBalancer` Service also gets a node port that Kubernetes allocates, and `loadBalancerSourceRanges` never covers node ports; load-balancer implementations also differ in whether they enforce it.
+Sandbox [service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) skip the gateway's sign-in, so anyone who reaches the endpoint with a service's host name reaches that service, which must authenticate its own clients.
+The URLs that apply prints don't open remotely yet ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
+
+The chart writes the certificate once, when it creates the Secrets `<release>-server-tls`, `<release>-client-tls` and `<release>-jwt-keys`, and destroy keeps them.
+NemoClaw records the client certificate Secret the first time it dials a published gateway and refuses a replaced one, since it trusts that Secret's CA for whatever answers at the endpoint.
+A new deployment with the same `metadata.uid` in the same namespace reuses the retained Secrets, whose certificate may not name its host; delete the three Secrets before its first apply.
+Destroy removes the Service; a load balancer's controller must still run, since Kubernetes keeps the Service until the controller releases the load balancer, and destroy waits up to 20 minutes.
+
 ### Reach the Gateway from the OpenShell CLI
 
 With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](../agents-inference/interfaces.md#invoke-an-agent) and run other `openshell` commands.
 It needs three things: a port forward to the gateway pod, the gateway's client certificate, and an OpenShell gateway entry that signs in through your identity provider.
+A [published gateway](#publish-the-gateway-outside-the-cluster) needs no forward: skip the first step, and add the gateway at `gateway.endpoint` instead of `https://127.0.0.1:17671`.
 These steps have not been run on a cluster.
 
 In one terminal, forward the port in `gateway.endpoint` to the gateway, which listens on port 8080 in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets.
@@ -320,10 +372,15 @@ rules:
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [roles, rolebindings]
     verbs: [get, create, delete]
-  # The providers' port forwards; the WebSocket upgrade also needs create.
+  # Without gateway.kubernetes.expose, the providers' port forwards; the
+  # WebSocket upgrade also needs create.
   - apiGroups: [""]
     resources: [pods/portforward]
     verbs: [get, create]
+  # With gateway.kubernetes.expose, the Kubernetes provider patches its Service.
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [patch]
   # Granted by the chart's Roles.
   - apiGroups: [""]
     resources: [pods]

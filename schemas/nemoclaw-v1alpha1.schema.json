@@ -501,6 +501,7 @@
           "description": "LoadBalancer only: client CIDRs the load balancer admits. Load-balancer implementations differ in whether they enforce it, and it never covers node ports.",
           "items": {
             "pattern": "^(?:(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:3[0-2]|[12]?[0-9])|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*/(?:12[0-8]|1[01][0-9]|[1-9]?[0-9]))$",
+            "type": "string",
             "x-nemoclaw-error": "loadBalancerSourceRanges entries must be IPv4 or IPv6 CIDRs"
           },
           "maxItems": 32,

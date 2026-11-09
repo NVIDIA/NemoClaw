@@ -891,7 +891,7 @@ The three NemoClaw resources take the same cluster target and identity:
 
 - `name`: `nc-`, 16 lowercase hexadecimal characters, and `-gateway`.
 - `compute_driver`: `kubernetes` or `openshift`.
-- `endpoint`: the gateway's `https://127.0.0.1:PORT` loopback endpoint.
+- `endpoint`: the gateway's HTTPS endpoint: `https://127.0.0.1:PORT`, or, for a gateway published through `gateway.kubernetes.expose`, the address clients dial. The exposure Service is a separate `kubernetes_service_v1` resource that the bundled `hashicorp/kubernetes` provider owns.
 - Optional `kubeconfig_env`: the environment variable whose value is the kubeconfig file path. Omit it to use the service account of the pod that runs OpenTofu; the provider then finds the API server through `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`.
 - Optional `context`: the exact kubeconfig context, set exactly when `kubeconfig_env` is.
 - `namespace`: the namespace for the gateway.
