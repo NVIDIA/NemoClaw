@@ -38,8 +38,9 @@ Use several sandbox definitions to isolate agents, credentials, and lifecycles.
 The [multiple-agent example](../../examples/multiple-models.yaml) demonstrates shared inference definitions with independent sandbox selections.
 An agent's model choices do not restrict other processes within its sandbox beyond the sandbox's provider and network policy.
 
-### Run One Deep Agents or Pi Request
+### Run One Agent Request
 
+Every harness takes a request through the same Fabric command; the [headless OpenClaw request](#run-one-headless-openclaw-request) shows a complete example.
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
@@ -54,7 +55,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/934ab7eca1ec9ac86a22fd24913f2e9d68637c4a/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID and send a request:
@@ -156,9 +157,31 @@ NemoClaw does not wrap its refresh contract, and manual sandbox attachments affe
 ## Skills on a Mounted Volume
 
 Fabric reads skills from the paths in `fabric_agent`'s `skills` block.
+For OpenClaw and Hermes, each path is a skill or a folder of skills:
+
+- A folder that contains `SKILL.md` is one skill.
+- Otherwise, each folder directly inside it that contains `SKILL.md` is a skill; Fabric ignores the folder's other files and folders, including folders it can't read, such as a volume's `lost+found`.
+- A folder that holds no skills, such as a new, empty volume, adds none.
+
+The agent doesn't start when a path doesn't exist or isn't a folder, when Fabric can't list a path that has no `SKILL.md` of its own, when a skill's `SKILL.md` can't be read, or when two skills have the same name; Fabric's error names the path or both skills' folders.
+For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/adapters) say what a path must hold.
+
 To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
 The gateway must allow driver configuration: for a managed gateway, set `allow_driver_config: true` in the driver's table of `spec.gateway.config` when you create the deployment (see [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes)); for an external gateway, its administrator enables OpenShell's `allow_driver_config`.
-In YAML, set the sandbox's `driverConfig` and list the mount in the harness configuration's `skills`:
+
+Mix the two forms to share a folder of skills between agents and give one agent a skill of its own, with its own mount settings.
+In this example, the `team-skills` volume holds a folder per skill, and the `review-skill` volume holds one skill at its root:
+
+```text
+team-skills            review-skill
+├── summarize/         └── SKILL.md
+│   └── SKILL.md
+└── translate/
+    └── SKILL.md
+```
+
+Both agents mount `team-skills` read-only; only the OpenClaw agent mounts `review-skill`, and it can write there.
+In YAML, set each sandbox's `driverConfig` and list its mounts in the harness configuration's `skills`:
 
 ```yaml
 sandboxes:
@@ -167,14 +190,34 @@ sandboxes:
       docker:
         mounts:
           - type: volume
-            source: assistant-skills
+            source: team-skills
             target: /sandbox/skills
+            read_only: true
+          - type: volume
+            source: review-skill
+            target: /sandbox/review-skill
+            read_only: false
     harness:
       kind: nvidia.fabric.openclaw
       config:
         skills:
+          paths: [/sandbox/skills, /sandbox/review-skill]
+  researcher:
+    driverConfig:
+      docker:
+        mounts:
+          - type: volume
+            source: team-skills
+            target: /sandbox/skills
+            read_only: true
+    harness:
+      kind: nvidia.fabric.hermes
+      config:
+        skills:
           paths: [/sandbox/skills]
 ```
+
+The `assistant` agent loads `summarize`, `translate`, and the skill in `review-skill`; `researcher` loads `summarize` and `translate`.
 
 In HCL, use `openshell_sandbox`'s [`driver_config`](../references/provider.md#openshell-resources-and-data-sources) and `fabric_agent`'s `skills` block:
 
@@ -183,7 +226,10 @@ resource "openshell_sandbox" "assistant" {
   # ...
   driver_config = jsonencode({
     docker = {
-      mounts = [{ type = "volume", source = "assistant-skills", target = "/sandbox/skills" }]
+      mounts = [
+        { type = "volume", source = "team-skills", target = "/sandbox/skills", read_only = true },
+        { type = "volume", source = "review-skill", target = "/sandbox/review-skill", read_only = false },
+      ]
     }
   })
 }
@@ -191,7 +237,7 @@ resource "openshell_sandbox" "assistant" {
 resource "fabric_agent" "assistant" {
   # ...
   skills {
-    paths = ["/sandbox/skills"]
+    paths = ["/sandbox/skills", "/sandbox/review-skill"]
   }
 }
 ```
@@ -199,6 +245,20 @@ resource "fabric_agent" "assistant" {
 OpenShell's mount settings decide whether the agent can write to the volume, and the sandbox's filesystem policy decides which paths its process may read or write.
 The volume's contents persist when the sandbox is replaced, including anything the agent writes there.
 How the volume gets its contents is up to the platform; OpenShell's documentation describes the volume labels it requires.
+
+Fabric decides which folders are skills, but the harness loads them, and Hermes can load more than Fabric resolves or name skills differently:
+
+| Volume layout | What happens |
+| --- | --- |
+| A skill folder contains other skill folders | Hermes also loads the nested skills; it searches every folder below a skill except `references`, `templates`, `assets`, and `scripts`. OpenClaw loads only the skill folder. |
+| Two skills have the same name | Fabric's check covers only the skills it resolves from `skills.paths`, not nested skills that Hermes loads or skills a harness finds elsewhere. |
+| A skill's name matches another skill's folder name | Hermes looks a skill up by its name, its folder name, and its path, so it treats the skill as ambiguous and doesn't load it. OpenClaw loads both. |
+| A skill's name is longer than 64 characters | Hermes cuts it to 64 characters, so two names that share their first 64 characters collide. |
+| A folder of skills holds a hidden folder, such as `.archive` | Fabric loads it as a skill if it contains `SKILL.md`, although Hermes's own scans skip folders such as `.archive` and `.git`. |
+| A Hermes path uses `~` or `${VAR}` | Fabric doesn't expand them, unlike Hermes's own `skills.external_dirs`; use absolute sandbox paths. |
+
+To avoid these differences, keep one skill per folder, don't nest skill folders, and give each skill a name that differs from every skill folder name.
+The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
 
 ## Web Search
 

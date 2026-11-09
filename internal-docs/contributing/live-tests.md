@@ -78,8 +78,6 @@ Run blocks call these modules:
 
 | Case | Runner | Checks |
 |---|---|---|
-| Case | Runner | Agent and reply |
-|---|---|---|
 | `docker-openclaw-nvidia` | Live / HCL | OpenClaw on NVIDIA hosted inference; any reply. |
 | `docker-openclaw-v0-parity` | Live / HCL and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
 | `docker-hermes-v0-parity` | Live / HCL | The hosted parity Hermes document; `FOUR`. |
@@ -225,7 +223,10 @@ The `docker-openclaw-hermes-interfaces` [HCL E2E scenario](#hcl-e2e-scenarios) d
 `cargo ci live-docker` runs it: it installs the pinned OpenShell CLI by checksum, binds the case to a fresh UID, gateway port and subnet, stub address, and the run's OpenClaw and Hermes images, and passes a fresh model key as `NEMOCLAW_TEST_INTERFACES_MODEL_KEY` and `TF_VAR_model_key`.
 Before apply, the `tests/e2e/hcl/model` module runs a stub model with the bundled Docker provider: the pinned `nginx-unprivileged` image that the development issuer runs, on the host network at the port the case's `model` provider names.
 It lists one model and answers every chat completion with the same reply, streamed when the request asks, and refuses any request without that key.
-Apply must report each interface's port, sign-in, and token file.
+The `tests/e2e/hcl/volume` module also creates each sandbox's two skills volumes, named for the run's UID, and writes their skills, owned by the agent image's user.
+Each agent's `skills.paths` lists a folder of skills on one volume and a folder that is one skill on a read-only volume, as [Skills on a Mounted Volume](../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes; OpenClaw's folder holds two skills and a file that isn't one, and Hermes's folder is empty.
+Apply must start both agents with them, and report each interface's port, sign-in, and token file.
+Whether the agent uses a skill is not checked live; Fabric's tests check what each harness loads.
 The `tests/e2e/hcl/interface` module then runs `hcl_live::interface` once per request: it reads the reported token with `openshell sandbox exec`, forwards the port with `openshell forward service`, and sends one request with the token as a Bearer credential.
 OpenClaw's Control UI page must load and its configuration endpoint must accept the token; Hermes's API server must list its models and answer a chat completion with the stub's reply, which also shows that NemoClaw sent the configured key; Hermes's dashboard page must load with its session token.
 Reports hold status codes; tokens and response bodies stay in the run's private `work` directory.

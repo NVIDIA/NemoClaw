@@ -48,6 +48,7 @@ fn case() {
         "openshell": var("NEMOCLAW_TEST_OPENSHELL").unwrap_or_default(),
         "work_dir": work,
         "evidence_dir": reports,
+        "versions": fs::canonicalize("../../versions.json").unwrap(),
     });
     let providers = run.join("providers.tfrc");
     fs::write(
@@ -58,15 +59,24 @@ fn case() {
         ),
     )
     .unwrap();
+    // `tofu init` writes its dependency lock file beside the root module, so
+    // the run initializes a copy of the modules in its own directory.
+    let root = run.join("hcl");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
     let tofu = || {
         let mut tofu = Command::new(bundle.tofu());
-        tofu.current_dir("tests/e2e/hcl")
+        tofu.current_dir(&root)
             .env("TF_DATA_DIR", run.join("tofu"))
             .env("TF_CLI_CONFIG_FILE", &providers)
             .env("TF_VAR_context", context.to_string());
         tofu
     };
-    let initialized = tofu().args(["init", "-input=false", "-no-color"]).status();
+    let modules = fs::canonicalize("tests/e2e/hcl").unwrap();
+    let initialized = tofu()
+        .args(["init", "-input=false", "-no-color"])
+        .arg(format!("-from-module={}", modules.display()))
+        .status();
     assert!(initialized.unwrap().success(), "tofu init failed");
     // The test's core log times its runs.
     let log = CoreLog::create(work.join("tofu-test.log"));

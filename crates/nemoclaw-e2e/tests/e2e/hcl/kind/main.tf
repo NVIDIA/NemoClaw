@@ -25,6 +25,7 @@ variable "context" {
     config           = string
     probe_executable = string
     work_dir         = string
+    versions         = string
   })
 }
 
@@ -53,7 +54,7 @@ locals {
   # The stub's namespace, from the endpoint its Service gives the case.
   model = regex("^http://model\\.([a-z0-9-]+)\\.svc", local.document.spec.inferenceProviders.stub.endpoint)[0]
   # The development issuer's pinned image serves nginx unprivileged.
-  image = jsondecode(file("${path.module}/../../../../../../versions.json")).images.developmentIssuer
+  image = jsondecode(file(var.context.versions)).images.developmentIssuer
   # One OpenAI chat completion stream of the reply. nginx expands the
   # escaped line breaks in its single-quoted return text.
   chunks = [

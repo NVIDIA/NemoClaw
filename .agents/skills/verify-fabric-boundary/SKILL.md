@@ -84,8 +84,9 @@ Run [Write the YAML](../verify-yaml-deployment/SKILL.md#write-the-yaml), all fiv
 Add what the checks need to the base YAML, then save it:
 
 1. **Volumes.** Mount `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`, with `read_only: false` on both mounts; OpenShell defaults them to read-only. Follow [caller-owned volumes](../../../docs/build-deploy/state.md) for admission and filesystem access.
-2. **Skills.** Keep the supplied skill under `/sandbox/workspace/skills/capability-probe`. Check the selected adapter's path validation before setting `harness.config.skills.paths`: OpenClaw at Fabric `e5b5ebf2b81cc3c6325301ea419ebf2453dab12e` requires individual skill directories containing `SKILL.md`, so use `[/sandbox/workspace/skills/capability-probe]`, not the parent directory. Record this per-item configuration separately from native discovery; do not claim directory scanning or automatic discovery of generated skills from it.
+2. **Skills.** Keep the supplied skill under `/sandbox/workspace/skills/capability-probe`. Check the selected adapter's path validation before setting `harness.config.skills.paths`: at the Fabric pin in `image/fabric/Dockerfile`, OpenClaw and Hermes accept a folder that contains `SKILL.md` or a folder of such folders, as [Skills on a Mounted Volume](../../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes. Use `[/sandbox/workspace/skills/capability-probe]`, the supplied skill's own folder, so the path names only that skill. Record this per-item configuration separately from native discovery; do not claim directory scanning or automatic discovery of generated skills from it.
 3. **Capabilities.** Choose the run-scoped extension names first: run step 2 of [mounted-extensions](features/mounted-extensions.md), and note the generated plugin's ID, `fb-plugin-$UID8`, as step 4 of [plugins](features/plugins.md) derives it.
+   Resolve the bundled plugin's safe trigger, observable effect, and startup registration capture through [plugin bindings](features/plugins.md#driving-it-with-fabric-agent-ctl-and-the-openshell-cli) before apply; Hermes has a [pinned binding recipe](references/hermes-bundled-plugin.md).
    Then enable each capability the feature files check: the native TUI and, where in scope, the Web UI; a harmless bundled plugin; the mounted native tool and plugin locations under `/sandbox/workspace/extensions`, with any per-item enablement; and a tool allow-list from which Config change can remove only the shell-launch tool.
 4. **Merge rules.** Keep everything the base YAML sets, including its harness kind, execution, approval settings, and inference route.
    Set the route's output-token limit to 4096 for these multistep checks when the adapter accepts one, and record the limit used in `$EVIDENCE/identity.txt`.
@@ -199,6 +200,7 @@ Run checks only at their listed phases; don't add repetitions.
 Run one request at a time: two model requests at once can make a reply arrive after the check that waits for it.
 Continue independent checks after a failure; reassess blocked checks after each transition.
 Never repair the baseline between phases: no reseeding, reinstalling, re-enabling, or editing state or generated native configuration.
+Native evolution of writable skill contents follows [Evolving Skill Contents](features/skills.md#evolving-skill-contents): retain diagnostic snapshots and verify behavior without requiring initial byte identity. This does not permit runner repairs or relax other fixture hashes.
 
 ## Evidence
 

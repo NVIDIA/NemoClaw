@@ -69,7 +69,7 @@ dist/linux_arm64/bin/nemoclaw apply --state-dir .local/station-demo/state .local
 Planning performs the hardware, image, network, and capacity checks without creating runtime resources.
 Applying downloads the pinned model snapshot, starts managed vLLM and the declared agent runtimes, and may take several minutes.
 Apply verifies readiness but does not request an agent response.
-Use the [headless OpenClaw request](../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) and [Pi request](../../docs/agents-inference/agents.md#run-one-deep-agents-or-pi-request) procedures for the agents in your selected example.
+Use the [headless OpenClaw request](../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) and [agent request](../../docs/agents-inference/agents.md#run-one-agent-request) procedures for the agents in your selected example.
 
 Check convergence and the export round trip:
 

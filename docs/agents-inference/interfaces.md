@@ -76,7 +76,7 @@ Agents:
 JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`. If an apply result also lists interfaces, the CLI prints the gateway and workspace selection once under **Agents**, not again under **Agent interfaces**.
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
 An agent without a recorded runtime, such as before the first apply, is listed with `no runtime recorded` and has no `runtimeId`.
-[Run one request](agents.md#run-one-deep-agents-or-pi-request) shows the command and its input.
+[Run one request](agents.md#run-one-agent-request) shows the command and its input.
 The selected Fabric adapter owns how the harness handles the request.
 
 ## Forward a Native Service
@@ -97,7 +97,7 @@ Apply prints this command for each interface that an agent's configuration enabl
 
 OpenClaw's Control UI and Hermes's API server and dashboard are served by the agent's Fabric runtime inside its sandbox, on loopback ports that you choose.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime; NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
-The [Fabric OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/934ab7eca1ec9ac86a22fd24913f2e9d68637c4a/adapters/python/openclaw/README.md#serve-the-control-ui) and [Fabric Hermes adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/934ab7eca1ec9ac86a22fd24913f2e9d68637c4a/adapters/python/hermes/README.md#serve-the-api-server-and-dashboard) document each interface's behavior.
+The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/docs/integrations/harness/openclaw.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/docs/integrations/harness/hermes-interfaces.mdx#enable-native-interfaces) document each interface's behavior.
 
 ### Enable an Interface
 

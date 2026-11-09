@@ -13,9 +13,9 @@ Files that survive a transition aren't enough: each phase needs fresh native dis
 - `skill-discovery`: native skill discovery lists the supplied `capability-probe` skill and views it, as the current turn's native discovery or loading record shows, not only the reply. Phases: Initial, After stop/start, After recreate, After config change, After restore.
 - `skill-execution`: asked only to use `capability-probe`, the agent loads it natively, or reuses its earlier view as [Instruction Evidence](#instruction-evidence) allows, and follows its undisclosed recipe, writing `results/skill-result.json` with `probe` set to `agent-capability-probe` and the input's nonce and phase. Phases: Initial, After stop/start, After recreate, After config change, After restore.
 - `mounted-skill-first-start`: the skill seeded before the first runtime starts is discovered and runs on first startup, before any install, reload, activation restart, or manual import. Phases: Initial.
-- `mounted-supplied-skill`: the supplied skill keeps its seeded hash, is discovered and loaded natively, and produces fresh output after every transition; persistence, discovery, loading, and output are each required. Phases: Initial, After runtime restart, After stop/start, After recreate, After config change, After restore.
+- `mounted-supplied-skill`: the supplied skill remains at its seeded location, is discovered and loaded natively, and produces fresh output after every transition; persistence, discovery, loading, and output are each required. Phases: Initial, After runtime restart, After stop/start, After recreate, After config change, After restore.
 - `generated-skill`: the agent creates a run-named skill with a unique marker once, through its native authoring mechanism, and native discovery finds and views it after every transition without re-creation. Phases: Initial, After stop/start, After recreate, After config change, After restore.
-- `mounted-generated-skill`: the generated skill keeps its hash at its recorded save location, is discovered and loaded natively, and writes `results/generated-skill-result.json` from fresh input after every transition. Phases: Initial, After runtime restart, After stop/start, After recreate, After config change, After restore.
+- `mounted-generated-skill`: the generated skill remains at its recorded save location with its run marker, is discovered and loaded natively, and writes `results/generated-skill-result.json` from fresh input after every transition. Phases: Initial, After runtime restart, After stop/start, After recreate, After config change, After restore.
 - `mounted-generated-skill-save`: native authoring, choosing its own destination, saves the generated skill in the configured mounted skill directory `/sandbox/workspace/skills/` without runner intervention. Phases: Initial.
 
 ## How to get to it (user POV)
@@ -33,7 +33,7 @@ Loading passes when either of these holds before the run request reads its input
 - **Reuse:** all of these hold:
   - This phase's discovery request viewed the skill, as its saved `discover.calls.txt` or `discover.skills.txt` shows. For `skill-execution`, that is the `skill-discovery` check's request.
   - Both replies show the same runtime ID.
-  - The skill file still matches its sealed hash in this phase, as step 2's hash lines check for the supplied skill and step 9's for the generated one.
+  - The saved native view contains the instructions used for this run. Later edits to the file do not invalidate instructions already loaded in the same conversation; record which view the run reused.
   - The harness's session record shows no compaction, reset, or new session between that view and the run request. Save the part of the record that shows this in `$CHECK_DIR/session.txt`.
 
 `bindings.md` names where the session record is; for Hermes, it is the session database, read from a copy as the [native records](README.md#driving-conventions) convention says.
@@ -44,6 +44,24 @@ Otherwise, if neither holds, Loading is Failed.
 - Never copy the discovery request's calls into `run.calls.txt`.
 - Correct output alone never proves loading.
 - Authoring prompts and the agent's claims never replace a native read of the saved skill.
+
+## Evolving Skill Contents
+
+Skills on supported writable paths may evolve during a run, including through native background review. This rule applies to both harnesses; record the actual path and write access in `bindings.md`.
+Changed contents or hashes alone do not fail a skill check, and passing does not require reconstructing the edit's arguments or proving who made it.
+Save the initial contents and hash outside the sandbox, then capture contents and hashes before and after each skill check. Keep these snapshots as diagnostic evidence, without replacing the initial record.
+When a change is observed, describe it and link any available native edit records; distinguish an observed edit from inferred authorship.
+
+The supplied skill must remain at its seeded path; the generated skill must remain at its recorded save path with `$MARKER`. Missing files or a missing generated marker fail persistence. Discovery, loading, and the exact fresh outputs below still have to pass independently.
+Do not repair, reseed, reseal, relocate, or ask the agent to rewrite a skill to make a check pass. Keep historical outcomes unchanged. This allowance does not change script, native-tool, plugin, or retention-marker hash checks.
+
+## Output Evidence
+
+For supplied and generated skills on both OpenClaw and Hermes, the runner reads the result from the mounted filesystem through `openshell sandbox exec` and checks its exact keys, probe, nonce, and phase with the commands below.
+That independent read is authoritative for contents; an agent's reply or a successful write-tool response, including `verified:true`, cannot replace it.
+The run's native file calls must still show a current input-read and output-write, and [Instruction Evidence](#instruction-evidence) must establish loading.
+An agent-side result reread is optional and is not a pass condition: native system guidance may forbid reverifying a write the tool already confirmed.
+Keep the fresh phase input and remove the output before each run, so a retained artifact cannot pass.
 
 ## Driving it with fabric-agent-ctl and the OpenShell CLI
 
@@ -72,16 +90,17 @@ Save each request's runtime skill list or loading record for the turn in `$CHECK
    - `phase`: the input phase unchanged.
 
    Use file tools, not shell execution, so this workflow also works when the terminal toolset is disabled.
-   Read the result back and report its path. Do not claim success if a tool failed.
+   Report the result's path. Do not claim success if a tool failed.
    ```
 
    The launch seeds it once, before the first apply, and records its hash in `$EVIDENCE/seeded.sha256`.
+   Save the seeded contents as `$EVIDENCE/supplied-skill-initial.md` before the first apply.
    This skill's recipe stays in this file and the volume; no prompt repeats it.
 2. **Supplied skill requests.** The supplied-skill checks use these commands, one request per prompt, in their own `CHECK_DIR`; steps 3 to 5 say which each sends. Before each `run`, remove the stale output:
 
    ```sh
    openshell sandbox exec -n assistant --no-tty -- sha256sum /sandbox/workspace/skills/capability-probe/SKILL.md | tee "$CHECK_DIR/hash.txt"
-   grep -F "$(cut -d' ' -f1 "$CHECK_DIR/hash.txt")" "$EVIDENCE/seeded.sha256"
+   openshell sandbox exec -n assistant --no-tty -- cat /sandbox/workspace/skills/capability-probe/SKILL.md > "$CHECK_DIR/skill-before.md"
    ask discover <<'EOF'
    Use native skill discovery to list your skills, then view capability-probe. Report what discovery returned. Do not create, edit or run any skill.
    EOF
@@ -91,13 +110,15 @@ Save each request's runtime skill list or loading record for the turn in `$CHECK
    EOF
    openshell sandbox exec -n assistant --no-tty -- cat /sandbox/workspace/results/skill-result.json > "$CHECK_DIR/skill-result.json"
    jq -c --arg n "$NONCE" --arg p "$PHASE" '{keys: keys, ok: (.probe == "agent-capability-probe" and .nonce == $n and .phase == $p)}' "$CHECK_DIR/skill-result.json"
+   openshell sandbox exec -n assistant --no-tty -- cat /sandbox/workspace/skills/capability-probe/SKILL.md > "$CHECK_DIR/skill-after.md"
+   sha256sum "$CHECK_DIR/skill-before.md" "$CHECK_DIR/skill-after.md" > "$CHECK_DIR/skill-snapshots.sha256"
    ```
 
    Read each result separately:
-   - **Persistence:** `grep` prints the seeded hash's line.
+   - **Persistence:** the skill is readable at its seeded path; record any content change under [Evolving Skill Contents](#evolving-skill-contents).
    - **Discovery:** `discover.calls.txt` or `discover.skills.txt` shows the current turn's native discovery listing `capability-probe` from `/sandbox/workspace/skills/capability-probe/`, and a native view of its content.
    - **Loading:** [Instruction Evidence](#instruction-evidence) holds for `capability-probe`: a current load in `run.calls.txt`, or reuse of this phase's discovery view.
-   - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json`, wrote `results/skill-result.json`, and read the result back.
+   - **Output:** the runner's independent read produces `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json` and wrote `results/skill-result.json`, as [Output Evidence](#output-evidence) requires.
 3. **`mounted-skill-first-start`:** run it first in the Initial phase, before any other request in this run, including `inference`:
 
    ```sh
@@ -135,15 +156,16 @@ MARKER=%s
    openshell sandbox exec -n assistant --no-tty -- sh -c 'find /sandbox /tmp /home/node -type f -path "*$1*" -print 2>/dev/null | xargs -r grep -lF -- "$2"' sh "$SKILL_NAME" "$MARKER" | tee "$CHECK_DIR/found.txt"
    ```
 
-   Set `GENERATED_SKILL_FILE` to the skill file that the authoring result and native discovery name, append it to `$EVIDENCE/generated-skill.env`, and seal its hash:
+   Set `GENERATED_SKILL_FILE` to the skill file that the authoring result and native discovery name, append it to `$EVIDENCE/generated-skill.env`, and record its initial contents and hash:
 
    ```sh
    printf 'GENERATED_SKILL_FILE=%s
 ' "$GENERATED_SKILL_FILE" >> "$EVIDENCE/generated-skill.env"
    openshell sandbox exec -n assistant --no-tty -- sha256sum "$GENERATED_SKILL_FILE" > "$EVIDENCE/generated-skill.sha256"
+   openshell sandbox exec -n assistant --no-tty -- cat "$GENERATED_SKILL_FILE" > "$EVIDENCE/generated-skill-initial.md"
    ```
 
-   Keep any authoring retry's request, reply, and calls in `$CHECK_DIR` before sealing the hash.
+   Keep any authoring retry's request, reply, and calls in `$CHECK_DIR` before recording the initial hash.
    The configured read paths and the agent's reply can't establish that no skill exists; record "no skill" only after the search.
    If no skill was saved, don't create one for the agent: link every later `generated-skill` and `mounted-generated-skill` row to the creation finding, Failed for missing support and Not tested for a runner or access problem.
 7. **`mounted-generated-skill-save`:** resolve it from step 6's evidence; it sends no request:
@@ -179,7 +201,8 @@ MARKER=%s
     . "$EVIDENCE/generated-skill.env"
     mkdir -p "$CHECK_DIR"
     openshell sandbox exec -n assistant --no-tty -- sha256sum "$GENERATED_SKILL_FILE" | tee "$CHECK_DIR/hash.txt"
-    cmp "$CHECK_DIR/hash.txt" "$EVIDENCE/generated-skill.sha256" && echo same
+    openshell sandbox exec -n assistant --no-tty -- cat "$GENERATED_SKILL_FILE" > "$CHECK_DIR/skill-before.md"
+    grep -F -- "$MARKER" "$CHECK_DIR/skill-before.md"
     fill - <<'EOF' | ask discover
     Use native skill discovery to list your skills, then view <skill-name>. Report what discovery returned. Do not create, edit or run any skill.
     EOF
@@ -189,13 +212,15 @@ MARKER=%s
     EOF
     openshell sandbox exec -n assistant --no-tty -- cat /sandbox/workspace/results/generated-skill-result.json > "$CHECK_DIR/generated-skill-result.json"
     jq -c --arg s "$SKILL_NAME" --arg n "$NONCE" --arg p "$PHASE" '{keys: keys, ok: (.probe == $s and .nonce == $n and .phase == $p)}' "$CHECK_DIR/generated-skill-result.json"
+    openshell sandbox exec -n assistant --no-tty -- cat "$GENERATED_SKILL_FILE" > "$CHECK_DIR/skill-after.md"
+    sha256sum "$CHECK_DIR/skill-before.md" "$CHECK_DIR/skill-after.md" > "$CHECK_DIR/skill-snapshots.sha256"
     ```
 
     Write `$CHECK_DIR/result.md` with four separate lines:
-    - **Persistence:** `same`, at the recorded save location.
+    - **Persistence:** the skill is readable at the recorded save location and contains `$MARKER`; record any content change under [Evolving Skill Contents](#evolving-skill-contents).
     - **Discovery:** the current turn's native discovery lists `$SKILL_NAME` from that location.
     - **Loading:** [Instruction Evidence](#instruction-evidence) holds for `$SKILL_NAME`: a current load in `run.calls.txt`, or reuse of this phase's discovery view.
-    - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json` and wrote `results/generated-skill-result.json`.
+    - **Output:** the runner's independent read produces `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json` and wrote `results/generated-skill-result.json`, as [Output Evidence](#output-evidence) requires.
 
     Result: all four hold. A retained file with failed native discovery is Failed when a runtime is available.
 ## Gotchas
@@ -203,8 +228,8 @@ MARKER=%s
 - Never paste a saved skill's contents or its expected output into an execution prompt. The run prompts name the skill only, and correct output alone never proves loading.
 - Some harnesses list skills in the system prompt instead of through a tool. Then the discovery evidence is the runtime's loaded skill list for the turn, not the reply.
 - `skill-execution` and `mounted-supplied-skill` both write `results/skill-result.json`. Remove it before each run so one check can't pass on the other's output.
-- Retained files prove neither discovery nor fresh execution. [lifecycle-and-retention](lifecycle-and-retention.md)'s `retention` check tracks the supplied skill's hash; these checks need a fresh native discovery in each phase.
-- The agent creates its skill once, in the Initial phase. Never re-create, rewrite, reseed, or move it after a transition, and never create it for the agent; a missing or changed skill is evidence.
+- Retained files prove neither discovery nor fresh execution. [lifecycle-and-retention](lifecycle-and-retention.md)'s `retention` check tracks unchanged markers and the supplied skill's presence; these checks need fresh native discovery in each phase.
+- The agent creates its skill once, in the Initial phase. Never re-create, rewrite, reseed, or move it for the agent after a transition. Native content evolution follows [Evolving Skill Contents](#evolving-skill-contents); deletion remains a failure.
 - Don't ask the agent to search for where it saved the skill; resolve the location from native evidence yourself.
 - A native file tool can write to a virtual backend instead of the mount. Read every skill file and result through `openshell sandbox exec`.
 - Write the plain prompt; a harness constraint that `bindings.md` records may be added, but it must not change the requested behavior or expected output.

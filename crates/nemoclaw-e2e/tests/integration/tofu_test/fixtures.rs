@@ -372,7 +372,12 @@ impl Fixtures {
     /// loses its credential and TLS: the fixture serves plaintext gRPC.
     pub fn redirect(&self, document: &mut Document) {
         let shared = &self.shared;
-        *document.spec.gateway.endpoint_mut() = shared.gateway_endpoint.clone();
+        // Managed Kubernetes plans keep their HTTPS tunnel target. Their
+        // gateway read waits for installation; plan-only scenarios mock Helm
+        // and do not connect to a cluster or the gateway.
+        if document.spec.gateway.as_kubernetes().is_none() {
+            *document.spec.gateway.endpoint_mut() = shared.gateway_endpoint.clone();
+        }
         let (engine, endpoint) = match &mut document.spec.gateway {
             Gateway::External(gateway) => {
                 gateway.credential = None;

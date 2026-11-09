@@ -398,8 +398,9 @@ fn dummy_case(
 const INTERFACES_CASE: &str = "docker-openclaw-hermes-interfaces";
 
 /// The interface case bound to one run's UID, gateway endpoint, subnet, stub
-/// model address and port, which its model provider and a grant name, and
-/// OpenClaw and Hermes images.
+/// model address and port, which its model provider and a grant name,
+/// OpenClaw and Hermes images, and skills volumes named for the UID, so runs
+/// never share one.
 fn interfaces_case(
     template: &str,
     uid: &str,
@@ -424,6 +425,10 @@ fn interfaces_case(
             ("172.30.123.0/24", subnet),
             (&format!("nc-fabric@sha256:{zero}"), openclaw),
             (&format!("nc-fabric-hermes@sha256:{zero}"), hermes),
+            (
+                "source: hcl-interfaces-",
+                &format!("source: hcl-interfaces-{uid}-"),
+            ),
         ],
     )?)
 }

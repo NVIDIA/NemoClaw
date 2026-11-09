@@ -562,7 +562,6 @@
               "type": "object"
             },
             "max_tokens": {
-              "default": 512,
               "description": "Maximum number of tokens in each Hermes model response.",
               "minimum": 1,
               "type": "integer"
@@ -2193,8 +2192,8 @@
       ]
     }
   ],
-  "fabric_revision": "934ab7eca1ec9ac86a22fd24913f2e9d68637c4a",
+  "fabric_revision": "316fbdfbd7ac9eb63ffd52023ab4464f2d23e938",
   "schema_version": 2,
-  "source_sha256": "33c4e855e3b72464546b5cb77cc83644f7401956976d34dc7f11cd4235203ff6",
+  "source_sha256": "7fcf49e29bdabb06eb482d667c6d1d18ee7c4991d7cffcc84ce21623e41ebea0",
   "targets": []
 }

@@ -93,10 +93,10 @@ Follow [the deployment workflow](../../docs/build-deploy/usage.md) for apply, re
 
 ## AMD64 Kubernetes with NVIDIA Cloud Inference
 
-One profile targets Linux AMD64 Kubernetes workers, an existing OpenShell gateway, and NVIDIA's hosted Super VL API.
+One profile targets Linux AMD64 Kubernetes workers and NVIDIA's hosted Super VL API.
 It replaces the earlier three-OpenClaw Kubernetes example with two sandboxes: one OpenClaw agent and one Hermes agent.
 Inference runs on NVIDIA's cloud; the Kubernetes workers need no local GPU.
-Choose the [YAML](kubernetes-amd64.yaml) or equivalent [OpenTofu HCL](kubernetes-amd64.tf) configuration.
+Choose the [YAML](kubernetes-amd64.yaml) or [OpenTofu HCL](kubernetes-amd64.tf) configuration; both install a managed development gateway.
 Both links are symlinks to the owning files in `examples/kubernetes/`.
 The profile requires live validation.
 
@@ -112,17 +112,50 @@ Each harness gets a registration bound to its image's executables, using the sha
 Both sandboxes retain explicit process and filesystem policies, with writes limited to `/sandbox`.
 Hermes also reads its packaged source, Switchyard plugin, and the public CA bundle used for HTTPS, and can open pseudo-terminals in `/dev/pts`, which its [browser chat](../../docs/agents-inference/interfaces.md#hermess-browser-chat) needs.
 
-Follow the [Kubernetes prerequisites and image preparation](../../docs/build-deploy/kubernetes.md#prerequisites), then the [existing-gateway procedure](../../docs/build-deploy/kubernetes.md#use-an-existing-gateway).
+Follow the [Kubernetes prerequisites and image preparation](../../docs/build-deploy/kubernetes.md#prerequisites).
 Select a Linux AMD64 image for each harness, push both to a registry the cluster can pull from, and supply their matching metadata bundles.
-Set `GATEWAY_TOKEN` and the `GATEWAY_CA`, `GATEWAY_CERT`, and `GATEWAY_KEY` TLS file references for the existing gateway.
 
-For YAML, assign a fresh deployment UID and replace the gateway endpoint and both image digests before planning.
+For YAML, assign a fresh deployment UID and replace the cluster context, namespace, and both image digests before planning.
+Set `NEMOCLAW_CLUSTER_KUBECONFIG` to the kubeconfig file for that context.
+NemoClaw installs the gateway and creates development authentication material; its providers use command-scoped loopback tunnels, so no `GATEWAY_*` credentials are required.
+The YAML enables PVC driver configuration through `spec.gateway.config`; the HCL sets the same Helm `gatewayConfig` value.
+Both paths install the gateway with the permissions needed to inspect PVCs.
+The [development authentication profile](../../docs/build-deploy/kubernetes.md#deploy-with-a-managed-gateway) is for development clusters; use the documented OIDC profile for an existing issuer.
+
+Before applying either configuration, the platform operator must create `gtc-dc-openclaw-data` and `gtc-dc-hermes-data` in the sandbox namespace.
+Use `spec.gateway.kubernetes.namespace` for YAML or `var.namespace` for HCL; create that namespace before provisioning the claims if it does not exist.
+Prepare `workspace/` and `artifacts/` on each claim, writable by UID/GID `10001:10001`, and add these PVC labels:
+
+```yaml
+metadata:
+  labels:
+    openshell.ai/sandbox-attachable: "true"
+    openshell.ai/sandbox-attachable-workspace: "<OpenShell workspace>"
+```
+
+For YAML, use the OpenShell workspace printed by `nemoclaw plan`; for HCL, use `var.workspace`.
+The workspace label is not the Kubernetes namespace; an operator-configured admission label map replaces these defaults.
+Both configurations mount each claim's subdirectories at `/sandbox/workspace` and `/sandbox/artifacts`.
+See [mounted-volume preparation and retention](../../docs/build-deploy/state.md#keep-agent-files-on-mounted-volumes) before adding mounts to an existing deployment; adding mounts replaces the sandbox and does not migrate its files.
+Retaining files does not resume conversations.
 Follow the [deployment workflow](../../docs/build-deploy/usage.md) for apply and retained teardown.
 
-For HCL, copy `hosted-nvidia.tf` alone into a private working directory and set `gateway_endpoint`, a fresh `workspace`, and both `images` references.
-Pin the two NVIDIA providers to the matching native bundle's manifest version and install them from its `providers` directory, as in the [HCL setup](../hcl/travel-team/README.md#run-it).
+For HCL, copy `hosted-nvidia.tf` and the repository's `versions.json` into a private working directory.
+The latter supplies the chart and gateway image pins from the same checkout as the native bundle.
+Set a fresh `deployment_uid` and `workspace`, the explicit `context` and `namespace`, and both agent `images` references.
+Export `NEMOCLAW_CLUSTER_KUBECONFIG` as the absolute kubeconfig path for the OpenShell provider, and set `TF_VAR_CLUSTER_KUBECONFIG` to the same path for Helm:
+
+```sh
+export NEMOCLAW_CLUSTER_KUBECONFIG="$HOME/.kube/config"
+export TF_VAR_CLUSTER_KUBECONFIG="$NEMOCLAW_CLUSTER_KUBECONFIG"
+```
+
+Export `NEMOCLAW_KUBERNETES_STATE` as an absolute path to a private directory for this deployment's ownership receipt and development credentials, and retain it with the OpenTofu state.
+Neither path requires an existing gateway or `GATEWAY_*` credentials.
+Pin the two NVIDIA providers to the matching native bundle's manifest version and install them and the pinned Helm provider from its `providers` directory, as in the [HCL setup](../hcl/travel-team/README.md#run-it).
 Run the bundle's `libexec/tofu` to initialize, validate, plan, and apply that directory.
-The HCL protects its workspace with `prevent_destroy`; full workspace deletion requires removing that protection and setting `destroy=true`.
+For HCL workload teardown, remove the workspace's `prevent_destroy` protection, then run `tofu destroy -var destroy=true -target=openshell_kubernetes_auth.platform` to remove authentication and its dependent gateway and agents.
+Keep the `openshell_kubernetes_storage.platform` resource and its `prevent_destroy` protection; the namespace, key Secret, and gateway storage remain for recovery.
 Choose one authoring path per deployment, with its own workspace and state; applying both configurations does not adopt the other path's resources.
 Verify an [agent response](../../docs/agents-inference/inference.md#verify-the-result) from each sandbox separately.
 
