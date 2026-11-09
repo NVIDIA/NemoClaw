@@ -113,6 +113,57 @@ Apply creates the gateway and every sandbox, and starts each agent.
 Keep the state directory: it holds the cluster ownership receipt and the development issuer's keys, and destroy needs both.
 [Managed Kubernetes ownership](../../internal-docs/design/architecture.md#managed-kubernetes-ownership) describes which component owns each resource.
 
+### Allow Driver Configuration and Approve PVCs
+
+Before applying a sandbox that declares `driverConfig`, explicitly allow it on the managed gateway.
+Merge this fragment into `deployment.yaml`:
+
+```yaml
+spec:
+  gateway:
+    config:
+      openshell.drivers.kubernetes:
+        allow_driver_config: true
+```
+
+NemoClaw passes this table to the OpenShell chart's `gatewayConfig` through Helm.
+Declaring sandbox `driverConfig` does not enable the gateway setting; without the opt-in, OpenShell rejects caller driver configuration.
+For an external gateway, its administrator must enable the setting on that gateway instead.
+
+Allowing driver configuration does not approve external PVCs.
+The platform operator must provision each referenced claim in the deployment's namespace and approve its use by the deployment's OpenShell workspace.
+Create the namespace first if needed; NemoClaw can bind an existing namespace.
+From the directory holding `deployment.yaml`, run plan with the deployment's UID and state directory:
+
+```sh
+nemoclaw plan --state-dir .local/kubernetes deployment.yaml
+```
+
+Use the `OpenShell workspace` name reported by plan, such as `nc-0123456789abcdef`, for the approval below.
+It is not the Kubernetes namespace or sandbox name.
+Under OpenShell's default admission policy, each PVC needs these labels on the claim's own `metadata.labels`:
+
+```yaml
+metadata:
+  labels:
+    openshell.ai/sandbox-attachable: "true"
+    openshell.ai/sandbox-attachable-workspace: "REPLACE_WITH_OPEN_SHELL_WORKSPACE"
+```
+
+An operator-configured `resource_admission.required_labels` map replaces these defaults.
+Missing or mismatched labels cause `external resource not admitted by required labels`, even with `allow_driver_config: true`.
+Approve only claims the deployment is authorized to use; enabling the gateway setting does not grant access to every PVC.
+
+Prepare the volume contents writable by the sandbox's identity; the bundled images use UID/GID `10001:10001`, while OpenShift uses its namespace-assigned identity.
+If a mount uses `sub_path`, prepare that directory on the volume before agent startup.
+For writable mounts, set `read_only: false` on both the `persistent_volume_claim` and the container's `volume_mounts` entry.
+See [mounted-volume configuration and retention](state.md#keep-agent-files-on-mounted-volumes) and the pinned OpenShell [Kubernetes driver settings](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-driver-kubernetes/README.md).
+
+Check each claim's labels and status with `kubectl --kubeconfig "$NEMOCLAW_CLUSTER_KUBECONFIG" --context my-cluster --namespace nemoclaw-development get pvc --show-labels`.
+A claim can remain `Pending` until its first consumer starts when its StorageClass uses `WaitForFirstConsumer`.
+After provisioning and approval, apply the deployment with the same YAML, UID and state directory.
+If an earlier apply stopped at either admission check, correct the gateway setting or claim labels and rerun apply without deleting its state.
+
 ### Authenticate Through an Existing OIDC Issuer
 
 The `development` profile runs a token issuer for this deployment, which is not an identity service.

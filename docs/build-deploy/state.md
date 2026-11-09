@@ -116,6 +116,7 @@ For an external gateway, its administrator enables OpenShell's `allow_driver_con
 Mounts default to read-only, so `read_only: false` is required for agent writes.
 Do not mount over `/sandbox` or the image's working directory: OpenShell protects its workspace root and control paths.
 For driver-specific settings and admission labels, follow the pinned OpenShell [Docker](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-driver-docker/README.md), [Podman](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-driver-podman/README.md), or [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-driver-kubernetes/README.md) instructions; Kubernetes uses PVCs rather than Docker named volumes.
+For the Kubernetes preparation order, follow [Allow Driver Configuration and Approve PVCs](kubernetes.md#allow-driver-configuration-and-approve-pvcs).
 
 ### Choose What to Retain for Each Harness
 
