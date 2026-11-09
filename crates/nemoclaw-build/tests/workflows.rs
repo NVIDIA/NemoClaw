@@ -93,25 +93,62 @@ fn jobs_say_what_happens_when_a_job_they_need_is_skipped() {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
-/// The SSH probe uses Linux shell and filesystem semantics on a shared runner group.
+/// Only manual v1 dispatches can execute this smoke workflow.
 #[test]
-fn ssh_probe_selects_linux_from_the_shared_runner_group() {
-    let workflows = definitions(&repository());
-    let (_, workflow) = workflows
-        .iter()
-        .find(|(path, _)| path == ".github/workflows/colossus-connectivity.yml")
-        .expect("SSH connectivity workflow");
-    let labels = workflow["jobs"]["probe"]["runs-on"]["labels"]
-        .as_array()
-        .expect("explicit runner labels");
-    assert!(
-        labels.iter().any(|label| label == "linux"),
-        "shared runner selection must require Linux"
+fn colossus_smoke_is_manual_and_v1_only() {
+    let workflow: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/colossus-connectivity.yml"))
+            .unwrap(),
+    )
+    .unwrap();
+    let events = workflow["on"]
+        .as_object()
+        .expect("explicit workflow events");
+    assert_eq!(events.len(), 1, "the smoke test must be manual only");
+    assert!(events.contains_key("workflow_dispatch"));
+    let jobs = workflow["jobs"].as_object().expect("workflow jobs");
+    assert_eq!(jobs.len(), 1, "only the smoke job may execute");
+    let job = jobs.values().next().unwrap();
+    assert_eq!(
+        job["if"],
+        "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'",
+        "only a manual dispatch on the canonical v1 branch may execute"
     );
+    assert_eq!(job["runs-on"], "colossus-gb300-pilot");
+    assert_eq!(job["timeout-minutes"], 2);
+}
+
+/// The smoke test performs no checkout, secret handling, or hardware commands.
+#[test]
+fn colossus_smoke_executes_only_true_without_credentials() {
+    let source =
+        fs::read_to_string(repository().join(".github/workflows/colossus-connectivity.yml"))
+            .unwrap();
+    let workflow: Value = serde_saphyr::from_str(&source).unwrap();
+    assert_eq!(workflow["permissions"], serde_json::json!({}));
     assert!(
-        labels.iter().any(|label| label == "x64"),
-        "shared runner selection must require x64"
+        workflow["env"].is_null(),
+        "no workflow environment variables"
     );
+    assert!(!source.contains("secrets."), "no secret references");
+    let job = workflow["jobs"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    assert!(job["permissions"].is_null(), "inherit empty permissions");
+    assert!(
+        job["environment"].is_null(),
+        "no protected-environment secrets"
+    );
+    assert!(job["env"].is_null(), "no job environment variables");
+    let steps = job["steps"].as_array().expect("smoke steps");
+    assert_eq!(steps.len(), 1);
+    assert!(steps[0]["uses"].is_null(), "no checkout or other actions");
+    assert!(steps[0]["env"].is_null(), "no step environment variables");
+    assert_eq!(steps[0]["shell"], "bash");
+    assert_eq!(steps[0]["run"], "true");
 }
 
 /// The organization allows GitHub's and NVIDIA's actions and verified
