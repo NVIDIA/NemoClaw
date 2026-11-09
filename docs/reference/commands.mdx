@@ -580,6 +580,7 @@ NemoClaw records onboarding progress so interrupted runs can continue. Use `--re
 <AgentOnly variant="hermes">
 
 `--resume` can recover an unpublished Switchyard provider reservation only in its owning onboarding session.
+Pass the unchanged Switchyard configuration file: `$$nemoclaw onboard --resume --switchyard-config ./switchyard.json`.
 The recorded selection must be unchanged, with no workload or pending sandbox create.
 NemoClaw verifies all recorded provider bindings and requires the reservation to remain unchanged during recovery.
 This recovery reads no credentials, changes no providers, and does not rewrite the registry.
