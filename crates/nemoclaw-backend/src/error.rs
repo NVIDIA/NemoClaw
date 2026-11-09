@@ -11,6 +11,11 @@ pub enum Error {
     State(&'static str),
     #[error("{0}")]
     Bundle(&'static str),
+    /// Saved deployment state whose intent record has another format.
+    #[error(
+        "deployment state was written by a different NemoClaw release (intent record version {recorded}; this release reads {supported}); keep using the CLI bundle that created the deployment, or destroy it with that bundle and create a new deployment; state retained"
+    )]
+    StateFromOtherRelease { recorded: u64, supported: u32 },
     #[error("{0}")]
     Conflict(&'static str),
     #[error(

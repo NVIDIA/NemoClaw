@@ -233,7 +233,6 @@ fn prepare(
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
             live_images::build_hermes(platform, &prefix)?;
-            live_images::build_deepagents_code(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
         }
     }
@@ -322,8 +321,8 @@ fn prepare(
                     .strip_suffix(".0/24")
                     .map(|prefix| format!("{prefix}.1"))
                     .ok_or("a gateway subnet is a /24")?;
-                let model = format!("http://{host}:{}/v1", live::free_port()?);
-                interfaces_case(&template, &uid, &endpoint, &subnet, &model, &agent, &hermes)?
+                let model = (host.as_str(), live::free_port()?);
+                interfaces_case(&template, &uid, &endpoint, &subnet, model, &agent, &hermes)?
             }
             other => {
                 return Err(format!(
@@ -370,7 +369,8 @@ fn prepare(
 /// The reference image's case, which this suite binds to the derived image.
 const DUMMY_CASE: &str = "docker-dummy";
 
-/// The dummy case bound to one run's UID, gateway endpoint, subnet, and image.
+/// The dummy case bound to one run's UID, gateway endpoint, subnet, and image,
+/// and a workspace volume named for the UID, so runs never share one.
 fn dummy_case(
     template: &str,
     uid: &str,
@@ -386,6 +386,10 @@ fn dummy_case(
             ("http://127.0.0.1:17697", endpoint),
             ("172.30.122.0/24", subnet),
             (&zero, image),
+            (
+                "source: hcl-dummy-workspace",
+                &format!("source: hcl-dummy-workspace-{uid}"),
+            ),
         ],
     )?)
 }
@@ -394,26 +398,37 @@ fn dummy_case(
 const INTERFACES_CASE: &str = "docker-openclaw-hermes-interfaces";
 
 /// The interface case bound to one run's UID, gateway endpoint, subnet, stub
-/// model endpoint, and OpenClaw and Hermes images.
+/// model address and port, which its model provider and a grant name,
+/// OpenClaw and Hermes images, and skills volumes named for the UID, so runs
+/// never share one.
 fn interfaces_case(
     template: &str,
     uid: &str,
     endpoint: &str,
     subnet: &str,
-    model: &str,
+    (model_host, model_port): (&str, u16),
     openclaw: &str,
     hermes: &str,
 ) -> Result<String> {
     let zero = "0".repeat(64);
+    let model_port = model_port.to_string();
     Ok(live::bind_case(
         template,
         &[
+            // The stub's address and port come first: bind_case replaces
+            // every occurrence, and a later value, such as the UID, could
+            // contain the template's port.
+            ("172.30.123.1", model_host),
+            ("17699", &model_port),
             ("9d4c1f2e-6b3a-4c8d-a5e7-2f1b0c9d8e76", uid),
             ("http://127.0.0.1:17698", endpoint),
-            ("http://172.30.123.1:17699/v1", model),
             ("172.30.123.0/24", subnet),
             (&format!("nc-fabric@sha256:{zero}"), openclaw),
             (&format!("nc-fabric-hermes@sha256:{zero}"), hermes),
+            (
+                "source: hcl-interfaces-",
+                &format!("source: hcl-interfaces-{uid}-"),
+            ),
         ],
     )?)
 }
@@ -573,6 +588,7 @@ mod tests {
             "  uid: u-1",
             "    networkCIDR: 172.30.9.0/24",
             "        ref: i@1",
+            "              source: hcl-dummy-workspace-u-1",
         ] {
             assert!(bound.lines().any(|bound| bound == line), "{line}");
         }
@@ -588,7 +604,7 @@ mod tests {
             "u-1",
             "http://127.0.0.1:1",
             "172.30.9.0/24",
-            "http://172.30.9.1:2/v1",
+            ("172.30.9.1", 2),
             "o@1",
             "h@1",
         )
@@ -599,6 +615,10 @@ mod tests {
             "      endpoint: http://172.30.9.1:2/v1",
             "        ref: o@1",
             "        ref: h@1",
+            // The claw sandbox's grant names the stub's address too.
+            "              - host: 172.30.9.1",
+            "                port: 2",
+            "                  - 172.30.9.1/32",
         ] {
             assert!(bound.lines().any(|bound| bound == line), "{line}");
         }

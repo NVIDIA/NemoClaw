@@ -19,12 +19,15 @@ Use existing automated tests for configuration mapping and provider planning rul
 The feature files retain native discovery, registration, fresh use, and physical lifecycle evidence that those tests cannot prove.
 Keep the configuration and identity needed to drive a run as prerequisites, not separate proof of native behavior.
 
+The SDK tests [`public_fabric_configuration_passes_through_without_overriding_deployment_bindings`](../../../crates/nemoclaw-sdk/tests/fabric_compatibility.rs) and [`sandboxes_pass_driver_configuration_through`](../../../crates/nemoclaw-sdk/tests/compile.rs) cover skills passthrough with and without mounts and preservation of caller-owned writable mount payloads, respectively.
+Fabric owns adapter-native path mapping; its [OpenClaw test](https://github.com/NVIDIA/NeMo-Fabric/blob/e5b5ebf2b81cc3c6325301ea419ebf2453dab12e/tests/adapters/test_openclaw.py#L530) asserts `skills.load.extraDirs`.
+
 ## Scope
 
 - **Gateway:** a managed Docker gateway on the DGX Spark running the skill, as in [verify-yaml-deployment's scope](../verify-yaml-deployment/SKILL.md#scope).
 - **Agent:** one sandbox named `assistant` with one Fabric agent from the [agent table](#choose-the-agent-and-target).
 - **Target:** [dgx-spark](../verify-yaml-deployment/targets/dgx-spark.md) only. Another host type needs its own target file and proof first.
-- **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 136 checks for `hermes` and `openclaw`, 131 for `deepagents-code`.
+- **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 137 checks for `hermes`, 135 for `openclaw`.
 
 [Completed Runs](#completed-runs) lists the agent–target pairs run to completion, with the revision, date, and counts by outcome; a completed run doesn't prove the pair.
 A pair that isn't listed has no completed run: say so with the result.
@@ -35,7 +38,6 @@ A pair that isn't listed has no completed run: say so with the result.
 |---|---|---|
 | `hermes` | `nvidia.fabric.hermes` | Every feature |
 | `openclaw` | `nvidia.fabric.openclaw` | Every feature |
-| `deepagents-code` | `nvidia.fabric.langchain.deepagents-code` | Every feature except the `web-ui` case, which the check log omits |
 
 | Target file | `TARGET` |
 |---|---|
@@ -82,8 +84,9 @@ Run [Write the YAML](../verify-yaml-deployment/SKILL.md#write-the-yaml), all fiv
 Add what the checks need to the base YAML, then save it:
 
 1. **Volumes.** Mount `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`, with `read_only: false` on both mounts; OpenShell defaults them to read-only. Follow [caller-owned volumes](../../../docs/build-deploy/state.md) for admission and filesystem access.
-2. **Skills.** Keep the supplied skill under `/sandbox/workspace/skills/capability-probe`. Check the selected adapter's path validation before setting `skills.paths`: OpenClaw at Fabric `e5b5ebf2b81cc3c6325301ea419ebf2453dab12e` requires individual skill directories containing `SKILL.md`, so use `[/sandbox/workspace/skills/capability-probe]`, not the parent directory. Record this per-item configuration separately from native discovery; do not claim directory scanning or automatic discovery of generated skills from it.
+2. **Skills.** Keep the supplied skill under `/sandbox/workspace/skills/capability-probe`. Check the selected adapter's path validation before setting `harness.config.skills.paths`: at the Fabric pin in `image/fabric/Dockerfile`, OpenClaw and Hermes accept a folder that contains `SKILL.md` or a folder of such folders, as [Skills on a Mounted Volume](../../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes. Use `[/sandbox/workspace/skills/capability-probe]`, the supplied skill's own folder, so the path names only that skill. Record this per-item configuration separately from native discovery; do not claim directory scanning or automatic discovery of generated skills from it.
 3. **Capabilities.** Choose the run-scoped extension names first: run step 2 of [mounted-extensions](features/mounted-extensions.md), and note the generated plugin's ID, `fb-plugin-$UID8`, as step 4 of [plugins](features/plugins.md) derives it.
+   Resolve the bundled plugin's safe trigger, observable effect, and startup registration capture through [plugin bindings](features/plugins.md#driving-it-with-fabric-agent-ctl-and-the-openshell-cli) before apply; Hermes has a [pinned binding recipe](references/hermes-bundled-plugin.md).
    Then enable each capability the feature files check: the native TUI and, where in scope, the Web UI; a harmless bundled plugin; the mounted native tool and plugin locations under `/sandbox/workspace/extensions`, with any per-item enablement; and a tool allow-list from which Config change can remove only the shell-launch tool.
 4. **Merge rules.** Keep everything the base YAML sets, including its harness kind, execution, approval settings, and inference route.
    Set the route's output-token limit to 4096 for these multistep checks when the adapter accepts one, and record the limit used in `$EVIDENCE/identity.txt`.
@@ -197,6 +200,7 @@ Run checks only at their listed phases; don't add repetitions.
 Run one request at a time: two model requests at once can make a reply arrive after the check that waits for it.
 Continue independent checks after a failure; reassess blocked checks after each transition.
 Never repair the baseline between phases: no reseeding, reinstalling, re-enabling, or editing state or generated native configuration.
+Native evolution of writable skill contents follows [Evolving Skill Contents](features/skills.md#evolving-skill-contents): retain diagnostic snapshots and verify behavior without requiring initial byte identity. This does not permit runner repairs or relax other fixture hashes.
 
 ## Evidence
 
@@ -219,14 +223,14 @@ Before the first check, write every selected check to `checks.md` with an empty 
 { echo '| case | phase | outcome | finding | evidence |'; echo '|---|---|---|---|---|'
   sed -n 's/^- `\([a-z-]*\)`: .* Phases: \(.*\)\.$/\1|\2/p' "$SKILL_DIR"/features/*.md |
   while IFS='|' read -r id phases; do
-    [ "$AGENT" = deepagents-code ] && [ "$id" = web-ui ] && continue
+    case "$id" in hermes-tui-*) [ "$AGENT" = hermes ] || continue ;; esac
     printf '%s\n' "$phases" | tr ',' '\n' | sed 's/^ *//' |
       while read -r phase; do echo "| $id | $phase | | | |"; done
   done; } > "$EVIDENCE/checks.md"
 grep -c '^| [a-z-]* | [A-Z]' "$EVIDENCE/checks.md"
 ```
 
-The count must be 136, or 131 for `deepagents-code`.
+The count must be 137 for `hermes`, 135 for `openclaw`.
 Fill in each row's outcome, finding ID, and evidence path as the check finishes; leave no row empty at the end.
 Write each finding in `findings.md` as:
 
@@ -281,6 +285,8 @@ Add the pair to [Completed Runs](#completed-runs) only after a complete run, inc
 Mark an interrupted run as interrupted, keep its evidence, and don't add it.
 
 ## Completed Runs
+
+Counts below describe each run's archived suite. The two Hermes TUI lifecycle checks added afterward have no live result here; historical completion does not qualify them.
 
 | Agent | Target | Inference source | Revision | Date | Passed | Failed | Not tested | Notes |
 |---|---|---|---|---|---|---|---|---|

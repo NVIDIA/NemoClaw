@@ -4,18 +4,18 @@
 # Lifecycle and Retention
 
 A user restarts the agent's runtime, stops and starts its sandbox, destroys and recreates the deployment, changes its configuration, restores it, and finally tears it down, all through the NemoClaw and OpenShell CLIs.
-After each transition, the same YAML brings back an agent that answers, and the files the user keeps on the two caller volumes are still there, unchanged.
-A restart or stop/start keeps the same sandbox; a recreation replaces it; a configuration change alters only what the YAML changed.
+After each transition, the same YAML brings back an agent that answers, and the files the user keeps on the two caller volumes are still there. Retention markers stay unchanged; writable skills may evolve under [the skill content rules](skills.md#evolving-skill-contents).
+A restart or stop/start keeps the same sandbox; a recreation replaces it; removing and restoring the shell tool changes which native calls the agent can make.
 Teardown removes the deployment's compute and leaves the caller volumes, model data, and evidence for the user.
 
 ## Sub-features
 
-- `retention`: the seeded workspace and artifacts markers and the supplied `capability-probe` skill keep their seeded hashes on the same caller volumes, without reseeding. Phases: Initial, After stop/start, After recreate, After config change, After restore.
+- `retention`: the seeded workspace and artifacts markers keep their seeded hashes, and the supplied `capability-probe` skill remains readable at its seeded path on the same caller volume, without reseeding. Phases: Initial, After stop/start, After recreate, After config change, After restore.
 - `extension-runtime-restart`: stopping only the managed Fabric runtime through `fabric-agent-ctl stop`, then an unchanged plan/apply, gives the same sandbox and container a new runtime that answers. Phases: Runtime restart.
 - `stop-start`: stopping the sandbox through OpenShell's supported control stops it and access to it, starting it brings back the same sandbox and container, and after an unchanged plan/apply its runtime answers. Phases: Stop/start.
 - `recreate`: destroying the deployment through NemoClaw keeps the state and caller volumes, and plan/apply of the baseline YAML creates a new sandbox. Phases: Recreate.
-- `change`: a YAML edit to only the agent's shell restriction shows in plan, applies, and leaves the model resources alone. Phases: Config change.
-- `restore`: reapplying the exact baseline YAML reverses the change, and the runtime answers. Phases: Restore.
+- `change`: removing only the shell-launch tool blocks shell calls while other native tools still work and the model service and gateway keep running. Phases: Config change.
+- `restore`: reapplying the baseline YAML restores shell calls, other native tools still work, and the runtime answers. Phases: Restore.
 - `teardown`: NemoClaw's destroy removes the deployment's compute, and the caller volumes, model data, and evidence remain and are listed. Phases: Teardown.
 
 ## How to get to it (user POV)
@@ -46,13 +46,15 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 
    ```sh
    CASE=retention; CHECK_DIR=$EVIDENCE/$PHASE/$CASE; mkdir -p "$CHECK_DIR"
-   openshell sandbox exec -n assistant --no-tty -- sha256sum /sandbox/workspace/retained/marker.txt /sandbox/artifacts/retained/marker.txt /sandbox/workspace/skills/capability-probe/SKILL.md | tee "$CHECK_DIR/hashes.txt"
+   openshell sandbox exec -n assistant --no-tty -- sha256sum /sandbox/workspace/retained/marker.txt /sandbox/artifacts/retained/marker.txt | tee "$CHECK_DIR/hashes.txt"
    cut -d' ' -f1 "$CHECK_DIR/hashes.txt" | while read -r h; do grep -qF "$h" "$EVIDENCE/seeded.sha256" && echo match || echo MISSING; done
+   openshell sandbox exec -n assistant --no-tty -- cat /sandbox/workspace/skills/capability-probe/SKILL.md > "$CHECK_DIR/skill.md"; echo "skill read exit $?"
+   sha256sum "$CHECK_DIR/skill.md" > "$CHECK_DIR/skill.sha256"
    docker inspect "$SANDBOX_CONTAINER" --format '{{range .Mounts}}{{.Name}} {{.Destination}}{{"\n"}}{{end}}' | grep -E '/sandbox/(workspace|artifacts)' | tee "$CHECK_DIR/mounts.txt"
    ```
 
-   Result: three `match` lines, and the mounts name `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`.
-   A missing or changed file is Failed. This check doesn't need the runtime, so run it even when the runtime is unusable.
+   Result: two `match` lines, `skill read exit 0`, and the mounts name `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`.
+   A missing or changed marker, or a missing skill, is Failed. Changed skill bytes alone do not fail retention; keep the snapshot for diagnosis. This check doesn't need the runtime, so run it even when the runtime is unusable. Native discovery, loading, and fresh skill output remain separate checks.
 3. **Before a transition:** set `PHASE` to the transition's directory and `CASE` to its check, then record what it should keep or replace:
 
    ```sh
@@ -85,18 +87,20 @@ Each transition uses steps 3, 4, and 5 around its own commands.
    EOF
    ```
 
-   Result: both exits are 0, apply ends with `Apply complete`, `RUNTIME_ID` is one nonempty ID, the doctor passes, and the reply shows `run` `succeeded`, `error` `null`, `same_runtime` `true`, and `response` `$WORD`.
+   Result: both exits are 0, apply ends with `Apply complete`, `RUNTIME_ID` is one nonempty ID, the doctor passes, and the reply's `response` is `$WORD`.
    [native-interfaces](native-interfaces.md) reads the new entry points from `$APPLY_OUT`.
 5. **After a transition:** set `PHASE` to the next phase's directory, write its [fresh phase input](README.md#driving-conventions), and re-run every check whose Phases list names that phase, in the [map's order](README.md#features).
    The [lifecycle phases](README.md#lifecycle-phases) table gives each After-phase's check count; run exactly those.
    Record the transition's own row in `$EVIDENCE/checks.md` once its result is known.
-6. **`extension-runtime-restart`:** with `PHASE=runtime-restart` and `CASE=extension-runtime-restart`, run step 3, then stop only the runtime through Fabric's supported control. Save the control's help, the exact command, and its output in `$CHECK_DIR`.
+6. **`extension-runtime-restart`:** with `PHASE=runtime-restart` and `CASE=extension-runtime-restart`, run step 3.
+   For Hermes, prepare [the open TUI and in-flight probe](native-interfaces.md#prepare-and-observe-the-stop) before stopping; finish that check's stop, cancellation, stale-entry, and persistence observations before recovery.
+   Stop only the runtime through Fabric's supported control. Save the control's help, the exact command, and its output in `$CHECK_DIR`.
 
    Result: the control reports a stop that succeeded, with no error.
    Run step 4; review the plan before apply and do not proceed if it replaces the sandbox, as the [gotchas](#gotchas) require.
    Pass when `container-before.txt` and `container-after.txt` match, `runtime-after.txt` differs from `runtime-before.txt`, and the request in step 4 succeeds on the new runtime.
    A stop with no supported control is Failed, linked to one missing-implementation finding; a runtime that plan/apply doesn't bring back is Failed.
-   Then run step 5 with `PHASE=after-runtime-restart`.
+   Then run step 5 with `PHASE=after-runtime-restart`, including `hermes-tui-recovery` for Hermes.
 7. **`stop-start`:** with `PHASE=stop-start` and `CASE=stop-start`, run step 3, then stop the same sandbox through OpenShell's supported control, confirm it is stopped and unreachable, and start it again. Save the control's help, each command, and its output in `$CHECK_DIR`. While the sandbox is stopped, record:
 
    ```sh
@@ -145,9 +149,10 @@ Each transition uses steps 3, 4, and 5 around its own commands.
    ```
 
    Result: the diff touches only the shell-restriction lines.
-   Run step 4; `plan.txt` must show the agent's change, and every other resource as the plan lists it.
-   Compare `owned-before.txt` with `owned-after.txt`: the model service and gateway keep their container IDs unless the plan lists a change to them.
-   Pass when the plan shows the change, apply completes, the request in step 4 succeeds, and `shell-success` in After config change shows the shell tool absent or rejected; settle this row after that check.
+   Run step 4.
+   Compare `owned-before.txt` with `owned-after.txt`: the model service and gateway must keep their container IDs.
+   The Rust integration test `shell_restriction_and_restore_replace_only_the_target_sandbox` covers plan/apply agreement and unchanged gateway objects across both transitions; the SDK test `shell_restriction_changes_only_the_allow_list_and_restores_the_baseline_graph` covers configuration preservation. Neither fixture test observes physical model or gateway containers, so keep that live comparison.
+   Pass when apply completes, the request in step 4 succeeds, `shell-success` in After config change shows the shell tool absent or rejected, and the other native-tool checks still pass; settle this row after those checks.
    When the adapter offers no supported way to remove only the shell-launch tool, mark `change` Failed with one missing-implementation finding, don't plan or apply a guessed key, and link the four shell checks in After config change to that finding, as [invoke-and-tools](invoke-and-tools.md#gotchas) says.
    An approval policy or classifier that declines a command isn't the shell restriction: judge by tool exposure and actual calls.
    Never test the unchanged baseline as the changed phase.
@@ -161,8 +166,8 @@ Each transition uses steps 3, 4, and 5 around its own commands.
     ```
 
     Result: `restored`, and `restore.diff` is the reverse of `config.diff`.
-    Run step 4; `plan.txt` must show the reverse of the change.
-    Pass when the plan shows the reversal, apply completes, the request in step 4 succeeds, and `shell-success` in After restore runs the shell again; settle this row after that check.
+    Run step 4 and compare `owned-before.txt` with `owned-after.txt`: the model service and gateway must keep their container IDs.
+    Pass when apply completes, the request in step 4 succeeds, `shell-success` in After restore runs the shell again, and the other native-tool checks still pass; settle this row after those checks.
     If `change` was blocked, keep exercising the baseline in After restore, but mark `restore` Not tested, linked to the `change` finding: there was no change to reverse.
     Then run step 5 with `PHASE=after-restore`.
 11. **`teardown`:** with `PHASE=teardown` and `CASE=teardown`, set `CHECK_DIR` as step 3 does, after every other row has an outcome.
@@ -182,9 +187,9 @@ Each transition uses steps 3, 4, and 5 around its own commands.
     Then let [this skill's cleanup](../SKILL.md#cleanup) remove the retained resources and caller volumes.
 ## Gotchas
 
-- Never reseed a marker, the supplied skill, or anything else after a transition. A missing or changed file is evidence.
+- Never reseed a marker, the supplied skill, or anything else after a transition. A missing or changed file is evidence; evaluate skill changes under [the skill content rules](skills.md#evolving-skill-contents).
 - Retained files prove neither discovery, registration, fresh execution, nor conversation resume. [skills](skills.md) tracks rediscovery of a generated skill separately; don't infer conversation resume from `retention`.
-- Each transition starts a new runtime or sandbox: an old `RUNTIME_ID` fails with `runtime_unavailable`, and old interface entry points or tokens are gone. Step 4 reads both again.
+- After runtime replacement, the old `RUNTIME_ID` fails with `runtime_unavailable`; old entry points or tokens must not grant access to that runtime. A leftover launcher file alone proves neither access nor cleanup. Step 4 reads the current runtime and entry points again.
 - Stop only what the check names. `extension-runtime-restart` stops the Fabric runtime, not the sandbox; `stop-start` stops the sandbox, not the gateway, model service, or Docker daemon.
 - Don't substitute `docker stop`, `docker restart`, or killing the runtime's process for the supported controls; a killed runtime can leave interface markers behind.
 - An explicit `fabric-agent-ctl start`, or a runtime started by hand, is at most a separately recorded diagnostic. Never put its handle in state, and stop it before teardown.

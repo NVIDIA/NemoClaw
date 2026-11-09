@@ -147,7 +147,8 @@ resource "openshell_sandbox" "agent" {
           ["/usr", "/opt/fabric", "/opt/nemoclaw", "/app"],
           each.key == "hermes" ? ["/opt/hermes", "/opt/nemo-relay/plugins/switchyard", "/etc/ssl/certs/ca-certificates.crt"] : [],
         )
-        read_write = ["/sandbox"]
+        # Hermes's browser chat opens pseudo-terminals in /dev/pts.
+        read_write = concat(["/sandbox"], each.key == "hermes" ? ["/dev/pts"] : [])
       }
       network_policies "hosted-inference" {
         name = "hosted-inference"

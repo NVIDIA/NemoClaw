@@ -16,7 +16,8 @@ The directory also links an [AMD64 Kubernetes profile](#amd64-kubernetes-with-nv
 
 The first apply downloads the 74.8 GiB model; on the verified DGX Spark the download took about 55 minutes and loading about 15.
 After the model loaded, a short question took about 5 seconds, a five-point itinerary about 15–18 seconds, and a task with a tool call 17–29 seconds.
-The model's reasoning left room for complete answers within the templates' 1,024-token limit.
+Those measurements used a 1,024-token output limit.
+The templates allow 8,192 output tokens for longer replies: within the 300-second execution timeout, one sequence of this model on a GB10 produces about 8,000 tokens, so a larger limit would reach the timeout first.
 Switching a deployment from one harness to another replaces only the sandbox, while the model service keeps running.
 DGX Station and Windows WSL2 RTX Spark remain untested.
 
@@ -109,7 +110,7 @@ Set `NVIDIA_INFERENCE_API_KEY` on the applying host; [credential ownership](../.
 Model requests can incur cloud inference charges.
 Each harness gets a registration bound to its image's executables, using the shared endpoint and credential reference.
 Both sandboxes retain explicit process and filesystem policies, with writes limited to `/sandbox`.
-Hermes also reads its packaged source, Switchyard plugin, and the public CA bundle used for HTTPS.
+Hermes also reads its packaged source, Switchyard plugin, and the public CA bundle used for HTTPS, and can open pseudo-terminals in `/dev/pts`, which its [browser chat](../../docs/agents-inference/interfaces.md#hermess-browser-chat) needs.
 
 Follow the [Kubernetes prerequisites and image preparation](../../docs/build-deploy/kubernetes.md#prerequisites), then the [existing-gateway procedure](../../docs/build-deploy/kubernetes.md#use-an-existing-gateway).
 Select a Linux AMD64 image for each harness, push both to a registry the cluster can pull from, and supply their matching metadata bundles.

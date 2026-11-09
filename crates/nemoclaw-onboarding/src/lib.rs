@@ -75,6 +75,9 @@ fn load_journey(
     definition
         .ask(["/metadata/name"])
         .ask(harness)
+        // Only these run as full agents in a deployment today; a template that
+        // names another harness keeps it.
+        .offer_harnesses(["nvidia.fabric.openclaw", "nvidia.fabric.hermes"])
         .ask(["/spec/gateway/runtime/provider", "inference:preset"])
         .ask([JourneyScope::InferenceApi])
         .ask([JourneyScope::RouteModels])

@@ -5,9 +5,11 @@
 # kubernetes runtime profile and the development authentication profile, in
 # which the SDK issues the gateway's tokens. Its inference route reaches a
 # stub model in its own namespace, and the agent image comes from a private
-# registry through the pull Secret the operator created. cargo ci live-kind
-# gives each run a fresh identity, port, namespace, kubeconfig context,
-# registry, and agent image.
+# registry through the pull Secret the operator created. Its sandbox has an
+# explicit policy: the image's own filesystem and process policy, and one
+# entry that gives python3 the stub's /health, which the managed inference
+# grant leaves out. cargo ci live-kind gives each run a fresh identity, port,
+# namespace, kubeconfig context, registry, and agent image.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -47,7 +49,34 @@ spec:
         metadata:
           env: NEMOCLAW_TEST_AGENT_METADATA
       network:
-        tier: isolated
+        policy:
+          explicit:
+            version: 1
+            filesystem_policy:
+              include_workdir: false
+              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
+              read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
+            landlock:
+              compatibility: best_effort
+            process:
+              run_as_user: "10001"
+              run_as_group: "10001"
+            network_policies:
+              stub-health:
+                name: stub-health
+                endpoints:
+                  # The managed inference grant's host, port, and protocol,
+                  # which OpenShell requires of endpoints that share a host
+                  # and port.
+                  - host: model.nc-hcl-kind-model.svc.cluster.local
+                    port: 8000
+                    path: /health
+                    protocol: rest
+                    access: read-only
+                # OpenShell matches an executable's real path, which the
+                # image's python3 links to.
+                binaries:
+                  - path: /usr/local/bin/python3.14
       harness:
         kind: nvidia.fabric.openclaw
       agent:

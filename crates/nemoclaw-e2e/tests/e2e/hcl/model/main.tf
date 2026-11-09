@@ -20,7 +20,8 @@ terraform {
 
 variable "context" {
   type = object({
-    config = string
+    config   = string
+    versions = string
   })
 }
 
@@ -38,7 +39,7 @@ variable "reply" {
 locals {
   document = yamldecode(file(var.context.config))
   port     = tonumber(regex(":([0-9]+)/v1$", local.document.spec.inferenceProviders.model.endpoint)[0])
-  image    = jsondecode(file("${path.module}/../../../../../../versions.json")).images.developmentIssuer
+  image    = jsondecode(file(var.context.versions)).images.developmentIssuer
   # Responses, as nginx returns them: it expands the escaped line breaks in
   # single-quoted text.
   models = jsonencode({ object = "list", data = [{ id = "fixture-model", object = "model" }] })

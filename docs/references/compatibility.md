@@ -21,7 +21,7 @@ Within a release, configuration from `export` re-applies to the same deployment.
 ## Deployment State
 
 State isn't migrated between releases while v1 is in alpha.
-A release that changes what state records refuses older state, without changing it, and names the cause, for example: "deployment predates openshell_inference; retain state and use the original NemoClaw version for recovery or teardown".
+A release refuses state written by a release with another intent record format, without changing it: "deployment state was written by a different NemoClaw release (intent record version N; this release reads M); keep using the CLI bundle that created the deployment, or destroy it with that bundle and create a new deployment; state retained".
 Keep the release that created a deployment until you have destroyed it, then create a new deployment with the new release, using a fresh `metadata.uid` and state directory.
 
 The providers refuse state recorded under an older version of a resource's schema; they don't upgrade it.

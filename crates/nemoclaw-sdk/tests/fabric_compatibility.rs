@@ -58,6 +58,7 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     input["spec"]["sandboxes"]["assistant"]["harness"]["config"] = json!({
         "mcp":{"servers":{"custom":{"transport":"stdio","url":"owned-fixture","exposure":"harness_native"}}},
         "relay":{"plugins":{"dynamic":[{"manifest":"/plugins/example/relay-plugin.toml","config":{"mode":"route"}}]}},
+        "skills":{"paths":["/sandbox/workspace/skills/supplied-skill"]},
         "runtime":{"max_turns":3}
     });
     let doc = Document::parse(input.to_string().as_bytes()).unwrap();
@@ -71,6 +72,20 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     assert_eq!(
         actual["relay"],
         input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["relay"]
+    );
+    assert_eq!(
+        actual["skills"], input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["skills"],
+        "skills must pass through without driverConfig"
+    );
+    input["spec"]["sandboxes"]["assistant"]["driverConfig"] = json!({"docker": {"mounts": [
+        {"type": "volume", "source": "caller-workspace", "target": "/sandbox/workspace", "read_only": false}
+    ]}});
+    let doc = Document::parse(input.to_string().as_bytes()).unwrap();
+    let actual =
+        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();
+    assert_eq!(
+        actual["skills"], input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["skills"],
+        "workspace mounts must not add or replace skill paths"
     );
     input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["models"] =
         json!({"default":{"base_url":"https://substituted.invalid"}});
@@ -555,35 +570,6 @@ fn the_bundled_adapters_accept_their_p0_interfaces_only() {
     }
 }
 
-/// The bundled Deep Agents Code adapter declares its terminal, which has no
-/// port: `enabled` is its only field.
-#[test]
-fn the_bundled_deep_agents_code_adapter_accepts_its_terminal_without_a_port() {
-    let catalog = FabricCatalog::bundled();
-    let adapter = "nvidia.fabric.langchain.deepagents-code";
-    for terminal in [
-        json!({}),
-        json!({"enabled": true}),
-        json!({"enabled": false}),
-    ] {
-        assert!(
-            rejected_interfaces(&catalog, adapter, json!({ "terminal": terminal })).is_empty(),
-            "{terminal}"
-        );
-    }
-    assert_eq!(
-        rejected_interfaces(
-            &catalog,
-            adapter,
-            json!({"terminal": {"port": 7681}, "dashboard": {"port": 9119}})
-        ),
-        [
-            "harness.settings.interfaces.dashboard",
-            "harness.settings.interfaces.terminal.port"
-        ]
-    );
-}
-
 #[test]
 fn agents_keep_their_state_where_the_adapter_accepts_it() {
     // Fabric gives every runtime of an agent one state folder when asked, and
@@ -747,17 +733,24 @@ fn routes_set_the_harness_provider_and_sampling() {
     let tuned = text.replace(
         "                maxTokens: 8192\n",
         "                maxTokens: 8192\n                harnessProvider: custom\n                temperature: 0.2\n                topP: 0.9\n",
-    );
+    ).replace("example-reasoning-model", "example-reasoning-model:Q4_K_M");
     assert_ne!(tuned, text);
     let tuned = nemoclaw_sdk::config::Document::parse(tuned.as_bytes()).unwrap();
     let model =
         &nemoclaw_sdk::fabric_config::for_sandbox(&tuned, tuned.sandbox("assistant").unwrap())
             .unwrap()["models"]["default"];
     assert_eq!(model["provider"], "custom", "{model}");
+    assert_eq!(model["model"], "example-reasoning-model:Q4_K_M", "{model}");
     assert_eq!(model["temperature"], 0.2, "{model}");
     assert_eq!(model["top_p"], 0.9, "{model}");
     assert_eq!(model["max_tokens"], 8192, "{model}");
 }
+
+/// A bundled adapter that accepts none of the tuning fields: Codex's descriptor
+/// accepts only `models.base_url` among model fields and declares no model
+/// extension. Pi's model extension declares `max_tokens`, which planning
+/// accepts as a legacy extension field.
+const NO_TUNING: &str = "nvidia.fabric.codex";
 
 #[test]
 fn model_tuning_rejects_fields_the_adapter_does_not_accept() {
@@ -768,8 +761,7 @@ fn model_tuning_rejects_fields_the_adapter_does_not_accept() {
         ("topP", json!(0.9)),
     ] {
         let mut input: serde_json::Value = serde_saphyr::from_str(text).unwrap();
-        input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
-            json!("nvidia.fabric.langchain.deepagents-code");
+        input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(NO_TUNING);
         input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] =
             json!({"model":"test-model", authored:value});
         let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
@@ -815,8 +807,7 @@ fn model_extensions_cannot_bypass_adapter_tuning_acceptance() {
     ] {
         let mut input: serde_json::Value =
             serde_saphyr::from_str(include_str!("../../../examples/openclaw.yaml")).unwrap();
-        input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
-            json!("nvidia.fabric.langchain.deepagents-code");
+        input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(NO_TUNING);
         input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] =
             json!({"model":"test-model", "extensions": {field:value}});
         let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
@@ -857,7 +848,7 @@ fn rejected_tuning_names_the_referenced_inference_definition() {
         let mut input: serde_json::Value =
             serde_saphyr::from_str(include_str!("../../../examples/openclaw.yaml")).unwrap();
         let sandbox = &mut input["spec"]["sandboxes"]["assistant"];
-        sandbox["harness"]["kind"] = json!("nvidia.fabric.langchain.deepagents-code");
+        sandbox["harness"]["kind"] = json!(NO_TUNING);
         let mut inference = sandbox["agent"]
             .as_object_mut()
             .unwrap()
@@ -886,8 +877,7 @@ fn rejected_tuning_names_the_referenced_inference_definition() {
 fn null_sampling_extensions_remain_unset_for_adapter_acceptance() {
     let mut input: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../examples/openclaw.yaml")).unwrap();
-    input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
-        json!("nvidia.fabric.langchain.deepagents-code");
+    input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(NO_TUNING);
     input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] = json!({"model":"test-model", "extensions": {"max_tokens":null,"temperature":null,"top_p":null}});
     let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
     let config =

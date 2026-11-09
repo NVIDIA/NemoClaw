@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Runs one fixed command in each target's sandbox: hcl_live::command runs it
-# with the pinned OpenShell CLI's `sandbox exec`, as a person would. Reports
-# hold the exit status and whether the output contained the expected text and
-# not the forbidden text; the output stays private, and the module's output
-# names only the targets that failed.
+# with the pinned OpenShell CLI's `sandbox exec`, as a person would, or on a
+# managed Kubernetes gateway through the SDK's port-forward. Reports hold the
+# exit status and whether the output contained the expected text and not the
+# forbidden text; the output stays private, and the module's output names
+# only the targets that failed.
 
 terraform {
   required_version = "= 1.12.12"
@@ -13,6 +14,8 @@ terraform {
 
 variable "context" {
   type = object({
+    config           = string
+    state_dir        = string
     probe_executable = string
     openshell        = string
     work_dir         = string
@@ -21,11 +24,12 @@ variable "context" {
 }
 
 variable "connection" {
-  description = "The gateway and workspace apply reports, which the OpenShell CLI selects."
+  description = "The gateway and workspace apply reports, which the OpenShell CLI selects; a managed Kubernetes gateway needs none."
   type = object({
     gatewayEndpoint = string
     workspace       = string
   })
+  default = null
 }
 
 variable "targets" {
@@ -41,8 +45,10 @@ resource "terraform_data" "command" {
     environment = {
       NEMOCLAW_HCL_PROBE     = var.context.probe_executable
       NEMOCLAW_HCL_OPENSHELL = var.context.openshell
-      NEMOCLAW_HCL_ENDPOINT  = var.connection.gatewayEndpoint
-      NEMOCLAW_HCL_WORKSPACE = var.connection.workspace
+      NEMOCLAW_HCL_CONFIG    = var.context.config
+      NEMOCLAW_HCL_STATE     = var.context.state_dir
+      NEMOCLAW_HCL_ENDPOINT  = var.connection == null ? "" : var.connection.gatewayEndpoint
+      NEMOCLAW_HCL_WORKSPACE = var.connection == null ? "" : var.connection.workspace
       NEMOCLAW_HCL_SANDBOX   = each.value.sandbox
       NEMOCLAW_HCL_COMMAND   = jsonencode(each.value.command)
       NEMOCLAW_HCL_CONTAINS  = try(each.value.contains, null) == null ? "" : each.value.contains
