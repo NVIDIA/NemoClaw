@@ -27,7 +27,9 @@ afterEach(() => {
 });
 
 function makeTempRoot(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-gateway-service-"));
+  const root = fs.mkdtempSync(
+    path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-install-gateway-service-"),
+  );
   tempRoots.push(root);
   return root;
 }
