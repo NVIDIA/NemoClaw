@@ -194,7 +194,7 @@ Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, and refe
 | `contract` | Each partition's nextest run | 300 s | 16 s | 32 s |
 | `integration` | Each partition's nextest run | 300 s | 90 s | 180 s |
 | `live-docker` | Its five nextest commands together | 360 s | 180 s | 360 s |
-| `live-kind` | Its nextest commands, one per HCL case, together | 300 s | 180 s | 360 s |
+| `live-kind` | Its nextest commands, one per HCL case, together | 450 s | 180 s | 360 s |
 
 Its `binaries` section budgets each provider's contract binary by its nextest name: the binary's test times summed across a platform's contract partitions, and a limit for any one of its tests:
 
