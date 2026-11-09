@@ -284,6 +284,36 @@ fn native_helm_state_preserves_its_namespace_and_immutable_chart_binding() {
     assert!(other["docker_container.runtime"].namespace.is_empty());
     assert!(other["docker_container.runtime"].chart.is_empty());
 }
+/// The Kubernetes provider records a Service's `metadata` and `spec` as
+/// nested blocks; the binding keeps its identity, name, and namespace.
+#[test]
+fn an_exposure_service_binds_by_its_identity_name_and_namespace() {
+    let address = "kubernetes_service_v1.gateway_exposure";
+    let resource = serde_json::json!({
+        "address": address, "mode": "managed",
+        "values": {
+            "id": "owned-agents/nc-0123456789abcdef-gateway-exposure",
+            "metadata": [{
+                "name": "nc-0123456789abcdef-gateway-exposure",
+                "namespace": "owned-agents",
+                "labels": {"nemoclaw.nvidia.com/uid": "owner"},
+                "annotations": {"metallb.io/ip-allocated-from-pool": "agents"}
+            }],
+            "spec": [{"type": "NodePort", "port": [{"port": 30851, "node_port": 30851}]}],
+            "status": [{"load_balancer": [{"ingress": []}]}],
+            "wait_for_load_balancer": true
+        }
+    });
+    let observed = read(&state(serde_json::json!([resource]))).unwrap();
+    let binding = &observed[address];
+    assert_eq!(
+        binding.id,
+        "owned-agents/nc-0123456789abcdef-gateway-exposure"
+    );
+    assert_eq!(binding.name, "nc-0123456789abcdef-gateway-exposure");
+    assert_eq!(binding.namespace, "owned-agents");
+    assert!(binding.spec.is_empty(), "the Service has no NemoClaw spec");
+}
 #[test]
 fn data_observations_do_not_become_managed_bindings() {
     let data = serde_json::json!({"address":"data.example.observed", "mode":"data", "values":{"id":"observation"}});

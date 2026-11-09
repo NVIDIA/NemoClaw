@@ -161,7 +161,15 @@ fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> 
     }
     Ok(())
 }
-pub(super) use crate::docker_compute::is_disposable as disposable;
+/// Resources that hold no retained data, so OpenTofu and their provider own
+/// their identity, absence, and replacement: Docker compute, and a managed
+/// Kubernetes gateway's exposure Service.
+pub(super) fn disposable(address: &str) -> bool {
+    crate::docker_compute::is_disposable(address)
+        || address
+            .strip_prefix(crate::kubernetes::service::RESOURCE_TYPE)
+            .is_some_and(|rest| rest.starts_with('.'))
+}
 
 pub(super) fn reconstructible(address: &str) -> bool {
     address.starts_with("terraform_data.")
@@ -571,6 +579,31 @@ mod native_helm_tests {
             "change":{"actions":actions, "before":before, "after":after}
         }]}))
         .unwrap()
+    }
+
+    /// Like Docker compute, the exposure Service holds no retained data:
+    /// OpenTofu and its provider own its identity, so a tainted or deleted
+    /// Service is replaced.
+    #[test]
+    fn the_exposure_service_is_replaced_like_disposable_compute() {
+        let address = crate::kubernetes::service::ADDRESS;
+        assert!(disposable(address));
+        let allowed = BTreeMap::from([(address.to_owned(), Row::new())]);
+        let plan: Plan = serde_json::from_value(json!({"resource_changes": [{
+            "mode": "managed", "address": address,
+            "change": {"actions": ["delete", "create"], "before": {"id": "agents/old"}, "after": {}}
+        }]}))
+        .unwrap();
+        let bindings = BTreeMap::from([(
+            address.to_owned(),
+            StateBinding {
+                id: "agents/old".into(),
+                ..Default::default()
+            },
+        )]);
+        let changes = check_plan(&plan, &allowed, &bindings).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].resource, address);
     }
 
     #[test]

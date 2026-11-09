@@ -15,6 +15,7 @@ pub mod gateway;
 pub mod issuer;
 pub mod operations;
 pub mod receipt;
+pub mod service;
 pub mod storage;
 
 use crate::{Error, ObservationError, config::ManagedGateway};
@@ -210,6 +211,9 @@ impl Spec {
                     // Pull Secrets configure the Helm release, not these
                     // platform resources; their values stay in Kubernetes.
                     image_pull_secrets: Vec::new(),
+                    // The exposure Service is its own resource; these
+                    // platform resources keep only its endpoint.
+                    expose: None,
                 })),
                 ..Default::default()
             },

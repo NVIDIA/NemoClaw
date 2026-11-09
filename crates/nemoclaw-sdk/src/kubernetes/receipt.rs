@@ -54,6 +54,13 @@ pub struct Receipt {
     /// Set while a Helm release exists for the gateway.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<String>,
+    /// The UID of the gateway's client TLS Secret, recorded the first time
+    /// NemoClaw dials an exposed gateway directly and kept after the release
+    /// is removed, since the Secret outlives it. A direct dial trusts that
+    /// Secret's CA for whatever answers at the endpoint, so another Secret is
+    /// refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_tls: Option<String>,
 }
 
 impl Receipt {

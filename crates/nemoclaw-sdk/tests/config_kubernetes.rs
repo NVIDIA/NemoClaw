@@ -706,7 +706,7 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
 
 #[test]
 fn managed_kubernetes_endpoint_and_local_field_errors_state_the_target_rule() {
-    let rule = "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings";
+    let rule = "managed Kubernetes requires an explicit HTTPS endpoint with a lowercase host and a nonzero port and excludes local engine settings";
     let mut endpoint = managed_document();
     endpoint["spec"]["gateway"]["endpoint"] = json!("http://127.0.0.1:17671");
     let mut local = managed_document();

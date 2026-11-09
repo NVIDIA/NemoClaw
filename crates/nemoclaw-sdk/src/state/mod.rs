@@ -20,8 +20,8 @@ use std::{
 /// When the format changes, raise the version with the fingerprint, so that a
 /// release refuses state another release wrote instead of misreading it.
 pub(crate) const RECORD_FORMAT: (u32, &str) = (
-    16,
-    "b40093ab7cb47d39a3b0c8c1ceccbda929f0faad702e4b0763e4cadea5474367",
+    17,
+    "4ae6a124fe9ec4efcd4ab3a16561a9d58e973eb4b287e932e246670e6b1dab1f",
 );
 pub(crate) const RECORD_VERSION: u32 = RECORD_FORMAT.0;
 
@@ -576,6 +576,7 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
             if let Some((kind, _)) = resource.address.split_once('.') {
                 nemoclaw_openshell::flatten(kind, &mut values);
                 nemoclaw_fabric::agent::flatten(kind, &mut values);
+                flatten_service(kind, &mut values);
             }
             let attributes: StateBinding = serde_json::from_value(values).map_err(|_| {
                 Error::State("OpenTofu binding is unreadable; retain state for recovery")
@@ -617,5 +618,23 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
         }
     }
     Ok(bindings)
+}
+/// The Kubernetes provider records a Service's `metadata` and `spec` as
+/// nested blocks. Its binding keeps the Service's identity, name, and
+/// namespace; OpenTofu owns the rest.
+fn flatten_service(kind: &str, values: &mut serde_json::Value) {
+    if kind != crate::kubernetes::service::RESOURCE_TYPE {
+        return;
+    }
+    let metadata = values["metadata"][0].clone();
+    let Some(object) = values.as_object_mut() else {
+        return;
+    };
+    object.retain(|field, _| field == "id");
+    for field in ["name", "namespace"] {
+        if let Some(value) = metadata.get(field).filter(|value| value.is_string()) {
+            object.insert(field.into(), value.clone());
+        }
+    }
 }
 pub(crate) use nemoclaw_runtime::files::{atomic_write, save_json};

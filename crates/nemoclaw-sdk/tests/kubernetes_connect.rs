@@ -208,6 +208,81 @@ async fn a_gateway_that_is_not_running_cannot_be_connected() {
     );
 }
 
+/// The gateway published through a NodePort Service at `endpoint`.
+fn exposed(endpoint: &'static str) -> impl Fn(&str, u16) -> Spec {
+    move |kind, port| {
+        let mut spec = spec(kind, port);
+        spec.settings.endpoint = endpoint.into();
+        spec.settings.kubernetes.as_mut().unwrap().expose =
+            Some(serde_json::from_value(json!({"service": {"type": "NodePort"}})).unwrap());
+        spec
+    }
+}
+
+fn client_tls(uid: &str) -> serde_json::Value {
+    json!({"apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/tls",
+    "metadata": {"name": format!("{NAME}-client-tls"), "namespace": "agents", "uid": uid},
+    "data": {
+        "ca.crt": STANDARD.encode("gateway CA"),
+        "tls.crt": STANDARD.encode("client certificate"),
+        "tls.key": STANDARD.encode("client key"),
+    }})
+}
+
+/// A published gateway is dialed where clients reach it, like a Docker
+/// gateway's published port, with the same credentials and no forward.
+#[tokio::test]
+async fn an_exposed_gateway_is_dialed_at_its_endpoint() {
+    let objects = Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let endpoint = "https://gateway.agents.example.com:30851";
+    let (_fixture, operations) = running(&objects, directory.path(), exposed(endpoint)).await;
+    objects.insert(client_tls("client-tls-uid"));
+    let connection = operations
+        .connect(&exposed(endpoint)(GATEWAY_KIND, 1))
+        .await
+        .unwrap();
+    assert_eq!(connection.endpoint(), endpoint);
+    let environment = connection.environment();
+    for (name, expected) in [
+        (CA_ENV, "gateway CA"),
+        (CERT_ENV, "client certificate"),
+        (KEY_ENV, "client key"),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(&environment[name]).unwrap(),
+            expected,
+            "{name}"
+        );
+    }
+    assert!(environment.contains_key(TOKEN_ENV));
+}
+
+/// A direct dial trusts the Secret's CA for whatever answers at the endpoint,
+/// so a replaced Secret is refused rather than trusted.
+#[tokio::test]
+async fn an_exposed_gateway_refuses_a_replaced_client_certificate_secret() {
+    let objects = Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let endpoint = "https://gateway.agents.example.com:30851";
+    let (_fixture, operations) = running(&objects, directory.path(), exposed(endpoint)).await;
+    objects.insert(client_tls("first-uid"));
+    let spec = exposed(endpoint)(GATEWAY_KIND, 1);
+    operations.connect(&spec).await.unwrap();
+    operations.connect(&spec).await.unwrap();
+    objects.insert(client_tls("replaced-uid"));
+    let Err(error) = operations.connect(&spec).await else {
+        panic!("a replaced client TLS Secret was trusted");
+    };
+    assert!(
+        matches!(
+            error,
+            nemoclaw_sdk::Error::Observation(nemoclaw_sdk::ObservationError::BindingMismatch)
+        ),
+        "{error:?}"
+    );
+}
+
 /// Every regular file under `directory`.
 fn files(directory: &Path) -> Vec<std::path::PathBuf> {
     std::fs::read_dir(directory)

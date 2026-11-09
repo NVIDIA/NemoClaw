@@ -17,6 +17,18 @@ pub use nemoclaw_backend::{validate_endpoint, validate_endpoint_url};
 pub fn is_fabric_harness(harness: &str) -> bool {
     harness.parse::<super::HarnessKind>().is_ok()
 }
+
+/// An IPv4 or IPv6 address and a prefix length no longer than the address.
+fn source_range(value: &str) -> bool {
+    let Some((address, prefix)) = value.split_once('/') else {
+        return false;
+    };
+    let (Ok(address), Ok(prefix)) = (address.parse::<std::net::IpAddr>(), prefix.parse::<u8>())
+    else {
+        return false;
+    };
+    prefix <= if address.is_ipv4() { 32 } else { 128 }
+}
 impl Document {
     pub fn validate(&self) -> Result<(), ConfigError> {
         schema::validate_document(self)?;
@@ -138,7 +150,15 @@ impl super::ManagedGateway {
             };
             crate::managed::gateway_config::check(config, driver).map_err(ConfigError)?;
         }
-        if self.kubernetes.is_some() {
+        if let Some(target) = &self.kubernetes {
+            if let Some(expose) = &target.expose {
+                for range in &expose.service.load_balancer_source_ranges {
+                    require(
+                        source_range(range),
+                        "loadBalancerSourceRanges entries must be IPv4 or IPv6 CIDRs",
+                    )?;
+                }
+            }
             return validate_endpoint(&self.endpoint, true);
         }
         let authority = self

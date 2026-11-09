@@ -37,6 +37,55 @@ pub struct ManagedKubernetes {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 32))]
     pub image_pull_secrets: Vec<String>,
+    /// How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host; without it, NemoClaw forwards a free local port to the gateway pod for each command. Fixed after the first successful plan, like the endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "KubernetesExpose")]
+    pub expose: Option<KubernetesExpose>,
+}
+
+/// Publication of a managed Kubernetes gateway's endpoint.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KubernetesExpose {
+    /// A Service that publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged.
+    pub service: ExposureService,
+}
+
+/// The Service that publishes a managed Kubernetes gateway.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExposureService {
+    /// `NodePort` listens on the endpoint's port, from 30000 through 32767, on every node. `LoadBalancer` asks the cluster's load-balancer implementation for an address, requires the `oidc` authentication profile, and also listens on a node port Kubernetes allocates.
+    #[serde(rename = "type")]
+    pub service_type: ExposureServiceType,
+    /// LoadBalancer only: client CIDRs the load balancer admits. Load-balancer implementations differ in whether they enforce it, and it never covers node ports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 32))]
+    pub load_balancer_source_ranges: Vec<String>,
+    /// LoadBalancer only: annotations set on the Service unchanged, such as the address annotation of MetalLB, GKE, AKS or the AWS Load Balancer Controller. They must not terminate TLS. Fixed after the first successful plan.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(length(max = 32))]
+    pub annotations: std::collections::BTreeMap<String, String>,
+}
+
+/// The Kubernetes Service type that publishes a managed gateway.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(inline)]
+pub enum ExposureServiceType {
+    /// A port on every node.
+    NodePort,
+    /// An address from the cluster's load-balancer implementation.
+    LoadBalancer,
+}
+
+impl ExposureServiceType {
+    /// The Service `spec.type` value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NodePort => "NodePort",
+            Self::LoadBalancer => "LoadBalancer",
+        }
+    }
 }
 
 /// Authentication provisioned for a managed Kubernetes gateway.

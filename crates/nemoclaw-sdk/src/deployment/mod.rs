@@ -284,6 +284,13 @@ impl Deployment {
                 "state is bound to a different deployment UID or gateway",
             ));
         }
+        if crate::kubernetes::service::binding(&record.document)
+            != crate::kubernetes::service::binding(&document)
+        {
+            return Err(Error::Conflict(
+                "state is bound to a different gateway exposure: kubernetes.expose, its Service type, and its annotations stay as first planned; create a separate deployment to change them",
+            ));
+        }
         record.allocate_missing_generations(&document)?;
         let bindings = if record.pending() || record.digest != document.digest() {
             self.state_bindings(
