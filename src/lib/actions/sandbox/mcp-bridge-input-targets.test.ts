@@ -261,12 +261,13 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
           timeout: 30_000,
         });
         expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-        expect(JSON.parse(result.stdout).nativeCommandCalls).toEqual([]);
-        const admission = JSON.parse(result.stdout) as {
+        const admission = trailingJsonPayload(result.stdout) as {
           entry: Record<string, unknown>;
           target: Record<string, unknown>;
+          nativeCommandCalls: unknown[];
           gatewayRestarted: boolean;
         };
+        expect(admission.nativeCommandCalls).toEqual([]);
         expect(admission.entry).toMatchObject({
           allowedIps: ["10.20.30.40", "10.20.30.41"],
           trustedPrivateHost: "mcp.corp.example",
