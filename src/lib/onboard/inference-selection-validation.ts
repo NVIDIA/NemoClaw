@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { withTraceSpan } from "../trace";
 import { getCredential } from "../credentials/store";
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../inference/config";
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
@@ -485,12 +486,14 @@ export function createInferenceSelectionValidationHelpers(
     capabilityCache?: OnboardInferenceCapabilityCache,
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<EndpointValidationResult> {
-    const preflight = await preflightCustomEndpointOrFail(
-      label,
-      endpointUrl,
-      credentialEnv,
-      helpUrl,
-      revalidateSandboxIdentity,
+    const preflight = await withTraceSpan("nemoclaw.inference.endpoint_preflight", {}, () =>
+      preflightCustomEndpointOrFail(
+        label,
+        endpointUrl,
+        credentialEnv,
+        helpUrl,
+        revalidateSandboxIdentity,
+      ),
     );
     if ("blocked" in preflight) return preflight.blocked;
     const { pinnedAddresses, trustedPrivateCapability } = preflight;
