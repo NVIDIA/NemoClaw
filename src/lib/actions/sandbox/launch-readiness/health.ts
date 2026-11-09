@@ -266,7 +266,10 @@ export async function requireNativeInferenceHealth(input: {
     try {
       config = decodeManagedStartupProfile(input.entry.workload.encodedProfile).agentConfig;
     } catch (error) {
-      if (error instanceof ManagedStartupProfileError)
+      if (
+        error instanceof ManagedStartupProfileError ||
+        error instanceof SwitchyardProviderBindingError
+      )
         throw new LaunchReadinessObservationError("config");
       throw error;
     }

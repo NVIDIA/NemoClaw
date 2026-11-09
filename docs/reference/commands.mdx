@@ -483,8 +483,8 @@ Successful provider setup does not establish that qualification.
 </Note>
 
 Switchyard onboarding supports fresh provider creation only.
-It rejects reuse of recorded Switchyard bindings, including resumed provider setup, without changing those bindings.
-Neither `--resume --switchyard-config <file>` nor `--recreate-sandbox` enables provider reuse, routing changes, or credential rotation.
+It rejects reuse of recorded Switchyard bindings except for recovery of the owning session's unpublished reservation before sandbox creation.
+Neither `--resume --switchyard-config <file>` nor `--recreate-sandbox` enables reuse of a published routed sandbox, routing changes, or credential rotation.
 While routing is configured, `inference set` refuses changes.
 To use different selections, preserve the existing sandbox and onboard with a new name.
 For a new single-model sandbox, omit `--switchyard-config`.
@@ -579,9 +579,11 @@ NemoClaw records onboarding progress so interrupted runs can continue. Use `--re
 
 <AgentOnly variant="hermes">
 
-Switchyard provider reuse is not supported during resume, even when you supply the original `--switchyard-config` file.
-If provider setup must run again after bindings were recorded, onboarding stops without changing those bindings.
-Use a new sandbox name for fresh Switchyard setup instead of clearing the recorded bindings.
+`--resume` can recover an unpublished Switchyard provider reservation only in its owning onboarding session.
+The recorded selection must be unchanged, with no workload or pending sandbox create.
+NemoClaw verifies all recorded provider bindings and requires the reservation to remain unchanged during recovery.
+This recovery reads no credentials, changes no providers, and does not rewrite the registry.
+Published Switchyard bindings cannot be reused; preserve the sandbox and onboard with a new name.
 
 </AgentOnly>
 
@@ -631,9 +633,10 @@ Run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run
 
 During finalization, NemoClaw stops onboarding when it cannot complete the process check or a required secret-boundary check refuses.
 It does not report the sandbox as ready.
+For a published Switchyard sandbox, preserve the sandbox and onboard with a new name; its recorded providers cannot be reused.
 For a Portable Hermes receipt and registry authority mismatch, preserve both records and follow [Portable Hermes receipt and registry authority do not match](troubleshooting#portable-hermes-receipt-and-registry-authority-do-not-match).
 Do not resume onboarding for that authority failure.
-For another resumable finalization failure, run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
+For other resumable finalization failures, run `$$nemoclaw <sandbox-name> doctor`, correct the reported condition, then run `$$nemoclaw onboard --resume`.
 
 </AgentOnly>
 

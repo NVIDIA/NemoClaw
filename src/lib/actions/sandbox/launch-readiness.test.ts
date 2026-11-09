@@ -3,11 +3,14 @@
 
 import { performance } from "node:perf_hooks";
 import { createHash } from "node:crypto";
+import { requireNativeInferenceHealth } from "./launch-readiness/health";
 import { createSwitchyardProviderFixture } from "../../../../test/support/switchyard-provider-adapter";
 import { createHermesSwitchyardRoutingIntent } from "../../hermes-switchyard-routing";
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
-import { requireNativeInferenceHealth } from "./launch-readiness/health";
+import {
+  encodeManagedStartupProfile,
+  readStoredManagedStartupProfileMetadata,
+} from "../../onboard/managed-startup/profile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
@@ -183,9 +186,8 @@ describe("launch readiness validation", () => {
     });
     const f = createSwitchyardProviderFixture(routing, GATEWAY_NAME, SANDBOX);
     const { bindings } = await f.setup();
-    const profile = managedStartupE2eProfile("hermes");
     const encodedProfile = encodeManagedStartupProfile({
-      ...profile,
+      ...managedStartupE2eProfile("hermes"),
       agentConfig: {
         agent: "hermes",
         webSearch: { enabled: false, provider: "tavily" },
@@ -230,36 +232,46 @@ describe("launch readiness validation", () => {
     expect(publishedIdentity).toBeNull();
   });
 
-  it("classifies absent Switchyard bindings as a configuration error (#13863)", async () => {
-    const { currentDeps } = await switchyardReadinessFixture();
-    delete sandbox.hermesSwitchyard;
-    await expect(
-      requireNativeInferenceHealth({
-        sandboxName: SANDBOX,
-        gatewayName: GATEWAY_NAME,
-        agentName: "hermes",
-        entry: sandbox,
-        deps: currentDeps,
-      }),
-    ).rejects.toMatchObject({ category: "config" });
-  });
-
-  it("classifies a malformed managed profile as a configuration error (#13863)", async () => {
-    const { currentDeps, routedEntry } = await switchyardReadinessFixture();
-    sandbox = {
-      ...routedEntry,
-      workload: { ...routedEntry.workload, encodedProfile: "invalid-profile" },
-    };
-    await expect(
-      requireNativeInferenceHealth({
-        sandboxName: SANDBOX,
-        gatewayName: GATEWAY_NAME,
-        agentName: "hermes",
-        entry: sandbox,
-        deps: currentDeps,
-      }),
-    ).rejects.toMatchObject({ category: "config" });
-  });
+  it.each([
+    ["current", (encoded: string) => encoded],
+    [
+      "legacy",
+      (encoded: string) => {
+        const profile = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+        delete profile.agentConfig.switchyardBindings;
+        const legacy = Buffer.from(JSON.stringify(profile)).toString("base64url");
+        expect(readStoredManagedStartupProfileMetadata(legacy).agent).toBe("hermes");
+        return legacy;
+      },
+    ],
+    ["malformed", () => "invalid-profile"],
+  ] as const)(
+    "rejects a %s profile without Switchyard bindings before publishing (#13863)",
+    async (_profileKind, encode) => {
+      const { currentDeps, routedEntry } = await switchyardReadinessFixture();
+      const workload = routedEntry.workload;
+      workload.encodedProfile = encode(workload.encodedProfile);
+      workload.startupProfileSha256 = createHash("sha256")
+        .update(workload.encodedProfile)
+        .digest("hex");
+      delete sandbox.hermesSwitchyard;
+      await expect(
+        requireNativeInferenceHealth({
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          entry: sandbox,
+          deps: currentDeps,
+        }),
+      ).rejects.toMatchObject({ category: "config" });
+      expect(externalEvents).not.toContain("inference-get");
+      const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      expect(
+        await publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+      ).toMatchObject({ kind: "validation-failed", category: "config" });
+      expect(publishedIdentity).toBeNull();
+      expect(externalEvents).not.toContain("inference-health");
+    },
+  );
 
   it("rechecks Switchyard bindings without consulting the shared inference route (#13863)", async () => {
     const { currentDeps, f } = await switchyardReadinessFixture();
