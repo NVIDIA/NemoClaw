@@ -510,9 +510,20 @@ $$nemoclaw <sandbox-name> logs --tail 100
 ```
 
 If the warning says `The retained sandbox was stopped` and OpenShell confirms it remains stopped, keep it stopped.
-If the warning says the recovery marker could not be invalidated, the retained source still exists. Do not retry `rebuild`, even if the source is stopped: prepared recovery refuses a retained source. Preserve the source, backup, and recovery files. Ask a NemoClaw maintainer to reconcile the interrupted rebuild and any source writes before another rebuild.
-If source maintenance cleanup failed after the marker was removed, the old backup is inspection evidence, not retry authority. Keep the source stopped and ask a NemoClaw maintainer to reconcile its maintenance state and any writes before another rebuild. A later rebuild creates a new backup.
-If NemoClaw could not verify the stop or maintenance reconciliation, preserve the current state and ask a NemoClaw maintainer to review the warning, redacted logs, and backup path.
+
+If the warning says the recovery marker could not be invalidated, the retained source still exists.
+Do not retry `rebuild`, even if the source is stopped, because prepared recovery refuses a retained source.
+Preserve the source, backup, and recovery files.
+Ask a NemoClaw maintainer to reconcile the interrupted rebuild and any source writes before another rebuild.
+
+If source maintenance cleanup failed after the marker was removed, keep the old backup for inspection.
+Do not use it to retry the rebuild.
+Keep the source stopped.
+Ask a NemoClaw maintainer to reconcile its maintenance state and any writes before another rebuild.
+A later rebuild creates a new backup.
+
+If NemoClaw could not verify the stop or maintenance reconciliation, preserve the current state.
+Ask a NemoClaw maintainer to review the warning, redacted logs, and backup path.
 Do not delete the source or start another replacement until its maintenance state is reconciled.
 
 </AgentOnly>
