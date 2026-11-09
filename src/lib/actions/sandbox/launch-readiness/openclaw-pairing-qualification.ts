@@ -324,7 +324,7 @@ RAW_PUBLIC_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
 incompatible_pairing = False
 
 def reject(field=None):
-    if incompatible_pairing and ORDINARY_SETTLEMENT and field:
+    if incompatible_pairing and ${mode === "ordinary-settlement" || mode === "qualification" ? "True" : "False"} and field:
         print(MISMATCH_MARKER + json.dumps({'field': field}, separators=(',', ':')))
     sys.exit(${INCOMPATIBLE_OBSERVATION_EXIT_STATUS} if incompatible_pairing else 1)
 
@@ -1010,7 +1010,9 @@ function runOpenClawPairingObservation(
   }
   if (!result.error && !result.signal && result.status === INCOMPATIBLE_OBSERVATION_EXIT_STATUS) {
     throw new OpenClawPairingIncompatibleError(
-      mode === "ordinary-settlement" ? parseOpenClawPairingMismatchField(result.stdout) : null,
+      mode === "ordinary-settlement" || mode === "qualification"
+        ? parseOpenClawPairingMismatchField(result.stdout)
+        : null,
     );
   }
   if (result.error || result.signal || result.status !== 0) {
