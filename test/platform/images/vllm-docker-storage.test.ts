@@ -211,7 +211,8 @@ const result = await installVllm(profile, {
   nonInteractive: true,
   promptFn: async () => "",
   readinessReports: [{ nodeId: "storage-proof", report }],
-  // This fixture measures real storage; bridge discovery has its own tests.
+  // This storage fixture has no OpenShell gateway; it measures real Docker capacity.
+  // Bridge discovery has its own tests.
   resolveManagedBridgeHost: () => "172.18.0.1",
 });
 process.exitCode = result.ok ? 0 : 1;
