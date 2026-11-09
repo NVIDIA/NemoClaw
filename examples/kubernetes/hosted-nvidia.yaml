@@ -6,22 +6,6 @@
 # Replace the deployment UID, gateway endpoint, and both image digests before applying.
 # Export each Linux AMD64 image's metadata with `cargo images export-metadata`.
 # Set the two image-metadata variables below to the matching bundle paths.
-# Before applying, have the cluster operator provision four ReadWriteOnce PVCs
-# in the sandbox namespace: gtc-dc-openclaw-workspace, gtc-dc-openclaw-artifacts,
-# gtc-dc-hermes-workspace, and gtc-dc-hermes-artifacts. Choose their capacity and
-# StorageClass for the cluster, and make their contents writable by 10001:10001.
-# The external gateway must enable openshell.drivers.kubernetes.allow_driver_config.
-# Default admission requires both labels on every claim:
-#   openshell.ai/sandbox-attachable: "true"
-#   openshell.ai/sandbox-attachable-workspace: <deployment OpenShell workspace name>
-# Use this deployment's authorized workspace name, not the Kubernetes namespace.
-# An operator-configured admission label map replaces these defaults.
-# These mounts replace OpenShell's automatic /sandbox PVC with external storage
-# retained across sandbox replacement. Preserve the claims separately at teardown.
-# Adding mounts replaces existing sandboxes; copy needed files out before applying.
-# Mounts do not migrate existing files or resume conversations. Hermes native
-# memory and sessions live under /sandbox/artifacts; OpenClaw native history is
-# temporary. See docs/build-deploy/state.md for retention and verification steps.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
