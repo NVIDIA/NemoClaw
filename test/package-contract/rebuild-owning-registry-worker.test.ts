@@ -171,7 +171,7 @@ function writeSiblingRegistry(
 function writeTimeoutPreflightRuntime(
   home: string,
   callsFile: string,
-  gatewayPort: number,
+  owningGatewayPort: number,
   dashboardPort: number,
 ) {
   const imageId = `sha256:${"a".repeat(64)}`;
@@ -198,7 +198,7 @@ function writeTimeoutPreflightRuntime(
       'const fs = require("node:fs");',
       'const path = require("node:path");',
       "const args = process.argv.slice(2);",
-      `const gatewayPort = ${String(gatewayPort)};`,
+      `const gatewayPort = ${String(owningGatewayPort)};`,
       "const tool = path.basename(process.argv[1]);",
       `fs.appendFileSync(${JSON.stringify(callsFile)}, JSON.stringify({ tool, args, gateway: process.env.OPENSHELL_GATEWAY }) + "\\n");`,
       'if (["brew", "curl"].includes(tool)) { console.error("Unexpected host tool: " + tool); process.exit(1); }',
@@ -270,7 +270,7 @@ function writeTimeoutPreflightRuntime(
         shared: true,
       },
     },
-    gatewayPort,
+    owningGatewayPort,
   );
   return executable;
 }
