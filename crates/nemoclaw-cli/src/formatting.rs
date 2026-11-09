@@ -130,13 +130,15 @@ pub(crate) fn render(
 ) -> Result<String, Box<dyn std::error::Error>> {
     match result {
         CommandResult::Export(document) => Ok(document.yaml()?),
-        CommandResult::Authored(path) => Ok(path.map(|path| format!("Authored desired state: {}\nRun nemoclaw plan with this file when you are ready to check deployment.\n", terminal_text(&path.display().to_string()))).unwrap_or_default()),
+        CommandResult::Authored(path) => Ok(path
+            .map(|path| authored(&path, context.output_palette))
+            .unwrap_or_default()),
         CommandResult::Operation(result) => match format {
             OutputFormat::Text => {
                 let mut output = operation(&result, context);
                 context.append_warnings(&mut output);
                 Ok(output)
-            },
+            }
             OutputFormat::Json => {
                 let mut value = serde_json::to_value(&result)?;
                 context.add_warnings(&mut value);
@@ -146,6 +148,40 @@ pub(crate) fn render(
                 Ok(format!("{}\n", serde_json::to_string_pretty(&value)?))
             }
         },
+    }
+}
+
+/// The save confirmation, with commands that run as printed.
+fn authored(path: &std::path::Path, palette: Palette) -> String {
+    let file = terminal_text(&shell_word(&path.display().to_string()));
+    let heading = format!(
+        "{} {}",
+        "Authored desired state:",
+        palette.paint(&terminal_text(&path.display().to_string()), Tone::Success)
+    );
+    let plan = palette.paint(&format!("nemoclaw plan {file}"), Tone::Accent);
+    let apply = palette.paint(&format!("nemoclaw apply {file}"), Tone::Accent);
+    let note = palette.paint("Apply pulls images and starts containers.", Tone::Muted);
+    format!(
+        "{heading}\n\nPreview the changes with plan, then apply them:\n\n  {plan}\n  {apply}\n\n{note}\n"
+    )
+}
+
+/// One shell word that reads back as `value`; a leading `-` gets `./` so it is not a flag.
+fn shell_word(value: &str) -> String {
+    let value = if value.starts_with('-') {
+        format!("./{value}")
+    } else {
+        value.to_string()
+    };
+    let plain = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+    if plain {
+        value
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }
 
@@ -791,6 +827,74 @@ mod tests {
             &RenderContext::new(&cli),
         )
         .unwrap()
+    }
+
+    fn authored(path: &str) -> String {
+        let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
+        super::render(
+            CommandResult::Authored(Some(path.into())),
+            OutputFormat::Text,
+            &RenderContext::new(&cli),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn saving_names_the_exact_plan_and_apply_commands() {
+        let text = authored("deployment.yaml");
+        assert!(
+            text.contains("\n  nemoclaw plan deployment.yaml\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\n  nemoclaw apply deployment.yaml\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("pulls images and starts containers"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_terminal_gets_a_styled_save_message_with_the_same_words() {
+        let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
+        let mut context = RenderContext::new(&cli);
+        let plain = authored("deployment.yaml");
+        context.output_palette = Palette { enabled: true };
+        let styled = super::render(
+            CommandResult::Authored(Some("deployment.yaml".into())),
+            OutputFormat::Text,
+            &context,
+        )
+        .unwrap();
+        assert!(styled.contains('\x1b'), "{styled:?}");
+        assert!(
+            styled.contains("Authored desired state: \x1b[38;2;118;185;0mdeployment.yaml\x1b[0m\n")
+        );
+        assert!(styled.contains("\x1b[38;2;118;185;0mnemoclaw plan deployment.yaml\x1b[0m"));
+        assert!(styled.contains("\x1b[2mApply pulls images"));
+        let stripped = styled
+            .replace("\x1b[38;2;118;185;0m", "")
+            .replace("\x1b[2m", "")
+            .replace("\x1b[0m", "");
+        assert_eq!(stripped, plain);
+    }
+
+    #[test]
+    fn saved_paths_are_quoted_so_the_commands_run_as_printed() {
+        let text = authored("my dir/it's.yaml");
+        assert!(
+            text.contains("nemoclaw plan 'my dir/it'\\''s.yaml'\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("nemoclaw apply 'my dir/it'\\''s.yaml'\n"),
+            "{text}"
+        );
+        let text = authored("-odd.yaml");
+        assert!(text.contains("nemoclaw plan ./-odd.yaml\n"), "{text}");
+        assert!(!authored("a\u{1b}[2J.yaml").contains('\u{1b}'));
     }
 
     #[test]

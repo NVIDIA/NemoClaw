@@ -185,6 +185,24 @@ impl JourneyQuestion {
     }
 }
 
+/// What review says about one checked credential reference.
+#[derive(Clone, Debug)]
+pub struct CredentialNote {
+    text: String,
+    missing: bool,
+}
+
+impl CredentialNote {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+    /// Whether the user must set the credential before plan can use it: it is
+    /// not set, or could not be read.
+    pub fn is_missing(&self) -> bool {
+        self.missing
+    }
+}
+
 /// A fresh result, recomputed after each answer or catalog change.
 #[derive(Clone, Debug)]
 pub struct JourneyResolution {
@@ -194,7 +212,7 @@ pub struct JourneyResolution {
     defaults: Vec<(String, Value)>,
     warnings: Vec<String>,
     information: Vec<String>,
-    credentials: Vec<String>,
+    credentials: Vec<CredentialNote>,
     unverified: Vec<String>,
     assessment: PartialAssessment,
     target_required: bool,
@@ -232,7 +250,7 @@ impl JourneyResolution {
     }
     /// The availability of each credential reference checked here, for review.
     /// A reference that was never checked has no entry.
-    pub fn credentials(&self) -> &[String] {
+    pub fn credentials(&self) -> &[CredentialNote] {
         &self.credentials
     }
     pub fn unverified(&self) -> &[String] {
