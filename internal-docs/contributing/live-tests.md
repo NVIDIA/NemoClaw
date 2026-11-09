@@ -227,7 +227,7 @@ Each skill's description is a marker, and the reply ends with the name of each s
 The `tests/e2e/hcl/volume` module also creates each sandbox's two skills volumes, named for the run's UID, and writes their skills, owned by the agent image's user.
 Each agent's `skills.paths` lists a writable folder of skills on one volume and a folder that is one skill on another, as [Skills on a Mounted Volume](../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes; OpenClaw's skill volume is read-only and Hermes's writable, OpenClaw's folder holds two skills and a file that isn't one, and Hermes's folder is empty.
 Apply must start both agents with them, and report each interface's port, sign-in, and token file.
-A harness offers the model the skills it finds, so each reply below must name the skills on that agent's volumes: `notes` for Hermes, and `review`, `summarize`, and `translate` for OpenClaw.
+A harness offers the model the skills it finds, so each reply below must name the skills on that agent's volumes: `notes` for Hermes, and `digest`, `review`, and `translate` for OpenClaw.
 Whether the agent loads and follows a skill is not checked live; Fabric's tests check what each harness loads.
 The `tests/e2e/hcl/interface` module then runs `hcl_live::interface` once per request: it reads the reported token with `openshell sandbox exec`, forwards the port with `openshell forward service`, and sends one request with the token as a Bearer credential.
 Hermes's dashboard has no token file, so for a request that needs its session token, the probe first loads the page and reads the token from it, as a browser does.

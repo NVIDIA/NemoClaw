@@ -29,7 +29,9 @@
 # the write with EROFS.
 
 # The skills volumes, which a platform provides before apply. The agent images
-# run agents as 10001:10001 (image/fabric/Dockerfile).
+# run agents as 10001:10001 (image/fabric/Dockerfile). OpenClaw's bundled
+# skills take precedence over skills of the same name in skills.paths, so no
+# skill here shares a name with one of them.
 run "volume" {
   module {
     source = "./volume"
@@ -39,7 +41,7 @@ run "volume" {
     owner = "10001:10001"
     files = {
       "claw:/sandbox/skills" = {
-        "summarize/SKILL.md" = "---\nname: summarize\ndescription: nemoclaw-skill-summarize\n---\n\nSummarize the workspace.\n"
+        "digest/SKILL.md"    = "---\nname: digest\ndescription: nemoclaw-skill-digest\n---\n\nDigest the workspace.\n"
         "translate/SKILL.md" = "---\nname: translate\ndescription: nemoclaw-skill-translate\n---\n\nTranslate the reply.\n"
         "README.md"          = "Skills shared by the deployment's agents.\n"
       }
@@ -63,9 +65,9 @@ run "model" {
     key   = var.model_key
     reply = "nemoclaw-stub-reply"
     markers = {
+      digest    = "nemoclaw-skill-digest"
       notes     = "nemoclaw-skill-notes"
       review    = "nemoclaw-skill-review"
-      summarize = "nemoclaw-skill-summarize"
       translate = "nemoclaw-skill-translate"
     }
   }
@@ -167,7 +169,7 @@ run "interfaces" {
 # OpenClaw's terminal UI is a client of the Gateway that serves the Control
 # UI, at the dashboard's port and with its token; its status line reads
 # "connected | idle" once it can take a prompt. OpenClaw offers three skills:
-# review, on its own volume, and summarize and translate, in its folder.
+# review, on its own volume, and digest and translate, in its folder.
 run "terminal" {
   module {
     source = "./terminal"
@@ -182,7 +184,7 @@ run "terminal" {
         token_path = one([for access in run.apply.result.interfaces : access.tokenPath if access.sandbox == "claw"])
         ready      = "connected | idle"
         prompt     = "Reply to this NemoClaw live test."
-        reply      = "nemoclaw-stub-reply review summarize translate"
+        reply      = "nemoclaw-stub-reply digest review translate"
       }
     }
   }
