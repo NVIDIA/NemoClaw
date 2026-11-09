@@ -14,7 +14,7 @@ use super::{
     gateway::{KUBECONFIG_VARIABLE, literal},
 };
 use crate::{
-    Error,
+    Error, artifact_pins as pins,
     backend::Row,
     compile::Target,
     config::{Document, ExposureServiceType},
@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 pub const PROVIDER_ADDRESS: &str = "registry.opentofu.org/hashicorp/kubernetes";
-pub const PROVIDER_VERSION: &str = "3.4.0";
+pub use pins::KUBERNETES_PROVIDER_VERSION as PROVIDER_VERSION;
 /// The OpenTofu resource type of the exposure Service.
 pub const RESOURCE_TYPE: &str = "kubernetes_service_v1";
 /// The exposure Service's address in the runtime graph.

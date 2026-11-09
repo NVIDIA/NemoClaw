@@ -16,6 +16,7 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
 | Helm provider | The pinned OpenShell chart release on the authored Kubernetes cluster |
+| Kubernetes provider | The Service that publishes a managed Kubernetes gateway's endpoint |
 | OpenShell provider | OpenShell workspaces, provider registrations and profiles, sandboxes, and gateway capability reads; Podman gateway processes, gateway storage, and Kubernetes gateway installation |
 | Fabric provider | Fabric runtime configuration and readiness in agent sandboxes |
 | vLLM and Ollama providers | Inference service storage contracts and readiness observations |
@@ -46,7 +47,7 @@ Each service owns its storage retention requirements.
 ## Managed Kubernetes Ownership
 
 For a managed Kubernetes gateway, the runtime graph orders retained storage, development authentication, `helm_release.gateway`, and gateway readiness.
-The native bundle includes the pinned Helm provider; no Helm CLI is required.
+The native bundle includes the pinned Helm and Kubernetes providers; no Helm CLI is required.
 
 | Owner | Managed Kubernetes responsibility |
 |---|---|
