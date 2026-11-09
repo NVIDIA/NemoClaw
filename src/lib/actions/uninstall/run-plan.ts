@@ -32,8 +32,6 @@ import {
 } from "../../domain/uninstall/messaging";
 import {
   cleanupManagedLlamaCppRuntimeForSandbox,
-  HOST_LOCAL_VLLM_CONTAINER_NAME,
-  HOST_LOCAL_VLLM_MANAGED_LABEL,
   HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
   type ManagedLlamaCppCleanupTarget,
   resolveManagedLlamaCppCleanupTarget,
@@ -142,6 +140,9 @@ import {
   pidExists,
   readOnboardSessionModelRouter,
   removeForceFreshReceiptVolumes,
+  removeOrphanedManagedHostLocalVllm,
+  verifyManagedInferenceCleanup,
+  MANAGED_INFERENCE_CONTAINER_NAME_PATTERN,
   selectedGatewayCleanupRuntimeSelection,
 } from "./runtime-commands";
 import {
@@ -240,8 +241,6 @@ export interface UninstallRunOutcome {
 const OPENSHELL_COMMAND_MISSING_ERROR =
   "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.";
 const INTERRUPTED_ONBOARD_SESSION_MAX_BYTES = 1024 * 1024;
-export const MANAGED_INFERENCE_CONTAINER_NAME_PATTERN =
-  /^(?:nemoclaw-vllm|nemoclaw-vllm-worker|nemoclaw-llama-cpp|nemoclaw-vllm-cluster-rank-[0-9]+)$/;
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
   if (!command || command.includes("\0")) return false;
@@ -2574,34 +2573,6 @@ function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallR
   return false;
 }
 
-function removeOrphanedManagedHostLocalVllm(runtime: UninstallRuntime): boolean {
-  if (!runtime.commandExists("docker")) return true;
-  const inspection = runtime.runDocker(
-    [
-      "container",
-      "inspect",
-      "--format",
-      `{{.Id}} {{index .Config.Labels ${JSON.stringify(HOST_LOCAL_VLLM_MANAGED_LABEL)}}}`,
-      HOST_LOCAL_VLLM_CONTAINER_NAME,
-    ],
-    { env: runtime.env, timeout: 10_000 },
-  );
-  if (inspection.status !== 0 || !inspection.stdout.trim()) return true;
-  const [containerId, managedLabel, ...extra] = inspection.stdout.trim().split(/\s+/);
-  if (!/^[0-9a-f]{64}$/u.test(containerId ?? "") || managedLabel !== "true" || extra.length > 0) {
-    return true;
-  }
-  const removal = runtime.runDocker(["rm", "-f", containerId], {
-    env: runtime.env,
-    timeout: 10_000,
-  });
-  if (removal.status === 0) return true;
-  runtime.error(
-    `Could not remove orphaned managed inference container '${HOST_LOCAL_VLLM_CONTAINER_NAME}'. NemoClaw did not start the remaining uninstall steps.`,
-  );
-  return false;
-}
-
 function managedLlamaCppCleanupPorts(homeDir: string, scopedToSelectedGateway: boolean): number[] {
   const ports = new Set<number>([GATEWAY_PORT]);
   if (scopedToSelectedGateway) return [...ports];
@@ -2682,24 +2653,7 @@ function removeManagedModelRuntimes(
     removePath(path.join(sharedRoot, MANAGED_VLLM_API_KEY_FILE), runtime);
   }
   if (!runtime.commandExists("docker")) return llama;
-  const inventory = runtime.runDocker(["ps", "-a", "--format", "{{.Names}}"], {
-    env: runtime.env,
-    timeout: 10_000,
-  });
-  if (inventory.status !== 0) {
-    runtime.error(
-      "Docker could not inventory reserved managed inference container names. NemoClaw refused the remaining uninstall steps so it cannot report incomplete cleanup as success.",
-    );
-    return { failedStateDirs: [], ok: false };
-  }
-  const residual = splitNonEmptyLines(inventory.stdout).find((name) =>
-    MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name),
-  );
-  if (!residual) return llama;
-  runtime.error(
-    `Managed inference container '${residual}' remains after ownership-aware cleanup. NemoClaw refused the remaining uninstall steps; restore its ownership state or remove it after manual review, then retry.`,
-  );
-  return { failedStateDirs: [], ok: false };
+  return { ...llama, ok: verifyManagedInferenceCleanup(runtime) };
 }
 
 function recordManagedModelCleanup(

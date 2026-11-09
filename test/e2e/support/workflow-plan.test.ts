@@ -671,6 +671,14 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it("focuses readiness helper changes on inference routing", () => {
+    const file = "test/e2e/support/bearerless-vllm-readiness.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [file] });
+    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["inference-routing"]);
+    expect(plan.matrix).toEqual([]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
+  });
+
   it.each<[string, string[]]>([
     ["test/e2e/fixtures/native-local-chat.ts", ["gpu-double-onboard", "gpu-e2e"]],
     [
@@ -678,6 +686,10 @@ describe("E2E workflow plan", () => {
       ["inference-routing-openclaw-native"],
     ],
     ["src/lib/actions/sandbox/inference-route-health.ts", ["inference-routing-openclaw-native"]],
+    ["src/lib/inference/local.ts", ["inference-routing"]],
+    ["src/lib/inference/serving/vllm-host-local-lifecycle.ts", ["inference-routing"]],
+    ["src/lib/inference/serving/vllm-host-local-network.ts", ["inference-routing"]],
+    ["src/lib/inference/vllm-docker-env.ts", ["inference-routing"]],
   ])("selects the live owners of %s", (changedFile, targets) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual(
       expect.arrayContaining(targets),
