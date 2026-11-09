@@ -20,7 +20,12 @@ import { ROOT } from "../../../runner";
  * in an `afterEach` hook so the spies and tracked descriptors do not leak into
  * later tests; the tracked-descriptor set is cleared by the cleanup as well.
  */
-const sharedTemporaryRoots = new Set<string>([path.resolve("/tmp"), fs.realpathSync("/tmp")]);
+const sharedTemporaryRoots = new Set<string>([path.resolve("/tmp")]);
+try {
+  sharedTemporaryRoots.add(fs.realpathSync("/tmp"));
+} catch {
+  // A sandboxed runner may not expose /tmp; the resolved path still matches.
+}
 const sourceRoot = path.resolve(ROOT);
 for (let directory = sourceRoot; ; directory = path.dirname(directory)) {
   sharedTemporaryRoots.add(directory);
@@ -42,7 +47,7 @@ const wrapStat = (stat: fs.Stats): fs.Stats =>
       // Preserve the original Stats.mode type. Consumers mix numeric masks
       // (`mode & 0o022`) with bigint masks (`mode & 0o22n`), and coercing to
       // bigint makes the numeric callers throw a TypeError.
-      return typeof mode === "bigint" ? mode & ~0o22n : (mode as number) & ~0o222;
+      return typeof mode === "bigint" ? mode & ~0o22n : (mode as number) & ~0o022;
     },
   });
 
@@ -71,9 +76,9 @@ export function emulatePrivateSourceAncestor(): void {
   }) as typeof fs.closeSync);
 }
 
-/** Restore the fs spies installed by `emulatePrivateSourceAncestor` and clear
- * the tracked file-descriptor set. Safe to call in either an `afterEach` or
- * `afterAll` hook. */
+/** Restore every mock via `vi.restoreAllMocks()`, which includes the fs spies
+ * installed here and any spies a caller installed in the same test, then clear
+ * the tracked file-descriptor set. Safe in an `afterEach` or `afterAll` hook. */
 export function cleanupEmulatePrivateSourceAncestor(): void {
   vi.restoreAllMocks();
   maskedFds.clear();
