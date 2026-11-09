@@ -284,6 +284,9 @@ struct Pins {
     #[cfg(feature = "sdk")]
     #[serde(rename = "helmProvider")]
     helm_provider: String,
+    #[cfg(feature = "sdk")]
+    #[serde(rename = "kubernetesProvider")]
+    kubernetes_provider: String,
     platforms: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Artifact>>,
     /// Pinned OpenShell images; the Docker live tests pull these.
     #[serde(default)]
@@ -445,6 +448,13 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
             .ok_or("missing Helm provider platform pin")?,
     )
     .await?;
+    let kubernetes_archive = download(
+        pins.platforms
+            .get(platform)
+            .and_then(|p| p.get("kubernetesProvider"))
+            .ok_or("missing Kubernetes provider platform pin")?,
+    )
+    .await?;
     let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
@@ -555,6 +565,14 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
             root,
             &helm_archive,
             &pins.helm_provider,
+            platform,
+        )?);
+    manifest
+        .files
+        .extend(nemoclaw_build::kubernetes_provider::install(
+            root,
+            &kubernetes_archive,
+            &pins.kubernetes_provider,
             platform,
         )?);
     nemoclaw_build::schema::add_to_bundle(root, &mut manifest)?;

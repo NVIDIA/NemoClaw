@@ -3,7 +3,7 @@
 
 # OpenTofu Provider Reference
 
-The native bundle includes the NemoClaw, OpenShell, Fabric, Docker, and Helm OpenTofu providers.
+The native bundle includes the NemoClaw, OpenShell, Fabric, Docker, Helm, and Kubernetes OpenTofu providers.
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
 OpenShell manages workspaces, provider registrations and profiles, and sandboxes through a gateway's API.
 Fabric starts and stops the one agent runtime in each sandbox through Fabric's `fabric-agent-ctl`, through the same gateway.
@@ -75,8 +75,9 @@ The bundle pins these providers:
 | Host | `registry.opentofu.org/nvidia/host` | Source-derived, matching the bundle |
 | Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.6.0 |
 | Helm | `registry.opentofu.org/hashicorp/helm` | 3.3.0 |
+| Kubernetes | `registry.opentofu.org/hashicorp/kubernetes` | 3.4.0 |
 
-None of them exposes ephemeral resources or provider functions.
+Only the Kubernetes provider exposes ephemeral resources and provider functions.
 
 ### OpenShell Resources and Data Sources
 
@@ -917,7 +918,7 @@ The namespace, encryption key, and persistent volumes remain.
 
 Follow [bundle building](../build-deploy/build.md) for matched CLI, SDK contract, provider, schema, and OpenTofu versions.
 The NemoClaw, OpenShell, and Fabric providers use the same source-derived version to prevent stale reuse.
-The Docker and Helm providers have fixed release versions and checksum-pinned native archives, with their upstream licenses retained in the bundle.
+The Docker, Helm, and Kubernetes providers have fixed release versions and checksum-pinned native archives, with their upstream licenses retained in the bundle.
 
 [Schema snapshots](../../internal-docs/contributing/testing.md#provider-schema-snapshots) of the NemoClaw, OpenShell, and Fabric providers, [planning tests](../../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
 [Fixture qualification](../../internal-docs/contributing/integration-tests.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
