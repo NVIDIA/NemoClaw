@@ -45,6 +45,10 @@ on:
         description: The validation plan's live HCL case selection, by where each case runs; required with e2e.
         type: string
         default: ""
+      save-cache:
+        description: Write the shared Rust caches on v1; a self-hosted runner's experiment only reads them.
+        type: boolean
+        default: true
 # The live suites read the per-commit image package for images to reuse.
 permissions:
   contents: read
@@ -76,6 +80,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ inputs.platform }}
+          save-cache: ${{ inputs.save-cache }}
       - name: Check formatting
         run: cargo ci fmt
       - name: Lint Rust
@@ -142,6 +147,7 @@ jobs:
         with:
           platform: ${{ inputs.platform }}
           cache-prefix: native-bundle-v3
+          save-cache: ${{ inputs.save-cache }}
       - name: Clear cached build timings
         id: timings
         run: rm -rf target/cargo-timings

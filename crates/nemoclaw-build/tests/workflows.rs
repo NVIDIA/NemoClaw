@@ -93,50 +93,59 @@ fn jobs_say_what_happens_when_a_job_they_need_is_skipped() {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
-/// Only manual v1 dispatches can execute this smoke workflow.
-#[test]
-fn colossus_smoke_is_manual_and_v1_only() {
-    let workflow: Value = serde_saphyr::from_str(
+fn colossus_workflow() -> Value {
+    serde_saphyr::from_str(
         &fs::read_to_string(repository().join(".github/workflows/colossus-connectivity.yml"))
             .unwrap(),
     )
-    .unwrap();
+    .unwrap()
+}
+
+/// Only manual v1 dispatches can execute jobs on the leased machine's runner,
+/// and a dispatch selects one of them.
+#[test]
+fn colossus_runs_are_manual_and_v1_only() {
+    let workflow = colossus_workflow();
     let events = workflow["on"]
         .as_object()
         .expect("explicit workflow events");
-    assert_eq!(events.len(), 1, "the smoke test must be manual only");
-    assert!(events.contains_key("workflow_dispatch"));
+    assert_eq!(events.len(), 1, "the pilot runner takes manual runs only");
+    let suite = &workflow["on"]["workflow_dispatch"]["inputs"]["suite"];
+    assert_eq!(suite["type"], "choice");
+    assert_eq!(suite["options"], serde_json::json!(["smoke", "bundle"]));
+    assert_eq!(suite["default"], "smoke");
     let jobs = workflow["jobs"].as_object().expect("workflow jobs");
-    assert_eq!(jobs.len(), 1, "only the smoke job may execute");
-    let job = jobs.values().next().unwrap();
     assert_eq!(
-        job["if"],
-        "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'",
-        "only a manual dispatch on the canonical v1 branch may execute"
+        jobs.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["bundle", "smoke"]
     );
-    assert_eq!(job["runs-on"], "colossus-gb300-pilot");
-    assert_eq!(job["timeout-minutes"], 2);
-}
-
-/// The smoke test performs no checkout, secret handling, or hardware commands.
-#[test]
-fn colossus_smoke_executes_only_true_without_credentials() {
-    let source =
-        fs::read_to_string(repository().join(".github/workflows/colossus-connectivity.yml"))
-            .unwrap();
-    let workflow: Value = serde_saphyr::from_str(&source).unwrap();
+    for (name, job) in jobs {
+        assert_eq!(
+            job["if"],
+            format!(
+                "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == '{name}'"
+            ),
+            "only a manual dispatch on the canonical v1 branch may execute {name}"
+        );
+    }
+    assert!(
+        !workflow.to_string().contains("secrets"),
+        "no secret references or inherited secrets"
+    );
     assert_eq!(workflow["permissions"], serde_json::json!({}));
     assert!(
         workflow["env"].is_null(),
         "no workflow environment variables"
     );
-    assert!(!source.contains("secrets."), "no secret references");
-    let job = workflow["jobs"]
-        .as_object()
-        .unwrap()
-        .values()
-        .next()
-        .unwrap();
+}
+
+/// The smoke test performs no checkout, secret handling, or hardware commands.
+#[test]
+fn colossus_smoke_executes_only_true_without_credentials() {
+    let workflow = colossus_workflow();
+    let job = &workflow["jobs"]["smoke"];
+    assert_eq!(job["runs-on"], "colossus-gb300-pilot");
+    assert_eq!(job["timeout-minutes"], 2);
     assert!(job["permissions"].is_null(), "inherit empty permissions");
     assert!(
         job["environment"].is_null(),
@@ -149,6 +158,54 @@ fn colossus_smoke_executes_only_true_without_credentials() {
     assert!(steps[0]["env"].is_null(), "no step environment variables");
     assert_eq!(steps[0]["shell"], "bash");
     assert_eq!(steps[0]["run"], "true");
+}
+
+/// The bundle suite runs the Linux ARM64 bundle, unit, contract, and
+/// integration jobs on the pilot runner, to compare its timings with the
+/// hosted runners'. It reads the shared Rust caches but never writes them, so
+/// hosted v1 runs never restore artifacts built on the leased machine.
+#[test]
+fn colossus_bundle_runs_linux_arm64_ci_without_writing_shared_caches() {
+    let workflow = colossus_workflow();
+    let job = &workflow["jobs"]["bundle"];
+    assert_eq!(job["uses"], "./.github/workflows/bundle-platform.yml");
+    assert_eq!(
+        job["permissions"],
+        serde_json::json!({"contents": "read", "packages": "read"}),
+        "only what bundle-platform.yml declares"
+    );
+    assert_eq!(
+        job["with"],
+        serde_json::json!({
+            "runner": "colossus-gb300-pilot",
+            "platform": "linux_arm64",
+            "bundle": true,
+            "lifecycle": true,
+            "e2e": false,
+            "save-cache": false,
+        })
+    );
+
+    let platform: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/bundle-platform.yml")).unwrap(),
+    )
+    .unwrap();
+    let input = &platform["on"]["workflow_call"]["inputs"]["save-cache"];
+    assert_eq!(input["type"], "boolean");
+    assert_eq!(input["default"], true, "CI / Bundle keeps saving on v1");
+    let mut setups = 0;
+    for (name, job) in platform["jobs"].as_object().unwrap() {
+        for step in job["steps"].as_array().into_iter().flatten() {
+            if step["uses"] == "./.github/actions/setup-rust" {
+                setups += 1;
+                assert_eq!(
+                    step["with"]["save-cache"], "${{ inputs.save-cache }}",
+                    "{name} must honor save-cache"
+                );
+            }
+        }
+    }
+    assert!(setups > 0, "bundle-platform.yml sets up Rust");
 }
 
 /// The organization allows GitHub's and NVIDIA's actions and verified

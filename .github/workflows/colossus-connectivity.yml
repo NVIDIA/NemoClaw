@@ -4,6 +4,14 @@ name: E2E / Colossus runner connectivity
 
 on:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: >-
+          smoke runs `true`; bundle runs the Linux ARM64 bundle, unit, contract,
+          and integration jobs, to compare their timings with the hosted runners'.
+        type: choice
+        options: [smoke, bundle]
+        default: smoke
 
 permissions: {}
 
@@ -13,10 +21,28 @@ concurrency:
 
 jobs:
   smoke:
-    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == 'smoke'
     runs-on: colossus-gb300-pilot
     timeout-minutes: 2
     steps:
       - name: Confirm job execution
         shell: bash
         run: "true"
+
+  # The pilot runner takes one job at a time, so these jobs run one after
+  # another, where hosted runners run the test partitions in parallel. The jobs
+  # restore the hosted runners' Rust caches but never save them, so hosted runs
+  # never restore artifacts built on the leased machine.
+  bundle:
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == 'bundle'
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/bundle-platform.yml
+    with:
+      runner: colossus-gb300-pilot
+      platform: linux_arm64
+      bundle: true
+      lifecycle: true
+      e2e: false
+      save-cache: false
