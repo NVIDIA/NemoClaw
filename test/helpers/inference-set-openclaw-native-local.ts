@@ -24,13 +24,13 @@ export const attachment = {
   providerId: "owned-local-provider",
 };
 
-export function fixture(selectedAttachment = attachment) {
+export function fixture(selectedAttachment: NativeLocalProviderAttachment = attachment) {
   const config: ConfigObject = {
     agents: { defaults: { model: { primary: "inference/old-model" } } },
     models: {
       providers: {
         inference: {
-          baseUrl: binding.endpointUrl,
+          baseUrl: selectedAttachment.endpointUrl,
           apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
           api: "openai-completions",
           models: [{ id: "old-model" }],
@@ -44,9 +44,9 @@ export function fixture(selectedAttachment = attachment) {
       name: "alpha",
       agent: "openclaw",
       gatewayName: "nemoclaw",
-      provider: binding.provider,
+      provider: selectedAttachment.provider,
       model: "old-model",
-      endpointUrl: binding.endpointUrl,
+      endpointUrl: selectedAttachment.endpointUrl,
       preferredInferenceApi: "openai-completions",
       nativeLocalProviderAttachment: selectedAttachment,
     },

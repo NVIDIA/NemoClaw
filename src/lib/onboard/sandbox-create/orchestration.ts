@@ -91,6 +91,7 @@ import {
   resolveProviderAdapter,
   usesNativeNvidiaProvider,
   usesNativeHostedProvider,
+  requiresNativeHostedBasePolicy,
   validateAttachedNativeProfileBeforeSandboxCreation,
   validateAttachedOwnedProfilesBeforeSandboxCreation,
   validateAttachedHermesToolGatewayProfileBeforeSandboxCreation,
@@ -384,16 +385,17 @@ export function selectRebuildCreatePolicy(
   requiredNetworkPolicyKeys: readonly string[],
   removedNetworkPolicyKeys: readonly string[],
   requiredNetworkPolicyPresetNames: readonly string[],
-  messagingAgent: string | null | undefined,
+  agentName: string | null | undefined,
   messagingConfig: MessagingChannelConfig | null | undefined,
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
   policySource?: string,
   inferenceProvider: string | null = null,
+  nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"],
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
-      agent: messagingAgent,
+      agent: agentName,
       sandboxName,
       messagingConfig,
     });
@@ -406,13 +408,22 @@ export function selectRebuildCreatePolicy(
   });
   return materializeRebuildPolicyHandoff({
     sandboxName,
+    agentName,
     livePolicyPath: policySourcePath,
     ...(policySource === undefined ? {} : { livePolicySource: policySource }),
     replacementPolicy: generatedPolicy,
+    inferenceProvider,
+    nativeHostedProviderAttachment,
     requiredNetworkPolicyKeys: [
       ...requiredNetworkPolicyKeys,
       ...(usesNativeNvidiaProvider(inferenceProvider) ? ["native_nvidia_inference"] : []),
-      ...(usesNativeHostedProvider(inferenceProvider) ? ["native_hosted_inference"] : []),
+      ...(requiresNativeHostedBasePolicy(
+        inferenceProvider,
+        nativeHostedProviderAttachment,
+        agentName,
+      )
+        ? ["native_hosted_inference"]
+        : []),
     ],
     removedNetworkPolicyKeys: [
       ...removedNetworkPolicyKeys,
@@ -3035,6 +3046,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildPolicyProviderAuthority,
           rebuildPolicySource?.document,
           resolvedCreateIntent.inferenceProvider,
+          resolvedCreateIntent.nativeHostedProviderAttachment,
         )
       : materializedInitialSandboxPolicy;
     const createRequestPlan = selectRebuildCreateRequestPlan({

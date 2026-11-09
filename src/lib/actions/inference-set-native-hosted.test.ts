@@ -630,3 +630,128 @@ describe("custom native inference selection", () => {
     );
   });
 });
+
+describe("custom NVIDIA to native NVIDIA transition", () => {
+  const custom = customNativeProvider({
+    provider: "compatible-endpoint",
+    api: "openai-completions",
+    endpointUrl: "https://integrate.api.nvidia.com/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    allowedIps: ["8.8.8.8"],
+  });
+  const native = fixedNativeProvider("nvidia-prod")!;
+
+  async function onboarded() {
+    const state = fixture([custom]);
+    const { calls, attached, entry, authorities, deps } = state;
+    // Seed the same owned custom provider receipt produced by onboarding.
+    await calls.createProvider({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      name: custom.providerName,
+      type: custom.profileId,
+      fromExisting: false,
+      credentials: [],
+      config: [],
+    });
+    const receipt: NativeProviderAttachment = {
+      schemaVersion: 1,
+      providerName: custom.providerName,
+      profileId: custom.profileId,
+      providerId: `id-${custom.providerName}`,
+      endpointUrl: custom.endpointUrl,
+      allowedIps: custom.allowedIps,
+      custom: custom.custom,
+    };
+    Object.assign(entry, {
+      provider: "compatible-endpoint",
+      model: "custom-model",
+      endpointUrl: custom.endpoint,
+      nativeHostedProviderAttachment: receipt,
+    });
+    authorities.set(`nemoclaw/${custom.providerName}`, receipt);
+    attached.get("alpha")!.add(custom.providerName);
+    const attach = calls.attachProvider.getMockImplementation()!;
+    calls.attachProvider.mockImplementation(async (request) => {
+      const conflict =
+        request.providerName === native.providerName ? custom.providerName : native.providerName;
+      expect(attached.get(request.sandboxName)!.has(conflict), "conflicting endpoint pins").toBe(
+        false,
+      );
+      return attach(request);
+    });
+    return {
+      ...state,
+      select: () => runInferenceSet({ provider: "nvidia-prod", model: "native-model" }, deps),
+    };
+  }
+
+  it("replaces custom access before attaching the native provider (#14013)", async () => {
+    const { select, entry, attached, calls } = await onboarded();
+    await select();
+    expect([...attached.get("alpha")!]).toEqual([native.providerName]);
+    expect([...attached.get("beta")!]).toEqual(["unrelated-provider"]);
+    expect(entry.provider).toBe("nvidia-prod");
+    expect(entry.nativeHostedProviderAttachment).toBeUndefined();
+    expect(calls.detachProvider).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        providerName: custom.providerName,
+      }),
+    );
+  });
+
+  const failures: readonly {
+    phase: string;
+    fail: (state: Awaited<ReturnType<typeof onboarded>>) => void;
+  }[] = [
+    {
+      phase: "attach",
+      fail: ({ calls }) => {
+        calls.attachProvider.mockResolvedValueOnce({
+          ok: false,
+          error: { kind: "command", reason: "failed", message: "attachment rejected" },
+        });
+      },
+    },
+    {
+      phase: "probe",
+      fail: ({ deps }) => {
+        deps.calls.probeSandboxRoute.mockResolvedValue({
+          ok: false,
+          detail: "verification rejected",
+          httpStatus: 401,
+        });
+      },
+    },
+    {
+      phase: "publish",
+      fail: ({ deps }) => {
+        deps.updateSandbox = () => false;
+      },
+    },
+  ];
+
+  it.each(failures)("restores custom access after a failed $phase (#14013)", async ({ fail }) => {
+    const state = await onboarded();
+    const { select, entry, attached } = state;
+    const previous = structuredClone(entry);
+    fail(state);
+    await expect(select()).rejects.toThrow();
+    expect(entry).toEqual(previous);
+    expect([...attached.get("alpha")!]).toEqual([custom.providerName]);
+    expect([...attached.get("beta")!]).toEqual(["unrelated-provider"]);
+  });
+
+  it("does not attach native access when custom detachment fails (#14013)", async () => {
+    const { select, entry, attached, calls } = await onboarded();
+    const previous = structuredClone(entry);
+    calls.detachProvider.mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "detachment rejected" },
+    });
+    await expect(select()).rejects.toThrow("Could not detach");
+    expect(calls.attachProvider).not.toHaveBeenCalled();
+    expect(entry).toEqual(previous);
+    expect([...attached.get("alpha")!]).toEqual([custom.providerName]);
+  });
+});

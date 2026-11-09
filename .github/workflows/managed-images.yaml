@@ -64,6 +64,7 @@ on:
       - "test/package-contract/channels/hermes-discord-runtime.test.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
       - "test/e2e/fixtures/hermes-switchyard-package.ts"
+      - "test/e2e/fixtures/hermes-crash-capture.ts"
       - "test/e2e/live/hermes-root-entrypoint-smoke.test.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
@@ -980,6 +981,27 @@ jobs:
             --image "$IMAGE_REFERENCE" \
             --platform "$PLATFORM"
 
+      - name: Prepare passive Hermes native crash capture
+        id: hermes-crash-capture
+        if: matrix.agent == 'hermes' && matrix.arch == 'amd64'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v gdb >/dev/null; then
+            if ! sudo apt-get update || ! sudo apt-get install -y --no-install-recommends gdb; then
+              echo '::warning::Debugger installation failed; Hermes qualification will run without crash capture.'
+              exit 0
+            fi
+          fi
+          umask 077
+          saved="$RUNNER_TEMP/nemoclaw-hermes-original-core-pattern"
+          test ! -e "$saved"
+          test ! -L "$saved"
+          cp /proc/sys/kernel/core_pattern "$saved"
+          printf '%s\n' '/tmp/nemoclaw-hermes-crash/core.%p' | sudo tee /proc/sys/kernel/core_pattern >/dev/null
+          printf '%s\n' 'enabled=true' >> "$GITHUB_OUTPUT"
+
       - name: Qualify Hermes root entrypoint and Switchyard package
         if: matrix.agent == 'hermes'
         timeout-minutes: 30
@@ -987,9 +1009,42 @@ jobs:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
           NEMOCLAW_HERMES_TEST_IMAGE: ${{ steps.contract.outputs.reference }}
           NEMOCLAW_RUN_LIVE_E2E: "1"
+          NEMOCLAW_HERMES_CRASH_CAPTURE: ${{ matrix.arch == 'amd64' && steps.hermes-crash-capture.outputs.enabled == 'true' && '1' || '0' }}
         run: |
           npx --no-install vitest run --project e2e-live \
             test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+
+      - name: Restore core settings and remove private Hermes crash memory
+        if: always() && matrix.agent == 'hermes' && matrix.arch == 'amd64'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          saved="$RUNNER_TEMP/nemoclaw-hermes-original-core-pattern"
+          if [ -f "$saved" ]; then
+            if ! sudo tee /proc/sys/kernel/core_pattern <"$saved" >/dev/null; then
+              echo '::error::Failed to restore the original core pattern'
+              status=1
+            # Read procfs through a pipe: its reported file size can be zero.
+            elif ! cat /proc/sys/kernel/core_pattern | cmp -s "$saved" -; then
+              echo '::error::Failed to verify the restored core pattern'
+              status=1
+            else
+              rm -f "$saved" || status=1
+            fi
+          fi
+          find "$RUNNER_TEMP" -maxdepth 1 -type d -name 'nemoclaw-hermes-crash-*' -exec rm -rf -- {} + || status=1
+          if containers="$(docker ps -aq --filter label=io.nvidia.nemoclaw.hermes-crash-capture=1)"; then
+            if [ -n "$containers" ]; then
+              while IFS= read -r container; do
+                docker rm -f "$container" || status=1
+              done <<<"$containers"
+            fi
+          else
+            status=1
+          fi
+          exit "$status"
 
       - name: Upload Hermes package qualification artifacts
         if: always() && matrix.agent == 'hermes'

@@ -62,7 +62,7 @@ The following endpoint groups are allowed by default:
 
 | Policy | Endpoints | Binaries | Rules |
 | --- | --- | --- | --- |
-| `nvidia` | `integrate.api.nvidia.com:443` | `/usr/local/bin/openclaw` | Retained baseline compatibility rule: POST to inference and embedding paths, GET to model listings. NVIDIA Endpoints selection uses the narrower attached-provider rule described below. |
+| `nvidia` | `integrate.api.nvidia.com:443` | `/usr/local/bin/openclaw` | Baseline compatibility rule: POST to inference and embedding paths, GET to model listings. Attached NVIDIA providers use the rules described below. |
 | `clawhub` | `clawhub.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET, POST, including scoped package paths |
 | `openclaw_api` | `openclaw.ai:443`, `catalog.openclaw.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET and POST to `openclaw.ai`; GET only to `catalog.openclaw.ai` |
 | `openclaw_docs` | `docs.openclaw.ai:443` | `/usr/local/bin/openclaw` | GET only |
@@ -90,10 +90,25 @@ When you select NVIDIA Endpoints, NemoClaw attaches the `nemoclaw-nvidia-prod-v1
 This attached provider is the effective NVIDIA Endpoints route. Its profile permits only `GET /v1/models` and `POST /v1/chat/completions` at `integrate.api.nvidia.com:443` from the listed agent-runtime and readiness-verification binaries.
 The NVIDIA API key remains in OpenShell provider state and does not enter the sandbox.
 
+<AgentOnly variant="openclaw">
+
+When an attached custom provider uses `https://integrate.api.nvidia.com/v1`, NemoClaw removes the `nvidia` rule only if it matches the unchanged bundled rule.
+Operator-edited rules remain authoritative and must pass endpoint-pin validation.
+
+</AgentOnly>
+
 OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider also use sandbox-attached native providers.
 NemoClaw derives the `native_hosted_inference` policy from the selected provider profile, restricting endpoint hosts, request paths, methods, and agent-runtime binaries.
 OpenShell replaces credential placeholders at that boundary; raw provider credentials remain outside the sandbox.
 Refer to [Inference](#inference) for the local-provider and custom-endpoint routing rules.
+
+<AgentOnly variant="openclaw">
+
+An attached custom provider for `https://integrate.api.nvidia.com/v1` owns its endpoint pins without a duplicate `native_hosted_inference` base rule.
+During rebuild, NemoClaw removes an older base rule only if it matches the generated provider policy.
+If the rule differs, rebuild stops before sandbox replacement and leaves the live policy unchanged.
+
+</AgentOnly>
 
 The baseline HTTPS endpoint groups above use TLS termination on port `443`. Local inference and other explicit policy entries can use different ports.
 

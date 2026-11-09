@@ -3,7 +3,6 @@
 
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
-import { randomUUID } from "node:crypto";
 import { buildSandboxInferenceChatCommand } from "../fixtures/inference-adapter.ts";
 import os from "node:os";
 import path from "node:path";
@@ -65,11 +64,9 @@ import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json
 import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
 import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 import {
-  completedAgentRunId,
+  nativePluginAgentInvocationOutcome,
   nativePluginPresent,
-  nativeToolCallOutcome,
   NATIVE_PLUGIN_ID,
-  nativeToolName,
   nativePluginWriteScript,
   type NativePluginVersion,
 } from "../fixtures/native-plugin-evidence.ts";
@@ -229,49 +226,20 @@ async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResu
   return status.value;
 }
 
-/** Exercise the plugin through normal agent admission and inspect host-owned execution records. */
 async function invokeNativePlugin(
   sandbox: SandboxClient,
   version: NativePluginVersion,
   artifactName: string,
 ): Promise<void> {
-  const toolName = nativeToolName(version);
-  const result = await sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "openclaw",
-      "agent",
-      "--agent",
-      "main",
-      "--json",
-      "--thinking",
-      "off",
-      "--session-id",
-      `e2e-plugin-${randomUUID()}`,
-      "-m",
-      `Run the local ${toolName} tool once with no arguments.`,
-    ],
-    { artifactName, env: env(), timeoutMs: FIRST_TURN_TIMEOUT_MS },
-  );
-  await captureNativePluginFailureReadiness(sandbox, result, SANDBOX_NAME, artifactName, env());
-  expect(result.exitCode, resultText(result)).toBe(0);
-  const runId = completedAgentRunId(result.stdout);
-  // Audit persistence is asynchronous. Poll only the read-only page, never replay the agent turn.
-  const audit = await pollUntil({
-    artifactPrefix: `${artifactName}-audit`,
-    attempts: 5,
-    delayMs: 1_000,
-    probe: async (_attempt, auditArtifact) => {
-      const page = await sandbox.exec(
-        SANDBOX_NAME,
-        ["openclaw", "audit", "--run", runId, "--kind", "tool_action", "--limit", "100", "--json"],
-        { artifactName: auditArtifact, env: env(), timeoutMs: 30_000 },
-      );
-      return page.exitCode === 0 ? nativeToolCallOutcome(page.stdout, runId, toolName) : "failed";
-    },
-    accept: (outcome) => outcome !== "pending",
+  const outcome = await nativePluginAgentInvocationOutcome(sandbox, {
+    sandboxName: SANDBOX_NAME,
+    version,
+    artifactName,
+    env: env(),
+    turnTimeoutMs: FIRST_TURN_TIMEOUT_MS,
+    audit: { attempts: 5, delayMs: 1_000, timeoutMs: 30_000 },
   });
-  expect(audit.value, "the plugin tool must start and succeed in this agent run").toBe("succeeded");
+  expect(outcome, "the plugin tool must start and succeed in this agent run").toBe("succeeded");
 }
 
 async function exerciseNativeOpenClawPluginVersion(
@@ -1053,6 +1021,7 @@ test(
           cwd: REPO_ROOT,
           env: env({
             ...hosted.env,
+            NPM_CONFIG_PREFIX: path.join(os.homedir(), ".npm-global"),
             NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
             ...(coldOnboard ? { NEMOCLAW_TRACE_FILE: coldOnboard.traceFile } : {}),
           }),

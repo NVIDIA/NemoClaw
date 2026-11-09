@@ -126,12 +126,52 @@ Endpoint-shape and shared-gateway compatibility checks still apply.
 
 ## Recreate a Deep Agents Sandbox
 
-Deep Agents uses fresh sandbox recreation for provider changes.
-The recreation validates the provider and rewrites `/sandbox/.deepagents/config.toml` with the OpenShell route.
+Named recreation replaces the Deep Agents sandbox and restores its saved native home, including `/sandbox/.deepagents/config.toml`.
+It preserves saved model and endpoint preferences.
+If those preferences conflict with the requested provider or model, validation stops before NemoClaw updates the registry.
+The replacement still exists, but its live route is unverified.
+Keep the backup and follow the printed recovery instructions.
+Do not rebuild that replacement without verified registry metadata.
+
+Use named recreation when you need a replacement image with the saved preferences:
 
 ```bash
 $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
+
+## Validate a Different Deep Agents Selection
+
+To select a different provider or model without restoring existing preferences, use a new sandbox name.
+Review [shared-gateway effects](#account-for-shared-gateways) before selecting a shared route.
+Record your existing default sandbox's name before starting.
+Onboarding selects the new sandbox as the default before final verification.
+A later verification failure can leave that default changed.
+Onboard the new sandbox and choose the requested provider and model:
+
+```bash
+$$nemoclaw onboard --fresh --name <new-sandbox-name>
+```
+
+This creates a separate sandbox and native configuration.
+After the onboarding attempt, restore your existing default before testing the new sandbox:
+
+```bash
+$$nemoclaw use <existing-sandbox-name>
+```
+
+If onboarding failed, follow the printed recovery instructions while keeping the existing sandbox as the default.
+After successful onboarding, inspect the new sandbox's route:
+
+```bash
+$$nemoclaw <new-sandbox-name> status
+$$nemoclaw <new-sandbox-name> inference get
+```
+
+Require the output to report the requested provider and model.
+Complete [Verify the Sandbox Inference Route](../validate-inference/verify-inference-route) using the new sandbox name for each command.
+Use the named `inference get` command above instead of the default-sandbox form.
+After validation succeeds, follow [Choose the Default Sandbox](../../manage-sandboxes/operate-sandboxes/run-deep-agents-code#choose-the-default-sandbox) to select it again.
+If validation fails, keep the restored default and follow the reported recovery instructions.
 
 </AgentOnly>
 
