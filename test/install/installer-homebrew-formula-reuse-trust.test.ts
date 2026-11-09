@@ -13,7 +13,7 @@ const INSTALLER_SOURCE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
   "utf8",
 );
-const CURRENT_TEMPLATE_DIGEST = "1173e0c7bd122319069d09afd879b1ab48019893a98443c905784f3868beff3f";
+const CURRENT_TEMPLATE_DIGEST = "f9e5f187d343ed148f10a6a6e990e7a40028d231932b78c21d413c7b90e8018b";
 const tempDirs: string[] = [];
 
 afterEach(() => {

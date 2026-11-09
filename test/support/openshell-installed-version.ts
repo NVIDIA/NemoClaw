@@ -36,6 +36,18 @@ export type InstalledOpenShellOptions = {
 export function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
+/** Keep real installer downloads inside the fixture on BSD and GNU hosts. */
+export function writeFixtureMktemp(fakeBin: string, fixtureRoot: string): void {
+  const template = path.join(fixtureRoot, "download.XXXXXX").replaceAll("'", "'\\''");
+  writeExecutable(
+    path.join(fakeBin, "mktemp"),
+    `#!/usr/bin/env bash
+if [ "$#" -eq 1 ] && [ "$1" = "-d" ]; then
+  exec /usr/bin/mktemp -d '${template}'
+fi
+exec /usr/bin/mktemp "$@"`,
+  );
+}
 export function createInstalledOpenShellFixture(
   version: string,
   extraEnv: NodeJS.ProcessEnv = {},
@@ -63,6 +75,8 @@ export function createInstalledOpenShellFixture(
     const driverBin = options.driverLocation ? path.join(tmp, "driver-bin") : fakeBin;
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(driverBin, { recursive: true });
+
+    writeFixtureMktemp(fakeBin, tmp);
 
     writeExecutable(
       path.join(fakeBin, "uname"),

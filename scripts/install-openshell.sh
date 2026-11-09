@@ -147,6 +147,10 @@ prepare_openshell_install_directory() {
       && user_local_executable_directory_safe "$active_dir"; then
       printf '%s\n' "$active_dir"
       return 0
+    elif [[ "$active_dir" == /usr/local/bin && "$mode" != upgrade && "${NEMOCLAW_NON_INTERACTIVE:-}" != 1 ]] \
+      && [ -t 0 ] && user_local_executable_directory_safe "$active_dir"; then
+      printf '%s\n' "$active_dir"
+      return 0
     fi
   else
     target_dir=/usr/local/bin

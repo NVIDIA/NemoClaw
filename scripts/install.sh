@@ -2603,7 +2603,6 @@ maybe_install_openshell_during_install() {
     esac
   elif [[ -n "${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR:-}" ]]; then
     export NEMOCLAW_OPENSHELL_BIN="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR}/openshell"
-    export NEMOCLAW_OPENSHELL_GATEWAY_BIN="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR}/openshell-gateway"
     export PATH="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR}:$PATH"
   else
     prefer_user_local_openshell

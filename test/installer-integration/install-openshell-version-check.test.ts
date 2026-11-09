@@ -12,6 +12,7 @@ import {
   createInstalledOpenShellFixture,
   type InstalledOpenShellOptions,
   writeExecutable,
+  writeFixtureMktemp,
 } from "../support/openshell-installed-version";
 
 import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json";
@@ -321,6 +322,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       const downloadLog = path.join(tmp, "downloads.log");
       const brewLog = path.join(tmp, "brew.log");
       fs.mkdirSync(fakeBin);
+      writeFixtureMktemp(fakeBin, tmp);
 
       writeExecutable(
         path.join(fakeBin, "uname"),
@@ -767,6 +769,72 @@ function stat {
     },
   );
 
+  it("replaces the safe nonwritable active system binary in interactive mode (#14268)", () => {
+    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+    const systemBin = path.join(tmp, "system-bin");
+    fs.mkdirSync(systemBin);
+    try {
+      fs.renameSync(path.join(fakeBin, "openshell"), path.join(systemBin, "openshell"));
+      const sudoLog = path.join(tmp, "sudo.log");
+      writeExecutable(
+        path.join(fakeBin, "sudo"),
+        `#!/usr/bin/env bash
+[[ "$1" = install && "\${@: -1}" == "$HOME/system-bin/"* ]] || exit 97
+printf '%s\\n' "$*" >> "$HOME/sudo.log"
+chmod u+w "$HOME/system-bin"
+"$@"
+status=$?
+chmod 555 "$HOME/system-bin"
+exit "$status"
+`,
+      );
+      const bashEnv = path.join(tmp, "interactive-safe-system.sh");
+      fs.writeFileSync(
+        bashEnv,
+        `function [ {
+  if [[ "$#" = 3 && "$1" = -t && "$2" = 0 ]]; then return 0; fi
+  if [[ "$#" = 4 && "$1" = '!' && "$2" = -t && "$3" = 0 ]]; then return 1; fi
+  builtin [ "$@"
+}
+function stat {
+  if [[ " $* " == *" $HOME/system-bin "* ]]; then printf '0 755\\n'; return 0; fi
+  command stat "$@"
+}
+`,
+      );
+      fs.chmodSync(systemBin, 0o555);
+      // Confine the system destination to the fixture before executing the real installer.
+      const installer = path.join(tmp, "install-openshell.sh");
+      fs.writeFileSync(
+        installer,
+        fs.readFileSync(SCRIPT, "utf8").replaceAll("/usr/local/bin", systemBin),
+      );
+      const result = spawnSync("bash", [installer], {
+        env: {
+          ...process.env,
+          BASH_ENV: bashEnv,
+          HOME: tmp,
+          XDG_BIN_HOME: "",
+          NEMOCLAW_NON_INTERACTIVE: "",
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${systemBin}:${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const active = spawnSync(path.join(systemBin, "openshell"), ["--version"], {
+        encoding: "utf8",
+      });
+      expect(active.status).toBe(0);
+      expect(active.stdout.trim()).toBe(`openshell ${REQUIRED_OPENSHELL_VERSION}`);
+      expect(fs.readFileSync(sudoLog, "utf8")).toContain(` ${path.join(systemBin, "openshell")}`);
+      expect(fs.existsSync(path.join(tmp, ".local", "bin", "openshell"))).toBe(false);
+    } finally {
+      fs.chmodSync(systemBin, 0o755);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("selects the prepared replacement when its directory already occurs later on PATH (#14268)", () => {
     const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
     try {
@@ -786,7 +854,7 @@ install_nemoclaw_openshell_gateway_user_service() { :; }
 maybe_install_openshell_during_install force
 [ "$(command -v openshell)" = "$2/openshell" ]
 [ "$NEMOCLAW_OPENSHELL_BIN" = "$2/openshell" ]
-[ "$NEMOCLAW_OPENSHELL_GATEWAY_BIN" = "$2/openshell-gateway" ]
+[ "$(resolve_openshell_gateway_bin_for_service)" = "$2/openshell-gateway" ]
 `,
           "test",
           path.resolve(import.meta.dirname, "../.."),
@@ -959,6 +1027,7 @@ function stat {
       const installLog = path.join(tmp, "install.log");
       fs.mkdirSync(activeBin);
       fs.mkdirSync(fakeBin);
+      writeFixtureMktemp(fakeBin, tmp);
 
       writeExecutable(
         path.join(activeBin, "openshell"),
@@ -1094,6 +1163,7 @@ exit 0`,
       const tarLog = path.join(tmp, "tar.log");
       const installLog = path.join(tmp, "install.log");
       fs.mkdirSync(fakeBin);
+      writeFixtureMktemp(fakeBin, tmp);
 
       writeExecutable(
         path.join(fakeBin, "uname"),
