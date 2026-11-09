@@ -79,6 +79,7 @@ fn runtime_targets_with_plans(
                 ("chart".into(), crate::kubernetes::gateway::CHART.into()),
             ]),
         });
+        targets.extend(crate::kubernetes::service::target(document));
         return Ok(targets);
     }
     let Some(settings) = document.spec.gateway.as_managed() else {
@@ -143,10 +144,11 @@ pub(crate) fn runtime_graph(
         graph.as_object_mut().unwrap().remove("output");
         graph["resource"] = json!({});
         let targets = runtime_targets_with_plans(document, generations, &service_plans)?;
-        for target in targets
-            .iter()
-            .filter(|target| target.kind != "helm_release")
-        {
+        // The Helm release and the exposure Service are declared below.
+        for target in targets.iter().filter(|target| {
+            target.kind != "helm_release"
+                && target.kind != crate::kubernetes::service::RESOURCE_TYPE
+        }) {
             // The environment list travels as JSON in the target row.
             let mut attributes = json!({});
             for (name, value) in &target.values {
@@ -179,6 +181,7 @@ pub(crate) fn runtime_graph(
             "managed Kubernetes gateway settings are missing",
         ))?;
         crate::kubernetes::gateway::configure(&mut graph, &spec)?;
+        crate::kubernetes::service::configure(&mut graph, &spec)?;
         return Ok((graph, targets));
     }
     // Readiness follows gateway reconciliation, including restart or replacement.

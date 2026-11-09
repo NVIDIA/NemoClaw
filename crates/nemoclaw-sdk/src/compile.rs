@@ -404,6 +404,13 @@ pub(crate) fn deployment_graph(
     } else {
         Vec::new()
     };
+    // Both reads dial an exposed gateway's endpoint, which may answer a
+    // little after its Service exists.
+    if let Some(wait) = crate::kubernetes::service::read_wait(document) {
+        for read in ["current", "apply"] {
+            graph["data"]["openshell_gateway"][read]["wait_timeout_seconds"] = json!(wait);
+        }
+    }
     Ok(Compiled {
         graph,
         objects,
@@ -483,7 +490,8 @@ fn join(graph: &mut Value, mut runtime: Value) -> Result<(), crate::Error> {
     if let Some(current) = current {
         reads["current"] = current;
     } else {
-        // A Kubernetes gateway's read waits for its installation instead.
+        // A Kubernetes gateway's read waits for its installation instead, and
+        // an exposed gateway's for the Service it is dialed through.
         let installed: Vec<Value> = gates
             .iter()
             .filter(|gate| {
@@ -491,7 +499,7 @@ fn join(graph: &mut Value, mut runtime: Value) -> Result<(), crate::Error> {
                     address.starts_with(&format!(
                         "{}.",
                         resource_type(crate::kubernetes::GATEWAY_KIND)
-                    ))
+                    )) || address == crate::kubernetes::service::ADDRESS
                 })
             })
             .cloned()

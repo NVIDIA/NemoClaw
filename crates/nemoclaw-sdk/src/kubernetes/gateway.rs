@@ -98,6 +98,21 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             "limits": {"cpu": "1", "memory": "1Gi"},
         },
     });
+    // An exposed gateway's certificate names the endpoint host clients dial.
+    // The chart's certificate always names 127.0.0.1 and in-cluster names.
+    if target.expose.is_some() {
+        let endpoint = url::Url::parse(&spec.settings.endpoint)
+            .map_err(|_| Error::State("invalid managed Kubernetes endpoint"))?;
+        match endpoint.host() {
+            Some(url::Host::Domain(name)) => {
+                values["pkiInitJob"]["serverDnsNames"] = json!([name]);
+            }
+            Some(url::Host::Ipv4(address)) if !address.is_loopback() => {
+                values["pkiInitJob"]["serverIpAddresses"] = json!([address.to_string()]);
+            }
+            _ => {}
+        }
+    }
     if !target.image_pull_secrets.is_empty() {
         values["imagePullSecrets"] = json!(
             target

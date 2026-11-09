@@ -4,7 +4,7 @@
 //! Service, at the endpoint clients dial.
 
 use nemoclaw_sdk::{
-    compile::{Generations, runtime_targets},
+    compile::{Generations, compile, compile_runtime, runtime_targets},
     config::{Document, schema},
 };
 use serde_json::{Value, json};
@@ -249,5 +249,244 @@ fn exposed_platform_resources_rebuild_from_their_attributes() {
             rebuilt += 1;
         }
         assert_eq!(rebuilt, 3);
+    }
+}
+
+fn generations() -> Generations {
+    [
+        "workspace",
+        "provider",
+        "sandbox",
+        "kubernetes_gateway",
+        "kubernetes_storage",
+    ]
+    .map(|kind| (kind.to_owned(), "a".repeat(32)))
+    .into()
+}
+
+fn chart_values(graph: &Value) -> Value {
+    serde_json::from_str(
+        graph["resource"]["helm_release"]["gateway"]["values"][0]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+/// Like Docker's published port, the Service forwards the endpoint's port to
+/// the gateway's own TLS listener, so TLS and client certificates pass
+/// through unchanged.
+#[test]
+fn a_node_port_publishes_the_endpoint_port_to_the_gateway_listener() {
+    let document = parse(&input(
+        "https://gateway.agents.example.com:30851",
+        Some(node_port()),
+    ))
+    .unwrap();
+    let graph = compile_runtime(&document, &generations(), "0.1.0").unwrap();
+    let release = format!("{}-gateway", document.workspace());
+    let service = &graph["resource"]["kubernetes_service_v1"]["gateway_exposure"];
+    assert_eq!(
+        service["metadata"],
+        json!([{
+            "name": format!("{release}-exposure"),
+            "namespace": "owned-gateway",
+            "labels": {"nemoclaw.nvidia.com/uid": document.metadata.uid}
+        }])
+    );
+    assert_eq!(
+        service["spec"],
+        json!([{
+            "type": "NodePort",
+            "selector": {"app.kubernetes.io/name": "openshell", "app.kubernetes.io/instance": release},
+            "port": [{
+                "name": "grpc", "protocol": "TCP", "port": 30851,
+                "node_port": 30851, "target_port": "grpc"
+            }]
+        }])
+    );
+    assert_eq!(
+        service["depends_on"],
+        json!(["openshell_kubernetes_auth.runtime"]),
+        "the Service is ready while Helm installs the gateway"
+    );
+    assert_eq!(
+        graph["terraform"]["required_providers"]["kubernetes"],
+        json!({"source": "registry.opentofu.org/hashicorp/kubernetes", "version": "= 3.4.0"})
+    );
+    assert_eq!(
+        graph["provider"]["kubernetes"],
+        json!({
+            "config_path": "${var.nemoclaw_kubeconfig}",
+            "config_context": "explicit-context",
+            "ignore_annotations": [".*"]
+        }),
+        "the Service uses Helm's cluster and leaves annotations controllers add"
+    );
+    assert!(
+        runtime_targets(&document, &generations())
+            .unwrap()
+            .iter()
+            .any(
+                |target| target.address == "kubernetes_service_v1.gateway_exposure"
+                    && target.values["name"] == format!("{release}-exposure")
+                    && target.values["namespace"] == "owned-gateway"
+            )
+    );
+}
+
+#[test]
+fn a_load_balancer_carries_its_source_ranges_and_annotations() {
+    let mut exposed = oidc(input(
+        "https://gateway.agents.example.com:443",
+        Some(load_balancer()),
+    ));
+    exposed["spec"]["gateway"]["kubernetes"]["expose"]["service"]["annotations"]["example.com/template"] =
+        json!("${not-an-expression}");
+    let document = parse(&exposed).unwrap();
+    let graph = compile_runtime(&document, &generations(), "0.1.0").unwrap();
+    let service = &graph["resource"]["kubernetes_service_v1"]["gateway_exposure"];
+    assert_eq!(
+        service["metadata"][0]["annotations"],
+        json!({
+            "example.com/template": "$${not-an-expression}",
+            "metallb.io/loadBalancerIPs": "10.20.0.40"
+        })
+    );
+    let spec = &service["spec"][0];
+    assert_eq!(spec["type"], "LoadBalancer");
+    assert_eq!(
+        spec["load_balancer_source_ranges"],
+        json!(["10.20.0.0/16", "192.0.2.7/32"])
+    );
+    assert_eq!(
+        spec["port"],
+        json!([{"name": "grpc", "protocol": "TCP", "port": 443, "target_port": "grpc"}]),
+        "Kubernetes allocates a LoadBalancer's node port"
+    );
+    assert_eq!(service["wait_for_load_balancer"], true);
+    assert_eq!(
+        service["lifecycle"],
+        json!({"ignore_changes": ["spec[0].load_balancer_class"]}),
+        "a class a controller sets on create does not force replacement"
+    );
+}
+
+/// Without a kubeconfig, the provider's client loads the pod's service
+/// account, as Helm's does.
+#[test]
+fn an_exposure_from_a_pod_names_no_kubeconfig() {
+    let mut exposed = input(
+        "https://gateway.agents.example.com:30851",
+        Some(node_port()),
+    );
+    let kubernetes = exposed["spec"]["gateway"]["kubernetes"]
+        .as_object_mut()
+        .unwrap();
+    kubernetes.remove("kubeconfig");
+    kubernetes.remove("context");
+    let graph = compile_runtime(&parse(&exposed).unwrap(), &generations(), "0.1.0").unwrap();
+    assert_eq!(
+        graph["provider"]["kubernetes"],
+        json!({"ignore_annotations": [".*"]})
+    );
+}
+
+#[test]
+fn without_exposure_the_graph_has_no_service_or_kubernetes_provider() {
+    let document = parse(&input("https://127.0.0.1:17671", None)).unwrap();
+    for graph in [
+        compile_runtime(&document, &generations(), "0.1.0").unwrap(),
+        compile(&document, &generations(), "0.1.0").unwrap(),
+    ] {
+        assert!(graph["resource"].get("kubernetes_service_v1").is_none());
+        assert!(graph["provider"].get("kubernetes").is_none());
+        assert!(
+            graph["terraform"]["required_providers"]
+                .get("kubernetes")
+                .is_none()
+        );
+        assert!(
+            graph["data"]["openshell_gateway"]["current"]
+                .get("wait_timeout_seconds")
+                .is_none()
+        );
+    }
+    assert!(
+        !runtime_targets(&document, &generations())
+            .unwrap()
+            .iter()
+            .any(|target| target.address.starts_with("kubernetes_service_v1."))
+    );
+}
+
+/// The gateway reads dial the endpoint once the Service exists. A node port
+/// is programmed within seconds; a load balancer's address may route only
+/// after its provider's health checks pass.
+#[test]
+fn the_gateway_reads_wait_for_the_exposure_service() {
+    for (exposed, wait) in [
+        (
+            input(
+                "https://gateway.agents.example.com:30851",
+                Some(node_port()),
+            ),
+            90,
+        ),
+        (
+            oidc(input(
+                "https://gateway.agents.example.com:443",
+                Some(load_balancer()),
+            )),
+            300,
+        ),
+    ] {
+        let graph = compile(&parse(&exposed).unwrap(), &generations(), "0.1.0").unwrap();
+        for read in ["current", "apply"] {
+            let read = &graph["data"]["openshell_gateway"][read];
+            assert!(
+                read["depends_on"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("kubernetes_service_v1.gateway_exposure")),
+                "{read}"
+            );
+            assert_eq!(read["wait_timeout_seconds"], wait, "{read}");
+        }
+    }
+}
+
+#[test]
+fn the_gateway_certificate_names_the_exposed_host() {
+    for (endpoint, field, host) in [
+        (
+            "https://gateway.agents.example.com:30851",
+            "serverDnsNames",
+            "gateway.agents.example.com",
+        ),
+        (
+            "https://192.0.2.10:30851",
+            "serverIpAddresses",
+            "192.0.2.10",
+        ),
+    ] {
+        let graph = compile_runtime(
+            &parse(&input(endpoint, Some(node_port()))).unwrap(),
+            &generations(),
+            "0.1.0",
+        )
+        .unwrap();
+        assert_eq!(
+            chart_values(&graph)["pkiInitJob"],
+            json!({"enabled": true, field: [host]})
+        );
+    }
+    // The chart's certificate always names 127.0.0.1.
+    for document in [
+        input("https://127.0.0.1:30851", Some(node_port())),
+        input("https://127.0.0.1:17671", None),
+    ] {
+        let graph = compile_runtime(&parse(&document).unwrap(), &generations(), "0.1.0").unwrap();
+        assert_eq!(chart_values(&graph)["pkiInitJob"], json!({"enabled": true}));
     }
 }
