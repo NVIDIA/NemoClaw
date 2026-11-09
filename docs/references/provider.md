@@ -856,7 +856,6 @@ Without `gpu`, its host observation reads every GPU on the engine and refuses a 
 `gpu` takes one GPU's UUID or index, as `container.gpu` does; with it, the observation reads only that GPU, through `nvidia-smi --id`.
 The data source then describes that one GPU, so list only the contracts of services whose `container.gpu` names it, and use one data source for each GPU.
 It can't check which GPU a contract's service uses, because a contract doesn't carry the service's `container` settings.
-`gpu` hasn't been run on a host with two or more GPUs ([#13743](https://github.com/NVIDIA/NemoClaw/issues/13743)).
 Per-service runtime protection does not reserve capacity across deployments or schedule shared GPUs.
 Operators must choose budgets appropriate for the shared host.
 
