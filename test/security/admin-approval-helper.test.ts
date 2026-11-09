@@ -1147,7 +1147,7 @@ describe("prepared connect-shell administrative approval", () => {
 
   it.each([
     ["devices:list", 25, "ADMIN_DEVICES_LIST_FAILED", "gateway-unavailable", 1],
-    ["devices:approve", 27, "ADMIN_APPROVE_FAILED", "authorization-rejected", 2],
+    ["devices:approve", 27, "ADMIN_APPROVE_FAILED", "authorization-rejected", 3],
     ["cron:add", 28, "ADMIN_CRON_RETRY_FAILED", "scope-upgrade-pending", 3],
     ["cron:run", 29, "ADMIN_CRON_RUN_FAILED", "timeout", 4],
   ] as const)(

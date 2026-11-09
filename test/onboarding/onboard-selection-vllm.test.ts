@@ -11,6 +11,12 @@ import { describe, expect, it } from "vitest";
 import { testTimeout } from "../helpers/timeouts";
 
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
+const ABSENT_MANAGED_VLLM_DOCKER = `#!/usr/bin/env bash
+if [ "$*" = "container inspect nemoclaw-vllm" ]; then
+  echo "Error: No such object: nemoclaw-vllm" >&2
+fi
+exit 1
+`;
 
 describe(
   "onboard provider selection vLLM UX",
@@ -30,6 +36,7 @@ describe(
       const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "docker"), ABSENT_MANAGED_VLLM_DOCKER, { mode: 0o755 });
       fs.writeFileSync(
         path.join(fakeBin, "curl"),
         `#!/usr/bin/env bash
@@ -155,6 +162,9 @@ const { setupNim } = require(${onboardPath});
     it("does not apply detected vLLM max_model_len when validation returns to provider selection", () => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-validation-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "docker"), ABSENT_MANAGED_VLLM_DOCKER, { mode: 0o755 });
       const scriptPath = path.join(tmpDir, "vllm-validation-context-check.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
       const credentialsPath = JSON.stringify(
@@ -250,6 +260,7 @@ const { setupNim } = require(${onboardPath});
         env: {
           ...process.env,
           HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_EXPERIMENTAL: "",
           NEMOCLAW_PROVIDER: "",
           NEMOCLAW_CONTEXT_WINDOW: "",
@@ -603,6 +614,9 @@ const { setupNim } = require(${onboardPath});
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-running-"),
       );
+      const fakeBin = path.join(tmpDir, "bin");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "docker"), ABSENT_MANAGED_VLLM_DOCKER, { mode: 0o755 });
       const scriptPath = path.join(tmpDir, "install-vllm-running-check.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
       const credentialsPath = JSON.stringify(
@@ -654,6 +668,7 @@ const { setupNim } = require(${onboardPath});
         env: {
           ...process.env,
           HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
           NEMOCLAW_PROVIDER: "install-vllm",
           NEMOCLAW_VLLM_MODEL: "nemotron-3.5-lightning-30b",
@@ -679,6 +694,7 @@ const { setupNim } = require(${onboardPath});
       const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "docker"), ABSENT_MANAGED_VLLM_DOCKER, { mode: 0o755 });
       fs.writeFileSync(
         path.join(fakeBin, "curl"),
         `#!/usr/bin/env bash

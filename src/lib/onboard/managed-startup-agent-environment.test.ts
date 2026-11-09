@@ -688,6 +688,15 @@ describe("managed startup agent environment", () => {
       },
       {
         kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_INFERENCE_PROVIDER_ID",
+        path: "/usr/local/share/nemoclaw/dcode-provider-route",
+        contents: "inference\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
+      {
+        kind: "root-owned-file",
         legacyInput: "NEMOCLAW_PROXY_HOST",
         path: "/usr/local/share/nemoclaw/dcode-proxy-host",
         contents: "10.200.0.1\n",

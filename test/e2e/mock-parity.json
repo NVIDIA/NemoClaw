@@ -212,6 +212,8 @@
       ],
       "fast": [
         "src/lib/inference/native-local.test.ts",
+        "src/lib/inference/local-vllm-auth.test.ts",
+        "src/lib/inference/serving/vllm-host-local-probe.test.ts",
         "test/onboarding/onboard-host-local-inference-routing.test.ts",
         "test/agents/deepagents/langchain-deepagents-code-config.test.ts",
         "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
@@ -277,7 +279,8 @@
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
-        "test/security/admin-approval-helper.test.ts"
+        "test/security/admin-approval-helper.test.ts",
+        "test/install/install-npm-private-prefix.test.ts"
       ]
     },
     {
@@ -569,6 +572,7 @@
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/install/install-npm-private-prefix.test.ts",
         "test/e2e/support/mcp-bridge-hermes-http.test.ts"
       ],
       "liveSources": ["test/e2e/fixtures/sandbox-failure-diagnostics.ts"]
@@ -734,16 +738,19 @@
         "test/e2e/support/inference-adapter.test.ts",
         "test/e2e/support/security-posture.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
-        "test/helpers/e2e-answer-assertions.test.ts"
+        "test/helpers/e2e-answer-assertions.test.ts",
+        "test/install/install-npm-private-prefix.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/hermes-inference-switch.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/hermes-nvidia-recovery.ts",
         "test/e2e/live/hermes-inference-switch-helpers.ts",
         "test/e2e/live/public-nvidia-switch-provider.ts"
       ],
       "fast": [
+        "test/e2e/support/hermes-nvidia-recovery.test.ts",
         "src/lib/onboard/hermes/initial-inference-route.test.ts",
         "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
         "test/e2e/support/hermes-native-local-evidence.test.ts",
@@ -935,6 +942,7 @@
       ],
       "fast": [
         "src/lib/inference/native-local.test.ts",
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "src/lib/actions/inference-set-openclaw-native-local.test.ts",
         "src/lib/actions/inference-set-openclaw-run.test.ts",
         "test/onboarding/onboard-host-local-inference-routing.test.ts",
@@ -1048,6 +1056,8 @@
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "test/e2e/support/sandbox-survival-timeout-contract.test.ts",
+        "test/e2e/support/native-plugin-evidence.test.ts",
         "src/lib/onboard/machine/finalization-deps.test.ts",
         "src/lib/actions/sandbox/destroy-flow.test.ts",
         "test/agents/native-gateway-lifecycle.test.ts",
@@ -1093,6 +1103,9 @@
     {
       "live": "test/e2e/live/dgx-express.test.ts",
       "fast": [
+        "src/lib/inference/vllm.test.ts",
+        "src/lib/inference/vllm-configured-port.test.ts",
+        "test/e2e/support/spark-express-vllm-safety.test.ts",
         "src/lib/inference/vllm-runtime-selection.test.ts",
         "test/e2e/support/dgx-station-express.test.ts",
         "test/e2e/support/live-vitest-invocation.test.ts",
@@ -1168,8 +1181,12 @@
     },
     {
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
-      "liveSources": ["test/e2e/fixtures/hermes-switchyard-package.ts"],
+      "liveSources": [
+        "test/e2e/fixtures/hermes-switchyard-package.ts",
+        "test/e2e/fixtures/hermes-crash-capture.ts"
+      ],
       "fast": [
+        "test/e2e/support/hermes-crash-capture.test.ts",
         "src/lib/hermes-switchyard-routing.test.ts",
         "test/agents/hermes/hermes-switchyard-package.test.ts",
         "test/agents/hermes/hermes-runtime-api-key.test.ts",
