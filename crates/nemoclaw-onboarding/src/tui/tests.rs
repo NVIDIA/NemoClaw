@@ -121,6 +121,7 @@ fn review_scroll_reveals_later_yaml_without_changing_the_document() {
         }
     }
     assert!(wizard.accepted);
+    wizard.toggle_configuration();
     let before_document = wizard.document().unwrap().yaml().unwrap();
     let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
     terminal.draw(|frame| wizard.render(frame)).unwrap();
@@ -507,6 +508,7 @@ async fn the_only_engine_that_answered_is_recorded_without_asking_for_its_socket
         Some(&serde_json::json!("unix:///home/me/.colima/docker.sock"))
     );
     wizard.accepted = false;
+    wizard.toggle_configuration();
     assert!(
         screen(&wizard, 160, 120).contains("engine: unix:///home/me/.colima/docker.sock"),
         "the review shows the engine it recorded"
@@ -551,18 +553,19 @@ fn review_summarizes_the_network_tier_it_left_at_its_default() {
         "{screen}"
     );
     // The summary comes before the YAML, where the review opens.
+    wizard.toggle_configuration();
     let lines = review_text(&wizard);
     let network = lines.iter().position(|line| line.contains("Network"));
     let yaml = lines
         .iter()
-        .position(|line| line.starts_with("apiVersion:"));
+        .position(|line| line.starts_with("│ apiVersion:"));
     assert!(network.is_some() && network < yaml, "{lines:#?}");
 }
 
 /// The review's lines as plain text.
 fn review_text(wizard: &JourneyWizard) -> Vec<String> {
     wizard
-        .review_lines()
+        .review_lines(u16::MAX)
         .iter()
         .map(|line| line.to_string())
         .collect()
@@ -602,7 +605,7 @@ fn at_120x40_the_review_shows_the_agent_model_and_image_without_scrolling() {
         assert!(text.contains(row), "{row:?} is not on screen: {screen}");
     }
     assert!(
-        text.find("Image default image") < text.find("apiVersion:"),
+        text.find("Image default image") < text.find("Configuration file"),
         "{screen}"
     );
     // The saved file's details stay in the YAML, not the summary.
@@ -613,19 +616,39 @@ fn at_120x40_the_review_shows_the_agent_model_and_image_without_scrolling() {
 }
 
 #[test]
-fn the_configuration_file_under_the_summary_is_the_saved_yaml() {
-    let wizard = reviewing_wizard_with("nvidia.fabric.openclaw");
-    let lines = review_text(&wizard);
-    let heading = lines
-        .iter()
-        .position(|line| line == "Configuration file")
-        .expect("Configuration file heading");
+fn the_configuration_file_opens_under_the_summary_as_the_saved_yaml() {
+    let mut wizard = reviewing_wizard_with("nvidia.fabric.openclaw");
     let saved = wizard.saved_yaml().unwrap();
     assert!(saved.contains("uid: "), "{saved}");
-    assert_eq!(
-        lines[heading + 1..heading + 1 + saved.lines().count()],
-        saved.lines().collect::<Vec<_>>()[..],
+    // Collapsed, the review names the file and how to open it.
+    let collapsed = review_text(&wizard);
+    let heading = collapsed
+        .iter()
+        .position(|line| line.starts_with("▸ Configuration file"))
+        .expect("Configuration file heading");
+    assert!(
+        collapsed[heading].contains("Tab shows it"),
+        "{collapsed:#?}"
     );
+    assert!(
+        !collapsed.iter().any(|line| line.contains("apiVersion")),
+        "{collapsed:#?}"
+    );
+    wizard.press(key(KeyCode::Tab));
+    let open = review_text(&wizard);
+    assert!(
+        open[heading].starts_with("▾ Configuration file"),
+        "{open:#?}"
+    );
+    let file = open[heading + 1..heading + 1 + saved.lines().count()]
+        .iter()
+        .map(|line| {
+            line.strip_prefix("│ ")
+                .unwrap_or_else(|| panic!("{line:?}"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(file, saved.lines().collect::<Vec<_>>());
+    assert_eq!(open[heading + 1 + saved.lines().count()], "╰─");
 }
 
 #[test]
@@ -816,6 +839,7 @@ fn review_shows_the_configuration_that_will_be_saved() {
     let mut wizard = JourneyWizard::new(capabilities, state);
     questions_until_review(&mut wizard);
     wizard.accepted = false;
+    wizard.toggle_configuration();
     let screen = screen(&wizard, 160, 120);
     for line in wizard.saved_yaml().unwrap().lines() {
         assert!(screen.contains(line), "{line:?} is not on screen: {screen}");
@@ -879,7 +903,7 @@ fn another_harness_omits_its_optional_settings_and_asks_required_ones() {
 /// Lines of the review section listing template values kept by omission.
 fn from_template_section(wizard: &JourneyWizard) -> Option<Vec<String>> {
     let lines = wizard
-        .review_lines()
+        .review_lines(u16::MAX)
         .iter()
         .map(|line| line.to_string())
         .collect::<Vec<_>>();
@@ -1948,6 +1972,7 @@ fn review_scroll_stops_at_the_last_line_and_shows_a_scrollbar() {
         |yaml| yaml.lines().last().unwrap().trim().to_owned(),
     );
     assert!(!last.is_empty());
+    wizard.toggle_configuration();
     assert!(screen(&wizard, 80, 24).contains('┃'), "no scrollbar");
     scroll_to_end(&mut wizard, 80, 24);
     let bottom = screen(&wizard, 80, 24);
@@ -2022,6 +2047,7 @@ fn scrollbar_column(wizard: &JourneyWizard, width: u16, height: u16) -> String {
 #[test]
 fn the_scrollbar_thumb_reaches_each_end_with_the_review() {
     let mut wizard = reviewing_wizard(unverified_engine());
+    wizard.toggle_configuration();
     let top = scrollbar_column(&wizard, 80, 24);
     assert!(top.starts_with('┃'), "{top}");
     scroll_to_end(&mut wizard, 80, 24);
@@ -2032,6 +2058,7 @@ fn the_scrollbar_thumb_reaches_each_end_with_the_review() {
 #[test]
 fn review_opens_at_the_top_after_going_back_and_returning() {
     let mut wizard = reviewing_wizard(unverified_engine());
+    wizard.toggle_configuration();
     screen(&wizard, 80, 24);
     for _ in 0..10 {
         wizard.next();
@@ -2218,4 +2245,42 @@ fn an_explicit_policy_is_not_summarized_as_isolated() {
         "{text}"
     );
     assert!(!text.contains("Isolated"), "{text}");
+}
+
+#[test]
+fn an_open_configuration_file_keeps_its_rule_on_wrapped_lines() {
+    let mut wizard = reviewing_wizard_with("nvidia.fabric.hermes");
+    wizard.toggle_configuration();
+    let longest = wizard
+        .saved_yaml()
+        .unwrap()
+        .lines()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap();
+    assert!(longest > 72, "no line wraps at 72 columns");
+    scroll_to_end(&mut wizard, 72, 24);
+    let screen = screen(&wizard, 72, 24);
+    let rows = screen
+        .lines()
+        .map(|line| line.trim_matches('"').trim_start())
+        .skip_while(|line| !line.starts_with('│'))
+        .take_while(|line| !line.starts_with("╰─"))
+        .collect::<Vec<_>>();
+    assert!(rows.len() > 5, "{screen}");
+    for row in rows {
+        assert!(row.starts_with('│'), "{row:?} in {screen}");
+    }
+}
+
+#[test]
+fn the_review_footer_fits_the_narrowest_terminal() {
+    let mut wizard = reviewing_wizard_with("nvidia.fabric.hermes");
+    for _ in 0..2 {
+        let text = flat(&screen(&wizard, 72, 24));
+        for key in ["Enter save", "Tab file", "Esc exit"] {
+            assert!(text.contains(key), "{key:?} in {text}");
+        }
+        wizard.toggle_configuration();
+    }
 }

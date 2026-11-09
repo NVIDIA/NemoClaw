@@ -44,6 +44,8 @@ pub(crate) struct JourneyWizard {
     pub(super) review_scroll_limit: Cell<u16>,
     /// Where saving writes, named on the review.
     pub(super) output: Option<PathBuf>,
+    /// Whether the review shows the saved YAML under its summary.
+    pub(super) show_configuration: bool,
 }
 
 impl JourneyWizard {
@@ -68,6 +70,7 @@ impl JourneyWizard {
             review_scroll: 0,
             review_scroll_limit: Cell::new(0),
             output: None,
+            show_configuration: false,
         }
     }
 
@@ -248,6 +251,13 @@ impl JourneyWizard {
     }
 
     // A resolver failure has no choices to move through; the view shows it.
+    /// Show or hide the saved YAML on the review.
+    pub(super) fn toggle_configuration(&mut self) {
+        if self.reviewing() {
+            self.show_configuration = !self.show_configuration;
+        }
+    }
+
     pub(super) fn previous(&mut self) {
         match self.question() {
             Ok(None) if self.started => {
@@ -381,6 +391,7 @@ impl JourneyWizard {
         match key.code {
             KeyCode::Char('o') if control => self.omit(),
             KeyCode::Char('a') if control => self.input.clear(),
+            KeyCode::Tab if self.reviewing() => self.toggle_configuration(),
             KeyCode::Tab => self.edit_suggestion(),
             KeyCode::Enter => self.advance(),
             KeyCode::Left => self.back(),

@@ -26,7 +26,7 @@ A built CLI takes the same arguments, as `nemoclaw onboard`.
   The saved YAML leaves them out so `plan` fills them, and the review's summary shows the values that apply.
 - **Output:** defaults to `deployment.yaml` and must be a new file; onboarding never overwrites one.
 - **Review:** a summary leads the screen: the agent, one model per route with its provider, each API key and whether it is set here, where the deployment runs, the image and the target check, the network access, any web search, and the output file.
-  The complete YAML that saving writes follows under **Configuration file**.
+  Under it, **Configuration file** holds the complete YAML that saving writes; **Tab** shows or hides it.
   A conflict that blocks saving comes first.
 
 Each screen lists its keys.

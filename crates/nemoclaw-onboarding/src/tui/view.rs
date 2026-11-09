@@ -104,7 +104,8 @@ impl JourneyWizard {
         } else if let Ok(Some(question)) = current.as_ref() {
             self.question_lines(question, rows[2].width)
         } else {
-            self.review_lines()
+            // The review's scrollbar takes the last column.
+            self.review_lines(rows[2].width.saturating_sub(1))
         };
         // Review lists them after the target, so the verdict opens the screen.
         if self.started
@@ -286,7 +287,8 @@ impl JourneyWizard {
         lines
     }
 
-    pub(super) fn review_lines(&self) -> Vec<Line<'static>> {
+    /// The review, with the open configuration file wrapped to `width`.
+    pub(super) fn review_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines = vec![
             Line::from(Span::styled(
                 "Review your deployment",
@@ -377,12 +379,8 @@ impl JourneyWizard {
             );
             lines.push(Line::from(""));
         }
-        lines.push(Line::from(Span::styled(
-            "Configuration file",
-            Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
-        )));
         match self.configuration() {
-            Some(Ok(yaml)) => lines.extend(yaml.lines().map(yaml_line)),
+            Some(Ok(yaml)) => lines.extend(self.configuration_lines(&yaml, width)),
             Some(Err(reason)) => lines.push(Line::from(Span::styled(
                 terminal_text(&format!("Cannot save: {reason}")),
                 Style::new().fg(ERROR),
@@ -396,6 +394,33 @@ impl JourneyWizard {
                 "Press Enter to save.",
                 Style::new().fg(MUTED),
             )));
+        }
+        lines
+    }
+
+    /// The saved YAML as a box under the summary: one line while collapsed,
+    /// the complete file behind a rule while open.
+    fn configuration_lines(&self, yaml: &str, width: u16) -> Vec<Line<'static>> {
+        let count = yaml.lines().count();
+        let (marker, hint) = if self.show_configuration {
+            ("▾", "Tab hides it".to_owned())
+        } else {
+            ("▸", format!("{count} lines · Tab shows it"))
+        };
+        let mut lines = vec![Line::from(vec![
+            Span::styled(format!("{marker} "), Style::new().fg(BRIGHT_GREEN)),
+            Span::styled(
+                "Configuration file",
+                Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("  {hint}"), Style::new().fg(DIM)),
+        ])];
+        if self.show_configuration {
+            lines.extend(
+                yaml.lines()
+                    .flat_map(|line| ruled_lines(line, width.into())),
+            );
+            lines.push(Line::from(Span::styled("╰─", Style::new().fg(DIM))));
         }
         lines
     }
@@ -414,7 +439,7 @@ impl JourneyWizard {
             "Enter  begin     Esc  exit".to_owned()
         } else if reviewing {
             format!(
-                "{}↑/↓  scroll     ←  back     Esc  exit",
+                "{}↑/↓  scroll     Tab  file     ←  back     Esc  exit",
                 if self.saveable() {
                     "Enter  save     "
                 } else {
@@ -533,6 +558,41 @@ fn choice_line(value: &str, active: bool) -> Line<'static> {
             },
         ),
     ])
+}
+
+/// One YAML line behind the box's rule, wrapped here so every row keeps the
+/// rule. Continuation rows are indented past the line's own indentation.
+fn ruled_lines(line: &str, width: usize) -> Vec<Line<'static>> {
+    const GUTTER: usize = 2;
+    let gutter = || Span::styled("│ ", Style::new().fg(DIM));
+    let room = width.saturating_sub(GUTTER).max(1);
+    let indent = (line.len() - line.trim_start().len() + 2).min(room / 2);
+    let mut rows = Vec::new();
+    let mut row = vec![gutter()];
+    let mut used = 0;
+    for span in yaml_line(line).spans {
+        let mut text = String::new();
+        for character in span.content.chars() {
+            let cells = Span::raw(character.to_string()).width();
+            if used > 0 && used + cells > room {
+                if !text.is_empty() {
+                    row.push(Span::styled(std::mem::take(&mut text), span.style));
+                }
+                rows.push(Line::from(std::mem::replace(
+                    &mut row,
+                    vec![gutter(), Span::raw(" ".repeat(indent))],
+                )));
+                used = indent;
+            }
+            text.push(character);
+            used += cells;
+        }
+        if !text.is_empty() {
+            row.push(Span::styled(text, span.style));
+        }
+    }
+    rows.push(Line::from(row));
+    rows
 }
 
 /// Mute YAML keys so the authored values stand out.
