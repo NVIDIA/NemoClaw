@@ -69,6 +69,7 @@ export function privateHermesManifestAgent(source: AgentDefinition): AgentDefini
   // for the same manifest path; the on-disk private copy is unaffected.
   if (
     existing &&
+    fs.existsSync(existing.agent.manifestPath) &&
     Buffer.compare(existing.contents, manifestContents) === 0
   ) {
     return { ...source, manifestPath: existing.agent.manifestPath };
@@ -91,7 +92,8 @@ export function privateHermesManifestAgent(source: AgentDefinition): AgentDefini
 
 /**
  * Remove all cached manifest copies and their directories.
- * Call this in an afterAll hook to clean up temporary files.
+ * Call this in an `afterEach` or `afterAll` hook to clean up temporary files;
+ * either lifecycle hook is acceptable.
  */
 export function cleanupPrivateHermesManifestAgent(): void {
   for (const { directory } of privateCopies.values()) {

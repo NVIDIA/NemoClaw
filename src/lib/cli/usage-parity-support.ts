@@ -65,7 +65,12 @@ function staticUsage(commandId: string, subcommand?: string): string[] {
   const source = fs.readFileSync(commandSourcePath(commandId), "utf8");
   const match = /static usage = (\[[\s\S]*?\]);/u.exec(source);
   if (match === null) throw new Error(`No literal static usage in ${commandId}`);
-  const parsed: unknown = JSON.parse(match[1].replace(/,\s*\]/u, "]"));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(match[1].replace(/,\s*\]/u, "]"));
+  } catch (error) {
+    throw new Error(`Failed to parse static usage for ${commandId}`, { cause: error });
+  }
   if (!Array.isArray(parsed)) throw new Error(`static usage for ${commandId} is not an array`);
   return parsed.map(String);
 }

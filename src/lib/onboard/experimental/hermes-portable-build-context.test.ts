@@ -12,7 +12,10 @@ import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import { ROOT } from "../../runner";
 import { createHermesPortableBuildContextPlan } from "./hermes-portable-build-context";
 import { HERMES_PORTABLE_BUILD_CONTEXT_FILES } from "./hermes-portable-build-context-files";
-import { emulatePrivateSourceAncestor } from "./__test-helpers__/emulate-private-source";
+import {
+  cleanupEmulatePrivateSourceAncestor,
+  emulatePrivateSourceAncestor,
+} from "./__test-helpers__/emulate-private-source";
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 const CREATE_INTENT = "a".repeat(64);
@@ -89,7 +92,7 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    cleanupEmulatePrivateSourceAncestor();
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
 

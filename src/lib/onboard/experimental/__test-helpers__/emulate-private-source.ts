@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+
 import { vi } from "vitest";
 
 import { ROOT } from "../../../runner";
@@ -14,36 +15,41 @@ import { ROOT } from "../../../runner";
  * writable authority failures.
  *
  * This helper installs `vi.spyOn` mocks on `fs.lstatSync`, `fs.openSync`,
- * `fs.fstatSync`, and `fs.closeSync`. Callers MUST restore them with
- * `vi.restoreAllMocks()` after each test; otherwise subsequent tests inherit
- * the wrapped fs behavior and may see emulated ownership on real directories.
+ * `fs.fstatSync`, and `fs.closeSync`, and tracks file descriptors opened under
+ * emulated ownership. Callers MUST invoke `cleanupEmulatePrivateSourceAncestor`
+ * in an `afterEach` hook so the spies and tracked descriptors do not leak into
+ * later tests; the tracked-descriptor set is cleared by the cleanup as well.
  */
+const sharedTemporaryRoots = new Set<string>([path.resolve("/tmp"), fs.realpathSync("/tmp")]);
+const sourceRoot = path.resolve(ROOT);
+for (let directory = sourceRoot; ; directory = path.dirname(directory)) {
+  sharedTemporaryRoots.add(directory);
+  if (path.dirname(directory) === directory) break;
+}
+const maskedFds = new Set<number>();
+
+const emulateOwnerOnlyMode = (target: unknown): boolean => {
+  const resolved = path.resolve(String(target));
+  return (
+    sharedTemporaryRoots.has(resolved) || resolved.startsWith(`${sourceRoot}${path.sep}`)
+  );
+};
+const wrapStat = (stat: fs.Stats): fs.Stats =>
+  new Proxy(stat, {
+    get(value, property) {
+      if (property !== "mode") return Reflect.get(value, property, value);
+      const mode = Reflect.get(value, property, value);
+      // Preserve the original Stats.mode type. Consumers mix numeric masks
+      // (`mode & 0o022`) with bigint masks (`mode & 0o22n`), and coercing to
+      // bigint makes the numeric callers throw a TypeError.
+      return typeof mode === "bigint" ? mode & ~0o22n : (mode as number) & ~0o222;
+    },
+  });
+
 export function emulatePrivateSourceAncestor(): void {
   const originalLstat = fs.lstatSync;
   const originalFstat = fs.fstatSync;
   const originalOpen = fs.openSync;
-  const sharedTemporaryRoots = new Set([path.resolve("/tmp"), fs.realpathSync("/tmp")]);
-  const sourceRoot = path.resolve(ROOT);
-  for (let directory = sourceRoot; ; directory = path.dirname(directory)) {
-    sharedTemporaryRoots.add(directory);
-    if (path.dirname(directory) === directory) break;
-  }
-  const maskedFds = new Set<number>();
-  const emulateOwnerOnlyMode = (target: unknown): boolean => {
-    const resolved = path.resolve(String(target));
-    return sharedTemporaryRoots.has(resolved) || resolved.startsWith(`${sourceRoot}${path.sep}`);
-  };
-  const wrapStat = (stat: fs.Stats): fs.Stats =>
-    new Proxy(stat, {
-      get(value, property) {
-        if (property !== "mode") return Reflect.get(value, property, value);
-        const mode = Reflect.get(value, property, value);
-        // Preserve the original Stats.mode type. Consumers mix numeric masks
-        // (`mode & 0o022`) with bigint masks (`mode & 0o22n`), and coercing to
-        // bigint makes the numeric callers throw a TypeError.
-        return typeof mode === "bigint" ? mode & ~0o22n : (mode as number) & ~0o022;
-      },
-    });
   vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
     const stat = originalLstat(target, options as never);
     if (stat === undefined) return undefined;
@@ -63,4 +69,12 @@ export function emulatePrivateSourceAncestor(): void {
     maskedFds.delete(fd);
     return originalClose(fd);
   }) as typeof fs.closeSync);
+}
+
+/** Restore the fs spies installed by `emulatePrivateSourceAncestor` and clear
+ * the tracked file-descriptor set. Safe to call in either an `afterEach` or
+ * `afterAll` hook. */
+export function cleanupEmulatePrivateSourceAncestor(): void {
+  vi.restoreAllMocks();
+  maskedFds.clear();
 }
