@@ -306,6 +306,13 @@ impl Gateway {
             Self::External(gateway) => &mut gateway.runtime,
         }
     }
+    /// Who authors sandbox policy on this gateway; `None` means NemoClaw does.
+    pub fn policy_authority(&self) -> Option<&PolicyAuthority> {
+        match self {
+            Self::Managed(gateway) => gateway.policy_authority.as_ref(),
+            Self::External(gateway) => gateway.policy_authority.as_ref(),
+        }
+    }
     /// The endpoint used to connect to either gateway configuration.
     pub fn endpoint(&self) -> &str {
         match self {

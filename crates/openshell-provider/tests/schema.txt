@@ -20,6 +20,7 @@ resource openshell_api (version 2)
   header_name: string, optional, computed
   id: string, computed
   name: string, required
+  policy_authority: string, optional, computed
   ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
   registration: string, computed
   workspace: object({ name = string, owner = string, type = string }), required
@@ -45,6 +46,7 @@ resource openshell_inference (version 2)
   generation: string, optional, computed
   id: string, computed
   name: string, required
+  policy_authority: string, optional, computed
   ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
   registration: string, computed
   sandbox_env: string, computed
@@ -121,6 +123,7 @@ resource openshell_sandbox (version 2)
   launch_json: string, required
   name: string, required
   owner: string, optional, computed
+  policy_authority: string, optional, computed
   policy_hash: string, computed
   providers: list(object({ registration = string, type = string })), optional
   ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
@@ -337,6 +340,7 @@ resource openshell_web_search (version 2)
   generation: string, optional, computed
   id: string, computed
   name: string, required
+  policy_authority: string, optional, computed
   provider_type: string, required
   ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
   registration: string, computed

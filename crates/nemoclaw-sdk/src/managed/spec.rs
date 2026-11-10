@@ -364,6 +364,7 @@ impl Spec {
                     ),
                     None => None,
                 },
+                policy_authority: None,
             },
             image: get("image")?,
             process: None,

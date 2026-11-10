@@ -23,9 +23,15 @@ pub trait SandboxExecution: Send + Sync {
     fn exec(&self, request: &p::ExecSandboxRequest) -> Result<std::process::Output, Status>;
 }
 
+/// Rewrites a sandbox as a gateway admission interceptor does.
+pub type SandboxAdmission = Arc<dyn Fn(&mut p::Sandbox) + Send + Sync>;
+
 #[derive(Default)]
 pub struct State {
     pub sandbox_execution: Option<Arc<dyn SandboxExecution>>,
+    /// Rewrites each sandbox as CreateSandbox stores it, as a gateway
+    /// admission interceptor such as APF does.
+    pub sandbox_admission: Option<SandboxAdmission>,
     pub driver: Option<String>,
     pub gateway_info: Option<p::GetGatewayInfoResponse>,
     pub gateway_reads: usize,
@@ -877,7 +883,7 @@ fn create_sandbox(
         return Err(Status::already_exists("collision"));
     }
     state.sandbox_exposures.push(q.service_exposures.clone());
-    let sandbox = p::Sandbox {
+    let mut sandbox = p::Sandbox {
         metadata: Some(p::ObjectMeta {
             annotations: q.annotations,
             ..state.metadata(q.name, workspace(&q.workspace_scope)?, q.labels)
@@ -891,6 +897,9 @@ fn create_sandbox(
         }),
         ..Default::default()
     };
+    if let Some(admission) = &state.sandbox_admission {
+        admission(&mut sandbox);
+    }
     if let Some(execution) = &state.sandbox_execution {
         let mut credentials = HashMap::new();
         for name in &sandbox.spec.as_ref().unwrap().providers {

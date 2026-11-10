@@ -206,6 +206,7 @@ impl ConnectedOpenShellGateway {
         let row = match kind {
             "workspace" => return self.workspace(name, removing).await,
             "provider_profile" => self.observe_profile(workspace, name, removing).await?,
+            crate::composite::APF_PROFILE => self.observe_apf_profile(workspace, name).await?,
             "provider" => {
                 let response = authoritative(
                     self.client
@@ -255,10 +256,12 @@ impl ConnectedOpenShellGateway {
                         .await
                         .map_err(|error| remote_error(&error))?
                         .into_inner();
-                    let hash = active_policy(
-                        status,
-                        &policy_json(&network::granted_row_policy(&row, &grants)?)?,
-                    )?;
+                    let expected = if row.get(crate::POLICY_AUTHORITY).is_some_and(|a| a == "apf") {
+                        None
+                    } else {
+                        Some(policy_json(&network::granted_row_policy(&row, &grants)?)?)
+                    };
+                    let hash = active_policy(status, expected.as_deref())?;
                     row.insert(crate::POLICY_HASH.into(), hash);
                 }
                 Some(row)

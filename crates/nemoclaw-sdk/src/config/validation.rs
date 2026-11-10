@@ -61,6 +61,11 @@ impl Document {
                 schema::validate_definition("FileRef", metadata)?;
             }
             sandbox.network.validate()?;
+            require(
+                gateway.policy_authority().is_none()
+                    || !matches!(sandbox.network.policy, super::NetworkPolicy::Explicit(_)),
+                "a sandbox on a gateway with a policyAuthority must not author an explicit network policy",
+            )?;
             let web_search = self.web_search(sandbox)?;
             crate::image_runtime::policy_input(self, sandbox)?;
             if let Some(search) = web_search {

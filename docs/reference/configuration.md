@@ -112,6 +112,18 @@ Paths:
 |---|---|---|---|---|
 | `allow` | array of string | Yes | — | Native tool identifiers. Fabric validates availability and semantics. Constraints: minimum items 1; maximum items 128; items: pattern `^[^\x00-\x1f\x7f]+$`; minimum characters 1; maximum characters 256. |
 
+## ApfPolicyAuthority
+
+APF policy authority settings; none yet.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.policyAuthority.apf`
+
+Accepted input: object.
+
 ## ApiAuthStyle
 
 How an API key is sent.
@@ -394,6 +406,7 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 | `kubernetes` | [ManagedKubernetes](#managedkubernetes) | No | — | Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes. Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes. |
+| `policyAuthority` | [PolicyAuthority](#policyauthority) | No | — | Who authors sandbox policy on this gateway; omission means NemoClaw does. |
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the gateway runs every sandbox with; omission selects Docker. |
 
 ### Alternative 2
@@ -407,6 +420,7 @@ An existing gateway managed outside this deployment.
 | `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
 | `engine` | string | No | — | Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
+| `policyAuthority` | [PolicyAuthority](#policyauthority) | No | — | Who authors sandbox policy on this gateway; omission means NemoClaw does. |
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports. |
 | `tls` | [TLS](#tls) | No | — | Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS. |
 
@@ -854,6 +868,20 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `any` | array of string | Yes | — | Nonempty list of nonempty glob strings. |
+
+## PolicyAuthority
+
+The component that authors every sandbox's policy on a gateway, instead of NemoClaw.
+
+Guide: [Sandbox policy](../security/sandbox-network.md).
+
+Paths:
+
+- `spec.gateway.policyAuthority`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `apf` | [ApfPolicyAuthority](#apfpolicyauthority) | Yes | — | APF's admission interceptor, registered in the gateway's configuration, replaces each sandbox's policy with its signed bundle's. Sandboxes must not author an explicit policy; NemoClaw requires APF's provenance on each sandbox and treats a later change to the loaded policy as drift. |
 
 ## PolicyBinary
 

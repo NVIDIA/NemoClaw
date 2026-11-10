@@ -163,6 +163,9 @@ fn targets_with_plans(
             serde_json::to_string(&crate::image_runtime::policy_input(document, sandbox)?)
                 .expect("policy input"),
         );
+        if document.spec.gateway.policy_authority().is_some() {
+            values.insert("policy_authority".into(), "apf".into());
+        }
         if let Some(config) = &sandbox.driver_config {
             values.insert(
                 "driver_config_json".into(),
@@ -256,6 +259,12 @@ fn targets_with_plans(
             if let Some(name) = &search.sandbox_env {
                 target.values.insert("sandbox_env".into(), name.clone());
             }
+            // APF serves the profile of each credential on a gateway it governs.
+            if document.spec.gateway.policy_authority().is_some() {
+                target
+                    .values
+                    .insert("policy_authority".into(), "apf".into());
+            }
             if let Some(previous) = result.iter().find(|t| t.address == target.address) {
                 if previous != &target {
                     return Err(ConfigError::new(
@@ -293,6 +302,11 @@ fn targets_with_plans(
             }
             if let Some(header) = &api.api.header_name {
                 target.values.insert("header_name".into(), header.clone());
+            }
+            if document.spec.gateway.policy_authority().is_some() {
+                target
+                    .values
+                    .insert("policy_authority".into(), "apf".into());
             }
             if let Some(previous) = result.iter().find(|t| t.address == target.address) {
                 if previous != &target {
@@ -339,7 +353,7 @@ fn inference_targets(
 ) -> Result<[Target; 1], ConfigError> {
     let connection = document.provider_connection(provider)?;
     let logical = format!("inference_{key}");
-    let values: Row = [
+    let mut values: Row = [
         ("workspace".into(), document.workspace()),
         ("name".into(), key.into()),
         ("owner".into(), document.metadata.uid.clone()),
@@ -365,6 +379,10 @@ fn inference_targets(
         ),
     ]
     .into();
+    // APF serves the profile of each provider on a gateway it governs.
+    if document.spec.gateway.policy_authority().is_some() {
+        values.insert("policy_authority".into(), "apf".into());
+    }
     Ok([Target {
         kind: "inference".into(),
         address: format!("openshell_inference.{logical}"),

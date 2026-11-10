@@ -102,8 +102,14 @@ impl OpenShell {
                 }
                 // The ID and the computed URLs and policy hash come from the
                 // gateway; every other field must read back as written.
+                // A provider records no policy authority; its profile does.
+                let unrecorded = if kind == "provider" {
+                    crate::POLICY_AUTHORITY
+                } else {
+                    "id"
+                };
                 if want.iter().any(|(key, v)| {
-                    !["id", services::URLS, crate::POLICY_HASH].contains(&key.as_str())
+                    !["id", services::URLS, crate::POLICY_HASH, unrecorded].contains(&key.as_str())
                         && row.get(key) != Some(v)
                 }) {
                     return Ok(Mutation::partial(row, ObservationError::Incomplete));

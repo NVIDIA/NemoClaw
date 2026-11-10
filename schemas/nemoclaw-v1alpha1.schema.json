@@ -126,6 +126,11 @@
       ],
       "type": "object"
     },
+    "ApfPolicyAuthority": {
+      "additionalProperties": false,
+      "description": "APF policy authority settings; none yet.",
+      "type": "object"
+    },
     "ApiAuthStyle": {
       "description": "How an API key is sent.",
       "enum": [
@@ -674,6 +679,10 @@
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes."
             },
+            "policyAuthority": {
+              "$ref": "#/$defs/PolicyAuthority",
+              "description": "Who authors sandbox policy on this gateway; omission means NemoClaw does."
+            },
             "runtime": {
               "$ref": "#/$defs/Runtime",
               "description": "Compute driver the gateway runs every sandbox with; omission selects Docker."
@@ -750,6 +759,10 @@
               "const": "external",
               "description": "Whether this deployment manages the gateway.",
               "type": "string"
+            },
+            "policyAuthority": {
+              "$ref": "#/$defs/PolicyAuthority",
+              "description": "Who authors sandbox policy on this gateway; omission means NemoClaw does."
             },
             "runtime": {
               "$ref": "#/$defs/Runtime",
@@ -2132,6 +2145,20 @@
       },
       "required": [
         "any"
+      ],
+      "type": "object"
+    },
+    "PolicyAuthority": {
+      "additionalProperties": false,
+      "description": "The component that authors every sandbox's policy on a gateway, instead of NemoClaw.",
+      "properties": {
+        "apf": {
+          "$ref": "#/$defs/ApfPolicyAuthority",
+          "description": "APF's admission interceptor, registered in the gateway's configuration, replaces each sandbox's policy with its signed bundle's. Sandboxes must not author an explicit policy; NemoClaw requires APF's provenance on each sandbox and treats a later change to the loaded policy as drift."
+        }
+      },
+      "required": [
+        "apf"
       ],
       "type": "object"
     },
