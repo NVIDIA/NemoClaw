@@ -53,6 +53,8 @@ import {
   type GatewayUpgradeServiceEvidence,
   captureGatewayUpgradeService,
   prepareGatewayUpgradeUserManager,
+  prepareGatewayUpgradeInstallPaths,
+  gatewayUpgradeInstallEnv,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeBaseImageOverrideEnabled,
@@ -148,6 +150,7 @@ function writeExecutable(target: string, contents: string): void {
 function liveEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
+    ...gatewayUpgradeInstallEnv(os.homedir(), process.env.PATH ?? "/usr/bin:/bin"),
     ...(VERIFY_SYSTEMD_UPGRADE
       ? {
           XDG_CONFIG_HOME: path.join(os.homedir(), ".config"),
@@ -174,7 +177,7 @@ function shellLoginPrefix(): string {
     '  source "$HOME/.bashrc" 2>/dev/null || true',
     "fi",
     'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"',
-    'if [ -s "$NVM_DIR/nvm.sh" ]; then',
+    'if ! command -v node >/dev/null 2>&1 && [ -s "$NVM_DIR/nvm.sh" ]; then',
     "  # shellcheck source=/dev/null",
     '  . "$NVM_DIR/nvm.sh"',
     "fi",
@@ -790,6 +793,7 @@ runOpenShellGatewayUpgrade(
     await prepareGatewayUpgradeExecutableDirectory(host, liveEnv());
     await prepareGatewayUpgradeUserManager(host, liveEnv(), VERIFY_SYSTEMD_UPGRADE);
     await preCleanUpgradeGateway(host, "pre-cleanup-gateway");
+    prepareGatewayUpgradeInstallPaths(os.homedir());
 
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: GATEWAY_CREDENTIAL,
