@@ -43,11 +43,13 @@ run "refresh" {
   }
 }
 
-# One apply changes research's port, removes writer, and adds api.
+# One apply changes research's port, returns writer to the default
+# authorization mode, and adds api.
 run "change_services" {
   variables {
     services = {
       research = { target_port = 9090 }
+      writer   = { target_port = 7000 }
       api      = { target_port = 8642, authorization_mode = "BEARER_PASSTHROUGH" }
     }
   }
@@ -59,13 +61,15 @@ run "change_services" {
     condition = { for key, endpoint in local.openshell.services : key => endpoint if startswith(key, "team/researcher/") } == {
       "team/researcher/api"      = { target_port = 8642, authorization_mode = "SERVICE_AUTHORIZATION_MODE_BEARER_PASSTHROUGH" }
       "team/researcher/research" = { target_port = 9090, authorization_mode = "SERVICE_AUTHORIZATION_MODE_STRIP" }
+      "team/researcher/writer"   = { target_port = 7000, authorization_mode = "SERVICE_AUTHORIZATION_MODE_STRIP" }
     }
-    error_message = "The gateway must hold the changed and added exposures and not the removed one: ${jsonencode(local.openshell.services)}"
+    error_message = "The gateway must hold research's new port, writer's default mode, and the added api: ${jsonencode(local.openshell.services)}"
   }
   assert {
     condition = terraform_data.caller.output == tomap({
       api      = "http://team--researcher--api.services.fixture.test/"
       research = "http://team--researcher--research.services.fixture.test/"
+      writer   = "http://team--researcher--writer.services.fixture.test/"
     })
     error_message = "Another resource must receive the updated URLs in the same apply."
   }
