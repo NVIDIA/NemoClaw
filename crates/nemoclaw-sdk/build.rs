@@ -52,8 +52,8 @@ fn validate_fabric_catalog() {
     );
     assert_eq!(
         dependency.get("git").and_then(toml::Value::as_str),
-        Some("https://github.com/jyaunches/NeMo-Fabric"),
-        "Fabric planner must use the pinned integration repository"
+        Some("https://github.com/NVIDIA/NeMo-Fabric"),
+        "Fabric planner must use the canonical owner repository"
     );
     assert_eq!(
         dependency.get("rev").and_then(toml::Value::as_str),

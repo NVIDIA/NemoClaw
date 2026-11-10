@@ -2193,8 +2193,8 @@
       ]
     }
   ],
-  "fabric_revision": "038e0c87f87a0bb636e352bdcc7946116bfe35c4",
+  "fabric_revision": "1b5c8ce5057f846dd86db6788e0be38c6b3675af",
   "schema_version": 2,
-  "source_sha256": "03ea19ef469db145db24c14acb20060451d73c10bd3b7c58c6e412c65af8b880",
+  "source_sha256": "f4ba02f59340bd377debec86d2444add614db9bd75d0ae9bbbd77cf2e8c76e33",
   "targets": []
 }
