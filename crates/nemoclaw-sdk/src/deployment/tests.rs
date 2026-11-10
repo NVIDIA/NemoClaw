@@ -1196,21 +1196,10 @@ async fn changing_a_gateway_exposure_preserves_saved_state() {
         }})
     };
     let node_port = json!({"service": {"type": "NodePort"}});
-    // The certificate names the service URL domain once, like the endpoint.
-    let domain =
-        |domain: &str| json!({"service": {"type": "NodePort"}, "serviceUrlDomain": domain});
     for (original, changed) in [
         (
             exposed(Some(node_port.clone()), false),
             exposed(None, false),
-        ),
-        (
-            exposed(Some(node_port.clone()), false),
-            exposed(Some(domain("apps.example.com")), false),
-        ),
-        (
-            exposed(Some(domain("apps.example.com")), false),
-            exposed(Some(domain("services.example.com")), false),
         ),
         (
             exposed(None, false),

@@ -2,15 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # One agent on a managed gateway in kind that a NodePort Service publishes:
-# apply, which creates the Service and reports the sandbox's service URL
-# under the service URL domain at the endpoint's port; a reply from the
-# agent's recorded runtime; an unchanged plan; and destroy that keeps only
-# the gateway's storage. Apply's reads of the gateway and the probe dial the
-# node's address and verify the gateway's certificate there, as the SDK's
+# apply, which creates the Service; a reply from the agent's recorded
+# runtime; an unchanged plan; and destroy that keeps only the gateway's
+# storage. Apply's reads of the gateway and the probe dial the node's
+# address and verify the gateway's certificate there, as the SDK's
 # providers do, through no port-forward. cargo ci live-kind runs it. The
-# stub's reply shows each request reached it; no model runs. The service
-# URL is checked as reported, not opened: nothing in the sandbox serves it,
-# and its domain has no DNS records.
+# stub's reply shows each request reached it; no model runs.
 
 run "cluster" {
   module {
@@ -42,15 +39,6 @@ run "apply" {
   assert {
     condition     = contains(keys(output.changes), "kubernetes_service_v1.gateway_exposure")
     error_message = "Apply did not create the exposure Service; it changed ${join(", ", keys(output.changes))}"
-  }
-
-  # The gateway names service URLs under the first wildcard name in its
-  # certificate, the case's service URL domain, at the port it listens on,
-  # the endpoint's node port. An assertion can't read the cluster run's
-  # document, so both are written out.
-  assert {
-    condition     = can(regex("^https://[a-z0-9-]+--web\\.apps\\.nemoclaw\\.test:30080/$", output.result.serviceUrls.assistant.web))
-    error_message = "Apply reported these service URLs: ${jsonencode(try(output.result.serviceUrls, null))}"
   }
 }
 

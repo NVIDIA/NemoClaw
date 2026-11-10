@@ -35,11 +35,9 @@ Another apply must then reuse that storage, refreshing rather than creating it a
 The runner deletes the cluster with the redeployed deployment.
 That a gateway trusts only the deployment's own issuer is a [contract check](integration-tests.md#openshell-provider-contract) of the rendered chart.
 
-The `kind-kubernetes-nodeport` scenario deploys one agent with the same profiles behind a gateway that a NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster) at the kind node's address, with a service URL domain.
+The `kind-kubernetes-nodeport` scenario deploys one agent with the same profiles behind a gateway that a NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster) at the kind node's address.
 Apply must create the Service.
 Apply's reads of the gateway and the probe dial the node's address, as the SDK's providers do, and check that the gateway's certificate names it; neither uses a port-forward.
-The sandbox exposes one service, and apply must report its URL under the service URL domain at the endpoint's port.
-Nothing serves that service and the domain has no DNS records, so the scenario doesn't open the URL.
 The agent must answer with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
 
 The `kind-openshift-oidc` scenario deploys two agents with the OpenShift profile, `assistant` and `researcher`, each sandbox granting one endpoint named for it so that no two have the same policy.
@@ -96,7 +94,7 @@ Run blocks call these modules:
 | `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, and OpenClaw's terminal UI through `openshell sandbox exec --tty`, on a stub model that requires the run's key; in each sandbox, a writable workspace and no model key in the environment; in Hermes's sandbox, a pseudo-terminal; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused ([Agent Interfaces](#agent-interfaces)). |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, and a workspace file on a named volume that survives the destroy and redeploy. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
-| `kind-kubernetes-nodeport` | `cargo ci live-kind` | One agent behind a gateway that a NodePort Service [publishes on kind](#kubernetes-gateway-without-the-helm-cli), dialed at the node's address with no port-forward; apply creates the Service and reports the sandbox's service URL under the service URL domain at the endpoint's port, the agent answers with the stub's reply, and a plan reports no changes. |
+| `kind-kubernetes-nodeport` | `cargo ci live-kind` | One agent behind a gateway that a NodePort Service [publishes on kind](#kubernetes-gateway-without-the-helm-cli), dialed at the node's address with no port-forward; apply creates the Service, the agent answers with the stub's reply, and a plan reports no changes. |
 | `kind-openshift-oidc` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
 
 Every scenario checks the same successful path:

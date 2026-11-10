@@ -288,7 +288,7 @@ impl Deployment {
             != crate::kubernetes::service::binding(&document)
         {
             return Err(Error::Conflict(
-                "state is bound to a different gateway exposure: kubernetes.expose, its Service type and annotations, and its service URL domain stay as first planned; create a separate deployment to change them",
+                "state is bound to a different gateway exposure: kubernetes.expose, its Service type, and its annotations stay as first planned; create a separate deployment to change them",
             ));
         }
         record.allocate_missing_generations(&document)?;

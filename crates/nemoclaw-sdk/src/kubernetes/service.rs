@@ -29,32 +29,20 @@ pub const RESOURCE_TYPE: &str = "kubernetes_service_v1";
 /// The exposure Service's address in the runtime graph.
 pub const ADDRESS: &str = "kubernetes_service_v1.gateway_exposure";
 
-/// What an exposed gateway's address and certificate depend on: its exposure
-/// Service's type and annotations, and its service URL domain. Like the
-/// endpoint, they stay as first planned; source ranges only admit clients
-/// and may change.
-pub fn binding(document: &Document) -> Option<Binding<'_>> {
-    let expose = document
+/// What selects the address a managed Kubernetes gateway's endpoint names:
+/// its exposure Service's type and annotations. Like the endpoint, it stays
+/// as first planned; source ranges only admit clients and may change.
+pub fn binding(document: &Document) -> Option<(ExposureServiceType, &BTreeMap<String, String>)> {
+    let service = &document
         .spec
         .gateway
         .as_managed()?
         .kubernetes
         .as_ref()?
         .expose
-        .as_ref()?;
-    Some(Binding {
-        service_type: expose.service.service_type,
-        annotations: &expose.service.annotations,
-        service_url_domain: expose.service_url_domain.as_deref(),
-    })
-}
-
-/// The exposure settings fixed after the first successful plan.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Binding<'a> {
-    pub service_type: ExposureServiceType,
-    pub annotations: &'a BTreeMap<String, String>,
-    pub service_url_domain: Option<&'a str>,
+        .as_ref()?
+        .service;
+    Some((service.service_type, &service.annotations))
 }
 
 /// How long the gateway reads wait for an exposed endpoint to answer, in
@@ -62,7 +50,7 @@ pub struct Binding<'a> {
 /// address may route only after its health checks pass. 300 seconds is the
 /// gateway data source's limit.
 pub fn read_wait(document: &Document) -> Option<u64> {
-    binding(document).map(|binding| match binding.service_type {
+    binding(document).map(|(service_type, _)| match service_type {
         ExposureServiceType::NodePort => 90,
         ExposureServiceType::LoadBalancer => 300,
     })

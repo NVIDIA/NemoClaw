@@ -49,17 +49,6 @@ pub struct ManagedKubernetes {
 pub struct KubernetesExpose {
     /// A Service that publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged.
     pub service: ExposureService,
-    /// A domain you serve for sandbox service URLs. NemoClaw adds `*.DOMAIN` to the gateway certificate, and the gateway then names each URL `WORKSPACE--SANDBOX--SERVICE.DOMAIN` at the endpoint's port. Point a wildcard DNS record for `*.DOMAIN` at the endpoint's address. Fixed after the first successful plan.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(
-        default,
-        with = "String",
-        length(min = 1, max = 251),
-        regex(
-            pattern = r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
-        )
-    )]
-    pub service_url_domain: Option<String>,
 }
 
 /// The Service that publishes a managed Kubernetes gateway.

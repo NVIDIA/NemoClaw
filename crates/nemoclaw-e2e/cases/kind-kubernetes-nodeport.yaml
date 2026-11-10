@@ -5,14 +5,13 @@
 # publishes at its endpoint, with the kubernetes runtime and development
 # authentication profiles. NemoClaw and the probe dial the node's address
 # instead of forwarding a port, so the gateway's certificate must name it.
-# The sandbox exposes one service, which nothing serves, so that apply
-# reports its URL under the service URL domain. Its inference route reaches
-# a stub model in its own namespace, and the agent image comes from a
-# private registry through the pull Secret the operator created. cargo ci
-# live-kind gives each run a fresh identity, namespace, kubeconfig context,
-# registry, and agent image, and replaces the endpoint's host with the
-# node's address. The node port stays: it is in the range's lower band,
-# which Kubernetes leaves for Services that name their port.
+# Its inference route reaches a stub model in its own namespace, and the
+# agent image comes from a private registry through the pull Secret the
+# operator created. cargo ci live-kind gives each run a fresh identity,
+# namespace, kubeconfig context, registry, and agent image, and replaces
+# the endpoint's host with the node's address. The node port stays: it is
+# in the range's lower band, which Kubernetes leaves for Services that name
+# their port.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -36,7 +35,6 @@ spec:
       expose:
         service:
           type: NodePort
-        serviceUrlDomain: apps.nemoclaw.test
   inferenceProviders:
     stub:
       provider: openai
@@ -55,9 +53,6 @@ spec:
         ref: nc-registry:5000/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
         metadata:
           env: NEMOCLAW_TEST_AGENT_METADATA
-      serviceExposures:
-        web:
-          targetPort: 18800
       harness:
         kind: nvidia.fabric.openclaw
       agent:
