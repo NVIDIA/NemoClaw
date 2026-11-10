@@ -540,35 +540,61 @@ describe("CLI OpenShell forward observations", () => {
   });
 
   it.each([
-    ["the exact executable", "expected", { state: "owned", forward }],
-    ["a different executable", "foreign", { state: "foreign", forward }],
-  ] as const)("classifies a Linux /proc owner with %s", async (_case, owner, expected) => {
-    const fixture = createLinuxProcFixture({ executableOwner: owner });
-    const hostProbe = vi.fn<HostProbe>(async (command) => {
-      return command === "/usr/bin/lsof"
-        ? missingCommand()
-        : captured(
-            0,
-            `${[fixture.executable, ...buildCliOpenShellForwardServiceArgs(forward)].join(" ")}\n`,
-          );
-    });
-    const adapter = createCliOpenShellForwardAdapter({
-      environment: {},
-      executable: fixture.executable,
-      gatewayEndpoint: forward.gatewayEndpoint,
-      hostProbe,
-      platform: "linux",
-      procRoot: fixture.procRoot,
-      run: async () => capturedForwardList(noActiveForwards),
-      runtimeSelection,
-    });
+    ["the exact executable", "expected", "exact", { state: "owned", forward }],
+    ["a different executable", "foreign", "exact", { state: "foreign", forward }],
+    ["repeated internal separators", "expected", "separators", { state: "owned", forward }],
+    [
+      "configured internal separators",
+      "expected",
+      "configuredSeparators",
+      { state: "owned", forward },
+    ],
+    [
+      "a foreign image with repeated separators",
+      "foreign",
+      "separators",
+      { state: "foreign", forward },
+    ],
+    ["a parent-directory alias", "expected", "parent", { state: "foreign", forward }],
+    ["a double-root alias", "expected", "doubleRoot", { state: "foreign", forward }],
+  ] as const)(
+    "classifies a Linux /proc owner with %s",
+    async (_case, owner, spelling, expected) => {
+      const fixture = createLinuxProcFixture({ executableOwner: owner });
+      const commandPaths = {
+        exact: fixture.executable,
+        separators: fixture.executable.replace("/bin/", "//bin///"),
+        configuredSeparators: fixture.executable,
+        parent: fixture.executable.replace("/bin/", "/bin/../bin/"),
+        doubleRoot: `/${fixture.executable}`,
+      };
+      const hostProbe = vi.fn<HostProbe>(async (command) => {
+        return command === "/usr/bin/lsof"
+          ? missingCommand()
+          : captured(
+              0,
+              `${[commandPaths[spelling], ...buildCliOpenShellForwardServiceArgs(forward)].join(" ")}\n`,
+            );
+      });
+      const adapter = createCliOpenShellForwardAdapter({
+        environment: {},
+        executable:
+          spelling === "configuredSeparators" ? commandPaths.separators : fixture.executable,
+        gatewayEndpoint: forward.gatewayEndpoint,
+        hostProbe,
+        platform: "linux",
+        procRoot: fixture.procRoot,
+        run: async () => capturedForwardList(noActiveForwards),
+        runtimeSelection,
+      });
 
-    try {
-      await expect(adapter.observeForwards({ forwards: [forward] })).resolves.toEqual([expected]);
-    } finally {
-      fixture.remove();
-    }
-  });
+      try {
+        await expect(adapter.observeForwards({ forwards: [forward] })).resolves.toEqual([expected]);
+      } finally {
+        fixture.remove();
+      }
+    },
+  );
 
   it.each([
     ["an incomplete process scan", true, 50_000],

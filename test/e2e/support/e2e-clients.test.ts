@@ -454,13 +454,13 @@ describe("E2E fixture clients", () => {
   it("host client removes a current OpenShell gateway with the caller environment", async () => {
     const runner = new FakeRunner();
     const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+    const env = { HOME: "/tmp/cloud-onboard-home" };
+    const expected = { ...env, NPM_CONFIG_PREFIX: `${env.HOME}/.npm-global` };
 
-    await host.cleanupGatewayRegistration("nemoclaw", {
-      env: { HOME: "/tmp/cloud-onboard-home" },
-    });
+    await host.cleanupGatewayRegistration("nemoclaw", { env });
 
     expect(runner.calls.map((call) => call.args)).toEqual([["gateway", "remove", "nemoclaw"]]);
-    expect(runner.calls[0]?.options?.env).toEqual({ HOME: "/tmp/cloud-onboard-home" });
+    expect(runner.calls[0]?.options?.env).toEqual(expected);
   });
 
   it("host client falls back to the legacy gateway destroy verb", async () => {
