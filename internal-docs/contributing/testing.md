@@ -336,13 +336,16 @@ Adding or removing a test moves later tests to other partitions.
 
 ### Archives
 
-`cargo ci archive` writes two files that let other runners run the tests without compiling:
+`cargo ci archive` writes the files that let other runners run the tests without compiling, one nextest archive per test layer so each job downloads only the tests it runs:
 
-- `.build/ci/lifecycle.tar.zst`, a nextest archive of the test binaries that the `contract` and `integration` profiles select, on Linux also those that the `live-docker` and `live-kind` profiles select, and the executables their packages build;
+- `.build/ci/contract.tar.zst`, the test binaries that the `contract` profile selects, and those that the `fixtures` profile selects, so that it also holds the fixture executables the contract tests start;
+- `.build/ci/integration.tar.zst`, the test binaries that the `integration` profile selects;
+- `.build/ci/live.tar.zst`, on Linux only, the test binaries that the `live-docker` and `live-kind` profiles select;
 - `.build/ci/lifecycle-inputs.tar`, which keeps the executable permissions of the pinned tools, the `nemoclaw-build` executable, and the fake `ssh` relay.
 
-The bundle job uploads `dist/PLATFORM` separately.
-Contract, integration, and live jobs extract both archives and the bundle, the live jobs also download the live images archive, and each then runs `.build/ci/nemoclaw-build ci STEP --archive-file .build/ci/lifecycle.tar.zst`, which remaps the tests' working directories to the checkout and extracts the tests into `.build/ci/extracted`.
+Each archive also holds the executables that its test binaries' packages build.
+The build job uploads each file as its own artifact, and the bundle job uploads `dist/PLATFORM` separately.
+Contract, integration, and live jobs download the inputs, their own layer's archive, and the bundle, the live jobs also the live images archive, and each then runs `.build/ci/nemoclaw-build ci STEP --archive-file .build/ci/LAYER.tar.zst`, which remaps the tests' working directories to the checkout and extracts the tests into `.build/ci/extracted`.
 CI keeps these artifacts for one day; rerunning a failed job reuses its producers' artifacts, even from an earlier attempt, and after they expire the complete workflow must be rerun.
 
 ### Run a Contract or Integration Partition
@@ -355,12 +358,14 @@ cargo ci integration --partition slice:1/2
 ```
 
 To reproduce the archive handoff, run `cargo ci archive` after building.
-Copy both archives into `.build/ci` and the bundle into `dist/PLATFORM` in a separate checkout of the same revision on the same operating system and architecture, then run:
+Copy `.build/ci/lifecycle-inputs.tar` and `.build/ci/integration.tar.zst` into `.build/ci` and the bundle into `dist/PLATFORM` in a separate checkout of the same revision on the same operating system and architecture, then run:
 
 ```sh
 tar -xf .build/ci/lifecycle-inputs.tar
-.build/ci/nemoclaw-build ci integration --archive-file .build/ci/lifecycle.tar.zst --partition slice:1/2
+.build/ci/nemoclaw-build ci integration --archive-file .build/ci/integration.tar.zst --partition slice:1/2
 ```
+
+The checkout must be at the path where the tests were built: they read fixtures through paths that `env!("CARGO_MANIFEST_DIR")` fixed at compile time, which the remap does not change.
 
 The worker compiles nothing and writes JUnit timings under `target/nextest/integration`; repeating the command overwrites the extracted files.
 `--partition` requires the `contract` or `integration` step, `--archive-file` requires `contract`, `integration`, `live-docker`, or `live-kind`, and `--images` and `--images-commit` require `live-docker` or `live-kind`, so none of them narrows plain `cargo ci`.
@@ -521,6 +526,9 @@ These tests use fixtures and temporary files; they do not start deployment workl
 
 `CI / Bundle` disables incremental compilation.
 Development and test builds use `debug = 1`, retaining line-number backtraces without full local-variable debug data.
+On CI, `cargo ci` passes `CARGO_PROFILE_DEV_DEBUG=0` to the Cargo commands it runs, unless the caller sets that variable: nothing in CI reads debug data, and it is most of each test archive that test jobs download.
+CI backtraces therefore name functions without line numbers; panic messages keep their file and line.
+`cargo ci` sets the variable only for its own Cargo processes, so it is not part of the cache key, and third-party crates, which the profile already builds without debug data, keep their cached artifacts.
 Profiles live in `.cargo/config.toml`, whose hash and the current month are part of the CI dependency cache prefix.
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
 Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
