@@ -571,6 +571,47 @@ fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed(
     );
 }
 
+/// CI saves the live images' layers on v1 only; every build imports them.
+#[test]
+fn live_images_import_cached_layers_and_save_them_only_when_ci_asks() {
+    for save in [None, Some("false"), Some("true")] {
+        let fixture = Fixture::new();
+        fixture.fake_container_tools();
+        let mut command = fixture.command(&["live-images"]);
+        command.env_remove("NEMOCLAW_SAVE_GHA_CACHE");
+        if let Some(save) = save {
+            command.env("NEMOCLAW_SAVE_GHA_CACHE", save);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let log = fixture.docker_log();
+        for name in ["openclaw", "hermes", "dummy"] {
+            let builds: Vec<&str> = log
+                .lines()
+                .filter(|line| line.starts_with(&format!("buildx bake {name} ")))
+                .collect();
+            assert_eq!(builds.len(), 2, "{log}");
+            let scope = format!("type=gha,scope=live-images-{name}-arm64");
+            for build in &builds {
+                assert!(
+                    build.contains(&format!("{name}.cache-from={scope}")),
+                    "{build}"
+                );
+            }
+            assert_eq!(
+                builds[1].contains(&format!("{name}.cache-to={scope},")),
+                save == Some("true"),
+                "NEMOCLAW_SAVE_GHA_CACHE={save:?}: {}",
+                builds[1]
+            );
+        }
+    }
+}
+
 #[test]
 fn live_images_report_each_build_duration() {
     let fixture = Fixture::new();
