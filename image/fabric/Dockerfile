@@ -8,8 +8,8 @@ ARG RUST_IMAGE=rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490
 # The Fabric source every harness installs; the reference dummy's descriptor
 # follows the adapter contract at the same revision.
-ARG FABRIC_REVISION=316fbdfbd7ac9eb63ffd52023ab4464f2d23e938
-ARG FABRIC_SHA256=7fcf49e29bdabb06eb482d667c6d1d18ee7c4991d7cffcc84ce21623e41ebea0
+ARG FABRIC_REVISION=038e0c87f87a0bb636e352bdcc7946116bfe35c4
+ARG FABRIC_SHA256=03ea19ef469db145db24c14acb20060451d73c10bd3b7c58c6e412c65af8b880
 # OpenClaw release 2026.9.34, the only version the pinned Fabric's OpenClaw
 # adapter supports; move it with the Fabric revision, not on its own.
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:70e88573161a9248cfe992c069f638085ac066278e03f11a46bcbd115f38e3fc
@@ -54,7 +54,7 @@ ENV CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup PATH=/usr/local/ca
 ARG SOURCE_DATE_EPOCH=1789516800
 ARG FABRIC_REVISION
 ARG FABRIC_SHA256
-ADD --checksum=sha256:${FABRIC_SHA256} https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/${FABRIC_REVISION} /sources/fabric.tar.gz
+ADD --checksum=sha256:${FABRIC_SHA256} https://codeload.github.com/jyaunches/NeMo-Fabric/tar.gz/${FABRIC_REVISION} /sources/fabric.tar.gz
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /src/fabric /wheels \
