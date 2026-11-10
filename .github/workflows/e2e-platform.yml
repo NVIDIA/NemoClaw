@@ -64,6 +64,12 @@ jobs:
         with:
           platform: ${{ inputs.platform }}
           save-cache: "false"
+      # The image builds' pinned sources, as CI / Images saved them.
+      - name: Restore the verified image sources
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build/downloads
+          key: image-sources-v1-${{ hashFiles('versions.json') }}
       - uses: ./.github/actions/containerd-store
       # Buildx reads the Actions cache service from these variables, which
       # GitHub passes to actions but not to run steps.

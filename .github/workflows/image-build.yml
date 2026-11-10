@@ -53,6 +53,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Image builds copy the remote files versions.json pins, which both
+      # platforms download once per pin change.
+      - name: Restore and save the verified image sources
+        if: inputs.run
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build/downloads
+          key: image-sources-v1-${{ hashFiles('versions.json') }}
+      # Bake reads them from .build/image-sources, even to check the Dockerfiles.
+      - name: Fetch the pinned image sources
+        if: inputs.run
+        run: cargo images fetch
       # Keep the required Build checks present when image work is unneeded.
       - name: Validate image selection and Dockerfile instructions
         if: inputs.run

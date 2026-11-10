@@ -17,7 +17,7 @@ Deliver one pull request, titled like `feat: add the OpenCode agent image`.
 ## 1. Gather the Inputs
 
 - **Adapter ID** from Fabric, such as `nvidia.fabric.opencode`, and a short **harness name** for the image and example, lowercase and hyphenated, such as `opencode`.
-- **Fabric revision.** NemoClaw pins one Fabric revision for every image. If the pin predates the adapter, bump it first, in its own pull request: `FABRIC_REVISION` and `FABRIC_SHA256` in [the agent Dockerfile](../../../image/fabric/Dockerfile), then [regenerate the bundled catalog](../../../internal-docs/contributing/agent-image-maintenance.md#regenerate-the-bundled-catalog). The SDK learns adapter IDs and descriptors from that catalog; it needs no code change.
+- **Fabric revision.** NemoClaw pins one Fabric revision for every image. If the pin predates the adapter, bump it first, in its own pull request: the URL and SHA-256 of `fabric.tar.gz` under `imageSources.fabric` in [`versions.json`](../../../versions.json), then [regenerate the bundled catalog](../../../internal-docs/contributing/agent-image-maintenance.md#regenerate-the-bundled-catalog). The SDK learns adapter IDs and descriptors from that catalog; it needs no code change.
 - **The adapter's descriptor** (`*.fabric-adapter.json` in Fabric's source at that revision): its runner command and `requirements.binaries` name the runtime the image must carry.
 - **Its packaging:** a Python adapter with a Fabric extra, or anything else, such as a TypeScript adapter or a native agent.
 
@@ -54,7 +54,7 @@ The stage:
 ## 5. Validate
 
 - Build and qualify the image on each platform you can reach natively: `cargo images build --platform linux/arm64 <name>`, then `cargo images qualify nc-fabric:<name>`.
-- Run `docker buildx bake check` and `cargo ci`. Tests that walk every example also count them, such as the [deployment journey](../../../crates/nemoclaw-authoring/tests/deployment_journey.rs); update their counts.
+- Run `cargo images fetch`, then `docker buildx bake check`, and `cargo ci`. Tests that walk every example also count them, such as the [deployment journey](../../../crates/nemoclaw-authoring/tests/deployment_journey.rs); update their counts.
 - CI's image jobs build and qualify every harness on both platforms.
 - Deploying the example is optional; it exercises Fabric's adapter rather than NemoClaw.
 

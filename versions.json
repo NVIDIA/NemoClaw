@@ -143,6 +143,32 @@
     "developmentIssuer": "docker.io/nginxinc/nginx-unprivileged@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03",
     "kindNode": "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
   },
+  "imageSources": {
+    "fabric": {
+      "fabric.tar.gz": {
+        "url": "https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938",
+        "sha256": "7fcf49e29bdabb06eb482d667c6d1d18ee7c4991d7cffcc84ce21623e41ebea0"
+      },
+      "hermes.tar.gz": {
+        "url": "https://codeload.github.com/NousResearch/hermes-agent/tar.gz/bf0203a794a07aac3ff764972ab9087baa4e4f4e",
+        "sha256": "0dc2cca54657d162845a77f634e107c61c3fb0bd6c8505212aa2e200591b7cc9"
+      },
+      "switchyard-amd64.tar.gz": {
+        "url": "https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-0.3.1/switchyard-plugin-0.3.1-linux-x86_64.tar.gz",
+        "sha256": "c3f46807d96deb1c057357a676f92be0f751f92d67571d3aa85240e78cfbd36a"
+      },
+      "switchyard-arm64.tar.gz": {
+        "url": "https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-0.3.1/switchyard-plugin-0.3.1-linux-arm64.tar.gz",
+        "sha256": "e55023684543d1cdbfe127af5328481c436f730cc0b5e4d3ca283f4226696b73"
+      }
+    },
+    "ollama": {
+      "ollama-LICENSE": {
+        "url": "https://raw.githubusercontent.com/ollama/ollama/675150d6ad2747df1e218ef59de9194bc4a7e538/LICENSE",
+        "sha256": "5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226"
+      }
+    }
+  },
   "dockerProvider": "4.6.0",
   "helmProvider": "3.3.0"
 }

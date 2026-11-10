@@ -199,11 +199,13 @@ Build the supervisor image from this checkout using the [runtime build prerequis
 From the repository root, on a Linux ARM64 or AMD64 build host matching the model host:
 
 ```sh
+cargo images fetch
 docker buildx bake ollama
 docker image inspect nc-prototype-ollama:rust-v1 --format '{{index .RepoDigests 0}}'
 ```
 
-The command builds and loads a local image for the build host's architecture.
+`cargo images fetch` downloads the Ollama license that the image retains, as `versions.json` pins it; Bake reads it from `.build/image-sources`.
+The build loads a local image for the build host's architecture.
 Use the immutable image reference that inspection prints in `spec.services.<name>.image` and make the image available on the selected engine.
 The example image digest is a placeholder; a bare upstream `ollama/ollama` image lacks the required supervisor.
 The [runtime notice](../../image/ollama/NOTICE.md) identifies the pinned upstream image and retained sources.
