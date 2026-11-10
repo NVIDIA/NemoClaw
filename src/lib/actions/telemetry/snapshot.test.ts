@@ -253,7 +253,8 @@ it("joins a managed OpenClaw 2026.10.5 configuration to its operation target (#1
     deadlineAt: Date.now() + 10_000,
   });
   expect(read).toHaveBeenCalled();
-  expect(read).toHaveBeenCalledTimes(5);
+  // One configured agent each, so no sandbox needs the native roster command.
+  expect(read).toHaveBeenCalledTimes(3);
   expect(read).not.toHaveBeenCalledWith(
     expect.objectContaining({ sandboxName: "selected", command: ["uname", "-s"] }),
     expect.anything(),
@@ -577,11 +578,7 @@ const hostedRouteBranches = [
         agents: { defaults: { model: `inference/${hostedNvidiaModel}` }, entries: { main: {} } },
         models: { providers: { inference: { api: "openai-completions", baseUrl } } },
       }),
-    extraResponses: {
-      [JSON.stringify(["openclaw", "agents", "list", "--json"])]: JSON.stringify([
-        { id: "main", isDefault: true },
-      ]),
-    },
+    extraResponses: {},
     workload: (routedBaseUrl: string) => ({
       imageTag: imageRef,
       workload: hostedNvidiaWorkload(
@@ -655,5 +652,167 @@ it.each(hostedRouteBranches)(
     });
     expect(event.parameters.collectionStatus).toBe("partial");
     expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
+it("reports a healthy OpenClaw rebuild without the native roster command (#14239)", async () => {
+  const { agent, configPath, config, workload } = hostedRouteBranches[0];
+  // collectNativeConfiguration rejects the roster command and counts every sandbox read.
+  const event = await collectNativeConfiguration(agent, configPath, config(hostedNvidiaEndpoint), {
+    model: hostedNvidiaModel,
+    provider: "nvidia-prod",
+    modelSelectionProvenance: hostedNvidiaProvenance,
+    agentVersion: "2026.9.1",
+    openshellDriver: "docker",
+    sandboxGpuEnabled: false,
+    webSearchEnabled: false,
+    observabilityEnabled: false,
+    appliedPolicySelection: { schemaVersion: 1, source: "verified_selection", tier: "balanced" },
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "native",
+        agent: "openclaw",
+        workflow: "onboard",
+        disabledChannels: [],
+        channels: [],
+        credentialBindings: [],
+      },
+    },
+    ...workload(hostedNvidiaEndpoint),
+  } as unknown as Partial<SandboxEntry>);
+  expect(event.parameters).toMatchObject({
+    configuredRuntimeCount: 1,
+    configuredAgentCount: 1,
+    countsStatus: "reported",
+    collectionStatus: "complete",
+    configurations: [
+      {
+        status: "reported",
+        agentsStatus: "reported",
+        defaultAgentModel: { agentPosition: 0, modelPosition: 0, status: "reported" },
+        sandboxOS: "linux",
+        sandboxOSStatus: "reported",
+        managedAgentVersionStatus: "reported",
+        settings: {
+          computeDriverStatus: "reported",
+          gpuStatus: "reported",
+          imageOwnershipStatus: "reported",
+          policyTierStatus: "reported",
+          webSearchStatus: "reported",
+        },
+      },
+    ],
+  });
+  expect(isOperationEvent(event)).toBe(true);
+});
+
+const twoAgentConfig = JSON.stringify({
+  agents: {
+    defaults: { model: "openai/gpt-4o" },
+    entries: { main: { default: true }, helper: {} },
+  },
+  models: { providers: { openai: { api: "openai-completions" } } },
+});
+
+async function collectWithFailures(failing: readonly string[]) {
+  mocks.readRegistry.mockReturnValue({
+    defaultSandbox: null,
+    sandboxes: { pair: { name: "pair", agent: "openclaw", gatewayPort: 8080 } },
+  });
+  const responses: Record<string, string> = {
+    uname: "Linux",
+    cat: twoAgentConfig,
+    openclaw: JSON.stringify([
+      { id: "main", isDefault: true },
+      { id: "helper", isDefault: false },
+    ]),
+  };
+  mocks.createReader.mockReturnValue({
+    read: vi.fn(async ({ command }: { command: readonly string[] }) =>
+      failing.includes(command[0])
+        ? Promise.reject(new Error("Native evidence could not be verified"))
+        : responses[command[0]],
+    ),
+    observeInferenceRoute: vi.fn(async () =>
+      failing.includes("route")
+        ? Promise.reject(new Error("no gateway in this test"))
+        : { ok: true, value: { state: "unconfigured" } },
+    ),
+    dispose: vi.fn(),
+  });
+  return collectOperationSnapshot({
+    signal: new AbortController().signal,
+    deadlineAt: Date.now() + 10_000,
+  });
+}
+
+it.each([
+  [
+    "no read",
+    [],
+    { status: "reported", agentsStatus: "reported", defaultAgentModel: { status: "reported" } },
+    "reported",
+    "complete",
+  ],
+  [
+    "the OS read",
+    ["uname"],
+    { sandboxOSStatus: "collection_error", status: "reported", agentsStatus: "reported" },
+    "reported",
+    "partial",
+  ],
+  [
+    "the route read",
+    ["route"],
+    { currentInferenceRouteStatus: "collection_error", agentsStatus: "reported" },
+    "reported",
+    "partial",
+  ],
+  [
+    "the roster read",
+    ["openclaw"],
+    {
+      status: "collection_error",
+      agentsStatus: "reported",
+      agents: [{ modelsStatus: "reported" }, { modelsStatus: "reported" }],
+      defaultAgentModel: { status: "collection_error" },
+      sandboxOSStatus: "reported",
+    },
+    "reported",
+    "partial",
+  ],
+  [
+    "the configuration read",
+    ["cat"],
+    {
+      status: "collection_error",
+      agentsStatus: "reported",
+      agents: [{ modelsStatus: "collection_error" }, { modelsStatus: "collection_error" }],
+      defaultAgentModel: { status: "collection_error" },
+      sandboxOSStatus: "reported",
+    },
+    "reported",
+    "partial",
+  ],
+  [
+    "both agent reads",
+    ["cat", "openclaw"],
+    {
+      status: "collection_error",
+      agentsStatus: "collection_error",
+      sandboxOSStatus: "reported",
+      currentInferenceRouteStatus: "not_configured",
+    },
+    "collection_error",
+    "partial",
+  ],
+] as const)(
+  "degrades only the fields that %s supplies (#14239)",
+  async (_label, failing, row, countsStatus, collectionStatus) => {
+    const snapshot = await collectWithFailures(failing);
+    expect(snapshot.configurations[0]).toMatchObject(row);
+    expect(snapshot).toMatchObject({ countsStatus, collectionStatus });
   },
 );
