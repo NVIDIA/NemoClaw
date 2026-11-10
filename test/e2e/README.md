@@ -1320,18 +1320,9 @@ Failed targets still write a manifest for diagnosis, and the existing artifact u
 The manifest is secret-free diagnostic evidence.
 It does not replace the workflow job result or the strict `Release qualification` aggregate.
 
-The `model-router-provider-routed-inference` target writes `router-diagnostics.json` before sandbox cleanup.
-It summarizes the final 64 KiB of the router log as fixed status flags and a completion-response count.
-It never copies log text, request content, or credentials into that file.
-An unavailable log is recorded explicitly; a false flag does not prove that an unlogged event did not occur.
-The cleanup registry captures diagnostics before destroying the sandbox and records capture failures separately from the test failure.
-After onboarding fails, the `router-provider-failure-diagnostics` command also records Python
-and package versions and probes the two shipped NVIDIA pool models directly from the host.
-The probes run concurrently with 60-second socket timeouts and a 75-second command cap.
-They use the existing child credential environment and never follow redirects. Retained output
-contains status, timing, and byte counts; response text, response headers,
-and exception messages are omitted. These diagnostics do not replace the onboarding or
-`inference.local` assertions.
+The deprecated built-in Model Router target and its router-log diagnostics were removed with the feature (#14066).
+Legacy destroy and uninstall cleanup remain covered by their existing lifecycle tests.
+Retired selectors fail validation instead of silently selecting another target.
 
 Run the planner locally to render the complete default selection as a Markdown table:
 

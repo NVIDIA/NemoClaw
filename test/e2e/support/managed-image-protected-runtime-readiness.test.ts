@@ -832,11 +832,12 @@ describe("protected NIM failure cleanup diagnostics", () => {
       "docker",
       `if [ "$1" = "container" ]; then
   printf 'inspected\\n' > ${JSON.stringify(inspectRequest)}
-  # Let the readiness check finish, but stall the EXIT trap's state diagnostics.
+  # Refuse readiness immediately and hold diagnostics until forced shutdown.
   if [ "$5" != '{{.State.Running}}' ]; then
+    trap '' TERM
     exec /bin/sleep 30
   fi
-  printf 'true\\n'
+  printf 'false\\n'
   exit 0
 fi
 printf '%s\\n' "$*" > ${JSON.stringify(logRequest)}

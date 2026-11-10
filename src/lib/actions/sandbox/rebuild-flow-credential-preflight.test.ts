@@ -187,6 +187,21 @@ function disabledDiscordRebuildHarness(recorded: ReturnType<typeof makeStagedHer
 describe("rebuildSandbox flow: credential preflight", () => {
   installRebuildFlowTestHooks();
 
+  it.each(["routed", "nvidia-router"])(
+    "rejects retired %s before rebuild backup or deletion",
+    async (provider) => {
+      const harness = createRebuildFlowHarness({ sandboxEntry: { provider } });
+      const before = structuredClone(harness.session);
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+      ).rejects.toThrow("Model Router has been removed");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.session).toEqual(before);
+    },
+  );
+
   it.each(["hermes", "langchain-deepagents-code"] as const)(
     "rebuilds native local %s with only its scoped provider",
     async (agent) => {
@@ -851,7 +866,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
   it("stops before backup when the agent base-image preflight fails", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: { agent: "hermes", provider: "nvidia-prod" },
       baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
     });
 
@@ -881,7 +896,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
   });
 
-  it.each(["ollama-local", "vllm-local", "nvidia-router"])(
+  it.each(["ollama-local", "vllm-local"])(
     "blocks a legacy %s target before backup (#2519)",
     async (provider) => {
       const harness = createRebuildFlowHarness({

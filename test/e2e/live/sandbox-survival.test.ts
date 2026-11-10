@@ -23,6 +23,7 @@ import {
   SANDBOX_SURVIVAL_INSTALL_TIMEOUT_MS,
   SANDBOX_SURVIVAL_LIFECYCLE_READINESS,
   SANDBOX_SURVIVAL_MARKER_PATHS,
+  SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
   SANDBOX_SURVIVAL_NATIVE_READINESS,
   SANDBOX_SURVIVAL_OPENSHELL_DELETE_TIMEOUT_MS,
   SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS,
@@ -137,19 +138,18 @@ async function expectNativeSurvivalPluginInvocation(
   exec: (
     script: string,
     artifactName: string,
+    timeoutMs?: number,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number | null }>,
 ): Promise<void> {
   const invocation = await exec(
-    buildNativePluginInvocationScript(
-      {
-        tool: "survival_probe",
-        plugin: "e2e-survival-plugin",
-        args: {},
-        details: { survived: true },
-      },
-      10,
-    ),
+    buildNativePluginInvocationScript({
+      tool: "survival_probe",
+      plugin: "e2e-survival-plugin",
+      args: {},
+      details: { survived: true },
+    }),
     "post-openshell-start-native-plugin-invoke",
+    SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
   );
   expect(
     invocation.exitCode === 0 && nativePluginInvocationSucceeded(invocation.stdout),
@@ -306,11 +306,15 @@ test(
     };
 
     stateValidation.expectLocalRegistryContains(SANDBOX_NAME);
-    const execShell = (script: string, artifactName: string) =>
+    const execShell = (
+      script: string,
+      artifactName: string,
+      timeoutMs: number = SANDBOX_SURVIVAL_NATIVE_READINESS.timeoutMs,
+    ) =>
       sandbox.exec(SANDBOX_NAME, ["sh", "-lc", script], {
         artifactName,
         env: sandboxAccessEnv(),
-        timeoutMs: SANDBOX_SURVIVAL_NATIVE_READINESS.timeoutMs,
+        timeoutMs,
       });
 
     progress.phase("prove baseline sandbox access and native agent readiness");

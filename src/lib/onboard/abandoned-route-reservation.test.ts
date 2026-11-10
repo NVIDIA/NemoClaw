@@ -317,9 +317,9 @@ describe("abandoned inference route reservation (#11051)", () => {
     const { createSetupInference } = await import("./setup-inference");
     const route = {
       ...ROUTE,
-      provider: "router-test",
-      endpointUrl: "http://router.test/v1",
-      credentialEnv: "ROUTER_KEY",
+      provider: "compatible-endpoint",
+      endpointUrl: "https://api.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
     };
     registry.registerSandbox({
       name: SANDBOX,
@@ -341,6 +341,16 @@ describe("abandoned inference route reservation (#11051)", () => {
       getModelRouterPort: () => 4000,
       step: vi.fn(),
       getGatewayName: () => GATEWAY,
+      getSandbox: registry.getSandbox,
+      // Personal custom endpoints use the shared route even for pending reservations.
+      resolvePolicyTier: async () => "personal",
+      localInference: { loadPendingOllamaModelCleanup: () => [] },
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: async () => ({ handled: false as const }),
+      },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: async () => ({ handled: false as const }),
+      },
       runOpenshell: () => ({ status: 0 }),
       inferenceRouteMutator: {
         setInferenceRoute: async () => ({ ok: true as const }),
@@ -357,15 +367,7 @@ describe("abandoned inference route reservation (#11051)", () => {
       verifyOnboardInferenceSmoke: vi.fn(),
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-      isRoutedInferenceProvider: () => true,
-      reconcileModelRouter: async () => undefined,
-      routedInference: {
-        upsertRoutedProvider: () => ({
-          ok: true,
-          endpointUrl: route.endpointUrl,
-          result: { ok: true },
-        }),
-      },
+
       hydrateCredentialEnv: () => "fixture-key",
       redact: (value: string) => value,
       compactText: (value: string) => value,
@@ -386,6 +388,7 @@ describe("abandoned inference route reservation (#11051)", () => {
         [],
         {
           skipHostInferenceSmoke: true,
+          endpointPinnedAddresses: ["93.184.216.34"],
           reservationSessionId: "current-session",
           revalidateSandboxIdentity: () => undefined,
         },
