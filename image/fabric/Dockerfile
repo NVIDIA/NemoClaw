@@ -123,7 +123,8 @@ ARG HERMES_SHA256=0dc2cca54657d162845a77f634e107c61c3fb0bd6c8505212aa2e200591b7c
 COPY image/fabric/fetch_source.py /build/fetch_source.py
 RUN python3 -B /build/fetch_source.py \
     "https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION}" \
-    "$HERMES_SHA256" /sources/hermes.tar.gz
+    /sources/hermes.tar.gz \
+    && printf '%s  /sources/hermes.tar.gz\n' "$HERMES_SHA256" | sha256sum -c -
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
 RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md
