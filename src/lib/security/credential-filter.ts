@@ -157,7 +157,12 @@ function isSqlBindParameter(text: string, assignment: RegExpExecArray): boolean 
 /** Detect standalone and context-anchored credentials in opaque file content. */
 export function textContainsCredential(
   value: string,
-  options: { opaqueAssignments?: boolean; privateKeyHeader?: boolean } = {},
+  options: {
+    opaqueAssignments?: boolean;
+    privateKeyHeader?: boolean;
+    /** Only for Deep Agents session content, including database sidecars. */
+    sqlBindParameters?: boolean;
+  } = {},
 ): boolean {
   const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
   if (textContainsHighConfidenceCredential(withoutPlaceholders, options)) return true;
@@ -176,7 +181,7 @@ export function textContainsCredential(
       !/^(?:module\.)?exports\./u.test(field) &&
       isCredentialField(field) &&
       !isSafeCredentialPlaceholder(candidate) &&
-      !isSqlBindParameter(withoutPlaceholders, match)
+      !(options.sqlBindParameters === true && isSqlBindParameter(withoutPlaceholders, match))
     ) {
       return true;
     }

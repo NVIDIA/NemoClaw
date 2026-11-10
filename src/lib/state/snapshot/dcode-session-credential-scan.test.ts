@@ -7,7 +7,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { inspectExtractedDcodeSessionsDatabase } from "./sqlite-credential-scan.js";
+import {
+  inspectExtractedDcodeSessionsDatabase,
+  inspectExtractedOpenClawDatabase,
+} from "./sqlite-credential-scan.js";
 
 const fixtures: string[] = [];
 
@@ -127,9 +130,24 @@ describe("DCode session database credential scan", () => {
       expect(
         inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
       ).toBe(false);
+      expect(
+        inspectExtractedOpenClawDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+      ).toBe(true);
       expect(fs.readFileSync(fixture.path)).toEqual(before);
     },
   );
+
+  it("keeps SQL-shaped assignments credential-bearing in the database schema", () => {
+    const fixture = createDatabase();
+    fixture.database.exec(
+      "CREATE TABLE sessions (content TEXT DEFAULT 'SELECT id FROM users WHERE password=? AND id=1')",
+    );
+    fixture.database.close();
+
+    expect(
+      inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+    ).toBe(true);
+  });
 
   it("preserves the pinned QuickJS diagnostic embedded in interpreter checkpoints", () => {
     const fixture = createDatabase();

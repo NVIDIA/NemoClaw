@@ -22,8 +22,8 @@ afterAll(() => {
 });
 
 describe("DCode WAL snapshot persistence", () => {
-  it.each(["-journal", "-shm", "-wal"])(
-    "rejects credential bytes in a sessions.db%s sidecar",
+  it.each(["-journal", "-shm", "-wal", ".env"])(
+    "rejects credential-shaped text in sessions.db%s",
     (suffix) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-sidecar-secret-"));
       try {
@@ -39,7 +39,7 @@ describe("DCode WAL snapshot persistence", () => {
             : ["ghp_", "a".repeat(36)].join("");
         fs.writeFileSync(
           `${databasePath}${suffix}`,
-          `db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))\n${credential}`,
+          `db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))${suffix === ".env" ? "" : `\n${credential}`}`,
         );
 
         fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });

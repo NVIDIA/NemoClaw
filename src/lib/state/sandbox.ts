@@ -1726,7 +1726,7 @@ function scanNativeTarFilePayload(
   descriptor: number,
   position: number,
   size: number,
-  opaqueAssignments: boolean,
+  credentialOptions: { opaqueAssignments: boolean; sqlBindParameters: boolean },
   npmConfig: boolean,
   providerProfileSchema: boolean,
   openclawConfig: boolean,
@@ -1768,7 +1768,7 @@ function scanNativeTarFilePayload(
           : raw;
     if (
       textContainsCredential(credentialScanInput, {
-        opaqueAssignments,
+        ...credentialOptions,
         privateKeyHeader,
       })
     ) {
@@ -2209,8 +2209,12 @@ function nativeArchiveRawCredentialViolation(
           descriptor!,
           dataOffset,
           size,
-          dcodeSessionsDatabaseRole === "sidecar" ||
-            shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+          {
+            opaqueAssignments:
+              dcodeSessionsDatabaseRole === "sidecar" ||
+              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+            sqlBindParameters: dcodeSessionsDatabaseRole === "sidecar",
+          },
           fileName === ".npmrc",
           providerProfileSchema,
           openclawConfig,

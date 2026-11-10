@@ -23,7 +23,7 @@ function sessionBlobContainsCredential(value: Uint8Array): boolean {
   const text = Buffer.from(value)
     .toString("utf8")
     .replaceAll("\0unexpected token: '%.*s'\0", "\0unexpected syntax: '%.*s'\0");
-  return textContainsCredential(text);
+  return textContainsCredential(text, { sqlBindParameters: true });
 }
 
 type InspectionFailure = "integrity-check" | "table-name" | "sqlite-query" | "file-access";
@@ -51,7 +51,7 @@ function cellContainsCredential(
   ) {
     return false;
   }
-  return textContainsCredential(value);
+  return textContainsCredential(value, { sqlBindParameters: databaseKind === "dcode" });
 }
 
 /** Inspect logical SQLite values so record framing cannot create token-shaped byte sequences. */

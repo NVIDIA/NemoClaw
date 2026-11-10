@@ -290,6 +290,10 @@ describe("textContainsHighConfidenceCredential", () => {
 });
 
 describe("textContainsCredential", () => {
+  it("keeps SQL-shaped assignments credential-bearing by default", () => {
+    expect(textContainsCredential("'SELECT id FROM users WHERE password=?'")).toBe(true);
+  });
+
   it.each([
     "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
     'db.execute("select id from users where password = ?", (pw,))',
@@ -301,7 +305,7 @@ describe("textContainsCredential", () => {
     "db.execute('WITH matches AS (SELECT id, password FROM users) SELECT id FROM matches WHERE password=?', (pw,))",
     "db.execute('EXPLAIN QUERY PLAN UPDATE users SET password=? WHERE id=?', (pw, user_id))",
   ])("preserves anonymous SQL parameters in a conversation: %s (#14074)", (value) => {
-    expect(textContainsCredential(value)).toBe(false);
+    expect(textContainsCredential(value, { sqlBindParameters: true })).toBe(false);
   });
 
   it.each([
@@ -323,7 +327,7 @@ describe("textContainsCredential", () => {
     "'UPDATE users SET password=private-value WHERE id=?'",
     `'DELETE FROM users WHERE password=?'; ghp_${"0123456789abcdef"}`,
   ])("rejects credential assignments beside SQL-shaped text: %s", (value) => {
-    expect(textContainsCredential(value)).toBe(true);
+    expect(textContainsCredential(value, { sqlBindParameters: true })).toBe(true);
   });
 
   it.each([
