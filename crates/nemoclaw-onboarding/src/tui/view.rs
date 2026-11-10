@@ -561,12 +561,22 @@ fn choice_line(value: &str, active: bool) -> Line<'static> {
 }
 
 /// One YAML line behind the box's rule, wrapped here so every row keeps the
-/// rule. Continuation rows are indented past the line's own indentation.
+/// rule. Continuation rows start with `↪` past the line's own indentation,
+/// so they don't read as lines of the file.
 fn ruled_lines(line: &str, width: usize) -> Vec<Line<'static>> {
     const GUTTER: usize = 2;
-    let gutter = || Span::styled("│ ", Style::new().fg(DIM));
+    const MARKER: &str = "↪ ";
     let room = width.saturating_sub(GUTTER).max(1);
-    let indent = (line.len() - line.trim_start().len() + 2).min(room / 2);
+    let indent = (line.len() - line.trim_start().len()).min(room / 2);
+    let gutter = || Span::styled("│ ", Style::new().fg(DIM));
+    let continuation = || {
+        vec![
+            gutter(),
+            Span::raw(" ".repeat(indent)),
+            Span::styled(MARKER, Style::new().fg(DIM)),
+        ]
+    };
+    let indent = indent + MARKER.chars().count();
     let mut rows = Vec::new();
     let mut row = vec![gutter()];
     let mut used = 0;
@@ -578,10 +588,7 @@ fn ruled_lines(line: &str, width: usize) -> Vec<Line<'static>> {
                 if !text.is_empty() {
                     row.push(Span::styled(std::mem::take(&mut text), span.style));
                 }
-                rows.push(Line::from(std::mem::replace(
-                    &mut row,
-                    vec![gutter(), Span::raw(" ".repeat(indent))],
-                )));
+                rows.push(Line::from(std::mem::replace(&mut row, continuation())));
                 used = indent;
             }
             text.push(character);

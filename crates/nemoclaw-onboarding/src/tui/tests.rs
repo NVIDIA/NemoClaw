@@ -2248,7 +2248,7 @@ fn an_explicit_policy_is_not_summarized_as_isolated() {
 }
 
 #[test]
-fn an_open_configuration_file_keeps_its_rule_on_wrapped_lines() {
+fn an_open_configuration_file_marks_and_rules_its_wrapped_lines() {
     let mut wizard = reviewing_wizard_with("nvidia.fabric.hermes");
     wizard.toggle_configuration();
     let longest = wizard
@@ -2268,9 +2268,24 @@ fn an_open_configuration_file_keeps_its_rule_on_wrapped_lines() {
         .take_while(|line| !line.starts_with("╰─"))
         .collect::<Vec<_>>();
     assert!(rows.len() > 5, "{screen}");
+    let yaml = wizard.saved_yaml().unwrap();
+    let mut continued = 0;
     for row in rows {
-        assert!(row.starts_with('│'), "{row:?} in {screen}");
+        let Some(text) = row.strip_prefix('│') else {
+            panic!("{row:?} in {screen}");
+        };
+        // The scrollbar track ends the row.
+        let text = text.trim().trim_end_matches(['│', '┃']).trim();
+        if text.starts_with('↪') {
+            continued += 1;
+        } else {
+            assert!(
+                yaml.lines().any(|line| line.trim_start().starts_with(text)),
+                "{row:?} continues a line without a marker in {screen}"
+            );
+        }
     }
+    assert!(continued > 0, "{screen}");
 }
 
 #[test]
