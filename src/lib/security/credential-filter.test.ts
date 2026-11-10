@@ -294,6 +294,12 @@ describe("textContainsCredential", () => {
     "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
     'db.execute("select id from users where password = ?", (pw,))',
     "db.execute('SELECT id FROM users WHERE pass=? AND name=?', (pw, user))",
+    "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
+    'db.execute("delete from users where password = ?", (pw,))',
+    "db.execute('INSERT INTO audit SELECT id FROM users WHERE password=?', (pw,))",
+    "db.execute('REPLACE INTO audit SELECT id FROM users WHERE password=?', (pw,))",
+    "db.execute('WITH matches AS (SELECT id, password FROM users) SELECT id FROM matches WHERE password=?', (pw,))",
+    "db.execute('EXPLAIN QUERY PLAN UPDATE users SET password=? WHERE id=?', (pw, user_id))",
   ])("preserves anonymous SQL parameters in a conversation: %s (#14074)", (value) => {
     expect(textContainsCredential(value)).toBe(false);
   });
@@ -313,6 +319,9 @@ describe("textContainsCredential", () => {
     `'SELECT ${" ".repeat(1_024)}password=?'`,
     "'SELECT id FROM users WHERE pass=?'; password=private-value",
     `'SELECT id FROM users WHERE pass=?'; ghp_${"0123456789abcdef"}`,
+    "'UPDATE users SET password=? WHERE id=?'; password=private-value",
+    "'UPDATE users SET password=private-value WHERE id=?'",
+    `'DELETE FROM users WHERE password=?'; ghp_${"0123456789abcdef"}`,
   ])("rejects credential assignments beside SQL-shaped text: %s", (value) => {
     expect(textContainsCredential(value)).toBe(true);
   });

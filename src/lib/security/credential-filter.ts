@@ -143,12 +143,15 @@ function isSqlBindParameter(text: string, assignment: RegExpExecArray): boolean 
   const candidate = assignment[4];
   if (candidate !== "?" && candidate !== "?'" && candidate !== '?"') return false;
   if (!/=[ \t]*\?/u.test(assignment[0])) return false;
-  // A SQL parameter has no credential value. Require nearby quoted SELECT
-  // context and match any captured closing quote. Bound repeated context scans.
-  const query = /(?:'SELECT\b[^'\r\n\0]*|"SELECT\b[^"\r\n\0]*)$/iu.exec(
+  // A bind marker carries no credential. Keep context bounded and within its quote.
+  const query = /(?:'[^'\r\n\0]*|"[^"\r\n\0]*)$/u.exec(
     text.slice(Math.max(0, assignment.index - 1_024), assignment.index),
   );
-  return query !== null && (candidate === "?" || candidate === `?${query[0][0]}`);
+  return (
+    query !== null &&
+    /^['"](?:SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|EXPLAIN)\b/iu.test(query[0]) &&
+    (candidate === "?" || candidate === `?${query[0][0]}`)
+  );
 }
 
 /** Detect standalone and context-anchored credentials in opaque file content. */

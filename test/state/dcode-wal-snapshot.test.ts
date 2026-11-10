@@ -39,7 +39,7 @@ describe("DCode WAL snapshot persistence", () => {
             : ["ghp_", "a".repeat(36)].join("");
         fs.writeFileSync(
           `${databasePath}${suffix}`,
-          `db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))\n${credential}`,
+          `db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))\n${credential}`,
         );
 
         fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
@@ -116,7 +116,10 @@ describe("DCode WAL snapshot persistence", () => {
 
   it.each([
     'Example configuration: {"model":"not-a-secret-marker"}',
-    "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
+    [
+      "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
+      "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
+    ].join("\n"),
   ])("preserves a live database and its conversation: %s", (content) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-state-"));
     let database: DatabaseSync | null = null;

@@ -113,7 +113,10 @@ describe("DCode session database credential scan", () => {
     "preserves a parameterized SQL conversation stored as %s (#14074)",
     (storageType) => {
       const fixture = createDatabase();
-      const content = "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))";
+      const content = [
+        "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
+        "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
+      ].join("\n");
       fixture.database.exec(`CREATE TABLE sessions (content ${storageType})`);
       fixture.database
         .prepare("INSERT INTO sessions VALUES (?)")
