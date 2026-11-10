@@ -120,7 +120,10 @@ FROM base AS hermes-assets
 # Hermes Agent release v0.22.5, which includes its native Relay integration.
 ARG HERMES_REVISION=bf0203a794a07aac3ff764972ab9087baa4e4f4e
 ARG HERMES_SHA256=0dc2cca54657d162845a77f634e107c61c3fb0bd6c8505212aa2e200591b7cc9
-ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
+COPY image/fabric/fetch_source.py /build/fetch_source.py
+RUN python3 -B /build/fetch_source.py \
+    "https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION}" \
+    "$HERMES_SHA256" /sources/hermes.tar.gz
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
 RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md
