@@ -223,8 +223,9 @@ The Restricted tier suppresses this agent-required preset during onboarding and 
 An operator can add it manually after reviewing the additional egress, but the next Restricted reconciliation removes it.
 </AgentOnly>
 The applied set therefore reflects the chosen tier *plus* any agent-required presets, so `policy list` may show one or more presets that do not appear in the tier table above.
-The `policy list` provenance tags are inferred from the current tier YAML and the active agent at display time and are not persisted per preset.
-A preset whose name matches an entry in the sandbox's current tier definition is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding; agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches.
+The `policy list` provenance tags are inferred from the active agent at display time and are not persisted per preset.
+`policy list` does not tag tier presets, so it labels them `[user-added]`.
+Agent-specific preset names are labelled `[from <agent> agent]` only when the active agent matches.
 Claude Code direct egress is not included in the Restricted, Balanced, or Open tiers.
 Personal's broad route permits its port `443` transport but does not install or configure Claude Code; on other tiers, apply the `claude-code` preset explicitly if you install and run the CLI inside the sandbox with its own credentials.
 NemoClaw-managed Anthropic inference remains mediated by OpenShell.
