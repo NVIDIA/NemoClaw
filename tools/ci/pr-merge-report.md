@@ -5,32 +5,26 @@
 
 ## Accepted scope
 
-Decision: Accept for #14163. Accountable maintainer: @deepujain.
-The approval covers the reporting workflow and standalone helper in #14253.
+The [maintainer decision in PR #14253](https://github.com/NVIDIA/NemoClaw/pull/14253)
+accepts the reporting workflow and standalone helper for #14163. @deepujain owns
+this scope; repository automation maintainers own failures and recovery.
 
-Reason: maintainers need outcomes beside the opening session report to evaluate
-workflow changes. Reports use GitHub metadata and label revision counts as
-observed because complete push history is unavailable.
+Maintainers need GitHub-derived outcomes beside the opening session report.
+Revision counts are observed because complete push history is unavailable.
+The default-branch workflow and helper under `tools/ci/` serve merged PRs into
+`main` and `v1`, including forks, without session access or PR-code execution.
 
-Placement: `.github/workflows/pr-merge-report.yml` and the standalone helper
-under `tools/ci/`. Repository automation maintainers own failures and recovery;
-the accountable maintainer owns changes to this scope.
+Reporting starts with the next merge after installation. Each eligible PR gets
+one collapsed bot report. Runs serialize per PR, stop after 20 minutes, and
+retain artifacts for 90 days. Existing comments stay intact; retries avoid
+duplicates. Compile only the verified squash-parent reporter, disable persisted
+checkout credentials, and expose the short-lived token only to API steps with
+the declared job permissions.
 
-Lifecycle: reporting starts with the next merge after installation. Each merged
-PR into `main` or `v1` receives one collapsed bot report. Runs are serialized per
-PR and bounded to 20 minutes; artifacts expire after 90 days. Existing comments
-remain intact, and retries must avoid duplicate reports.
-
-Compatibility and security: preserve the opening report and support fork PRs
-without reading session records or executing PR code. Compile only the verified
-squash-parent reporter and disable persisted checkout credentials. Expose the
-short-lived workflow token only to the API steps that need it, with the
-permissions declared by the job.
-
-Validation plan: run the reporter and workflow-adapter tests below, including
-API refusal, trusted-checkout rejection, publication readback, failure retention,
-and duplicate avoidance. Complete hosted acceptance after installation; local
-fixtures do not establish GitHub event delivery or effective token permissions.
+Validation covers metadata, rejected parents and events, API refusal,
+publication readback, failure retention, and recovery. Hosted acceptance follows
+installation; fixtures cannot establish GitHub event delivery, effective token
+permissions, or the real checkout action.
 
 ## Local evidence
 
