@@ -303,6 +303,7 @@ function validateJobIdentity(
   }
 }
 
+/** Reject MCP jobs that expand token access or change trusted checkout and execution boundaries. */
 function validateJobSecurity(
   errors: string[],
   jobName: string,
