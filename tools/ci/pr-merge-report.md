@@ -3,11 +3,12 @@
 
 # Qualify merge outcome reporting
 
-## Accepted scope
+## Scope and ownership
 
-The [maintainer decision in PR #14253](https://github.com/NVIDIA/NemoClaw/pull/14253)
-accepts the reporting workflow and standalone helper for #14163. @deepujain owns
-this scope; repository automation maintainers own failures and recovery.
+[Issue #14163](https://github.com/NVIDIA/NemoClaw/issues/14163) defines merge-outcome
+reporting under the maintainer-owned [session-report epic #14160](https://github.com/NVIDIA/NemoClaw/issues/14160).
+@deepujain owns this workflow's scope; repository automation maintainers own
+failures and recovery.
 
 Maintainers need GitHub-derived outcomes beside the opening session report.
 Revision counts are observed because complete push history is unavailable.
