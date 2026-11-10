@@ -185,6 +185,7 @@ export async function deleteSelectedGatewaySandbox(
     if (attempt < 4) runtime.sleep?.(200);
   }
   runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+  if (result.kind === "failed") runtime.warn(sandboxCleanupReasonMessage(result));
   return false;
 }
 
