@@ -10,6 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import {
@@ -475,17 +476,37 @@ test(
       env: sandboxAccessEnv(),
       timeoutMs: SANDBOX_SURVIVAL_FINAL_DESTROY_TIMEOUT_MS,
     });
-    sandboxDeleted = true;
-    const postDestroyList = await sandbox.list({
-      artifactName: "post-destroy-openshell-sandbox-list",
-      env: sandboxAccessEnv(),
-      timeoutMs: SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS,
+    const deleteDeadline = performance.now() + SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS;
+    const { value: postDestroyList } = await pollUntil({
+      artifactPrefix: "post-destroy-openshell-sandbox-list",
+      deadlineMs: SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS,
+      now: () => performance.now(),
+      delayMs: () => Math.min(1_000, Math.max(0, deleteDeadline - performance.now())),
+      probe: (_attempt, artifactName) =>
+        sandbox.list({
+          artifactName,
+          env: sandboxAccessEnv(),
+          timeoutMs: Math.max(1, Math.floor(deleteDeadline - performance.now())),
+        }),
+      accept: (result) => result.exitCode === 0 && !outputContainsSandbox(result, SANDBOX_NAME),
+      terminal: (result) => {
+        const deleting = stripVTControlCharacters(result.stdout)
+          .split(/\r?\n/)
+          .some((line) => {
+            const fields = line.trim().split(/\s+/);
+            return fields[0] === SANDBOX_NAME && fields.at(-1) === "Deleting";
+          });
+        return result.exitCode !== 0 || (outputContainsSandbox(result, SANDBOX_NAME) && !deleting)
+          ? `sandbox destroy verification failed: ${resultText(result)}`
+          : undefined;
+      },
     });
     const destroyedAtEnd = !outputContainsSandbox(postDestroyList, SANDBOX_NAME);
     expect(
       postDestroyList.exitCode === 0 && destroyedAtEnd,
       `sandbox destroy verification failed: ${resultText(postDestroyList)}`,
     ).toBe(true);
+    sandboxDeleted = true;
 
     await artifacts.target.complete({
       id: "sandbox-survival",
