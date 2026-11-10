@@ -17,6 +17,7 @@ export function copyTrustedInstallerVerifier(repoRoot: string, targetRoot: strin
     "tools/e2e/candidate-openshell-trust.mts",
     "tools/e2e/candidate-openshell-version.mts",
     "tools/e2e/candidate-upgrade-admission.mts",
+    "tools/e2e/candidate-review-scope.mts",
     "tools/e2e/base-image-publication.mts",
   ].forEach((file) => {
     const target = path.join(targetRoot, file);

@@ -5,9 +5,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { writeExecutable } from "../helpers/installer-sourced-env";
-import { writeNpmStub } from "../helpers/installer-run-fixture";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { INSTALLER_PAYLOAD, writeExecutable } from "../helpers/installer-sourced-env";
+import { createInstallerCheckout, writeNpmStub } from "../helpers/installer-run-fixture";
 
 const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
 
@@ -139,4 +139,52 @@ printf '#!/usr/bin/env bash\\n: > %s\\necho "not the pinned nvm installer"\\n' $
     expect(fs.existsSync(executionMarker)).toBe(false);
     expect(fs.existsSync(downloadedFile)).toBe(false);
   });
+});
+
+describe("installer retired-provider admission", () => {
+  it.each(["routed", "nvidia-router", "NVIDIA_ROUTER", " Routed "])(
+    "rejects retired provider %s before host preparation",
+    (provider) => {
+      const checkout = createInstallerCheckout("nemoclaw-retired-provider-");
+      onTestFinished(() => checkout.remove());
+      const tmp = checkout.root;
+      const marker = path.join(tmp, "host-prepared");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `
+set -euo pipefail
+source "$INSTALLER_UNDER_TEST"
+load_station_vllm_conflict_helpers() { :; }
+consume_station_local_vllm_resume() { return 1; }
+apply_persisted_automatic_gateway_port() { :; }
+validate_forwarded_service_port_overrides() { :; }
+resolve_nemoclaw_gateway_port() { printf 18789; }
+preflight_explicit_express_flags() { :; }
+validate_installer_docker_target_before_host_changes() { :; }
+print_banner() { :; }
+preflight_usage_notice_prompt() { :; }
+_installer_telemetry_begin() { :; }
+prepare_installer_host() { touch "$HOST_MARKER"; exit 91; }
+main --non-interactive --yes-i-accept-third-party-software
+`,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: tmp,
+            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+            HOST_MARKER: marker,
+            NEMOCLAW_PROVIDER: provider,
+            NEMOCLAW_NO_EXPRESS: "1",
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stdout + result.stderr).toContain("Model Router has been removed");
+      expect(fs.existsSync(marker)).toBe(false);
+    },
+  );
 });

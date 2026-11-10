@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouterSession } from "../../inference/provider-key/contract";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
@@ -91,6 +92,7 @@ export function resolveOnboardResumeIntent(options: {
   const status = stored?.value.status;
   const effectiveResume = options.explicitResume || (!options.fresh && status === "in_progress");
   if (!effectiveResume) return { effectiveResume: false, snapshot: null };
+  rejectRetiredModelRouterSession(stored?.value);
   if (!stored) {
     throw new OnboardResumeIntentError("No resumable onboarding session was found.");
   }

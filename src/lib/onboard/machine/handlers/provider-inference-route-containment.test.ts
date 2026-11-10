@@ -66,17 +66,7 @@ function createDeps() {
     recordStepComplete: vi.fn(async () => createSession()),
     surfaceReady: vi.fn(() => true),
     reconcileRouter: vi.fn(async () => undefined),
-    reupsertRoutedProvider: vi.fn(
-      (
-        _gatewayName: string,
-        _provider: string,
-        endpointUrl: string | null,
-        _credentialEnv: string | null,
-      ) => ({
-        ok: true as const,
-        endpointUrl: endpointUrl ?? "http://host.openshell.internal:4000/v1",
-      }),
-    ),
+
     reserveRoute: vi.fn(() => true),
     updateSandbox: vi.fn(),
     log: vi.fn(),
@@ -90,8 +80,7 @@ function createDeps() {
     preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
     getSandboxRecoveryAuthority: (): "missing" => "missing",
     withGatewayRouteMutationLock: async (_gatewayName, operation) => await operation(),
-    withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
-    getModelRouterPort: () => 4000,
+
     normalizeHermesAuthMethod: () => null,
     setupNim: calls.setupNim,
     setupInference: calls.setupInference,
@@ -119,9 +108,7 @@ function createDeps() {
     getOpenshellBinary: () => "/usr/bin/openshell",
     needsBedrockRuntimeAdapter: () => false,
     isInferenceRouteReady: () => true,
-    isRoutedInferenceProvider: (provider) => ["nvidia-router", "custom-router"].includes(provider),
-    reconcileModelRouter: calls.reconcileRouter,
-    reupsertRoutedProvider: calls.reupsertRoutedProvider,
+
     reserveSandboxInferenceRoute: calls.reserveRoute,
     hasSandboxLifecycleAuthority: vi.fn(() => false),
     registryUpdateSandbox: calls.updateSandbox,
@@ -352,141 +339,6 @@ describe("provider route containment", () => {
     expect(inferenceOptions).toMatchObject({ endpointSource: null });
     expect(inferenceOptions).not.toHaveProperty("onboardEndpointUrl");
     expect(result).toMatchObject({ endpointSource: null, onboardEndpointUrl: null });
-  });
-
-  it("allows routed-provider repair across a valid peer-route difference (#6315)", async () => {
-    const session = createSession({ provider: "custom-router", model: "router/model" });
-    session.steps.provider_selection.status = "complete";
-    const { calls, deps } = createDeps();
-    reportDifferentRoute(calls, "custom-router", "router/model");
-
-    const options = resumeOptions(deps, session);
-    options.initial.endpointSource = "inference-set";
-    await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
-      provider: "custom-router",
-      model: "router/model",
-    });
-
-    expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledWith({
-      gatewayName: "nemoclaw-9090",
-      sandboxName: "target-sandbox",
-      route: {
-        provider: "custom-router",
-        model: "router/model",
-        endpointUrl: null,
-        credentialEnv: null,
-        preferredInferenceApi: null,
-      },
-    });
-    expect(calls.reconcileRouter).toHaveBeenCalledOnce();
-    expect(calls.surfaceReady).toHaveBeenCalledOnce();
-    expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
-    expect(calls.reserveRoute).toHaveBeenCalledWith("target-sandbox", {
-      provider: "custom-router",
-      model: "router/model",
-      endpointUrl: "http://host.openshell.internal:4000/v1",
-      endpointSource: "inference-set",
-      credentialEnv: null,
-      preferredInferenceApi: null,
-      gatewayName: "nemoclaw-9090",
-      reservationSessionId: session.sessionId,
-    });
-    expect(calls.updateSandbox).not.toHaveBeenCalled();
-    expect(calls.setupInference).not.toHaveBeenCalled();
-  });
-
-  it("rechecks routed repair after waiting for the gateway lock (#6315)", async () => {
-    const session = createSession({ provider: "custom-router", model: "router/model" });
-    session.steps.provider_selection.status = "complete";
-    const { calls, deps } = createDeps();
-    let releaseLock!: () => void;
-    const lockReleased = new Promise<void>((resolve) => {
-      releaseLock = resolve;
-    });
-    let reportLockEntered!: () => void;
-    const lockEntered = new Promise<void>((resolve) => {
-      reportLockEntered = resolve;
-    });
-    deps.withGatewayRouteMutationLock = async (_gatewayName, operation) => {
-      reportLockEntered();
-      await lockReleased;
-      return await operation();
-    };
-
-    const repair = handleProviderInferenceState(resumeOptions(deps, session));
-    await lockEntered;
-    reportDifferentRoute(calls, "custom-router", "router/model");
-    releaseLock();
-
-    await expect(repair).resolves.toMatchObject({ provider: "custom-router" });
-    expect(calls.reconcileRouter).toHaveBeenCalledOnce();
-    expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
-    expect(calls.updateSandbox).not.toHaveBeenCalled();
-  });
-
-  it("waits for a cross-gateway teardown port lock before publishing routed resume repair (#9098)", async () => {
-    const session = createSession({ provider: "custom-router", model: "router/model" });
-    session.steps.provider_selection.status = "complete";
-    const { calls, deps } = createDeps();
-    let insideGatewayLock = false;
-    let insidePortLock = false;
-    let reportPortLockRequested!: () => void;
-    const portLockRequested = new Promise<void>((resolve) => {
-      reportPortLockRequested = resolve;
-    });
-    let releaseTeardownPortLock!: () => void;
-    const teardownPortLockReleased = new Promise<void>((resolve) => {
-      releaseTeardownPortLock = resolve;
-    });
-    deps.withGatewayRouteMutationLock = async (gatewayName, operation) => {
-      expect(gatewayName).toBe("nemoclaw-9090");
-      insideGatewayLock = true;
-      try {
-        return await operation();
-      } finally {
-        insideGatewayLock = false;
-      }
-    };
-    deps.withModelRouterPortLifecycleLock = async (port, operation) => {
-      expect(insideGatewayLock).toBe(true);
-      expect(port).toBe(4000);
-      reportPortLockRequested();
-      await teardownPortLockReleased;
-      insidePortLock = true;
-      try {
-        return await operation();
-      } finally {
-        insidePortLock = false;
-      }
-    };
-    calls.reconcileRouter.mockImplementation(async () => {
-      expect(insideGatewayLock).toBe(true);
-      expect(insidePortLock).toBe(true);
-    });
-    calls.reupsertRoutedProvider.mockImplementation(() => {
-      expect(insideGatewayLock).toBe(true);
-      expect(insidePortLock).toBe(true);
-      return { ok: true, endpointUrl: "http://host.openshell.internal:4000/v1" };
-    });
-    calls.reserveRoute.mockImplementation(() => {
-      expect(insideGatewayLock).toBe(true);
-      expect(insidePortLock).toBe(true);
-      return true;
-    });
-
-    const repair = handleProviderInferenceState(resumeOptions(deps, session));
-    await portLockRequested;
-
-    expect(calls.reconcileRouter).not.toHaveBeenCalled();
-    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
-    expect(calls.reserveRoute).not.toHaveBeenCalled();
-
-    releaseTeardownPortLock();
-    await expect(repair).resolves.toMatchObject({ provider: "custom-router" });
-
-    expect(calls.reconcileRouter).toHaveBeenCalledOnce();
-    expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
-    expect(calls.reserveRoute).toHaveBeenCalledOnce();
   });
 
   it("allows compatible-endpoint refresh to reach the final setup boundary (#6315)", async () => {

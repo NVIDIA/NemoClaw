@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouter } from "../inference/config";
 import os from "node:os";
 import type { SystemReadinessReport } from "../readiness/types";
 import type { ManagedInferenceReadinessSource } from "../inference/serving/types";
@@ -191,7 +192,6 @@ export interface SetupNimFlowDeps {
     probeVllm?: boolean;
   }): InferenceProviderHostState;
   getAgentInferenceProviderOptions(agent: AgentDefinition | null | undefined): string[];
-  loadRoutedProfile(): { router?: { enabled?: boolean } } | null | undefined;
   readRecordedProvider(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -302,7 +302,6 @@ export interface SetupNimFlowDeps {
     env?: NodeJS.ProcessEnv,
   ): RequestedServingProfileModel | null;
   selectVllmModelFromEnv?(env?: NodeJS.ProcessEnv): { id: string; servedModelId?: string } | null;
-  handleRoutedSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
   coerceAgentInferenceApi(
     agent: AgentDefinition | null,
     preferredInferenceApi: string | null,
@@ -999,6 +998,7 @@ export function createSetupNim(
     revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
     readinessReport?: SystemReadinessReport,
   ): Promise<ProviderSelectionResult> {
+    rejectRetiredModelRouter(deps.getNonInteractiveProvider());
     deps.step(3, 8, "Configuring inference provider");
 
     let model: string | BaseSetupNimSelectionState["model"] = null;
@@ -1159,7 +1159,6 @@ export function createSetupNim(
         requestedProvider,
       });
 
-    const blueprintRouterCfg = deps.loadRoutedProfile();
     const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
       remoteProviderConfig: deps.remoteProviderConfig,
       agentProviderOptions,
@@ -1182,7 +1181,6 @@ export function createSetupNim(
       winOllamaLoopbackOnly,
       ollamaInstallEntry: ollamaInstallMenu.entry,
       vllmEntries,
-      routedEnabled: blueprintRouterCfg?.router?.enabled === true,
       managedLlamaCppOptions,
     });
 
@@ -1581,20 +1579,6 @@ export function createSetupNim(
             preparedVllmState !== null,
             requestedServingProfile,
           );
-          break;
-        } else if (selected.key === "routed") {
-          const state = createSelectionState();
-          const result = await deps.handleRoutedSelection(state);
-          ({
-            model,
-            provider,
-            endpointUrl,
-            credentialEnv,
-            preferredInferenceApi,
-            nimContainer,
-            allowToolsIncompatible,
-          } = state);
-          if (result === "retry-selection") continue selectionLoop;
           break;
         }
       }
