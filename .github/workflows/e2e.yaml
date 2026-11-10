@@ -5726,14 +5726,16 @@ jobs:
 
       - name: Restore trusted OpenShell sources
         timeout-minutes: 1
-        if: ${{ always() && steps.openshell-projection.outcome == 'success' }}
+        if: ${{ always() }}
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+          PROJECTION_OUTCOME: ${{ steps.openshell-projection.outcome }}
         run: |
           set -euo pipefail
-          node tools/e2e/protected-openshell-workspace.mts restore > "$E2E_ARTIFACT_DIR/openshell-projection-restored.json"
+          receipt="$GITHUB_WORKSPACE/.git/nemoclaw-openshell-projection.json"
+          if [[ "${PROJECTION_OUTCOME:-}" == success || -e "$receipt" || -L "$receipt" ]]; then
+            node tools/e2e/protected-openshell-workspace.mts restore > "$E2E_ARTIFACT_DIR/openshell-projection-restored.json"
+          fi
 
       - name: Upload protected managed-image runtime artifacts
         timeout-minutes: 4

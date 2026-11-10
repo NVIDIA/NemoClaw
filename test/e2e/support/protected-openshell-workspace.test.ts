@@ -16,6 +16,7 @@ import {
   fixture,
   approvedFixture,
   admittedSdkFixture,
+  executeWorkflowRestoration,
   git,
   roots,
 } from "../../support/protected-openshell-workspace";
@@ -458,6 +459,72 @@ describe("protected OpenShell workspace", () => {
       /fixture replacement failure/,
     );
     expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
+  });
+
+  it("runs workflow recovery after preparation and its rollback both fail", async () => {
+    const input = fixture();
+    const { renameSync: original } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const failProjection = vi.fn(() => {
+      throw new Error("fixture projection failure");
+    });
+    const failRollback = vi.fn(() => {
+      throw new Error("fixture rollback failure");
+    });
+    vi.mocked(fs.renameSync)
+      .mockImplementationOnce(original)
+      .mockImplementationOnce(original)
+      .mockImplementationOnce(failProjection)
+      .mockImplementationOnce(failRollback);
+    await expect(manageProtectedOpenShellWorkspace("prepare", input)).rejects.toThrow(
+      /fixture rollback failure/,
+    );
+    expect(failProjection).toHaveBeenCalledOnce();
+    expect(failRollback).toHaveBeenCalledOnce();
+    expect(git(input.trustedRoot, "diff", "--no-ext-diff")).not.toBe("");
+    const result = executeWorkflowRestoration(input, "failure");
+    expect(result.condition).toBe("${{ always() }}");
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.output)).toMatchObject({
+      operation: "restore",
+      workflowSha: input.workflowSha,
+      candidateSha: input.candidateSha,
+    });
+    expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
+  });
+
+  it.each(["failure", "cancelled", "skipped"])(
+    "skips recovery without a receipt when preparation was %s",
+    (outcome) => {
+      const input = fixture();
+      const result = executeWorkflowRestoration(input, outcome);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.output).toBe("");
+      expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
+    },
+  );
+
+  it.each<[string, string, (receiptPath: string) => void]>([
+    ["missing", "success", (receiptPath) => fs.unlinkSync(receiptPath)],
+    ["malformed", "failure", (receiptPath) => fs.writeFileSync(receiptPath, "{")],
+    [
+      "dangling symlink",
+      "failure",
+      (receiptPath) => {
+        fs.unlinkSync(receiptPath);
+        fs.symlinkSync(`${receiptPath}.missing`, receiptPath);
+      },
+    ],
+  ])("fails workflow recovery for a %s receipt after %s", async (_kind, outcome, mutate) => {
+    const input = fixture();
+    await manageProtectedOpenShellWorkspace("prepare", input);
+    mutate(join(input.trustedRoot, ".git/nemoclaw-openshell-projection.json"));
+    const before = git(input.trustedRoot, "diff", "--no-ext-diff");
+    const result = executeWorkflowRestoration(input, outcome);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(
+      /Unsafe protected OpenShell file|Invalid protected OpenShell recovery/,
+    );
+    expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
   });
 });
 

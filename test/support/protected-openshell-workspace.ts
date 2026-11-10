@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { vi } from "vitest";
+import YAML from "yaml";
 import { candidateSdkFixture } from "./candidate-openshell-sdk";
 import { fixture as approvalFixture, identity } from "../helpers/candidate-openshell-trust";
 import {
@@ -85,6 +87,54 @@ export function fixture() {
     candidateRoot,
     workflowSha: git(trustedRoot, "rev-parse", "HEAD"),
     candidateSha: git(candidateRoot, "rev-parse", "HEAD"),
+  };
+}
+
+export function executeWorkflowRestoration(input: ReturnType<typeof fixture>, outcome: string) {
+  const parent = dirname(input.trustedRoot);
+  const bin = join(parent, "recovery-bin");
+  const artifacts = join(parent, "recovery-artifacts");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(artifacts, { recursive: true });
+  fs.writeFileSync(
+    join(bin, "node"),
+    `#!/bin/sh
+[ "$1" = tools/e2e/protected-openshell-workspace.mts ] || exit 91
+shift
+exec "$TEST_NODE_BIN" "$TEST_RECOVERY_HELPER" "$@"
+`,
+    { mode: 0o700 },
+  );
+  const workflow = YAML.parse(
+    fs.readFileSync(new URL("../../.github/workflows/e2e.yaml", import.meta.url), "utf8"),
+  );
+  const step = workflow.jobs["managed-image-protected-runtime"].steps.find(
+    (step: { name?: string }) => step.name === "Restore trusted OpenShell sources",
+  );
+  if (typeof step?.run !== "string") throw new Error("Missing protected workflow restoration step");
+  const result = spawnSync("bash", ["-c", step.run], {
+    cwd: input.trustedRoot,
+    encoding: "utf8",
+    timeout: 10_000,
+    env: {
+      PATH: `${bin}:${process.env.PATH}`,
+      TEST_NODE_BIN: process.execPath,
+      TEST_RECOVERY_HELPER: fileURLToPath(
+        new URL("../../tools/e2e/protected-openshell-workspace.mts", import.meta.url),
+      ),
+      PROJECTION_OUTCOME: outcome,
+      GITHUB_WORKSPACE: input.trustedRoot,
+      NEMOCLAW_E2E_TESTED_ROOT: input.candidateRoot,
+      CHECKOUT_SHA: input.candidateSha,
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: input.workflowSha,
+      E2E_ARTIFACT_DIR: artifacts,
+    },
+  });
+  const report = join(artifacts, "openshell-projection-restored.json");
+  return {
+    ...result,
+    condition: step.if,
+    output: fs.existsSync(report) ? fs.readFileSync(report, "utf8") : "",
   };
 }
 

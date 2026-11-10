@@ -2643,7 +2643,7 @@ When the candidate needs trust absent from the controller's registry, preparatio
 The approval must match the open PR, candidate commit, and base commit.
 The approved registry and installer sources must match the candidate's committed files.
 Candidates covered by the controller's registry need no additional approval.
-The job exposes its GitHub token as `GITHUB_TOKEN` only to the four trusted source-projection steps, with `contents: read` and `pull-requests: read` permissions.
+For source projection, the job exposes its GitHub token as `GITHUB_TOKEN` only to preparation and both verification steps, with `contents: read` and `pull-requests: read` permissions.
 The token exists in those step environments and is absent from the live qualification environment.
 It projects only the reviewed installer, supervisor and feature-check modules, plus version literals, into the trusted controller checkout.
 It verifies the projected sources before installing the SDK or building the controller, then rechecks them before qualification.
@@ -2657,6 +2657,11 @@ It needs neither live admission nor the candidate checkout, so revoked approval 
 The receipt cannot supply replacement bytes or authorize candidate execution.
 Restoration rejects changed identities, unsafe files, unrelated edits, and bytes that match neither the recorded projection nor the trusted originals.
 If a restoration write fails, completed trusted writes remain in place and the same receipt permits another restoration attempt.
+The workflow runs recovery after a failed or cancelled preparation when a receipt exists, including a failed projection whose rollback also failed.
+It skips recovery when preparation did not succeed and created no receipt.
+A successful preparation still requires recovery; a missing receipt then fails cleanup.
+Malformed receipts and dangling receipt symlinks fail cleanup instead of being skipped.
+Recovery receives the preparation outcome without a GitHub API token.
 The receipt remains in Git metadata for idempotent recovery; a later admitted preparation replaces it after validating the clean trusted sources.
 Inspect the job log and projection artifacts when recovery rejects a receipt or destination.
 Those records identify tested inputs; they do not prove live E2E success.
