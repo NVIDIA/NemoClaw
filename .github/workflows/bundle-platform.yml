@@ -110,6 +110,13 @@ jobs:
           path: target/cargo-timings/*.html
           if-no-files-found: ignore
           retention-days: 14
+      # The Bake tests' first Docker call reads the Docker CLI and its Buildx
+      # plugin, about 110 MB, from the runner's disk; under the test run's load,
+      # that took up to 5.5 s on some hosted runners. Reading them here keeps
+      # that out of the tests' time limits. Without Docker, the tests skip.
+      - name: Load Docker Buildx from disk
+        if: runner.os == 'Linux'
+        run: docker buildx version || true
       - name: Run tests
         run: cargo ci test
       - name: Upload test timings
