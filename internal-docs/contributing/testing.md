@@ -179,6 +179,7 @@ It builds the OpenClaw and Hermes agent images and the reference dummy image und
 The command exports directly from Docker's local containerd store before compression.
 This requires Docker to report its containerd address and namespace, `sudo -n ctr` access, and temporary disk space for the uncompressed archive.
 The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.
+On GitHub Actions, each image's build imports the layers, including builder stages, that an earlier run saved to the Actions cache under `live-images-IMAGE-ARCH`; see [CI caches](#ci-caches).
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
 
 Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, and reference images that a `v1` commit pushed to `ghcr.io/nvidia/nemoclaw/v1-ci`, after `docker login ghcr.io`.
@@ -545,6 +546,10 @@ Native, Docker, and Kind jobs share each platform's dependency cache instead of 
 Only the native build-and-test job writes that shared cache; Docker and Kind jobs restore it without uploading duplicate copies, and the bundle job writes its own.
 Documentation and Brev retain separate cache prefixes.
 The shared key causes a one-time cold build when first enabled; old job-specific entries can expire normally.
+
+`E2E build images` keeps BuildKit's layers for the live images in the same cache, through `cargo images build --gha-cache`: about 1.8 GB per Linux platform, mostly the OpenClaw application, the Rust toolchain, and the Fabric runtime's Rust build.
+Only `v1` saves them, and pull requests into `v1` import them; a layer hits while its inputs, such as the pinned upstream images, the Fabric revision, or `image/fabric`, stay unchanged.
+RUN cache mounts, such as the uv and Cargo download caches, are not saved, and a hit reuses the layer's packages, such as those `apt-get` installed, until its inputs change or the cache expires.
 
 The checksum-addressed OpenTofu archives in `.build/downloads` use a separate cache keyed by platform and `versions.json`.
 Source-only changes reuse that archive cache without uploading it again.
