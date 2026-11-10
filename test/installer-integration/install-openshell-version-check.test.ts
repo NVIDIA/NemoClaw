@@ -878,7 +878,7 @@ maybe_install_openshell_during_install force
     }
   });
 
-  it("rechecks a prepared directory before replacing executable files (#14268)", () => {
+  it("rechecks the prepared directory through the installer caller before replacement (#14268)", () => {
     const { tmp, fakeBin, downloadLog } = createLinuxArm64DownloadFixture();
     try {
       const env = {
@@ -898,10 +898,24 @@ maybe_install_openshell_during_install force
       expect(fs.existsSync(downloadLog)).toBe(false);
       const oldBinary = fs.readFileSync(path.join(fakeBin, "openshell"));
       fs.chmodSync(fakeBin, 0o775);
-      const result = spawnSync("bash", [SCRIPT], {
-        env: { ...env, _NEMOCLAW_OPENSHELL_INSTALL_DIR: preparation.stdout.trim() },
-        encoding: "utf8",
-      });
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `
+source "$1/scripts/install.sh" >/dev/null 2>&1
+NEMOCLAW_SOURCE_ROOT="$1"
+_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR="$2"
+spin() { shift; "$@"; }
+install_nemoclaw_openshell_gateway_user_service() { :; }
+maybe_install_openshell_during_install force
+`,
+          "test",
+          path.resolve(import.meta.dirname, "../.."),
+          preparation.stdout.trim(),
+        ],
+        { env, encoding: "utf8" },
+      );
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("Unsafe prepared executable directory");
       expect(fs.readFileSync(path.join(fakeBin, "openshell"))).toEqual(oldBinary);
