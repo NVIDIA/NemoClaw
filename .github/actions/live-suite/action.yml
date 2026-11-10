@@ -10,7 +10,7 @@ inputs:
     description: The cargo ci step, live-docker or live-kind.
     required: true
   tests:
-    description: Name of the Build and test job's artifact.
+    description: Name prefix of the Build and test job's artifacts; the suite downloads PREFIX-inputs and PREFIX-live.
     required: true
   bundle:
     description: Name of the bundle job's artifact.
@@ -34,10 +34,15 @@ runs:
       with:
         path: .build/downloads
         key: native-downloads-v1-${{ inputs.platform }}-${{ hashFiles('versions.json') }}
-    - name: Download the test archive
+    - name: Download the test inputs
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
-        name: ${{ inputs.tests }}
+        name: ${{ inputs.tests }}-inputs
+        path: .build/ci
+    - name: Download the live test archive
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ inputs.tests }}-live
         path: .build/ci
     - name: Download the bundle
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -79,7 +84,7 @@ runs:
         else
           images=(--images .build/ci/live-images.tar.zst)
         fi
-        .build/ci/nemoclaw-build ci "$LIVE_STEP" --archive-file .build/ci/lifecycle.tar.zst "${images[@]}" \
+        .build/ci/nemoclaw-build ci "$LIVE_STEP" --archive-file .build/ci/live.tar.zst "${images[@]}" \
           --hcl-cases "$HCL_CASES"
     - name: Sign out of the image registry
       if: always() && inputs.images-commit != ''

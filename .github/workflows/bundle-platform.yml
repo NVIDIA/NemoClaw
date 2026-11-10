@@ -113,18 +113,49 @@ jobs:
       - name: Archive lifecycle executables and inputs
         if: inputs.lifecycle || inputs.e2e
         run: cargo ci archive
-      - name: Identify lifecycle artifact
+      # The artifacts' common name prefix: each test job downloads the inputs
+      # and only its own layer's archive, PREFIX-inputs and PREFIX-LAYER.
+      - name: Identify lifecycle artifacts
         if: inputs.lifecycle || inputs.e2e
         id: identity
-        run: echo "artifact=lifecycle-inputs-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+        run: echo "artifact=lifecycle-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Upload lifecycle inputs
         if: inputs.lifecycle || inputs.e2e
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ steps.identity.outputs.artifact }}
-          path: |
-            .build/ci/lifecycle.tar.zst
-            .build/ci/lifecycle-inputs.tar
+          name: ${{ steps.identity.outputs.artifact }}-inputs
+          path: .build/ci/lifecycle-inputs.tar
+          include-hidden-files: true
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload contract tests
+        if: inputs.lifecycle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.identity.outputs.artifact }}-contract
+          path: .build/ci/contract.tar.zst
+          include-hidden-files: true
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload integration tests
+        if: inputs.lifecycle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.identity.outputs.artifact }}-integration
+          path: .build/ci/integration.tar.zst
+          include-hidden-files: true
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
+      # Only Linux archives the live suites, and only Linux runs them.
+      - name: Upload live tests
+        if: inputs.e2e
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.identity.outputs.artifact }}-live
+          path: .build/ci/live.tar.zst
           include-hidden-files: true
           compression-level: 1
           retention-days: 1
@@ -196,7 +227,11 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ needs.build.outputs.artifact }}
+          name: ${{ needs.build.outputs.artifact }}-inputs
+          path: .build/ci
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.build.outputs.artifact }}-${{ matrix.layer }}
           path: .build/ci
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -220,7 +255,7 @@ jobs:
         run: >-
           .build/ci/nemoclaw-build ci "$LAYER"
           --partition "slice:${SHARD}/${SHARDS}"
-          --archive-file .build/ci/lifecycle.tar.zst
+          --archive-file ".build/ci/${LAYER}.tar.zst"
       - name: Upload timings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -275,7 +310,7 @@ jobs:
       # The build tool comes from the test inputs; this job compiles nothing.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ needs.build.outputs.artifact }}
+          name: ${{ needs.build.outputs.artifact }}-inputs
           path: .build/ci
       # Every attempt's timings; the report reads each shard's latest attempt.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
