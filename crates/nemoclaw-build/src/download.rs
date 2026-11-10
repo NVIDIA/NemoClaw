@@ -60,7 +60,8 @@ struct Retry {
     /// The wait before the first retry when the response has no Retry-After;
     /// it doubles for each later retry.
     backoff: Duration,
-    /// The longest wait, including one that Retry-After asks for.
+    /// The longest wait. A larger Retry-After stops retries rather than
+    /// sending another request before the server allows it.
     cap: Duration,
 }
 
@@ -71,12 +72,17 @@ const RETRY: Retry = Retry {
 };
 
 impl Retry {
-    /// The wait before request `attempt + 1`.
-    fn wait(&self, attempt: u32, retry_after: Option<&str>) -> Duration {
-        retry_after
-            .and_then(requested_wait)
-            .unwrap_or_else(|| self.backoff.saturating_mul(1 << (attempt - 1).min(16)))
-            .min(self.cap)
+    /// The wait before request `attempt + 1`, or none if the server's
+    /// requested wait exceeds the budget.
+    fn wait(&self, attempt: u32, retry_after: Option<&str>) -> Option<Duration> {
+        if let Some(wait) = retry_after.and_then(requested_wait) {
+            return (wait <= self.cap).then_some(wait);
+        }
+        Some(
+            self.backoff
+                .saturating_mul(1 << (attempt - 1).min(16))
+                .min(self.cap),
+        )
     }
 }
 
@@ -130,7 +136,12 @@ impl Downloads {
                     .headers()
                     .get(reqwest::header::RETRY_AFTER)
                     .and_then(|value| value.to_str().ok());
-                let wait = self.retry.wait(attempt, retry_after);
+                let Some(wait) = self.retry.wait(attempt, retry_after) else {
+                    return Err(format!(
+                        "{url} answered {status}; Retry-After exceeds the {} s retry wait budget",
+                        self.retry.cap.as_secs()
+                    ));
+                };
                 eprintln!(
                     "{url} answered {status}; retrying in {} s",
                     wait.as_secs_f32()
@@ -185,10 +196,6 @@ mod tests {
     type Response<'a> = (u16, &'a [(&'a str, &'a str)], &'a [u8]);
 
     fn serve(responses: &[Response]) -> Server {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/artifact", listener.local_addr().unwrap());
-        let requests = Arc::new(AtomicUsize::new(0));
-        let counted = requests.clone();
         let responses: Vec<Vec<u8>> = responses
             .iter()
             .map(|(status, headers, body)| {
@@ -203,6 +210,15 @@ mod tests {
                 [response.as_bytes(), body].concat()
             })
             .collect();
+        serve_raw(responses)
+    }
+
+    /// Literal responses also let a fixture close before its promised body ends.
+    fn serve_raw(responses: Vec<Vec<u8>>) -> Server {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/artifact", listener.local_addr().unwrap());
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counted = requests.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
@@ -293,6 +309,40 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_retry_after_beyond_the_wait_budget_stops_without_retrying() {
+        let directory = tempfile::tempdir().unwrap();
+        let server = serve(&[
+            (429, &[("Retry-After", "3600")], b"slow down"),
+            (200, &[], b"pinned bytes"),
+        ]);
+        let error = downloads(directory.path())
+            .get(&pin(&server, b"pinned bytes"))
+            .await
+            .unwrap_err();
+        assert!(error.contains("Retry-After"), "{error}");
+        assert_eq!(server.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_transfer_is_not_retried_or_cached() {
+        let directory = tempfile::tempdir().unwrap();
+        let server = serve_raw(vec![
+            b"HTTP/1.1 200 Fixture\r\nContent-Length: 100\r\nConnection: close\r\n\r\npartial"
+                .to_vec(),
+            b"HTTP/1.1 200 Fixture\r\nContent-Length: 12\r\nConnection: close\r\n\r\npinned bytes"
+                .to_vec(),
+        ]);
+        let error = downloads(directory.path())
+            .get(&pin(&server, b"pinned bytes"))
+            .await
+            .unwrap_err();
+        assert!(error.contains("cannot download"), "{error}");
+        assert_eq!(server.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
     #[test]
     fn retry_after_may_name_a_number_of_seconds_or_an_http_date() {
         assert_eq!(requested_wait("7"), Some(Duration::from_secs(7)));
@@ -305,7 +355,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retry_after_sets_the_wait_up_to_the_cap() {
+    async fn retry_after_sets_the_wait() {
         let directory = tempfile::tempdir().unwrap();
         let server = serve(&[
             (503, &[("Retry-After", "1")], b"unavailable"),
@@ -318,21 +368,6 @@ mod tests {
             .unwrap();
         assert!(
             start.elapsed() >= Duration::from_secs(1),
-            "waited {:?}",
-            start.elapsed()
-        );
-        let server = serve(&[
-            (429, &[("Retry-After", "3600")], b"slow down"),
-            (200, &[], b"pinned bytes"),
-        ]);
-        let start = Instant::now();
-        downloads(directory.path())
-            .get(&pin(&server, b"other pinned bytes"))
-            .await
-            .unwrap_err();
-        // The tests' cap is 1.1 seconds.
-        assert!(
-            start.elapsed() < Duration::from_secs(3),
             "waited {:?}",
             start.elapsed()
         );

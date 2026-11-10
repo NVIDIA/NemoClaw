@@ -77,11 +77,12 @@ Both platforms build every harness in the Bake file's `HARNESSES` map.
 Agent images share a Python 3.14.10 base without pip.
 Only OpenClaw, Hermes, and Pi add Node.js 24.22.2 LTS: OpenClaw's CLI and the Pi adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
-Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
+Build stages supply the pinned toolchains for image assembly; the host uses Rust to run the image builder and source downloader.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
 `cargo images build` downloads the remote files that image builds copy, such as the Fabric and Hermes source archives, as `versions.json` pins them under `imageSources`.
 It checks each file's SHA-256, keeps it in `.build/downloads`, and places it in `.build/image-sources`, where the Bake file reads it.
 When a server rate-limits a download or answers with a server error, it retries up to three times, waiting as long as `Retry-After` asks, for at most a minute.
+If the server asks for a longer wait, the download stops without retrying early.
 Before building or checking an agent or Ollama image with `docker buildx bake` directly, run `cargo images fetch`, which places the same files; otherwise Bake stops with `failed to get build context sources`.
 Digest-based sandbox use requires a Docker image store that retains repository digests for local builds, such as the tested containerd store.
 
@@ -150,7 +151,8 @@ To extend an agent image with your own skills and tools, refer to [derived agent
 Runtime images build with Docker Buildx Bake on a Linux ARM64 or AMD64 host, always for that host's platform, so the supervisor compiles natively rather than under emulation.
 They require a Docker daemon using the containerd image store, which keeps each local image's digest.
 Run `docker info --format '{{json .DriverStatus}}'` against the selected daemon and check for `["driver-type","io.containerd.snapshotter.v1"]`; Docker's classic image store is unsupported.
-Build stages use pinned Rust and upstream images, so the host needs no Rust toolchain.
+Build stages use pinned Rust and upstream images.
+The vLLM build needs no host Rust toolchain; Ollama requires Rust to fetch its pinned sources.
 Initial builds need network access for the base images and the supervisor's dependency sources.
 A build does not launch inference or publish an image.
 
