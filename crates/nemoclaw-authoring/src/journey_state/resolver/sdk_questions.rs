@@ -47,7 +47,9 @@ impl QuestionResolver<'_> {
                 },
                 required: true,
                 choices: Vec::new(),
-                suggestion: name.cloned(),
+                suggestion: name
+                    .cloned()
+                    .or_else(|| name_from_harness(&self.authored.values)),
                 schema: serde_json::json!({"type":"string"}),
                 title: None,
                 description: None,
@@ -164,4 +166,26 @@ impl QuestionResolver<'_> {
             });
         }
     }
+}
+
+/// A name for a deployment that has none, from its agent's harness: the last
+/// part of `nvidia.fabric.hermes` as a DNS label, `hermes`.
+fn name_from_harness(values: &Value) -> Option<Value> {
+    let kind = harness_kind(values)?;
+    let label = kind
+        .rsplit('.')
+        .next()?
+        .to_ascii_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .take(63)
+        .collect::<String>();
+    let label = label.trim_matches('-');
+    (!label.is_empty()).then(|| Value::String(label.into()))
 }

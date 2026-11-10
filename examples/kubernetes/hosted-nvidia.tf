@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The same two-sandbox AMD64 Kubernetes setup as hosted-nvidia.yaml, in HCL.
+# The same managed development gateway and two sandboxes as hosted-nvidia.yaml.
 # Choose one authoring path per deployment; keep its workspace and state separate.
 # Pin both provider versions to the matching native bundle's manifest version.
 # Adapted from examples/hcl/travel-team at 4b9f06c1c7f85724d0416a119241f6c335e23e9d.
@@ -10,13 +10,38 @@ terraform {
   required_providers {
     openshell = { source = "registry.opentofu.org/nvidia/openshell" }
     fabric    = { source = "registry.opentofu.org/nvidia/fabric" }
+    helm      = { source = "registry.opentofu.org/hashicorp/helm", version = "= 3.3.0" }
   }
 }
 
 variable "gateway_endpoint" {
-  description = "Existing Kubernetes OpenShell gateway HTTPS endpoint."
+  description = "Loopback HTTPS endpoint used by command-scoped Kubernetes tunnels."
   type        = string
-  default     = "https://openshell.example.com"
+  default     = "https://127.0.0.1:17671"
+}
+
+variable "CLUSTER_KUBECONFIG" {
+  description = "Absolute kubeconfig path for Helm; set NEMOCLAW_CLUSTER_KUBECONFIG to the same file for the OpenShell provider."
+  type        = string
+  sensitive   = true
+}
+
+variable "context" {
+  description = "Explicit context in the selected kubeconfig."
+  type        = string
+  default     = "replace-with-explicit-context"
+}
+
+variable "namespace" {
+  description = "Namespace for the managed gateway and caller-provisioned agent PVCs."
+  type        = string
+  default     = "nemoclaw-gtc-dc"
+}
+
+variable "deployment_uid" {
+  description = "Fresh deployment UUID; keep it and the private Kubernetes state directory for recovery."
+  type        = string
+  default     = "689091f2-bca0-44c5-81bf-c9db1874d9d0"
 }
 
 variable "workspace" {
@@ -46,20 +71,176 @@ provider "openshell" {
 provider "fabric" {
   destroy = var.destroy
 }
+provider "helm" {
+  helm_driver            = "secret"
+  registry_config_path   = ".helm/registry.json"
+  repository_config_path = ".helm/repositories.yaml"
+  repository_cache       = ".helm/cache"
+  plugins_path           = ".helm/plugins"
+  kubernetes = {
+    config_path    = var.CLUSTER_KUBECONFIG
+    config_context = var.context
+  }
+}
+
+locals {
+  pins         = jsondecode(file("${path.module}/versions.json"))
+  gateway_name = "nc-${substr(sha256(var.deployment_uid), 0, 16)}-gateway"
+  platform_images = {
+    for name in ["gateway", "supervisor", "sandboxRuntime"] : name => {
+      registry   = ""
+      repository = split("@", local.pins.images[name])[0]
+      digest     = split("@", local.pins.images[name])[1]
+      pullPolicy = "IfNotPresent"
+    }
+  }
+  gateway_settings = {
+    runtime  = { provider = "kubernetes" }
+    endpoint = var.gateway_endpoint
+    kubernetes = {
+      kubeconfig     = { env = "NEMOCLAW_CLUSTER_KUBECONFIG" }
+      context        = var.context
+      namespace      = var.namespace
+      authentication = { profile = "development" }
+    }
+  }
+}
+
+resource "openshell_kubernetes_storage" "platform" {
+  name                   = local.gateway_name
+  owner                  = var.deployment_uid
+  compute_driver         = "kubernetes"
+  endpoint               = var.gateway_endpoint
+  kubeconfig_env         = "NEMOCLAW_CLUSTER_KUBECONFIG"
+  context                = var.context
+  namespace              = var.namespace
+  authentication_profile = "development"
+  lifecycle {
+    prevent_destroy = true
+    postcondition {
+      condition     = self.running == "true"
+      error_message = "Managed gateway storage is not ready."
+    }
+  }
+}
+
+resource "openshell_kubernetes_auth" "platform" {
+  name                   = local.gateway_name
+  owner                  = openshell_kubernetes_storage.platform.owner
+  compute_driver         = "kubernetes"
+  endpoint               = var.gateway_endpoint
+  kubeconfig_env         = "NEMOCLAW_CLUSTER_KUBECONFIG"
+  context                = var.context
+  namespace              = var.namespace
+  authentication_profile = "development"
+  lifecycle {
+    postcondition {
+      condition     = self.running == "true"
+      error_message = "Managed gateway development authentication is not ready."
+    }
+  }
+}
+
+resource "helm_release" "gateway" {
+  depends_on       = [openshell_kubernetes_auth.platform]
+  name             = local.gateway_name
+  namespace        = var.namespace
+  chart            = local.pins.images.gatewayChart
+  create_namespace = false
+  take_ownership   = false
+  upgrade_install  = false
+  atomic           = true
+  wait             = true
+  wait_for_jobs    = true
+  timeout          = 600
+  values = [jsonencode({
+    fullnameOverride = local.gateway_name
+    global           = { image = { registry = "" } }
+    gateway          = { image = local.platform_images.gateway }
+    supervisor       = { image = local.platform_images.supervisor }
+    sandboxRuntime   = { image = local.platform_images.sandboxRuntime }
+    sandbox          = { image = local.platform_images.sandboxRuntime }
+    server = {
+      telemetryEnabled = false
+      disableTls       = false
+      tls = {
+        enableMtls          = true
+        certSecretName      = "${local.gateway_name}-server-tls"
+        clientTlsSecretName = "${local.gateway_name}-client-tls"
+      }
+      sandboxJwt        = { signingSecretName = "${local.gateway_name}-jwt-keys" }
+      credentialStorage = { existingSecret = "${local.gateway_name}-kek" }
+      oidc              = { caConfigMapName = "${local.gateway_name}-oidc-ca" }
+    }
+    gatewayConfig = {
+      "openshell.gateway.auth" = { allow_unauthenticated_users = false }
+      "openshell.gateway.oidc" = {
+        issuer                          = "https://${local.gateway_name}-oidc.${var.namespace}.svc.cluster.local:8443"
+        audience                        = var.deployment_uid
+        jwks_ttl_secs                   = 60
+        roles_claim                     = "roles"
+        admin_role                      = "nemoclaw-development-admin"
+        user_role                       = "nemoclaw-development-user"
+        scopes_claim                    = "scope"
+        dangerously_allow_insecure_http = false
+      }
+      "openshell.drivers.kubernetes" = {
+        workspace_mode                 = "shared"
+        workspace_default_storage_size = "2Gi"
+        allow_driver_config            = true
+      }
+    }
+    pkiInitJob = { enabled = true }
+    resources = {
+      requests = { cpu = "250m", memory = "256Mi" }
+      limits   = { cpu = "1", memory = "1Gi" }
+    }
+  })]
+}
+
+resource "openshell_kubernetes_gateway" "platform" {
+  depends_on             = [helm_release.gateway]
+  name                   = local.gateway_name
+  owner                  = openshell_kubernetes_storage.platform.owner
+  generation             = openshell_kubernetes_auth.platform.generation
+  compute_driver         = "kubernetes"
+  endpoint               = var.gateway_endpoint
+  kubeconfig_env         = "NEMOCLAW_CLUSTER_KUBECONFIG"
+  context                = var.context
+  namespace              = var.namespace
+  authentication_profile = "development"
+  lifecycle {
+    postcondition {
+      condition     = self.running == "true"
+      error_message = "Managed Kubernetes gateway is not ready."
+    }
+  }
+}
 
 data "openshell_gateway" "current" {
-  endpoint                 = var.gateway_endpoint
-  credential_env           = "GATEWAY_TOKEN"
-  tls_ca_env               = "GATEWAY_CA"
-  tls_certificate_env      = "GATEWAY_CERT"
-  tls_key_env              = "GATEWAY_KEY"
+  depends_on = [openshell_kubernetes_gateway.platform]
+  endpoint   = var.gateway_endpoint
+  kubernetes = jsonencode({
+    layout     = 1
+    kind       = "kubernetes_gateway"
+    name       = local.gateway_name
+    owner      = openshell_kubernetes_storage.platform.owner
+    generation = openshell_kubernetes_auth.platform.generation
+    settings   = local.gateway_settings
+  })
   required_compute_drivers = ["kubernetes"]
 }
 
 locals {
   agents = {
-    openclaw = { adapter_id = "nvidia.fabric.openclaw", metadata_env = "NEMOCLAW_OPENCLAW_IMAGE_METADATA" }
-    hermes   = { adapter_id = "nvidia.fabric.hermes", metadata_env = "NEMOCLAW_HERMES_IMAGE_METADATA" }
+    openclaw = {
+      adapter_id   = "nvidia.fabric.openclaw"
+      metadata_env = "NEMOCLAW_OPENCLAW_IMAGE_METADATA"
+    }
+    hermes = {
+      adapter_id   = "nvidia.fabric.hermes"
+      metadata_env = "NEMOCLAW_HERMES_IMAGE_METADATA"
+    }
   }
   inference = {
     endpoint = "https://integrate.api.nvidia.com/v1"
@@ -79,6 +260,7 @@ locals {
 
 data "fabric_harness" "agent" {
   for_each     = local.agents
+  engine       = ""
   image        = var.images[each.key]
   metadata_env = each.value.metadata_env
   adapter_id   = each.value.adapter_id
@@ -98,7 +280,7 @@ resource "openshell_workspace" "deployment" {
     prevent_destroy = true
     precondition {
       condition     = data.openshell_gateway.current.compatible
-      error_message = "The existing gateway must support the Kubernetes compute driver."
+      error_message = "The managed gateway must support the Kubernetes compute driver."
     }
   }
 }
@@ -134,6 +316,27 @@ resource "openshell_sandbox" "agent" {
   image       = var.images[each.key]
   launch_json = data.fabric_harness.agent[each.key].launch_json
   providers   = [openshell_inference.cloud[each.key].ref]
+  driver_config = jsonencode({
+    kubernetes = {
+      volumes = [{
+        name = "agent-data"
+        persistent_volume_claim = {
+          claim_name = "gtc-dc-${each.key}-data"
+          read_only  = false
+        }
+      }]
+      containers = {
+        agent = {
+          volume_mounts = [for directory in ["workspace", "artifacts"] : {
+            name       = "agent-data"
+            mount_path = "/sandbox/${directory}"
+            sub_path   = directory
+            read_only  = false
+          }]
+        }
+      }
+    }
+  })
   policy {
     explicit {
       version = 1
