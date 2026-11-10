@@ -78,7 +78,7 @@ jobs:
         env:
           # Like the Rust caches, only v1 saves image layers; pull requests
           # into v1 read them.
-          NEMOCLAW_SAVE_GHA_CACHE: ${{ github.ref == 'refs/heads/v1' }}
+          NEMOCLAW_SAVE_GHA_CACHE: ${{ github.ref == 'refs/heads/v1' || github.event_name == 'pull_request' }}
         run: cargo ci live-images
       - name: Identify live images artifact
         id: identity
