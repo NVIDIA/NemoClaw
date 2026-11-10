@@ -73,7 +73,10 @@ function buildForwardResponseHeaders(source: http.IncomingHttpHeaders): http.Out
   return headers;
 }
 
-function readBoundedRequestBody(req: http.IncomingMessage): Promise<Buffer> {
+function readBoundedRequestBody(
+  req: http.IncomingMessage,
+  bodyTimeoutMs = OPENROUTER_RUNTIME_ADAPTER_BODY_TIMEOUT_MS,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const contentLength = Number(req.headers["content-length"] || 0);
     if (
@@ -90,9 +93,14 @@ function readBoundedRequestBody(req: http.IncomingMessage): Promise<Buffer> {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      // Do not destroy `req` here: `req` and `res` share the same underlying
+      // socket, so tearing it down now would take the 408 response with it and
+      // the client would see a dead connection instead of the documented JSON
+      // body. Stop buffering the stalled upload and let the caller destroy the
+      // request once the error response has finished writing.
+      req.removeAllListeners("data");
       reject(new ForwardHttpError(408, "Request body timed out.", "request_timeout"));
-      req.destroy();
-    }, OPENROUTER_RUNTIME_ADAPTER_BODY_TIMEOUT_MS);
+    }, bodyTimeoutMs);
 
     req.on("data", (chunk: Buffer) => {
       if (settled) return;
@@ -120,11 +128,26 @@ function readBoundedRequestBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
-function sendForwardError(res: http.ServerResponse, err: unknown): number {
+function sendForwardError(
+  res: http.ServerResponse,
+  err: unknown,
+  req?: http.IncomingMessage,
+): number {
   const status = err instanceof ForwardHttpError ? err.status : 502;
   const code = err instanceof ForwardHttpError ? err.code : "openrouter_runtime_error";
   const message = err instanceof ForwardHttpError ? err.message : "OpenRouter request failed.";
+  // Only the body-read timeout leaves the client still uploading indefinitely,
+  // so only then do we destroy the shared request socket -- and only once the
+  // error response has finished writing. Destroying it any earlier (or for a
+  // rejection that already responded, such as an oversized body) would cut off
+  // the 408 body or a still-draining client write.
+  const shouldDestroyRequest = Boolean(req) && code === "request_timeout";
   if (!res.headersSent) {
+    if (shouldDestroyRequest) {
+      res.once("finish", () => {
+        if (req && !req.destroyed) req.destroy();
+      });
+    }
     sendJson(res, status, {
       error: {
         message: compactText(message),
@@ -143,14 +166,15 @@ export async function forwardOpenRouterRequest(options: {
   res: http.ServerResponse;
   upstreamBaseUrl: string;
   upstreamTimeoutMs?: number;
+  bodyTimeoutMs?: number;
 }): Promise<number> {
   const upstreamUrl = buildUpstreamUrl(options.upstreamBaseUrl, options.req.url);
   const transport = upstreamUrl.protocol === "http:" ? http : https;
   let body: Buffer;
   try {
-    body = await readBoundedRequestBody(options.req);
+    body = await readBoundedRequestBody(options.req, options.bodyTimeoutMs);
   } catch (err) {
-    return sendForwardError(options.res, err);
+    return sendForwardError(options.res, err, options.req);
   }
   return new Promise((resolve) => {
     let settled = false;
