@@ -168,3 +168,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# Temporary: measures a live image build after an image/fabric change.
