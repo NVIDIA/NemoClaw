@@ -32,8 +32,8 @@ export function authorizedNativeLocalAttachment(
     !sandbox.model.trim() ||
     !(sandbox.agent === "langchain-deepagents-code"
       ? attachment.agent === undefined
-      : sandbox.agent === "hermes"
-        ? attachment.agent === "hermes"
+      : sandbox.agent === "hermes" || sandbox.agent === "pi"
+        ? attachment.agent === sandbox.agent
         : sandbox.agent === "openclaw" &&
           attachment.agent === "openclaw" &&
           isLocalInferenceProvider(sandbox.provider) &&

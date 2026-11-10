@@ -289,14 +289,10 @@ const nativeModelCases = [
   },
 ] as const;
 
-async function collectNativeConfiguration(
+async function collectNativeEvent(
   agent: string,
-  configPath: string,
-  rawConfig: string,
-  entryOverrides: Partial<SandboxEntry> = {},
-  extraResponses: Record<string, string> = {},
-  // A valid managed receipt supplies the sandbox OS; otherwise the collector runs `uname -s`.
-  unameReads = entryOverrides.workload ? 0 : 1,
+  entryOverrides: Partial<SandboxEntry>,
+  responses: Record<string, string>,
 ) {
   mocks.readRegistry.mockReturnValue({
     defaultSandbox: null,
@@ -304,11 +300,6 @@ async function collectNativeConfiguration(
       native: { name: "native", agent, gatewayPort: 8080, ...entryOverrides },
     },
   });
-  const responses: Record<string, string> = {
-    [JSON.stringify(["uname", "-s"])]: "Linux",
-    [JSON.stringify(["cat", configPath])]: rawConfig,
-    ...extraResponses,
-  };
   const read = vi.fn(async ({ command }: { command: readonly string[] }) => {
     return (
       responses[JSON.stringify(command)] ?? Promise.reject(new Error("Unexpected sandbox command"))
@@ -340,6 +331,23 @@ async function collectNativeConfiguration(
     },
     { signal: new AbortController().signal, deadlineAt: Date.now() + 10_000 },
   );
+  return { event, read };
+}
+
+async function collectNativeConfiguration(
+  agent: string,
+  configPath: string,
+  rawConfig: string,
+  entryOverrides: Partial<SandboxEntry> = {},
+  extraResponses: Record<string, string> = {},
+  // A valid managed receipt supplies the sandbox OS; otherwise the collector runs `uname -s`.
+  unameReads = entryOverrides.workload ? 0 : 1,
+) {
+  const { event, read } = await collectNativeEvent(agent, entryOverrides, {
+    [JSON.stringify(["uname", "-s"])]: "Linux",
+    [JSON.stringify(["cat", configPath])]: rawConfig,
+    ...extraResponses,
+  });
   expect(read).toHaveBeenCalledWith(
     expect.objectContaining({ sandboxName: "native", command: ["cat", configPath] }),
     expect.objectContaining({ workspace: "native" }),
@@ -758,6 +766,25 @@ it.each(nativeRouteCases)(
     expect(isOperationEvent(event)).toBe(true);
   },
 );
+
+it("reports a recorded Pi native-local selection as the current route (#14241)", async () => {
+  const { entry, route } = nativeRouteCases[2];
+  // Pi has no telemetry config parser, so the collector reads only the sandbox OS.
+  const { event, read } = await collectNativeEvent(
+    "pi",
+    {
+      ...entry,
+      nativeLocalProviderAttachment: nativeLocalAttachment({ ...nativeLocalBinding, agent: "pi" }),
+    } as unknown as Partial<SandboxEntry>,
+    { [JSON.stringify(["uname", "-s"])]: "Linux" },
+  );
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(event.parameters.configurations[0]).toMatchObject({
+    currentInferenceRouteStatus: "reported",
+    currentInferenceRoute: { modelId: route.modelId, providerProfile: route.providerProfile },
+  });
+  expect(mocks.createReader.mock.results[0].value.observeInferenceRoute).not.toHaveBeenCalled();
+});
 
 it("reports not_configured when the gateway has no route for a shared-route sandbox (#14241)", async () => {
   const event = await collectNativeConfiguration(
