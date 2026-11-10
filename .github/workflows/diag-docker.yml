@@ -14,59 +14,18 @@ defaults:
 env:
   CARGO_INCREMENTAL: "0"
 jobs:
-  synthetic:
-    name: synthetic ${{ matrix.os }} ${{ matrix.load }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
-        load: [idle, dirty-pages]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Measure
-        env:
-          LOAD: ${{ matrix.load }}
-        run: |
-          set +e +o pipefail
-          mem() { awk '/^(Dirty|Writeback):/ {printf "%s%dMB ", $1, $2/1024}' /proc/meminfo; }
-          t() {
-            local label=$1; shift
-            local a b
-            a=$(date +%s.%N)
-            "$@" >/dev/null 2>&1
-            b=$(date +%s.%N)
-            printf '%-32s %6.3f s  %s\n' "$label" "$(echo "$b - $a" | bc)" "$(mem)"
-          }
-          echo "nproc $(nproc); $(free -m | awk '/Mem:/ {print "RAM " $2 " MB"}')"
-          if [ "$LOAD" = dirty-pages ]; then
-            # Like a large Cargo build: GBs written, not yet flushed to disk.
-            dd if=/dev/urandom of="$RUNNER_TEMP/big" bs=1M count=6000 status=none
-            echo "after writing 6 GB: $(mem)"
-          fi
-          t "docker buildx version (1st)" docker buildx version
-          t "docker buildx version (2nd)" docker buildx version
-          t "bake --print dummy" docker buildx bake --print dummy
-          t "cat /usr/bin/dockerd" cat /usr/bin/dockerd
-          echo "--- sockets bake --print connects to"
-          command -v strace >/dev/null || sudo apt-get install -y -q strace >/dev/null 2>&1
-          strace -f -e trace=connect -o /tmp/st docker buildx bake --print dummy >/dev/null 2>&1
-          echo "strace exit $?, $(wc -l < /tmp/st) connect calls"
-          cat /tmp/st | head
-
   unit:
     name: unit ${{ matrix.os }} ${{ matrix.rep }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04]
-        rep: [1, 2, 3]
+        rep: [1, 2, 3, 4, 5, 6]
         include:
           - os: ubuntu-24.04
             rep: 1
+          - os: ubuntu-24.04
+            rep: 2
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -82,6 +41,8 @@ jobs:
       - run: cargo ci fmt
       - run: cargo ci clippy
       - run: cargo ci build
+      - name: Load Docker Buildx from disk
+        run: time (docker buildx version || true)
       - name: Record each Docker call during the tests
         run: |
           mkdir -p "$RUNNER_TEMP/wrap"
