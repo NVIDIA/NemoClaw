@@ -109,6 +109,25 @@ describe("DCode session database credential scan", () => {
     ).toBe(false);
   });
 
+  it.each(["TEXT", "BLOB"])(
+    "preserves a parameterized SQL conversation stored as %s (#14074)",
+    (storageType) => {
+      const fixture = createDatabase();
+      const content = "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))";
+      fixture.database.exec(`CREATE TABLE sessions (content ${storageType})`);
+      fixture.database
+        .prepare("INSERT INTO sessions VALUES (?)")
+        .run(storageType === "BLOB" ? Buffer.from(content) : content);
+      fixture.database.close();
+      const before = fs.readFileSync(fixture.path);
+
+      expect(
+        inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+      ).toBe(false);
+      expect(fs.readFileSync(fixture.path)).toEqual(before);
+    },
+  );
+
   it("preserves the pinned QuickJS diagnostic embedded in interpreter checkpoints", () => {
     const fixture = createDatabase();
     fixture.database.exec("CREATE TABLE writes (channel TEXT, value BLOB)");

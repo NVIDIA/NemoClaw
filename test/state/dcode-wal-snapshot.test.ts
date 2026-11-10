@@ -37,7 +37,10 @@ describe("DCode WAL snapshot persistence", () => {
           suffix === "-shm"
             ? ["password=", "opaque-value-for-snapshot"].join("")
             : ["ghp_", "a".repeat(36)].join("");
-        fs.writeFileSync(`${databasePath}${suffix}`, credential);
+        fs.writeFileSync(
+          `${databasePath}${suffix}`,
+          `db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))\n${credential}`,
+        );
 
         fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
         fs.writeFileSync(
@@ -111,7 +114,10 @@ describe("DCode WAL snapshot persistence", () => {
     }
   });
 
-  it("validates and preserves a live database as one SQLite state family", () => {
+  it.each([
+    'Example configuration: {"model":"not-a-secret-marker"}',
+    "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
+  ])("preserves a live database and its conversation: %s", (content) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-state-"));
     let database: DatabaseSync | null = null;
     try {
@@ -121,9 +127,7 @@ describe("DCode WAL snapshot persistence", () => {
       database = new DatabaseSync(databasePath);
       database.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;");
       database.exec("CREATE TABLE sessions (content TEXT)");
-      database
-        .prepare("INSERT INTO sessions VALUES (?)")
-        .run('Example configuration: {"model":"not-a-secret-marker"}');
+      database.prepare("INSERT INTO sessions VALUES (?)").run(content);
       expect(fs.statSync(`${databasePath}-wal`).size).toBeGreaterThan(0);
 
       fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
@@ -158,6 +162,25 @@ describe("DCode WAL snapshot persistence", () => {
       ]).stdout.toString();
       expect(archivedPaths).toContain(".deepagents/.state/sessions.db");
       expect(archivedPaths).toContain(".deepagents/.state/sessions.db-wal");
+      const extracted = path.join(fixture, "extracted");
+      fs.mkdirSync(extracted);
+      expect(
+        spawnSync("tar", [
+          "-xf",
+          path.join(backup.manifest!.backupPath, "native-home.tar"),
+          "-C",
+          extracted,
+        ]).status,
+      ).toBe(0);
+      const restored = new DatabaseSync(
+        path.join(extracted, ".deepagents", ".state", "sessions.db"),
+        { readOnly: true },
+      );
+      try {
+        expect(restored.prepare("SELECT content FROM sessions").all()).toEqual([{ content }]);
+      } finally {
+        restored.close();
+      }
     } finally {
       database?.close();
       fs.rmSync(fixture, { recursive: true, force: true });

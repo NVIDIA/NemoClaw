@@ -291,6 +291,33 @@ describe("textContainsHighConfidenceCredential", () => {
 
 describe("textContainsCredential", () => {
   it.each([
+    "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
+    'db.execute("select id from users where password = ?", (pw,))',
+    "db.execute('SELECT id FROM users WHERE pass=? AND name=?', (pw, user))",
+  ])("preserves anonymous SQL parameters in a conversation: %s (#14074)", (value) => {
+    expect(textContainsCredential(value)).toBe(false);
+  });
+
+  it.each([
+    "password=?",
+    '{"password":?}',
+    "'SELECT id FROM users WHERE password:?'",
+    "'SELECT id FROM users WHERE password=?private-value'",
+    "'SELECT id FROM users WHERE password=?123secret'",
+    "\"SELECT id FROM users WHERE password='?'\"",
+    "'SELECT id FROM users WHERE password=\"?\"'",
+    "'SELECT id FROM users WHERE password=?\"",
+    "'SELECT id FROM users'; password=?",
+    "'SELECT id FROM users\npassword=?'",
+    "'SELECT id FROM users\0password=?'",
+    `'SELECT ${" ".repeat(1_024)}password=?'`,
+    "'SELECT id FROM users WHERE pass=?'; password=private-value",
+    `'SELECT id FROM users WHERE pass=?'; ghp_${"0123456789abcdef"}`,
+  ])("rejects credential assignments beside SQL-shaped text: %s", (value) => {
+    expect(textContainsCredential(value)).toBe(true);
+  });
+
+  it.each([
     "request failed: Authorization: Bearer opaqueCredentialPayloadZ1234567890",
     "password=abc",
     "sessionToken=opaqueCredentialPayloadZ1234567890",
