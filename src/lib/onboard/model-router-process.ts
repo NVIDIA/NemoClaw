@@ -5,7 +5,6 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import * as http from "node:http";
 import path from "node:path";
-import type { Session } from "../state/onboard-session";
 
 export const ROUTER_HEALTH_TIMEOUT_MS = 3000;
 
@@ -311,16 +310,4 @@ export function inspectModelRouterProcessForPort(
     if (args && isModelRouterCommandLineForPort(args, port)) return { status: "found", pid };
   }
   return { status: "absent" };
-}
-
-export async function stopTrackedModelRouterForAgentChange(
-  session: Pick<Session, "routerPid"> | null,
-  port: number,
-  deps: ModelRouterProcessOwnershipDeps & {
-    stopProcess?: (pid: number, port: number) => Promise<void>;
-  } = {},
-): Promise<void> {
-  const recordedPid = session?.routerPid ?? null;
-  if (!doesModelRouterProcessOwnPort(recordedPid, port, deps)) return;
-  await (deps.stopProcess ?? stopModelRouterProcess)(recordedPid as number, port);
 }

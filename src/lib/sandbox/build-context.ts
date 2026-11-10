@@ -305,11 +305,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedBlueprintDir, "provider-profiles"),
     { recursive: true },
   );
-  fs.mkdirSync(path.join(stagedBlueprintDir, "router"), { recursive: true });
-  fs.copyFileSync(
-    path.join(sourceBlueprintDir, "router", "pool-config.yaml"),
-    path.join(stagedBlueprintDir, "router", "pool-config.yaml"),
-  );
   normalizeReadModesForDockerCopy(stagedBlueprintDir);
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });

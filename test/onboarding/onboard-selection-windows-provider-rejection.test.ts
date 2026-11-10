@@ -48,7 +48,7 @@ function buildProviderMenu(overrides: ProviderMenuOverrides = {}) {
     winOllamaLoopbackOnly: false,
     ollamaInstallEntry: null,
     vllmEntries: [],
-    routedEnabled: false,
+
     ...overrides,
   });
 }

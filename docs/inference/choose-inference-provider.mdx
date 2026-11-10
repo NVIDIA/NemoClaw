@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Choose an Inference Provider"
 sidebar-title: "Choose a Provider"
-description: "Compare hosted, local, routed, and compatible inference providers available during NemoClaw onboarding."
-description-agent: "Compares NemoClaw inference provider options. Use when deciding which hosted provider, local server, model router, or compatible endpoint to select."
+description: "Compare hosted, local, and compatible inference providers available during NemoClaw onboarding."
+description-agent: "Compares NemoClaw inference provider options. Use when deciding which hosted provider, local server, or compatible endpoint to select."
 keywords: ["choose inference provider", "nemoclaw providers", "hosted local inference"]
 content:
   type: "concept"
@@ -101,10 +101,10 @@ Use a compatible endpoint when you operate a server or gateway that implements a
 Behavior can vary across compatible proxies, gateways, and self-hosted implementations.
 The documented support applies to the NemoClaw adapter rather than every compatible endpoint implementation.
 
-## Routed Inference
+## Retired Model Router
 
-Use [Model Router](../hosted-inference/set-up-model-router) when you want a host-side router to select from a configured model pool.
-The router registers as an OpenAI-compatible provider while the sandbox remains on `inference.local`.
+The built-in Model Router has been removed because `llm-router` is deprecated.
+For retained installations, refer to [Model Router cleanup](../hosted-inference/set-up-model-router).
 
 ## Next Step
 

@@ -407,7 +407,7 @@ export function nativeSelectionConfigCredentials(
   return {
     apiKey:
       native?.apiKey ??
-      (isLocalInferenceProvider(provider) || provider === "nvidia-router"
+      (isLocalInferenceProvider(provider)
         ? nativeLocalCredentialReference(provider, baseUrl, "openclaw")
         : null) ??
       managedInferenceApiKey(

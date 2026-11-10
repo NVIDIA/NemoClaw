@@ -84,9 +84,7 @@ function primaryCloneFixture(privateFileModes = false): string {
   for (const entry of HERMES_PORTABLE_BUILD_CONTEXT_FILES) {
     const target = path.join(root, entry.path);
     fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
-    entry.mode === "160000"
-      ? fs.mkdirSync(target, { mode: 0o755 })
-      : copyFixtureFile(root, entry.path, entry.mode, privateFileModes);
+    copyFixtureFile(root, entry.path, entry.mode, privateFileModes);
   }
   const git = path.join(root, ".git");
   const ref = path.join(git, "refs/heads");
