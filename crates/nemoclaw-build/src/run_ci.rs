@@ -170,8 +170,17 @@ fn run_step(
 ) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
+    // Nothing in CI reads debug information, and it is most of each test
+    // archive that test jobs download. Local runs keep the developer's
+    // profile, and a setting the caller passes wins.
+    let without_debug = (std::env::var_os("CI").is_some()
+        || std::env::var_os("GITHUB_ACTIONS").is_some())
+        && std::env::var_os("CARGO_PROFILE_DEV_DEBUG").is_none();
     let configure = |command: &mut Command| {
         command.env("PROTOC", &protoc).env("PATH", &path);
+        if without_debug {
+            command.env("CARGO_PROFILE_DEV_DEBUG", "0");
+        }
     };
     let tool = |name: &str| {
         Path::new("target")
