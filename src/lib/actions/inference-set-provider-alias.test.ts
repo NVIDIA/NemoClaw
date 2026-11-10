@@ -76,9 +76,9 @@ describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)"
   });
 
   it.each(INFERENCE_SET_SUPPORTED_PROVIDER_NAMES)(
-    "passes the OpenShell provider name %s through unchanged",
+    "resolves the supported provider name %s to its canonical selection",
     (name) => {
-      expect(normalizeInferenceSetProvider(name)).toBe(name);
+      expect(normalizeInferenceSetProvider(name)).toBe(name === "nvidia-nim" ? "vllm-local" : name);
     },
   );
 
@@ -118,10 +118,12 @@ describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)"
   });
 
   it.each([...INFERENCE_SET_SUPPORTED_PROVIDER_NAMES])(
-    "normalizes the underscore spelling of canonical name %s back to the hyphenated form",
+    "resolves the underscore spelling of supported name %s to its canonical selection",
     (name) => {
       const underscored = name.replaceAll("-", "_");
-      expect(normalizeInferenceSetProvider(underscored)).toBe(name);
+      expect(normalizeInferenceSetProvider(underscored)).toBe(
+        name === "nvidia-nim" ? "vllm-local" : name,
+      );
     },
   );
 

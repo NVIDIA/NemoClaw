@@ -174,11 +174,11 @@ describe("restartSandboxGateway native lifecycle", () => {
       const execute = vi
         .fn()
         .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
-        .mockResolvedValue({
-          status: sample.status,
-          stdout: sample.stdout,
-          stderr: "secret-stderr",
-        });
+        .mockImplementation(async (_name, _command, timeout) =>
+          timeout === 15_000
+            ? { status: 0, stdout: "", stderr: "" }
+            : { status: sample.status, stdout: sample.stdout, stderr: "secret-stderr" },
+        );
       const deps = baseDeps({
         executeSandboxExecCommand: execute,
         waitForRecoveredSandboxGateway: async (
@@ -191,7 +191,8 @@ describe("restartSandboxGateway native lifecycle", () => {
       });
       const result = await restartSandboxGateway("alpha", { quiet: true, deps });
       expect(result.ok).toBe(sample.decision);
-      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute).toHaveBeenCalledTimes(3);
+      expect(execute.mock.calls.at(-1)?.[2]).toBe(15_000);
       expect(execute.mock.calls[0]?.[2]).toBe(210000);
       expect(execute.mock.calls[1]?.[2]).toBe(10000);
       expect(readinessDiagnostic()).toEqual({
@@ -251,7 +252,8 @@ describe("restartSandboxGateway native lifecycle", () => {
     expect(diagnostic.samples.map((sample: { ordinal: number }) => sample.ordinal)).toEqual(
       Array.from({ length: 32 }, (_, index) => index + 4),
     );
-    expect(execute).toHaveBeenCalledTimes(36);
+    expect(execute).toHaveBeenCalledTimes(37);
+    expect(execute.mock.calls.at(-1)?.[2]).toBe(15_000);
     const printed = vi.mocked(console.error).mock.calls.join("\n");
     expect(printed.length).toBeLessThan(6000);
     expect(printed).not.toMatch(/private-token|password|https:\/\/|example\.com/);
@@ -288,7 +290,8 @@ describe("restartSandboxGateway native lifecycle", () => {
           probeResult: null,
         },
       ]);
-      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute).toHaveBeenCalledTimes(3);
+      expect(execute.mock.calls.at(-1)?.[2]).toBe(15_000);
     },
   );
 
@@ -450,11 +453,11 @@ describe("restartSandboxGateway native lifecycle", () => {
   );
 
   it.each([
-    { settled: true, observations: null },
-    { settled: false, observations: [true, false] },
+    { settled: true, observations: null, lastTimeout: 10_000 },
+    { settled: false, observations: [true, false], lastTimeout: 15_000 },
   ])(
     "preserves the readiness settle result $settled and its probe count",
-    async ({ settled, observations }) => {
+    async ({ settled, observations, lastTimeout }) => {
       silenceConsole();
       vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "25");
       const execute = vi
@@ -476,7 +479,8 @@ describe("restartSandboxGateway native lifecycle", () => {
           waitForRecoveredSandboxGateway(name, { ...options, timeoutSeconds: 0, sleepImpl: sleep }),
       });
       expect((await restartSandboxGateway("alpha", { quiet: true, deps })).ok).toBe(settled);
-      expect(execute).toHaveBeenCalledTimes(3);
+      expect(execute).toHaveBeenCalledTimes(settled ? 3 : 4);
+      expect(execute.mock.calls.at(-1)?.[2]).toBe(lastTimeout);
       expect(sleep).toHaveBeenCalledExactlyOnceWith(25);
       expect(
         readinessDiagnostic()?.samples.map(
@@ -517,7 +521,8 @@ describe("restartSandboxGateway native lifecycle", () => {
         probeResult: null,
       },
     ]);
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute.mock.calls.at(-1)?.[2]).toBe(15_000);
   });
 
   it("treats lost OpenClaw readiness transport as unavailable evidence", async () => {

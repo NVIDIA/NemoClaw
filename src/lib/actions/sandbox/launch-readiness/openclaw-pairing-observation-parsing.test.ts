@@ -128,7 +128,8 @@ describe.each([
     expect(
       `${String(caught)}${JSON.stringify(caught)}${JSON.stringify(log.mock.calls)}`,
     ).not.toContain(TOKEN);
-    expect(child).toHaveBeenCalledOnce();
+    expect(child).toHaveBeenCalledTimes(category === "state-changing" ? 3 : 1);
+    expect(child.mock.calls.every(([, , options]) => Number(options?.timeout) <= 3000)).toBe(true);
     expect(child.mock.calls[0]?.[2]).toMatchObject({
       timeout: 3000,
       maxBuffer: 4096,

@@ -15,6 +15,7 @@ import {
   parseRuntimeRoster,
   projectRuntimeAgents,
   projectCurrentInferenceRoute,
+  projectRecordedNativeInferenceRoute,
   unknownModel,
 } from "../../domain/telemetry/dimensions";
 import type {
@@ -259,7 +260,8 @@ async function collectRuntime(
     });
     const gatewayName = resolveSandboxGatewayName(entry);
     const routeKey = JSON.stringify([gatewayName, runtimeSelection]);
-    let route = options.routes.get(routeKey);
+    const nativeRoute = projectRecordedNativeInferenceRoute(entry, gatewayName);
+    let route = nativeRoute ? Promise.resolve(nativeRoute) : options.routes.get(routeKey);
     if (!route) {
       const remaining = options.deadlineAt - Date.now();
       if (options.signal.aborted || remaining <= 0)

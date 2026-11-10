@@ -143,7 +143,7 @@ if (command.includes("tar -C")) {
       fs.writeFileSync(path.join(initRoot, "status"), "PPid:\\t0\\nUid:\\t" + process.getuid() + "\\n");
       fs.writeFileSync(path.join(initRoot, "task", "1", "status"), "State:\\tS\\n");
     }
-    const prelude = 'kill() { printf "%s\\\\n" "$*" >> "$NEMOCLAW_TEST_SIGNAL_LOG"; }; sleep() { :; }; tar() { command tar -C "$NEMOCLAW_TEST_NATIVE_ROOT" -cf - .; }; ';
+    const prelude = 'kill() { printf "%s\\\\n" "$*" >> "$NEMOCLAW_TEST_SIGNAL_LOG"; }; sleep() { :; }; tar() { command tar --format=ustar -C "$NEMOCLAW_TEST_NATIVE_ROOT" -cf - .; }; ';
     const capture = spawnSync("sh", ["-c", prelude + command.replaceAll("/proc/", procRoot + "/")], {
       stdio: ["ignore", "inherit", "inherit"],
       timeout: 3000,

@@ -116,7 +116,7 @@ describe("native provider protocol details", () => {
   });
 });
 
-it("projects the attached Router credential into OpenClaw without loading a host blueprint", () => {
+it("does not project a credential for the retired Router provider", () => {
   const config = buildConfig({
     ...baseOpenClawGenerationEnv(),
     NEMOCLAW_UPSTREAM_PROVIDER: "team-router",
@@ -127,7 +127,7 @@ it("projects the attached Router credential into OpenClaw without loading a host
   expect(config.models.providers["test-provider"]).toEqual(
     expect.objectContaining({
       baseUrl: "http://host.openshell.internal:43123/team/v1",
-      apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      apiKey: "unused",
     }),
   );
 });

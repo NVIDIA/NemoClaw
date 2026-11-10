@@ -195,6 +195,17 @@ const requiredFeatures = "request-body-credential-rewrite websocket-credential-r
 if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.1.7\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
+if (a[0] === "sandbox" && a[1] === "provider" && a[2] === "list") {
+  process.stdout.write(${JSON.stringify(
+    attachment
+      ? `NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS
+${providerName} ${attachment.profileId} 1 0
+`
+      : `No providers attached to sandbox ${sandboxName}.
+`,
+  )});
+  process.exit(0);
+}
 if (a[0] === "sandbox" && a[1] === "get") {
   if (fs.existsSync(${JSON.stringify(deleteMarker)})) {
     process.stderr.write("sandbox ${sandboxName} not found\\n");
@@ -229,6 +240,22 @@ if (a[0] === "gateway" && a[1] === "list") { process.stdout.write(JSON.stringify
 if (a[0] === "gateway" && a[1] === "select") process.exit(0);
 if (a[0] === "inference" && a[1] === "get") { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0] === "inference" && a[1] === "set") process.exit(0);
+if (a[0] === "provider" && a[1] === "profile") {
+  const stored = ${JSON.stringify(path.join(tmpDir, "provider-profile.yaml"))};
+  if (a.includes("import")) {
+    fs.copyFileSync(a[a.indexOf("--file") + 1], stored);
+    process.exit(0);
+  }
+  if (a.includes("export")) {
+    if (!fs.existsSync(stored)) {
+      process.stderr.write("provider profile '" + a[a.indexOf("export") + 1] + "' not found\\n");
+      process.exit(1);
+    }
+    const yaml = require(${JSON.stringify(path.join(REPO_ROOT, "node_modules/yaml"))});
+    process.stdout.write(JSON.stringify(yaml.parse(fs.readFileSync(stored, "utf8"))));
+    process.exit(0);
+  }
+}
 if (a[0] === "provider" && a[1] === "get") {
   if (!${providerRegistered ? "true" : "false"}) {
     process.stderr.write("Error: provider '${provider}' not found\\n");
@@ -365,6 +392,7 @@ function runCli(
     input,
     env: {
       HOME: fixture.tmpDir,
+      TMPDIR: fixture.tmpDir,
       NEMOCLAW_GATEWAY_PORT: String(fixture.gatewayPort),
       PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",

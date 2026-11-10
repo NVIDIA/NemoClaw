@@ -201,11 +201,16 @@ describe("OpenShell stop/start sandbox cleanup", () => {
       ) =>
         execOptions.artifactName === "cold-recovery-native-health"
           ? { ...success, stdout: "200" }
-          : (execResults[args.slice(0, 2).join(" ")] ?? {
-              ...success,
-              stdout:
-                args[2] === "echo alive" ? "alive" : args[2].includes("/health") ? "ready" : "",
-            }),
+          : execOptions.artifactName === "post-openshell-start-native-plugin-invoke"
+            ? {
+                ...success,
+                stdout: `__NEMOCLAW_NATIVE_PLUGIN_RESULT__=${JSON.stringify({ matched: !options.pluginFails })}\n`,
+              }
+            : (execResults[args.slice(0, 2).join(" ")] ?? {
+                ...success,
+                stdout:
+                  args[2] === "echo alive" ? "alive" : args[2].includes("/readyz") ? "ready" : "",
+              }),
     );
     const commandResults: Record<string, () => Promise<typeof success>> = {
       "install-sh-sandbox-survival": async () => (await options.install?.()) ?? success,

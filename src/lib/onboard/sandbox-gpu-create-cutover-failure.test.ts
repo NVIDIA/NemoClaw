@@ -148,7 +148,10 @@ describe("compatibility cutover failure diagnostics", () => {
     expect(patch.verifyGpuOrExit).not.toHaveBeenCalled();
     expect(deps.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", failure.action, "-g", "nemoclaw", "alpha"],
-      expect.objectContaining({ timeout: 5_000, killProcessTreeOnTimeout: true }),
+      expect.objectContaining({
+        timeout: failure.action === "stop" ? 90_000 : 30_000,
+        killProcessTreeOnTimeout: true,
+      }),
     );
     expect(
       vi.mocked(deps.runOpenshell).mock.calls.filter(([args]) => args[1] === failure.action),

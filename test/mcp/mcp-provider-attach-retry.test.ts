@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
+import { mcpBridgeProviderType } from "../../src/lib/actions/sandbox/mcp-bridge/provider-profile";
 
 type AttachScenario =
   | "success"
@@ -15,6 +16,7 @@ type AttachScenario =
   | "collision";
 
 function runAttachScenario(scenario: AttachScenario) {
+  const profileType = mcpBridgeProviderType("EXPECTED_TOKEN");
   const script = String.raw`
 const scenario = ${JSON.stringify(scenario)};
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -34,15 +36,15 @@ providerCommands.runOpenshellProviderCommand = (args, options) => {
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     if (attachCalls > 0 && scenario === "unknown") return { status: 1, stdout: "", stderr: "connection refused" };
-    if (attachCalls > 0 && scenario === "collision") return { status: 0, stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nforeign nemoclaw-mcp-v1 1 0\n", stderr: "" };
+    if (attachCalls > 0 && scenario === "collision") return { status: 0, stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nforeign ${profileType} 1 0\n", stderr: "" };
     return attached
-      ? { status: 0, stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\n", stderr: "" }
+      ? { status: 0, stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake ${profileType} 1 0\n", stderr: "" }
       : { status: 0, stdout: "No providers attached to sandbox alpha.\n", stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Name: " + args[2] + "\nId: " + liveId + "\nType: nemoclaw-mcp-v1\nResource version: " + revision + "\nCredential keys: EXPECTED_TOKEN\nConfig keys: <none>\n",
+      stdout: "Name: " + args[2] + "\nId: " + liveId + "\nType: ${profileType}\nResource version: " + revision + "\nCredential keys: EXPECTED_TOKEN\nConfig keys: <none>\n",
       stderr: "",
     };
   }

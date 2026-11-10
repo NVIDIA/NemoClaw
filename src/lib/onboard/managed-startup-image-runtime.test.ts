@@ -158,7 +158,9 @@ describe("managed startup image runtime", () => {
       ).toBe(true);
       expect(
         commands.every(
-          ([command, , options]) => command !== "/usr/bin/setpriv" && options.stdio === "pipe",
+          ([command, args, options]) =>
+            command !== "/usr/bin/setpriv" &&
+            options.stdio === (args.includes("--wait-gateway-executable") ? "inherit" : "pipe"),
         ),
       ).toBe(true);
       expect(commands.flatMap(([, args]) => args)).not.toContain("runtime-setup");

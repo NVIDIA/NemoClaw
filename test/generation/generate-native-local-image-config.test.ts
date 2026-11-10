@@ -61,7 +61,7 @@ describe.each(["pi", "langchain-deepagents-code"] as const)(
         "team-router",
         "http://host.openshell.internal:43123/team/v1",
         "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-        true,
+        false,
       ],
       ["team-router", "http://host.openshell.internal:43123/team/v1", "raw-key", false],
     ] as const)(

@@ -291,7 +291,7 @@ const PROFILES: Readonly<Record<ManagedStartupAgent, () => ManagedStartupProfile
 };
 
 describe("managed startup agent environment", () => {
-  it("binds the OpenClaw proxy authority to the configured host and port", () => {
+  it("omits the retired OpenClaw proxy material for a configured host and port", () => {
     const profile = openClawProfile();
     const configured = {
       ...profile,
@@ -300,15 +300,10 @@ describe("managed startup agent environment", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(configured, {
       HTTP_PROXY: "http://attacker:9",
     });
-    expect(result.materials).toContainEqual({
-      kind: "root-owned-file",
-      legacyInput: "NEMOCLAW_PROXY_HOST",
-      path: "/usr/local/share/nemoclaw/openclaw-proxy-url",
-      contents: "http://custom.internal:3129\n",
-      owner: "root",
-      group: "root",
-      mode: 0o444,
-    });
+    expect(result.materials).not.toContainEqual(
+      expect.objectContaining({ kind: "root-owned-file" }),
+    );
+    expect(result.runtimeEnvironment.HTTP_PROXY).toBe(profile.proxy.hostHttpUrl);
   });
   it("maps every OpenClaw profile field to the existing generator and entrypoint contracts", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(openClawProfile(), {
@@ -414,15 +409,6 @@ describe("managed startup agent environment", () => {
         kind: "corporate-ca-handoff",
         legacyInput: "NEMOCLAW_CORPORATE_CA_B64",
         expectedSha256: CA_SHA256,
-      },
-      {
-        kind: "root-owned-file",
-        legacyInput: "NEMOCLAW_PROXY_HOST",
-        path: "/usr/local/share/nemoclaw/openclaw-proxy-url",
-        contents: "http://10.200.0.1:3128\n",
-        owner: "root",
-        group: "root",
-        mode: 0o444,
       },
     ]);
     expect(result.actions).toEqual([

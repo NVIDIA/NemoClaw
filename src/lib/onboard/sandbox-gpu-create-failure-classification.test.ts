@@ -170,7 +170,7 @@ describe("compatibility lifecycle failure diagnostics", () => {
       action: "stop",
       status: null,
       signal: "SIGKILL",
-      error: new Error("spawnSync openshell ETIMEDOUT"),
+      error: Object.assign(new Error("private transport error"), { code: "ETIMEDOUT" }),
       timeout: 90_000,
       applied: 0,
       diagnostic: "pass",
@@ -307,9 +307,9 @@ describe("compatibility lifecycle failure diagnostics", () => {
       );
       const message = (failure as Error).message;
       expect(message).toContain(`could not ${action} sandbox 'alpha'`);
-      expect(message).toContain(`status=${String(status)}, signal=${String(signal)}`);
-      expect(message).toContain("runtime transition refused");
-      expect(message.includes("ETIMEDOUT")).toBe(Boolean(error));
+      expect(message).toContain(error ? "command timed out" : "exit status 1");
+      expect(message).not.toContain("runtime transition refused");
+      expect(message).not.toContain("ETIMEDOUT");
       expect(message).not.toContain(secret);
       expect(message).not.toContain("private-password");
       expect(message.length).toBeLessThanOrEqual(2_100);

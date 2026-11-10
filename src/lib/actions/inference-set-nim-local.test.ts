@@ -133,7 +133,7 @@ function fixture(
 }
 
 describe.each(["openclaw", "hermes"] as const)("%s NIM inference set", (agent) => {
-  it.each(["nim", "nim-local", "nim_local"])(
+  it.each(["nim", "nim-local", "nim_local", "nvidia-nim", "nvidia_nim"])(
     "selects the recorded native NIM route through alias %s",
     async (provider) => {
       const f = fixture(agent, "unreadable");
@@ -151,8 +151,8 @@ describe.each(["openclaw", "hermes"] as const)("%s NIM inference set", (agent) =
     },
   );
 
-  it.each(["nvidia-nim", "nvidia_nim"])(
-    "selects native NVIDIA Endpoints through legacy hosted alias %s",
+  it.each(["build", "nvidia-prod"])(
+    "selects native NVIDIA Endpoints through hosted selection %s",
     async (provider) => {
       const f = fixture(agent);
       await expect(
@@ -171,7 +171,7 @@ describe.each(["openclaw", "hermes"] as const)("%s NIM inference set", (agent) =
     },
   );
 
-  it.each(["nim", "nim-local", "nim_local"])(
+  it.each(["nim", "nim-local", "nim_local", "nvidia-nim", "nvidia_nim"])(
     "refuses local alias %s without its NIM record before shared route access or mutation",
     async (provider) => {
       const f = fixture(agent);

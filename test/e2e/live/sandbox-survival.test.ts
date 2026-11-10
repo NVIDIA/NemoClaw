@@ -154,7 +154,7 @@ async function expectNativeSurvivalPluginInvocation(
   );
   expect(
     invocation.exitCode === 0 && nativePluginInvocationSucceeded(invocation.stdout),
-    resultText(invocation),
+    `the plugin tool must start and succeed: ${resultText(invocation)}`,
   ).toBe(true);
 }
 
@@ -267,7 +267,7 @@ test(
     );
     const sandboxCleanupOptions = {
       artifactName: "cleanup-openshell-delete-sandbox-survival",
-      env: sandboxAccessEnv(),
+      env: sandboxEnv,
       redactionValues: [apiKey],
     };
     let sandboxDeleted = false;
@@ -315,7 +315,7 @@ test(
     ) =>
       sandbox.exec(SANDBOX_NAME, ["sh", "-lc", script], {
         artifactName,
-        env: sandboxAccessEnv(),
+        env: sandboxEnv,
         timeoutMs,
       });
 
@@ -331,14 +331,7 @@ test(
     await stateValidation.writeSandboxMarkers(instance, markers);
     await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
     progress.phase("install a native OpenClaw plugin package");
-    await approveOpenClawAdminScope(
-      host,
-      sandbox,
-      SANDBOX_NAME,
-      sandboxAccessEnv(),
-      [apiKey],
-      false,
-    );
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, sandboxEnv, [apiKey], false);
     const pluginInstall = await execShell(
       nativeSurvivalPluginInstallScript(),
       "pre-openshell-stop-native-plugin-install",
@@ -364,7 +357,7 @@ test(
     progress.phase("recheck native agent readiness, state, and plugin execution");
     await lifecycle.waitForSandboxReadyAfterGatewayRestart(instance, {
       artifactNamePrefix: "post-openshell-start-ready",
-      env: sandboxAccessEnv(),
+      env: sandboxEnv,
       attempts: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.attempts,
       delayMs: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.delayMs,
       timeoutMs: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.timeoutMs,
@@ -474,7 +467,7 @@ test(
     progress.phase("destroy the sandbox");
     await sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "final-openshell-delete-sandbox-survival",
-      env: sandboxAccessEnv(),
+      env: sandboxEnv,
       timeoutMs: SANDBOX_SURVIVAL_FINAL_DESTROY_TIMEOUT_MS,
     });
     const deleteDeadline = performance.now() + SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS;
@@ -486,7 +479,7 @@ test(
       probe: (_attempt, artifactName) =>
         sandbox.list({
           artifactName,
-          env: sandboxAccessEnv(),
+          env: sandboxEnv,
           timeoutMs: Math.max(1, Math.floor(deleteDeadline - performance.now())),
         }),
       accept: (result) => result.exitCode === 0 && !outputContainsSandbox(result, SANDBOX_NAME),
