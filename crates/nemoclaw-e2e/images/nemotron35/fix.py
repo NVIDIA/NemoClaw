@@ -12,6 +12,7 @@ new = ('            vit_hidden_size = getattr(config, "vision_hidden_size", None
        '            if vit_hidden_size is None:\n'
        '                vit_hidden_size = config.vit_hidden_size')
 source = path.read_text()
-assert source.count(old) == 1, "Unexpected vLLM source; refusing to patch"
+if source.count(old) != 1:
+    raise SystemExit("Unexpected vLLM source; refusing to patch")
 path.write_text(source.replace(old, new))
 py_compile.compile(str(path), doraise=True)

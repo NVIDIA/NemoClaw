@@ -171,6 +171,8 @@ A separate `always()` step attempts destroy after a failed or cancelled lifecycl
 
 Raw build/test output, deployment state, keys and replies stay in an owner-only directory under the runner account's `~/.local/state/nemoclaw-hardware-e2e/`. Preserve a failed run there for recovery with the matching bundle and state, as [interrupted-operation recovery](../../docs/build-deploy/usage.md#recover-an-interrupted-operation) describes. Generated model cache, gateway storage and inference credentials are retained after destroy; retain their ownership records until the operator removes them. The workflow does not claim full data erasure or model-cache reuse across fresh deployments. Shared weight caching is tracked separately in #13994.
 
+The run directory, copied bundle/test executable and three run-tagged images also persist for recovery. Before returning the lease, finish recovery, remove only that run's retained resources and directory, and remove its image tags with `docker image rm nc-e2e-RUN_ID-RUN_ATTEMPT:openclaw nc-e2e-RUN_ID-RUN_ATTEMPT:vllm nc-e2e-RUN_ID-RUN_ATTEMPT:vllm-base`, substituting the recorded run IDs. Do not use a host-wide prune. Inspect free disk space before another run; this workflow does not implement retention or garbage collection.
+
 The artifact contains only candidate image identities, source/model revision and lifecycle/cleanup outcomes. Raw native errors are not published. Successful text inference and convergence do not qualify tool calls, vision/video, long contexts, other agents, or another hardware family.
 
 ## Spark and Fabric
