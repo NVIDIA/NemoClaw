@@ -95,7 +95,7 @@ jobs:
           cargo ci tools
           # GITHUB_ENV applies to later steps, not this shell's direct Cargo build.
           PROTOC=$(sed -n 's/^PROTOC=//p' "$GITHUB_ENV" | tail -1)
-          test -x "$PROTOC"
+          command -v -- "$PROTOC" > /dev/null
           export PROTOC
           cargo ci bundle
           executable=$(cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json |

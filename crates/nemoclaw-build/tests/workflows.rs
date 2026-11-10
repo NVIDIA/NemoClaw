@@ -541,7 +541,7 @@ fn colossus_preparation_stops_and_keeps_native_errors_private() {
         .unwrap()["run"]
         .as_str()
         .unwrap();
-    for failed in ["uname", "nvidia-smi", "rustup", "tools-env"] {
+    for failed in ["uname", "nvidia-smi", "rustup", "tools-env", "tools-path"] {
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("bin");
         fs::create_dir(&bin).unwrap();
@@ -554,6 +554,7 @@ fn colossus_preparation_stops_and_keeps_native_errors_private() {
             "docker",
             "cp",
             "jq",
+            "protoc",
         ] {
             let contents = match name {
                 "uname" if failed != "uname" => "#!/bin/sh\necho aarch64\n".to_owned(),
@@ -561,17 +562,18 @@ fn colossus_preparation_stops_and_keeps_native_errors_private() {
                 "nvidia-smi" if failed != "nvidia-smi" => {
                     "#!/bin/sh\necho 'NVIDIA GB300'\n".to_owned()
                 }
-                "rustup" if failed == "tools-env" => "#!/bin/sh\nexit 0\n".to_owned(),
+                "rustup" if failed.starts_with("tools-") => "#!/bin/sh\nexit 0\n".to_owned(),
+                "protoc" => "#!/bin/sh\nexit 0\n".to_owned(),
                 "jq" => "#!/bin/sh\necho 36.2\n".to_owned(),
-                "cargo" if failed == "tools-env" => r#"#!/bin/sh
+                "cargo" if failed.starts_with("tools-") => r#"#!/bin/sh
 if [ "$*" = 'ci tools' ]; then
   mkdir -p .tools/protoc-36.2/bin
   printf '#!/bin/sh\nexit 0\n' > .tools/protoc-36.2/bin/protoc
   chmod +x .tools/protoc-36.2/bin/protoc
-  echo "PROTOC=$PWD/.tools/protoc-36.2/bin/protoc" >> "$GITHUB_ENV"
+  echo "PROTOC=$SELECTED_PROTOC" >> "$GITHUB_ENV"
   exit 0
 fi
-if [ "$PROTOC" = "$PWD/.tools/protoc-36.2/bin/protoc" ]; then
+if [ "$PROTOC" = "$SELECTED_PROTOC" ]; then
   touch tool-env-passed
 fi
 exit 23
@@ -600,11 +602,22 @@ exit 99
             .env("NEMOCLAW_HCL_RUN", root.path())
             .env("SENTINEL", root.path().join("continued"))
             .env("GITHUB_ENV", root.path().join("github-env"))
+            .env(
+                "SELECTED_PROTOC",
+                if failed == "tools-path" {
+                    "protoc".to_owned()
+                } else {
+                    root.path()
+                        .join(".tools/protoc-36.2/bin/protoc")
+                        .display()
+                        .to_string()
+                },
+            )
             .current_dir(root.path())
             .output()
             .unwrap();
         assert!(!output.status.success(), "{failed} must fail preparation");
-        if failed == "tools-env" {
+        if failed.starts_with("tools-") {
             assert!(
                 root.path().join("tool-env-passed").exists(),
                 "the direct build needs the tools installed in the same step"
