@@ -47,7 +47,8 @@ jobs:
   # The live suites' images, built once per platform alongside the build and
   # bundle jobs; both live jobs load them instead of building their own. When
   # no image input changed since a v1 commit that pushed them, the live jobs
-  # pull that commit's images instead.
+  # pull that commit's images instead. The builds reuse the layers that v1's
+  # last build saved to the Actions cache for unchanged image inputs.
   live-images:
     name: E2E build images
     if: inputs.live-images-commit == ''
@@ -64,7 +65,20 @@ jobs:
           platform: ${{ inputs.platform }}
           save-cache: "false"
       - uses: ./.github/actions/containerd-store
+      # Buildx reads the Actions cache service from these variables, which
+      # GitHub passes to actions but not to run steps.
+      - name: Expose the Actions cache to Buildx
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            for (const name of ["ACTIONS_CACHE_SERVICE_V2", "ACTIONS_CACHE_URL", "ACTIONS_RESULTS_URL", "ACTIONS_RUNTIME_TOKEN"]) {
+              if (process.env[name]) core.exportVariable(name, process.env[name]);
+            }
       - name: Build and save the live images
+        env:
+          # Like the Rust caches, only v1 saves image layers; pull requests
+          # into v1 read them.
+          NEMOCLAW_SAVE_GHA_CACHE: ${{ github.ref == 'refs/heads/v1' }}
         run: cargo ci live-images
       - name: Identify live images artifact
         id: identity
