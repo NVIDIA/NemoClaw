@@ -208,10 +208,8 @@ fn a_loaded_policy_keeps_the_declared_rules_and_reports_its_hash() {
     assert!(active_policy(response(enriched, "", loaded), &expected).is_err());
 }
 
-/// A loaded policy may gain OpenShell's filesystem additions, but its middleware
-/// bindings must stay exactly as declared.
-#[test]
-fn a_loaded_policy_keeps_middleware_bindings_exactly() {
+/// A declared policy with filesystem grants and one middleware binding.
+fn guarded_policy() -> proto::SandboxPolicy {
     let declared: nemoclaw_openshell::policy::ExplicitPolicy =
         serde_json::from_value(serde_json::json!({
             "version": 1,
@@ -219,34 +217,43 @@ fn a_loaded_policy_keeps_middleware_bindings_exactly() {
             "network_policies": {},
             "network_middlewares": {"guard": {
                 "middleware": "decision-guard", "order": 10, "on_error": "fail_closed",
-                "config": {"mode": "block", "threshold": 2},
+                "config": {"mode": "block"},
                 "endpoints": {"include": ["docs.example.com"], "exclude": ["trusted.example.com"]}
             }}
         }))
         .unwrap();
-    let declared = declared.to_proto().unwrap();
-    let expected = policy_json(&declared).unwrap();
+    declared.to_proto().unwrap()
+}
+
+#[test]
+fn openshell_filesystem_additions_keep_a_loaded_middleware_binding() {
+    let declared = guarded_policy();
     let mut loaded = declared.clone();
-    loaded
-        .filesystem
-        .as_mut()
-        .unwrap()
-        .read_only
-        .push("/proc".into());
-    assert!(network::loaded_policy_contains(&loaded, &expected).unwrap());
-    let changes: [fn(&mut proto::NetworkMiddlewareConfig); 4] = [
-        |guard| guard.order = 20,
-        |guard| guard.on_error = "fail_open".into(),
-        |guard| guard.endpoints.as_mut().unwrap().exclude.clear(),
-        |guard| guard.config = Some(Default::default()),
+    let filesystem = loaded.filesystem.as_mut().unwrap();
+    filesystem.read_only.push("/proc".into());
+    assert!(network::loaded_policy_contains(&loaded, &policy_json(&declared).unwrap()).unwrap());
+}
+
+fn guard(policy: &mut proto::SandboxPolicy) -> &mut proto::NetworkMiddlewareConfig {
+    policy.network_middlewares.get_mut("guard").unwrap()
+}
+
+#[test]
+fn any_change_to_a_loaded_middleware_binding_is_drift() {
+    let declared = guarded_policy();
+    let expected = policy_json(&declared).unwrap();
+    let changes: [fn(&mut proto::SandboxPolicy); 5] = [
+        |policy| policy.network_middlewares.clear(),
+        |policy| guard(policy).order = 20,
+        |policy| guard(policy).on_error = "fail_open".into(),
+        |policy| guard(policy).endpoints.as_mut().unwrap().exclude.clear(),
+        |policy| guard(policy).config = Some(Default::default()),
     ];
     for change in changes {
-        let mut changed = loaded.clone();
-        change(changed.network_middlewares.get_mut("guard").unwrap());
-        assert!(!network::loaded_policy_contains(&changed, &expected).unwrap());
+        let mut loaded = declared.clone();
+        change(&mut loaded);
+        assert!(!network::loaded_policy_contains(&loaded, &expected).unwrap());
     }
-    loaded.network_middlewares.clear();
-    assert!(!network::loaded_policy_contains(&loaded, &expected).unwrap());
 }
 
 #[test]
