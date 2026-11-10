@@ -37,6 +37,9 @@ group "default" {
 
 target "_fabric" {
   context = "."
+  # The remote sources that versions.json pins for this image, which
+  # `cargo images fetch` and `cargo images build` place here.
+  contexts = { sources = ".build/image-sources/fabric" }
   dockerfile = "image/fabric/Dockerfile"
   platforms = [AGENT_PLATFORM]
 }
@@ -100,6 +103,7 @@ target "vllm" {
 
 target "ollama" {
   inherits = ["_runtime"]
+  contexts = { supervisor = "target:supervisor", sources = ".build/image-sources/ollama" }
   dockerfile = "image/ollama/Dockerfile"
   tags = ["nc-prototype-ollama:rust-v1"]
 }

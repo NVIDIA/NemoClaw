@@ -6,15 +6,14 @@ ARG NODE_IMAGE=node:24.22.2-trixie-slim@sha256:0820eaa85e07d0490446dd01d14707e17
 ARG PYTHON_IMAGE=python:3.14.10-slim-trixie@sha256:af8a5aa14780025dbfbcfbc81bd8a91ebd87711dd5b0f48ed71090949dd7cb1d
 ARG RUST_IMAGE=rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd3dacff4d457ca7cccd781e02297cc6
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490
-# The Fabric source every harness installs; the reference dummy's descriptor
-# follows the adapter contract at the same revision.
-ARG FABRIC_REVISION=316fbdfbd7ac9eb63ffd52023ab4464f2d23e938
-ARG FABRIC_SHA256=7fcf49e29bdabb06eb482d667c6d1d18ee7c4991d7cffcc84ce21623e41ebea0
+# The remote sources this image copies, such as the Fabric source every harness
+# installs, are pinned under imageSources.fabric in versions.json; Bake passes
+# them as the sources context, which `cargo images fetch` fills.
 # OpenClaw release 2026.9.34, the only version the pinned Fabric's OpenClaw
 # adapter supports; move it with the Fabric revision, not on its own.
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:70e88573161a9248cfe992c069f638085ac066278e03f11a46bcbd115f38e3fc
-# Hermes Agent's release image for HERMES_REVISION; only its built dashboard
-# and TUI bundle are copied. Move it with HERMES_REVISION, not on its own.
+# Hermes Agent's release image for the pinned Hermes source; only its built
+# dashboard and TUI bundle are copied. Move it with that source, not on its own.
 ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.22.5@sha256:9c5561579f3ffdf333401797094ac3a743738d6c25d40f4331c7bf77b694238d
 # The harness stage the catalog and labeled stages build on.
 ARG STAGE=generic
@@ -52,9 +51,8 @@ COPY --from=rust /usr/local/rustup /usr/local/rustup
 COPY --from=uv /uv /usr/local/bin/uv
 ENV CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup PATH=/usr/local/cargo/bin:$PATH
 ARG SOURCE_DATE_EPOCH=1789516800
-ARG FABRIC_REVISION
-ARG FABRIC_SHA256
-ADD --checksum=sha256:${FABRIC_SHA256} https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/${FABRIC_REVISION} /sources/fabric.tar.gz
+# The reference dummy's descriptor follows the adapter contract at this revision.
+COPY --from=sources /fabric.tar.gz /sources/fabric.tar.gz
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /src/fabric /wheels \
@@ -118,9 +116,7 @@ USER node
 
 FROM base AS hermes-assets
 # Hermes Agent release v0.22.5, which includes its native Relay integration.
-ARG HERMES_REVISION=bf0203a794a07aac3ff764972ab9087baa4e4f4e
-ARG HERMES_SHA256=0dc2cca54657d162845a77f634e107c61c3fb0bd6c8505212aa2e200591b7cc9
-ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
+COPY --from=sources /hermes.tar.gz /sources/hermes.tar.gz
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
 RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md
@@ -137,11 +133,7 @@ RUN --mount=type=bind,from=hermes-upstream,source=/opt/hermes,target=/upstream \
 
 FROM base AS switchyard-assets
 ARG TARGETARCH
-ARG SWITCHYARD_PLUGIN_VERSION=0.3.1
-ARG SWITCHYARD_PLUGIN_AMD64_SHA256=c3f46807d96deb1c057357a676f92be0f751f92d67571d3aa85240e78cfbd36a
-ARG SWITCHYARD_PLUGIN_ARM64_SHA256=e55023684543d1cdbfe127af5328481c436f730cc0b5e4d3ca283f4226696b73
-ADD --checksum=sha256:${SWITCHYARD_PLUGIN_AMD64_SHA256} https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-${SWITCHYARD_PLUGIN_VERSION}/switchyard-plugin-${SWITCHYARD_PLUGIN_VERSION}-linux-x86_64.tar.gz /sources/switchyard-amd64.tar.gz
-ADD --checksum=sha256:${SWITCHYARD_PLUGIN_ARM64_SHA256} https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-${SWITCHYARD_PLUGIN_VERSION}/switchyard-plugin-${SWITCHYARD_PLUGIN_VERSION}-linux-arm64.tar.gz /sources/switchyard-arm64.tar.gz
+COPY --from=sources /switchyard-amd64.tar.gz /switchyard-arm64.tar.gz /sources/
 RUN case "$TARGETARCH" in amd64|arm64) ;; *) exit 1 ;; esac \
     && mkdir -p /opt/nemo-relay/plugins/switchyard \
     && tar -xzf "/sources/switchyard-${TARGETARCH}.tar.gz" \

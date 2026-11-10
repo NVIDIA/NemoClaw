@@ -39,7 +39,7 @@ Build the ordinary runtime and the harnesses selected by your example:
 
 ```sh
 docker buildx bake vllm
-AGENT_PLATFORM=linux/arm64 docker buildx bake pi deepagents openclaw --load
+cargo images build --platform linux/arm64 pi deepagents openclaw
 cargo run -p nemoclaw-build -- bundle
 ```
 
