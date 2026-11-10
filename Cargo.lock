@@ -3021,6 +3021,7 @@ dependencies = [
  "getrandom 0.4.3",
  "guppy",
  "nemoclaw-sdk",
+ "object 0.40.0",
  "pulldown-cmark",
  "pulldown-cmark-to-cmark",
  "quick-junit",
