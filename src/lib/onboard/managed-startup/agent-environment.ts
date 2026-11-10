@@ -5,6 +5,8 @@ import { Buffer } from "node:buffer";
 import { PROVIDERLESS_INFERENCE_ENV } from "../../providerless-inference";
 import {
   encodeHermesSwitchyardRoutingIntent,
+  encodeSwitchyardProviderBindings,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
   HERMES_SWITCHYARD_ROUTING_ENV,
 } from "../../hermes-switchyard-routing";
 
@@ -37,6 +39,7 @@ export interface ManagedStartupRootOwnedFileMaterial {
   readonly legacyInput:
     | "NEMOCLAW_DCODE_AUTO_APPROVAL"
     | "NEMOCLAW_INFERENCE_BASE_URL"
+    | "NEMOCLAW_INFERENCE_PROVIDER_ID"
     | "NEMOCLAW_PROXY_HOST"
     | "NEMOCLAW_PROXY_PORT"
     | "NEMOCLAW_REASONING_EFFORT"
@@ -48,6 +51,8 @@ export interface ManagedStartupRootOwnedFileMaterial {
     | "/usr/local/share/nemoclaw/dcode-proxy-port"
     | "/usr/local/share/nemoclaw/dcode-reasoning-effort"
     | "/usr/local/share/nemoclaw/dcode-upstream-provider"
+    | "/usr/local/share/nemoclaw/dcode-provider-route"
+    | "/usr/local/share/nemoclaw/openclaw-proxy-url"
     | "/usr/local/share/nemoclaw/pi-proxy-host"
     | "/usr/local/share/nemoclaw/pi-proxy-port";
   readonly contents: string;
@@ -414,7 +419,14 @@ function mapOpenClawProfile(
     configurationEnvironment: sortedEnvironment(configurationEnvironment),
     runtimeEnvironment: sortedEnvironment(runtimeEnvironment),
     applicationRuntime: applicationRuntimePlan(profile, environment),
-    materials: Object.freeze([corporateCaMaterial(profile)]),
+    materials: Object.freeze([
+      corporateCaMaterial(profile),
+      rootOwnedFile(
+        "NEMOCLAW_PROXY_HOST",
+        "/usr/local/share/nemoclaw/openclaw-proxy-url",
+        `http://${profile.proxy.managedHost}:${profile.proxy.managedPort}`,
+      ),
+    ]),
     actions: applicationActions(profile, "openclaw"),
   });
 }
@@ -454,6 +466,13 @@ function mapHermesProfile(
     [HERMES_SWITCHYARD_ROUTING_ENV]: profile.agentConfig.switchyardRouting
       ? encodeHermesSwitchyardRoutingIntent(profile.agentConfig.switchyardRouting)
       : "",
+    [HERMES_SWITCHYARD_BINDINGS_ENV]:
+      profile.agentConfig.switchyardRouting && profile.agentConfig.switchyardBindings
+        ? encodeSwitchyardProviderBindings(
+            profile.agentConfig.switchyardBindings,
+            profile.agentConfig.switchyardRouting,
+          )
+        : "",
   };
 
   const runtimeEnvironment: MutableEnvironment = {
@@ -463,6 +482,7 @@ function mapHermesProfile(
   };
   delete runtimeEnvironment.NEMOCLAW_MESSAGING_PLAN_B64;
   delete runtimeEnvironment[HERMES_SWITCHYARD_ROUTING_ENV];
+  delete runtimeEnvironment[HERMES_SWITCHYARD_BINDINGS_ENV];
   runtimeEnvironment.NEMOCLAW_DASHBOARD_PORT =
     profile.dashboard.publicPort === null ? "" : String(profile.dashboard.publicPort);
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD =
@@ -549,6 +569,11 @@ function mapDcodeProfile(
       "NEMOCLAW_UPSTREAM_PROVIDER",
       "/usr/local/share/nemoclaw/dcode-upstream-provider",
       profile.inference.upstreamProvider,
+    ),
+    rootOwnedFile(
+      "NEMOCLAW_INFERENCE_PROVIDER_ID",
+      "/usr/local/share/nemoclaw/dcode-provider-route",
+      profile.inference.routeProvider,
     ),
     rootOwnedFile(
       "NEMOCLAW_PROXY_HOST",

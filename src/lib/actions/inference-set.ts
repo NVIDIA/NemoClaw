@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouter } from "../inference/config";
 import type { NativeLocalProviderAttachment } from "../inference/config";
 import {
   requireNativeProviderPolicy,
@@ -19,7 +20,7 @@ import type {
   OpenShellInferenceRouteObserver,
 } from "../adapters/openshell/inference-route";
 import { CLI_NAME } from "../cli/branding";
-import { shellQuote } from "../core/shell-quote";
+import { dcodeSelectionChangeGuidance } from "../inference/managed-dcode/selection-guidance";
 import { applyHermesManagedRoute } from "../hermes-managed-route";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
@@ -279,7 +280,6 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
 const SUPPORTED_PROVIDER_NAMES = [
   "nvidia-prod",
   "nvidia-nim",
-  "nvidia-router",
   "openai-api",
   "openrouter-api",
   "anthropic-prod",
@@ -331,7 +331,6 @@ const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   vllm: "vllm-local",
   nim: "nvidia-nim",
   "nim-local": "nvidia-nim",
-  routed: "nvidia-router",
 };
 
 const SUPPORTED_PROVIDER_NAME_SET: ReadonlySet<string> = new Set(SUPPORTED_PROVIDER_NAMES);
@@ -352,6 +351,7 @@ const SUPPORTED_PROVIDER_NAME_SET: ReadonlySet<string> = new Set(SUPPORTED_PROVI
  * unchanged.
  */
 export function normalizeInferenceSetProvider(provider: string): string {
+  rejectRetiredModelRouter(provider);
   const trimmed = provider.trim();
   const lowered = trimmed.toLowerCase();
   const directAlias = INSTALLER_PROVIDER_ALIASES[lowered];
@@ -443,7 +443,7 @@ async function assertSelectableProvider(
   gatewayName: string,
   deps: Pick<InferenceSetDeps, "providerAdapter" | "log">,
 ): Promise<void> {
-  if (getProviderSelectionConfig(provider, model) || provider === "nvidia-router") return;
+  if (getProviderSelectionConfig(provider, model)) return;
   const registeredProviders = await queryRegisteredGatewayProviders(gatewayName, deps);
   if (registeredProviders?.includes(provider)) return;
   const providerGuidance =
@@ -1269,16 +1269,9 @@ async function runInferenceSetWithoutHostLock(
   const { sandboxName, entry, agentName } = resolveTargetSandbox(options.sandboxName, deps);
   const priorHttpsPinRouteId = parseHttpsPinRouteId(entry.endpointUrl);
   if (agentName !== "openclaw" && agentName !== "hermes") {
-    // #6321: Deep Agents Code (langchain-deepagents-code) bakes its model into
-    // the sandbox image at build time (agents/langchain-deepagents-code/Dockerfile
-    // ARG NEMOCLAW_MODEL → ~/.deepagents/config.toml), so — unlike OpenClaw and
-    // Hermes — it has no runtime inference-set config-mutation path. The blunt
-    // "supports OpenClaw and Hermes" message left dcode users with no next step;
-    // point them at the only way to change a Deep Agents model: re-onboard with
-    // a new selection.
     const dcodeHint =
       agentName === "langchain-deepagents-code"
-        ? ` Deep Agents Code bakes its model into the sandbox image at build time, so it has no runtime inference-set path. To change the model, re-onboard with the new selection: \`${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh\` (set NEMOCLAW_PROVIDER / NEMOCLAW_MODEL for the target model).`
+        ? ` Deep Agents Code has no runtime inference-set path. ${dcodeSelectionChangeGuidance()}`
         : "";
     throw new InferenceSetError(
       `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.${dcodeHint}`,

@@ -298,6 +298,7 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "scripts/lib/bundled-npm-package.mts",
   "scripts/lib/entrypoint-env-wrapper.sh",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
+  "scripts/lib/patch-bundled-npm-undici.mts",
   "scripts/lib/reviewed-npm-archive.mts",
   "scripts/lib/reviewed-npm-audit.mts",
   "scripts/lib/reviewed-npm-identity.mts",
@@ -327,6 +328,19 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
 ] as const;
 
+const OPENCLAW_SEARCH_RUNTIME_OWNING_PATHS = [
+  "agents/openclaw/manifest.yaml",
+  "nemoclaw-blueprint/blueprint.yaml",
+  "nemoclaw/package.json",
+  "nemoclaw/src/index.ts",
+  "nemoclaw/src/denied-search-state.ts",
+  "nemoclaw/src/runtime-context.ts",
+  "nemoclaw/src/search-config.ts",
+  "scripts/generate-openclaw-config.mts",
+  "scripts/nemoclaw-start.sh",
+  "src/lib/openclaw/agent-json-provenance.ts",
+] as const;
+
 function commonEgressTarget(options: {
   displayName: string;
   environment?: Readonly<Record<string, string>>;
@@ -334,6 +348,7 @@ function commonEgressTarget(options: {
   hermes?: boolean;
   owningPaths?: readonly string[];
   profile?: E2eExecutionProfile;
+  prAdvisorSelectable?: boolean;
   runnerComparison?: boolean;
   selector: string;
   shard: string;
@@ -344,6 +359,7 @@ function commonEgressTarget(options: {
     agentRuntime: options.hermes ? "hermes" : "openclaw",
     environmentOrInferenceEndpoint: options.environmentOrInferenceEndpoint,
     profile: options.profile ?? "nvidia-inference",
+    prAdvisorSelectable: options.prAdvisorSelectable,
     testFile: "test/e2e/live/common-egress-agent.test.ts",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -653,7 +669,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     displayName: "Networking: OpenClaw answers through balanced egress",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public weather endpoint",
     shard: "openclaw-balanced-weather",
+    prAdvisorSelectable: true,
     selector: "^common-egress.+C1.+$",
+    owningPaths: OPENCLAW_SEARCH_RUNTIME_OWNING_PATHS,
   }),
   commonEgressTarget({
     displayName: "Networking: OpenClaw reaches a public reference through open egress",
@@ -674,6 +692,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "nvidia-inference",
     runnerComparison: false,
     owningPaths: [
+      ...OPENCLAW_SEARCH_RUNTIME_OWNING_PATHS,
       "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml",
       "nemoclaw-blueprint/policies/tiers.yaml",
       "src/lib/onboard/policy-selection.ts",
@@ -933,7 +952,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; native NVIDIA Endpoints provider",
     profile: "nvidia-api",
-    timeoutMinutes: 55,
+    timeoutMinutes: 85,
     installMode: "authenticated",
     installNonInteractive: true,
     restoreCli: true,
@@ -955,6 +974,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SWITCH_PROVIDER: "nvidia-prod",
       NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3.5-super-vl-120b-a12b",
       NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
+      // Reserve the added damaged-state rebuild and keep ten minutes for job cleanup.
+      NEMOCLAW_TEST_TIMEOUT: String(75 * 60_000),
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
@@ -1058,7 +1079,14 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: false,
     cloudflared: true,
-    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
+    owningPaths: [
+      "test/e2e/support/bearerless-vllm-readiness.ts",
+      "tools/e2e/onboard-timeout-contract.mts",
+      "src/lib/inference/local.ts",
+      "src/lib/inference/serving/vllm-host-local-lifecycle.ts",
+      "src/lib/inference/serving/vllm-host-local-network.ts",
+      "src/lib/inference/vllm-docker-env.ts",
+    ],
   }),
   managedRuntimeTarget("inference-routing-openclaw-native", {
     testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
@@ -1128,28 +1156,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       TELEGRAM_ALLOWED_IDS: "123456789",
       TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e",
     },
-  }),
-  managedRuntimeTarget("model-router-provider-routed-inference", {
-    displayName: "Inference: Model Router returns a provider-routed response",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA API and Model Router",
-    profile: "nvidia-api",
-    prAdvisorSelectable: true,
-    timeoutMinutes: 45,
-    installMode: "none",
-    restoreCli: true,
-    exposeCliBin: true,
-    // ubuntu-latest (26.04) ships only Python 3.14, which Model Router does not
-    // yet support (src/lib/onboard/model-router-python.ts). Pin until 3.14 is qualified.
-    runner: "ubuntu-24.04",
-    owningPaths: [
-      "nemoclaw-blueprint/router/pool-config.yaml",
-      "src/lib/actions/sandbox/destroy-preflight.ts",
-      "src/lib/onboard/model-router-process.ts",
-      "src/lib/onboard/model-router.ts",
-      "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
-    ],
-    environment: { OPENSHELL_GATEWAY: "nemoclaw" },
   }),
   managedRuntimeTarget("network-policy", {
     displayName: "Network policy: enforces restricted allow and deny rules",
@@ -1291,6 +1297,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "src/lib/inference/native-provider/network-policy.ts",
       "src/lib/inference/native-nvidia/index.ts",
       "managed-inference/provider-profiles/nemoclaw-nvidia-inference-v1.yaml",
       "src/lib/actions/inference-set.ts",
@@ -1466,6 +1473,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     owningPaths: [
+      "src/lib/actions/sandbox/connect.ts",
+      "src/lib/actions/sandbox/process-recovery.ts",
+      "src/lib/actions/sandbox/start.ts",
       "src/lib/actions/sandbox/gateway-state.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
       "tools/e2e/sandbox-survival-timeout-contract.mts",

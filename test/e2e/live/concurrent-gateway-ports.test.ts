@@ -13,7 +13,6 @@
  * then NemoClaw recovers its managed dashboard forward.
  */
 
-import fs from "node:fs";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { observeForwardRestart } from "../fixtures/forward-restart-observation.ts";
@@ -26,13 +25,16 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { buildOpenClawGatewayWaitScript } from "../fixtures/gateway-runtime-start.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   openshellListIncludesSandbox,
   sandboxPhaseFromList,
 } from "../fixtures/openshell-sandbox-list.ts";
+import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 
 const SANDBOX_A = process.env.NEMOCLAW_CGP_SANDBOX_A ?? "e2e-cgp-a";
 const SANDBOX_B = process.env.NEMOCLAW_CGP_SANDBOX_B ?? "e2e-cgp-b";
@@ -104,6 +106,24 @@ async function command(
     env: options.env ?? commandEnv(),
     timeoutMs: options.timeoutMs,
   });
+}
+
+async function activeSessionCount(
+  host: HostCliClient,
+  sandboxName: string,
+  gatewayPort: string,
+  artifactName: string,
+): Promise<number | null> {
+  const result = await command(host, ["list", "--json"], {
+    artifactName,
+    env: commandEnv({ NEMOCLAW_GATEWAY_PORT: gatewayPort }),
+    timeoutMs: 60_000,
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  const parsed = JSON.parse(result.stdout) as {
+    sandboxes?: { name: string; activeSessionCount?: number | null }[];
+  };
+  return parsed.sandboxes?.find((row) => row.name === sandboxName)?.activeSessionCount ?? null;
 }
 
 function gatewayRegistryContains(result: ShellProbeResult, gatewayName: string): boolean {
@@ -290,6 +310,7 @@ async function probeSurvivorDashboard(
   dashboardPort: string,
   artifactPrefix: string,
   dashboardProbes = 1,
+  recoveryDeadline?: number,
 ): Promise<SurvivorDashboardProbe> {
   const gatewayPortProbe = await host.command(
     "bash",
@@ -297,16 +318,22 @@ async function probeSurvivorDashboard(
     {
       artifactName: `${artifactPrefix}-gateway-port`,
       env: commandEnv(),
-      timeoutMs: 30_000,
+      timeoutMs:
+        recoveryDeadline === undefined
+          ? 30_000
+          : Math.max(1, Math.min(30_000, recoveryDeadline - Date.now())),
     },
   );
   const scopedList = await sandbox.openshell(["sandbox", "list", "-g", gatewayName], {
     artifactName: `${artifactPrefix}-registry`,
     env: commandEnv(),
-    timeoutMs: 30_000,
+    timeoutMs:
+      recoveryDeadline === undefined
+        ? 30_000
+        : Math.max(1, Math.min(30_000, recoveryDeadline - Date.now())),
   });
   const dashboard: ShellProbeResult[] = [];
-  const dashboardDeadline = Date.now() + 60_000;
+  const dashboardDeadline = recoveryDeadline ?? Date.now() + 60_000;
   for (
     let probe = 1;
     probe <= dashboardProbes &&
@@ -380,16 +407,44 @@ async function recoverSurvivor(
   sandboxName: string,
   gatewayName: string,
   artifactPrefix: string,
-): Promise<ShellProbeResult> {
-  const deadline = performance.now() + 120_000;
-  const remaining = () => Math.floor(deadline - performance.now());
+): Promise<{ result: ShellProbeResult; deadline: number }> {
+  const deadline = Date.now() + 60_000;
+  const remaining = () => Math.floor(deadline - Date.now());
+  const env = commandEnv({
+    NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A,
+    OPENSHELL_GATEWAY: gatewayName,
+  });
+  const nativeReady = await host.command(
+    process.execPath,
+    [
+      "-e",
+      buildOpenClawGatewayWaitScript(),
+      sandboxName,
+      gatewayName,
+      String(Math.max(1, remaining())),
+    ],
+    {
+      artifactName: `${artifactPrefix}-native-ready`,
+      env,
+      timeoutMs: Math.max(1, remaining()),
+    },
+  );
+  await captureSandboxFailureDiagnostics(host, nativeReady, {
+    sandboxName,
+    artifactPrefix: `${artifactPrefix}-native-readiness`,
+    captureOpenClawOwner: true,
+    env,
+    redactionValues: ["dummy"],
+  });
+  expect(nativeReady.exitCode, resultText(nativeReady)).toBe(0);
+
   // OpenShell Ready precedes OpenClaw's HTTP listener. Probe inside the sandbox,
   // since the host forward may require the single recovery call below.
   await pollUntil({
     artifactPrefix: `${artifactPrefix}-agent-ready`,
     attempts: PROBE_ATTEMPTS,
-    deadlineMs: 120_000,
-    now: () => performance.now(),
+    deadlineMs: 60_000,
+    now: () => Date.now(),
     delayMs: () => Math.max(0, Math.min(PROBE_DELAY_MS, remaining())),
     probe: async (_attempt, artifactName) => {
       return await sandbox.exec(
@@ -416,11 +471,12 @@ async function recoverSurvivor(
         : undefined,
   });
   // Raw OpenShell start does not restore a forward that exited while stopped.
-  return await command(host, [sandboxName, "recover"], {
+  const result = await command(host, [sandboxName, "recover"], {
     artifactName: `${artifactPrefix}-recover`,
     env: { ...openshellEnvForGateway(gatewayName), NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A },
     timeoutMs: Math.max(1, remaining()),
   });
+  return { result, deadline };
 }
 
 async function restartAndRecoverSurvivor(
@@ -436,6 +492,7 @@ async function restartAndRecoverSurvivor(
   readonly start: ShellProbeResult;
   readonly phase: string;
   readonly recover: ShellProbeResult | null;
+  readonly recoveryDeadline: number;
 }> {
   const listener = async (stage: string) => {
     try {
@@ -502,7 +559,11 @@ async function restartAndRecoverSurvivor(
   const recover = restarted
     ? await recoverSurvivor(host, sandbox, sandboxName, gatewayName, artifactPrefix)
     : null;
-  return { ...restart, recover };
+  return {
+    ...restart,
+    recover: recover?.result ?? null,
+    recoveryDeadline: recover?.deadline ?? Date.now(),
+  };
 }
 
 async function prerequisiteOrSkip(
@@ -620,6 +681,7 @@ test(
         "onboard sandbox on first non-default gateway",
         "onboard sandbox on alternate gateway",
         "verify isolated gateways and dashboard forwards",
+        "count the interactive connect only on its owning gateway",
         "garbage-collect an orphan without deleting the sibling gateway image",
         "destroy alternate sandbox with gateway cleanup while restarting the survivor",
         "destroy alternate sandbox without gateway cleanup while restarting the survivor",
@@ -630,11 +692,6 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
-    expect(
-      fs.existsSync(CLI_DIST_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
-
     await prerequisiteOrSkip(host, skip, "docker", ["info"], "prereq-docker-info");
     await prerequisiteOrSkip(
       host,
@@ -668,6 +725,7 @@ test(
         "sandboxes A and B onboard on distinct non-default NemoClaw gateway ports",
         "both sandboxes, gateways, and dashboard forwards coexist without port collision",
         "each port-scoped registry lists only the sandbox owned by that gateway",
+        "an interactive connect contributes one owning-gateway session and clears after exit",
         "gc on gateway A preserves gateway B's registered image while removing a true orphan tag",
         "destroy with gateway cleanup removes gateway B, preserves selected gateway A, and keeps A restartable and dashboard-reachable",
         "destroy without gateway cleanup removes only B's sandbox, preserves gateway B and selected gateway A, and keeps A restartable and dashboard-reachable",
@@ -727,13 +785,7 @@ test(
       "phase-1-onboard-sandbox-a",
     );
     expect(onboardA.exitCode, resultText(onboardA)).toBe(0);
-    const phaseA = await waitForSandboxReady(
-      sandbox,
-      SANDBOX_A,
-      gatewayA,
-      "phase-1-sandbox-a-ready",
-    );
-    expect(["Ready", "Running"]).toContain(phaseA);
+    await waitForSandboxReady(sandbox, SANDBOX_A, gatewayA, "phase-1-sandbox-a-ready");
 
     const listAfterA = await command(host, ["list"], {
       artifactName: "phase-1-nemoclaw-list-after-a",
@@ -768,10 +820,6 @@ test(
       gatewayB,
       "phase-3-sandbox-b-ready",
     );
-    expect(
-      [phaseAAfterB, phaseBAfterB].every((phase) => phase === "Ready" || phase === "Running"),
-      `gateway A=${phaseAAfterB}, gateway B=${phaseBAfterB}`,
-    ).toBe(true);
     await expectPortListening(host, GATEWAY_PORT_A, "phase-3-gateway-port-a-still-listening");
     await expectPortListening(host, GATEWAY_PORT_B, "phase-3-gateway-port-b-listening");
 
@@ -801,6 +849,71 @@ test(
       dashboardAAfterB === dashboardA && Boolean(dashboardB) && dashboardB !== dashboardA,
       `dashboard A before=${dashboardA}, after=${dashboardAAfterB}, gateway B=${dashboardB}`,
     ).toBe(true);
+
+    progress.phase("count the interactive connect only on its owning gateway");
+    const connectController = new AbortController();
+    const connectEnv = commandEnv({
+      NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A,
+      OPENSHELL_GATEWAY: gatewayA,
+    });
+    delete connectEnv.NEMOCLAW_NON_INTERACTIVE;
+    let connectFinished = false;
+    const connectDone = driveInteractiveCommand({
+      activityLabel: `interactive connect to ${SANDBOX_B}`,
+      cmd: [process.execPath, CLI_ENTRYPOINT, SANDBOX_B, "connect"],
+      env: connectEnv,
+      progress,
+      rules: [],
+      signal: connectController.signal,
+      timeoutMs: 4 * 60_000,
+    }).finally(() => {
+      connectFinished = true;
+    });
+    // Attach a rejection handler immediately; cleanup still awaits and reports the original error.
+    void connectDone.catch(() => undefined);
+    const stopConnect = async (): Promise<void> => {
+      connectController.abort();
+      await connectDone;
+    };
+    cleanup.add("close interactive cross-gateway connect", stopConnect);
+    let owningGatewaySessionObserved = false;
+    let siblingGatewaySessionAbsent = false;
+    try {
+      const attached = await pollUntil({
+        artifactPrefix: "phase-3-interactive-connect-attached",
+        attempts: PROBE_ATTEMPTS,
+        delayMs: PROBE_DELAY_MS,
+        probe: async (_attempt, artifactName) => ({
+          a: await activeSessionCount(host, SANDBOX_A, GATEWAY_PORT_A, `${artifactName}-a`),
+          b: await activeSessionCount(host, SANDBOX_B, GATEWAY_PORT_B, `${artifactName}-b`),
+        }),
+        accept: ({ b }) => b !== null && b > 0,
+        terminal: () =>
+          connectFinished
+            ? "interactive connect exited before its session became visible"
+            : undefined,
+      });
+      owningGatewaySessionObserved = attached.value.b !== null && attached.value.b > 0;
+      siblingGatewaySessionAbsent = attached.value.a === 0;
+      expect(attached.value.a).toBe(0);
+      const markedList = await command(host, ["list"], {
+        artifactName: "phase-3-interactive-connect-marked-list",
+        env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
+        timeoutMs: 60_000,
+      });
+      expect(markedList.stdout).toMatch(new RegExp(`^\\s+${SANDBOX_B}(?: \\*)? ●$`, "m"));
+      expect(connectFinished, "interactive connect ended before listing its session").toBe(false);
+    } finally {
+      await stopConnect();
+    }
+    const detached = await pollUntil({
+      artifactPrefix: "phase-3-interactive-connect-detached",
+      attempts: PROBE_ATTEMPTS,
+      delayMs: PROBE_DELAY_MS,
+      probe: async (_attempt, artifactName) =>
+        await activeSessionCount(host, SANDBOX_B, GATEWAY_PORT_B, artifactName),
+      accept: (count) => count === 0,
+    });
 
     progress.phase("garbage-collect an orphan without deleting the sibling gateway image");
     const registeredImage = await host.command(
@@ -990,6 +1103,7 @@ test(
       DASHBOARD_PORT_A,
       "phase-3-survivor-after-cleanup-destroy",
       PROBE_ATTEMPTS,
+      survivorRestartAfterCleanupDestroy.recoveryDeadline,
     );
     const sandboxARestartedWithCleanup =
       survivorRestartAfterCleanupDestroy.stop.exitCode === 0 &&
@@ -1132,6 +1246,7 @@ test(
       DASHBOARD_PORT_A,
       "phase-3-survivor-after-retained-destroy",
       PROBE_ATTEMPTS,
+      survivorRestartAfterRetainedDestroy.recoveryDeadline,
     );
     const sandboxARestartedWithoutCleanup =
       survivorRestartAfterRetainedDestroy.stop.exitCode === 0 &&
@@ -1316,6 +1431,9 @@ test(
           !outputIncludesSandbox(listGatewayA.stdout, SANDBOX_B) &&
           outputIncludesSandbox(listGatewayB.stdout, SANDBOX_B) &&
           !outputIncludesSandbox(listGatewayB.stdout, SANDBOX_A),
+        owningGatewaySessionObserved,
+        siblingGatewaySessionAbsent,
+        sessionClearedAfterDisconnect: detached.value === 0,
         siblingGatewayImagePreservedByGc: siblingImagePreserved,
         gcRemovedOnlyOrphanTag: orphanTagAbsent,
         dashboardPortsDistinct: Boolean(dashboardA && dashboardB && dashboardA !== dashboardB),

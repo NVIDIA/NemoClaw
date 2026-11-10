@@ -4,6 +4,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
+import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -356,8 +359,27 @@ describe("launch readiness observation timing", () => {
     });
   });
 
-  it("records every fixed OpenShell-backed semantic observation without its values", async () => {
-    const sandbox = entry();
+  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("hermes"));
+  const managedWorkload: SandboxEntry["workload"] = {
+    schemaVersion: 1,
+    kind: "managed-image",
+    reference: `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"1".repeat(64)}`,
+    release: "v0.1.0",
+    sourceRevision: "2".repeat(40),
+    sourceCohort: "ghrun-1-1",
+    capabilityContractVersion: 1,
+    startupProfileContractVersion: 1,
+    encodedProfile,
+    startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+    credentialProxyReplayRequired: false,
+    shared: true,
+  };
+
+  it.each([
+    { variant: "legacy", workload: undefined },
+    { variant: "managed", workload: managedWorkload },
+  ])("records each $variant Hermes observation once without its values", async ({ workload }) => {
+    const sandbox = { ...entry(), workload };
     const stages: string[] = [];
     const failures: string[] = [];
     let inferenceHealthy = true;

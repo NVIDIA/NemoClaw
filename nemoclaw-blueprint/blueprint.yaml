@@ -5,7 +5,7 @@ version: "0.1.0"
 # Requires OpenShell MCP/JSON-RPC L7 policy support from NVIDIA/OpenShell#1865.
 min_openshell_version: "0.0.116"
 max_openshell_version: "0.0.116"
-min_openclaw_version: "2026.3.11"
+min_openclaw_version: "2026.9.2"
 # Mirrors the components.sandbox.image manifest digest below. Lets a
 # downstream consumer (or release tooling) verify the blueprint declares
 # a specific sandbox image without parsing the components tree, and
@@ -19,7 +19,6 @@ profiles:
   - ncp
   - nim-local
   - vllm
-  - routed
 
 description: |
   NemoClaw blueprint: orchestrates OpenClaw sandbox creation, migration,
@@ -84,19 +83,6 @@ components:
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
         timeout_secs: 180
-
-      routed:
-        provider_type: "openai"
-        provider_name: "nvidia-router"
-        endpoint: "http://localhost:4000/v1"
-        model: "nvidia-routed"
-        credential_env: "NVIDIA_INFERENCE_API_KEY"
-        timeout_secs: 180
-
-  router:
-    enabled: true
-    port: 4000
-    pool_config_path: "router/pool-config.yaml"
 
   policy:
     base: "sandboxes/openclaw/policy.yaml"

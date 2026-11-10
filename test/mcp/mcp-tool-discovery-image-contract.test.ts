@@ -13,9 +13,12 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import {
   createHermesSwitchyardRoutingIntent,
   encodeHermesSwitchyardRoutingIntent,
+  encodeSwitchyardProviderBindings,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
   HERMES_SWITCHYARD_ROUTING_ENV,
   serializeHermesSwitchyardRouting,
 } from "../../src/lib/hermes-switchyard-routing";
+import { switchyardBindingFixture } from "../helpers/hermes-switchyard";
 import { expectManagedToolDiscoveryRuntimeImageContract } from "../support/managed-bootstrap-image-contract";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
@@ -33,10 +36,12 @@ function runSwitchyardBundleInstall(transformDeployment = (deployment: string) =
     efficient: { provider: "nvidia-prod", model: "efficient-model" },
     capable: { provider: "openai-api", model: "capable-model" },
   });
+  const bindings = switchyardBindingFixture(routing);
   const environment = {
     [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+    [HERMES_SWITCHYARD_BINDINGS_ENV]: encodeSwitchyardProviderBindings(bindings, routing),
   };
-  const serialized = serializeHermesSwitchyardRouting(routing);
+  const serialized = serializeHermesSwitchyardRouting(routing, bindings);
   const paths = {
     relayPluginStateSource: path.join(fixture, "staged-state.json"),
     relayPluginStateTarget: path.join(fixture, "installed-state.json"),
@@ -298,7 +303,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "2e97bd77319510316ded2c073832205bf86bf1ca371eb0f665524e7c9ccce7ec",
+      expectedHash: "d465fd988c86369e6667dece2cae967fe6d0e6cadb8c8d83d15c22964c1aa55d",
       relativePath: "managed-startup-direct-image-runtime.bundle",
     },
     {
@@ -306,15 +311,15 @@ describe("MCP tool discovery image contract", () => {
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
-      expectedHash: "e639c9b532e145ffad3486d39f899a63fabcc845fbbd4a19294b2e5c2853e495",
+      expectedHash: "7384ddd3b6fd306b3d3f5768d987002dab01987c090bf7f6a54bb20125293a4a",
       relativePath: "mcp-tool-discovery/BUNDLED_PACKAGES.json",
     },
     {
-      expectedHash: "3ac4c12b0946565b6f5e2066c77758b7e95f2a3e24c37e56bc82aca6e12feb4a",
+      expectedHash: "4068a68377e22a07547de5dec4d4822bc5f6eca3affcb22138db7c9f7b97c671",
       relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
     },
     {
-      expectedHash: "c5e79087da4479b2937cc17b78d9bb6f0844e6ef14e356c7b32523ce0530fde0",
+      expectedHash: "609ff22801958cbce2c4555c3abc4ef62bf6e69fb7a17c8c1f55f44519925d93",
       relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
     },
   ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {

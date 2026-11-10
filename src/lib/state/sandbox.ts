@@ -43,6 +43,8 @@ import type { AgentMcpAdapter } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
+import { NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential.js";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract.js";
 import { shellQuote } from "../runner.js";
 import {
   createTempSshConfig,
@@ -104,6 +106,10 @@ const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
 // These paths are NemoClaw control-plane state, not native agent state. The
 // target image regenerates config.json and its root-owned blueprint cache. The
 // OpenClaw doctor marker and warm-up sessions are transient lifecycle state.
+// Native doctor/update captures are private rollback snapshots, explicitly
+// excluded by OpenClaw from backups and support exports. They may contain
+// pre-sanitization credentials; preserve the active state through its normal
+// sanitization path instead of exporting these generation-local snapshots.
 // Hermes' PID and lock files identify processes in one sandbox generation;
 // restoring them over the replacement gateway makes a healthy process appear
 // stale to authenticated lifecycle commands.
@@ -111,6 +117,8 @@ const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/config.json'",
   "--exclude='./.nemoclaw/blueprints'",
   "--exclude='./.openclaw/.nemoclaw-post-upgrade-doctor'",
+  "--exclude='./.openclaw.update-captures'",
+  "--exclude='./.openclaw-data.update-captures'",
   "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
   "--exclude='./.openclaw/state/openclaw.sqlite'",
   "--exclude='./.openclaw/state/openclaw.sqlite-journal'",
@@ -1347,7 +1355,7 @@ function nativeStructuredAuthorityKind(
   return null;
 }
 
-const HERMES_OPENROUTER_CONFIG = ".hermes/config.yaml";
+const HERMES_MANAGED_CONFIG = ".hermes/config.yaml";
 const HERMES_OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1";
 const HERMES_OPENROUTER_TEMPLATE = "${OPENROUTER_API_KEY}";
 
@@ -1355,7 +1363,7 @@ const HERMES_OPENROUTER_TEMPLATE = "${OPENROUTER_API_KEY}";
 function stripNativeStructuredCredentials(config: unknown, normalized: string): unknown {
   const sanitized = stripCredentials(config);
   if (
-    normalized !== HERMES_OPENROUTER_CONFIG ||
+    normalized !== HERMES_MANAGED_CONFIG ||
     !isObjectRecord(config) ||
     !isObjectRecord(sanitized)
   ) {
@@ -1365,31 +1373,36 @@ function stripNativeStructuredCredentials(config: unknown, normalized: string): 
   const model = config.model;
   const providers = config.providers;
   const custom = config.custom_providers;
-  const managed = isObjectRecord(providers) ? providers["openrouter-api"] : null;
+  if (!isObjectRecord(upstream)) return sanitized;
+  const provider = upstream.provider;
+  if (provider !== "openrouter-api" && provider !== "nvidia-prod") return sanitized;
+  const endpoint =
+    provider === "nvidia-prod" ? NVIDIA_HOSTED_NATIVE_ENDPOINT : HERMES_OPENROUTER_ENDPOINT;
+  const template =
+    provider === "nvidia-prod" ? NVIDIA_INFERENCE_PLACEHOLDER : HERMES_OPENROUTER_TEMPLATE;
+  const managed = isObjectRecord(providers) ? providers[provider] : null;
   const matches = Array.isArray(custom)
-    ? custom.filter((entry) => isObjectRecord(entry) && entry.name === "openrouter-api")
+    ? custom.filter((entry) => isObjectRecord(entry) && entry.name === provider)
     : [];
   if (
-    !isObjectRecord(upstream) ||
     !isObjectRecord(model) ||
     !isObjectRecord(managed) ||
     !Array.isArray(custom) ||
-    upstream.provider !== "openrouter-api" ||
-    upstream.provider_key !== "openrouter-api" ||
+    upstream.provider_key !== provider ||
     typeof upstream.model !== "string" ||
     !upstream.model ||
     upstream.model !== model.default ||
     model.provider !== "custom" ||
-    model.base_url !== HERMES_OPENROUTER_ENDPOINT ||
-    model.api_key !== HERMES_OPENROUTER_TEMPLATE ||
-    managed.name !== "openrouter-api" ||
-    managed.api !== HERMES_OPENROUTER_ENDPOINT ||
+    model.base_url !== endpoint ||
+    model.api_key !== template ||
+    managed.name !== provider ||
+    managed.api !== endpoint ||
     managed.default_model !== model.default ||
-    managed.api_key !== HERMES_OPENROUTER_TEMPLATE ||
+    managed.api_key !== template ||
     matches.length !== 1 ||
     !isObjectRecord(matches[0]) ||
-    matches[0].base_url !== HERMES_OPENROUTER_ENDPOINT ||
-    matches[0].api_key !== HERMES_OPENROUTER_TEMPLATE
+    matches[0].base_url !== endpoint ||
+    matches[0].api_key !== template
   ) {
     return sanitized;
   }
@@ -1398,9 +1411,7 @@ function stripNativeStructuredCredentials(config: unknown, normalized: string): 
   const sanitizedModel = sanitized.model;
   const sanitizedProviders = sanitized.providers;
   const sanitizedCustom = sanitized.custom_providers;
-  const sanitizedManaged = isObjectRecord(sanitizedProviders)
-    ? sanitizedProviders["openrouter-api"]
-    : null;
+  const sanitizedManaged = isObjectRecord(sanitizedProviders) ? sanitizedProviders[provider] : null;
   const matchIndex = custom.indexOf(matches[0]);
   if (
     isObjectRecord(sanitizedModel) &&
@@ -1408,9 +1419,9 @@ function stripNativeStructuredCredentials(config: unknown, normalized: string): 
     Array.isArray(sanitizedCustom) &&
     isObjectRecord(sanitizedCustom[matchIndex])
   ) {
-    sanitizedModel.api_key = HERMES_OPENROUTER_TEMPLATE;
-    sanitizedManaged.api_key = HERMES_OPENROUTER_TEMPLATE;
-    sanitizedCustom[matchIndex].api_key = HERMES_OPENROUTER_TEMPLATE;
+    sanitizedModel.api_key = template;
+    sanitizedManaged.api_key = template;
+    sanitizedCustom[matchIndex].api_key = template;
   }
   return sanitized;
 }
@@ -1725,7 +1736,7 @@ function scanNativeTarFilePayload(
   npmConfig: boolean,
   providerProfileSchema: boolean,
   openclawConfig: boolean,
-  hermesOpenRouterConfig: boolean,
+  hermesManagedConfig: boolean,
   privateKeyHeader: boolean,
   dependencyBinary: boolean,
   deadlineMs: number | undefined,
@@ -1754,10 +1765,12 @@ function scanNativeTarFilePayload(
         )
       : openclawConfig
         ? raw.replace(/("apiKey"\s*:\s*")\$\{NVIDIA_INFERENCE_API_KEY\}(")/gu, "$1unused$2")
-        : hermesOpenRouterConfig
-          ? // The structured scan admits this literal only in the three
+        : hermesManagedConfig
+          ? // The structured scan admits these literals only in the three
             // validated managed slots; raw scanning still catches other secrets.
-            raw.replaceAll(HERMES_OPENROUTER_TEMPLATE, "unused")
+            raw
+              .replaceAll(HERMES_OPENROUTER_TEMPLATE, "unused")
+              .replaceAll(NVIDIA_INFERENCE_PLACEHOLDER, "unused")
           : raw;
     if (
       textContainsCredential(credentialScanInput, {
@@ -2196,8 +2209,8 @@ function nativeArchiveRawCredentialViolation(
             path.posix.normalize(entry.replace(/^\.\//u, "")),
             fileName,
           ) === "openclaw-config";
-        const hermesOpenRouterConfig =
-          path.posix.normalize(entry.replace(/^\.\//u, "")) === HERMES_OPENROUTER_CONFIG;
+        const hermesManagedConfig =
+          path.posix.normalize(entry.replace(/^\.\//u, "")) === HERMES_MANAGED_CONFIG;
         const violation = scanNativeTarFilePayload(
           descriptor!,
           dataOffset,
@@ -2207,7 +2220,7 @@ function nativeArchiveRawCredentialViolation(
           fileName === ".npmrc",
           providerProfileSchema,
           openclawConfig,
-          hermesOpenRouterConfig,
+          hermesManagedConfig,
           !dependencyTree,
           dependencyTree,
           deadlineMs,
@@ -2255,8 +2268,8 @@ function nativeArchiveCredentialViolation(
     const isOpenClawConfig =
       nativeStructuredAuthorityKind(path.posix.normalize(entry.replace(/^\.\//u, "")), fileName) ===
       "openclaw-config";
-    const isHermesOpenRouterConfig =
-      path.posix.normalize(entry.replace(/^\.\//u, "")) === HERMES_OPENROUTER_CONFIG;
+    const isHermesManagedConfig =
+      path.posix.normalize(entry.replace(/^\.\//u, "")) === HERMES_MANAGED_CONFIG;
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
     if (
       !isLockfile &&
@@ -2266,7 +2279,7 @@ function nativeArchiveCredentialViolation(
       !isEnv &&
       !isSensitive &&
       !isOpenClawConfig &&
-      !isHermesOpenRouterConfig
+      !isHermesManagedConfig
     ) {
       continue;
     }
@@ -2353,7 +2366,7 @@ function nativeArchiveCredentialViolation(
         if (
           candidate.isLockfile ||
           candidate.isDependencyPackage ||
-          path.posix.normalize(candidate.entry.replace(/^\.\//u, "")) === HERMES_OPENROUTER_CONFIG
+          path.posix.normalize(candidate.entry.replace(/^\.\//u, "")) === HERMES_MANAGED_CONFIG
         )
           return candidate.entry;
         continue;
@@ -2728,6 +2741,7 @@ function capturePreparedNativeState(
           '  rm -f -- "$stage/.nemoclaw/config.json"',
           '  rm -rf -- "$stage/.nemoclaw/blueprints"',
           '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
+          '  rm -rf -- "$stage/.openclaw.update-captures" "$stage/.openclaw-data.update-captures"',
           '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
           '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite"*',
           '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite"*',
@@ -2912,7 +2926,9 @@ function backupNativeSandboxState(
           'ancestors=" $self "',
           "cursor=$PPID",
           'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; { while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$cursor/status" || break; cursor=$parent; [ -n "$cursor" ] || break; done',
-          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
+          // A foreign or vanished final PID is normal; do not let its failed UID
+          // comparison become the function status under set -e.
+          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; return 0; }',
           'stopped=""',
           'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; rm -rf -- "$db_stage"; }',
           "trap resume EXIT HUP INT TERM",

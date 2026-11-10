@@ -3,6 +3,7 @@
 
 import { parse as parseToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
+import { switchyardBindingFixture } from "../../test/helpers/hermes-switchyard";
 
 import {
   createHermesSwitchyardRoutingIntent,
@@ -37,7 +38,10 @@ describe("Hermes Switchyard routing", () => {
   });
 
   it("serializes the released adaptive Relay and Switchyard contracts (#13862)", () => {
-    const serialized = serializeHermesSwitchyardRouting(routing());
+    const serialized = serializeHermesSwitchyardRouting(
+      routing(),
+      switchyardBindingFixture(routing()),
+    );
     const relay = parseToml(serialized.relayPluginsToml) as Record<string, unknown>;
     const relayState = JSON.parse(serialized.relayPluginStateJson) as Record<string, unknown>;
     const deployment = parseToml(serialized.switchyardDeploymentToml) as Record<string, unknown>;
@@ -122,12 +126,11 @@ describe("Hermes Switchyard routing", () => {
       "gemini-api",
       "openrouter-api",
     ]);
-    const serialized = serializeHermesSwitchyardRouting(
-      createHermesSwitchyardRoutingIntent({
-        efficient: { provider: "openrouter-api", model: "openai/gpt-oss-20b" },
-        capable: { provider: "anthropic-prod", model: "claude-sonnet-4-5" },
-      }),
-    );
+    const intent = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "openrouter-api", model: "openai/gpt-oss-20b" },
+      capable: { provider: "anthropic-prod", model: "claude-sonnet-4-5" },
+    });
+    const serialized = serializeHermesSwitchyardRouting(intent, switchyardBindingFixture(intent));
     const deployment = parseToml(serialized.switchyardDeploymentToml) as Record<string, unknown>;
 
     expect(deployment).toMatchObject({
@@ -154,12 +157,11 @@ describe("Hermes Switchyard routing", () => {
   it.each(HERMES_SWITCHYARD_PROVIDERS)(
     "sets finite deadlines and zero retries for both %s clients, including judge reuse (#13865)",
     (provider) => {
-      const serialized = serializeHermesSwitchyardRouting(
-        createHermesSwitchyardRoutingIntent({
-          efficient: { provider, model: "efficient-model" },
-          capable: { provider, model: "capable-model" },
-        }),
-      );
+      const intent = createHermesSwitchyardRoutingIntent({
+        efficient: { provider, model: "efficient-model" },
+        capable: { provider, model: "capable-model" },
+      });
+      const serialized = serializeHermesSwitchyardRouting(intent, switchyardBindingFixture(intent));
       const deployment = parseToml(serialized.switchyardDeploymentToml);
       const clientPolicy = { timeout_ms: 120_000, max_retries: 0, forward_auth: false };
 
@@ -183,10 +185,10 @@ describe("Hermes Switchyard routing", () => {
   ] as const)("rejects the %s target's %s override (#13865)", (role, field, value) => {
     const intent = routing();
     expect(() =>
-      serializeHermesSwitchyardRouting({
-        ...intent,
-        [role]: { ...intent[role], [field]: value },
-      }),
+      serializeHermesSwitchyardRouting(
+        { ...intent, [role]: { ...intent[role], [field]: value } },
+        switchyardBindingFixture(intent),
+      ),
     ).toThrow(`routing.${role} contains unknown fields`);
   });
 
@@ -239,6 +241,41 @@ describe("Hermes Switchyard routing", () => {
         ...routing(),
         judge: { mode: "dedicated", target: "judge" },
       }),
-    ).toThrow("judge must explicitly reuse the capable target");
+    ).toThrow("routing.judge");
+  });
+
+  it("serializes an explicitly configured judge from its observed provider binding (#13863)", () => {
+    const intent = createHermesSwitchyardRoutingIntent({
+      efficient: routing().efficient,
+      capable: routing().capable,
+      judge: { provider: "anthropic-prod", model: "claude-judge" },
+    });
+    const bindings = switchyardBindingFixture(intent);
+    const deployment = parseToml(
+      serializeHermesSwitchyardRouting(intent, bindings).switchyardDeploymentToml,
+    );
+    expect(deployment).toMatchObject({
+      llm_clients: {
+        judge: {
+          format: "anthropic_messages",
+          base_url: "https://api.anthropic.com",
+          api_key_env: "ANTHROPIC_API_KEY",
+          forward_auth: false,
+          timeout_ms: 120_000,
+          max_retries: 0,
+        },
+      },
+      targets: { judge: { id: "claude-judge", llm_client: "judge" } },
+      routes: { switchyard: { classifier_target: "judge" } },
+    });
+    expect(bindings.judge).toMatchObject({
+      mode: "dedicated",
+      target: "judge",
+      model: "claude-judge",
+    });
+    expect(bindings.judge.providerId).not.toBe(bindings.capable.providerId);
+    expect(
+      decodeHermesSwitchyardRoutingIntent(encodeHermesSwitchyardRoutingIntent(intent)),
+    ).toEqual(intent);
   });
 });

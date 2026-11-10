@@ -162,12 +162,12 @@ export const wechatManifest = {
       id: "openclawPluginPackage",
       agent: "openclaw",
       manager: "openclaw-plugin",
-      spec: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
+      spec: "npm:@tencent-weixin/openclaw-weixin@2.4.10",
       pin: true,
       integrity:
-        "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
+        "sha512-qCN7rFtBK5BO/i5YGEJLdpC/8WQrm0dtPlQ0xNxku4RSyzGaRsiBoLVheU5hgpoOIBvfc5pUwKTktMbROLcIVg==",
       tarballUrl:
-        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.10.tgz",
       runtimeLock: {
         cachePath: "/usr/local/share/nemoclaw/wechat-npm-cache",
         installCacheEnvKey: "NEMOCLAW_WECHAT_NPM_INSTALL_CACHE",

@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   truncateSync,
@@ -18,6 +19,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSingleNpmPackResult } from "../helpers/npm-pack-result";
+import {
+  candidateSdkCheckout,
+  candidateSdkFixture,
+  sdkCandidateIdentity,
+} from "../support/candidate-openshell-sdk";
 
 import {
   prepareCiNpmInstallWithReviewedConfig,
@@ -206,6 +212,67 @@ afterEach(() => {
 });
 
 describe("trusted OpenShell SDK archive preparation", () => {
+  it.each([
+    [
+      "workflow_dispatch",
+      "123",
+      sdkCandidateIdentity.candidateSha,
+      "Candidate SDK admission requires a GitHub API token",
+    ],
+    [
+      "pull_request",
+      "123",
+      sdkCandidateIdentity.candidateSha,
+      "Candidate SDK admission requires a GitHub API token",
+    ],
+    [
+      "workflow_dispatch",
+      "123",
+      sdkCandidateIdentity.baseSha,
+      "reviewed npm lock package must use the reviewed registry",
+    ],
+    [
+      "workflow_dispatch",
+      "",
+      sdkCandidateIdentity.candidateSha,
+      "reviewed npm lock package must use the reviewed registry",
+    ],
+    [
+      "push",
+      "123",
+      sdkCandidateIdentity.candidateSha,
+      "reviewed npm lock package must use the reviewed registry",
+    ],
+  ])(
+    "rejects an unreviewed SDK without credentials for %s, PR %s, revision %s",
+    (event, pr, revision, error) => {
+      const root = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-admission-selection-"));
+      temporaryRoots.push(root);
+      const source = candidateSdkCheckout(root, candidateSdkFixture());
+      const result = spawnSync(process.execPath, ["scripts/checks/prepare-ci-npm-install.mts"], {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          PATH: process.env.PATH,
+          HOME: root,
+          TMPDIR: root,
+          GITHUB_EVENT_NAME: event,
+          UPGRADE_PR_NUMBER: pr,
+          CANDIDATE_SHA: revision,
+          UPGRADE_BASE_SHA: sdkCandidateIdentity.baseSha,
+          NEMOCLAW_CI_NPM_PACKAGE_MODE: "artifact",
+          NEMOCLAW_CI_TARGET_ROOT: root,
+          NEMOCLAW_CI_NPM_CACHE: source.cacheDirectory,
+          NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY: source.artifactDirectory,
+        },
+      });
+      expect(result.status, result.error?.message).toBe(1);
+      expect(result.stderr).toContain(error);
+      expect(result.stdout).toBe("");
+      expect(readdirSync(source.cacheDirectory)).toEqual([]);
+    },
+  );
+
   it("does not pass API or package credentials to the offline cache process", async () => {
     const source = fixture();
     const bin = join(source.root, "bin");

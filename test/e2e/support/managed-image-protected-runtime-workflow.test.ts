@@ -76,7 +76,15 @@ describe("protected managed-image runtime workflow", () => {
     ["Bind reviewed candidate OpenShell runtime", "env", { CHECKOUT_SHA: "other" }],
     ["Bind reviewed candidate OpenShell runtime", "run", "echo bypass"],
     ["Restore trusted OpenShell sources", "if", "success()"],
+    [
+      "Restore trusted OpenShell sources",
+      "if",
+      "${{ always() && steps.openshell-projection.outcome == 'success' }}",
+    ],
     ["Restore trusted OpenShell sources", "run", "echo bypass"],
+    ["Restore trusted OpenShell sources", "continue-on-error", true],
+    ["Restore trusted OpenShell sources", "env", { PROJECTION_OUTCOME: "success" }],
+    ["Restore trusted OpenShell sources", "env", { GITHUB_TOKEN: "${{ github.token }}" }],
     ["Build trusted CLI with reviewed OpenShell runtime", "if", "false"],
     ["Build trusted CLI with reviewed OpenShell runtime", "run", "echo bypass"],
     ["Prepare E2E workspace", "with", {}],
@@ -176,11 +184,11 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
   });
 
-  it("rejects a runtime job that exceeds the 75 minute budget", () => {
+  it("rejects a runtime job that exceeds the 90 minute budget", () => {
     const value = workflow();
     runtimeJob(value)["timeout-minutes"] = 300;
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime must keep the 75 minute timeout",
+      "managed-image-protected-runtime must keep the 90 minute timeout",
     );
   });
 

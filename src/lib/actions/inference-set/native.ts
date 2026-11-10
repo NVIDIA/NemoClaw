@@ -298,6 +298,7 @@ export async function prepareNativeSelection(input: {
     readAuthority: authority.read,
     writeAuthority: authority.write,
   });
+  await input.beforeAttach?.(ensured);
   const attached = await lifecycle.ensureNativeProviderAttached({
     adapter: input.deps.providerAdapter,
     target,
@@ -407,7 +408,7 @@ export function nativeSelectionConfigCredentials(
     apiKey:
       native?.apiKey ??
       (isLocalInferenceProvider(provider)
-        ? nativeLocalCredentialReference(provider, baseUrl)
+        ? nativeLocalCredentialReference(provider, baseUrl, "openclaw")
         : null) ??
       managedInferenceApiKey(
         baseUrl,

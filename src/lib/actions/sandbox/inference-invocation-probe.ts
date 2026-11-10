@@ -369,11 +369,19 @@ export async function probeSandboxInferenceInvocation(
   const nvcfFunctionNotFound = result.stdout
     .split("\n")
     .some((line) => line.trim() === NVCF_FUNCTION_NOT_FOUND_MARKER);
+  // Retain only curl's numeric CONNECT refusal, never arbitrary proxy stderr.
+  // This status belongs to the proxy, not the upstream inference endpoint.
+  const proxyConnectStatus =
+    result.status === 56 && result.stdout.split("\n").some((line) => line === "curl-error:56")
+      ? result.stderr.match(
+          /(?:^|\n)curl: \(56\) CONNECT tunnel failed, response (403|407)\r?(?:\n|$)/,
+        )?.[1]
+      : undefined;
   const detail = timedOut
     ? "sandbox inference invocation timed out before the upstream answered"
     : httpStatus
       ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
-      : `sandbox inference invocation probe exited with status ${result.status}`;
+      : `sandbox inference invocation probe exited with status ${result.status}${proxyConnectStatus ? ` (proxy CONNECT returned HTTP ${proxyConnectStatus})` : ""}`;
   const legacyDnsFailure =
     input.nativeProvider !== true &&
     result.stdout.split("\n").some((line) => line.trim() === "curl-error:6") &&

@@ -3,10 +3,10 @@
 
 import type { dockerCapture, dockerSpawn } from "../../adapters/docker";
 import type { runCapture } from "../../runner";
-import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
 import { runCurlProbe } from "../../adapters/http/probe";
 import { VLLM_PORT } from "../../core/vllm-port";
 import { BoundedLineDecoder } from "../../core/bounded-line-transcript";
+import { buildModelListProbeCommand, isOpenAiModelListResponse } from "../serving/model-inventory";
 
 const LOG_LINES = 80;
 const LOG_TIMEOUT_MS = 5_000;
@@ -78,7 +78,7 @@ export async function readVllmStartupLogExcerpts(
         "{{if gt .RestartCount 0}}{{.State.StartedAt}}{{end}}",
         containerName,
       ],
-      { env: dockerEnv, ignoreError: true, timeout: LOG_TIMEOUT_MS },
+      { env: dockerEnv, replaceEnv: true, ignoreError: true, timeout: LOG_TIMEOUT_MS },
     )
     .trim();
   const excerpts: { lines: string[]; suffix: string }[] = [];
@@ -93,6 +93,7 @@ export async function readVllmStartupLogExcerpts(
   const current = operations
     .dockerCapture(["logs", "--tail", String(LOG_LINES), containerName], {
       env: dockerEnv,
+      replaceEnv: true,
       ignoreError: true,
       includeStderr: true,
     })
@@ -116,24 +117,11 @@ export function vllmEndpointReady(
     ).ok;
   }
   const response = runCapture(
-    [
-      "curl",
-      ...buildValidatedCurlCommandArgs([
-        "-sf",
-        "--connect-timeout",
-        "2",
-        "--max-time",
-        "5",
-        `http://127.0.0.1:${String(VLLM_PORT)}/v1/models`,
-      ]),
-    ],
+    buildModelListProbeCommand(
+      ["--connect-timeout", "2", "--max-time", "5"],
+      `http://127.0.0.1:${String(VLLM_PORT)}/v1/models`,
+    ),
     { ignoreError: true },
-  ).trim();
-  if (!response) return false;
-  try {
-    const parsed = JSON.parse(response) as { data?: unknown };
-    return Array.isArray(parsed.data);
-  } catch {
-    return false;
-  }
+  );
+  return isOpenAiModelListResponse(response);
 }

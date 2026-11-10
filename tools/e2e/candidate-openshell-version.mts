@@ -81,6 +81,13 @@ export function reviewedOpenShellMcpRuntime(version: string) {
       gateway = "c8fa78fd49f245978f64d038207ce0205d98fcdd48bf115bae8a0b9f4f4d5003";
       standaloneSandbox = "65aa2a2afb96e7d1351c1d197ded7a966e20bcad68e18a58a94621a8f23769bc";
       break;
+    case "0.1.7":
+      sourceSha = "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c";
+      supervisorDigest = "a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06";
+      cli = "718f40674738206a84bc3a967966225ff47dfed9ba5738099d56777faa4af793";
+      gateway = "0b7cb54fd8558bfad4c57f556f7fc1a20ef8cd94ebb11f4f40a9a90b74b4ad17";
+      standaloneSandbox = "d13966b032b07d75c917d3fbb7471e608edfdf1f25e9d922e5aa7c779cf6ad21";
+      break;
     default:
       throw new Error("The selected OpenShell release has no reviewed MCP runtime provenance");
   }

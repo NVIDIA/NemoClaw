@@ -15,6 +15,8 @@ import { startTestProgress } from "../fixtures/progress.ts";
 
 import {
   getRouteOutput,
+  openClawGatewayRestarted,
+  parseOpenClawGatewayIdentity,
   readOpenClawConfig,
   agentReplyContainsToken,
   anthropicToolCount,
@@ -27,6 +29,37 @@ import {
   parseOpenClawGatewayModelRun,
   startMockOpenClawBaselineProvider,
 } from "../live/openclaw-inference-switch-helpers.ts";
+
+describe("OpenClaw gateway restart evidence", () => {
+  const firstBoot = "11111111-1111-4111-8111-111111111111";
+  const nextBoot = "22222222-2222-4222-8222-222222222222";
+  const identity = (bootId: string) =>
+    parseOpenClawGatewayIdentity(JSON.stringify({ rpc: { ok: true, server: { bootId } } }));
+
+  it.each([
+    { before: identity(firstBoot), after: identity(nextBoot), expected: true },
+    { before: identity(firstBoot), after: identity(firstBoot), expected: false },
+    { before: null, after: identity(nextBoot), expected: false },
+    { before: identity(firstBoot), after: null, expected: false },
+    { before: null, after: null, expected: false },
+    { before: identity("bad-boot"), after: identity(nextBoot), expected: false },
+  ])("requires an observed new gateway boot [$before -> $after]", ({ before, after, expected }) => {
+    expect(openClawGatewayRestarted(before, after)).toBe(expected);
+  });
+
+  it.each([
+    "",
+    "not-json",
+    "null",
+    "{}",
+    JSON.stringify({ rpc: { ok: false, server: { bootId: firstBoot } } }),
+    JSON.stringify({ rpc: { ok: true, server: { bootId: "" } } }),
+    JSON.stringify({ rpc: { ok: true, server: { bootId: [firstBoot] } } }),
+    JSON.stringify({ rpc: { ok: true, server: { bootId: firstBoot } } }) + "trailing-data",
+  ])("rejects unavailable or malformed gateway boot evidence [%s]", (raw) => {
+    expect(parseOpenClawGatewayIdentity(raw)).toBeNull();
+  });
+});
 
 describe("openclaw-inference-switch post-switch retry classification", () => {
   const attempt = {

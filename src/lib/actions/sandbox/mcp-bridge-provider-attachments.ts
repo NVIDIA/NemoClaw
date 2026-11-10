@@ -72,49 +72,76 @@ export async function attachProvider(
     );
   }
   const boundary = createMcpProviderAdapterBoundary(runtimeSelection, providerAdapter);
-  const inspection = await inspectMcpProvider(
-    entry.providerName,
-    runtimeSelection,
-    boundary.adapter,
-  );
-  if (inspection.exists === false) {
-    throw new McpBridgeError(
-      `OpenShell provider '${entry.providerName}' disappeared before attach.`,
-    );
-  }
-  if (!providerMatchesCredential(inspection, entry.env[0], entry.providerId)) {
-    throw new McpBridgeError(
-      `OpenShell provider '${entry.providerName}' changed before attach. ${providerShapeDetail(inspection, entry.env[0], entry.providerId)} Refusing to mutate it.`,
-    );
-  }
-  if (!inspection.id || !inspection.resourceVersion) {
-    throw new McpBridgeError(`OpenShell provider '${entry.providerName}' has incomplete metadata.`);
-  }
-  const result = await boundary.adapter.attachProvider({
-    providerName: entry.providerName,
-    sandboxName,
-    target: boundary.target,
-  });
-  if (!result.ok) {
-    const afterError = await exactAttachment(
-      sandboxName,
-      entry,
+  let initialResourceVersion: number | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const inspection = await inspectMcpProvider(
+      entry.providerName,
       runtimeSelection,
       boundary.adapter,
     );
-    if (attachmentMatchesCurrentProviderSnapshot(afterError.attachment, entry)) return;
-    throw new McpBridgeError(
-      result.error.message ||
-        afterError.inspection.error ||
-        `Failed to attach MCP provider '${entry.providerName}'.`,
-    );
-  }
-  const after = await exactAttachment(sandboxName, entry, runtimeSelection, boundary.adapter);
-  if (!attachmentMatchesCurrentProviderSnapshot(after.attachment, entry)) {
-    throw new McpBridgeError(
-      after.inspection.error ??
-        `OpenShell did not persist the expected provider identity and credential shape for '${entry.providerName}' after attach.`,
-    );
+    if (inspection.exists === false) {
+      throw new McpBridgeError(
+        `OpenShell provider '${entry.providerName}' disappeared before attach.`,
+      );
+    }
+    if (!providerMatchesCredential(inspection, entry.env[0], entry.providerId)) {
+      throw new McpBridgeError(
+        `OpenShell provider '${entry.providerName}' changed before attach. ${providerShapeDetail(inspection, entry.env[0], entry.providerId)} Refusing to mutate it.`,
+      );
+    }
+    if (!inspection.id || !inspection.resourceVersion) {
+      throw new McpBridgeError(
+        `OpenShell provider '${entry.providerName}' has incomplete metadata.`,
+      );
+    }
+    if (
+      initialResourceVersion !== undefined &&
+      inspection.resourceVersion !== initialResourceVersion
+    ) {
+      throw new McpBridgeError(
+        `OpenShell provider '${entry.providerName}' changed during attach. Refusing to retry.`,
+      );
+    }
+    initialResourceVersion = inspection.resourceVersion;
+    const result = await boundary.adapter.attachProvider({
+      providerName: entry.providerName,
+      sandboxName,
+      target: boundary.target,
+    });
+    if (!result.ok) {
+      const afterError = await exactAttachment(
+        sandboxName,
+        entry,
+        runtimeSelection,
+        boundary.adapter,
+      );
+      if (attachmentMatchesCurrentProviderSnapshot(afterError.attachment, entry)) return;
+      if (
+        attempt === 0 &&
+        result.error.kind === "command" &&
+        result.error.reason === "conflict" &&
+        afterError.inspection.attachments &&
+        !afterError.attachment &&
+        !afterError.inspection.attachments.some((attachment) =>
+          attachment.credentialKeys.includes(entry.env[0]),
+        )
+      ) {
+        continue;
+      }
+      throw new McpBridgeError(
+        result.error.message ||
+          afterError.inspection.error ||
+          `Failed to attach MCP provider '${entry.providerName}'.`,
+      );
+    }
+    const after = await exactAttachment(sandboxName, entry, runtimeSelection, boundary.adapter);
+    if (!attachmentMatchesCurrentProviderSnapshot(after.attachment, entry)) {
+      throw new McpBridgeError(
+        after.inspection.error ??
+          `OpenShell did not persist the expected provider identity and credential shape for '${entry.providerName}' after attach.`,
+      );
+    }
+    return;
   }
 }
 

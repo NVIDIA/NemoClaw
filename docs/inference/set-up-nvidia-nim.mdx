@@ -62,6 +62,9 @@ When `NGC_API_KEY` or `NVIDIA_INFERENCE_API_KEY` is already exported, NemoClaw p
 
 ## Understand Model Detection
 
+NemoClaw accepts NIM as healthy only when its recorded container is running and `/v1/models` returns HTTP `200` with an OpenAI-style JSON response containing a `data` array.
+It rejects redirects, error responses, HTML, and other response bodies.
+If NemoClaw cannot inspect the recorded container, onboarding stops.
 If the NIM container exits before its health endpoint becomes ready, onboarding stops and prints the last container log lines.
 If recent NIM logs report that estimated memory exceeds usable GPU memory, onboarding ends the health wait before the 1,200-second timeout and removes the NIM container.
 After confirmed removal, onboarding stops without changing providers.

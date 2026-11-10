@@ -678,7 +678,7 @@ describe("deferred onboarding", () => {
     );
     expect(result.output.match(/no registered sandboxes/g)).toHaveLength(2);
     expect(result.output.match(/no local model profile/g)).toHaveLength(2);
-    expect(result.output.match(/build, cloud, or routed NVIDIA hosted provider/g)).toHaveLength(2);
+    expect(result.output.match(/build or cloud NVIDIA hosted provider/g)).toHaveLength(2);
   });
 
   it.each([
