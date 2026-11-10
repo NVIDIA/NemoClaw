@@ -2639,7 +2639,7 @@ Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
 The GPU job reads OpenShell sources from the candidate commit as data, then validates their pins and operational templates.
-When the candidate needs trust absent from the controller's registry, preparation, both verifications, and restoration recheck the [candidate approval](#candidate-openshell-release-admission).
+When the candidate needs trust absent from the controller's registry, preparation and both verifications recheck the [candidate approval](#candidate-openshell-release-admission).
 The approval must match the open PR, candidate commit, and base commit.
 The approved registry and installer sources must match the candidate's committed files.
 Candidates covered by the controller's registry need no additional approval.
@@ -2651,8 +2651,14 @@ The job restores the trusted sources after qualification and retains source-dige
 An admission rejection changes no files.
 A failed verification blocks qualification.
 A failed restoration fails the job.
-If admission fails after preparation, the projected checkout remains for diagnosis.
-Inspect the job log and projection artifacts before recovering the runner or dispatching another run.
+Preparation records the dispatch commits, fixed projection paths, and original and projected digests in a mode-0600 recovery receipt under the trusted checkout's `.git` directory before changing sources.
+Restoration validates that receipt, the trusted commit, and every destination before writing originals read from the trusted Git commit.
+It needs neither live admission nor the candidate checkout, so revoked approval cannot block cleanup.
+The receipt cannot supply replacement bytes or authorize candidate execution.
+Restoration rejects changed identities, unsafe files, unrelated edits, and bytes that match neither the recorded projection nor the trusted originals.
+If a restoration write fails, completed trusted writes remain in place and the same receipt permits another restoration attempt.
+The receipt remains in Git metadata for idempotent recovery; a later admitted preparation replaces it after validating the clean trusted sources.
+Inspect the job log and projection artifacts when recovery rejects a receipt or destination.
 Those records identify tested inputs; they do not prove live E2E success.
 The job also selects the candidate OpenShell SDK from the controller's reviewed current or replacement archives.
 It projects the SDK identity into the trusted manifest and lockfile, then installs the verified archive before building the CLI.

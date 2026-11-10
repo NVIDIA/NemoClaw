@@ -41,7 +41,7 @@ afterEach(() => {
 });
 
 describe("protected OpenShell workspace", () => {
-  it("projects independently approved installer and feature gate templates and rechecks each phase", async () => {
+  it("projects independently approved templates and rechecks admission before verification", async () => {
     const { input, request } = approvedFixture();
     await expect(manageProtectedOpenShellWorkspace("prepare", input)).resolves.toMatchObject({
       operation: "prepare",
@@ -60,9 +60,7 @@ describe("protected OpenShell workspace", () => {
     await expect(manageProtectedOpenShellWorkspace("restore", input)).resolves.toMatchObject({
       operation: "restore",
     });
-    expect(
-      request.mock.calls.filter(([path]) => path === "/repos/NVIDIA/NemoClaw/pulls/123"),
-    ).toHaveLength(2);
+    expect(request).not.toHaveBeenCalled();
     expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
   });
 
@@ -120,18 +118,162 @@ describe("protected OpenShell workspace", () => {
     expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
   });
 
-  it("rejects revoked approval before verification and leaves projected files untouched", async () => {
-    const { input, approval } = approvedFixture();
+  it("rejects revoked approval for verification but restores trusted files without admission", async () => {
+    const { input, approval, request } = approvedFixture();
     await manageProtectedOpenShellWorkspace("prepare", input);
     const before = git(input.trustedRoot, "diff", "--no-ext-diff");
     approval.approvals[0]!.body = `NemoClaw-Upgrade-E2E: revoke ${input.candidateSha} ${identity.baseSha}`;
     await expect(manageProtectedOpenShellWorkspace("verify", input)).rejects.toThrow(
       "Candidate upgrade needs an independent maintainer's current commit-bound E2E approval",
     );
+    expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
+    request.mockClear();
+    await manageProtectedOpenShellWorkspace("restore", { ...input, admission: undefined });
+    await manageProtectedOpenShellWorkspace("restore", { ...input, admission: undefined });
+    expect(request).not.toHaveBeenCalled();
+    expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
+  });
+
+  it.each<
+    [
+      string,
+      (receipt: {
+        workflowSha: string;
+        candidateSha: string;
+        trustedRoot: string;
+        files: { path: string; originalSha256: string }[];
+      }) => void,
+    ]
+  >([
+    [
+      "workflowSha",
+      (receipt) => {
+        receipt.workflowSha = "invalid";
+      },
+    ],
+    [
+      "candidateSha",
+      (receipt) => {
+        receipt.candidateSha = "invalid";
+      },
+    ],
+    [
+      "trustedRoot",
+      (receipt) => {
+        receipt.trustedRoot = "invalid";
+      },
+    ],
+    [
+      "path",
+      (receipt) => {
+        receipt.files[0]!.path = "../outside";
+      },
+    ],
+    [
+      "duplicate",
+      (receipt) => {
+        receipt.files[1] = receipt.files[0]!;
+      },
+    ],
+    [
+      "originalSha256",
+      (receipt) => {
+        receipt.files[0]!.originalSha256 = "0".repeat(64);
+      },
+    ],
+  ])(
+    "rejects a recovery receipt with altered %s before writing sources",
+    async (_field, mutate) => {
+      const input = fixture();
+      await manageProtectedOpenShellWorkspace("prepare", input);
+      const receiptPath = join(input.trustedRoot, ".git/nemoclaw-openshell-projection.json");
+      const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+      mutate(receipt);
+      fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+      const before = git(input.trustedRoot, "diff", "--no-ext-diff");
+      await expect(manageProtectedOpenShellWorkspace("restore", input)).rejects.toThrow(
+        /Invalid protected OpenShell recovery/,
+      );
+      expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
+    },
+  );
+
+  it.each<[string, (receiptPath: string) => void]>([
+    ["missing", (receiptPath) => fs.unlinkSync(receiptPath)],
+    [
+      "symlink",
+      (receiptPath) => {
+        fs.renameSync(receiptPath, `${receiptPath}.retained`);
+        fs.symlinkSync(`${receiptPath}.retained`, receiptPath);
+      },
+    ],
+    ["hardlink", (receiptPath) => fs.linkSync(receiptPath, `${receiptPath}.retained`)],
+    ["public", (receiptPath) => fs.chmodSync(receiptPath, 0o644)],
+    ["malformed", (receiptPath) => fs.writeFileSync(receiptPath, "{")],
+  ])("rejects a %s recovery receipt without changing sources", async (_kind, mutate) => {
+    const input = fixture();
+    await manageProtectedOpenShellWorkspace("prepare", input);
+    const receiptPath = join(input.trustedRoot, ".git/nemoclaw-openshell-projection.json");
+    mutate(receiptPath);
+    const before = git(input.trustedRoot, "diff", "--no-ext-diff");
     await expect(manageProtectedOpenShellWorkspace("restore", input)).rejects.toThrow(
-      "Candidate upgrade needs an independent maintainer's current commit-bound E2E approval",
+      /Unsafe protected OpenShell file|Invalid protected OpenShell recovery/,
     );
     expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
+  });
+
+  it.each([
+    ["file", "scripts/install-openshell.sh", /Unsafe/],
+    ["parent", "scripts", /Unrelated changes/],
+  ] as const)(
+    "rejects a symlinked destination %s during restoration",
+    async (_kind, file, diagnostic) => {
+      const input = fixture();
+      await manageProtectedOpenShellWorkspace("prepare", input);
+      const destination = join(input.trustedRoot, file);
+      const retained = `${destination}.retained`;
+      fs.renameSync(destination, retained);
+      fs.symlinkSync(retained, destination);
+      const before = git(input.trustedRoot, "diff", "--no-ext-diff");
+      await expect(manageProtectedOpenShellWorkspace("restore", input)).rejects.toThrow(diagnostic);
+      expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
+      expect(fs.readlinkSync(destination)).toBe(retained);
+    },
+  );
+
+  it("rejects a hard-linked projected destination during restoration", async () => {
+    const input = fixture();
+    await manageProtectedOpenShellWorkspace("prepare", input);
+    const destination = join(input.trustedRoot, "scripts/install-openshell.sh");
+    fs.linkSync(destination, `${destination}.retained`);
+    const before = git(input.trustedRoot, "diff", "--no-ext-diff");
+    await expect(manageProtectedOpenShellWorkspace("restore", input)).rejects.toThrow(/Unsafe/);
+    expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
+    expect(fs.statSync(destination).nlink).toBe(2);
+  });
+
+  it("resumes a partially completed restoration without restoring candidate bytes", async () => {
+    const input = fixture();
+    await manageProtectedOpenShellWorkspace("prepare", input);
+    const versionPath = "src/lib/onboard/openshell-version.ts";
+    const trustedVersion = git(input.trustedRoot, "show", `${input.workflowSha}:${versionPath}`);
+    const { renameSync: original } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(fs.renameSync)
+      .mockImplementationOnce(original)
+      .mockImplementationOnce(() => {
+        throw new Error("fixture recovery failure");
+      });
+    await expect(manageProtectedOpenShellWorkspace("restore", input)).rejects.toThrow(
+      /fixture recovery failure/,
+    );
+    expect(fs.readFileSync(join(input.trustedRoot, versionPath), "utf8").trim()).toBe(
+      trustedVersion,
+    );
+    await manageProtectedOpenShellWorkspace("restore", input);
+    expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
+    await manageProtectedOpenShellWorkspace("prepare", input);
+    await manageProtectedOpenShellWorkspace("restore", input);
+    expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
   });
 
   it("binds the workflow CLI to dispatch commits and emits records for each phase", async () => {
@@ -227,6 +369,9 @@ describe("protected OpenShell workspace", () => {
     "rejects unrelated controller edits during %s",
     async (operation) => {
       const input = fixture();
+      await (operation === "prepare"
+        ? undefined
+        : manageProtectedOpenShellWorkspace("prepare", input));
       fs.writeFileSync(join(input.trustedRoot, "controller.txt"), "modified");
       await expect(manageProtectedOpenShellWorkspace(operation, input)).rejects.toThrow(
         /Unrelated/,
@@ -305,6 +450,7 @@ describe("protected OpenShell workspace", () => {
     const { renameSync: original } = await vi.importActual<typeof import("node:fs")>("node:fs");
     vi.mocked(fs.renameSync)
       .mockImplementationOnce(original)
+      .mockImplementationOnce(original)
       .mockImplementationOnce(() => {
         throw new Error("fixture replacement failure");
       });
@@ -316,6 +462,43 @@ describe("protected OpenShell workspace", () => {
 });
 
 describe("protected admitted SDK preparation", () => {
+  it("restores the trusted SDK after revoked admission without the candidate checkout or API token", async () => {
+    const f = admittedSdkFixture();
+    await manageProtectedOpenShellWorkspace("prepare", f.input);
+    f.sdk.records.splice(0);
+    await expect(manageProtectedOpenShellWorkspace("verify", f.input)).rejects.toThrow(
+      /approval|decision/i,
+    );
+    f.request.mockClear();
+    fs.rmSync(f.input.candidateRoot, { recursive: true });
+    const restored = execFileSync(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL("../../../tools/e2e/protected-openshell-workspace.mts", import.meta.url),
+        ),
+        "restore",
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          GITHUB_WORKSPACE: f.input.trustedRoot,
+          NEMOCLAW_E2E_TESTED_ROOT: f.input.candidateRoot,
+          CHECKOUT_SHA: f.input.candidateSha,
+          NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: f.input.workflowSha,
+        },
+      },
+    );
+    expect(JSON.parse(restored)).toMatchObject({
+      operation: "restore",
+      workflowSha: f.input.workflowSha,
+    });
+    await manageProtectedOpenShellWorkspace("restore", { ...f.input, admission: undefined });
+    expect(f.request).not.toHaveBeenCalled();
+    expect(f.stage).not.toHaveBeenCalled();
+    expect(git(f.input.trustedRoot, "status", "--porcelain")).toBe("");
+  });
   it("stages admitted bytes while retaining trusted scripts, dependencies and restore behavior", async () => {
     const f = admittedSdkFixture();
     const original = f.manifest();

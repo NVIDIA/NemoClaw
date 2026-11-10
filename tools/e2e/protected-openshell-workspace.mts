@@ -55,6 +55,31 @@ const SOURCE_PATHS = {
 } as const;
 const VERSION_PATH = "src/lib/onboard/openshell-version.ts";
 const MAX_SOURCE_BYTES = 1024 * 1024;
+const RESTORE_PATHS = [
+  SOURCE_PATHS.installerSource,
+  SOURCE_PATHS.supervisorRuntimeSource,
+  SOURCE_PATHS.featureGateSource,
+  VERSION_PATH,
+  SOURCE_PATHS.blueprintSource,
+  SOURCE_PATHS.packageSource,
+  SOURCE_PATHS.lockSource,
+] as const;
+const RECEIPT_PATH = ".git/nemoclaw-openshell-projection.json";
+
+interface ProjectionReceipt {
+  schemaVersion: 1;
+  trustedRoot: string;
+  workflowSha: string;
+  candidateSha: string;
+  releaseVersion: string;
+  sdkVersion: string;
+  sdkIntegrity: string;
+  files: { path: string; sha256: string; originalSha256: string }[];
+}
+
+function sha256(source: string): string {
+  return createHash("sha256").update(source).digest("hex");
+}
 
 export interface ProtectedOpenShellWorkspace {
   trustedRoot: string;
@@ -143,7 +168,7 @@ function replaceSource(path: string, source: string, mode: number): void {
   }
 }
 
-/** Recheck approval for each phase; local receipts cannot authorize new executable templates. */
+/** Recheck approval for preparation and verification; recovery receipts cannot authorize candidate execution. */
 async function candidateReleases(
   input: ProtectedOpenShellWorkspace,
   candidate: Record<keyof typeof SOURCE_PATHS, string>,
@@ -190,11 +215,9 @@ async function candidateReleases(
 
 /** Verify committed inputs, live admission, and the permitted controller projection without changing files. */
 async function inspectProtectedOpenShellWorkspace(
-  operation: "prepare" | "verify" | "restore",
+  operation: "prepare" | "verify",
   input: ProtectedOpenShellWorkspace,
 ) {
-  if (!["prepare", "verify", "restore"].includes(operation))
-    throw new Error("Invalid projection operation");
   assertCommit(input.trustedRoot, input.workflowSha);
   assertCommit(input.candidateRoot, input.candidateSha);
   const candidate = Object.fromEntries(
@@ -258,7 +281,30 @@ async function inspectProtectedOpenShellWorkspace(
     projected: source,
     original: committedSource(input.trustedRoot, input.workflowSha, path),
   }));
-  const allowed = new Set(files.map((file) => file.relativePath));
+  validateControllerChanges(
+    input,
+    files.map((file) => file.relativePath),
+  );
+  for (const file of files) {
+    const valid =
+      operation === "prepare" ? file.source === file.original : file.source === file.projected;
+    if (!valid) throw new Error(`Unexpected ${operation} source: ${file.relativePath}`);
+  }
+  return {
+    files,
+    projected,
+    sdk,
+    admittedSdk,
+    configSource: admittedSdk?.configSource ?? auditSource,
+  };
+}
+
+/** Reject unrelated controller changes and unsafe plugin inputs before any projection or recovery write. */
+function validateControllerChanges(
+  input: ProtectedOpenShellWorkspace,
+  allowedPaths: readonly string[],
+) {
+  const allowed = new Set(allowedPaths);
   const changed = git(input.trustedRoot, [
     "diff",
     "--no-ext-diff",
@@ -272,15 +318,6 @@ async function inspectProtectedOpenShellWorkspace(
     .filter(Boolean);
   if (changed.some((path) => !allowed.has(path)))
     throw new Error("Unrelated changes in the trusted controller");
-  for (const file of files) {
-    const valid =
-      operation === "prepare"
-        ? file.source === file.original
-        : operation === "verify"
-          ? file.source === file.projected
-          : file.source === file.original || file.source === file.projected;
-    if (!valid) throw new Error(`Unexpected ${operation} source: ${file.relativePath}`);
-  }
   // Plugin dependency inputs remain trusted and never come from the candidate projection.
   for (const path of ["nemoclaw/package.json", "nemoclaw/package-lock.json"]) {
     if (
@@ -289,12 +326,68 @@ async function inspectProtectedOpenShellWorkspace(
     )
       throw new Error(`Unexpected trusted plugin source: ${path}`);
   }
+}
+
+/** Keep recovery metadata in the trusted checkout, outside the projected and candidate file sets. */
+function receiptPath(input: ProtectedOpenShellWorkspace): string {
+  const metadata = lstatSync(join(input.trustedRoot, ".git"));
+  if (!metadata.isDirectory() || metadata.isSymbolicLink())
+    throw new Error("Protected recovery requires a regular trusted Git directory");
+  return join(input.trustedRoot, RECEIPT_PATH);
+}
+
+/** Restore only immutable trusted blobs; a receipt can never supply executable bytes or destinations. */
+function restoreProtectedOpenShellWorkspace(input: ProtectedOpenShellWorkspace) {
+  receiptPath(input);
+  assertCommit(input.trustedRoot, input.workflowSha);
+  const file = safeFile(input.trustedRoot, RECEIPT_PATH);
+  let receipt: ProjectionReceipt;
+  try {
+    receipt = JSON.parse(file.source) as ProjectionReceipt;
+  } catch (cause) {
+    throw new Error("Invalid protected OpenShell recovery receipt", { cause });
+  }
+  if (
+    file.mode !== 0o600 ||
+    receipt?.schemaVersion !== 1 ||
+    receipt.trustedRoot !== resolve(input.trustedRoot) ||
+    receipt.workflowSha !== input.workflowSha ||
+    receipt.candidateSha !== input.candidateSha ||
+    typeof receipt.releaseVersion !== "string" ||
+    typeof receipt.sdkVersion !== "string" ||
+    typeof receipt.sdkIntegrity !== "string" ||
+    !Array.isArray(receipt.files) ||
+    !isDeepStrictEqual(
+      receipt.files.map((entry) => entry?.path),
+      RESTORE_PATHS,
+    )
+  )
+    throw new Error("Invalid protected OpenShell recovery receipt");
+  validateControllerChanges(input, RESTORE_PATHS);
+  const files = receipt.files.map((entry) => {
+    const original = committedSource(input.trustedRoot, input.workflowSha, entry.path);
+    if (!/^[a-f0-9]{64}$/.test(entry.sha256) || entry.originalSha256 !== sha256(original))
+      throw new Error("Invalid protected OpenShell recovery digest");
+    const current = safeFile(input.trustedRoot, entry.path);
+    if (current.source !== original && sha256(current.source) !== entry.sha256)
+      throw new Error(`Unexpected restore source: ${entry.path}`);
+    const tree = git(input.trustedRoot, ["ls-tree", "-z", input.workflowSha, "--", entry.path]);
+    return { ...current, original, mode: tree.startsWith("100755 ") ? 0o755 : 0o644 };
+  });
+  // Leave completed recovery writes in place if a later write fails. The receipt permits resuming it.
+  for (const entry of files) {
+    if (entry.source !== entry.original || (lstatSync(entry.path).mode & 0o777) !== entry.mode)
+      replaceSource(entry.path, entry.original, entry.mode);
+  }
   return {
-    files,
-    projected,
-    sdk,
-    admittedSdk,
-    configSource: admittedSdk?.configSource ?? auditSource,
+    schemaVersion: 1,
+    operation: "restore" as const,
+    workflowSha: input.workflowSha,
+    candidateSha: input.candidateSha,
+    releaseVersion: receipt.releaseVersion,
+    sdkVersion: receipt.sdkVersion,
+    sdkIntegrity: receipt.sdkIntegrity,
+    files: receipt.files.map((entry) => ({ path: entry.path, sha256: entry.originalSha256 })),
   };
 }
 
@@ -303,12 +396,37 @@ export async function manageProtectedOpenShellWorkspace(
   operation: "prepare" | "verify" | "restore",
   input: ProtectedOpenShellWorkspace,
 ) {
+  if (!["prepare", "verify", "restore"].includes(operation))
+    throw new Error("Invalid projection operation");
+  if (operation === "restore") return restoreProtectedOpenShellWorkspace(input);
   const { files, projected, sdk } = await inspectProtectedOpenShellWorkspace(operation, input);
-  if (operation !== "verify") {
+  if (operation === "prepare") {
+    const receipt: ProjectionReceipt = {
+      schemaVersion: 1,
+      trustedRoot: resolve(input.trustedRoot),
+      workflowSha: input.workflowSha,
+      candidateSha: input.candidateSha,
+      releaseVersion: projected.releaseVersion,
+      sdkVersion: sdk.sdkVersion,
+      sdkIntegrity: sdk.sdkIntegrity,
+      files: files.map((file) => ({
+        path: file.relativePath,
+        sha256: sha256(file.projected),
+        originalSha256: sha256(file.original),
+      })),
+    };
+    if (
+      !isDeepStrictEqual(
+        receipt.files.map((file) => file.path),
+        RESTORE_PATHS,
+      )
+    )
+      throw new Error("Protected OpenShell projection paths changed");
+    replaceSource(receiptPath(input), `${JSON.stringify(receipt)}\n`, 0o600);
     const written: typeof files = [];
     try {
       for (const file of files) {
-        const next = operation === "prepare" ? file.projected : file.original;
+        const next = file.projected;
         if (file.source === next) continue;
         replaceSource(file.path, next, file.mode);
         written.push(file);
@@ -328,9 +446,7 @@ export async function manageProtectedOpenShellWorkspace(
     sdkIntegrity: sdk.sdkIntegrity,
     files: files.map((file) => ({
       path: file.relativePath,
-      sha256: createHash("sha256")
-        .update(operation === "restore" ? file.original : file.projected)
-        .digest("hex"),
+      sha256: sha256(file.projected),
     })),
   };
 }
