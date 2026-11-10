@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouterSession } from "../../inference/provider-key/contract";
 import path from "node:path";
 
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
@@ -179,6 +180,7 @@ export async function runRebuildPreflightPhase(
   } = createRebuildCommandContext(options, opts);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
+  rejectRetiredModelRouterSession(sandboxEntry);
   if (blockRebuildOnLegacySharedLocalRoute(sandboxName, sandboxEntry, bail)) return null;
   restoreRecordedRebuildGatewayStateDir(sandboxEntry);
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;

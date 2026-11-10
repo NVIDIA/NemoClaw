@@ -33,7 +33,7 @@ function routeObserver(result: OpenShellInferenceRouteResult) {
 
 describe("persisted provider selection", () => {
   it.each([
-    ["Model Router", "nvidia-router", false, false, "routed"],
+    ["retired Model Router", "nvidia-router", false, false, null],
     ["Ollama", "ollama-local", false, false, "ollama"],
     ["vLLM", "vllm-local", false, false, "vllm"],
     ["Local NVIDIA NIM", "vllm-local", true, false, "nim-local"],

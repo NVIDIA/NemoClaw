@@ -305,6 +305,8 @@ export async function preflightAuthoritativeOnboardRuntime(
       ...options,
       agent: resumeConfig.agent,
       nativeLocalProviderAttachment: resumeConfig.nativeLocalProviderAttachment,
+      nativeNvidiaProviderAttachment: resumeConfig.nativeNvidiaProviderAttachment,
+      nativeHostedProviderAttachment: resumeConfig.nativeHostedProviderAttachment,
       model: resumeConfig.model,
       provider: resumeConfig.provider,
       sandboxName,

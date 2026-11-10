@@ -2,23 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { nativeProviderLifecycle, NativeProviderError } from "../native-provider";
-import {
-  NVIDIA_HOSTED_CREDENTIAL_ENV,
-  NVIDIA_HOSTED_LOGICAL_PROVIDER,
-  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-  NVIDIA_HOSTED_NATIVE_PROVIDER,
-} from "./contract";
+import { NVIDIA_HOSTED_NATIVE_DEFINITION } from "./contract";
 
 export * from "./contract";
 export { NativeProviderError as NativeNvidiaProviderError };
 
-const lifecycle = nativeProviderLifecycle({
-  logicalProvider: NVIDIA_HOSTED_LOGICAL_PROVIDER,
-  label: "NVIDIA",
-  profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-  providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-  credentialEnv: NVIDIA_HOSTED_CREDENTIAL_ENV,
-});
+const lifecycle = nativeProviderLifecycle(NVIDIA_HOSTED_NATIVE_DEFINITION);
 
 export const nativeNvidiaProviderProfilePath = lifecycle.nativeProviderProfilePath.bind(lifecycle);
 export const requireNativeNvidiaProviderProfileBoundary =

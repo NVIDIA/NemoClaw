@@ -167,7 +167,8 @@ export function buildLiveVitestArgs(invocation: LiveVitestInvocation): string[] 
   const testPath = validateLiveTestPath(invocation.testPath);
   const selector = validateLiveSelector(invocation.selector);
   const selectorArgs = selector ? ["-t", selector] : [];
-  const bailArgs = testPath === INFERENCE_ROUTING_TEST_PATH ? ["--bail=1"] : [];
+  // Required routing cases must still execute after an earlier case fails.
+  const bailArgs = testPath === INFERENCE_ROUTING_TEST_PATH ? ["--bail=0"] : [];
   return [
     "vitest",
     "run",

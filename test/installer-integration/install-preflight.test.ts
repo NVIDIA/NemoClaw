@@ -338,7 +338,7 @@ exit 0
     expect(output).toMatch(/--version/);
     expect(output).toMatch(/NEMOCLAW_PROVIDER/);
     expect(output).toMatch(/build \| openrouter \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm\s*$/m);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
     expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
     expect(output).toMatch(/NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt/);
@@ -356,7 +356,7 @@ exit 0
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(output).toMatch(/build \| openrouter \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm\s*$/m);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
   });
 
@@ -396,7 +396,7 @@ exit 0
 
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(
-      /^(?![\s\S]*0\.1\.0)[\s\S]*NemoClaw Installer[\s\S]*--defer-onboarding[\s\S]*NEMOCLAW_AGENT=hermes or langchain-deepagents-code[\s\S]*no registered sandboxes[\s\S]*no local model profile[\s\S]*build, cloud, or routed NVIDIA hosted provider[\s\S]*NEMOCLAW_DEFER_ONBOARDING=1[\s\S]*NEMOCLAW_AGENT=hermes or langchain-deepagents-code[\s\S]*no registered sandboxes[\s\S]*no local model profile[\s\S]*build, cloud, or routed NVIDIA hosted provider/,
+      /^(?![\s\S]*0\.1\.0)[\s\S]*NemoClaw Installer[\s\S]*--defer-onboarding[\s\S]*NEMOCLAW_AGENT=hermes or langchain-deepagents-code[\s\S]*no registered sandboxes[\s\S]*no local model profile[\s\S]*build or cloud NVIDIA hosted provider[\s\S]*NEMOCLAW_DEFER_ONBOARDING=1[\s\S]*NEMOCLAW_AGENT=hermes or langchain-deepagents-code[\s\S]*no registered sandboxes[\s\S]*no local model profile[\s\S]*build or cloud NVIDIA hosted provider/,
     );
   });
 

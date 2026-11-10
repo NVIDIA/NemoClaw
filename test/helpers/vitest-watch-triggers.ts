@@ -46,6 +46,37 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern:
+      /(?:^|\/)test\/e2e\/(?:lib\/openclaw-owner-diagnostic|support\/openclaw-owner-diagnostic-cases)\.py$/,
+    testsToRun: runTests("test/e2e/support/openclaw-owner-diagnostic.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)test\/e2e\/lib\/issue-4462-admin-request-selector\.py$/,
+    testsToRun: runTests(
+      "test/security/admin-approval-helper.test.ts",
+      "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
+      "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/lib\/openclaw-gateway-owner\.mts$/,
+    testsToRun: runTests("src/lib/onboard/managed-startup/provider-root-apply.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/lib\/openclaw_pairing_state\.py$/,
+    testsToRun: runTests(
+      "src/lib/actions/sandbox/auto-pair-approval-sqlite.test.ts",
+      "src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification.test.ts",
+      "src/lib/onboard/managed-startup/provider-root-apply.test.ts",
+      "test/agents/openclaw/runtime/nemoclaw-start-auto-pair-sqlite.test.ts",
+      "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
+      "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+      "test/runtime/sandbox/sandbox-build-context.test.ts",
+      "test/runtime/sandbox/sandbox-provisioning-helper-permissions.test.ts",
+      "test/security/admin-approval-helper.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)Dockerfile(?:\.base)?$/,
     testsToRun: (file) => {
       const relative = file.startsWith(`${REPO_ROOT}/`) ? file.slice(REPO_ROOT.length + 1) : file;
@@ -215,6 +246,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
           ]
         : [
             "test/generation/providerless-agent-config.test.ts",
+            "test/networking/dashboard-remote-bind-lifecycle.test.ts",
             "src/lib/onboard/managed-startup-profile.test.ts",
             "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
             "test/mcp/mcp-tool-discovery-image-contract.test.ts",
