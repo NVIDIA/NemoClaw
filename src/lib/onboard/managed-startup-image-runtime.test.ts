@@ -434,7 +434,18 @@ describe("managed startup image runtime", () => {
     const fingerprint = fingerprintManagedStartupProfile(profile);
     const bootstrapIdentity = "b".repeat(64);
     const runtimeWrites: string[] = [];
-    const filesystem = mockRootReplayFilesystem(runtimeWrites);
+    const filesystem = mockRootReplayFilesystem(
+      runtimeWrites,
+      new Map([
+        [
+          "/usr/local/share/nemoclaw/openclaw-proxy-url",
+          {
+            contents: `http://${profile.proxy.managedHost}:${profile.proxy.managedPort}\n`,
+            mode: 0o444,
+          },
+        ],
+      ]),
+    );
     coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
       adapterApplied: false,
       application: {
@@ -855,7 +866,18 @@ describe("managed startup image runtime", () => {
     const encodedProfile = encodeManagedStartupProfile(profile);
     const fingerprint = fingerprintManagedStartupProfile(profile);
     const runtimeWrites: string[] = [];
-    mockRootReplayFilesystem(runtimeWrites);
+    mockRootReplayFilesystem(
+      runtimeWrites,
+      new Map([
+        [
+          "/usr/local/share/nemoclaw/openclaw-proxy-url",
+          {
+            contents: `http://${profile.proxy.managedHost}:${profile.proxy.managedPort}\n`,
+            mode: 0o444,
+          },
+        ],
+      ]),
+    );
     coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
       adapterApplied: false,
       application: {
