@@ -98,7 +98,6 @@ async fn running(
     let operations = Operations {
         client: client(&fixture),
         state: directory.join("state"),
-        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     };
     operations
         .ensure(&spec(STORAGE_KIND, 1), None)

@@ -170,7 +170,7 @@ It requests no inference from a model server and needs no GPU or credentials.
 `cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images).
 It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
 It starts a registry that requires a login on the kind network and pushes that image to it for the scenario.
-It then runs the `kind-kubernetes-development` and `kind-openshift-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
+It then runs the `kind-kubernetes-development` and `kind-kubernetes-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
 It deletes the cluster and its image tag whether or not the tests pass; set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to keep the cluster for inspection.
 [Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
 
@@ -391,11 +391,13 @@ Each case runs where its document's needs are met, in this order:
 
 | The case document | Runs in |
 |---|---|
-| Has a `kubernetes` or `openshift` gateway runtime | `E2E Kubernetes (kind) tests` |
+| Has a `kubernetes` gateway runtime | `E2E Kubernetes (kind) tests` |
+| Has an `openshift` gateway runtime | No CI job; [by hand on OpenShift](live-tests.md#openshift-gateway) |
 | Declares a `vllm` or `ollama` service | Live / HCL on the NVIDIA GPU runner |
 | Reads `NVIDIA_INFERENCE_API_KEY` | `E2E HCL CASE`, on NVIDIA hosted inference |
 | None of these | `E2E Docker tests` |
 
+kind can't stand in for OpenShift: a managed `openshift` gateway gets its `fsGroup` only from OpenShift.
 Only the hosted and GPU jobs receive the key, and a GPU case receives it only when it reads it.
 `E2E Docker tests` binds each case to its run with code in `run_ci/live_docker.rs`, and refuses a case without it.
 `E2E Kubernetes (kind) tests` runs only HCL cases, so it is skipped when none is selected; `cargo ci live-docker` and `live-kind` take the selection as `--hcl-cases`, and without it run every case placed on them.

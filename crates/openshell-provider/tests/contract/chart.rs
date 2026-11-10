@@ -6,7 +6,7 @@
 
 use nemoclaw_sdk::{
     config::ComputeDriver,
-    kubernetes::{GATEWAY_KIND, Spec, auth::Development, gateway, gateway::Identity, issuer},
+    kubernetes::{GATEWAY_KIND, Spec, auth::Development, gateway, issuer},
 };
 use nemoclaw_test_fixtures::{Bundle, tofu::TofuWorkspace};
 use serde_json::{Value, json};
@@ -81,11 +81,6 @@ fn render(test: &str) {
     let mut openshift = spec();
     openshift.settings.runtime.provider = ComputeDriver::OpenShift;
     write("openshift.json", &values(&openshift));
-    let identity = Identity {
-        user: 1_000_680_000,
-        group: 1_000_690_000,
-    };
-    write("openshift-identity.json", &identity.values());
     // The objects NemoClaw creates before the release, which Helm must not own.
     let auth = tempfile::tempdir().unwrap();
     let material = Development::new(
@@ -121,6 +116,6 @@ fn pull_secret_names_reach_pods_and_the_sandbox_driver() {
 
 #[test]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; pulls the pinned chart"]
-fn on_openshift_the_gateway_takes_the_namespace_identity() {
+fn on_openshift_the_chart_leaves_the_gateway_uid_to_openshift() {
     render("tests/openshift.tftest.hcl");
 }
