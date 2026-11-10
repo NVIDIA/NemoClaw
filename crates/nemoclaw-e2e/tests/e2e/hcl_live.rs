@@ -875,8 +875,8 @@ fn timing_tables_list_each_run_in_order_with_their_total() {
         ("destroy".to_owned(), Duration::from_millis(33_800)),
     ];
     assert_eq!(
-        timing_table("kind-openshift-oidc", &runs),
-        "#### Runs of the kind-openshift-oidc case: 74.0 s\n\n\
+        timing_table("kind-kubernetes-oidc", &runs),
+        "#### Runs of the kind-kubernetes-oidc case: 74.0 s\n\n\
          | Run | Time |\n|---|---|\n\
          | apply | 40.2 s |\n\
          | destroy | 33.8 s |\n"

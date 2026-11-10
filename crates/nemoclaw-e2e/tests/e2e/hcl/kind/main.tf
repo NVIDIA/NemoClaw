@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The cluster objects a kind case needs before its first apply, released
-# with the bundled Helm provider, as a platform or operator provides them:
-# the deployment's namespace, prepared as OpenShift prepares a project with
-# its UID range when the case supplies one, holding the registry pull
-# Secret; a stub model in its own namespace that answers every
+# The cluster objects a kind or OpenShift case needs before its first apply,
+# released with the bundled Helm provider, as a platform or operator
+# provides them: the deployment's namespace, prepared as OpenShift prepares a
+# project with its UID range when the case supplies one, holding the
+# registry pull Secret; a stub model in its own namespace that answers every
 # chat completion with `reply`; and, when the case selects the oidc
 # profile, an existing OIDC issuer in its own namespace and its CA. The test
 # runner removes both releases, and with them these namespaces, after the
@@ -30,7 +30,7 @@ variable "context" {
 }
 
 variable "kubeconfig" {
-  description = "The kind cluster's kubeconfig file."
+  description = "The cluster's kubeconfig file."
   type        = string
 }
 
@@ -139,6 +139,7 @@ locals {
     modelNamespace      = local.model
     # kind does not enforce OpenShift's constraints; OpenShell reads this
     # range and runs each sandbox as its first UID, as it does on OpenShift.
+    # On OpenShift, which writes its own range, a case supplies none.
     uidRange = var.uid_range
     image    = local.image
     stream   = local.stream
