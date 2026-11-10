@@ -170,7 +170,7 @@ It requests no inference from a model server and needs no GPU or credentials.
 `cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images).
 It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
 It starts a registry that requires a login on the kind network and pushes that image to it for the scenario.
-It then runs the `kind-kubernetes-development` and `kind-openshift-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
+It then runs the `kind-kubernetes-development` and `kind-kubernetes-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
 It deletes the cluster and its image tag whether or not the tests pass; set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to keep the cluster for inspection.
 [Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
 
@@ -314,6 +314,9 @@ Two tests in `nemoclaw-build`'s `workflows` module check what a workflow run wou
 
 ### Jobs of One Platform
 
+On Linux, `Unit build and test` and `Build bundle` run on Ubuntu 22.04, the oldest supported Linux, and `Build bundle` then runs `nemoclaw-build check-glibc --minimum 2.35`, which fails if any bundle executable needs a non-weak glibc symbol version newer than 2.35.
+The other jobs run on Ubuntu 24.04: executables built against an older glibc run on newer ones, but not the other way around.
+
 Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners, whose job names start with their test layer:
 
 1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables.
@@ -336,13 +339,16 @@ Adding or removing a test moves later tests to other partitions.
 
 ### Archives
 
-`cargo ci archive` writes two files that let other runners run the tests without compiling:
+`cargo ci archive` writes the files that let other runners run the tests without compiling, one nextest archive per test layer so each job downloads only the tests it runs:
 
-- `.build/ci/lifecycle.tar.zst`, a nextest archive of the test binaries that the `contract` and `integration` profiles select, on Linux also those that the `live-docker` and `live-kind` profiles select, and the executables their packages build;
+- `.build/ci/contract.tar.zst`, the test binaries that the `contract` profile selects, and those that the `fixtures` profile selects, so that it also holds the fixture executables the contract tests start;
+- `.build/ci/integration.tar.zst`, the test binaries that the `integration` profile selects;
+- `.build/ci/live.tar.zst`, on Linux only, the test binaries that the `live-docker` and `live-kind` profiles select;
 - `.build/ci/lifecycle-inputs.tar`, which keeps the executable permissions of the pinned tools, the `nemoclaw-build` executable, and the fake `ssh` relay.
 
-The bundle job uploads `dist/PLATFORM` separately.
-Contract, integration, and live jobs extract both archives and the bundle, the live jobs also download the live images archive, and each then runs `.build/ci/nemoclaw-build ci STEP --archive-file .build/ci/lifecycle.tar.zst`, which remaps the tests' working directories to the checkout and extracts the tests into `.build/ci/extracted`.
+Each archive also holds the executables that its test binaries' packages build.
+The build job uploads each file as its own artifact, and the bundle job uploads `dist/PLATFORM` separately.
+Contract, integration, and live jobs download the inputs, their own layer's archive, and the bundle, the live jobs also the live images archive, and each then runs `.build/ci/nemoclaw-build ci STEP --archive-file .build/ci/LAYER.tar.zst`, which remaps the tests' working directories to the checkout and extracts the tests into `.build/ci/extracted`.
 CI keeps these artifacts for one day; rerunning a failed job reuses its producers' artifacts, even from an earlier attempt, and after they expire the complete workflow must be rerun.
 
 ### Run a Contract or Integration Partition
@@ -355,12 +361,14 @@ cargo ci integration --partition slice:1/2
 ```
 
 To reproduce the archive handoff, run `cargo ci archive` after building.
-Copy both archives into `.build/ci` and the bundle into `dist/PLATFORM` in a separate checkout of the same revision on the same operating system and architecture, then run:
+Copy `.build/ci/lifecycle-inputs.tar` and `.build/ci/integration.tar.zst` into `.build/ci` and the bundle into `dist/PLATFORM` in a separate checkout of the same revision on the same operating system and architecture, then run:
 
 ```sh
 tar -xf .build/ci/lifecycle-inputs.tar
-.build/ci/nemoclaw-build ci integration --archive-file .build/ci/lifecycle.tar.zst --partition slice:1/2
+.build/ci/nemoclaw-build ci integration --archive-file .build/ci/integration.tar.zst --partition slice:1/2
 ```
+
+The checkout must be at the path where the tests were built: they read fixtures through paths that `env!("CARGO_MANIFEST_DIR")` fixed at compile time, which the remap does not change.
 
 The worker compiles nothing and writes JUnit timings under `target/nextest/integration`; repeating the command overwrites the extracted files.
 `--partition` requires the `contract` or `integration` step, `--archive-file` requires `contract`, `integration`, `live-docker`, or `live-kind`, and `--images` and `--images-commit` require `live-docker` or `live-kind`, so none of them narrows plain `cargo ci`.
@@ -386,11 +394,13 @@ Each case runs where its document's needs are met, in this order:
 
 | The case document | Runs in |
 |---|---|
-| Has a `kubernetes` or `openshift` gateway runtime | `E2E Kubernetes (kind) tests` |
+| Has a `kubernetes` gateway runtime | `E2E Kubernetes (kind) tests` |
+| Has an `openshift` gateway runtime | No CI job; [by hand on OpenShift](live-tests.md#openshift-gateway) |
 | Declares a `vllm` or `ollama` service | Live / HCL on the NVIDIA GPU runner |
 | Reads `NVIDIA_INFERENCE_API_KEY` | `E2E HCL CASE`, on NVIDIA hosted inference |
 | None of these | `E2E Docker tests` |
 
+kind can't stand in for OpenShift: a managed `openshift` gateway gets its `fsGroup` only from OpenShift.
 Only the hosted and GPU jobs receive the key, and a GPU case receives it only when it reads it.
 `E2E Docker tests` binds each case to its run with code in `run_ci/live_docker.rs`, and refuses a case without it.
 `E2E Kubernetes (kind) tests` runs only HCL cases, so it is skipped when none is selected; `cargo ci live-docker` and `live-kind` take the selection as `--hcl-cases`, and without it run every case placed on them.
@@ -521,11 +531,16 @@ These tests use fixtures and temporary files; they do not start deployment workl
 
 `CI / Bundle` disables incremental compilation.
 Development and test builds use `debug = 1`, retaining line-number backtraces without full local-variable debug data.
+On CI, `cargo ci` passes `CARGO_PROFILE_DEV_DEBUG=0` to the Cargo commands it runs, unless the caller sets that variable: nothing in CI reads debug data, and it is most of each test archive that test jobs download.
+CI backtraces therefore name functions without line numbers; panic messages keep their file and line.
+`cargo ci` sets the variable only for its own Cargo processes, so it is not part of the cache key, and third-party crates, which the profile already builds without debug data, keep their cached artifacts.
 Profiles live in `.cargo/config.toml`, whose hash and the current month are part of the CI dependency cache prefix.
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
 Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
 Within a month, manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
-The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v3` cache keeps those of its debug build tool and the target-specific release profile.
+The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v4` cache keeps those of its debug build tool and the target-specific release profile.
+On Linux, those jobs run on Ubuntu 22.04 and write the platform's caches, which the Ubuntu 24.04 live jobs restore.
+A cache written on a newer Ubuntu would carry its glibc headers' requirements into the bundle, because Cargo does not rebuild C objects when the system headers change; `native-deps-v5` and `native-bundle-v4` started fresh for that reason.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
 Only `v1` writes Rust dependency caches; PRs restore the base branch cache and skip uploads.
 This avoids spending PR time saving caches scoped to individual pull requests.

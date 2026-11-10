@@ -9,6 +9,7 @@ pub mod docker_provider;
 pub mod docs;
 #[cfg(feature = "sdk")]
 pub mod fern;
+pub mod glibc;
 pub mod hcl_cases;
 #[cfg(feature = "sdk")]
 pub mod helm_provider;
