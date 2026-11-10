@@ -284,6 +284,8 @@ struct Scenario {
     /// The statuses the web health endpoint answers; the last one repeats.
     web: Arc<Mutex<VecDeque<u16>>>,
     web_requests: Arc<Mutex<usize>>,
+    /// The warnings the deployment's operations reported.
+    warnings: Arc<Mutex<Vec<String>>>,
     prefix: String,
     _web: http_fixture::Fixture,
     _engine: http_fixture::Fixture,
@@ -385,14 +387,23 @@ impl Scenario {
         let prefix = Document::parse(document.to_string().as_bytes())
             .unwrap()
             .workspace();
+        let warnings = Arc::new(Mutex::new(Vec::new()));
+        let reported = warnings.clone();
         let scenario = Self {
             cancel: CancellationToken::new(),
-            deployment: Deployment::new(directory.path(), &bundle),
+            deployment: Deployment::new(directory.path(), &bundle).with_progress(Arc::new(
+                move |event| {
+                    if let nemoclaw_sdk::Progress::Warning { message } = event {
+                        reported.lock().unwrap().push(message);
+                    }
+                },
+            )),
             document,
             host,
             gateway,
             web,
             web_requests,
+            warnings,
             prefix,
             _web: web_endpoint,
             _engine: engine,
@@ -737,11 +748,17 @@ async fn interrupted_setup_is_unfinished_and_retry_completes_without_duplicates(
         matches!(result, Err(nemoclaw_sdk::Error::Cancelled)),
         "{result:?}"
     );
-    // The interrupted apply kept its record of the created container.
-    let state: Value = serde_json::from_slice(
-        &std::fs::read(s._directory.path().join("terraform.tfstate")).unwrap(),
-    )
-    .unwrap();
+    // The interrupted apply kept its record of the created container. A
+    // state that is missing or unreadable names how OpenTofu ended.
+    let bytes = std::fs::read(s._directory.path().join("terraform.tfstate"));
+    let state: Value = match bytes.as_deref().map(serde_json::from_slice) {
+        Ok(Ok(state)) => state,
+        error => panic!(
+            "the interrupted apply left no readable state ({} bytes: {error:?}); warnings: {:?}",
+            bytes.as_ref().map_or(0, Vec::len),
+            s.warnings.lock().unwrap()
+        ),
+    };
     let recorded = state["resources"]
         .as_array()
         .unwrap()

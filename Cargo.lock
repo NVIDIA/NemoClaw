@@ -3324,6 +3324,7 @@ dependencies = [
  "nemoclaw-provider",
  "nemoclaw-runtime",
  "nemoclaw-tofu",
+ "nix 0.29.0",
  "openshell-core",
  "openshell-policy",
  "process-wrap",

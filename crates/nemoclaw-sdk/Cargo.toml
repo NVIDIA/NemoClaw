@@ -73,5 +73,9 @@ ring = "0.17.14"
 # Managed Docker and Podman gateway configuration files.
 toml = { version = "1.1", default-features = false, features = ["display", "serde"] }
 
+[target.'cfg(unix)'.dependencies]
+# Interrupts OpenTofu alone, not the provider plugins in its process group.
+nix.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 widestring = "1"
