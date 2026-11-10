@@ -276,7 +276,20 @@ function dockerfilePatchCommand(dist: string, nodeExecutable: string): string {
       shellQuote(path.join(REPO_ROOT, "scripts/lib/patch-openclaw-explicit-proxy.mts")),
     )
     .replaceAll("/usr/local/lib/nemoclaw/extract-semver", shellQuote(OPENCLAW_VERSION_EXTRACTOR));
-  return `${legacy}\n${dockerfileRuntimePatchCommand(dist, nodeExecutable)}`;
+  const pairing = dockerRunCommandBetween(
+    "# Keep OpenClaw 2026.9.1 scope-upgrade",
+    "# Patch OpenClaw TUI unreachable-inference diagnostics",
+  )
+    .replaceAll("/usr/local/lib/node_modules/openclaw/dist", shellQuote(dist))
+    .replaceAll(
+      "node /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts",
+      `${shellQuote(nodeExecutable)} ${shellQuote(path.join(REPO_ROOT, "scripts/patch-openclaw-device-self-approval.mts"))}`,
+    )
+    .replaceAll(
+      "node /usr/local/lib/nemoclaw/patch-openclaw-secondary-main-session-delete.mts",
+      `${shellQuote(nodeExecutable)} ${shellQuote(path.join(REPO_ROOT, "scripts/lib/patch-openclaw-secondary-main-session-delete.mts"))}`,
+    );
+  return `${legacy}\n${dockerfileRuntimePatchCommand(dist, nodeExecutable)}\n${pairing}`;
 }
 
 function runDockerfilePatchBlock(
@@ -514,6 +527,12 @@ describe("OpenClaw real patched-dist materialization guard", () => {
     expect(command).not.toContain("/usr/local/lib/nemoclaw/extract-semver");
     expect(command).toContain(shellQuote(OPENCLAW_VERSION_EXTRACTOR));
     expect(command).toContain("for patch in container-restart agent-message-input");
+    expect(command).toContain(
+      path.join(REPO_ROOT, "scripts/patch-openclaw-device-self-approval.mts"),
+    );
+    expect(command).toContain(
+      path.join(REPO_ROOT, "scripts/lib/patch-openclaw-secondary-main-session-delete.mts"),
+    );
     expect(command).not.toContain("/usr/local/lib/nemoclaw/patch-openclaw-");
     expect(command).toContain(path.join(REPO_ROOT, "scripts", "lib", "patch-openclaw-"));
   });
