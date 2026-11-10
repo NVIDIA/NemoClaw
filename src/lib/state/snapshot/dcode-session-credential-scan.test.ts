@@ -119,6 +119,8 @@ describe("DCode session database credential scan", () => {
       const content = [
         "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
         "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
+        "db.execute('SELECT id FROM users WHERE (password = ?)', (pw,))",
+        'db.execute("SELECT id FROM users WHERE ((password = ?))", (pw,))',
       ].join("\n");
       fixture.database.exec(`CREATE TABLE sessions (content ${storageType})`);
       fixture.database

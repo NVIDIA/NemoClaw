@@ -140,8 +140,8 @@ function textWithoutSafeCredentialFixtures(value: string): string {
 }
 
 function isSqlBindParameter(text: string, assignment: RegExpExecArray): boolean {
-  const candidate = assignment[4];
-  if (candidate !== "?" && candidate !== "?'" && candidate !== '?"') return false;
+  const candidate = /^\?\)*(['"])?$/u.exec(assignment[4] ?? "");
+  if (candidate === null) return false;
   if (!/=[ \t]*\?/u.test(assignment[0])) return false;
   // A bind marker carries no credential. Keep context bounded and within its quote.
   const query = /(?:'[^'\r\n\0]*|"[^"\r\n\0]*)$/u.exec(
@@ -150,7 +150,7 @@ function isSqlBindParameter(text: string, assignment: RegExpExecArray): boolean 
   return (
     query !== null &&
     /^['"](?:SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|EXPLAIN)\b/iu.test(query[0]) &&
-    (candidate === "?" || candidate === `?${query[0][0]}`)
+    (candidate[1] === undefined || candidate[1] === query[0][0])
   );
 }
 
