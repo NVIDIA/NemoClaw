@@ -217,6 +217,11 @@ require 'yaml'
 require 'json'
 require 'fileutils'
 require 'open3'
+# Resolve the runner's Bash before isolating each step's command fixtures.
+BASH = ENV.fetch('PATH').split(File::PATH_SEPARATOR)
+  .map { |directory| File.expand_path('bash', directory) }
+  .find { |candidate| File.file?(candidate) && File.executable?(candidate) }
+raise 'Bash is unavailable' unless BASH
 workflow = YAML.safe_load(File.read('.github/workflows/pr-merge-report.yml'))
 parent = 'a' * 40
 head = 'b' * 40
@@ -385,7 +390,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
         end
       end
     when nil
-      _, stderr, status = Open3.capture3(env, 'bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', step.fetch('run'),
+      _, stderr, status = Open3.capture3(env, BASH, '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', step.fetch('run'),
         chdir: "#{root}/workspace", unsetenv_others: true)
       File.open("#{root}/errors", 'a') { |file| file.puts(stderr) }
       failed ||= !status.success?
@@ -451,12 +456,19 @@ raise 'Recovered artifact identity lost its attempt' unless File.basename(recove
 raise 'Recovery changed the first artifact' unless Dir["#{first[:artifact]}/*"].to_h { |path| [File.basename(path), File.binread(path)] } == first_artifact
 valid = exercise(workflow, "#{ARGV[0]}/valid", 'valid', parent, head)
 raise File.read("#{valid[:root]}/errors") if valid[:failed]
-raise 'PR source executed' unless File.read("#{valid[:root]}/executions") == "trusted\ntrusted\n"
+raise 'Successful report did not execute the trusted reporter exactly once' unless File.read("#{valid[:root]}/executions") == "trusted\n"
+raise 'Recovered receipt did not verify one report' unless recovered_receipt['report_unique']
+valid_comments = JSON.parse(File.read("#{valid[:root]}/comments.json"))
+valid_reports = valid_comments.select { |comment| comment.dig('user', 'login') == 'github-actions[bot]' && comment['body'].include?('<!-- nemoclaw-merge-report:v1 -->') }
+raise 'Successful report was missing or duplicated' unless valid_reports.length == 1
+raise 'Successful report lost merged identity' unless valid_reports.first.fetch('body').start_with?('<details>') && valid_reports.first.fetch('body').include?(head)
+raise 'Successful report changed existing comments' unless valid_comments.reject { |comment| comment == valid_reports.first } == JSON.parse(valid[:original_comments])
 raise 'Checkout persisted credentials' if File.exist?("#{valid[:root]}/credentials")
 receipt = JSON.parse(File.read("#{valid[:artifact]}/merge-outcomes-receipt.json"))
 raise 'Receipt is not revision-bound' unless receipt.values_at('workflow_revision', 'reporter_revision') == ['e' * 40, parent]
 raise 'Fork-modified reporter scenario was not covered' unless receipt['fork_modified_reporter']
 raise 'Opening report was absent' unless receipt['opening_report_count'] == 1
+raise 'Receipt did not verify one report' unless receipt['report_unique']
 v1 = exercise(workflow, "#{ARGV[0]}/v1", 'valid', parent, head, base: 'v1', reporter: reporter_source)
 raise File.read("#{v1[:root]}/errors") if v1[:failed]
 raise 'v1 merge did not compile the trusted reporter' unless File.exist?("#{v1[:root]}/compilations") && File.read("#{v1[:root]}/compilations") == "compile\n"
@@ -470,7 +482,7 @@ raise 'v1 merge changed existing comments' unless v1_comments.reject { |comment|
 raise 'v1 artifact lost the report' unless File.read("#{v1[:artifact]}/merge-outcomes.md").strip == v1_report.strip
 raise 'v1 summary lost the report' unless File.read("#{v1[:root]}/summary").include?(v1_report)
 v1_receipt = JSON.parse(File.read("#{v1[:artifact]}/merge-outcomes-receipt.json"))
-raise 'v1 receipt lost trusted provenance' unless v1_receipt.values_at('reporter_revision', 'publication_readback', 'opening_preserved', 'duplicate_avoided') == [parent, true, true, true]
+raise 'v1 receipt lost trusted provenance' unless v1_receipt.values_at('reporter_revision', 'publication_readback', 'opening_preserved', 'report_unique') == [parent, true, true, true]
 %w[malformed multiple api_failure wrong_checkout modified_reporter].each do |scenario|
   result = exercise(workflow, "#{ARGV[0]}/#{scenario}", scenario, parent, head)
   raise "Invalid parent or checkout accepted: #{scenario}" unless result[:failed]

@@ -102,11 +102,8 @@ jobs:
           jq 'add | [.[] | select(.body | contains("<!-- agent-session-report:v1 -->")) | {id,body}] | sort_by(.id)' "$RUNNER_TEMP/comments-after.json" > "$RUNNER_TEMP/opening-after.json"
           cmp "$RUNNER_TEMP/opening-before.json" "$RUNNER_TEMP/opening-after.json"
           query='add | [.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- nemoclaw-merge-report:v1 -->"))) | {id,body}]'
-          jq "$query" "$RUNNER_TEMP/comments-after.json" > "$RUNNER_TEMP/report-before-retry.json"
-          jq -e --arg head "$PR_HEAD_SHA" 'length == 1 and (.[0].body | startswith("<details>")) and (.[0].body | contains($head))' "$RUNNER_TEMP/report-before-retry.json"
-          "$RUNNER_TEMP/merge-report" "$GITHUB_REPOSITORY" "$PR_NUMBER" --post > "$RUNNER_TEMP/duplicate-preview.md"
-          gh api --paginate --slurp "$comments" | jq "$query" > "$RUNNER_TEMP/report-after-retry.json"
-          cmp "$RUNNER_TEMP/report-before-retry.json" "$RUNNER_TEMP/report-after-retry.json"
+          jq "$query" "$RUNNER_TEMP/comments-after.json" > "$RUNNER_TEMP/report.json"
+          jq -e --arg head "$PR_HEAD_SHA" 'length == 1 and (.[0].body | startswith("<details>")) and (.[0].body | contains($head))' "$RUNNER_TEMP/report.json"
           changed="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" --jq '.[] | select(.filename == "tools/ci/pr-merge-report.rs") | .filename')"
           jq -n --arg workflow "$GITHUB_WORKFLOW_SHA" --arg reporter "$(git rev-parse HEAD)" \
             --arg blob "$(git rev-parse HEAD:tools/ci/pr-merge-report.rs)" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
@@ -115,7 +112,7 @@ jobs:
             --arg fork "$PR_HEAD_REPOSITORY" --arg changed "$changed" \
             '{workflow_revision:$workflow,reporter_revision:$reporter,reporter_blob:$blob,run_id:$run,run_attempt:$attempt,repository:$repository,pr:$number,pr_head:$head,opening_report_count:$opening_count,
               fork_modified_reporter:($fork != "" and $fork != $repository and $changed != ""),
-              trusted_checkout:true,publication_readback:true,opening_preserved:true,duplicate_avoided:true}' > "$RUNNER_TEMP/merge-outcomes-receipt.json"
+              trusted_checkout:true,publication_readback:true,opening_preserved:true,report_unique:true}' > "$RUNNER_TEMP/merge-outcomes-receipt.json"
       - name: Retain the generated report
         id: evidence
         if: always() && steps.installed.outputs.available == 'true'

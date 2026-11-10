@@ -33,7 +33,8 @@ The report workflow has two evidence owners. The standalone Rust tests cover
 metadata selection, rendering and publication recovery. The workflow adapter
 test executes the checked-in YAML with controlled API, compiler and checkout
 boundaries. Its publication-recovery scenario compiles and executes the real
-reporter. It uses Ruby's standard YAML parser and `jq`.
+reporter. It uses Bash from `PATH`, Ruby's standard YAML parser and `jq`.
+Use Bash 5 or later to match the workflow runner.
 
 Run the local checks from the repository root:
 
@@ -56,8 +57,9 @@ These tests cannot prove GitHub event selection, effective token permissions or
 the real checkout action. The `report` job owns that live boundary. It runs on
 a merged `pull_request_target` closed event, verifies the trusted checkout,
 posts with the workflow token, compares the opening report before and after,
-and invokes the reporter again to check duplicate avoidance. A posting failure
-remains a job failure while summary and artifact retention still run.
+and verifies one bot report for the merged head. Each attempt invokes the
+reporter once. A posting failure remains a job failure while summary and
+artifact retention still run.
 
 ## Hosted acceptance
 
@@ -68,7 +70,8 @@ The installation merge itself skips reporting when its parent lacks the helper.
 
 For the covering scenario, inspect the real workflow run and its artifact.
 The name is `merge-outcomes-` followed by the run attempt, such as
-`merge-outcomes-1`. Require all of the following before recording acceptance:
+`merge-outcomes-1`. Require all of the following and the permitted-rerun
+recovery observation below before recording acceptance:
 
 - The run uses the installed workflow revision and the merged fork PR's closed
   event. The job's token-permission log shows read access to contents, actions
@@ -78,9 +81,9 @@ The name is `merge-outcomes-` followed by the run attempt, such as
   that parent as `reporter_revision` and records its `reporter_blob`.
 - The intended PR has one collapsed bot report with its merged head SHA. The
   reporter's successful publication step includes an identical API readback.
-- `Verify hosted publication` passes its opening-report comparison and its
-  second-invocation comparison. The opening report stays intact and no second
-  merge report appears. The receipt's `opening_report_count` is at least one.
+- `Verify hosted publication` passes its opening-report comparison and one-report
+  check. The receipt has `report_unique: true` and `opening_report_count` of at
+  least one. The opening report stays intact.
 - Summary retention and artifact upload succeed. The artifact contains the full
   report and `merge-outcomes-receipt.json` from that run attempt. The artifact
   name and receipt's `run_attempt` match the selected attempt.
@@ -101,6 +104,11 @@ access denials. Retry transient API failures only under the repository's
 An allowed retry regenerates the report. For an existing bot report, recovery
 requires exactly one copy matching the intended published body, including
 truncation. A mismatch or duplicate stops recovery without posting or editing.
-If the failed attempt retained an artifact, verify it is unchanged after
-a permitted rerun. Verify that the recovered attempt's artifact contains its
-report and receipt.
+
+Verify hosted duplicate recovery through one separately authorized report-job
+rerun. Record the bot report's ID and body, the opening comments, and the prior
+artifact before the rerun. Require unchanged comments afterward, one merge
+report, and an unchanged prior artifact. The rerun's artifact must contain its
+report and revision-bound receipt. If no rerun is permitted or observed, keep
+this recovery observation pending. The ordinary report job does not invoke the
+reporter a second time to produce this evidence.
