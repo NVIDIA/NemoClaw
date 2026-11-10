@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 
@@ -523,6 +525,7 @@ describe("managed startup agent environment", () => {
       CHAT_UI_URL: "https://hermes.example.test:19189",
       NEMOCLAW_CONTEXT_WINDOW: "65536",
       NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64: "",
+      NEMOCLAW_HERMES_SWITCHYARD_BINDINGS_B64: "",
       NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
       NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: expect.any(String),
       NEMOCLAW_INFERENCE_API: "anthropic-messages",
@@ -606,6 +609,7 @@ describe("managed startup agent environment", () => {
         agent: "hermes",
         webSearch: { enabled: true, provider: "tavily" },
         switchyardRouting: routing,
+        switchyardBindings: switchyardBindingFixture(routing),
       },
     };
     const mapped = mapManagedStartupProfileToAgentEnvironment(profile);
