@@ -314,6 +314,9 @@ Two tests in `nemoclaw-build`'s `workflows` module check what a workflow run wou
 
 ### Jobs of One Platform
 
+On Linux, `Unit build and test` and `Build bundle` run on Ubuntu 22.04, the oldest supported Linux, and `Build bundle` then runs `nemoclaw-build check-glibc --minimum 2.35`, which fails if any bundle executable needs a non-weak glibc symbol version newer than 2.35.
+The other jobs run on Ubuntu 24.04: executables built against an older glibc run on newer ones, but not the other way around.
+
 Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners, whose job names start with their test layer:
 
 1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables.
@@ -535,7 +538,9 @@ Profiles live in `.cargo/config.toml`, whose hash and the current month are part
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
 Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
 Within a month, manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
-The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v3` cache keeps those of its debug build tool and the target-specific release profile.
+The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v4` cache keeps those of its debug build tool and the target-specific release profile.
+On Linux, those jobs run on Ubuntu 22.04 and write the platform's caches, which the Ubuntu 24.04 live jobs restore.
+A cache written on a newer Ubuntu would carry its glibc headers' requirements into the bundle, because Cargo does not rebuild C objects when the system headers change; `native-deps-v5` and `native-bundle-v4` started fresh for that reason.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
 Only `v1` writes Rust dependency caches; PRs restore the base branch cache and skip uploads.
 This avoids spending PR time saving caches scoped to individual pull requests.

@@ -52,6 +52,10 @@ Keep the bundle unchanged while an operation uses it.
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
 `CI / Bundle` builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64; that does not qualify GPU deployment on every platform.
 
+On Linux, the oldest supported release is Ubuntu 22.04, whose glibc is 2.35.
+`CI / Bundle` builds the Linux bundles there and fails if any bundle executable needs a newer glibc; it runs the contract, integration, and live tests on Ubuntu 24.04.
+A bundle runs only where the glibc is at least as new as on the host that built it, so build it on the oldest Linux release that will run it.
+
 There are no release downloads or installer yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 
 ## Runtime and Inference Requirements
