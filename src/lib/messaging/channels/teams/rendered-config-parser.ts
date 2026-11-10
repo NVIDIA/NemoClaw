@@ -19,7 +19,7 @@ export const teamsRenderedConfigParser: RenderedChannelConfigParser = {
         structuredConfigKey("webhookPort", "openclaw.json", [
           "channels",
           "msteams",
-          "webhook",
+          "legacyWebhook",
           "port",
         ]),
         structuredConfigKey("requireMention", "openclaw.json", [
