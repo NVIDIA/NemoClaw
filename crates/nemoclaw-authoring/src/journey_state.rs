@@ -7,9 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
-use nemoclaw_sdk::discovery::{
-    CredentialRequest, DiscoveryObservations, DiscoveryRequest, ObservationStatus,
-};
+use nemoclaw_sdk::discovery::{DiscoveryObservations, DiscoveryRequest, ObservationStatus};
 use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
 use nemoclaw_sdk::json_schema::schema_accepts;
 use serde_json::{Map, Value};
@@ -185,24 +183,6 @@ impl JourneyQuestion {
     }
 }
 
-/// What review says about one checked credential reference.
-#[derive(Clone, Debug)]
-pub struct CredentialNote {
-    text: String,
-    missing: bool,
-}
-
-impl CredentialNote {
-    pub fn text(&self) -> &str {
-        &self.text
-    }
-    /// Whether the user must set the credential before plan can use it: it is
-    /// not set, or could not be read.
-    pub fn is_missing(&self) -> bool {
-        self.missing
-    }
-}
-
 /// A fresh result, recomputed after each answer or catalog change.
 #[derive(Clone, Debug)]
 pub struct JourneyResolution {
@@ -211,7 +191,6 @@ pub struct JourneyResolution {
     kept: Vec<(String, Value)>,
     warnings: Vec<String>,
     information: Vec<String>,
-    credentials: Vec<CredentialNote>,
     unverified: Vec<String>,
     assessment: PartialAssessment,
     target_required: bool,
@@ -241,11 +220,6 @@ impl JourneyResolution {
     /// Informational authoring notes; these do not establish compatibility.
     pub fn information(&self) -> &[String] {
         &self.information
-    }
-    /// The availability of each credential reference checked here, for review.
-    /// A reference that was never checked has no entry.
-    pub fn credentials(&self) -> &[CredentialNote] {
-        &self.credentials
     }
     pub fn unverified(&self) -> &[String] {
         &self.unverified

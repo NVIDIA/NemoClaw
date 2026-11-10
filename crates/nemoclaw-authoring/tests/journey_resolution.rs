@@ -2250,13 +2250,13 @@ fn delegation_accepts_when_a_credential_was_never_observed() {
 }
 
 #[test]
-fn credential_availability_names_each_observed_state_without_blocking_delegation() {
+fn credential_availability_neither_blocks_delegation_nor_becomes_a_note() {
     use nemoclaw_sdk::discovery::ObservationStatus;
     let capabilities = Capabilities::available();
-    for (status, says, plan_guidance) in [
-        (ObservationStatus::Available, "is set", false),
-        (ObservationStatus::Unavailable, "is not set", true),
-        (ObservationStatus::Unknown, "could not be read", true),
+    for status in [
+        ObservationStatus::Available,
+        ObservationStatus::Unavailable,
+        ObservationStatus::Unknown,
     ] {
         let mut facts = delegation_facts(&capabilities);
         facts.credentials[0].status = status;
@@ -2267,30 +2267,10 @@ fn credential_availability_names_each_observed_state_without_blocking_delegation
             .resolve_with_observations(&capabilities, &facts.observations())
             .unwrap();
         let reference = &facts.credentials[0].reference;
-        let notes = resolution.credentials();
-        assert_eq!(notes.iter().any(|note| note.is_missing()), plan_guidance);
-        let note = notes
-            .iter()
-            .map(|note| note.text())
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert!(note.contains(&format!("{reference} {says}")), "{note}");
-        assert_eq!(
-            note.contains(&format!("export {reference}=...")),
-            plan_guidance,
-            "{note}"
-        );
-        assert_eq!(
-            note.contains("https://build.nvidia.com/settings/api-keys"),
-            plan_guidance,
-            "{note}"
-        );
-        assert!(!note.contains("non-interactive"), "{note}");
-        assert!(!note.contains("PRIVATE_SENTINEL"));
-        assert!(
-            !resolution.information().join(" ").contains(reference),
-            "credential availability is not a note for every question"
-        );
+        let notes = [resolution.information(), resolution.warnings()].concat();
+        let notes = notes.join(" ");
+        assert!(!notes.contains(reference), "{notes}");
+        assert!(!notes.contains("PRIVATE_SENTINEL"), "{notes}");
     }
 }
 
@@ -2303,7 +2283,6 @@ fn a_credential_never_checked_says_nothing_about_its_availability() {
         .state
         .resolve_with_observations(&capabilities, &facts.observations())
         .unwrap();
-    assert!(resolution.credentials().is_empty());
     assert!(resolution.information().is_empty());
 }
 
