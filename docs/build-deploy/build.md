@@ -83,7 +83,8 @@ Initial builds need network access to fetch the pinned base images, source archi
 It checks each file's SHA-256, keeps it in `.build/downloads`, and places it in `.build/image-sources`, where the Bake file reads it.
 When a server rate-limits a download or answers with a server error, it retries up to three times, waiting as long as `Retry-After` asks, for at most a minute.
 If the server asks for a longer wait, the download stops without retrying early.
-Before building or checking an agent or Ollama image with `docker buildx bake` directly, run `cargo images fetch`, which places the same files; otherwise Bake stops with `failed to get build context sources`.
+Before building or checking an agent or Ollama image with `docker buildx bake` directly, run `cargo images fetch`, which places the same files; without them, Bake stops with `failed to get build context sources`.
+Run it again after changing a pin or checking out another revision: Bake copies whatever `.build/image-sources` holds without comparing it to `versions.json`, while `cargo images build` places the pinned files every time.
 Digest-based sandbox use requires a Docker image store that retains repository digests for local builds, such as the tested containerd store.
 
 On a native Linux ARM64 host, run from the repository root:
