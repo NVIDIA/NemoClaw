@@ -541,18 +541,42 @@ fn colossus_preparation_stops_and_keeps_native_errors_private() {
         .unwrap()["run"]
         .as_str()
         .unwrap();
-    for failed in ["uname", "nvidia-smi", "rustup"] {
+    for failed in ["uname", "nvidia-smi", "rustup", "tools-env"] {
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("bin");
         fs::create_dir(&bin).unwrap();
         fs::create_dir(root.path().join("work")).unwrap();
-        for name in ["uname", "nvidia-smi", "rustup", "cargo", "docker", "cp"] {
+        for name in [
+            "uname",
+            "nvidia-smi",
+            "rustup",
+            "cargo",
+            "docker",
+            "cp",
+            "jq",
+        ] {
             let contents = match name {
                 "uname" if failed != "uname" => "#!/bin/sh\necho aarch64\n".to_owned(),
                 "uname" => "#!/bin/sh\necho unsupported\n".to_owned(),
                 "nvidia-smi" if failed != "nvidia-smi" => {
                     "#!/bin/sh\necho 'NVIDIA GB300'\n".to_owned()
                 }
+                "rustup" if failed == "tools-env" => "#!/bin/sh\nexit 0\n".to_owned(),
+                "jq" => "#!/bin/sh\necho 36.2\n".to_owned(),
+                "cargo" if failed == "tools-env" => r#"#!/bin/sh
+if [ "$*" = 'ci tools' ]; then
+  mkdir -p .tools/protoc-36.2/bin
+  printf '#!/bin/sh\nexit 0\n' > .tools/protoc-36.2/bin/protoc
+  chmod +x .tools/protoc-36.2/bin/protoc
+  echo "PROTOC=$PWD/.tools/protoc-36.2/bin/protoc" >> "$GITHUB_ENV"
+  exit 0
+fi
+if [ "$PROTOC" = "$PWD/.tools/protoc-36.2/bin/protoc" ]; then
+  touch tool-env-passed
+fi
+exit 23
+"#
+                .to_owned(),
                 "nvidia-smi" | "rustup" => {
                     "#!/bin/sh\necho private-diagnostic-marker >&2\nexit 23\n".to_owned()
                 }
@@ -575,10 +599,17 @@ exit 99
             .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("NEMOCLAW_HCL_RUN", root.path())
             .env("SENTINEL", root.path().join("continued"))
+            .env("GITHUB_ENV", root.path().join("github-env"))
             .current_dir(root.path())
             .output()
             .unwrap();
         assert!(!output.status.success(), "{failed} must fail preparation");
+        if failed == "tools-env" {
+            assert!(
+                root.path().join("tool-env-passed").exists(),
+                "the direct build needs the tools installed in the same step"
+            );
+        }
         assert!(
             !root.path().join("continued").exists(),
             "{failed} continued into a build"
