@@ -422,6 +422,19 @@ describe("repository-owned PR review coordination", () => {
     expect(
       evaluateCoordinatorShadow({ ...input, requiredChecks: "pending" }).decision,
     ).toMatchObject({ action: "stay-quiet", reason: "prerequisites-not-ready" });
+    expect(
+      evaluateCoordinatorShadow({
+        ...input,
+        gate: {
+          ...input.gate,
+          unresolvedRecommendationCount: 1,
+          unresolvedInterests: ["verification-mistake-proofing"],
+        },
+      }),
+    ).toMatchObject({
+      snapshot: { advisor: null },
+      decision: { action: "stay-quiet", reason: "advisor-missing-or-stale" },
+    });
   });
 
   it("fails the approval gate when the Advisor reports missing product scope", () => {
