@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { beforeEach, expect, it, vi } from "vitest";
+
+import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 
 const mocks = vi.hoisted(() => ({
   listRoots: vi.fn(),
@@ -141,7 +145,9 @@ it("marks observations that never start before cancellation (#12859)", async () 
   expect(snapshot.collectionStatus).toBe("partial");
 });
 
-it("joins a published OpenClaw configuration to its operation target (#12859)", async () => {
+it("joins a managed OpenClaw 2026.10.5 configuration to its operation target (#12859)", async () => {
+  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
+  const imageTag = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
   mocks.readRegistry.mockReturnValue({
     defaultSandbox: null,
     sandboxes: {
@@ -155,6 +161,23 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
       selected: {
         name: "selected",
         agent: "openclaw",
+        agentVersion: "2026.10.5",
+        imageTag,
+        workload: {
+          schemaVersion: 1,
+          kind: "managed-image",
+          reference: imageTag,
+          platform: "linux/amd64",
+          release: "v0.0.132",
+          sourceRevision: "b".repeat(40),
+          sourceCohort: "ghrun-123456-1",
+          capabilityContractVersion: 1,
+          startupProfileContractVersion: 1,
+          encodedProfile,
+          startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+          credentialProxyReplayRequired: false,
+          shared: true,
+        },
         gatewayPort: 8080,
         model: "nvidia/nemotron-3-ultra-550b-a55b",
         provider: "nvidia-prod",
@@ -234,7 +257,12 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
     deadlineAt: Date.now() + 10_000,
   });
   expect(read).toHaveBeenCalled();
-  expect(read).toHaveBeenCalledTimes(6);
+  // One configured agent each, so no sandbox needs the native roster command.
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(read).not.toHaveBeenCalledWith(
+    expect.objectContaining({ sandboxName: "selected", command: ["uname", "-s"] }),
+    expect.anything(),
+  );
   expect(event.parameters).toMatchObject({
     publishedEnvironmentCount: 2,
     configuredRuntimeCount: 2,
@@ -249,6 +277,8 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
         agentHarnessId: "openclaw",
         agentsStatus: "reported",
         currentInferenceRouteStatus: "reported",
+        managedAgentVersion: "2026.10.5",
+        managedAgentVersionStatus: "reported",
       },
     ],
   });
@@ -560,11 +590,7 @@ const hostedRouteBranches = [
         agents: { defaults: { model: `inference/${hostedNvidiaModel}` }, entries: { main: {} } },
         models: { providers: { inference: { api: "openai-completions", baseUrl } } },
       }),
-    extraResponses: {
-      [JSON.stringify(["openclaw", "agents", "list", "--json"])]: JSON.stringify([
-        { id: "main", isDefault: true },
-      ]),
-    },
+    extraResponses: {},
     workload: (routedBaseUrl: string) => ({
       imageTag: imageRef,
       workload: hostedNvidiaWorkload(
@@ -826,3 +852,164 @@ it.each([
   expect(mocks.createReader.mock.results[0].value.observeInferenceRoute).not.toHaveBeenCalled();
   expect(isOperationEvent(event)).toBe(true);
 });
+it("reports a healthy OpenClaw rebuild without the native roster command (#14239)", async () => {
+  const { agent, configPath, config, workload } = hostedRouteBranches[0];
+  // collectNativeConfiguration rejects the roster command and counts every sandbox read.
+  const event = await collectNativeConfiguration(agent, configPath, config(hostedNvidiaEndpoint), {
+    model: hostedNvidiaModel,
+    provider: "nvidia-prod",
+    modelSelectionProvenance: hostedNvidiaProvenance,
+    agentVersion: "2026.9.1",
+    openshellDriver: "docker",
+    sandboxGpuEnabled: false,
+    webSearchEnabled: false,
+    observabilityEnabled: false,
+    appliedPolicySelection: { schemaVersion: 1, source: "verified_selection", tier: "balanced" },
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "native",
+        agent: "openclaw",
+        workflow: "onboard",
+        disabledChannels: [],
+        channels: [],
+        credentialBindings: [],
+      },
+    },
+    ...workload(hostedNvidiaEndpoint),
+  } as unknown as Partial<SandboxEntry>);
+  expect(event.parameters).toMatchObject({
+    configuredRuntimeCount: 1,
+    configuredAgentCount: 1,
+    countsStatus: "reported",
+    collectionStatus: "complete",
+    configurations: [
+      {
+        status: "reported",
+        agentsStatus: "reported",
+        defaultAgentModel: { agentPosition: 0, modelPosition: 0, status: "reported" },
+        sandboxOS: "linux",
+        sandboxOSStatus: "reported",
+        managedAgentVersionStatus: "reported",
+        settings: {
+          computeDriverStatus: "reported",
+          gpuStatus: "reported",
+          imageOwnershipStatus: "reported",
+          policyTierStatus: "reported",
+          webSearchStatus: "reported",
+        },
+      },
+    ],
+  });
+  expect(isOperationEvent(event)).toBe(true);
+});
+
+const twoAgentConfig = JSON.stringify({
+  agents: {
+    defaults: { model: "openai/gpt-4o" },
+    entries: { main: { default: true }, helper: {} },
+  },
+  models: { providers: { openai: { api: "openai-completions" } } },
+});
+
+async function collectWithFailures(failing: readonly string[]) {
+  mocks.readRegistry.mockReturnValue({
+    defaultSandbox: null,
+    sandboxes: { pair: { name: "pair", agent: "openclaw", gatewayPort: 8080 } },
+  });
+  const responses: Record<string, string> = {
+    uname: "Linux",
+    cat: twoAgentConfig,
+    openclaw: JSON.stringify([
+      { id: "main", isDefault: true },
+      { id: "helper", isDefault: false },
+    ]),
+  };
+  mocks.createReader.mockReturnValue({
+    read: vi.fn(async ({ command }: { command: readonly string[] }) =>
+      failing.includes(command[0])
+        ? Promise.reject(new Error("Native evidence could not be verified"))
+        : responses[command[0]],
+    ),
+    observeInferenceRoute: vi.fn(async () =>
+      failing.includes("route")
+        ? Promise.reject(new Error("no gateway in this test"))
+        : { ok: true, value: { state: "unconfigured" } },
+    ),
+    dispose: vi.fn(),
+  });
+  return collectOperationSnapshot({
+    signal: new AbortController().signal,
+    deadlineAt: Date.now() + 10_000,
+  });
+}
+
+it.each([
+  [
+    "no read",
+    [],
+    { status: "reported", agentsStatus: "reported", defaultAgentModel: { status: "reported" } },
+    "reported",
+    "complete",
+  ],
+  [
+    "the OS read",
+    ["uname"],
+    { sandboxOSStatus: "collection_error", status: "reported", agentsStatus: "reported" },
+    "reported",
+    "partial",
+  ],
+  [
+    "the route read",
+    ["route"],
+    { currentInferenceRouteStatus: "collection_error", agentsStatus: "reported" },
+    "reported",
+    "partial",
+  ],
+  [
+    "the roster read",
+    ["openclaw"],
+    {
+      status: "collection_error",
+      agentsStatus: "reported",
+      agents: [{ modelsStatus: "reported" }, { modelsStatus: "reported" }],
+      defaultAgentModel: { status: "collection_error" },
+      sandboxOSStatus: "reported",
+    },
+    "reported",
+    "partial",
+  ],
+  [
+    "the configuration read",
+    ["cat"],
+    {
+      status: "collection_error",
+      agentsStatus: "reported",
+      agents: [{ modelsStatus: "collection_error" }, { modelsStatus: "collection_error" }],
+      defaultAgentModel: { status: "collection_error" },
+      sandboxOSStatus: "reported",
+    },
+    "reported",
+    "partial",
+  ],
+  [
+    "both agent reads",
+    ["cat", "openclaw"],
+    {
+      status: "collection_error",
+      agentsStatus: "collection_error",
+      sandboxOSStatus: "reported",
+      currentInferenceRouteStatus: "not_configured",
+    },
+    "collection_error",
+    "partial",
+  ],
+] as const)(
+  "degrades only the fields that %s supplies (#14239)",
+  async (_label, failing, row, countsStatus, collectionStatus) => {
+    const snapshot = await collectWithFailures(failing);
+    expect(snapshot.configurations[0]).toMatchObject(row);
+    expect(snapshot).toMatchObject({ countsStatus, collectionStatus });
+  },
+);

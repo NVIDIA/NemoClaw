@@ -116,6 +116,7 @@ import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
   createProbeTimingRecorder,
   createBoundLaunchReadinessDeps,
+  formatOpenClawPairingMismatchField,
   formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   portableOpenClawPairingIncompleteMessage,
@@ -3224,7 +3225,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
       );
       if (publication.diagnostic) {
         console.error(
-          `  Readiness evidence: stage=${publication.diagnostic.stage} reason=${publication.diagnostic.reason}`,
+          `  Readiness evidence: stage=${publication.diagnostic.stage} reason=${publication.diagnostic.reason}${publication.diagnostic.pairingFailureReason ? ` pairing=${publication.diagnostic.pairingFailureReason}` : ""}${formatOpenClawPairingMismatchField(publication.diagnostic.pairingMismatchField)}`,
         );
       }
       process.exit(1);

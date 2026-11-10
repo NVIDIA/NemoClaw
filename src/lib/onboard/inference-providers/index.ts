@@ -12,7 +12,6 @@
 export { setupHermesProviderInference } from "./hermes";
 export { setupOllamaLocalInference } from "./ollama-local";
 export { setupRemoteProviderInference } from "./remote";
-export { setupRoutedInference } from "./routed";
 export { setupVllmLocalInference } from "./vllm-local";
 export { isRemoteProviderName, REMOTE_PROVIDER_NAMES } from "./types";
 export type {
@@ -21,7 +20,6 @@ export type {
   OllamaDeps,
   RemoteProviderDeps,
   RemoteProviderName,
-  RoutedDeps,
   SetupInferenceResult,
   VllmDeps,
 } from "./types";

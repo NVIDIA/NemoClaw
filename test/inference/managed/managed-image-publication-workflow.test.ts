@@ -43,16 +43,6 @@ function inlineNodeStdinValidator(source: string): string {
   ).trim();
 }
 
-function isStrictChildPath(root: string, candidate: string): boolean {
-  const relative = path.relative(fs.realpathSync(root), fs.realpathSync(candidate));
-  return (
-    relative !== "" &&
-    relative !== ".." &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
-  );
-}
-
 function managedPrBuilder(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["pr-build-and-entrypoint"],
@@ -154,22 +144,6 @@ describe("complete managed-image publication workflow", () => {
       "trusted-cache-write": "true",
     });
   });
-  it("rejects managed package paths redirected outside node_modules", () => {
-    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-plugin-"));
-    try {
-      const nodeModulesRoot = path.join(fixtureRoot, "project", "node_modules");
-      const outsideScope = path.join(fixtureRoot, "outside-scope");
-      const installedPackageRoot = path.join(nodeModulesRoot, "direct-package");
-      const escapedPackageRoot = path.join(nodeModulesRoot, "@scope", "plugin");
-      fs.mkdirSync(installedPackageRoot, { recursive: true });
-      fs.mkdirSync(path.join(outsideScope, "plugin"), { recursive: true });
-      fs.symlinkSync(outsideScope, path.join(nodeModulesRoot, "@scope"));
-      expect(isStrictChildPath(nodeModulesRoot, installedPackageRoot)).toBe(true);
-      expect(isStrictChildPath(nodeModulesRoot, escapedPackageRoot)).toBe(false);
-    } finally {
-      fs.rmSync(fixtureRoot, { recursive: true, force: true });
-    }
-  });
 
   it("mints a fresh immutable publication cohort when every job is rerun", () => {
     const workflow = readWorkflow("managed-images.yaml");
@@ -210,7 +184,7 @@ describe("complete managed-image publication workflow", () => {
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
         .run ?? "";
     expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
-    expect(validationRun).toContain('tavily: ["@openclaw/tavily-plugin", "2026.9.2"]');
+    expect(validationRun).toContain('tavily: ["@openclaw/tavily-plugin", "2026.10.5"]');
     expect(validationRun).not.toContain("uninstalled OpenClaw plugin tavily");
     const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
@@ -471,6 +445,7 @@ describe("complete managed-image publication workflow", () => {
         ".github/actions/ci-reviewed-npm-audit/**",
         "ci/reviewed-npm-audit.json",
         "test/helpers/openclaw-real-agent-reload-proof.ts",
+        "test/helpers/openclaw-real-legacy-migration-proof.ts",
       ]),
     );
     expect(reviewedAudit).toMatchObject({
@@ -551,6 +526,17 @@ describe("complete managed-image publication workflow", () => {
     for (const action of externalActions) {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
+
+    const exportMemory = step(prBuilder, "Prepare OpenClaw image export memory");
+    expect(exportMemory.if).toBe("matrix.agent == 'openclaw'");
+    expect(steps.indexOf(exportMemory)).toBeLessThan(
+      steps.indexOf(step(prBuilder, "Resolve digest-pinned native PR base")),
+    );
+    expect(exportMemory.run).toContain('"$available_kib" -lt 67108864');
+    expect(exportMemory.run).toContain('sudo fallocate -l 32G "$swap_file"');
+    expect(exportMemory.run).toContain('sudo chmod 0600 "$swap_file"');
+    expect(exportMemory.run).toContain('sudo swapon "$swap_file"');
+    expect(steps.filter(({ run }) => run?.includes("sudo swapon"))).toEqual([exportMemory]);
 
     expect(step(prBuilder, "Resolve digest-pinned native PR base").run).toBe(
       "scripts/checks/resolve-managed-pr-base.sh",
@@ -800,6 +786,7 @@ describe("complete managed-image publication workflow", () => {
     expect(baseImagePaths).toEqual(
       expect.arrayContaining([
         "test/helpers/openclaw-real-agent-reload-proof.ts",
+        "test/helpers/openclaw-real-legacy-migration-proof.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
       ]),

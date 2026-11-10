@@ -74,6 +74,7 @@ jobs:
             ci/openshell-upgrade-trust.json
             tools/e2e/candidate-openshell-trust.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
           sparse-checkout-cone-mode: false
 

@@ -66,7 +66,7 @@ export function buildDeferredOnboardingPlan(
     rawProvider === undefined || rawProvider === ""
       ? "build"
       : normalizeInstallerProvider(rawProvider);
-  if (provider !== "build" && provider !== "routed") return result("unsupported-provider");
+  if (provider !== "build") return result("unsupported-provider");
   if (registeredSandboxCount > 0) return result("existing-sandbox");
   if (hasHostedCredential(env)) return result("credential-present");
   return result("defer");

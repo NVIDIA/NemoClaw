@@ -40,7 +40,7 @@ export function usesNativeLocalInferenceForAgent(
   endpointUrl?: string | null,
   localNimSelected = false,
 ): boolean {
-  if (provider === "nvidia-router") return agentName === "openclaw";
+  if (provider === "nvidia-router") return false;
   if (provider === "vllm-local" && localNimSelected) return false;
   if (
     agentName === "pi" &&

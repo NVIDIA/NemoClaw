@@ -50,6 +50,7 @@ import { normalizePendingSandboxCreateIdentity } from "../../state/registry/pend
 import { isPublishedSandboxRegistration } from "../../state/registry/route-reservation";
 import type { SandboxEntry } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
+import { configuredAgentIds } from "../sandbox/agents/model-selections";
 import { getMcpProviderInspectionRuntimeSelection } from "../sandbox/mcp-bridge-provider-inspection";
 
 const MAX_CONCURRENT_RUNTIME_OBSERVATIONS = 4;
@@ -354,12 +355,29 @@ async function collectRuntime(
         return agent;
       },
     });
-    const [raw, roster] = await Promise.allSettled([
-      read(["cat", config.configPath]).then((text) => parseConfig(text, config.format)),
-      row.agentHarnessId === "openclaw"
-        ? read(["openclaw", "agents", "list", "--json"]).then(parseRuntimeRoster)
-        : undefined,
-    ]);
+    const raw = await read(["cat", config.configPath])
+      .then((text) => parseConfig(text, config.format))
+      .then(
+        (value) => ({ value }),
+        () => null,
+      );
+    const configured = raw ? configuredAgentIds(raw.value) : null;
+    let rosterFailed = false;
+    let roster: Record<string, unknown>[] | undefined;
+    if (row.agentHarnessId === "openclaw") {
+      // The roster command starts the OpenClaw CLI, which can outlast the telemetry budget.
+      // A single configured agent is the default agent, so the command adds nothing.
+      roster =
+        configured?.length === 1
+          ? [{ id: configured[0] }]
+          : await read(["openclaw", "agents", "list", "--json"])
+              .then(parseRuntimeRoster)
+              .catch(() => {
+                rosterFailed = true;
+                // Configured agents keep their models; only the default agent stays unknown.
+                return configured?.length ? configured.map((id) => ({ id })) : undefined;
+              });
+    }
     const runtime: Omit<TelemetryAgent, "models" | "modelsStatus"> = {
       agentHarnessId: row.agentHarnessId,
       agentHarnessStatus: row.agentHarnessStatus,
@@ -370,14 +388,13 @@ async function collectRuntime(
     const managedRoutedBaseUrl = readManagedRoutedBaseUrl(entry);
     Object.assign(
       row,
-      projectRuntimeAgents(
-        runtime,
-        raw.status === "fulfilled" ? raw.value : null,
-        roster.status === "fulfilled" ? roster.value : undefined,
-        { ...entry, metadataErrors: options.metadataErrors, managedRoutedBaseUrl },
-      ),
+      projectRuntimeAgents(runtime, raw ? raw.value : null, roster, {
+        ...entry,
+        metadataErrors: options.metadataErrors,
+        managedRoutedBaseUrl,
+      }),
     );
-    if (raw.status === "rejected" || roster.status === "rejected") row.status = "collection_error";
+    if (!raw || rosterFailed) row.status = "collection_error";
   } catch {
     row.agentsStatus = row.defaultAgentModel.status = "collection_error";
     row.status = "collection_error";
