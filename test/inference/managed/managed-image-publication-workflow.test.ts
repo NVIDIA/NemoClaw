@@ -1218,7 +1218,11 @@ ${required(qualification.run, "missing qualification command")}`,
     expect(publisher.steps?.map((candidate) => candidate.name)).not.toContain(
       "Export validated managed image candidate output",
     );
-    expect(promoter.needs).toEqual(["publication-identity", "build-and-validate"]);
+    expect(promoter.needs).toEqual([
+      "publication-identity",
+      "build-and-validate",
+      "security-scan-managed-images",
+    ]);
     expect(restoreCandidates).toMatchObject({
       uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
       with: {
