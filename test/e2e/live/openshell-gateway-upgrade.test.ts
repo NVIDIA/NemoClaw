@@ -28,13 +28,16 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
 import { registerOpenShellHostMockFirewall } from "../fixtures/host-mock-firewall.ts";
+import { prepareGatewayUpgradeExecutableDirectory } from "../fixtures/gateway-upgrade-executable-directory.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -575,6 +578,8 @@ async function installCurrentNemoclawUpgrade(
   host: HostCliClient,
   artifacts: ArtifactSink,
   fakeBaseUrl: string,
+  sandbox: SandboxClient,
+  runtime: RuntimeProviderPrerequisite,
 ): Promise<void> {
   const currentRef = currentNemoclawUpgradeRef(process.env);
   const currentBaseEnv = liveEnv({
@@ -610,6 +615,18 @@ async function installCurrentNemoclawUpgrade(
       ...(VERIFY_SYSTEMD_UPGRADE ? { home: `${os.homedir()}//` } : {}),
       onFailure: async () => {
         await Promise.allSettled([
+          ...LEGACY_SANDBOXES.map((sandboxName) =>
+            captureOpenClawOnboardFailure({ exitCode: 1 }, sandbox, {
+              sandboxName,
+              artifactPrefix: `current-install-${sandboxName}`,
+              // Three complete Doctor passes can exceed the default 16 KiB log bound.
+              logLimitBytes: 131_072,
+              env: currentEnv,
+              redactionValues,
+              runtime,
+              host,
+            }),
+          ),
           bash(host, `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} doctor`, {
             artifactName: "current-install-failure-doctor",
             env: currentEnv,
@@ -716,7 +733,7 @@ runOpenShellGatewayUpgrade(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, progress, sandbox, runtimeProvider }) => {
     await artifacts.writeJson("live-upgrade-target.json", {
       id: "openshell-gateway-upgrade",
       runner: "vitest",
@@ -772,6 +789,7 @@ runOpenShellGatewayUpgrade(
     // Vitest retries execute in the same runner process. Tear down any failed
     // legacy gateway before each attempt so partial containerd layers from a
     // transient image-import failure cannot consume the next attempt's disk.
+    await prepareGatewayUpgradeExecutableDirectory(host, liveEnv());
     await prepareGatewayUpgradeUserManager(host, liveEnv(), VERIFY_SYSTEMD_UPGRADE);
     await preCleanUpgradeGateway(host, "pre-cleanup-gateway");
     prepareGatewayUpgradeInstallPaths(os.homedir());
@@ -827,7 +845,7 @@ runOpenShellGatewayUpgrade(
     );
 
     progress.phase("upgrade to the current OpenShell gateway");
-    await installCurrentNemoclawUpgrade(host, artifacts, fake.baseUrl);
+    await installCurrentNemoclawUpgrade(host, artifacts, fake.baseUrl, sandbox, runtimeProvider);
     const upgradedService = await captureGatewayUpgradeService(
       host,
       "upgraded",

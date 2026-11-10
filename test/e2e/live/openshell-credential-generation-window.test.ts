@@ -8,6 +8,7 @@ import {
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -967,6 +968,12 @@ test(
       },
       redactionValues: [COMPATIBLE_KEY, ...allSecrets],
       timeoutMs: 25 * 60_000,
+    });
+    await captureSandboxFailureDiagnostics(host, rebuild, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "credential-window-rebuild-failure",
+      redactionValues: [COMPATIBLE_KEY, ...allSecrets],
+      captureGatewayLog: true,
     });
     expectExitZero(rebuild, "rebuild credential-window sandbox without MCP host secret");
     const rebuiltRevision = await observeFreshRevision(

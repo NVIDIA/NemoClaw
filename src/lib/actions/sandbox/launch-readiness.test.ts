@@ -9,8 +9,13 @@ import { readStoredManagedStartupProfileMetadata } from "../../onboard/managed-s
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
-import { entry, servingProfile } from "../../../../test/helpers/native-launch-readiness.ts";
+import {
+  entry,
+  servingProfile,
+  launchReadinessPolicy as POLICY_A,
+} from "../../../../test/helpers/native-launch-readiness.ts";
 import { loadAgent } from "../../agent/defs";
+import { OpenClawPairingQualificationError } from "./launch-readiness/openclaw-pairing-qualification";
 import type {
   LaunchReadinessFence,
   LaunchReadinessIdentity,
@@ -38,17 +43,6 @@ const GATEWAY_PORT = 8080;
 const EPOCH = "a".repeat(64);
 const FINGERPRINT = "b".repeat(64);
 const DIGEST = "c".repeat(64);
-
-const POLICY_A = `version: 1
-network_policies:
-  public_api:
-    name: Public API
-    endpoints:
-      - host: example.com
-        port: 443
-    binaries:
-      - path: /usr/bin/curl
-`;
 
 const POLICY_B = POLICY_A.replace("example.com", "api.example.com");
 
@@ -1364,6 +1358,27 @@ describe("launch readiness validation", () => {
     ).resolves.toEqual({ kind: "validation-failed", category: "config" });
     expect(publishLease).not.toHaveBeenCalled();
   });
+
+  it.each(["state-read", "state-changed", "timeout"] as const)(
+    "retains the pairing observation reason %s without publishing a lease",
+    async (failureReason) => {
+      const currentDeps = deps();
+      const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      const publication = publicationFromDecision(SANDBOX, first);
+      currentDeps.observeOpenClawPairingQualification = () => {
+        throw new OpenClawPairingQualificationError(failureReason);
+      };
+      expect(await publishLaunchReadiness(publication, currentDeps)).toEqual({
+        kind: "evidence-failed",
+        diagnostic: {
+          stage: "publication-validation",
+          reason: "pairing-observation-failed",
+          pairingFailureReason: failureReason,
+        },
+      });
+      expect(publishedIdentity).toBeNull();
+    },
+  );
 
   it.each(["paired.clientMode", "secret-token"])(
     "reports incompatible pairing with only allowlisted field %s (#13668)",

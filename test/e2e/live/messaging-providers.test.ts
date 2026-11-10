@@ -1137,7 +1137,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     check(
       installedWechatProof.proof === "openclaw-weixin-runtime-send" &&
         installedWechatProof.accountId === state.wechatAccount &&
-        installedWechatProof.pluginVersion === "2.4.9",
+        installedWechatProof.pluginVersion === "2.4.10",
       "M-W11: installed WeChat runtime loaded the configured post-rebuild account",
     );
     const wechatRuntimeCapture = lastJsonLine(

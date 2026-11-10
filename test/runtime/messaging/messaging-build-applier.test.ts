@@ -13,6 +13,8 @@ import {
   describeMessagingBuildPhase,
   type MessagingBuildPhase,
   readMessagingBuildPlanFromEnv,
+  reviewedOpenClawPluginIntegrityByPackageSpec,
+  reviewedOpenClawPluginTarballUrlByPackageSpec,
 } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts";
 import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
@@ -43,6 +45,20 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+it.each(["discord", "googlechat", "msteams", "whatsapp"])(
+  "resolves the reviewed %s archive for an installed OpenClaw 2026.9.2 sandbox",
+  (channel) => {
+    const env = { OPENCLAW_VERSION: "2026.9.2" };
+    const spec = `@openclaw/${channel}@2026.9.2`;
+    expect(reviewedOpenClawPluginIntegrityByPackageSpec(env)[spec]).toMatch(
+      /^sha512-[A-Za-z0-9+/]+=*$/u,
+    );
+    expect(reviewedOpenClawPluginTarballUrlByPackageSpec(env)[spec]).toBe(
+      `https://registry.npmjs.org/@openclaw/${channel}/-/${channel}-2026.9.2.tgz`,
+    );
+  },
+);
+
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
   "../../..",
@@ -68,7 +84,7 @@ const OPENCLAW_WHATSAPP_2026_9_1_INTEGRITY =
 const OPENCLAW_MSTEAMS_2026_9_1_INTEGRITY =
   "sha512-seRGr9/X6Vk9xU5elLVpDwq8R+TO0QFvUmxPEitqkngqDnMoXW0LEEXkriG6jgue74w2YLcNnAv/Rjf0a9jong==";
 const TENCENT_WEIXIN_2_4_9_INTEGRITY =
-  "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==";
+  "sha512-qCN7rFtBK5BO/i5YGEJLdpC/8WQrm0dtPlQ0xNxku4RSyzGaRsiBoLVheU5hgpoOIBvfc5pUwKTktMbROLcIVg==";
 const TEST_PATH = process.env.PATH || "/usr/bin:/bin";
 
 function fakeOpenClawPluginNpmPackScriptLines(): string[] {
@@ -76,7 +92,7 @@ function fakeOpenClawPluginNpmPackScriptLines(): string[] {
     'if [ "${1:-}" = "view" ] && [ "${3:-}" = "dist.tarball" ]; then',
     '  case "${2:-}" in',
     '    "@openclaw/discord@2026.9.1") printf "%s\\n" "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.1.tgz"; exit 0 ;;',
-    '    "@tencent-weixin/openclaw-weixin@2.4.9") printf "%s\\n" "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz"; exit 0 ;;',
+    '    "@tencent-weixin/openclaw-weixin@2.4.10") printf "%s\\n" "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.10.tgz"; exit 0 ;;',
     '    "@openclaw/slack@2026.9.1") printf "%s\\n" "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.1.tgz"; exit 0 ;;',
     '    "@openclaw/whatsapp@2026.9.1") printf "%s\\n" "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.9.1.tgz"; exit 0 ;;',
     '    "@openclaw/msteams@2026.9.1") printf "%s\\n" "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.1.tgz"; exit 0 ;;',
@@ -87,7 +103,7 @@ function fakeOpenClawPluginNpmPackScriptLines(): string[] {
     '  pack_dir="${4:-}";',
     '  case "${2:-}" in',
     `    "@openclaw/discord@2026.9.1") pack_file="discord-2026.9.1.tgz"; pack_integrity="\${OPENCLAW_DISCORD_INTEGRITY:-\${OPENCLAW_DISCORD_2026_9_1_INTEGRITY:-}}" ;;`,
-    `    "@tencent-weixin/openclaw-weixin@2.4.9") pack_file="openclaw-weixin-2.4.9.tgz"; pack_integrity="\${TENCENT_WEIXIN_2_4_9_INTEGRITY:-}" ;;`,
+    `    "@tencent-weixin/openclaw-weixin@2.4.10") pack_file="openclaw-weixin-2.4.10.tgz"; pack_integrity="\${TENCENT_WEIXIN_2_4_9_INTEGRITY:-}" ;;`,
     `    "@openclaw/slack@2026.9.1") pack_file="slack-2026.9.1.tgz"; pack_integrity="\${OPENCLAW_SLACK_INTEGRITY:-\${OPENCLAW_SLACK_2026_9_1_INTEGRITY:-}}" ;;`,
     `    "@openclaw/whatsapp@2026.9.1") pack_file="whatsapp-2026.9.1.tgz"; pack_integrity="\${OPENCLAW_WHATSAPP_2026_9_1_INTEGRITY:-}" ;;`,
     `    "@openclaw/msteams@2026.9.1") pack_file="msteams-2026.9.1.tgz"; pack_integrity="\${OPENCLAW_MSTEAMS_2026_9_1_INTEGRITY:-}" ;;`,
@@ -237,7 +253,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
 
       expect(payload.installSpecs).toEqual([
         "npm:@openclaw/discord@2026.5.22",
-        "npm:@tencent-weixin/openclaw-weixin@2.4.9",
+        "npm:@tencent-weixin/openclaw-weixin@2.4.10",
         "npm:@openclaw/slack@2026.5.22",
         "npm:@openclaw/whatsapp@2026.5.22",
         "npm:@openclaw/msteams@2026.5.22",
@@ -284,7 +300,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       NEMOCLAW_WECHAT_CONFIG_B64: wechatConfigB64(),
     });
 
-    expect(payload.installSpecs).toEqual(["npm:@tencent-weixin/openclaw-weixin@2.4.9"]);
+    expect(payload.installSpecs).toEqual(["npm:@tencent-weixin/openclaw-weixin@2.4.10"]);
     expect(payload.doctorEnv).toEqual({
       WECHAT_BOT_TOKEN: "openshell:resolve:env:WECHAT_BOT_TOKEN",
     });
@@ -882,9 +898,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
       "discord-2026.9.1.tgz",
     ],
     [
-      "@tencent-weixin/openclaw-weixin@2.4.9",
-      "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
-      "openclaw-weixin-2.4.9.tgz",
+      "@tencent-weixin/openclaw-weixin@2.4.10",
+      "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.10.tgz",
+      "openclaw-weixin-2.4.10.tgz",
     ],
     [
       "@openclaw/slack@2026.9.1",
@@ -929,7 +945,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           'if [ "${1:-}" != "view" ] || [ "${3:-}" != "dist.integrity" ]; then exit 1; fi',
           'case "${2:-}" in',
           `  "@openclaw/discord@2026.9.1") printf "%s\\n" "${OPENCLAW_DISCORD_2026_9_1_INTEGRITY}"; exit 0 ;;`,
-          `  "@tencent-weixin/openclaw-weixin@2.4.9") printf "%s\\n" "${TENCENT_WEIXIN_2_4_9_INTEGRITY}"; exit 0 ;;`,
+          `  "@tencent-weixin/openclaw-weixin@2.4.10") printf "%s\\n" "${TENCENT_WEIXIN_2_4_9_INTEGRITY}"; exit 0 ;;`,
           `  "@openclaw/slack@2026.9.1") printf "%s\\n" "${OPENCLAW_SLACK_2026_9_1_INTEGRITY}"; exit 0 ;;`,
           `  "@openclaw/whatsapp@2026.9.1") printf "%s\\n" "${OPENCLAW_WHATSAPP_2026_9_1_INTEGRITY}"; exit 0 ;;`,
           `  "@openclaw/msteams@2026.9.1") printf "%s\\n" "${OPENCLAW_MSTEAMS_2026_9_1_INTEGRITY}"; exit 0 ;;`,
