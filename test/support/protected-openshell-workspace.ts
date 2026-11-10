@@ -186,8 +186,17 @@ export function approvedFixture() {
   git(input.candidateRoot, "add", ".");
   git(input.candidateRoot, "commit", "--quiet", "-m", "approved fixture");
   input.candidateSha = git(input.candidateRoot, "rev-parse", "HEAD");
-  approval.approvals[0]!.body = `NemoClaw-Upgrade-E2E: approve ${input.candidateSha} ${identity.baseSha}`;
+  approval.approvals[0]!.commit_id = input.candidateSha;
   const request = vi.fn(async (path: string) => {
+    const comparison = /\/compare\/([a-f0-9]{40})\.\.\.([a-f0-9]{40})\?per_page=1$/u.exec(path);
+    if (comparison)
+      return {
+        status: "ahead",
+        base_commit: { sha: comparison[1] },
+        merge_base_commit: { sha: comparison[1] },
+        files:
+          comparison[1] === identity.baseSha ? [] : [{ filename: CANDIDATE_OPENSHELL_TRUST_PATH }],
+      };
     const result = await approval.request(path);
     if (path === "/repos/NVIDIA/NemoClaw/pulls/123") {
       const pr = result as { head: { sha: string } };
@@ -258,7 +267,7 @@ export function admittedSdkFixture() {
   ])
     sdk.sources[path] = fs.readFileSync(join(input.candidateRoot, path), "utf8");
   sdk.pr.head.sha = input.candidateSha;
-  sdk.records[0]!.body = `NemoClaw-Upgrade-E2E: approve ${input.candidateSha} ${sdk.pr.base.sha}`;
+  sdk.records[0]!.commit_id = input.candidateSha;
   const request = vi.fn(async (route: string) =>
     sdk.request(route.replaceAll(input.candidateSha, "a".repeat(40))),
   );

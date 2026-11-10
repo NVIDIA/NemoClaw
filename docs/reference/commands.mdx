@@ -116,7 +116,7 @@ The hosted installer accepts options after `bash -s --`. These options control i
 ### `--defer-onboarding`
 
 Use this option only with `NEMOCLAW_AGENT=hermes` or `NEMOCLAW_AGENT=langchain-deepagents-code`.
-Leave `NEMOCLAW_PROVIDER` unset, or select the `build`, `cloud`, or `routed` NVIDIA hosted provider.
+Leave `NEMOCLAW_PROVIDER` unset, or select the `build` or `cloud` NVIDIA hosted provider.
 Do not combine this option with a local model profile.
 
 If NVIDIA inference credentials are absent and no sandbox is registered, the installer installs NemoClaw and skips onboarding.
@@ -128,7 +128,7 @@ After the runtime process supplies one of these credentials, run the onboarding 
 
 - Non-empty `NVIDIA_INFERENCE_API_KEY`
 - Non-empty `NVIDIA_API_KEY`
-- `NEMOCLAW_PROVIDER_KEY` containing a credential value, rather than a provider selector such as `build` or `routed`
+- `NEMOCLAW_PROVIDER_KEY` containing a credential value, rather than a provider selector such as `build` or `openrouter`
 
 Credential presence selects normal onboarding; that path still validates the value.
 
@@ -559,6 +559,10 @@ In this mode, human progress remains available on stderr so stdout stays valid J
 This surface observes the canonical onboarding session and does not accept input, cancel onboarding, or create another state machine. It does not provide event history, reconnect, or replay; use the existing `--resume` behavior after an interrupted onboarding process. Closing the output pipe or applying sustained backpressure disables observation without cancelling, rolling back, or otherwise changing onboarding. Without `--events=jsonl`, terminal output and behavior are unchanged.
 
 #### `--resume` and `--fresh`
+
+Model Router has been removed because `llm-router` is deprecated.
+Onboarding rejects `routed`, `nvidia-router`, and saved Model Router sessions before changing provider or sandbox state.
+Refer to [Retired Model Router](../inference/hosted-inference/set-up-model-router) for supported provider selection and explicit legacy cleanup.
 
 NemoClaw records onboarding progress so interrupted runs can continue. Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, custom Dockerfile path, read-only host-mount declarations, and any explicitly selected serving-profile provenance recorded by the original run. For a profile-backed session, resume requires the same catalog, preset, and recipe digests and exits before effects if the installed definition changed. Omit `--profile` to reuse that recorded selection, or pass the same profile explicitly; use `--fresh` to adopt a changed catalog definition. Sessions without a serving-profile provenance record can resume when their checkpoint uses schema 4, but they cannot acquire a new `--profile` selection during resume.
 
@@ -2385,7 +2389,7 @@ Unfinished retirement retains the pending record.
 Resolve the reported cause, then rerun the same `destroy` command to finish cleanup.
 A completed retirement or a decision to keep the container for a consumer, preservation option, or distributed owner clears the record.
 
-For Model Router sandboxes, `destroy` keeps the process and recovery identity when another sandbox uses the port or when session, process, or absence checks are inconclusive. It also preserves a replacement onboarding session when the captured session identity changed. If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity. For lock order, same-port peer handling, and cleanup checks, refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
+For retained Model Router sandboxes, `destroy` keeps the process and recovery identity when another sandbox uses the port or when session, process, or absence checks are inconclusive. It also preserves a replacement onboarding session when the captured session identity changed. If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity. For lock order, same-port peer handling, and cleanup checks, refer to [Retired Model Router Cleanup](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
 
 If `destroy` warns that it could not identify or stop a listener for the deleted sandbox:
 
@@ -4003,7 +4007,7 @@ For an older Hermes sandbox with an OpenClaw `POLICY.md` file, follow [Explain N
 
 <AgentOnly variant="openclaw,hermes">
 
-Canonical supported provider IDs are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `llama-cpp-local`, `ollama-local`, and `vllm-local`.
+Canonical supported provider IDs are `nvidia-prod`, `nvidia-nim`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `llama-cpp-local`, `ollama-local`, and `vllm-local`.
 The installer alias `llama-cpp` is accepted and normalized to `llama-cpp-local`.
 Recognized underscore spellings of canonical provider IDs and hyphenated installer aliases are also accepted.
 For example, `ollama_local` normalizes to `ollama-local`, `nvidia_prod` normalizes to `nvidia-prod`, and `open_router` normalizes to `openrouter-api`.
@@ -4666,7 +4670,7 @@ The following variables let you tune onboarding without editing the Dockerfile o
 | Variable | Format | Effect |
 | --- | --- | --- |
 | `NEMOCLAW_DEFER_ONBOARDING` | `1` to enable | Hosted installer only. Selects the same behavior as `--defer-onboarding` for Hermes or LangChain Deep Agents Code with NVIDIA hosted inference. When none of the accepted credentials (`NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, or a credential value in `NEMOCLAW_PROVIDER_KEY`) is present and no sandbox is registered, the installer installs NemoClaw without creating a provider, sandbox, or completed onboarding state. |
-| `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, `install-vllm` supplies Deferred preview intent, while another provider supplies standard-onboarding intent and retains its existing requirements. Local NVIDIA NIM remains unavailable on N1x. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the compatible experimental managed path on DGX Spark, generic NVIDIA GPU, or Windows WSL N1x or Station GB300 hosts and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for an explicit declarative selection. A qualifying Windows WSL N1x or Station GB300 host automatically selects this provider and its Qwen 3.6 recipe when no provider is requested or recorded. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
+| `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, `install-vllm` supplies Deferred preview intent, while another provider supplies standard-onboarding intent and retains its existing requirements. Local NVIDIA NIM remains unavailable on N1x. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the compatible experimental managed path on DGX Spark, generic NVIDIA GPU, or Windows WSL N1x or Station GB300 hosts and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for an explicit declarative selection. A qualifying Windows WSL N1x or Station GB300 host automatically selects this provider and its Qwen 3.6 recipe when no provider is requested or recorded. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. For NVIDIA Endpoints, NemoClaw ignores a retired configured model and uses the agent default. Otherwise, NemoClaw preserves the explicit model across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or direct exposure. A new sandbox with no recorded mode defaults to `progressive`. A fresh managed OpenClaw sandbox using local Ollama or vLLM defaults to `direct`, except the accepted Deferred N1x managed-vLLM preview for `nvidia/Qwen3.6-35B-A3B-NVFP4`, which defaults to `progressive`. Existing recorded state takes precedence. `--tool-disclosure` takes precedence over this variable. |
@@ -4746,15 +4750,6 @@ override also controls the early and immediate pre-launch GPU-memory checks. |
   for new pristine workspaces. Existing files are not deleted; refer to [Understand Runtime
   Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes). |
 </AgentOnly>
-| `NEMOCLAW_MODEL_ROUTER_PYTHON` | absolute path | Pins the host Python interpreter used to create
-the Model Router virtual environment. Strict. NemoClaw probes only that interpreter and aborts with
-the failure reason if it does not qualify, rather than silently falling back to another python.
-Relative command names such as `python3.12` are rejected. When unset, NemoClaw probes `python3.13`,
-`python3.12`, `python3.11`, `python3.10`, and bare `python3`, retains every interpreter whose
-version is in `[3.10, 3.14)` and whose `ensurepip`, `pyexpat`, `ssl`, and `venv` stdlib modules
-import cleanly, and tries `python -m venv` on each in priority order until one succeeds. Set the pin
-when the auto-discovered interpreter is broken (for example, Homebrew `python@3.14` with a `pyexpat`
-dlopen mismatch on macOS). |
 
 <AgentOnly variant="openclaw">
 

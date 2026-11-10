@@ -209,7 +209,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("nemoclaw-blueprint", "private-networks.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "provider-profiles", "okta-runtime-v1.yaml"));
-    writeFixture(path.join("nemoclaw-blueprint", "router", "pool-config.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "scripts", "http-proxy-fix.js"));
     writeFixture(
       path.join(
@@ -358,6 +357,7 @@ describe("sandbox build context staging", () => {
       "index.js",
     );
 
+    expect(fs.existsSync(path.join(stagedBlueprint, "router"))).toBe(false);
     const stagedManifestDirMode = fs.statSync(stagedManifestDir).mode & 0o777;
     expect(stagedManifestDirMode & 0o555).toBe(0o555);
     expect(stagedManifestDirMode & 0o002).toBe(0);
@@ -366,7 +366,6 @@ describe("sandbox build context staging", () => {
     for (const relativePath of [
       "private-networks.yaml",
       path.join("provider-profiles", "okta-runtime-v1.yaml"),
-      path.join("router", "pool-config.yaml"),
     ]) {
       const stagedPath = path.join(stagedBlueprint, relativePath);
       expect(fs.readFileSync(stagedPath, "utf8"), relativePath).toBe("fixture\n");

@@ -663,6 +663,8 @@ const REASONING_EFFORT_PROVIDER = "compatible-endpoint";
 function buildReasoningEffortParams(env: Env): JsonObject {
   const raw = (env.NEMOCLAW_REASONING_EFFORT || "").trim().toLowerCase();
   const upstreamProvider = (env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim();
+  if (["routed", "nvidia-router"].includes(upstreamProvider.toLowerCase().replaceAll("_", "-")))
+    throw new Error("Model Router has been removed; choose a supported inference provider.");
   if (!raw || raw === REASONING_EFFORT_DEFAULT) return {};
   if (upstreamProvider !== REASONING_EFFORT_PROVIDER) return {};
   if (!REASONING_EFFORT_VALUES.includes(raw)) {
@@ -866,6 +868,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
     maxSearchLimit: 20,
   };
   const upstreamProvider = (env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim();
+  if (["routed", "nvidia-router"].includes(upstreamProvider.toLowerCase().replaceAll("_", "-")))
+    throw new Error("Model Router has been removed; choose a supported inference provider.");
   const openclawTools: JsonObject = {
     ...openclawToolOverrides,
     alsoAllow: ["bundle-mcp"],
@@ -975,9 +979,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     });
   }
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, inferenceBaseUrl);
-  const nativeLocal = ["ollama-local", "vllm-local", "llama-cpp-local", "nvidia-router"].includes(
-    upstreamProvider,
-  )
+  const nativeLocal = ["ollama-local", "vllm-local", "llama-cpp-local"].includes(upstreamProvider)
     ? nativeLocalCredentialReference(upstreamProvider, inferenceBaseUrl, "openclaw")
     : null;
   const providers = {

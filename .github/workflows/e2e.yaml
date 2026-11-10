@@ -147,6 +147,7 @@ jobs:
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/lib/reviewed-npm-cache.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
             scripts/lib/npm-diagnostics.sh
             scripts/lib/openclaw-npm-remediation.mts
@@ -888,6 +889,7 @@ jobs:
             scripts/checks/prepare-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
