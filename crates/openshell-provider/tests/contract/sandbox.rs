@@ -8,8 +8,8 @@ use serde_json::json;
 /// Unchanged settings read back by a new provider process plan no change,
 /// numbers and an omitted authorization mode included. A driver
 /// configuration changed behind OpenTofu is drift that replaces the sandbox;
-/// a service endpoint changed behind it is drift that an in-place update
-/// restores.
+/// a declared service endpoint changed or deleted behind it is drift that an
+/// in-place update restores.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn sandbox_settings_read_back_and_drift_is_restored() {
@@ -85,15 +85,25 @@ async fn sandbox_settings_read_back_and_drift_is_restored() {
         service.target_port = 1234;
     }
     // The update's URLs are unknown until it applies.
-    let updated = (json!("openshell_sandbox.agent"), json!(["update"]));
-    assert_eq!(actions(), vec![updated, caller]);
+    let updated = vec![
+        (json!("openshell_sandbox.agent"), json!(["update"])),
+        caller,
+    ];
+    assert_eq!(actions(), updated);
     let created = fixture.state.lock().unwrap().created_sandboxes.len();
-    run(&["apply", "-auto-approve"]);
-    assert_eq!(
-        fixture.state.lock().unwrap().created_sandboxes.len(),
-        created,
-        "the update replaced the sandbox"
-    );
-    assert_eq!(ports(), declared, "the update left the drift");
-    assert_eq!(actions(), vec![]);
+    let restored = |drift: &str| {
+        run(&["apply", "-auto-approve"]);
+        assert_eq!(
+            fixture.state.lock().unwrap().created_sandboxes.len(),
+            created,
+            "restoring {drift} replaced the sandbox"
+        );
+        assert_eq!(ports(), declared, "the update left {drift}");
+        assert_eq!(actions(), vec![], "{drift}");
+    };
+    restored("a changed endpoint");
+    // A declared endpoint deleted behind OpenTofu is restored the same way.
+    fixture.state.lock().unwrap().services.pop_first();
+    assert_eq!(actions(), updated);
+    restored("a deleted endpoint");
 }
