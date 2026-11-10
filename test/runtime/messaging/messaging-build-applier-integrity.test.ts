@@ -814,21 +814,23 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       [...copies].forEach(([, sources, destination]) => {
         const args = sources!.trim().split(/\s+/u);
         expect(
-          args.some((arg) => arg.startsWith("--")),
+          args.some((arg) => arg.startsWith("--") && !/^--chmod=0?[0-7]{3,4}$/u.test(arg)),
           "Unsupported COPY option",
         ).toBe(false);
-        args.forEach((source) => {
-          const sourcePath = path.join(REPO_ROOT, source);
-          const target = path.join(
-            root,
-            destination!,
-            destination!.endsWith("/") && fs.statSync(sourcePath).isFile()
-              ? path.basename(source)
-              : "",
-          );
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.cpSync(sourcePath, target, { recursive: true });
-        });
+        args
+          .filter((arg) => !arg.startsWith("--"))
+          .forEach((source) => {
+            const sourcePath = path.join(REPO_ROOT, source);
+            const target = path.join(
+              root,
+              destination!,
+              destination!.endsWith("/") && fs.statSync(sourcePath).isFile()
+                ? path.basename(source)
+                : "",
+            );
+            fs.mkdirSync(path.dirname(target), { recursive: true });
+            fs.cpSync(sourcePath, target, { recursive: true });
+          });
       });
       const result = spawnSync(
         process.execPath,
@@ -1278,8 +1280,8 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       "@openclaw/slack@2026.9.1": OPENCLAW_SLACK_2026_9_1_TARBALL,
       "@openclaw/whatsapp@2026.9.1":
         "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.9.1.tgz",
-      "@tencent-weixin/openclaw-weixin@2.4.9":
-        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
+      "@tencent-weixin/openclaw-weixin@2.4.10":
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.10.tgz",
     });
   });
 

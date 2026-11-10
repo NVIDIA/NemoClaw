@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -84,24 +85,64 @@ export function runRealOpenClawMcpStartRetryProof(options: ProofOptions): void {
   });
   requireSuccess(syntax, "validate patched bundle-mcp runtime syntax");
 
-  // This behavioral proof imports the reviewed bundle-mcp runtime, so install
-  // its shrinkwrapped production dependencies in the throwaway extraction.
-  // Lifecycle scripts stay disabled, matching the reviewed Docker boundary.
-  const packageDir = path.dirname(options.dist);
-  const install = spawnSync(
-    "npm",
-    ["install", "--ignore-scripts", "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund"],
-    { cwd: packageDir, encoding: "utf8", timeout: options.timeoutMs },
-  );
-  requireSuccess(install, "install reviewed OpenClaw runtime dependencies without scripts");
+  // The caller owns the installed runtime graph; do not re-resolve dependencies.
+  runMcpStartRetryScenarios(options);
+}
 
-  const proofFile = path.join(options.dist, ".nemoclaw-mcp-start-retry-proof.mjs");
-  fs.writeFileSync(proofFile, MCP_START_RETRY_PROOF_SCRIPT);
-  const proof = spawnSync(options.nodeExecutable, [proofFile], {
-    cwd: packageDir,
-    encoding: "utf8",
-    timeout: options.timeoutMs,
-  });
+/** Execute and assert the native scenarios against an already installed scratch graph. */
+export function runMcpStartRetryScenarios(
+  options: Pick<ProofOptions, "dist" | "nodeExecutable" | "timeoutMs"> & {
+    archivedWorkerDirectory?: string;
+    graph?: "embedded" | "split";
+  },
+): void {
+  const packageDir = path.dirname(options.dist);
+  const proofFile = path.join(options.dist, `.nemoclaw-mcp-start-retry-proof-${randomUUID()}.mjs`);
+  const archive = options.archivedWorkerDirectory;
+  const graph = options.graph ?? "embedded";
+  const proofModule =
+    archive && graph === "embedded"
+      ? path.join(archive, `.nemoclaw-mcp-archive-proof-${randomUUID()}.mjs`)
+      : undefined;
+  if (proofModule) {
+    const source = fs.readFileSync(path.join(archive!, "sqlite-store.worker.mjs"), "utf8");
+    if (
+      !source.includes("init_agent_bundle_mcp_runtime=__esmMin(") ||
+      !source.includes("init_agent_bundle_mcp_materialize=__esmMin(")
+    ) {
+      throw new Error("Unreviewed embedded MCP runtime initialization");
+    }
+    // Export the native runtime and materializer intact; only their visibility changes.
+    fs.writeFileSync(
+      proofModule,
+      source +
+        "\ninit_agent_bundle_mcp_runtime(); init_agent_bundle_mcp_materialize(); export { createSessionMcpRuntime, materializeBundleMcpToolsForRun };\n",
+    );
+  }
+  let proof;
+  try {
+    fs.writeFileSync(proofFile, MCP_START_RETRY_PROOF_SCRIPT);
+    const args = archive
+      ? [
+          "--input-type=module",
+          "-e",
+          `
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(${JSON.stringify(proofFile)}, {execArgv: [], argv: ${JSON.stringify([archive, graph, proofModule ?? ""])} });
+      worker.on("error", error => { console.error(error.stack); process.exitCode = 1; });
+      worker.on("exit", code => { if (code !== 0) process.exitCode = code; });
+    `,
+        ]
+      : [proofFile];
+    proof = spawnSync(options.nodeExecutable, args, {
+      cwd: packageDir,
+      encoding: "utf8",
+      timeout: options.timeoutMs,
+    });
+  } finally {
+    fs.rmSync(proofFile, { force: true });
+    if (proofModule) fs.rmSync(proofModule, { force: true });
+  }
   requireSuccess(proof, "run controlled MCP startup recovery proof");
 
   const marker = String(proof.stdout ?? "")
@@ -178,6 +219,24 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const distDir = path.resolve(process.argv[1], "..");
+const [archiveDirectory, graph, proofModule] = process.argv.slice(2);
+let createSessionMcpRuntime;
+let materializeBundleMcpToolsForRun;
+if (archiveDirectory) {
+  process.argv = [process.argv[0], process.argv[1], "--internal-worker-prewarm"];
+  if (graph === "split") {
+    await import(pathToFileURL(path.join(archiveDirectory, "worker.mjs")));
+    const runtime = await import(pathToFileURL(path.join(archiveDirectory, "worker-chunk-tcAUzPTe.mjs")));
+    const materializer = await import(pathToFileURL(path.join(archiveDirectory, "worker-chunk-CFlsVNv_.mjs")));
+    materializer.r();
+    createSessionMcpRuntime = runtime.createSessionMcpRuntime;
+    materializeBundleMcpToolsForRun = materializer.i;
+  } else {
+    const native = await import(pathToFileURL(proofModule));
+    createSessionMcpRuntime = native.createSessionMcpRuntime;
+    materializeBundleMcpToolsForRun = native.materializeBundleMcpToolsForRun;
+  }
+} else {
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
   const entryPath = path.join(dir, entry.name);
   return entry.isDirectory() ? walk(entryPath) : entry.isFile() && entry.name.endsWith(".js") ? [entryPath] : [];
@@ -190,8 +249,10 @@ const materializePath = fs.existsSync(siblingMaterializePath) ? siblingMateriali
 if (!materializePath) throw new Error("bundle-mcp materializer not found");
 const runtimeMod = await import(pathToFileURL(runtimePath).href);
 const materializeMod = await import(pathToFileURL(materializePath).href);
-const createSessionMcpRuntime = runtimeMod.n ?? runtimeMod.createSessionMcpRuntime;
-const materializeBundleMcpToolsForRun = materializeMod.r ?? materializeMod.materializeBundleMcpToolsForRun;
+createSessionMcpRuntime = runtimeMod.n ?? runtimeMod.createSessionMcpRuntime;
+materializeBundleMcpToolsForRun = materializeMod.r ?? materializeMod.materializeBundleMcpToolsForRun;
+
+}
 
 const TOOLS = [{ name: "search_docs", description: "Search the remote knowledge base.", inputSchema: { type: "object", properties: { query: { type: "string" } } } }];
 

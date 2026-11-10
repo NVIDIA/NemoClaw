@@ -278,6 +278,16 @@ export function requireReviewedDockerfileRunCommands(
     `${CORPORATE_CA_CURL_GUARD} ${invocation}`,
     `${CORPORATE_CA_NODE_CURL_GUARD} ${invocation}`,
   ]);
+  const finalNpmRepairs = [
+    "node /scripts/patch-bundled-npm-tar.mts",
+    "node /scripts/patch-bundled-npm-brace-expansion.mts",
+    "node /scripts/lib/patch-bundled-npm-ip-address.mts",
+    "node /scripts/lib/patch-bundled-npm-undici.mts",
+  ].map((repair) => `${repair} --npm-root /usr/local/lib/node_modules/npm`);
+  // Accept only the complete, ordered, fail-fast final-image recipe.
+  if (finalNpmRepairs.includes(invocation)) {
+    reviewedBodies.add(`${CORPORATE_CA_NODE_CURL_GUARD} ${finalNpmRepairs.join(" && ")}`);
+  }
   const matches: ReviewedDockerfileRunCommand[] = [];
   let unreviewedInstructions = 0;
 
