@@ -121,6 +121,7 @@ const DCODE_SKILL_OWNING_PATHS = [
   "src/lib/agent/skill-integration.ts",
   "src/lib/skill-install.ts",
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+  "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
 ] as const;
 const FULL_SUITE_OWNING_PATHS = [
   ".github/actions/docker-auth-setup/",

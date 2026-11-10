@@ -30,13 +30,16 @@ import {
 import {
   createHermesSwitchyardRoutingIntent,
   encodeHermesSwitchyardRoutingIntent,
+  encodeSwitchyardProviderBindings,
   HERMES_RELAY_PLUGIN_STATE_STAGING_FILE,
   HERMES_RELAY_PLUGINS_ENV,
   HERMES_RELAY_PLUGINS_FILE,
   HERMES_RELAY_PLUGINS_STAGING_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
   HERMES_SWITCHYARD_ROUTING_ENV,
 } from "../../src/lib/hermes-switchyard-routing.ts";
+import { switchyardBindingFixture } from "../helpers/hermes-switchyard.ts";
 import { testTimeout } from "../helpers/timeouts";
 import {
   withLegacyMessagingPlanEnv,
@@ -455,6 +458,10 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     const { config, envFile } = generateBaseConfig({
       [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+      [HERMES_SWITCHYARD_BINDINGS_ENV]: encodeSwitchyardProviderBindings(
+        switchyardBindingFixture(routing),
+        routing,
+      ),
     });
     const relayPluginsPath = path.join(tmpDir, ".hermes", HERMES_RELAY_PLUGINS_STAGING_FILE);
     const relayPluginStatePath = path.join(

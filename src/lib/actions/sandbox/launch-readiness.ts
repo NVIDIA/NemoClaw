@@ -839,9 +839,13 @@ async function captureLaunchIdentity(
   }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
+  if (entry.hermesSwitchyard !== undefined && inference.kind !== "configured") {
+    throw new ObservationError("config");
+  }
   const nativeProvider =
     Boolean(getNativeProviderAttachment(entry)) ||
-    entry.nativeLocalProviderAttachment !== undefined;
+    entry.nativeLocalProviderAttachment !== undefined ||
+    entry.hermesSwitchyard !== undefined;
   let liveInference: { provider: string; model: string } | null = null;
   if (!nativeProvider) {
     const inferenceGetStartedAt = performance.now();

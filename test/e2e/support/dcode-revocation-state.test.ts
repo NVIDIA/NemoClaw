@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 describe("Deep Code revocation state evidence", () => {
@@ -19,9 +20,11 @@ describe("Deep Code revocation state evidence", () => {
           "-c",
           'source "$1"; native_state_digest_source',
           "revocation-state-test",
-          path.join(
-            process.cwd(),
-            "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+          fileURLToPath(
+            new URL(
+              "../e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+              import.meta.url,
+            ),
           ),
         ],
         { encoding: "utf8" },

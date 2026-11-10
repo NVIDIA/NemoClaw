@@ -5,6 +5,8 @@ import { Buffer } from "node:buffer";
 import { PROVIDERLESS_INFERENCE_ENV } from "../../providerless-inference";
 import {
   encodeHermesSwitchyardRoutingIntent,
+  encodeSwitchyardProviderBindings,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
   HERMES_SWITCHYARD_ROUTING_ENV,
 } from "../../hermes-switchyard-routing";
 
@@ -464,6 +466,13 @@ function mapHermesProfile(
     [HERMES_SWITCHYARD_ROUTING_ENV]: profile.agentConfig.switchyardRouting
       ? encodeHermesSwitchyardRoutingIntent(profile.agentConfig.switchyardRouting)
       : "",
+    [HERMES_SWITCHYARD_BINDINGS_ENV]:
+      profile.agentConfig.switchyardRouting && profile.agentConfig.switchyardBindings
+        ? encodeSwitchyardProviderBindings(
+            profile.agentConfig.switchyardBindings,
+            profile.agentConfig.switchyardRouting,
+          )
+        : "",
   };
 
   const runtimeEnvironment: MutableEnvironment = {
@@ -473,6 +482,7 @@ function mapHermesProfile(
   };
   delete runtimeEnvironment.NEMOCLAW_MESSAGING_PLAN_B64;
   delete runtimeEnvironment[HERMES_SWITCHYARD_ROUTING_ENV];
+  delete runtimeEnvironment[HERMES_SWITCHYARD_BINDINGS_ENV];
   runtimeEnvironment.NEMOCLAW_DASHBOARD_PORT =
     profile.dashboard.publicPort === null ? "" : String(profile.dashboard.publicPort);
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD =
