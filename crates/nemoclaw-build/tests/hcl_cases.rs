@@ -39,6 +39,14 @@ fn a_managed_runtime_image_runs_on_the_gpu_runner_with_any_key_it_reads() {
 }
 
 #[test]
+fn a_station_model_runs_only_on_the_manual_arm64_station_runner() {
+    let station = "  services:\n    model:\n      kind: vllm\n      hardware:\n        profile: dgx-station\n";
+    let needed = needs(&document("docker", station)).unwrap();
+    assert_eq!(needed.runner.name(), "dgx-station");
+    assert!(!needed.nvidia_key);
+}
+
+#[test]
 fn reading_the_nvidia_key_runs_on_hosted_inference() {
     let needed = needs(&document("docker", NVIDIA_KEY)).unwrap();
     assert_eq!(needed.runner, Runner::Hosted);

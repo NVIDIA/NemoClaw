@@ -4,6 +4,8 @@
 # vLLM Runtime
 
 This artifact adds the NemoClaw runtime supervisor to the immutable multi-platform upstream vLLM image named in its Dockerfile, built for the Linux ARM64 or AMD64 host that builds it.
+The `VLLM_IMAGE` build argument can select another immutable upstream base; the manual Station reference uses this to consume an upstream build containing the Nemotron 3.5 configuration fix.
+The default base remains the one recorded in the Dockerfile.
 It does not apply model-specific patches or embed model weights.
 The selected model is downloaded into retained storage when the deployment is applied.
 

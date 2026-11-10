@@ -26,6 +26,11 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Prepare fresh inputs or verify cleanup for the manual Station HCL case.
+    Station {
+        #[command(subcommand)]
+        action: StationAction,
+    },
     /// Assess saved release SBOMs without authorizing or publishing a release.
     ReleaseAssess {
         #[command(flatten)]
@@ -174,6 +179,20 @@ enum Action {
         /// The shards CI ran, as a JSON list such as [1, 2].
         #[arg(long)]
         shards: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum StationAction {
+    Prepare {
+        #[arg(long)]
+        run: PathBuf,
+    },
+    Cleanup {
+        #[arg(long)]
+        run: PathBuf,
+        #[arg(long)]
+        bundle: PathBuf,
     },
 }
 #[derive(Clone, clap::ValueEnum)]
@@ -577,6 +596,16 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Action::Station { action } = cli.command {
+        return match action {
+            StationAction::Prepare { run } => {
+                nemoclaw_build::station::prepare(Path::new("."), &run)
+            }
+            StationAction::Cleanup { run, bundle } => {
+                nemoclaw_build::station::cleanup(&run, &bundle)
+            }
+        };
+    }
     if let Action::ReleaseCatalog {
         catalog,
         candidate_revision,
@@ -906,7 +935,8 @@ async fn main() -> Result<()> {
         Action::Schema { .. } | Action::Docs { .. } | Action::Fern { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
-        Action::Ci { .. }
+        Action::Station { .. }
+        | Action::Ci { .. }
         | Action::ReleaseGate(..)
         | Action::ReleaseVerifyPromotion { .. }
         | Action::ReleaseMonitorPlan { .. }

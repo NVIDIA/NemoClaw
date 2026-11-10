@@ -116,6 +116,7 @@ Run blocks call these modules:
 | `docker-openclaw-nvidia` | Live / HCL | OpenClaw on NVIDIA hosted inference; any reply. |
 | `docker-openclaw-v0-parity` | Live / HCL and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
 | `docker-hermes-v0-parity` | Live / HCL | The hosted parity Hermes document; `FOUR`. |
+| `dgx-station-openclaw-nemotron` | Manual Colossus workflow, GB300 ARM64 | OpenClaw on local Nemotron 3.5 Super VL; `READY`, unchanged apply, and verified runtime cleanup. |
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
 | `docker-openclaw-vllm-shared` | Live / HCL, NVIDIA GPU runner | Two OpenClaw agents sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
@@ -150,6 +151,55 @@ NVIDIA_INFERENCE_API_KEY=... \
 ```
 
 Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deployment` with the same bundle, whether or not the scenario passed.
+
+## DGX Station Reference
+
+The manually dispatched `E2E / Colossus runner connectivity` workflow offers three suites:
+`smoke` runs `nvidia-smi`; `bundle` builds and tests Linux ARM64; `station` runs the reference case for [#13937](https://github.com/NVIDIA/NemoClaw/issues/13937).
+Only canonical `v1` manual dispatches can use the leased `colossus-gb300-pilot` runner.
+The change planner places this case in `dgx-station`, separately from the existing AMD64 `gpu` cases; selecting it does not add automatic PR, push, or release execution.
+
+```sh
+gh workflow run colossus-connectivity.yml --repo NVIDIA/NemoClaw --ref v1 -f suite=station
+```
+
+The runner must already provide Ubuntu 24 on ARM64, a GB300, the pinned Rust toolchain, Docker with the containerd image store, and NVIDIA GPU access as the runner service user.
+The job checks these prerequisites; it does not install system packages, restart Docker, or manage the Colossus lease.
+Use a Station dedicated to CI with one runner agent. The existing concurrency group serializes whole Colossus runs without cancelling an active run.
+
+The case builds the candidate's bundle, E2E executable, OpenClaw image, and vLLM supervisor locally.
+The Station runtime overrides `VLLM_IMAGE` with the immutable upstream ARM64 image in the workflow, from vLLM commit `cf5cea2da37d3dfed27d2e0aa3041c3e553c2d57`, which includes [vLLM #64506](https://github.com/vllm-project/vllm/pull/64506).
+It applies no runtime source patches. Other runtime builds keep their existing default base.
+This upstream image differs from Rebecca's patched manual precursor; that precursor does not qualify this automated candidate.
+
+Each attempt creates a fresh UID, free ports and subnet, configuration, and deployment state.
+The HCL scenario applies the case, requests `READY` through OpenClaw, checks an unchanged plan and reapply with the same agent identities, and destroys the deployment.
+A separate cleanup step retries SDK destroy after a failed or interrupted scenario and independently checks Docker for owned workloads and unexpected retained objects.
+Cleanup failure fails the job. It never removes unrelated resources or uses Docker prune.
+
+The published reports contain candidate/model/image identities, inference outcome, and cleanup outcome; the job summary contains HCL operation timings.
+Raw responses, credentials, deployment state, and the original bundle remain private under:
+
+```text
+~/.local/state/nemoclaw-ci/colossus/<run-id>-<attempt>/
+```
+
+Model and gateway storage, service credentials, and images remain after destroy according to the SDK lifecycle.
+A fresh UID gets a fresh model volume: this case does not import another deployment's weights or claim a warm model-cache run. Rust and image build caches can still be reused.
+Record cold preparation separately from cached preparation if a future approved cache-import path is used; unchanged apply is not a cached model-startup measurement.
+Retained storage consumes disk space and requires explicit operator retirement after diagnosis.
+
+If the runner disappears or is forcibly stopped before cleanup, inspect its private run directory after recovery.
+From the same candidate checkout, use the preserved bundle to resume cleanup:
+
+```sh
+cargo run --locked --no-default-features -p nemoclaw-build -- station cleanup \
+  --run /absolute/path/to/retained-run \
+  --bundle /absolute/path/to/retained-run/bundle
+```
+
+A normal rerun uses a new attempt and fresh deployment; it refuses active NemoClaw workloads left on the host.
+This single text-inference case does not qualify vision, video, tools, throughput, other models, or other hardware.
 
 ## Spark and Fabric
 

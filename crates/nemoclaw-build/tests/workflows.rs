@@ -112,12 +112,15 @@ fn colossus_runs_are_manual_and_v1_only() {
     assert_eq!(events.len(), 1, "the pilot runner takes manual runs only");
     let suite = &workflow["on"]["workflow_dispatch"]["inputs"]["suite"];
     assert_eq!(suite["type"], "choice");
-    assert_eq!(suite["options"], serde_json::json!(["smoke", "bundle"]));
+    assert_eq!(
+        suite["options"],
+        serde_json::json!(["smoke", "bundle", "station"])
+    );
     assert_eq!(suite["default"], "smoke");
     let jobs = workflow["jobs"].as_object().expect("workflow jobs");
     assert_eq!(
         jobs.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["bundle", "smoke"]
+        ["bundle", "smoke", "station"]
     );
     for (name, job) in jobs {
         assert_eq!(
@@ -139,9 +142,9 @@ fn colossus_runs_are_manual_and_v1_only() {
     );
 }
 
-/// The smoke test performs no checkout, secret handling, or hardware commands.
+/// The smoke observes the GPU without checkout, credentials, or deployment.
 #[test]
-fn colossus_smoke_executes_only_true_without_credentials() {
+fn colossus_smoke_checks_the_gpu_without_credentials() {
     let workflow = colossus_workflow();
     let job = &workflow["jobs"]["smoke"];
     assert_eq!(job["runs-on"], "colossus-gb300-pilot");
@@ -157,7 +160,32 @@ fn colossus_smoke_executes_only_true_without_credentials() {
     assert!(steps[0]["uses"].is_null(), "no checkout or other actions");
     assert!(steps[0]["env"].is_null(), "no step environment variables");
     assert_eq!(steps[0]["shell"], "bash");
-    assert_eq!(steps[0]["run"], "true");
+    assert_eq!(steps[0]["run"], "nvidia-smi");
+}
+
+#[test]
+fn colossus_station_uses_arm64_and_always_checks_cleanup() {
+    let workflow = colossus_workflow();
+    let job = &workflow["jobs"]["station"];
+    assert_eq!(job["runs-on"], "colossus-gb300-pilot");
+    assert_eq!(job["env"]["TEST_PLATFORM"], "linux_arm64");
+    assert_eq!(workflow["concurrency"]["cancel-in-progress"], false);
+    let steps = job["steps"].as_array().unwrap();
+    assert!(
+        !steps
+            .iter()
+            .any(|step| step["uses"] == "./.github/actions/containerd-store"),
+        "the leased host's Docker configuration must not be mutated"
+    );
+    let cleanup = steps
+        .iter()
+        .find(|step| step["name"] == "Destroy and independently verify runtime cleanup")
+        .unwrap();
+    assert_eq!(cleanup["if"], "always()");
+    assert!(
+        cleanup["continue-on-error"].is_null(),
+        "cleanup failure fails the job"
+    );
 }
 
 /// The bundle suite runs the Linux ARM64 bundle, unit, contract, and

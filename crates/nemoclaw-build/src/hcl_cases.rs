@@ -32,6 +32,8 @@ pub enum Runner {
     Hosted,
     /// Live / HCL on the NVIDIA GPU runner.
     Gpu,
+    /// The manually dispatched GB300 ARM64 case in the Colossus workflow.
+    DgxStation,
     /// An OpenShift cluster, such as OpenShift Local, where the case runs by
     /// hand: no CI job has one.
     #[serde(rename = "openshift")]
@@ -46,15 +48,17 @@ impl Runner {
             Runner::LiveKind => "live-kind",
             Runner::Hosted => "hosted",
             Runner::Gpu => "gpu",
+            Runner::DgxStation => "dgx-station",
             Runner::OpenShift => "openshift",
         }
     }
 
-    pub const ALL: [Runner; 5] = [
+    pub const ALL: [Runner; 6] = [
         Runner::LiveDocker,
         Runner::LiveKind,
         Runner::Hosted,
         Runner::Gpu,
+        Runner::DgxStation,
         Runner::OpenShift,
     ];
 }
@@ -124,7 +128,8 @@ pub fn runtimes(root: &Path) -> Result<BTreeMap<String, BTreeSet<&'static str>>>
 /// What a case document needs from the job that runs it. A Kubernetes
 /// gateway needs the kind cluster. An OpenShift gateway needs OpenShift,
 /// which kind can't stand in for: the gateway gets its fsGroup only from
-/// OpenShift. Otherwise a managed model runtime image needs the GPU runner,
+/// OpenShift. A Station model needs the manual ARM64 runner; other managed
+/// model runtime images need the GPU runner,
 /// and reading the NVIDIA API key needs a hosted job. Every other case runs
 /// in the Docker live suite.
 pub fn needs(document: &str) -> Result<Needs> {
@@ -142,7 +147,16 @@ pub fn needs(document: &str) -> Result<Needs> {
     } else if provider == Some("openshift") {
         Runner::OpenShift
     } else if !crate::images::runtime_targets(document)?.is_empty() {
-        Runner::Gpu
+        if spec["services"]
+            .as_object()
+            .into_iter()
+            .flat_map(|services| services.values())
+            .any(|service| service["hardware"]["profile"] == "dgx-station")
+        {
+            Runner::DgxStation
+        } else {
+            Runner::Gpu
+        }
     } else if nvidia_key {
         Runner::Hosted
     } else {

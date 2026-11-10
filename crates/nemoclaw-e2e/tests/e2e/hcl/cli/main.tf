@@ -32,6 +32,12 @@ variable "empty_path" {
   default     = false
 }
 
+variable "baseline_agents" {
+  description = "Agent identities from an earlier apply, for unchanged-reapply assertions."
+  type        = any
+  default     = null
+}
+
 locals {
   arguments = {
     plan    = ["plan", "--output", "json", "--non-interactive", var.context.config]

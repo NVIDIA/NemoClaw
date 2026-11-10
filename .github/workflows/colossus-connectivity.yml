@@ -7,10 +7,10 @@ on:
     inputs:
       suite:
         description: >-
-          smoke runs `true`; bundle runs the Linux ARM64 bundle, unit, contract,
-          and integration jobs, to compare their timings with the hosted runners'.
+          smoke checks nvidia-smi; bundle runs the Linux ARM64 build and tests;
+          station runs OpenClaw with local Nemotron 3.5 text inference and cleanup.
         type: choice
-        options: [smoke, bundle]
+        options: [smoke, bundle, station]
         default: smoke
 
 permissions: {}
@@ -25,9 +25,9 @@ jobs:
     runs-on: colossus-gb300-pilot
     timeout-minutes: 2
     steps:
-      - name: Confirm job execution
+      - name: Check NVIDIA GPU access
         shell: bash
-        run: "true"
+        run: nvidia-smi
 
   # The pilot runner takes one job at a time, so these jobs run one after
   # another, where hosted runners run the test partitions in parallel. The jobs
@@ -46,3 +46,90 @@ jobs:
       lifecycle: true
       e2e: false
       save-cache: false
+
+  station:
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == 'station'
+    runs-on: colossus-gb300-pilot
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      TEST_PLATFORM: linux_arm64
+      CARGO_INCREMENTAL: "0"
+      NEMOCLAW_HCL_CASE: dgx-station-openclaw-nemotron
+      # Upstream cf5cea2 contains vLLM #64506. Pin its ARM64 image, not the
+      # moving nightly tag; existing RTX cases keep the default runtime base.
+      STATION_VLLM_BASE: vllm/vllm-openai@sha256:0d69205f3227e47b750b05789f117abbd929b67eccc46060e0d22ce4021c0318
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the prepared Station
+        timeout-minutes: 2
+        run: |
+          test "$(uname -m)" = aarch64
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "${VERSION_ID%%.*}" = 24
+          nvidia-smi
+          nvidia-smi --query-gpu=name --format=csv,noheader | grep -Fx 'NVIDIA GB300'
+          # A persistent runner must already be prepared. Do not restart Docker
+          # or use the hosted-runner containerd-store action here.
+          docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter.v1
+          for label in nemoclaw.nvidia.com/uid openshell.ai/sandbox-namespace; do
+            test -z "$(docker --host unix:///var/run/docker.sock ps -q --filter "label=$label")"
+          done
+          umask 077
+          parent="$HOME/.local/state/nemoclaw-ci/colossus"
+          mkdir -p "$parent"
+          run="$parent/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          {
+            echo "NEMOCLAW_HCL_RUN=$run"
+            echo "NEMOCLAW_HCL_DOCUMENT=$run/case.json"
+            echo "NEMOCLAW_TEST_BUNDLE=$GITHUB_WORKSPACE/dist/linux_arm64"
+          } >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: linux_arm64
+          save-cache: "false"
+      - name: Build the candidate bundle, test, and ARM64 images
+        timeout-minutes: 30
+        run: |
+          cargo ci bundle
+          executable=$(cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json |
+            jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test) | .executable' | tail -1)
+          test -x "$executable"
+          echo "NEMOCLAW_E2E_EXECUTABLE=$executable" >> "$GITHUB_ENV"
+          cargo images build --platform linux/arm64 openclaw
+          docker buildx bake vllm --set "vllm.args.VLLM_IMAGE=$STATION_VLLM_BASE" \
+            --set vllm.tags=nc-prototype-vllm:station
+          docker run --rm --gpus all --entrypoint nvidia-smi nc-prototype-vllm:station
+          target/ci-runner/debug/nemoclaw-build station prepare --run "$NEMOCLAW_HCL_RUN"
+          # Keep the original bundle for recovery after a later checkout cleans
+          # the Actions workspace. Deployment state must never outlive its CLI.
+          cp -a "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_HCL_RUN/bundle"
+          echo "NEMOCLAW_TEST_BUNDLE=$NEMOCLAW_HCL_RUN/bundle" >> "$GITHUB_ENV"
+      - name: Run inference, unchanged reconciliation, and teardown
+        timeout-minutes: 45
+        working-directory: crates/nemoclaw-e2e
+        run: '"$NEMOCLAW_E2E_EXECUTABLE" hcl_live::case --exact --ignored --nocapture'
+      - name: Destroy and independently verify runtime cleanup
+        if: always()
+        timeout-minutes: 10
+        run: |
+          [[ -n ${NEMOCLAW_HCL_RUN:-} && -f "$NEMOCLAW_HCL_RUN/case.json" ]] || exit 0
+          target/ci-runner/debug/nemoclaw-build station cleanup \
+            --run "$NEMOCLAW_HCL_RUN" --bundle "$NEMOCLAW_TEST_BUNDLE"
+      - name: Upload outcome evidence
+        if: always() && env.NEMOCLAW_HCL_RUN != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: station-reference-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.NEMOCLAW_HCL_RUN }}/reports/*.json
+          if-no-files-found: ignore
+          retention-days: 7
