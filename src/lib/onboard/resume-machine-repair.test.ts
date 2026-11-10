@@ -236,6 +236,22 @@ describe("resume machine repair", () => {
     expect(resumeMachineState(session)).toBe("agent_setup");
   });
 
+  it("resumes an OpenClaw sandbox to the openclaw state, not agent_setup", () => {
+    // `agent: "openclaw"` is the stored sentinel for the default OpenClaw flow
+    // (createSession / normalizeSession load it verbatim), and the rest of the
+    // tree treats it as null-equivalent. The branch after `sandbox` must honor
+    // that and route to the openclaw setup state rather than the custom-agent
+    // state.
+    const session = createFailedSession((current) => {
+      current.agent = "openclaw";
+      current.lastCompletedStep = "sandbox";
+      current.steps.sandbox.status = "complete";
+      current.failure = null;
+    });
+
+    expect(resumeMachineState(session)).toBe("openclaw");
+  });
+
   it("leaves nonterminal snapshots untouched", () => {
     const session = createSession({
       machine: {

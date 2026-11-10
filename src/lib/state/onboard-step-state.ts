@@ -17,7 +17,13 @@ export function nextMachineStateAfterCompletedStep(
     case "inference":
       return "sandbox";
     case "sandbox":
-      return session.agent ? "agent_setup" : "openclaw";
+      // `agent` is the stored agent-name string; "openclaw" is the sentinel for
+      // the default OpenClaw flow and is null-equivalent everywhere else in the
+      // tree (e.g. agent-resume-state normalizes it to null, and the sandbox
+      // handler treats `!agentName || agentName === "openclaw"` as the default).
+      // A bare truthiness test would route a stored "openclaw" to agent_setup
+      // and skip the OpenClaw setup state on resume.
+      return session.agent && session.agent !== "openclaw" ? "agent_setup" : "openclaw";
     case "openclaw":
     case "agent_setup":
       return "policies";
