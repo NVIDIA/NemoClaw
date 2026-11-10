@@ -134,6 +134,7 @@ jobs:
         if: always()
         timeout-minutes: 10
         run: |
+          set -euo pipefail
           umask 077
           [[ -n ${NEMOCLAW_HCL_RUN:-} ]] || exit 0
           if [[ -d $NEMOCLAW_HCL_RUN/deployment ]]; then

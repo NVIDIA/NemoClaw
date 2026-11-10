@@ -674,6 +674,7 @@ fn colossus_cleanup_fails_for_unobserved_or_remaining_owned_containers() {
         fs::set_permissions(&docker, fs::Permissions::from_mode(0o700)).unwrap();
         let output = Command::new("bash")
             .args(["-e", "-o", "pipefail", "-c", script])
+            .env_clear()
             .env(
                 "PATH",
                 format!(
