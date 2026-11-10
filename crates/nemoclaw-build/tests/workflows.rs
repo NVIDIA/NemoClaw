@@ -208,6 +208,52 @@ fn colossus_bundle_runs_linux_arm64_ci_without_writing_shared_caches() {
     assert!(setups > 0, "bundle-platform.yml sets up Rust");
 }
 
+/// Linux bundles must run on Ubuntu 22.04, the oldest supported Linux, so
+/// `CI / Bundle` builds them there and checks that none of their executables
+/// needs a newer glibc. Tests run where the default runners are: executables
+/// built against an older glibc run on newer ones.
+#[test]
+fn linux_bundles_build_on_ubuntu_22_04_and_check_its_glibc() {
+    let workflow: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/rust.yml")).unwrap(),
+    )
+    .unwrap();
+    for (platform, builder) in [
+        ("linux_arm64", "ubuntu-22.04-arm"),
+        ("linux_amd64", "ubuntu-22.04"),
+    ] {
+        let with = &workflow["jobs"][platform]["with"];
+        assert_eq!(with["build-runner"], builder, "{platform}");
+        assert_eq!(with["glibc"], "2.35", "{platform}");
+    }
+    for platform in ["darwin_arm64", "windows_amd64"] {
+        let with = &workflow["jobs"][platform]["with"];
+        assert!(with["glibc"].is_null(), "{platform} has no glibc");
+    }
+
+    let platform: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/bundle-platform.yml")).unwrap(),
+    )
+    .unwrap();
+    for job in ["build", "bundle"] {
+        assert_eq!(
+            platform["jobs"][job]["runs-on"], "${{ inputs.build-runner || inputs.runner }}",
+            "{job}"
+        );
+    }
+    let check = platform["jobs"]["bundle"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| {
+            step["run"]
+                .as_str()
+                .is_some_and(|run| run.contains("check-glibc"))
+        })
+        .expect("the bundle job checks the glibc floor");
+    assert_eq!(check["if"], "inputs.glibc != ''");
+}
+
 /// The organization allows GitHub's and NVIDIA's actions and verified
 /// creators' at any version, and other actions only at the commits it lists;
 /// any other action stops its whole workflow from starting (#13612).

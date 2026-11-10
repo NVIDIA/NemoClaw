@@ -46,7 +46,7 @@ live-docker:
   test_seconds: 180
 
 # live-kind (E2E Kubernetes (kind) tests): at most 199 s on linux_amd64 and 171 s on linux_arm64 in 11 v1
-# runs. The slowest test, the kind OpenShift HCL E2E scenario (now kind-openshift-oidc), took
+# runs. The slowest test, the kind OpenShift HCL E2E scenario (now kind-kubernetes-oidc), took
 # 133 s on linux_amd64 and 138 s on linux_arm64 with three agents (#14097);
 # about 30 s of each test's destroy waits out the sandbox pods' termination
 # grace period (#13959, NVIDIA/OpenShell#5025). Lower test_seconds when that is

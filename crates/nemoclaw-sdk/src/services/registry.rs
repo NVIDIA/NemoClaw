@@ -73,7 +73,7 @@ const KUBERNETES_FIELDS: [&str; 12] = [
     crate::kubernetes::OIDC_FIELD,
     "running",
 ];
-const KUBERNETES_AUTH_FIELDS: [&str; 14] = [
+const KUBERNETES_AUTH_FIELDS: [&str; 13] = [
     "name",
     "owner",
     "generation",
@@ -87,7 +87,6 @@ const KUBERNETES_AUTH_FIELDS: [&str; 14] = [
     crate::kubernetes::OIDC_FIELD,
     "running",
     "release_present",
-    "gateway_values",
 ];
 pub fn resource_schemas() -> Vec<ResourceSchema> {
     vec![
@@ -104,7 +103,7 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
         ResourceSchema {
             kind: crate::kubernetes::AUTH_KIND,
             fields: &KUBERNETES_AUTH_FIELDS,
-            mutable: &["running", "release_present", "gateway_values"],
+            mutable: &["running", "release_present"],
         },
         ResourceSchema {
             kind: "ollama_proxy_storage",

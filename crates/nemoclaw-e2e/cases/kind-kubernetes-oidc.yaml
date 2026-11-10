@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Two agents with the OpenShift profile on a managed gateway in a kind
-# cluster, each with its own sandbox and policy, sharing one inference route
-# to a stub model in its own namespace. The gateway accepts tokens from an
+# Two agents on a managed gateway in a kind cluster, in a namespace that
+# carries OpenShift's UID range, each with its own sandbox and policy,
+# sharing one inference route to a stub model in its own namespace. The
+# gateway uses the kubernetes profile, since kind can't run a managed
+# openshift gateway: its fsGroup comes only from OpenShift, and without one
+# it can't read its signing key. openshift-oidc deploys the same agents with
+# the openshift profile on OpenShift. The gateway accepts tokens from an
 # existing OIDC issuer in another namespace, and the agent image comes from a
 # private registry through the pull Secret the operator created. cargo ci
 # live-kind gives each run a fresh identity, which is also the token
@@ -17,7 +21,7 @@ spec:
   gateway:
     management: managed
     runtime:
-      provider: openshift
+      provider: kubernetes
     endpoint: https://127.0.0.1:17701
     kubernetes:
       kubeconfig:

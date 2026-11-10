@@ -170,7 +170,7 @@ It requests no inference from a model server and needs no GPU or credentials.
 `cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images).
 It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
 It starts a registry that requires a login on the kind network and pushes that image to it for the scenario.
-It then runs the `kind-kubernetes-development` and `kind-openshift-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
+It then runs the `kind-kubernetes-development` and `kind-kubernetes-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
 It deletes the cluster and its image tag whether or not the tests pass; set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to keep the cluster for inspection.
 [Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
 
@@ -314,6 +314,9 @@ Two tests in `nemoclaw-build`'s `workflows` module check what a workflow run wou
 
 ### Jobs of One Platform
 
+On Linux, `Unit build and test` and `Build bundle` run on Ubuntu 22.04, the oldest supported Linux, and `Build bundle` then runs `nemoclaw-build check-glibc --minimum 2.35`, which fails if any bundle executable needs a non-weak glibc symbol version newer than 2.35.
+The other jobs run on Ubuntu 24.04: executables built against an older glibc run on newer ones, but not the other way around.
+
 Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners, whose job names start with their test layer:
 
 1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables.
@@ -391,11 +394,13 @@ Each case runs where its document's needs are met, in this order:
 
 | The case document | Runs in |
 |---|---|
-| Has a `kubernetes` or `openshift` gateway runtime | `E2E Kubernetes (kind) tests` |
+| Has a `kubernetes` gateway runtime | `E2E Kubernetes (kind) tests` |
+| Has an `openshift` gateway runtime | No CI job; [by hand on OpenShift](live-tests.md#openshift-gateway) |
 | Declares a `vllm` or `ollama` service | Live / HCL on the NVIDIA GPU runner |
 | Reads `NVIDIA_INFERENCE_API_KEY` | `E2E HCL CASE`, on NVIDIA hosted inference |
 | None of these | `E2E Docker tests` |
 
+kind can't stand in for OpenShift: a managed `openshift` gateway gets its `fsGroup` only from OpenShift.
 Only the hosted and GPU jobs receive the key, and a GPU case receives it only when it reads it.
 `E2E Docker tests` binds each case to its run with code in `run_ci/live_docker.rs`, and refuses a case without it.
 `E2E Kubernetes (kind) tests` runs only HCL cases, so it is skipped when none is selected; `cargo ci live-docker` and `live-kind` take the selection as `--hcl-cases`, and without it run every case placed on them.
@@ -533,7 +538,9 @@ Profiles live in `.cargo/config.toml`, whose hash and the current month are part
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
 Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
 Within a month, manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
-The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v3` cache keeps those of its debug build tool and the target-specific release profile.
+The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v4` cache keeps those of its debug build tool and the target-specific release profile.
+On Linux, those jobs run on Ubuntu 22.04 and write the platform's caches, which the Ubuntu 24.04 live jobs restore.
+A cache written on a newer Ubuntu would carry its glibc headers' requirements into the bundle, because Cargo does not rebuild C objects when the system headers change; `native-deps-v5` and `native-bundle-v4` started fresh for that reason.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
 Only `v1` writes Rust dependency caches; PRs restore the base branch cache and skip uploads.
 This avoids spending PR time saving caches scoped to individual pull requests.

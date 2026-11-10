@@ -1,24 +1,23 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# With the OpenShift profile, the gateway runs as the user and group the
-# authentication resource observed in the namespace's assigned range.
+# With the OpenShift profile, the chart leaves the gateway's UID and fsGroup
+# unset, so the cluster's security context constraint assigns them.
 
 run "openshift" {
   command = plan
 
   variables {
-    values = ["inputs/openshift.json", "inputs/openshift-identity.json"]
+    values = ["inputs/openshift.json"]
   }
 
   assert {
     condition = (
-      strcontains(output.manifest, "runAsUser: 1000680000")
-      && strcontains(output.manifest, "fsGroup: 1000690000")
+      !strcontains(output.manifest, "runAsUser:")
+      && !strcontains(output.manifest, "fsGroup:")
       && strcontains(output.manifest, "runAsNonRoot: true")
-      && !strcontains(output.manifest, "runAsUser: 1000\n")
     )
-    error_message = "The gateway must take the namespace's assigned user and group."
+    error_message = "The gateway must leave its user and fsGroup to OpenShift and still run as non-root."
   }
 
   assert {
