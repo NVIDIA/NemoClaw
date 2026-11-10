@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../../../schemas/nemoclaw-v1alpha1.schema.json
+# Manual GB300 reference case; the Colossus workflow binds fresh identity and images.
+# Replace the deployment UID and zero image digests with owned build references.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: gb300-openclaw-nemotron35
+  uid: 35a87971-1114-44f9-92cd-ab7a27a3e603
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17903
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.30.182.0/24
+  services:
+    super:
+      kind: vllm
+      hardware:
+        profile: dgx-station
+      image: nc-prototype-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      authentication: bearer
+      model:
+        repository: nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4
+        revision: da5b2650a835292c678994a1fa3fb653250fb508
+      container:
+        ipc: host
+        sharedMemoryGiB: 32
+      serving:
+        modelName: nemotron-3.5-super-vl
+        toolParser: qwen3_coder
+        reasoningParser: nemotron_v3
+        mambaBackend: flashinfer
+        enforceEager: true
+        port: 19103
+        contextTokens: 32768
+        maxSequences: 1
+        batchTokens: 1024
+        speculativeTokens: 0
+        startupTimeoutSeconds: 3600
+      memory:
+        gpuMemoryGiB: 96
+        hostReserveGiB: 32
+        kvCacheGiB: 8
+        minAvailableGiB: 8
+        minFreeGiB: 3
+        freeGateGiB: 12
+        consecutiveSamples: 5
+  inferenceProviders:
+    super:
+      provider: openai
+      serviceRef: super
+  sandboxes:
+    assistant:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+        execution:
+          timeoutSeconds: 300
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: super
+              overrides:
+                model: nemotron-3.5-super-vl
+                maxTokens: 8192
