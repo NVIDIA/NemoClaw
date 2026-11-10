@@ -8,7 +8,10 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
-import { settleOrdinaryOpenClawPairing } from "../../onboard/machine/finalization-deps";
+import {
+  formatOpenClawPairingMismatchField,
+  settleOrdinaryOpenClawPairing,
+} from "../../onboard/machine/finalization-deps";
 import {
   classifyPortableLifecycleReceipt,
   portableLifecycleReceiptMatchesGeneration,
@@ -52,6 +55,7 @@ import {
   abortUnregisteredOpenClawPostRestoreDoctor,
   beginUnregisteredOpenClawBackupQuiesce,
   finishUnregisteredOpenClawPostRestoreDoctor,
+  prepareUnregisteredOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
 
@@ -198,7 +202,9 @@ async function resolveOpenClawPostRestoreWindow(
     `OpenClaw gateway-down maintenance window: ${maintenanceWindow.ok ? "verified" : maintenanceWindow.stage}`,
   );
   if (maintenanceWindow.ok) return maintenanceWindow.window;
-  console.log(`  ${D}OpenClaw could not enter its gateway-down maintenance window${R}`);
+  console.log(
+    `  ${D}OpenClaw could not enter its gateway-down maintenance window (${maintenanceWindow.stage})${R}`,
+  );
   bail("OpenClaw could not enter its gateway-down maintenance window during rebuild.");
   return null;
 }
@@ -307,6 +313,15 @@ export async function runRebuildPostRestorePhase(
         bail,
       );
       if (!openClawDoctorWindow) return;
+      // Native config patch requires a valid current schema. Doctor must migrate
+      // restored channel settings before manifest writes, without starting the gateway.
+      const prepared = await prepareUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
+      if (!prepared.ok) {
+        log(`OpenClaw offline state migration failed (${prepared.stage}).`);
+        bail("OpenClaw restored state could not be migrated before messaging configuration.");
+        return;
+      }
+      openClawDoctorWindow = prepared.window;
     }
 
     if (targetAgentName === "openclaw" || targetAgentName === "hermes") {
@@ -628,7 +643,10 @@ export async function runRebuildPostRestorePhase(
         ? await settleOrdinaryOpenClawPairing(sandboxName)
         : portablePairing;
     if (pairing.kind !== "settled") {
-      console.error(`  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}`);
+      const pairingField = "pairingField" in pairing ? pairing.pairingField : null;
+      console.error(
+        `  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}${formatOpenClawPairingMismatchField(pairingField)}`,
+      );
       if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
       console.error(
         `  Resolve the pairing failure, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,

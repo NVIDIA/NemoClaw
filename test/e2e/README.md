@@ -5,6 +5,18 @@
 
 Direct E2E coverage runs through Vitest.
 
+The `sandbox-survival` target retains the raw OpenShell stop/start proof and
+also checks cold public OpenClaw recovery on Docker and native Podman. After
+public `stop`, it invokes `recover` once without warming the command transport
+or listener. One-shot native and forwarded HTTP health probes must succeed,
+and the sandbox and container IDs must remain unchanged. The existing artifact
+sink records the candidate revision, runtime, identities, command results and
+health status. Startup polling and zero-wait policy remain in deterministic
+source tests. The public recovery command allows both 300-second readiness
+waits, the 120-second OpenClaw startup wait, and five minutes for the remaining
+checks. The lifecycle phase allows 25 minutes. The target allows 125 minutes,
+including test cleanup and workflow finalization.
+
 Messaging providers, lifecycle, pairing, Hermes Discord, native Hermes inference
 switching, and token-rotation targets use a
 test-only Node preload for their synthetic Discord enrollment tokens. The
@@ -33,11 +45,39 @@ jobs require it before exporting their validated image contracts. Their architec
 artifacts retain the probe results, including failures. Both architectures must pass for
 Switchyard release qualification; a startup-hold result alone does not qualify the package.
 
+The PR Hermes amd64 job enables passive crash diagnostics for the isolated package probe
+only after preparation succeeds. If debugger package installation fails, qualification runs
+without crash capture. Core-setting and cleanup failures still fail the job.
+Python's fault handler records Python stacks; the probe records executable identity and memory
+mappings before and after native shutdown. Only that probe raises its core soft limit, to 256 MiB.
+On exit 134 or 139, host GDB reads the core against the still-running container's executable and
+libraries. Debugger auto-loading and network symbol lookup are disabled. Artifacts contain bounded,
+redacted stack and mapping text, without frame arguments, locals, or raw memory. Missing symbols,
+unloaded libraries, or the core size limit can prevent a complete stack.
+The raw core stays in the container and a private runner temporary directory, never the artifact
+root. The collector removes its temporary copy; the workflow's always-step restores the original
+core pattern and removes remaining diagnostic containers and copies before artifact upload.
+This capture does not retry the probe, change its exit status, or establish a repair when it passes
+without crashing. Other architectures and release jobs retain the existing qualification behavior.
+
 OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
 Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
 Changes to the OpenClaw scope patch select the compatible-endpoint, latency, skill-lifecycle, inference-switch, and full OpenClaw targets on both runtimes, plus the Docker llama.cpp GPU target. The compatible-endpoint case owns the native in-sandbox CLI-to-gateway consumer proof before admin approval: it checks command success, the model reply, and newly observed mock-provider traffic separately.
 The full OpenClaw cases verify readiness after explicit admin approval and an ordinary agent turn. When the approved device matches the calling CLI's existing identity, the CLI confirms the already-granted admin scope through a read-only gateway request before exiting, so later ordinary calls retain the rotated token's approved metadata. This confirmation uses the existing transport with normal token-cache writes; other device commands keep their read-only shared-state behavior. Approvals for confirmed other devices retain their existing behavior. If reading the local identity fails, the CLI reports that approval completed but the handoff failed, and exits unsuccessfully with recovery guidance.
 The llama.cpp GPU case proves ordinary inference before approval, then uses the existing admin-only cron operation and exact-request helper for denial, approval, and privileged-consumer evidence. Its former requirement for an ordinary greeting to request admin is replaced by successful inference; GPU, model, authentication, and cleanup assertions remain live.
+
+The OpenClaw Discord and Slack pairing targets approve the sandbox CLI's exact
+pending admin request before invoking native pairing management. They retain
+the state-root checks, pending code and user checks, approval, allowlist state,
+repeat-approval refusal, and cleanup. The initial list command must succeed;
+its echoed channel name adds no pairing evidence and is no longer asserted.
+The pairing targets keep their existing assertion limits.
+
+The rebuild target verifies command success and restored native state without
+checking completion wording. The survival target proves baseline sandbox access
+through its native readiness command, which checks both command success and the
+expected response. It omits the duplicate `echo alive` probe. Restore, denial,
+native execution, and cleanup checks remain live.
 
 OpenClaw owns TUI turn ordering and `chat.send` correlation.
 Fixes and regression coverage for those behaviors belong upstream.
@@ -397,6 +437,15 @@ For OpenClaw, those checks also run the shared agent-reload proof against the im
 gateway policy and installed distribution. The proof checks live named-agent discovery, gateway
 health, and a nonzero exit after a restart-class bind failure. Google Chat's reload-off exception
 is tracked separately in #13274.
+Both OpenClaw platforms also require the shared native legacy migration proof, using the image's
+pinned 2026.9.5 and 2026.9.7 runtimes, installed migration coordinator, and 2026.10.5 target.
+It checks a copied JSON backup through native Doctors, canonical data and config preservation,
+unchanged backup bytes, idempotence, and refusal of downgrades or nonempty retired Telegram data.
+This isolated migration proof does not cover snapshot extraction or the full restore startup gate;
+the `state-backup-restore` live test owns that boundary.
+Its migration and refusal scenarios share one operation deadline within the existing
+45-minute test allowance, leaving time for setup, cleanup, and artifact upload in the
+unchanged 60-minute job. Each scenario retains its own assertions, artifacts, and cleanup.
 Docker activation selects the matching platform catalog and runs the existing all-agent lifecycle test.
 Rootless Podman activation remains AMD64. The catalog reader accepts only one platform per catalog;
 it rejects missing agents, mixed platforms, revisions, releases, and cohorts.
@@ -414,6 +463,41 @@ their own review. Historical upgrade fixtures keep their historical versions.
 Pi retains its separate candidate contract and qualification receipts below;
 selecting a shipped-agent catalog does not qualify Pi.
 
+### Hermes NVIDIA Stripped-State Recovery
+
+The native NVIDIA branch of `live/hermes-inference-switch.test.ts` owns the real registered rebuild boundary for #14094.
+Its catalogue entry provides a 75-minute test budget and an 85-minute workflow budget.
+The extra test time covers the second rebuild and its probes; ten minutes remain for workflow setup, diagnostics, and cleanup.
+It keeps the healthy Discord-state rebuild, then tests a separate damaged-state rebuild in the same disposable sandbox.
+The missing coverage dimension is recovery when all three managed NVIDIA credential fields already contain `[STRIPPED_BY_MIGRATION]`.
+
+`fixtures/hermes-nvidia-recovery.ts` seeds only those three fields through the sandbox owner's mutable config.
+It checks the route, regular-file ownership, links, and size, compares file metadata around the write, and reopens the config to verify the exact damaged input.
+These snapshot checks detect observed changes; they do not exclude concurrent writers.
+It does not alter config permissions, guard hashes, supervisor state, or credential stores.
+The public rebuild must recover three agreeing issued references, retain the noncredential config fingerprint and a test-owned user-state file, preserve Discord settings, report healthy NVIDIA inference, and return `PROBE_OK` from a real Hermes request.
+Neither rebuild sets `NVIDIA_INFERENCE_API_KEY` or `DISCORD_BOT_TOKEN`.
+The test-only enrollment transport receives the synthetic token through `NEMOCLAW_E2E_DISCORD_TOKEN`.
+The synthetic Discord enrollment transport does not establish real Discord delivery.
+Existing terminal cleanup still owns the disposable resources; the fixture adds no mutation retry or backup deletion.
+
+Source caller tests and the integration tests in `test/agents/hermes/hermes-nvidia-restore-validation.test.ts` and `hermes-restart-config-seal-write-lock.test.ts` own recovery eligibility and transaction refusal.
+`support/hermes-nvidia-recovery.test.ts` executes the fixture against local files and owns its mutation, refusal, and diagnostic-output contracts.
+`support/hermes-discord-rebuild-contract.test.ts` owns evidence sequencing and rejection.
+These deterministic tests do not qualify the installed guard.
+
+The live assertion count decreases by two. The Discord-state reader must exit successfully before its exact settings comparison; support tests reject valid output followed by a failed read after either rebuild. Each removed check has a separate disposition:
+
+| Removed check | Retained owner or reason |
+| --- | --- |
+| Repeated native-turn exit, PONG, and model checks | `runHermesPongWithRetry` already rejects these failures. `support/hermes-inference-switch-command-shape.test.ts` tests that rejection; live authenticated-request evidence remains. |
+| Diagnostic config-export exit | The diagnostic export is removed because it has no separate product outcome. Live config integrity and inference checks remain. |
+| Proxy fixture's OpenShell metadata readback | Support tests own fixture arguments. Live route readback and Hermes CLI inference prove the resulting NemoClaw route; mock-backed runs also retain authenticated request evidence. The Anthropic metadata check remains. |
+| Repeated recovery-probe output shape | The fixture tests own constant diagnostic fields and fingerprint format. Live seed/verify command success and the cross-rebuild fingerprint comparison remain. No checks move into the Python probe. |
+
+Live evidence must identify the exact CLI revision and matching immutable managed-image digest through the candidate image authority above.
+If fixture seeding, rebuild preflight, or installed readiness refuses the damaged state, stop and retain the failure evidence; do not update guard anchors or bypass readiness.
+
 ### Candidate OpenShell release admission
 
 An upgrade PR can carry `ci/openshell-upgrade-trust.json` instead of requiring a
@@ -427,13 +511,28 @@ retain prior records and revocations. Revoked hashes cannot authorize execution,
 even when retained in a historical record.
 
 The PR author may be a GitHub App bot on this repository. This manifest cannot
-approve itself. A different human with current repository
-`maintain` or `admin` permission must review the exact source and post one whole
-comment: `NemoClaw-Upgrade-E2E: approve <head-sha> <base-sha>`. The corresponding
-`revoke` command withdraws that decision. The latest eligible decision wins;
-edited comments, PR-author comments, stale commits, forks, and closed PRs do not
-authorize admission. The trusted reader rechecks the PR, comments, and current
-permissions before and after fetching the fixed source paths.
+approve itself. A different human with current repository `maintain` or `admin`
+permission must submit an **Approve** PR review. That review also authorizes
+candidate testing. No admission comment or copied commit identifiers are required.
+An outstanding maintainer request for changes blocks admission. Dismissed reviews,
+self-approvals, bot reviews, forks, and closed PRs do not authorize it.
+
+Approval can cover a later descendant commit when the consumer's selected source
+files and governing verification policy are unchanged. Unrelated tests or documentation
+can change without renewed test authorization. Installer admission also permits an
+unrelated lockfile synchronization. SDK admission includes its manifests, locks, and
+audit identity; changes to those files require another review.
+The verifier compares the reviewed commit with the candidate and checks trusted-base
+policy changes since their historical common ancestor. Policy changes require
+synchronizing the branch and obtaining another review. An incomplete comparison fails
+closed for that review; another independently verified approval can still cover the inputs.
+An incomplete candidate comparison requires a fresh review. An incomplete trusted-policy
+comparison requires synchronizing the branch and then obtaining a new review.
+The comparison includes renamed paths and file-mode changes.
+The trusted reader rechecks PR identity, review state, and reviewer permissions before
+and after fetching source data. GitHub review dismissal remains effective, including
+any dismissal caused by branch protection. Test authorization does not preserve a
+dismissed merge approval or replace evidence for the latest commit.
 
 The trusted installer checker compares local sources with the approved commit.
 It then verifies upstream checksum and formula records through the existing
@@ -449,10 +548,14 @@ After merge, the verifier reads the registry beside its trusted checkout, never
 from the candidate working directory. Normal branch protection and independent
 review govern that transition. An open PR's temporary admission is not merge authority.
 `Security / Candidate Upgrade Admission` refreshes the `check-hash` commit status
-on upstream PR changes and approval-comment creation, editing, or deletion.
+on upstream PR changes and review submission, editing, or dismissal.
+Review events run a signal workflow with `permissions: {}` and no checkout. Its completion
+wakes the default-branch controller, which reads current reviews through GitHub's API.
+The signal provides no approval authority or candidate artifacts.
 When `check-hash` is required, both that status and the native hash check must pass.
-An approval comment refreshes only the commit status. If the native hash check
-failed before approval, rerun that job after approval.
+Review events refresh the commit status. Candidate SDK packaging runs only when admission
+succeeds and the PR requires a new SDK archive. Rejected admission produces no candidate
+SDK artifact. If the native hash check failed before approval, rerun that job after approval.
 An interrupted refresh remains pending or fails; it cannot reuse an earlier success.
 
 For a new OpenShell TypeScript SDK version, the same approval also binds the root
@@ -471,8 +574,8 @@ commit, with the approved base and candidate as its two parents. The verifier re
 that commit's manifests and locks and compares them with the local files. The merged
 dependency graph must retain the approved SDK identity and pass the trusted package
 policy. Direct candidate E2E continues to require the approved candidate's file bytes.
-If the merge uses a newer base, synchronize the PR and refresh its commit-bound
-approval before rerunning candidate SDK CI.
+If the merge uses a newer base, synchronize the PR before rerunning candidate SDK CI.
+Obtain another review only when the admitted inputs or governing policy changed.
 The API credential is limited to trusted preparation and removed before npm runs.
 If CI starts before the approved artifact exists, wait for the admission workflow's
 SDK job, then rerun CI. Changed or revoked approval cannot reuse the older artifact.
@@ -578,6 +681,8 @@ onboarding, restore, rebuild, and cloud security checks. Expected nonzero outcom
 refusal does not trigger collection; a timeout still captures evidence. Diagnostic acquisition does
 not retry the mutation or replace its result.
 OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
+The weather lifecycle and sandbox survival fixtures invoke native plugins through an admitted agent turn with a local fixture request.
+They verify the actual paired tool result in that session's native store; the model's reply alone cannot establish execution.
 A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
@@ -676,6 +781,10 @@ These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
 The gateway fixture already binds its remote historical inputs to immutable commits and cryptographic digests.
 The workflow does not republish those inputs as artifacts.
+Before the historical install, GitHub-hosted Linux runners remove group and world
+write permissions from a verified root- or runner-owned `/usr/local/bin`.
+Preparation rejects symlinks, foreign owners, and unsafe ancestors. It records
+the original and resulting modes. Other hosts retain their existing permissions.
 Deterministic tests own installer identity, OpenShell release asset selection,
 NemoClaw restore behavior, and Dockerfile patch behavior. The live target does not
 assert OpenClaw database tables, migration checkpoints, or other third-party
@@ -981,6 +1090,10 @@ Each entry owns these target properties:
 - Target-specific environment variables.
 - Full-run qualification membership.
 
+For host commands with `HOME`, `HostCliClient` defaults `NPM_CONFIG_PREFIX` to `$HOME/.npm-global`.
+An explicit `NPM_CONFIG_PREFIX` or `npm_config_prefix` takes precedence.
+The fixture preserves `PATH`; installer ownership and permission checks still apply.
+
 Host preparation is the reviewed E2E runner preparation mode.
 `none` makes no runner-level change.
 `hermes-swap` provisions swap for the remaining measured Hermes execution lanes.
@@ -1004,14 +1117,16 @@ The Dockerfile fixture contains only a different baked model and stale limits.
 Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
 restarting the native gateway for the initial inference route, as external-image onboarding does.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
-The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
+The OpenClaw native NVIDIA switch variant starts with the public NVIDIA endpoint selected as an OpenAI-compatible provider on Balanced.
+This exercises fresh creation with the endpoint already present in OpenClaw's bundled policy (#14013), then checks inference, restart, rebuild, provider switching, and cleanup.
+The mock Anthropic switch variant starts with an authenticated OpenAI-compatible fixture.
 The Anthropic variant starts on a native OpenAI-compatible route, then switches to a native Anthropic endpoint.
 Both Anthropic-variant endpoints use public HTTPS quick tunnels from the verified cloudflared package.
 Rootless Pasta copies the runner's primary IP into its namespace, so that IP cannot identify the host fixture there.
 The local HTTP hop stays on the runner; host and sandbox probes use the same public endpoint without private-host trust overrides.
 Its mock rejects a missing or incorrect credential, and the existing sandbox request and OpenClaw model run must both succeed.
 The config probe validates the scoped Anthropic credential reference inside the sandbox before redaction.
-The native NVIDIA destination uses the public endpoint and its public credential only after switching.
+The native NVIDIA variant uses its existing public credential before and after switching from the custom provider to NVIDIA Endpoints.
 The interactive policy-preset sequencing fixture uses the same public HTTPS transport and retains its Personal shared-route assertions.
 Route assertions use JSON fields so terminal column alignment does not affect the result.
 Hermes inference-switch installation uses an authenticated local fixture before its model-only switch.
@@ -1115,11 +1230,18 @@ It uses the manifest endpoint, `http://localhost:18789/`, independently of the h
 The read-only poll accepts HTTP 200 or 401 and retries only curl connection-refused or empty-response results (7 or 52 with HTTP 000).
 Transport failures, other curl results, and unexpected HTTP responses fail immediately; each attempt has its own artifact.
 The target then runs one `nemoclaw <sandbox> recover` in the survivor's gateway context.
-The readiness poll and recovery share the existing 120-second recovery deadline; the poll also retains the configured probe-attempt bound.
+The readiness poll and recovery share the existing 60-second recovery deadline; the poll also retains the configured probe-attempt bound.
 Recovery runs after both listener snapshots and observer cleanup, so it cannot hide the original forward's exit.
 Both gateway-cleanup policies require recovery to succeed and the dashboard to answer within the existing probe budget.
 The pre-restart dashboard checks still prove that destroying the alternate sandbox preserves the survivor.
 Raw OpenShell start does not restore a forward that exits when its readiness poll observes the stopped sandbox.
+
+Failed native readiness in this target and the OpenClaw `channels-stop-start` shard also attempts a read-only owner snapshot before cleanup.
+The snapshot uses the uniquely resolved container ID and a separate 10-second diagnostic command limit.
+It records bounded owner heartbeat, boot identity, PID namespace, process start time, and snapshot-worker observations.
+It excludes raw owner payloads, configuration paths, hostnames, and process arguments.
+Missing or inaccessible evidence remains unavailable; a numeric PID does not establish owner liveness across namespaces.
+Collection failure preserves the readiness failure and its original deadline.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
@@ -1217,11 +1339,9 @@ Failed targets still write a manifest for diagnosis, and the existing artifact u
 The manifest is secret-free diagnostic evidence.
 It does not replace the workflow job result or the strict `Release qualification` aggregate.
 
-The `model-router-provider-routed-inference` target writes `router-diagnostics.json` before sandbox cleanup.
-It summarizes the final 64 KiB of the router log as fixed status flags and a completion-response count.
-It never copies log text, request content, or credentials into that file.
-An unavailable log is recorded explicitly; a false flag does not prove that an unlogged event did not occur.
-The cleanup registry captures diagnostics before destroying the sandbox and records capture failures separately from the test failure.
+The deprecated built-in Model Router target and its router-log diagnostics were removed with the feature (#14066).
+Legacy destroy and uninstall cleanup remain covered by their existing lifecycle tests.
+Retired selectors fail validation instead of silently selecting another target.
 
 Run the planner locally to render the complete default selection as a Markdown table:
 
@@ -2284,6 +2404,9 @@ The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` con
 It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
 The standard E2E artifacts retain bounded command output.
+After onboarding, both physical-host cases request vLLM health on loopback and the private OpenShell bridge.
+Each case also checks connection refusal on every discovered unintended IPv4 and IPv6 address.
+Spark and Station retain their own probe targets and request results.
 
 Run the target from a clean candidate checkout on the Spark host:
 
@@ -2291,7 +2414,10 @@ Run the target from a clean candidate checkout on the Spark host:
 E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
 ```
 
-A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries catalog provenance and the catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.
+A passing Spark target establishes that option 2 selects the fixed vLLM preset and recipe.
+The managed container carries catalog provenance and the catalog-derived serve command.
+Health requests succeed on loopback and the private OpenShell bridge; connections to every other discovered host address are refused.
+The target also requires a chat response through `inference.local` and an HTTP `403` response for unrelated sandbox egress.
 
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.
@@ -2559,7 +2685,9 @@ Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
 The GPU job reads OpenShell sources from the candidate commit as data, then validates their pins and operational templates.
 When the candidate needs trust absent from the controller's registry, preparation, both verifications, and restoration recheck the [candidate approval](#candidate-openshell-release-admission).
-The approval must match the open PR, candidate commit, and base commit.
+The approval must cover the open PR's admitted inputs and governing policy.
+A later descendant commit remains eligible only when those inputs and policy are unchanged.
+If governing policy changes on the base branch, synchronize the PR and obtain another review.
 The approved registry and installer sources must match the candidate's committed files.
 Candidates covered by the controller's registry need no additional approval.
 The job exposes its GitHub token as `GITHUB_TOKEN` only to the four trusted source-projection steps, with `contents: read` and `pull-requests: read` permissions.
@@ -2723,6 +2851,20 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 ## DGX Station Express
 
 The explicit `dgx-station-express` target runs the local Station Express installer with cached Nemotron 3.5 Super VL weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+After installation, this target requires vLLM health requests to succeed on loopback and the private OpenShell gateway and refuse every other assigned IPv4/IPv6 host address.
+The existing controller retains the inspected bindings, probe targets and per-request results for the candidate revision.
+Source tests own port and authentication permutations; these runtime requests prove Docker and host network enforcement.
+
+## Bearerless vLLM Provider Validation
+
+The `inference-routing` target runs TC-INF-09 compatible-endpoint routing on Docker and Podman.
+Its Docker-only bearerless companion validates the production provider against private bindings on port 18080 with distinct default/OpenShell gateways.
+Podman skips only that companion.
+Artifacts retain inspected bindings, the probe command, validation result, container requests and ID-based cleanup.
+Readiness retries cover only refused or reset connections during the fixture's idempotent startup GET.
+The check permits at most six attempts within ten seconds, with a one-second delay, and records each failure.
+HTTP, timeout and TLS errors stop the check without retrying. Provider validation runs once after readiness succeeds.
+Source tests own authentication, ownership and port permutations.
 
 ## DCode Native Local Inference
 

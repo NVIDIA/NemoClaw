@@ -1,0 +1,25 @@
+// Exact published OpenClaw 2026.10.5 excerpts; source commit 1b58cb9a1b4f4353e1add63c8506db4d890962e8.
+function persistDevicePairingStoreState(state, baseDir, target, options) {
+	runDevicePairingStoreMutation(baseDir, ({ db }) => {
+		const kysely = getNodeSqliteKysely(db);
+		if (target !== "paired") {
+			executeSqliteQuerySync(db, kysely.deleteFrom("device_pairing_pending"));
+			const rows = Object.values(state.pendingById).map(toPendingRow);
+			if (rows.length > 0) executeSqliteQuerySync(db, kysely.insertInto("device_pairing_pending").values(rows));
+		}
+		if (target !== "pending") {
+			executeSqliteQuerySync(db, kysely.deleteFrom("device_pairing_paired"));
+			const rows = Object.values(state.pairedByDeviceId).map(toPairedRow);
+			if (rows.length > 0) executeSqliteQuerySync(db, kysely.insertInto("device_pairing_paired").values(rows));
+		}
+		for (const nodeId of new Set(options?.clearApnsNodeIds ?? [])) clearApnsRegistrationFromDatabase(db, nodeId);
+		if (options?.retiredNodeToken) clearDeviceAuthTokenFromDatabase(db, {
+			...options.retiredNodeToken,
+			role: "node"
+		});
+		return {
+			mutated: true,
+			value: void 0
+		};
+	});
+}

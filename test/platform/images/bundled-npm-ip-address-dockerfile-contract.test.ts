@@ -154,12 +154,17 @@ describe("bundled npm Undici image remediation contract", () => {
 describe.each(["Dockerfile.base", "Dockerfile"])(
   "%s OpenClaw workspace override remediation",
   (file) => {
-    it.each(["2026.9.2", "2026.9.5", "2026.9.7", ""])(
+    it.each(["2026.9.2", "2026.9.5", "2026.9.7", "2026.10.5", ""])(
       "applies overrides only for the reviewed version: %s",
       (version) => {
         const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
         const helper = "/scripts/lib/patch-openclaw-dependency-overrides.mts";
-        const copy = requireSingleDockerfileCopySource(source, helper.slice(1), helper);
+        const copies = requireDockerfileCopySources(
+          source,
+          helper.slice(1),
+          helper,
+          file === "Dockerfile" ? 2 : 1,
+        );
         const calls = dockerfileRunCommandPositions(source, `node ${helper}`);
         const installs = dockerfileRunCommandPositions(
           source,
@@ -167,7 +172,7 @@ describe.each(["Dockerfile.base", "Dockerfile"])(
         );
         expect(calls).toHaveLength(1);
         expect(installs).toHaveLength(1);
-        expect(calls[0]).toBeGreaterThan(copy.start);
+        copies.forEach((copy) => expect(calls[0]).toBeGreaterThan(copy.start));
         expect(calls[0]).toBeGreaterThan(installs[0]);
         const instruction = dockerfileInstructions(source).find(
           (entry) => entry.start <= calls[0] && entry.end > calls[0],
@@ -181,7 +186,7 @@ describe.each(["Dockerfile.base", "Dockerfile"])(
         );
         expect(result.status, result.stderr).toBe(0);
         expect(result.stdout).toBe(
-          version === "2026.9.2"
+          ["2026.9.2", "2026.10.5"].includes(version)
             ? `${helper}\n/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw\n`
             : "",
         );

@@ -276,54 +276,31 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     vi.restoreAllMocks();
   });
 
-  function observe(approvalPolicy = POLICY) {
-    return observeOpenClawPairingQualification(
-      "alpha",
-      "nemoclaw-8080",
-      "2026.7.1",
-      stateDirectory,
-      {
-        getOpenshellBinary: () => "openshell",
-        readApprovalPolicy: () => approvalPolicy,
-        spawnSync: localScriptSpawn as typeof spawnSync,
-      },
-    );
-  }
-
-  function observeSettlement(approvalPolicy = POLICY) {
-    return observeOpenClawPairingSettlement("alpha", "nemoclaw-8080", "2026.7.1", stateDirectory, {
+  function observeWith<T>(
+    observer: (...args: Parameters<typeof observeOpenClawPairingQualification>) => T,
+    approvalPolicy = POLICY,
+  ): T {
+    return observer("alpha", "nemoclaw-8080", "2026.7.1", stateDirectory, {
       getOpenshellBinary: () => "openshell",
       readApprovalPolicy: () => approvalPolicy,
       spawnSync: localScriptSpawn as typeof spawnSync,
     });
   }
 
+  function observe(approvalPolicy = POLICY) {
+    return observeWith(observeOpenClawPairingQualification, approvalPolicy);
+  }
+
+  function observeSettlement(approvalPolicy = POLICY) {
+    return observeWith(observeOpenClawPairingSettlement, approvalPolicy);
+  }
+
   function observeOrdinarySettlement(approvalPolicy = POLICY) {
-    return observeOrdinaryOpenClawPairingSettlement(
-      "alpha",
-      "nemoclaw-8080",
-      "2026.7.1",
-      stateDirectory,
-      {
-        getOpenshellBinary: () => "openshell",
-        readApprovalPolicy: () => approvalPolicy,
-        spawnSync: localScriptSpawn as typeof spawnSync,
-      },
-    );
+    return observeWith(observeOrdinaryOpenClawPairingSettlement, approvalPolicy);
   }
 
   function observeRepairSettlement(approvalPolicy = POLICY) {
-    return observeOpenClawPairingRepairSettlement(
-      "alpha",
-      "nemoclaw-8080",
-      "2026.7.1",
-      stateDirectory,
-      {
-        getOpenshellBinary: () => "openshell",
-        readApprovalPolicy: () => approvalPolicy,
-        spawnSync: localScriptSpawn as typeof spawnSync,
-      },
-    );
+    return observeWith(observeOpenClawPairingRepairSettlement, approvalPolicy);
   }
 
   it("embeds the same packaged versioned pairing-state adapter as auto-pair approval", () => {
@@ -499,6 +476,26 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         expect(fs.readdirSync(sqliteStateDirectory).sort()).toEqual(entriesBefore);
       },
     );
+
+    sqliteIt("waits for a pairing-only SQLite device's client token publication", () => {
+      writeSqlitePairingState(stateDirectory, {
+        deviceId,
+        publicKey,
+        privateKeyPem,
+        scopes: ["operator.pairing"],
+      });
+      updateSqlitePairingState(stateDirectory, "DELETE FROM device_auth_tokens");
+
+      expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingObservationRetryableError);
+      expect(() => observe()).toThrow(OpenClawPairingIncompatibleError);
+      expect(() => observeSettlement()).toThrow(OpenClawPairingIncompatibleError);
+
+      updateSqlitePairingState(
+        stateDirectory,
+        `INSERT INTO device_auth_tokens SELECT device_id, 'operator', '${TOKEN}', '["operator.pairing"]', 1 FROM device_identities`,
+      );
+      expect(observeOrdinarySettlement().state).toBe("pairing-only");
+    });
 
     sqliteIt("qualifies the exact persisted admin-upgraded CLI state", () => {
       writeSqlitePairingState(stateDirectory, {
@@ -818,6 +815,51 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         paired[deviceId]!.scopes.push(scope);
         writeJson(pairedPath, paired);
         expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingIncompatibleError);
+      },
+    );
+
+    it.each([observeOrdinarySettlement, observe])(
+      "reports only the rejected persisted field with observer %# (#13668)",
+      (observePairing) => {
+        const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+        const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+        paired[deviceId]!.clientMode = "webchat";
+        writeJson(pairedPath, paired);
+        expect.assertions(4);
+        try {
+          observePairing();
+        } catch (failure) {
+          expect(failure).toBeInstanceOf(OpenClawPairingIncompatibleError);
+          expect((failure as OpenClawPairingIncompatibleError).field).toBe("paired.clientMode");
+          expect(JSON.stringify(failure)).not.toContain(TOKEN);
+          expect(JSON.stringify(failure)).not.toContain(deviceId);
+        }
+      },
+    );
+
+    it.each([
+      ["settlement", observeOrdinaryOpenClawPairingSettlement],
+      ["qualification", observeOpenClawPairingQualification],
+    ] as const)(
+      "discards untrusted mismatch output outside the field allowlist with %s (#13668)",
+      (_mode, observePairing) => {
+        const failure = () =>
+          observePairing("alpha", "nemoclaw-8080", "2026.7.1", stateDirectory, {
+            getOpenshellBinary: () => "openshell",
+            readApprovalPolicy: () => POLICY,
+            spawnSync: (() => ({
+              status: 4,
+              signal: null,
+              error: undefined,
+              stdout: '__NEMOCLAW_OPENCLAW_PAIRING_MISMATCH__={"field":"secret-token"}\n',
+            })) as unknown as typeof spawnSync,
+          });
+        expect(failure).toThrow(OpenClawPairingIncompatibleError);
+        try {
+          failure();
+        } catch (error) {
+          expect((error as OpenClawPairingIncompatibleError).field).toBeNull();
+        }
       },
     );
 

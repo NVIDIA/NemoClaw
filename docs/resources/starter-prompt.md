@@ -109,10 +109,9 @@ Choices:
 6. OpenAI, which requires an OpenAI API key.
 7. Anthropic, which requires an Anthropic API key.
 8. Google Gemini, which requires a Gemini API key.
-9. Model Router, which requires an NVIDIA API key.
-10. Other OpenAI-compatible endpoint, which requires an endpoint, model, and usually a key.
-11. Other Anthropic-compatible endpoint, which requires an endpoint, model, and usually a key.
-12. Hermes Provider, only when Hermes is selected.
+9. Other OpenAI-compatible endpoint, which requires an endpoint, model, and usually a key.
+10. Other Anthropic-compatible endpoint, which requires an endpoint, model, and usually a key.
+11. Hermes Provider, only when Hermes is selected.
 
 On ordinary supported macOS or Linux:
 
@@ -189,7 +188,6 @@ Use this provider mapping for non-interactive setup:
 - Anthropic: `NEMOCLAW_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`.
 - Gemini: `NEMOCLAW_PROVIDER=gemini`, `GEMINI_API_KEY`.
 - Hermes Provider: `NEMOCLAW_PROVIDER=hermes-provider`; Hermes only.
-- Model Router: `NEMOCLAW_PROVIDER=routed`, `NVIDIA_INFERENCE_API_KEY`.
 - OpenAI-compatible: `NEMOCLAW_PROVIDER=custom`, endpoint, model, `COMPATIBLE_API_KEY`.
 - Anthropic-compatible: `NEMOCLAW_PROVIDER=anthropicCompatible`, endpoint, model, `COMPATIBLE_ANTHROPIC_API_KEY`.
 - Ollama: `NEMOCLAW_PROVIDER=ollama`, optional `NEMOCLAW_MODEL`.

@@ -101,7 +101,7 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
 }
 
 const START_INFERENCE_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
-const START_OPENCLAW_GATEWAY_WAIT_SECONDS = 120;
+const START_OPENCLAW_GATEWAY_WAIT_SECONDS = 330;
 
 /** Observe native startup after the runtime starts; never relaunch the agent here. */
 async function waitForStartedSandboxGatewayProcess(
@@ -331,7 +331,7 @@ async function startSandboxWithinLifecycleFence(
     deps,
     log,
   );
-  if (readiness.gatewayProcess !== false) {
+  if (readiness.gatewayProcess !== false && readiness.gatewayProcess !== null) {
     log("  Checking gateway health and host forwards…");
     if (deps.verifyGateway) {
       await deps.verifyGateway(sandboxName);
@@ -353,7 +353,7 @@ async function startSandboxWithinLifecycleFence(
       log,
     );
   }
-  if (readiness.gatewayProcess === false) {
+  if (readiness.gatewayProcess === false || readiness.gatewayProcess === null) {
     log(
       "  The sandbox started but its native agent gateway did not become responsive before the startup settlement window expired.",
     );

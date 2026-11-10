@@ -200,22 +200,32 @@ describe("Station Express smoke boundaries", () => {
     {
       name: "accepts zero-exit commands that finish before their deadline",
       timeoutAt: "none",
+      publicationFailure: false,
       expectedFailure: null,
       inferenceCalls: 1,
     },
     {
       name: "rejects a timed-out host command even when it exits zero and still cleans up",
       timeoutAt: "host",
+      publicationFailure: false,
       expectedFailure: "station-express-install failed; inspect its command artifact",
       inferenceCalls: 0,
     },
     {
       name: "rejects timed-out routed inference even when it exits zero with valid content",
       timeoutAt: "inference",
+      publicationFailure: false,
       expectedFailure: "Station sandbox inference request failed; inspect its artifact",
       inferenceCalls: 1,
     },
-  ])("$name", async ({ timeoutAt, expectedFailure, inferenceCalls }) => {
+    {
+      name: "awaits listener verification and cleans up before inference if it fails",
+      timeoutAt: "none",
+      publicationFailure: true,
+      expectedFailure: "listener verification failed",
+      inferenceCalls: 0,
+    },
+  ])("$name", async ({ timeoutAt, publicationFailure, expectedFailure, inferenceCalls }) => {
     const home = cleanupHome();
     const normal = await stationProbeOutcome(home, false);
     expect(normal).toMatchObject({ exitCode: 0, timedOut: false });
@@ -267,6 +277,12 @@ describe("Station Express smoke boundaries", () => {
       environment: { ...base, HOME: home, NEMOCLAW_STATION_RUNNER_HOME: home },
       repoRoot: "/candidate",
       phases: { inspect: vi.fn(), install: vi.fn(), assert: vi.fn(), cleanup: vi.fn() },
+      verifyPublication: async () => {
+        await Promise.resolve();
+        return publicationFailure
+          ? Promise.reject(new Error("listener verification failed"))
+          : undefined;
+      },
       writeEvidence,
       modelCacheMetadata: () => ({ sha256: "unchanged", entries: 1 }),
     });
@@ -328,6 +344,7 @@ describe("Station Express smoke boundaries", () => {
         environment: { ...base, HOME: home, NEMOCLAW_STATION_RUNNER_HOME: home },
         repoRoot: "/candidate",
         phases,
+        verifyPublication: vi.fn(async () => {}),
         writeEvidence,
         now: () => time,
         modelCacheMetadata: () => ({ sha256: "baseline", entries: 1 }),

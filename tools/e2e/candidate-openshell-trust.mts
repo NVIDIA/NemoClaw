@@ -107,7 +107,7 @@ export async function reviewedCandidateOpenShellTrust(
     releases,
     selected,
     reviewer: admission.reviewer,
-    commentId: admission.commentId,
+    reviewId: admission.reviewId,
   };
 }
 
