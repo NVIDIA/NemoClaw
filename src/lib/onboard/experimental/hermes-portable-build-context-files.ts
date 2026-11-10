@@ -126,7 +126,6 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/tavily-hermes-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/tavily.yaml", mode: "100644" },
-  { path: "nemoclaw-blueprint/scripts/http-proxy-fix.js", mode: "100644" },
   { path: "nemoclaw-blueprint/scripts/nemotron-inference-fix.js", mode: "100644" },
   { path: "nemoclaw-blueprint/scripts/sandbox-safety-net.js", mode: "100644" },
   { path: "nemoclaw-blueprint/tsconfig.json", mode: "100644" },
