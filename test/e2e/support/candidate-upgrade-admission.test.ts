@@ -132,19 +132,37 @@ describe("candidate upgrade admission", () => {
     );
   });
 
-  it.each([
-    { admission: "installer", path: sourcePath, history: "changes" as const, branch: "candidate" },
-    {
-      admission: "installer",
-      path: sourcePath,
-      history: "policy" as const,
-      branch: "trusted base",
-    },
-    { admission: "SDK", path: "package.json", history: "changes" as const, branch: "candidate" },
-    { admission: "SDK", path: "package.json", history: "policy" as const, branch: "trusted base" },
-  ])(
-    "invalidates $admission approval when the $branch changes projection policy",
-    async ({ path, history }) => {
+  it.each(
+    [
+      {
+        admission: "installer",
+        path: sourcePath,
+        history: "changes" as const,
+        branch: "candidate",
+      },
+      {
+        admission: "installer",
+        path: sourcePath,
+        history: "policy" as const,
+        branch: "trusted base",
+      },
+      { admission: "SDK", path: "package.json", history: "changes" as const, branch: "candidate" },
+      {
+        admission: "SDK",
+        path: "package.json",
+        history: "policy" as const,
+        branch: "trusted base",
+      },
+    ].flatMap((scenario) =>
+      [
+        "tools/e2e/protected-openshell-projection.mts",
+        "tools/e2e/protected-openshell-filesystem.mts",
+        "tools/e2e/protected-openshell-filesystem.py",
+      ].map((policyPath) => ({ ...scenario, policyPath })),
+    ),
+  )(
+    "invalidates $admission approval when the $branch changes projection policy $policyPath",
+    async ({ path, history, policyPath }) => {
       const f = retainedReviewFixture();
       f.routes.set(`/repos/NVIDIA/NemoClaw/contents/${path}?ref=${identity.candidateSha}`, {
         ...f.blob,
@@ -155,7 +173,7 @@ describe("candidate upgrade admission", () => {
       ).resolves.toMatchObject({
         reviewId: 50,
       });
-      f[history].files = [{ filename: "tools/e2e/protected-openshell-projection.mts" }];
+      f[history].files = [{ filename: policyPath }];
       await expect(readApprovedCandidateUpgrade(identity, [path], f.request)).rejects.toThrow(
         /PR approval covering/,
       );

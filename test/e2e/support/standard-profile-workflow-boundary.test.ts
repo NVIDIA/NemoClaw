@@ -211,15 +211,18 @@ describe("standard E2E execution profile", () => {
 
   it("requires the SDK producer to include an available reviewed transition replacement", () => {
     const workflow = readWorkflow() as {
-      jobs: Record<string, { steps: Array<{ env?: Record<string, string>; name?: string }> }>;
+      jobs: Record<string, { steps: Array<{ run?: string; name?: string }> }>;
     };
     const packageStep = workflow.jobs["package-openshell-sdk"]!.steps.find(
       (step) => step.name === "Download and verify reviewed OpenShell SDK packages",
     )!;
-    delete packageStep.env!.NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT;
+    packageStep.run = packageStep.run!.replace(
+      "packageReviewedOpenShellSdk(output, 'if-present'",
+      "packageReviewedOpenShellSdk(output, 'exclude'",
+    );
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
-      "catalogue SDK packaging must include an available reviewed transition replacement",
+      "catalogue SDK packaging must admit candidate identities and retain reviewed main and exact-base packages",
     );
   });
 

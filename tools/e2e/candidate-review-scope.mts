@@ -20,6 +20,8 @@ function governsAdmission(path: string, sdk: boolean): boolean {
       "tools/e2e/base-image-publication.mts",
       "tools/e2e/protected-openshell-workspace.mts",
       "tools/e2e/protected-openshell-projection.mts",
+      "tools/e2e/protected-openshell-filesystem.mts",
+      "tools/e2e/protected-openshell-filesystem.py",
       "scripts/audit-reviewed-npm-graph.mts",
       "ci/reviewed-npm-audit.json",
       "scripts/checks/extract-installer-pins.mts",
