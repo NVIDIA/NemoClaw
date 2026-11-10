@@ -23,7 +23,7 @@ const FULL_WORDMARK_HEIGHT: u16 = 50;
 const NVIDIA_GREEN: Color = Color::Rgb(118, 185, 0);
 const BRIGHT_GREEN: Color = Color::Rgb(163, 230, 53);
 const DIM: Color = Color::Rgb(82, 121, 84);
-const MUTED: Color = Color::Rgb(126, 145, 128);
+pub(super) const MUTED: Color = Color::Rgb(126, 145, 128);
 const WHITE: Color = Color::Rgb(238, 245, 238);
 pub(super) const WARNING: Color = Color::Rgb(255, 170, 70);
 pub(super) const ERROR: Color = Color::Rgb(255, 95, 95);
@@ -111,14 +111,8 @@ impl JourneyWizard {
         if self.started
             && !reviewing
             && let Ok(resolution) = self.resolution()
-            && !resolution.information().is_empty()
         {
-            let mut information = resolution
-                .information()
-                .iter()
-                .map(|note| Line::from(Span::styled(terminal_text(note), Style::new().fg(MUTED))))
-                .collect::<Vec<_>>();
-            information.push(Line::from(""));
+            let mut information = information_lines(&resolution);
             information.append(&mut lines);
             lines = information;
         }
@@ -325,6 +319,7 @@ impl JourneyWizard {
                 lines.extend(target_lines(assessment, false));
                 lines.push(Line::from(""));
             }
+            lines.extend(information_lines(&resolution));
             lines.extend(resolution.unverified().iter().map(|warning| {
                 Line::from(Span::styled(
                     terminal_text(warning),
@@ -371,14 +366,7 @@ impl JourneyWizard {
             }));
             lines.push(Line::from(""));
         }
-        if !resolution.information().is_empty() {
-            lines.extend(
-                resolution.information().iter().map(|note| {
-                    Line::from(Span::styled(terminal_text(note), Style::new().fg(MUTED)))
-                }),
-            );
-            lines.push(Line::from(""));
-        }
+        lines.extend(information_lines(&resolution));
         match self.configuration() {
             Some(Ok(yaml)) => lines.extend(self.configuration_lines(&yaml, width)),
             Some(Err(reason)) => lines.push(Line::from(Span::styled(
@@ -558,6 +546,20 @@ fn choice_line(value: &str, active: bool) -> Line<'static> {
             },
         ),
     ])
+}
+
+/// The resolution's informational notes, muted, then a blank line; nothing
+/// when there are none.
+fn information_lines(resolution: &nemoclaw_authoring::JourneyResolution) -> Vec<Line<'static>> {
+    let mut lines = resolution
+        .information()
+        .iter()
+        .map(|note| Line::from(Span::styled(terminal_text(note), Style::new().fg(MUTED))))
+        .collect::<Vec<_>>();
+    if !lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+    lines
 }
 
 /// One YAML line behind the box's rule, wrapped here so every row keeps the

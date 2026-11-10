@@ -53,7 +53,8 @@
       "title": "Network policy"
     },
     "/spec/sandboxes/*/network/tier": {
-      "title": "Network tier"
+      "title": "Network tier",
+      "description": "Isolated lets the agent reach only the endpoints this configuration declares."
     },
     "/spec/gateway/runtime/provider": {
       "title": "Where should the sandbox run?",

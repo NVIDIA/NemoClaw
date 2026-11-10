@@ -250,7 +250,6 @@ impl JourneyWizard {
         }
     }
 
-    // A resolver failure has no choices to move through; the view shows it.
     /// Show or hide the saved YAML on the review.
     pub(super) fn toggle_configuration(&mut self) {
         if self.reviewing() {
@@ -258,6 +257,7 @@ impl JourneyWizard {
         }
     }
 
+    // A resolver failure has no choices to move through; the view shows it.
     pub(super) fn previous(&mut self) {
         match self.question() {
             Ok(None) if self.started => {

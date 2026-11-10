@@ -23,7 +23,7 @@ A built CLI takes the same arguments, as `nemoclaw onboard`.
 - **No template:** the suggestions describe a managed Docker gateway running OpenClaw with NVIDIA Endpoints inference.
 - **Name:** you choose the agent first; without a name in the template, the deployment's name is suggested from the agent, such as `hermes`.
 - **Settings onboarding decides:** it doesn't ask for the inference API of a named vendor such as NVIDIA Endpoints, the engine socket when one engine answered for the chosen runtime, the network tier, or optional agent and model settings.
-  The saved YAML leaves them out so `plan` fills them, and the review's summary shows the values that apply.
+  The saved YAML leaves them out so `plan` fills them; the review's **Network** row states what the default tier lets the agent reach.
 - **Output:** defaults to `deployment.yaml` and must be a new file; onboarding never overwrites one.
 - **Review:** a summary leads the screen: the agent, one model per route with its provider, each API key and whether it is set here, where the deployment runs, the image and the target check, the network access, any web search, and the output file.
   Under it, **Configuration file** holds the complete YAML that saving writes; **Tab** shows or hides it.

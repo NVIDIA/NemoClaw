@@ -175,19 +175,23 @@ fn credential_row(label: &'static str, reference: &str, facts: &Facts<'_>) -> Ro
     let observed = facts.observations.get(&CredentialRequest {
         reference: reference.into(),
     });
-    let missing =
-        observed.is_some_and(|credential| credential.status != ObservationStatus::Available);
+    let export = format!("export {reference}=...");
+    let run = || format!("Run {export} before nemoclaw plan, or plan asks for it.");
     Row {
         label,
         value: reference.to_owned(),
-        detail: missing.then(|| {
-            let export = format!("export {reference}=...");
-            match ProviderPreset::for_credential_reference(reference)
-                .and_then(ProviderPreset::key_url)
-            {
-                Some(url) => format!("Get a key at {url}, then run {export} before nemoclaw plan."),
-                None => format!("Run {export} before nemoclaw plan, or plan asks for it."),
-            }
+        // A key that could not be read may be set, so only an unset one
+        // points at where to get a new key.
+        detail: observed.and_then(|credential| match credential.status {
+            ObservationStatus::Available => None,
+            ObservationStatus::Unavailable => Some(
+                ProviderPreset::for_credential_reference(reference)
+                    .and_then(ProviderPreset::key_url)
+                    .map_or_else(run, |url| {
+                        format!("Get a key at {url}, then run {export} before nemoclaw plan.")
+                    }),
+            ),
+            ObservationStatus::Unknown => Some(run()),
         }),
         status: observed.map(|credential| match credential.status {
             ObservationStatus::Available => Status {
@@ -258,9 +262,14 @@ fn image_row(sandbox: NamedSandbox<'_>, target: Option<CompatibilityStatus>) -> 
             text: "conflict".into(),
             attention: true,
         },
-        Some(CompatibilityStatus::Unverified) | None => Status {
+        Some(CompatibilityStatus::Unverified) => Status {
             text: "not checked".into(),
             attention: true,
+        },
+        // Onboarding did not read the target, so there is nothing to act on.
+        None => Status {
+            text: "not checked".into(),
+            attention: false,
         },
     };
     Row {

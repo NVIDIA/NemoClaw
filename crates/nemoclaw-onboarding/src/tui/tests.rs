@@ -1518,9 +1518,26 @@ async fn credentials_are_checked_when_review_opens_and_only_once() {
     assert!(ask(&mut wizard, asked).await);
 
     assert!(credential_probe(&wizard).is_empty(), "each is checked once");
+    let text = flat(&screen(&wizard, 100, 40));
     assert!(
-        flat(&screen(&wizard, 100, 40))
-            .contains("API key NVIDIA_API_KEY · could not be read (plan will ask for it)")
+        text.contains("API key NVIDIA_API_KEY · could not be read (plan will ask for it)"),
+        "{text}"
+    );
+    // The key may be set but unreadable here, so getting a new one is no fix.
+    assert!(
+        text.contains("Run export NVIDIA_API_KEY=... before nemoclaw plan"),
+        "{text}"
+    );
+    assert!(!text.contains("Get a key at"), "{text}");
+}
+
+#[test]
+fn a_target_onboarding_did_not_read_is_not_checked_without_asking_for_action() {
+    let wizard = reviewing_wizard_with("nvidia.fabric.hermes");
+    assert!(wizard.resolution().unwrap().target_assessment().is_none());
+    assert_eq!(
+        foreground_after(&wizard, "default image · "),
+        super::view::MUTED
     );
 }
 
