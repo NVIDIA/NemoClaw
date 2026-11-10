@@ -583,14 +583,17 @@ impl Resource for ResourceAdapter {
             diags.root_error_short("Update forbidden during destroy");
             return Some((prior, private));
         }
-        let row = match self.row(&planned, false) {
-            Ok(row) => row,
-            Err(error) => {
+        let (row, bound) = match (self.row(&planned, false), self.row(&prior, false)) {
+            (Ok(row), Ok(bound)) => (row, bound),
+            (Err(error), _) | (_, Err(error)) => {
                 diags.root_error_short(error.to_string());
                 return Some((prior, private));
             }
         };
-        let mutation = self.backend.ensure(self.definition.kind, &row).await;
+        let mutation = self
+            .backend
+            .update(self.definition.kind, &row, &bound)
+            .await;
         self.finish(diags, mutation, &row, Some(prior))
             .map(|state| (state, private))
     }
@@ -847,6 +850,33 @@ mod tests {
         assert_eq!(sandbox_name(&agent), Some("coder"));
         let sandbox: Row = [("name".to_owned(), "coder".to_owned())].into();
         assert_eq!(sandbox_name(&sandbox), Some("coder"));
+    }
+
+    /// An observation of a mutable input, such as an exposure's URL, is
+    /// unknown in a plan that changes the input in place and carried in one
+    /// that doesn't.
+    #[test]
+    fn an_observation_of_a_changed_input_is_unknown_until_applied() {
+        let definition = Definition::new("sandbox", &["name", "services"], &["services"])
+            .computed("urls", crate::carry_prior)
+            .unknown_when_changed("urls", "services");
+        let known = |value: &str| Value::Value(value.to_owned());
+        let state = |services: &str| -> State {
+            [
+                ("id".to_owned(), known("sandbox/1")),
+                ("name".to_owned(), known("assistant")),
+                ("services".to_owned(), known(services)),
+                ("urls".to_owned(), known(r#"{"web":"http://web/"}"#)),
+            ]
+            .into()
+        };
+        let prior = state(r#"[{"name":"web","target_port":8080}]"#);
+        let changed = state(r#"[{"name":"web","target_port":9090}]"#);
+        let (planned, replacements) = plan_update(&definition, &prior, changed);
+        assert_eq!(planned["urls"], Value::Unknown);
+        assert!(replacements.is_empty());
+        let (planned, _) = plan_update(&definition, &prior, prior.clone());
+        assert_eq!(planned["urls"], prior["urls"]);
     }
 
     /// A computed observation that asks for replacement, such as an exited

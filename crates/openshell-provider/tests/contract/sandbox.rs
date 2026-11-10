@@ -7,11 +7,12 @@ use serde_json::json;
 
 /// Unchanged settings read back by a new provider process plan no change,
 /// numbers and an omitted authorization mode included. A driver
-/// configuration or service endpoint changed behind OpenTofu is drift that
-/// replaces the sandbox.
+/// configuration changed behind OpenTofu is drift that replaces the sandbox;
+/// a service endpoint changed behind it is drift that an in-place update
+/// restores.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn sandbox_settings_read_back_and_drift_replaces_the_sandbox() {
+async fn sandbox_settings_read_back_and_drift_is_restored() {
     let fixture = Fixture::start().await;
     let root = workspace();
     fs::copy(
@@ -71,8 +72,28 @@ async fn sandbox_settings_read_back_and_drift_replaces_the_sandbox() {
     assert_eq!(actions(), [replaced.clone(), vec![caller.clone()]].concat());
     fixture.state.lock().unwrap().sandboxes = sandboxes;
     assert_eq!(actions(), vec![]);
+    let ports = || -> Vec<u32> {
+        let state = fixture.state.lock().unwrap();
+        state
+            .services
+            .values()
+            .map(|service| service.target_port)
+            .collect()
+    };
+    let declared = ports();
     for service in fixture.state.lock().unwrap().services.values_mut() {
         service.target_port = 1234;
     }
-    assert_eq!(actions(), [replaced, vec![caller]].concat());
+    // The update's URLs are unknown until it applies.
+    let updated = (json!("openshell_sandbox.agent"), json!(["update"]));
+    assert_eq!(actions(), vec![updated, caller]);
+    let created = fixture.state.lock().unwrap().created_sandboxes.len();
+    run(&["apply", "-auto-approve"]);
+    assert_eq!(
+        fixture.state.lock().unwrap().created_sandboxes.len(),
+        created,
+        "the update replaced the sandbox"
+    );
+    assert_eq!(ports(), declared, "the update left the drift");
+    assert_eq!(actions(), vec![]);
 }

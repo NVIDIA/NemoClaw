@@ -395,6 +395,17 @@ impl State {
             .iter()
             .map(|rpc| rpc.trim_start_matches("/openshell.v1.OpenShell/"))
             .collect();
+        let services: BTreeMap<String, _> = self
+            .services
+            .iter()
+            .map(|((workspace, sandbox, name), endpoint)| {
+                (
+                    format!("{workspace}/{sandbox}/{name}"),
+                    json!({"target_port": endpoint.target_port,
+                "authorization_mode": endpoint.authorization_mode().as_str_name()}),
+                )
+            })
+            .collect();
         json!({
             "rpcs": rpcs, "created_providers": providers, "created_sandboxes": sandboxes,
             "exposures": exposures, "execs": execs, "fabric_starts": self.fabric_starts,
@@ -405,9 +416,10 @@ impl State {
             "effects": self.effects,
             "peak_sandbox_creates": self.peak_sandbox_creates,
             "sandbox_deletes": self.delete_calls,
-            // What the gateway holds now: sandbox IDs by name, registration
-            // names and their credentials' sources, and provider profiles by ID.
-            "sandboxes": live, "registrations": registrations,
+            // What the gateway holds now: sandbox IDs by name, service endpoints
+            // by workspace, sandbox, and name, registration names and their
+            // credentials' sources, and provider profiles by ID.
+            "sandboxes": live, "services": services, "registrations": registrations,
             "registration_credentials": registration_credentials, "profiles": profiles,
         })
     }
@@ -600,6 +612,12 @@ impl tower::Service<http::Request<Body>> for Service {
                     unary(request, state, delete_workspace).await
                 }
                 "/openshell.v1.OpenShell/GetService" => unary(request, state, get_service).await,
+                "/openshell.v1.OpenShell/ExposeService" => {
+                    unary(request, state, expose_service).await
+                }
+                "/openshell.v1.OpenShell/DeleteService" => {
+                    unary(request, state, delete_service).await
+                }
                 "/openshell.v1.OpenShell/DeleteProvider" => {
                     unary(request, state, |state, request| {
                         delete_provider(state, &request)
@@ -1031,6 +1049,75 @@ fn get_service(
         .ok_or_else(|| Status::not_found("service endpoint not found"))?
         .clone();
     Ok(service_response(endpoint))
+}
+/// The gateway exposes a live sandbox's service, or updates an exposed one in
+/// place and keeps its ID, resolving an omitted authorization mode to STRIP.
+fn expose_service(
+    state: &mut State,
+    q: p::ExposeServiceRequest,
+) -> Result<p::ServiceEndpointResponse, Status> {
+    let workspace = workspace(&q.workspace_scope)?;
+    let sandbox_id = state
+        .sandboxes
+        .get(&format!("{workspace}/{}", q.sandbox))
+        .and_then(|sandbox| sandbox.metadata.as_ref())
+        .map(|meta| meta.id.clone())
+        .ok_or_else(|| Status::not_found("sandbox not found"))?;
+    if q.target_port == 0 || q.target_port > u32::from(u16::MAX) {
+        return Err(Status::invalid_argument("target_port must be in 1..=65535"));
+    }
+    let mode = match p::ServiceAuthorizationMode::try_from(q.authorization_mode) {
+        Ok(p::ServiceAuthorizationMode::Unspecified) => p::ServiceAuthorizationMode::Strip,
+        Ok(mode) => mode,
+        Err(_) => return Err(Status::invalid_argument("authorization_mode is invalid")),
+    };
+    let key = (workspace.clone(), q.sandbox.clone(), q.name.clone());
+    let metadata = match state.services.get(&key).and_then(|e| e.metadata.clone()) {
+        Some(mut metadata) => {
+            state.effects += 1;
+            metadata.resource_version += 1;
+            metadata
+        }
+        None => state.metadata(
+            format!("{}--{}", q.sandbox, q.name),
+            workspace,
+            HashMap::from([("sandbox".into(), q.sandbox.clone())]),
+        ),
+    };
+    let endpoint = p::ServiceEndpoint {
+        metadata: Some(metadata),
+        sandbox_id,
+        sandbox: q.sandbox,
+        name: q.name,
+        target_port: q.target_port,
+        domain: q.domain,
+        authorization_mode: mode as i32,
+    };
+    state.services.insert(key, endpoint.clone());
+    Ok(service_response(endpoint))
+}
+/// The gateway removes one service endpoint; with `allow_missing`, an absent
+/// endpoint is already gone rather than an error.
+fn delete_service(
+    state: &mut State,
+    q: p::DeleteServiceRequest,
+) -> Result<p::DeleteServiceResponse, Status> {
+    let workspace = workspace(&q.workspace_scope)?;
+    let outcome = if state
+        .services
+        .remove(&(workspace, q.sandbox, q.name))
+        .is_some()
+    {
+        state.effects += 1;
+        p::DeletionOutcome::Completed
+    } else if q.allow_missing {
+        p::DeletionOutcome::AlreadyAbsent
+    } else {
+        return Err(Status::not_found("service endpoint not found"));
+    };
+    Ok(p::DeleteServiceResponse {
+        outcome: outcome.into(),
+    })
 }
 fn policy_status(
     state: &mut State,

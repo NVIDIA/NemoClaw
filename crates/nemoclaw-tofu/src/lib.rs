@@ -70,6 +70,9 @@ pub struct Definition {
     pub bound_fields: Vec<&'static str>,
     /// Attributes the backend observes, with their update planning rule.
     pub computed: Vec<(&'static str, PlanComputed)>,
+    /// Computed attributes, each with the mutable input it observes: a plan
+    /// that changes the input leaves the observation unknown until apply.
+    pub unknown_when_changed: Vec<(&'static str, &'static str)>,
     /// Computed attributes whose planned change requires replacement, such as
     /// an observation that the object can no longer run.
     pub replace_on_change: Vec<&'static str>,
@@ -114,6 +117,7 @@ impl Definition {
             reset_when_omitted: Vec::new(),
             bound_fields: Vec::new(),
             computed: Vec::new(),
+            unknown_when_changed: Vec::new(),
             replace_on_change: Vec::new(),
             generated: Vec::new(),
             protection: Protection::None,
@@ -151,6 +155,10 @@ impl Definition {
     }
     pub fn computed(mut self, name: &'static str, plan: PlanComputed) -> Self {
         self.computed.push((name, plan));
+        self
+    }
+    pub fn unknown_when_changed(mut self, computed: &'static str, input: &'static str) -> Self {
+        self.unknown_when_changed.push((computed, input));
         self
     }
     pub fn generated(mut self, name: &'static str, generate: Generate) -> Self {
@@ -332,6 +340,11 @@ pub fn plan_update(
     for (name, plan) in &definition.computed {
         if let Some(value) = plan(name, prior) {
             proposed.insert((*name).into(), value);
+        }
+    }
+    for (name, input) in &definition.unknown_when_changed {
+        if proposed.get(*input) != prior.get(*input) {
+            proposed.insert((*name).into(), Value::Unknown);
         }
     }
     let replacements = definition
