@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The cluster objects a kind case needs before its first apply, released
-# with the bundled Helm provider, as a platform or operator provides them:
-# the deployment's namespace, prepared as OpenShift prepares a project with
-# its UID range when the case selects the OpenShift profile, holding the
+# The cluster objects a kind or OpenShift case needs before its first apply,
+# released with the bundled Helm provider, as a platform or operator
+# provides them: the deployment's namespace, prepared as OpenShift prepares a
+# project with its UID range when the case supplies one, holding the
 # registry pull Secret; a stub model in its own namespace that answers every
 # chat completion with `reply`; and, when the case selects the oidc
 # profile, an existing OIDC issuer in its own namespace and its CA. The test
@@ -30,13 +30,19 @@ variable "context" {
 }
 
 variable "kubeconfig" {
-  description = "The kind cluster's kubeconfig file."
+  description = "The cluster's kubeconfig file."
   type        = string
 }
 
 variable "reply" {
   description = "The text of every stub reply."
   type        = string
+}
+
+variable "uid_range" {
+  description = "OpenShift's UID and supplemental-group range, START/SIZE, to annotate the deployment's namespace with, or null for none."
+  type        = string
+  default     = null
 }
 
 variable "pull_credentials" {
@@ -76,7 +82,6 @@ locals {
   pull_secret = jsonencode({ auths = { (local.registry) = {
     auth = base64encode("${var.pull_credentials.username}:${var.pull_credentials.password}")
   } } })
-  openshift = local.document.spec.gateway.runtime.provider == "openshift"
   # The existing issuer the gateway trusts, which the SDK's development
   # issuer image stands in for: its service is <name>-oidc in its namespace.
   oidc   = try(local.document.spec.gateway.config["openshell.gateway.oidc"], null)
@@ -132,9 +137,10 @@ locals {
   values = {
     deploymentNamespace = local.kubernetes.namespace
     modelNamespace      = local.model
-    # kind does not enforce OpenShift's constraints; the SDK and OpenShell
-    # read this range as they do on OpenShift.
-    uidRange = local.openshift ? "1000680000/10000" : null
+    # kind does not enforce OpenShift's constraints; OpenShell reads this
+    # range and runs each sandbox as its first UID, as it does on OpenShift.
+    # On OpenShift, which writes its own range, a case supplies none.
+    uidRange = var.uid_range
     image    = local.image
     stream   = local.stream
     pullSecret = {

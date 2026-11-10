@@ -453,7 +453,7 @@ mod tests {
         assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
         assert!(!bound.contains("nc-hcl-kind") && !bound.contains("@sha256:0000"));
 
-        let template = include_str!("../../../nemoclaw-e2e/cases/kind-openshift-oidc.yaml");
+        let template = include_str!("../../../nemoclaw-e2e/cases/kind-kubernetes-oidc.yaml");
         let bound = kind_case(
             template,
             "u-1",
