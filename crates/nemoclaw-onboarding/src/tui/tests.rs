@@ -586,6 +586,16 @@ fn reviewing_wizard_with(harness: &str) -> JourneyWizard {
     wizard
 }
 
+/// The review of the journey `path` starts. This machine answered for no engine.
+fn reviewing_template(path: &std::path::Path) -> JourneyWizard {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Template(path), &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state).with_local_engine_candidates(vec![]);
+    questions_until_review(&mut wizard);
+    wizard.accepted = false;
+    wizard
+}
+
 #[test]
 fn at_120x40_the_review_shows_the_agent_model_and_image_without_scrolling() {
     let wizard = reviewing_wizard_with("nvidia.fabric.hermes");
@@ -670,11 +680,7 @@ fn a_template_with_search_and_grants_summarizes_both() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("template.yaml");
     std::fs::write(&path, serde_json::to_vec(&values).unwrap()).unwrap();
-    let capabilities = Capabilities::available();
-    let state = load_journey(Source::Template(&path), &capabilities).unwrap();
-    let mut wizard = JourneyWizard::new(capabilities, state).with_local_engine_candidates(vec![]);
-    questions_until_review(&mut wizard);
-    wizard.accepted = false;
+    let wizard = reviewing_template(&path);
     let text = flat(&screen(&wizard, 160, 60));
     assert!(text.contains("Search Brave · BRAVE_API_KEY"), "{text}");
     assert!(
@@ -1023,17 +1029,7 @@ fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
 fn a_template_with_several_routes_gets_a_model_row_for_each() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/spark/local-and-hosted.yaml");
-    let capabilities = Capabilities::available();
-    let state = load_journey(Source::Template(&path), &capabilities).unwrap();
-    let mut wizard = JourneyWizard::new(capabilities, state);
-    wizard.started = true;
-    for _ in 0..80 {
-        if wizard.reviewing() {
-            break;
-        }
-        wizard.advance();
-        assert!(wizard.error.is_none(), "{:?}", wizard.error);
-    }
+    let wizard = reviewing_template(&path);
     let text = flat(&screen(&wizard, 160, 60));
     for row in [
         "Model local (default): nvidia/Qwen3.8-27B-NVFP4 · local service",
@@ -1609,6 +1605,27 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
                 );
             }
             assert!(!text.contains("non-interactive"), "{text}");
+        }
+        if status == ObservationStatus::Unavailable {
+            // The detail wraps under the value, not back to the label column.
+            let screen = screen(&wizard, 72, 24);
+            let rows = screen
+                .lines()
+                .map(|row| row.trim_matches('"'))
+                .collect::<Vec<_>>();
+            let first = rows
+                .iter()
+                .position(|row| row.contains("Get a key"))
+                .unwrap();
+            let value = rows.iter().find(|row| row.contains("API key")).unwrap();
+            let column = value.find("NVIDIA_API_KEY").unwrap();
+            for row in &rows[first..=first + 1] {
+                assert_eq!(
+                    row.len() - row.trim_start().len(),
+                    column,
+                    "{row:?} in {screen}"
+                );
+            }
         }
         // Color is not the only signal, but an unset key is what the user must act on.
         assert_eq!(
@@ -2251,11 +2268,7 @@ fn another_model_entry_starts_empty_because_enter_needs_a_typed_identifier() {
 fn an_explicit_policy_is_not_summarized_as_isolated() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/explicit-policy.yaml");
-    let capabilities = Capabilities::available();
-    let state = load_journey(Source::Template(&path), &capabilities).unwrap();
-    let mut wizard = JourneyWizard::new(capabilities, state).with_local_engine_candidates(vec![]);
-    questions_until_review(&mut wizard);
-    wizard.accepted = false;
+    let wizard = reviewing_template(&path);
     let text = flat(&screen(&wizard, 160, 60));
     assert!(
         text.contains("Network Explicit policy from the configuration file"),
@@ -2293,6 +2306,7 @@ fn an_open_configuration_file_marks_and_rules_its_wrapped_lines() {
         };
         // The scrollbar track ends the row.
         let text = text.trim().trim_end_matches(['│', '┃']).trim();
+        assert!(!text.is_empty(), "a wrap leaves a blank row in {screen}");
         if text.starts_with('↪') {
             continued += 1;
         } else {

@@ -578,16 +578,21 @@ fn a_pi_author_can_explicitly_choose_responses_api() {
 
 #[test]
 fn a_vendor_endpoint_names_its_preset_and_a_custom_endpoint_names_none() {
+    let openai = InferenceProviderKind::Openai;
+    let nvidia = "https://integrate.api.nvidia.com/v1";
     assert_eq!(
-        ProviderPreset::for_endpoint("https://integrate.api.nvidia.com/v1"),
+        ProviderPreset::for_endpoint(openai, nvidia),
         Some(ProviderPreset::NvidiaEndpoints)
     );
+    // The preset is also the API it speaks there.
     assert_eq!(
-        ProviderPreset::for_endpoint("https://inference.example.com/v1"),
+        ProviderPreset::for_endpoint(InferenceProviderKind::Anthropic, nvidia),
         None
     );
-    assert_eq!(
-        ProviderPreset::for_endpoint("http://172.20.0.1:11446/v1"),
-        None
-    );
+    for endpoint in [
+        "https://inference.example.com/v1",
+        "http://172.20.0.1:11446/v1",
+    ] {
+        assert_eq!(ProviderPreset::for_endpoint(openai, endpoint), None);
+    }
 }

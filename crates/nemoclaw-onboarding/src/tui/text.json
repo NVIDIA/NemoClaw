@@ -261,6 +261,10 @@
     "/spec/sandboxes/*/network/tier": {
       "isolated": "Isolated"
     },
+    "/spec/integrations/*/provider": {
+      "brave": "Brave",
+      "tavily": "Tavily"
+    },
     "/spec/gateway/runtime/provider": {
       "docker": "Docker",
       "podman": "Podman",

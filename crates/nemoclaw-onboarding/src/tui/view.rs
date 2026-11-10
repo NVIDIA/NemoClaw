@@ -104,8 +104,7 @@ impl JourneyWizard {
         } else if let Ok(Some(question)) = current.as_ref() {
             self.question_lines(question, rows[2].width)
         } else {
-            // The review's scrollbar takes the last column.
-            self.review_lines(rows[2].width.saturating_sub(1))
+            self.review_lines(review_text_area(rows[2]).width)
         };
         // Review lists them after the target, so the verdict opens the screen.
         if self.started
@@ -139,11 +138,7 @@ impl JourneyWizard {
     /// offset is clamped here as well as when scrolling, because a resize can
     /// shrink the limit after the last key press.
     fn render_review(&self, frame: &mut Frame<'_>, area: Rect, content: Paragraph<'_>) {
-        // The scrollbar takes the last column, so the text wraps one short.
-        let text = Rect {
-            width: area.width.saturating_sub(1),
-            ..area
-        };
+        let text = review_text_area(area);
         let height = content.line_count(text.width);
         let limit =
             u16::try_from(height.saturating_sub(usize::from(text.height))).unwrap_or(u16::MAX);
@@ -350,20 +345,13 @@ impl JourneyWizard {
         lines.extend(
             summary::rows(document, &facts)
                 .iter()
-                .flat_map(summary_lines),
+                .flat_map(|row| summary_lines(row, width.into())),
         );
         lines.push(Line::from(""));
         if let Some(assessment) = assessment.filter(|_| !blocked)
             && !assessment.reasons.is_empty()
         {
-            let color = if assessment.status == CompatibilityStatus::Unverified {
-                WARNING
-            } else {
-                MUTED
-            };
-            lines.extend(assessment.reasons.iter().map(|reason| {
-                Line::from(Span::styled(terminal_text(reason), Style::new().fg(color)))
-            }));
+            lines.extend(reason_lines(assessment, false));
             lines.push(Line::from(""));
         }
         lines.extend(information_lines(&resolution));
@@ -479,8 +467,8 @@ impl JourneyWizard {
                     .fg(LOGO_GRADIENT[0])
                     .add_modifier(Modifier::BOLD),
             ));
-            let used = if brand.is_some() { 8 } else { 0 };
-            texture.extend(texture_line((area.width as usize).saturating_sub(used)).spans);
+            let used = texture.iter().map(Span::width).sum::<usize>();
+            texture.extend(texture_line(usize::from(area.width).saturating_sub(used)).spans);
             frame.render_widget(
                 Paragraph::new(vec![Line::from(wordmark), Line::from(texture)]),
                 area,
@@ -548,6 +536,14 @@ fn choice_line(value: &str, active: bool) -> Line<'static> {
     ])
 }
 
+/// The review's scrollbar takes the last column, so its text is one short.
+fn review_text_area(area: Rect) -> Rect {
+    Rect {
+        width: area.width.saturating_sub(1),
+        ..area
+    }
+}
+
 /// The resolution's informational notes, muted, then a blank line; nothing
 /// when there are none.
 fn information_lines(resolution: &nemoclaw_authoring::JourneyResolution) -> Vec<Line<'static>> {
@@ -562,39 +558,69 @@ fn information_lines(resolution: &nemoclaw_authoring::JourneyResolution) -> Vec<
     lines
 }
 
-/// One YAML line behind the box's rule, wrapped here so every row keeps the
-/// rule. Continuation rows start with `↪` past the line's own indentation,
-/// so they don't read as lines of the file.
+/// One YAML line behind the box's rule. Continuation rows start with `↪`
+/// past the line's own indentation, so they don't read as lines of the file.
 fn ruled_lines(line: &str, width: usize) -> Vec<Line<'static>> {
-    const GUTTER: usize = 2;
-    const MARKER: &str = "↪ ";
-    let room = width.saturating_sub(GUTTER).max(1);
-    let indent = (line.len() - line.trim_start().len()).min(room / 2);
     let gutter = || Span::styled("│ ", Style::new().fg(DIM));
-    let continuation = || {
-        vec![
-            gutter(),
-            Span::raw(" ".repeat(indent)),
-            Span::styled(MARKER, Style::new().fg(DIM)),
-        ]
-    };
-    let indent = indent + MARKER.chars().count();
+    let indent = (line.len() - line.trim_start().len()).min(width.saturating_sub(2) / 2);
+    let continuation = [
+        gutter(),
+        Span::raw(" ".repeat(indent)),
+        Span::styled("↪ ", Style::new().fg(DIM)),
+    ];
+    hanging_lines(vec![gutter()], &continuation, yaml_line(line).spans, width)
+}
+
+/// `content` after `first`, wrapped at words to `width` here rather than by
+/// the paragraph, so every continuation row starts with `continuation`. A
+/// word longer than a row breaks anywhere.
+fn hanging_lines(
+    first: Vec<Span<'static>>,
+    continuation: &[Span<'static>],
+    content: Vec<Span<'static>>,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let start = continuation.iter().map(Span::width).sum::<usize>();
+    let mut used = first.iter().map(Span::width).sum::<usize>();
     let mut rows = Vec::new();
-    let mut row = vec![gutter()];
-    let mut used = 0;
-    for span in yaml_line(line).spans {
+    let mut row = first;
+    // Whether this row holds any visible content yet; until it does, the row
+    // takes a word of any length.
+    let mut filled = false;
+    let mut wrap = |row: &mut Vec<Span<'static>>, text: &mut String, style, used: &mut usize| {
+        if !text.is_empty() {
+            row.push(Span::styled(std::mem::take(text), style));
+        }
+        rows.push(Line::from(std::mem::replace(row, continuation.to_vec())));
+        *used = start;
+    };
+    for span in content {
         let mut text = String::new();
-        for character in span.content.chars() {
-            let cells = Span::raw(character.to_string()).width();
-            if used > 0 && used + cells > room {
-                if !text.is_empty() {
-                    row.push(Span::styled(std::mem::take(&mut text), span.style));
+        for word in words(&span.content) {
+            let cells = Span::raw(word).width();
+            if filled && used + cells > width {
+                wrap(&mut row, &mut text, span.style, &mut used);
+                filled = false;
+                if word.trim().is_empty() {
+                    continue;
                 }
-                rows.push(Line::from(std::mem::replace(&mut row, continuation())));
-                used = indent;
             }
-            text.push(character);
-            used += cells;
+            if used + cells <= width {
+                text.push_str(word);
+                used += cells;
+                // Indentation alone leaves room for a long word after it.
+                filled |= !word.trim().is_empty();
+                continue;
+            }
+            for character in word.chars() {
+                let cells = Span::raw(&*character.encode_utf8(&mut [0; 4])).width();
+                if filled && used + cells > width {
+                    wrap(&mut row, &mut text, span.style, &mut used);
+                }
+                text.push(character);
+                used += cells;
+                filled = true;
+            }
         }
         if !text.is_empty() {
             row.push(Span::styled(text, span.style));
@@ -602,6 +628,25 @@ fn ruled_lines(line: &str, width: usize) -> Vec<Line<'static>> {
     }
     rows.push(Line::from(row));
     rows
+}
+
+/// `text` as alternating runs of whitespace and of everything else.
+fn words(text: &str) -> Vec<&str> {
+    let mut words = Vec::new();
+    let mut start = 0;
+    let mut previous = None;
+    for (index, character) in text.char_indices() {
+        let space = character.is_whitespace();
+        if previous.is_some_and(|previous| previous != space) {
+            words.push(&text[start..index]);
+            start = index;
+        }
+        previous = Some(space);
+    }
+    if start < text.len() {
+        words.push(&text[start..]);
+    }
+    words
 }
 
 /// Mute YAML keys so the authored values stand out.
@@ -646,43 +691,60 @@ fn texture_line(width: usize) -> Line<'static> {
 /// The target's status and every reason. A reason that blocks saving is an
 /// error; one that only leaves the target unverified is a warning.
 fn target_lines(assessment: &DiscoveryAssessment, blocked: bool) -> Vec<Line<'static>> {
-    let color = match (blocked, assessment.status) {
-        (true, _) => ERROR,
-        (false, CompatibilityStatus::Unverified) => WARNING,
-        (false, _) => MUTED,
-    };
     let mut lines = vec![Line::from(Span::styled(
         format!("Target: {:?}", assessment.status),
-        Style::new().fg(color).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(target_color(assessment, blocked))
+            .add_modifier(Modifier::BOLD),
     ))];
-    lines.extend(
-        assessment
-            .reasons
-            .iter()
-            .map(|reason| Line::from(Span::styled(terminal_text(reason), Style::new().fg(color)))),
-    );
+    lines.extend(reason_lines(assessment, blocked));
     lines
 }
 
+fn reason_lines(assessment: &DiscoveryAssessment, blocked: bool) -> Vec<Line<'static>> {
+    let style = Style::new().fg(target_color(assessment, blocked));
+    assessment
+        .reasons
+        .iter()
+        .map(|reason| Line::from(Span::styled(terminal_text(reason), style)))
+        .collect()
+}
+
+fn target_color(assessment: &DiscoveryAssessment, blocked: bool) -> Color {
+    match (blocked, assessment.status) {
+        (true, _) => ERROR,
+        (false, CompatibilityStatus::Unverified) => WARNING,
+        (false, _) => MUTED,
+    }
+}
+
 /// A summary row: the label in a column, the value, then its status.
-fn summary_lines(row: &summary::Row) -> Vec<Line<'static>> {
-    let mut spans = vec![
-        Span::styled(format!("  {:<10} ", row.label), Style::new().fg(MUTED)),
-        Span::styled(terminal_text(&row.value), Style::new().fg(WHITE)),
-    ];
+fn summary_lines(row: &summary::Row, width: usize) -> Vec<Line<'static>> {
+    const LABEL_WIDTH: usize = 10;
+    let hang = [Span::raw(" ".repeat(2 + LABEL_WIDTH + 1))];
+    let mut content = vec![Span::styled(
+        terminal_text(&row.value),
+        Style::new().fg(WHITE),
+    )];
     if let Some(status) = &row.status {
-        spans.push(Span::styled(" · ", Style::new().fg(MUTED)));
-        spans.push(Span::styled(
-            terminal_text(&status.text),
+        content.push(Span::styled(" · ", Style::new().fg(MUTED)));
+        content.push(Span::styled(
+            status.text,
             Style::new().fg(if status.attention { WARNING } else { MUTED }),
         ));
     }
-    let mut lines = vec![Line::from(spans)];
+    let label = Span::styled(
+        format!("  {:<LABEL_WIDTH$} ", row.label),
+        Style::new().fg(MUTED),
+    );
+    let mut lines = hanging_lines(vec![label], &hang, content, width);
     if let Some(detail) = &row.detail {
-        lines.push(Line::from(vec![
-            Span::raw(" ".repeat(13)),
-            Span::styled(terminal_text(detail), Style::new().fg(MUTED)),
-        ]));
+        lines.extend(hanging_lines(
+            hang.to_vec(),
+            &hang,
+            vec![Span::styled(terminal_text(detail), Style::new().fg(MUTED))],
+            width,
+        ));
     }
     lines
 }

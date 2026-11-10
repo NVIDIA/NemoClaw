@@ -93,12 +93,13 @@ impl ProviderPreset {
         })
     }
 
-    /// The vendor preset whose fixed endpoint is `endpoint`. Compatible
-    /// presets carry only a placeholder endpoint, so none matches them.
-    pub fn for_endpoint(endpoint: &str) -> Option<Self> {
+    /// The vendor preset whose fixed endpoint is `endpoint` for a provider of
+    /// `kind`. Compatible presets carry only a placeholder endpoint, so none
+    /// matches them.
+    pub fn for_endpoint(kind: InferenceProviderKind, endpoint: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|preset| {
             let profile = preset.profile();
-            !profile.custom_endpoint && profile.endpoint == endpoint
+            !profile.custom_endpoint && profile.kind == kind && profile.endpoint == endpoint
         })
     }
 
