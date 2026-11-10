@@ -140,18 +140,14 @@ function textWithoutSafeCredentialFixtures(value: string): string {
 }
 
 function isSqlBindParameter(text: string, assignment: RegExpExecArray): boolean {
-  const candidate = /^\?\)*(['"])?$/u.exec(assignment[4] ?? "");
+  const candidate = /^\?\)*(?:$|(['"])(?:[.!?]['"]?)?)$/u.exec(assignment[4] ?? "");
   if (candidate === null) return false;
   if (!/=[ \t]*\?/u.test(assignment[0])) return false;
   // A bind marker carries no credential. Keep context bounded and within its quote.
-  const query = /(?:'[^'\r\n\0]*|"[^"\r\n\0]*)$/u.exec(
+  const query = /(['"])(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|EXPLAIN)\b[^'"\r\n\0]*$/iu.exec(
     text.slice(Math.max(0, assignment.index - 1_024), assignment.index),
   );
-  return (
-    query !== null &&
-    /^['"](?:SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|EXPLAIN)\b/iu.test(query[0]) &&
-    (candidate[1] === undefined || candidate[1] === query[0][0])
-  );
+  return query !== null && (candidate[1] === undefined || candidate[1] === query[1]);
 }
 
 /** Detect standalone and context-anchored credentials in opaque file content. */

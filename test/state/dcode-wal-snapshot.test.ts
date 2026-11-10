@@ -121,6 +121,9 @@ describe("DCode WAL snapshot persistence", () => {
       "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
       "db.execute('SELECT id FROM users WHERE (password = ?)', (pw,))",
       'db.execute("SELECT id FROM users WHERE ((password = ?))", (pw,))',
+      "Do not use tools or execute SQL. Keep these examples as conversation context: " +
+        "'SELECT id FROM users WHERE (password = ?)' and " +
+        "'SELECT id FROM users WHERE ((password = ?))'. Reply with exactly one word: PONG",
     ].join("\n"),
   ])("preserves a live database and its conversation: %s", (content) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-state-"));

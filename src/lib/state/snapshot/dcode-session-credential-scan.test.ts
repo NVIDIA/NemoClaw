@@ -86,12 +86,16 @@ describe("DCode session database credential scan", () => {
     }
   });
 
-  it("rejects an opaque credential assignment stored in a session transcript", () => {
+  it.each([
+    ["TEXT", 'Example configuration: {"API_KEY":"not-a-secret-marker"}'],
+    ["TEXT", 'log("note \'SELECT 1"); password=?'],
+    ["BLOB", 'log("note \'SELECT 1"); password=?'],
+  ])("rejects an opaque credential assignment stored as %s: %s", (storageType, content) => {
     const fixture = createDatabase();
-    fixture.database.exec("CREATE TABLE sessions (content TEXT)");
+    fixture.database.exec(`CREATE TABLE sessions (content ${storageType})`);
     fixture.database
       .prepare("INSERT INTO sessions VALUES (?)")
-      .run('Example configuration: {"API_KEY":"not-a-secret-marker"}');
+      .run(storageType === "BLOB" ? Buffer.from(content) : content);
     fixture.database.close();
 
     expect(
@@ -121,6 +125,9 @@ describe("DCode session database credential scan", () => {
         "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
         "db.execute('SELECT id FROM users WHERE (password = ?)', (pw,))",
         'db.execute("SELECT id FROM users WHERE ((password = ?))", (pw,))',
+        "Do not use tools or execute SQL. Keep these examples as conversation context: " +
+          "'SELECT id FROM users WHERE (password = ?)' and " +
+          "'SELECT id FROM users WHERE ((password = ?))'. Reply with exactly one word: PONG",
       ].join("\n");
       fixture.database.exec(`CREATE TABLE sessions (content ${storageType})`);
       fixture.database
