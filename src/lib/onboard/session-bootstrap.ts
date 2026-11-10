@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouterSession } from "../inference/provider-key/contract";
 import {
   finishTelemetryOperation,
   isTelemetryOperationActive,
@@ -741,6 +742,7 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  rejectRetiredModelRouterSession(session);
   assertNoIncompleteExternalComponentActivation(session);
   if (input.apfInterceptorRequested === true || session?.apfInterceptorRequested === true) {
     reportUnsupportedApfLifecycle("resume", deps);
@@ -807,7 +809,15 @@ function prepareFreshSession(
   if (input.apfInterceptorRequested === true && input.checkpointProfile === "portable") {
     reportUnsupportedApfLifecycle("portable", deps);
   }
-  assertNoIncompleteExternalComponentActivation(deps.loadSession());
+  const previousSession = deps.loadSession();
+  if (
+    previousSession?.routerPid ||
+    previousSession?.routerPort ||
+    previousSession?.routerCredentialHash
+  ) {
+    rejectRetiredModelRouterSession(previousSession);
+  }
+  assertNoIncompleteExternalComponentActivation(previousSession);
   deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();

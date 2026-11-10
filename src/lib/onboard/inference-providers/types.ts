@@ -323,27 +323,6 @@ export type OllamaDeps = CommonDeps & {
   OLLAMA_PROXY_CREDENTIAL_ENV: string;
 };
 
-export type RoutedDeps = CommonDeps &
-  InferenceRouteMutationDeps & {
-    reconcileModelRouter: () => Promise<void>;
-    routedInference: {
-      upsertRoutedProvider(
-        provider: string,
-        endpointUrl: string | null,
-        credentialEnv: string | null,
-        helpers: {
-          upsertProvider: UpsertProvider;
-          hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
-        },
-      ):
-        | { ok: boolean; result: { message?: string; status?: number } }
-        | Promise<{ ok: boolean; result: { message?: string; status?: number } }>;
-    };
-    hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
-    redact: (input: string) => string;
-    compactText: (input: string) => string;
-  };
-
 export const REMOTE_PROVIDER_NAMES = [
   "nvidia-prod",
   "nvidia-nim",

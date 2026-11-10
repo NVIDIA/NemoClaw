@@ -76,7 +76,7 @@ describe("OpenClaw native local live selection", () => {
         ),
       ).rejects.toMatchObject({
         exitCode: 2,
-        message: expect.stringMatching(/Model Router.*native.*onboard/s),
+        message: expect.stringMatching(/Model Router has been removed/),
       });
 
       expect(create).not.toHaveBeenCalled();
@@ -288,18 +288,10 @@ describe("OpenClaw native local live selection", () => {
     expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
   });
 
-  it.each(["ollama-local", "nvidia-router"] as const)(
+  it.each(["ollama-local"] as const)(
     "changes the %s model without touching the shared gateway route",
     async (provider) => {
-      const selectedBinding =
-        provider === "nvidia-router"
-          ? {
-              ...attachment,
-              provider,
-              authMode: "authenticated" as const,
-              endpointUrl: "http://host.openshell.internal:4000/v1",
-            }
-          : attachment;
+      const selectedBinding = attachment;
       const selected = { ...selectedBinding, ...nativeLocalIdentity(selectedBinding) };
       const deps = fixture(selected);
       const result = await runInferenceSet(

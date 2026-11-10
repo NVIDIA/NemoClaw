@@ -52,7 +52,8 @@ describe("reviewed OpenShell SDK transition packaging", () => {
       const prefix = "/repos/NVIDIA/NemoClaw";
       const routes = [
         `${prefix}/pulls/123`,
-        `${prefix}/issues/123/comments?per_page=100&page=1`,
+        `${prefix}/compare/${f.identity.baseSha}...${f.identity.candidateSha}?per_page=1`,
+        `${prefix}/pulls/123/reviews?per_page=100&page=1`,
         `${prefix}/collaborators/reviewer/permission`,
         `${prefix}/git/commits/${f.identity.mergeSha}`,
         ...Object.keys(f.sources).flatMap((file) => [

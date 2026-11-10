@@ -1441,7 +1441,7 @@ async function destroySandboxUnlocked(
       const detail = error instanceof Error ? error.message : String(error);
       defaultDestroyWarn(
         `Sandbox deletion succeeded, but the Model Router teardown did not complete: ${detail}. ` +
-          `Inspect the listener before the next Model Router onboarding and stop only a process ` +
+          `Inspect the listener before retrying cleanup and stop only a process ` +
           `that still owns the matching port and model-router command line.`,
       );
     }

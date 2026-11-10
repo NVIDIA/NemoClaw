@@ -211,6 +211,8 @@ const result = await installVllm(profile, {
   nonInteractive: true,
   promptFn: async () => "",
   readinessReports: [{ nodeId: "storage-proof", report }],
+  // This storage fixture has no OpenShell gateway; keep Docker capacity checks real.
+  resolveManagedBridgeHost: () => "172.18.0.1",
 });
 process.exitCode = result.ok ? 0 : 1;
 `;

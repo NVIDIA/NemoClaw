@@ -287,10 +287,6 @@ function isOptionalFiniteNumber(value: unknown): value is number | undefined {
   return value === undefined || (typeof value === "number" && Number.isFinite(value));
 }
 
-function isOptionalBoolean(value: unknown): value is boolean | undefined {
-  return value === undefined || typeof value === "boolean";
-}
-
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
@@ -510,19 +506,7 @@ function isBlueprint(value: unknown): value is Blueprint {
     }
   }
 
-  const router = components.router;
-  if (router !== undefined) {
-    if (!isPlainObject(router)) {
-      return false;
-    }
-    if (
-      !isOptionalBoolean(router.enabled) ||
-      !(router.port === undefined || isValidPort(router.port)) ||
-      !isOptionalString(router.pool_config_path)
-    ) {
-      return false;
-    }
-  }
+  if (components.router !== undefined) return false;
 
   const policy = components.policy;
   if (policy !== undefined) {
@@ -654,7 +638,6 @@ interface Blueprint {
       profiles?: InferenceProfileMap;
     };
     sandbox?: SandboxConfig;
-    router?: RouterConfig;
     policy?: {
       additions?: PolicyAdditions;
     };
@@ -677,14 +660,6 @@ interface SandboxConfig {
   name?: string;
   forward_ports?: number[];
 }
-
-interface RouterConfig {
-  enabled?: boolean;
-  port?: number;
-  pool_config_path?: string;
-}
-
-const DEFAULT_ROUTER_PORT = 4000;
 
 function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
   // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
@@ -1272,15 +1247,18 @@ async function resolveRunConfig(
   inferenceProfiles: InferenceProfileMap;
   inferenceCfg: InferenceProfile;
   sandboxCfg: SandboxConfig;
-  routerCfg: RouterConfig;
   policyAdditions: PolicyAdditions;
 }> {
+  if (profile === "routed")
+    throw new Error("Model Router has been removed because llm-router is deprecated.");
   const inferenceProfiles = blueprint.components?.inference?.profiles ?? {};
   if (!(profile in inferenceProfiles)) {
     const available = Object.keys(inferenceProfiles).join(", ");
     throw new Error(`Profile '${profile}' not found. Available: ${available}`);
   }
 
+  if (inferenceProfiles[profile]?.provider_name === "nvidia-router")
+    throw new Error("Model Router has been removed because llm-router is deprecated.");
   const policyAdditions = await resolveBlueprintPolicyAdditionHosts(
     blueprint.components?.policy?.additions ?? {},
   );
@@ -1298,7 +1276,6 @@ async function resolveRunConfig(
   }
 
   const sandboxCfg = blueprint.components?.sandbox ?? {};
-  const routerCfg = blueprint.components?.router ?? {};
 
   // A blueprint is untrusted input. Validate the identifiers that flow into
   // `openshell ... --name <value>` argv slots (and onward to shell scripts and
@@ -1313,7 +1290,7 @@ async function resolveRunConfig(
     assertValidProviderName(inferenceCfg.provider_name);
   }
 
-  return { inferenceProfiles, inferenceCfg, sandboxCfg, routerCfg, policyAdditions };
+  return { inferenceProfiles, inferenceCfg, sandboxCfg, policyAdditions };
 }
 
 // ── Actions ─────────────────────────────────────────────────────
@@ -1331,11 +1308,6 @@ export interface RunPlan {
     provider_name: string | undefined;
     endpoint: string | undefined;
     model: string | undefined;
-  };
-  router: {
-    enabled: boolean;
-    port: number;
-    pool_config_path: string | undefined;
   };
   identity?: RuntimeIdentityPlan;
   policy_additions: PolicyAdditions;
@@ -1381,11 +1353,6 @@ type StatusRunPlan = {
   gateway?: GatewayBinding;
   inference?: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
-  router?: {
-    enabled?: boolean;
-    port?: number;
-    pool_config_path?: string;
-  };
   timestamp?: string;
   dry_run?: boolean;
 };
@@ -1418,14 +1385,10 @@ function buildSafePublicRunPlan(args: {
   profile: string;
   inferenceCfg: InferenceProfile;
   sandboxCfg: SandboxConfig;
-  routerCfg: RouterConfig;
   runtimeIdentityConfig?: RuntimeIdentityConfig;
   policyAdditions: PolicyAdditions;
   dryRun: boolean;
 }): RunPlan {
-  const routerEnabled = args.routerCfg.enabled === true;
-  const routerPort = args.routerCfg.port ?? DEFAULT_ROUTER_PORT;
-
   const plan: RunPlan = {
     run_id: args.runId,
     profile: args.profile,
@@ -1435,11 +1398,6 @@ function buildSafePublicRunPlan(args: {
       forward_ports: args.sandboxCfg.forward_ports ?? [DASHBOARD_PORT],
     },
     inference: buildSafeInferencePlan(args.inferenceCfg),
-    router: {
-      enabled: routerEnabled,
-      port: routerPort,
-      pool_config_path: args.routerCfg.pool_config_path,
-    },
     policy_additions: args.policyAdditions,
     dry_run: args.dryRun,
   };
@@ -1551,23 +1509,6 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
     safePlan.identity = source.identity;
   }
 
-  if (isPlainObject(source.router)) {
-    const router: StatusRunPlan["router"] = {};
-    if (typeof source.router.enabled === "boolean") {
-      router.enabled = source.router.enabled;
-    }
-    if (isValidPort(source.router.port)) {
-      router.port = source.router.port;
-    }
-    const poolConfigPath = optionalString(source.router.pool_config_path);
-    if (poolConfigPath !== undefined) {
-      router.pool_config_path = poolConfigPath;
-    }
-    if (Object.keys(router).length > 0) {
-      safePlan.router = router;
-    }
-  }
-
   const timestamp = optionalString(source.timestamp);
   if (timestamp !== undefined) {
     safePlan.timestamp = timestamp;
@@ -1592,7 +1533,7 @@ export async function actionPlan(
   const rid = emitRunId();
   progress(10, "Validating blueprint");
 
-  const { inferenceCfg, sandboxCfg, routerCfg, policyAdditions } = await resolveRunConfig(
+  const { inferenceCfg, sandboxCfg, policyAdditions } = await resolveRunConfig(
     profile,
     blueprint,
     options?.endpointUrl,
@@ -1610,7 +1551,6 @@ export async function actionPlan(
     profile,
     inferenceCfg,
     sandboxCfg,
-    routerCfg,
     runtimeIdentityConfig: blueprint.components?.identity,
     policyAdditions,
     dryRun: options?.dryRun ?? false,
