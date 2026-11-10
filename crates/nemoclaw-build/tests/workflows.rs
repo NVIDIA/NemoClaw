@@ -254,6 +254,59 @@ fn linux_bundles_build_on_ubuntu_22_04_and_check_its_glibc() {
     assert_eq!(check["if"], "inputs.glibc != ''");
 }
 
+/// On `v1` pushes and manual runs, `CI / Bundle` runs the GPU HCL cases
+/// through Live / HCL from Linux AMD64's test archive, bundle, and live
+/// images, so Live / HCL builds no candidate of its own. Only a run without
+/// those artifacts, such as a dispatch, builds one.
+#[test]
+fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
+    let read = |path: &str| -> Value {
+        serde_saphyr::from_str(&fs::read_to_string(repository().join(path)).unwrap()).unwrap()
+    };
+    let callers: Vec<String> = definitions(&repository())
+        .into_iter()
+        .flat_map(|(path, workflow)| {
+            let jobs = workflow["jobs"].as_object().cloned().unwrap_or_default();
+            jobs.into_iter()
+                .filter(|(_, job)| job["uses"] == "./.github/workflows/hcl-e2e.yml")
+                .map(move |(name, _)| format!("{path}: {name}"))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(
+        callers,
+        [".github/workflows/e2e-platform.yml: gpu"],
+        "only the E2E platform workflow, which has the artifacts, calls Live / HCL"
+    );
+
+    let platform = read(".github/workflows/e2e-platform.yml");
+    let gpu = &platform["jobs"]["gpu"];
+    assert!(needs(gpu).contains(&"live-images".to_owned()));
+    assert_eq!(
+        gpu["with"],
+        serde_json::json!({
+            "hosted": false,
+            "cases": "${{ inputs.hcl-cases }}",
+            "tests": "${{ inputs.tests }}",
+            "bundle": "${{ inputs.bundle }}",
+            "live-images": "${{ needs.live-images.outputs.artifact }}",
+            "live-images-commit": "${{ inputs.live-images-commit }}",
+        })
+    );
+    let bundle_platform = read(".github/workflows/bundle-platform.yml");
+    assert_eq!(
+        bundle_platform["jobs"]["e2e"]["with"]["hcl-gpu"],
+        "${{ inputs.hcl-gpu }}"
+    );
+
+    let live = read(".github/workflows/hcl-e2e.yml");
+    let build = live["jobs"]["build"]["if"].as_str().unwrap_or_default();
+    assert!(
+        build.contains("inputs.tests == ''"),
+        "Live / HCL builds a candidate only without CI / Bundle's artifacts: {build}"
+    );
+}
+
 /// The organization allows GitHub's and NVIDIA's actions and verified
 /// creators' at any version, and other actions only at the commits it lists;
 /// any other action stops its whole workflow from starting (#13612).
