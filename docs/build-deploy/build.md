@@ -79,6 +79,10 @@ Only OpenClaw, Hermes, and Pi add Node.js 24.22.2 LTS: OpenClaw's CLI and the Pi
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
+`cargo images build` downloads the remote files that image builds copy, such as the Fabric and Hermes source archives, as `versions.json` pins them under `imageSources`.
+It checks each file's SHA-256, keeps it in `.build/downloads`, and places it in `.build/image-sources`, where the Bake file reads it.
+When a server rate-limits a download or answers with a server error, it retries up to three times, waiting as long as `Retry-After` asks, for at most a minute.
+Before building or checking an agent or Ollama image with `docker buildx bake` directly, run `cargo images fetch`, which places the same files; otherwise Bake stops with `failed to get build context sources`.
 Digest-based sandbox use requires a Docker image store that retains repository digests for local builds, such as the tested containerd store.
 
 On a native Linux ARM64 host, run from the repository root:
@@ -164,6 +168,7 @@ Selecting this artifact does not qualify GPU inference on the host.
 A model that needs preparation tools or patches uses an image its recipe's authors build; see [inline recipes](../agents-inference/recipes.md).
 
 `docker buildx bake ollama` builds the [managed Ollama](../agents-inference/inference.md#run-managed-ollama) image, and `docker buildx bake runtimes` builds both.
+Run `cargo images fetch` first: it places the Ollama license that the image retains, as `versions.json` pins it.
 Use the `NAME@sha256:DIGEST` reference that `docker image inspect` prints for `spec.services.<name>.image`.
 Builds use fixed timestamps, so rebuilding the same sources keeps the same digest.
 Do not substitute a mutable tag or a digest copied from another build.
@@ -193,7 +198,7 @@ When the image must be acquired, plan reports compatibility as deferred; apply m
 Matching labels establish the declared backend, recipe, and authentication, not successful model loading or inference.
 
 An image built by a different NemoClaw revision may carry the right labels yet reject the runtime contract when its runtime starts, after the deployment has created the service's storage and network.
-In either case, rebuild the selected image from the bundle's source revision with `docker buildx bake vllm` or `docker buildx bake ollama`, as above.
+In either case, rebuild the selected image from the bundle's source revision with `docker buildx bake vllm`, or `cargo images fetch` and then `docker buildx bake ollama`, as above.
 Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to its new digest.
 Keep the deployment state and reapply; existing model and credential storage remain subject to their retention and identity checks.
 Destroy omits image compatibility gates so a mismatched image alone does not prevent cleanup.

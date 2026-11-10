@@ -455,11 +455,13 @@ For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
 cargo test -p nemoclaw-build --test integration bake::
+cargo images fetch
 AGENT_PLATFORM=linux/arm64 docker buildx bake --check dummy agents ollama-proxy
 AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
 The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
+`cargo images fetch` places the remote files that `versions.json` pins under `imageSources` in `.build/image-sources`, where Bake reads them, even to check the Dockerfiles.
 Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, reference-backend tests without Fabric, and generic runtime behavior tests against Fabric's installed fixture adapter.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
 Checks produce build cache entries and no tagged runtime images.

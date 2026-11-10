@@ -57,6 +57,12 @@ jobs:
         with:
           platform: linux_amd64
           cache-prefix: hcl-deps-v1
+      # The image builds' pinned sources, as CI / Images saved them.
+      - name: Restore the verified image sources
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build/downloads
+          key: image-sources-v1-${{ hashFiles('versions.json') }}
       - uses: ./.github/actions/containerd-store
       - name: Build the bundle, test executable, and agent images
         run: |
@@ -68,6 +74,10 @@ jobs:
           cp -a "dist/$TEST_PLATFORM" candidate/bundle
           cargo images build --platform linux/amd64 openclaw hermes
           docker save nc-fabric:openclaw nc-fabric:hermes -o candidate/agents.tar
+          # The model runtime images' pinned sources, which images build placed
+          # and the case jobs' Bake reads; vllm has none.
+          mkdir candidate/image-sources
+          cp -a .build/image-sources/ollama candidate/image-sources/
           # Tar keeps the executable bits that artifact transfer drops.
           tar -cf "$RUNNER_TEMP/candidate.tar" candidate
       # Each case's documents say where it runs, whether it reads the NVIDIA
@@ -128,7 +138,10 @@ jobs:
         run: |
           tar -xf "$RUNNER_TEMP/candidate.tar"
           docker load -i candidate/agents.tar
-          # A case builds the model runtime images its services run.
+          # A case builds the model runtime images its services run, from the
+          # sources the build job fetched.
+          mkdir -p .build
+          mv candidate/image-sources .build/image-sources
           read -ra runtimes <<< "$RUNTIMES"
           if (( ${#runtimes[@]} )); then docker buildx bake "${runtimes[@]}"; fi
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
