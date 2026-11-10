@@ -25,11 +25,7 @@ describe("rebuild uses the registry target instead of stale session state", () =
 
   it("uses the registry Hermes target after OpenClaw was onboarded last (#2201)", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        agent: "hermes",
-        provider: "nvidia-prod",
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      },
+      sandboxEntry: { agent: "hermes", provider: "build" },
       sessionSandboxName: "openclaw",
     });
     harness.session.agent = null;

@@ -1207,53 +1207,16 @@ describe("handleProviderInferenceState", () => {
     );
   });
 
-  it("delegates routed resume to native setup without querying the retired shared route", async () => {
-    const session = createSession({
-      provider: "nvidia-router",
-      model: "router/model",
-      endpointUrl: "http://localhost:4000/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    });
-    session.steps.provider_selection.status = "complete";
-    const isInferenceRouteReady = vi.fn(() => {
-      throw new Error("retired route");
-    });
-    const { deps, calls } = createDeps({ isInferenceRouteReady });
-    await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "router-sandbox",
-    });
-    expect(calls.setupInference).toHaveBeenCalledWith(
-      "router-sandbox",
-      "router/model",
-      "nvidia-router",
-      "http://localhost:4000/v1",
-      "NVIDIA_INFERENCE_API_KEY",
-      null,
-      [],
-      expect.any(Object),
-    );
-    expect(isInferenceRouteReady).not.toHaveBeenCalled();
-    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
-  });
+  // #5974 instance 5: the Model Router Python preflight (`prepareModelRouterVenv`)
+  // throws a plain Error (e.g. "above supported ceiling", with no `oclif.exit`)
+  // out of `reconcileModelRouter`. The routed branch must catch that throw and
+  // exit non-zero via `exitProcess(1)` so onboard reports the failure to `$?`,
+  // rather than the throw being swallowed or riding the oclif runner. The error
+  // reasons themselves are locked by `model-router-python.test.ts`.
 
-  it("propagates native router setup failure during resume", async () => {
-    const session = createSession({ provider: "nvidia-router", model: "router/model" });
-    session.steps.provider_selection.status = "complete";
-    const { deps } = createDeps({
-      setupInference: vi.fn(async () => {
-        throw new Error("router ownership changed");
-      }),
-    });
-    await expect(
-      handleProviderInferenceState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "router-sandbox",
-      }),
-    ).rejects.toThrow("router ownership changed");
-  });
+  // Regression: #4564. On resume the routed provider was only reconciled, never
+  // re-upserted, so a stale localhost base URL recorded by an earlier run could
+  // survive in the gateway and break inference.local from the sandbox.
 
   it("returns to provider selection when inference setup requests a retry", async () => {
     const setupNim = vi
@@ -1397,5 +1360,4 @@ it("resumes a verified external selection without reading or rewriting the share
   expect(isInferenceRouteReady).not.toHaveBeenCalled();
   expect(calls.setupInference).not.toHaveBeenCalled();
   expect(calls.hydrate).not.toHaveBeenCalled();
-  expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
 });

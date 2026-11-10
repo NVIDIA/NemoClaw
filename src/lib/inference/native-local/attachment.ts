@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { nativeModelRouterEndpoint } from "./model-router";
+import { isLegacyModelRouterProvider } from "../../core/model-router-port";
 import { createHash } from "node:crypto";
 import { isLocalInferenceProvider, qualifiedNativeLocalEndpointUrl } from "./agent-config";
 import { usesNativeLocalInference } from "./eligibility";
@@ -37,12 +37,13 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   if (
     (!isLocalInferenceProvider(input.provider as string) &&
       input.provider !== "compatible-endpoint" &&
-      !nativeModelRouterEndpoint(input.provider as string, input.endpointUrl as string)) ||
+      !isLegacyModelRouterProvider(typeof input.provider === "string" ? input.provider : null)) ||
     (input.agent !== undefined &&
       input.agent !== "openclaw" &&
       input.agent !== "pi" &&
       input.agent !== "hermes") ||
     (input.agent === "openclaw" &&
+      !isLegacyModelRouterProvider(typeof input.provider === "string" ? input.provider : null) &&
       !usesNativeLocalInference(input.provider as string, input.endpointUrl as string)) ||
     (input.api !== undefined &&
       (input.api !== "openai-responses" ||

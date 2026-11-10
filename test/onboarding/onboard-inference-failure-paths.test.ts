@@ -95,6 +95,18 @@ function expectNemoclawScopedRunner(
 }
 
 describe("setupInference dependency failures", () => {
+  it.each(["routed", "nvidia-router"])(
+    "rejects retired %s before provider or sandbox mutations",
+    async (provider) => {
+      const upsertProvider = vi.fn(async () => ({ ok: true }));
+      const harness = createDirectSetupInferenceHarness({ overrides: { upsertProvider } });
+      await expect(
+        harness.setupInference("test-box", "old-router-model", provider),
+      ).rejects.toThrow("Model Router has been removed");
+      expect(upsertProvider).not.toHaveBeenCalled();
+      expectNoPostFailureSideEffects(harness);
+    },
+  );
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
@@ -894,42 +906,6 @@ describe("setupInference dependency failures", () => {
 
     expect(lookup).toHaveBeenCalledWith("api.public.example.test", { all: true });
     expect(exitProcess).not.toHaveBeenCalled();
-    expectNoPostFailureSideEffects(harness);
-  });
-
-  it("fails closed before routed-provider registration when model-router reconciliation fails", async () => {
-    const exitProcess = createInjectedExit();
-    const reconcileModelRouter = vi.fn(async () => {
-      throw new Error("router unavailable");
-    });
-    const upsertRoutedProvider = vi.fn(() => ({ ok: true, result: {} }));
-    const harness = createDirectSetupInferenceHarness({
-      overrides: {
-        isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
-        exitProcess,
-        reconcileModelRouter,
-        routedInference: { upsertRoutedProvider },
-      },
-    });
-
-    await expect(
-      harness.setupInference(
-        "test-box",
-        "router/model",
-        "nvidia-router",
-        "http://host.openshell.internal:4000/v1",
-        "NVIDIA_INFERENCE_API_KEY",
-        null,
-        [],
-        { agentName: "openclaw" },
-      ),
-    ).rejects.toThrow("EXIT_CALLED:1");
-
-    expect(reconcileModelRouter).toHaveBeenCalledOnce();
-    expect(upsertRoutedProvider).not.toHaveBeenCalled();
-    expect(exitProcess).toHaveBeenCalledOnce();
-    expect(exitProcess).toHaveBeenCalledWith(1);
-    expect(harness.errors).toEqual(["  ✗ Failed to start model router: router unavailable"]);
     expectNoPostFailureSideEffects(harness);
   });
 });

@@ -15,11 +15,11 @@ import {
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const RUNTIME_DIRECTORY = path.join(REPO_ROOT, "agents", "openclaw", "openclaw-runtime");
 const LOCKFILE = path.join(RUNTIME_DIRECTORY, "package-lock.json");
-const PACKAGE_SPEC = "openclaw@2026.9.2";
+const PACKAGE_SPEC = "openclaw@2026.10.5";
 const INTEGRITY =
-  "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==";
-const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz";
-const LOCK_SHA256 = "9ab6ce3358a1f3858d7c64aa6156a9e22df498107a7727d945a1efcb99a69869";
+  "sha512-9rCuXMweqVKZIK3KBtGcLzesz9G6+FmQ30lvwomRhmcNWDcOtlBoqdLbPditoJMuTP55jPqXpt1AA0L8tSzFHg==";
+const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz";
+const LOCK_SHA256 = "16b8c902f7760658e54ccc697a6ec7dbe38768e3fcd78876e1b8a1fd018c6a21";
 const roots: string[] = [];
 
 function sha256(file: string): string {
@@ -30,7 +30,7 @@ function lockRequest(lockfilePath = LOCKFILE, expectedLockSha256 = LOCK_SHA256) 
   return {
     expectedIntegrity: INTEGRITY,
     expectedLockSha256,
-    label: "OpenClaw 2026.9.2 locked runtime graph",
+    label: "OpenClaw 2026.10.5 locked runtime graph",
     lockfilePath,
     packageSpec: PACKAGE_SPEC,
     registryOrigin: "https://registry.npmjs.org/",
@@ -170,7 +170,7 @@ afterEach(() => {
 describe("locked OpenClaw production installation (#5896)", () => {
   it("binds the reviewed root artifact to the complete committed closure", () => {
     const verified = verifyReviewedNpmLock(lockRequest(), reviewedMetadata);
-    expect(verified).toHaveLength(366);
+    expect(verified).toHaveLength(413);
     expect(verified).toContain("body-parser@2.4.0");
     expect(verified).toContain("qs@6.16.1");
     expect(verified).toContain(PACKAGE_SPEC);
@@ -178,11 +178,11 @@ describe("locked OpenClaw production installation (#5896)", () => {
     expect(verified).toContain("fast-uri@3.1.9");
 
     expect(verified).not.toContain("fast-uri@3.1.6");
-    expect(verified).toContain("hono@4.12.34");
-    expect(verified).toContain("ip-address@10.7.2");
-    expect(verified).toContain("tar@7.5.21");
+    expect(verified).toContain("hono@4.13.11");
+    expect(verified).toContain("ip-address@10.7.4");
+    expect(verified).toContain("tar@7.5.22");
     expect(verified).not.toContain("tar@7.5.19");
-    expect(verified).toContain("undici@8.12.2");
+    expect(verified).toContain("undici@8.12.3");
     expect(sha256(LOCKFILE)).toBe(LOCK_SHA256);
   });
 
@@ -204,21 +204,21 @@ describe("locked OpenClaw production installation (#5896)", () => {
   // source-shape-contract: security -- Mutating the shipped lock proves every reviewed transitive identity remains bound to committed production bytes
   it.each([
     {
-      expected: "root must depend only on openclaw@2026.9.2",
+      expected: "root must depend only on openclaw@2026.10.5",
       mutate: (lock: any) => {
         lock.packages[""].dependencies.openclaw = "2026.7.2";
       },
       name: "root version drift",
     },
     {
-      expected: "root must depend only on openclaw@2026.9.2",
+      expected: "root must depend only on openclaw@2026.10.5",
       mutate: (lock: any) => {
         lock.packages[""].optionalDependencies = { "left-pad": "1.3.0" };
       },
       name: "root optional dependency injection",
     },
     {
-      expected: "lock integrity mismatch for openclaw@2026.9.2",
+      expected: "lock integrity mismatch for openclaw@2026.10.5",
       mutate: (lock: any) => {
         lock.packages["node_modules/openclaw"].integrity = `sha512-${"B".repeat(88)}`;
       },

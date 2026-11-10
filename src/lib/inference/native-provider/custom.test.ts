@@ -359,7 +359,7 @@ describe("custom native endpoint ownership", () => {
       getSandbox: () => ({ nativeHostedProviderAttachment: first }),
       isNonInteractive: () => true,
       providerExistsInGateway: vi.fn(() => false),
-      isRoutedInferenceProvider: () => false,
+
       replaceNamedCredential,
     });
     const recovery = await shim.ensureResumeProviderReady(

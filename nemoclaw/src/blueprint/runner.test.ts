@@ -541,23 +541,17 @@ describe("runner", () => {
       expect(out).toContain("PROGRESS:100:Plan complete");
     });
 
-    it("includes router info when router is enabled", async () => {
-      captureStdout();
-      mockExeca.mockResolvedValue({ exitCode: 0 });
-
-      const plan = await actionPlan("routed", routedBlueprint());
-      expect(plan.router.enabled).toBe(true);
-      expect(plan.router.port).toBe(4000);
-      expect(plan.router.pool_config_path).toBe("router/pool-config.yaml");
+    it("rejects the retired router profile without running external commands", async () => {
+      await expect(actionPlan("routed", routedBlueprint())).rejects.toThrow(
+        "Model Router has been removed",
+      );
+      expect(mockExeca).not.toHaveBeenCalled();
     });
 
-    it("defaults router to disabled when not in blueprint", async () => {
+    it("omits retired router metadata from a normal plan", async () => {
       captureStdout();
-      mockExeca.mockResolvedValue({ exitCode: 0 });
-
       const plan = await actionPlan("default", minimalBlueprint());
-      expect(plan.router.enabled).toBe(false);
-      expect(plan.router.port).toBe(4000);
+      expect(plan).not.toHaveProperty("router");
     });
   });
 
@@ -1110,17 +1104,11 @@ describe("runner", () => {
       expect(mockNativeCreator.mock.calls[0]?.[0].timeoutSeconds).toBeUndefined();
     });
 
-    it("passes endpoint as-is from blueprint (no rewriting)", async () => {
-      process.env.NVIDIA_INFERENCE_API_KEY = "test-key";
-      try {
-        await actionApply("routed", routedBlueprint());
-
-        expect(mockNativeCreator).toHaveBeenCalledWith(
-          expect.objectContaining({ endpointUrl: "http://localhost:4000/v1" }),
-        );
-      } finally {
-        delete process.env.NVIDIA_INFERENCE_API_KEY;
-      }
+    it("rejects the retired router before provider or sandbox mutation", async () => {
+      await expect(actionApply("routed", routedBlueprint())).rejects.toThrow(
+        "Model Router has been removed",
+      );
+      expect(mockExeca).not.toHaveBeenCalled();
     });
   });
 
@@ -1232,11 +1220,6 @@ describe("runner", () => {
           provider_name: "secret-provider",
           endpoint: "https://api.example.com/v1",
           model: "gpt-4",
-        },
-        router: {
-          enabled: true,
-          port: 4000,
-          pool_config_path: "router/pool-config.yaml",
         },
         timestamp: "2026-05-17T00:00:00.000Z",
         dry_run: false,

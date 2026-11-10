@@ -32,6 +32,9 @@ import type { OnboardOptions } from "./types";
 import type { NativeLocalProviderAttachment } from "../inference/native-local/contract";
 import { verifyRecordedNativeLocalProviderAttachment } from "../inference/native-local/profile";
 import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";
+import type { NativeNvidiaProviderAttachment } from "../inference/native-nvidia/contract";
+import type { NativeProviderAttachment } from "../inference/native-provider/contract";
+import { verifyRecordedNativeProviderAttachment } from "../inference/native-provider/recorded-selection";
 import { readValidatedRebuildPolicySource } from "./sandbox-create/rebuild-policy-handoff";
 
 export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
@@ -111,6 +114,8 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
   agent?: string | null;
   registeredInferenceProviderAttachment?: RegisteredInferenceProviderAttachment;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+  nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeHostedProviderAttachment?: NativeProviderAttachment;
   model: string;
   provider: string;
   sandboxName: string;
@@ -172,6 +177,8 @@ export type AuthoritativeRebuildTarget = {
   agent?: string | null;
   registeredInferenceProviderAttachment?: RegisteredInferenceProviderAttachment;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+  nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeHostedProviderAttachment?: NativeProviderAttachment;
   sandboxName: string;
   provider: string;
   model: string;
@@ -373,12 +380,23 @@ export async function preflightAuthoritativeRebuildTarget<
     await deps.runFatalRuntimePreflight();
     deps.ensureOpenshell();
     await deps.assertGatewayReadiness();
-    // Prepared-backup recovery can run after the installer has replaced a
+    // Verify recorded native attachments through their sandbox-scoped authority.
+    // For legacy shared routes, prepared-backup recovery can run after the installer has replaced a
     // legacy gateway. That fresh gateway has no inference route to validate
     // yet; authoritative onboarding configures and verifies the pinned route
     // before recreating the sandbox. A gateway that cannot answer at all leaves
     // the route unknown, which onboarding resolves the same way. Only a gateway
     // that answers with a different route contradicts the rebuild target.
+    if (
+      [
+        target.registeredInferenceProviderAttachment,
+        target.nativeLocalProviderAttachment,
+        target.nativeNvidiaProviderAttachment,
+        target.nativeHostedProviderAttachment,
+      ].filter(Boolean).length > 1
+    ) {
+      fail("Conflicting recorded native provider attachments.");
+    }
     if (target.registeredInferenceProviderAttachment !== undefined) {
       const expected = target.registeredInferenceProviderAttachment;
       if (
@@ -399,6 +417,15 @@ export async function preflightAuthoritativeRebuildTarget<
         gatewayName: target.targetGatewayName,
         agent: target.agent,
         provider: target.provider,
+      });
+    } else if (
+      target.nativeNvidiaProviderAttachment !== undefined ||
+      target.nativeHostedProviderAttachment !== undefined
+    ) {
+      await verifyRecordedNativeProviderAttachment(target, {
+        adapter: createManagedProviderAdapter(),
+        target: { kind: "named" as const, gatewayName: target.targetGatewayName },
+        sandboxName: target.sandboxName,
       });
     } else if (
       target.deferInferenceRouteUntilOnboard !== true &&

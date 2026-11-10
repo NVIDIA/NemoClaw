@@ -2,21 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import * as legacyModelRouter from "../core/model-router-port";
 import { BlockList, isIP } from "node:net";
 import { prepareNativeLocalSwitch } from "../actions/inference/native-local";
 import * as localRuntime from "../actions/inference-set/local-runtime";
 import { OLLAMA_PROXY_PORT } from "../core/ollama-proxy-port";
 import { isProtectedLocalInferencePort } from "./gateway/local-endpoint-ports";
 import { prepareNativeLocalSelection } from "./native-local/selection";
-import * as routerPort from "../core/model-router-port";
-import { getSandboxInferenceConfig } from "./config";
-import { createSetupInference, type SetupInferenceDeps } from "../onboard/setup-inference";
-import * as routerSession from "../state/onboard-session";
-import * as routerProcess from "../onboard/model-router-process";
-import { hashCredential } from "../security/credential-hash";
-import { prepareNativeModelRouterSelection } from "../onboard/routed-inference";
-import { upsertRoutedProvider } from "../onboard/routed-inference";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createCliOpenShellProviderAdapter,
   type RunProviderCommand,
@@ -141,13 +134,22 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
 }
 
 describe("native local inference", () => {
-  it.each(["openclaw", "hermes", "pi", "langchain-deepagents-code"] as const)(
-    "retains %s Model Router profile, rebuild identity, and retirement ownership",
-    async (agent) => {
+  it.each(
+    ["openclaw", "hermes", "pi", "langchain-deepagents-code"].flatMap((agent) =>
+      ["nvidia-router", "custom-router"].map((provider) => ({ agent, provider })),
+    ),
+  )(
+    "retains $agent legacy $provider profile identity and retirement ownership",
+    async ({ agent, provider }) => {
+      vi.spyOn(legacyModelRouter, "isLegacyModelRouterProvider").mockImplementation(
+        (value) => value === "nvidia-router" || value === provider,
+      );
       const routerBinding = {
         ...binding,
-        ...(agent === "langchain-deepagents-code" ? {} : { agent }),
-        provider: "nvidia-router" as const,
+        ...(agent === "langchain-deepagents-code"
+          ? {}
+          : { agent: agent as "openclaw" | "hermes" | "pi" }),
+        provider,
         endpointUrl: "http://host.openshell.internal:4000/v1",
         credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
       };
@@ -164,7 +166,7 @@ describe("native local inference", () => {
         agent,
         sandboxName: "alice",
         gatewayName: "nemoclaw",
-        provider: "nvidia-router",
+        provider,
       });
       const profile = prepareNativeLocalProfile(routerBinding);
       expect(profile.document.endpoints[0].rules).toEqual([
@@ -982,261 +984,15 @@ vi.mock("../state/gateway-registry", () => ({
   listRecordedModelRouterPorts: () => [12346],
 }));
 
-describe("native OpenClaw Model Router (#13560)", () => {
-  beforeEach(() => {
-    vi.spyOn(routerSession, "loadSession").mockReturnValue({
-      routerPort: 4000,
-      routerPid: 123,
-      routerCredentialHash: hashCredential("test-only-secret"),
-    } as ReturnType<typeof routerSession.loadSession>);
-    vi.spyOn(routerProcess, "doesModelRouterProcessOwnPort").mockReturnValue(true);
-  });
-  const routerBinding: NativeLocalBinding = {
-    ...binding,
-    provider: "nvidia-router",
-    agent: "openclaw",
-    endpointUrl: "http://host.openshell.internal:4000/v1",
-    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-  };
-
-  function routedSetup() {
-    const f = fixture(routerBinding);
-    const events: string[] = [];
-    const updateSandbox = vi.fn(() => true);
-    const upsertProvider = vi.fn();
-    const setInferenceRoute = vi.fn();
-    const verifyInferenceRoute = vi.fn();
-    const verifyOnboardInferenceSmoke = vi.fn(async () => {});
-    const lock = async <T>(name: string | number, operation: () => Promise<T> | T) => {
-      events.push(`lock:${name}`);
-      try {
-        return await operation();
-      } finally {
-        events.push(`unlock:${name}`);
-      }
-    };
-    const setup = createSetupInference({
-      checkGatewayRouteCompatibility: () => ({ ok: true }),
-      withSandboxMutationLock: lock,
-      withGatewayRouteMutationLock: lock,
-      withModelRouterPortLifecycleLock: lock,
-      getModelRouterPort: () => 4000,
-      step: vi.fn(),
-      getGatewayName: () => "nemoclaw",
-      getSandbox: () => null,
-      updateSandbox,
-      getNativeLocalProviderAuthority: f.input.readAuthority,
-      setNativeLocalProviderAuthority: f.input.writeAuthority,
-      requireNativeProviderPolicy: vi.fn(async () => {}),
-      providerAdapter: f.adapter,
-      upsertProvider,
-      runOpenshell: vi.fn(),
-      inferenceRouteMutator: { setInferenceRoute },
-      verifyInferenceRoute,
-      verifyOnboardInferenceSmoke,
-      isNonInteractive: () => true,
-      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-      hydrateCredentialEnv: () => "test-only-secret",
-      localInference: { loadPendingOllamaModelCleanup: () => [] },
-      withOllamaModelOwnershipLock: (action: () => unknown) => action(),
-      isRoutedInferenceProvider: (provider: string) => provider === "nvidia-router",
-      reconcileModelRouter: async () => {
-        events.push("router");
-      },
-      routedInference: { upsertRoutedProvider },
-      redact: (value: string) => value,
-      compactText: (value: string) => value,
-      log: vi.fn(),
-      error: vi.fn(),
-      exitProcess: (code: number): never => {
-        throw new Error(`exit ${code}`);
-      },
-    } as unknown as SetupInferenceDeps);
-    const run = (endpointUrl = "http://localhost:4000/v1") =>
-      setup(
-        "alice",
-        "nvidia-routed",
-        "nvidia-router",
-        endpointUrl,
-        "NVIDIA_INFERENCE_API_KEY",
-        null,
-        [],
-        { agentName: "openclaw", gatewayName: "nemoclaw" },
+describe("retired native Model Router", () => {
+  it.each(["nvidia-router", "custom-router"])(
+    "rejects %s creation before importing a profile or creating a provider",
+    async (provider) => {
+      vi.spyOn(legacyModelRouter, "isLegacyModelRouterProvider").mockImplementation(
+        (value) => value === "nvidia-router" || value === provider,
       );
-    return {
-      ...f,
-      run,
-      events,
-      updateSandbox,
-      upsertProvider,
-      setInferenceRoute,
-      verifyInferenceRoute,
-      verifyOnboardInferenceSmoke,
-    };
-  }
-
-  it.each(["http://localhost:4000/v1", "http://host.openshell.internal:4000/v1"])(
-    "probes the host and preserves native authority from %s on setup and repeat",
-    async (endpointUrl) => {
-      const f = routedSetup();
-      const result = {
-        ok: true,
-        nativeInference: {
-          endpointUrl: routerBinding.endpointUrl,
-          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-        },
-      };
-      await expect(f.run(endpointUrl)).resolves.toEqual(result);
-      await expect(f.run(endpointUrl)).resolves.toEqual(result);
-      expect(f.verifyOnboardInferenceSmoke).toHaveBeenCalledTimes(2);
-      expect(f.verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
-        expect.objectContaining({ endpointUrl: "http://127.0.0.1:4000/v1" }),
-      );
-      expect(f.adapter.importProviderProfile.mock.invocationCallOrder[0]).toBeLessThan(
-        f.adapter.createProvider.mock.invocationCallOrder[0],
-      );
-      expect(f.adapter.createProvider).toHaveBeenCalledOnce();
-      expect(f.adapter.updateProvider).toHaveBeenCalledWith(
-        expect.objectContaining({
-          target: { kind: "named", gatewayName: "nemoclaw" },
-          providerName: nativeLocalIdentity(routerBinding).providerName,
-        }),
-      );
-      expect(f.upsertProvider).not.toHaveBeenCalled();
-      expect(f.setInferenceRoute).not.toHaveBeenCalled();
-      expect(f.verifyInferenceRoute).not.toHaveBeenCalled();
-      const expected = f.input.readAuthority()!;
-      expect(f.updateSandbox).toHaveBeenCalledWith(
-        "alice",
-        expect.objectContaining({
-          endpointUrl: routerBinding.endpointUrl,
-          nativeLocalProviderAttachment: expected,
-        }),
-      );
-      expect(f.events.slice(0, 7)).toEqual([
-        "lock:alice",
-        "lock:nemoclaw",
-        "lock:4000",
-        "router",
-        "unlock:4000",
-        "unlock:nemoclaw",
-        "unlock:alice",
-      ]);
-      expect(JSON.stringify(f.updateSandbox.mock.calls)).not.toContain("test-only-secret");
-      const profilePath = f.adapter.importProviderProfile.mock.calls[0][0].profilePath;
-      expect(fs.existsSync(profilePath)).toBe(false);
-      await ensureNativeLocalProviderAttached({
-        adapter: f.adapter,
-        expected,
-        sandboxName: "alice",
-      });
-      expect(f.adapter.inspectProviderProfile.mock.invocationCallOrder[0]).toBeLessThan(
-        f.adapter.attachProvider.mock.invocationCallOrder[0],
-      );
-    },
-  );
-
-  it.each(["collision", "import failure"])(
-    "stops before mutation after a profile %s",
-    async (failure) => {
-      const f = routedSetup();
-      f.adapter.importProviderProfile.mockResolvedValue({
-        ok: false,
-        error: { kind: "command", reason: "failed", message: failure },
-      });
-      await expect(f.run()).rejects.toThrow(`: ${failure}`);
-      expect(f.adapter.createProvider).not.toHaveBeenCalled();
-      expect(f.adapter.attachProvider).not.toHaveBeenCalled();
-      expect(f.updateSandbox).not.toHaveBeenCalled();
-      expect(f.setInferenceRoute).not.toHaveBeenCalled();
-    },
-  );
-
-  it("restricts a nondefault port to the router endpoint and OpenClaw executables", async () => {
-    vi.spyOn(routerPort, "loadBlueprintProfile").mockReturnValue({
-      model: "nvidia-routed",
-      provider_name: "nvidia-router",
-      endpoint: "http://localhost:12346/v1",
-      router: { enabled: true, port: 12346 },
-    });
-    vi.mocked(routerSession.loadSession).mockReturnValue({
-      routerPort: 12346,
-      routerPid: 123,
-      routerCredentialHash: hashCredential("test-only-secret"),
-    } as ReturnType<typeof routerSession.loadSession>);
-    const f = fixture({ ...routerBinding, endpointUrl: "http://host.openshell.internal:12346/v1" });
-    const expected = await prepareNativeModelRouterSelection(f.input);
-    const prepared = prepareNativeLocalProfile(expected);
-    expect(prepared.document.endpoints).toEqual([
-      expect.objectContaining({
-        host: "host.openshell.internal",
-        port: 12346,
-        enforcement: "enforce",
-        rules: [
-          { allow: { method: "GET", path: "/v1/models" } },
-          { allow: { method: "POST", path: "/v1/chat/completions" } },
-        ],
-      }),
-    ]);
-    expect(prepared.document.binaries).toContain("/usr/local/bin/node");
-    expect(JSON.stringify(prepared)).not.toContain("test-only-secret");
-    expect(nativeLocalCredentialReference("nvidia-router", expected.endpointUrl, "openclaw")).toBe(
-      "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-    );
-    expect(
-      getSandboxInferenceConfig(
-        "nvidia-routed",
-        "nvidia-router",
-        null,
-        true,
-        expected.endpointUrl,
-        "openclaw",
-      ).inferenceBaseUrl,
-    ).toBe(expected.endpointUrl);
-  });
-
-  it.each([
-    {
-      provider: "nvidia-router",
-      endpoint: "http://host.openshell.internal:4000/v1",
-      generic: true,
-    },
-    {
-      provider: "compatible-endpoint",
-      endpoint: "http://host.openshell.internal:4000/v1",
-      generic: true,
-      agent: "pi",
-    },
-    { provider: "nvidia-router", endpoint: "http://host.docker.internal:4000/v1" },
-    { provider: "nvidia-router", endpoint: "http://10.1.2.3:4000/v1" },
-    {
-      provider: "nvidia-router",
-      endpoint: "http://host.openshell.internal:12346/v1",
-    },
-    {
-      provider: "nvidia-router",
-      endpoint: "http://host.openshell.internal:8080/v1",
-    },
-  ])(
-    "rejects unauthorized $provider endpoint $endpoint",
-    async ({ provider, endpoint, generic, agent }) => {
-      const f = fixture(routerBinding);
-      const input = {
-        ...f.input,
-        binding: {
-          ...routerBinding,
-          provider,
-          agent: (agent ?? "openclaw") as "openclaw" | "pi",
-          endpointUrl: endpoint,
-        },
-      };
-      await expect(
-        generic ? prepareNativeLocalSelection(input) : prepareNativeModelRouterSelection(input),
-      ).rejects.toThrow(
-        generic
-          ? "protected host port"
-          : "Model Router selection does not match its configured endpoint and credential",
-      );
+      const f = fixture({ ...binding, provider, agent: "openclaw" });
+      await expect(prepareNativeLocalSelection(f.input)).rejects.toThrow("unavailable");
       expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
       expect(f.adapter.createProvider).not.toHaveBeenCalled();
     },
@@ -1249,24 +1005,6 @@ describe("local inference endpoint port reservations", () => {
     { name: "default gateway", port: 8080, options: {}, protected: true },
     { name: "recorded gateway", port: 12345, options: {}, protected: true },
     { name: "retained router", port: 12346, options: {}, protected: true },
-    {
-      name: "owned router",
-      port: 12346,
-      options: { ownedModelRouterPort: 12346 },
-      protected: false,
-    },
-    {
-      name: "gateway despite router authority",
-      port: 12345,
-      options: { ownedModelRouterPort: 12345 },
-      protected: true,
-    },
-    {
-      name: "control plane despite router authority",
-      port: 8080,
-      options: { ownedModelRouterPort: 8080 },
-      protected: true,
-    },
     {
       name: "router despite proxy authority",
       port: 12346,

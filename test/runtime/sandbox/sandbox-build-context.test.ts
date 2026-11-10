@@ -137,6 +137,8 @@ describe("sandbox build context staging", () => {
       "managed-image-messaging-runtime",
       "mcporter-runtime",
       "openclaw-runtime",
+      "openclaw-migration-2026.9.5-runtime",
+      "openclaw-migration-2026.9.7-runtime",
       "wechat-runtime",
     ]) {
       for (const fileName of ["package.json", "package-lock.json"]) {
@@ -209,7 +211,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("nemoclaw-blueprint", "private-networks.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "provider-profiles", "okta-runtime-v1.yaml"));
-    writeFixture(path.join("nemoclaw-blueprint", "router", "pool-config.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "scripts", "http-proxy-fix.js"));
     writeFixture(
       path.join(
@@ -288,6 +289,26 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "patch-openclaw-npm12-pack-json.mts"));
     writeFixture(path.join("scripts", "lib", "patch-openclaw-dependency-overrides.mts"));
     writeFixture(path.join("scripts", "lib", "patch-openclaw-container-restart.mts"));
+    writeFixture(path.join("scripts", "lib", "patch-openclaw-worker-proxy.mts"));
+    for (const name of [
+      "patch-openclaw-node-compile-cache.mts",
+      "patch-openclaw-plugin-source-root.mts",
+      "verify-openclaw-official-plugin.mts",
+      "patch-bundled-npm-undici.mts",
+      "remediate-openclaw-runtime-dependencies.mts",
+      "openclaw-legacy-migrations.mts",
+      "openclaw-legacy-session-admission.mts",
+      "openclaw-gateway-owner.mts",
+      "install-openclaw-optional-plugins.sh",
+      "install-openclaw-migration-runtimes.sh",
+      "patch-openclaw-worker-archive.py",
+      "patch-openclaw-worker-device-approval.mts",
+      "openclaw-device-patch-payloads.mts",
+      "openclaw-mcp-retry-payloads.mts",
+      "patch-openclaw-worker-mcp-reliability.mts",
+    ])
+      writeFixture(path.join("scripts", "lib", name));
+    writeFixture(path.join("scripts", "lib", "patch-openclaw-explicit-proxy.mts"));
     writeFixture(
       path.join("scripts", "lib", "patch-openclaw-agent-message-input.mts"),
       "// agent message input patch fixture\n",
@@ -302,6 +323,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "patch-openclaw-secondary-main-session-delete.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
+    writeFixture(path.join("scripts", "lib", "patch-openclaw-webhook-completion.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
     writeFixture(path.join("scripts", "lib", "patch-bundled-npm-ip-address.mts"));
     writeFixture(path.join("scripts", "lib", "patch-bundled-npm-undici.mts"));
@@ -309,6 +331,11 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "upgrade-bundled-npm.mts"));
     writeFixture(path.join("scripts", "verify-wechat-runtime-lock.mts"));
     writeFixture(path.join("scripts", "lib", "reviewed-npm-archive.mts"), "fixture\n", 0o700);
+    writeFixture(
+      path.join("scripts", "lib", "verify-openclaw-official-plugin.mts"),
+      "fixture\n",
+      0o700,
+    );
     writeFixture(path.join("scripts", "lib", "reviewed-npm-identity.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "bundled-npm-package.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "seed-reviewed-npm-cache.mts"), "fixture\n", 0o700);
@@ -359,6 +386,7 @@ describe("sandbox build context staging", () => {
       "index.js",
     );
 
+    expect(fs.existsSync(path.join(stagedBlueprint, "router"))).toBe(false);
     const stagedManifestDirMode = fs.statSync(stagedManifestDir).mode & 0o777;
     expect(stagedManifestDirMode & 0o555).toBe(0o555);
     expect(stagedManifestDirMode & 0o002).toBe(0);
@@ -367,7 +395,6 @@ describe("sandbox build context staging", () => {
     for (const relativePath of [
       "private-networks.yaml",
       path.join("provider-profiles", "okta-runtime-v1.yaml"),
-      path.join("router", "pool-config.yaml"),
     ]) {
       const stagedPath = path.join(stagedBlueprint, relativePath);
       expect(fs.readFileSync(stagedPath, "utf8"), relativePath).toBe("fixture\n");
@@ -376,7 +403,13 @@ describe("sandbox build context staging", () => {
   }
 
   function expectStagedOpenClawRuntimeGraphs(buildCtx: string, sourceRoot: string) {
-    for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
+    for (const runtimeName of [
+      "mcporter-runtime",
+      "openclaw-runtime",
+      "openclaw-migration-2026.9.5-runtime",
+      "openclaw-migration-2026.9.7-runtime",
+      "wechat-runtime",
+    ]) {
       const runtimeDir = path.join(buildCtx, "agents", "openclaw", runtimeName);
       expect(fs.readdirSync(runtimeDir).sort()).toEqual(["package-lock.json", "package.json"]);
       for (const fileName of ["package.json", "package-lock.json"]) {
@@ -554,6 +587,27 @@ describe("sandbox build context staging", () => {
   function expectStagedScriptModes(buildCtx: string, sourceRoot: string) {
     const stagedScripts = path.join(buildCtx, "scripts");
     const stagedLib = path.join(stagedScripts, "lib");
+    for (const name of [
+      "patch-openclaw-node-compile-cache.mts",
+      "patch-openclaw-plugin-source-root.mts",
+      "verify-openclaw-official-plugin.mts",
+      "patch-bundled-npm-undici.mts",
+      "remediate-openclaw-runtime-dependencies.mts",
+      "openclaw-legacy-migrations.mts",
+      "openclaw-legacy-session-admission.mts",
+      "openclaw-gateway-owner.mts",
+      "install-openclaw-optional-plugins.sh",
+      "install-openclaw-migration-runtimes.sh",
+      "patch-openclaw-worker-archive.py",
+      "patch-openclaw-worker-device-approval.mts",
+      "openclaw-device-patch-payloads.mts",
+      "openclaw-mcp-retry-payloads.mts",
+      "patch-openclaw-worker-mcp-reliability.mts",
+    ]) {
+      expect(fs.readFileSync(path.join(stagedLib, name), "utf8")).toBe(
+        fs.readFileSync(path.join(sourceRoot, "scripts", "lib", name), "utf8"),
+      );
+    }
     const stagedHelper = path.join(stagedLib, "reviewed-npm-archive.mts");
     const stagedIdentity = path.join(stagedLib, "reviewed-npm-identity.mts");
     const stagedPackageHelper = path.join(stagedLib, "bundled-npm-package.mts");

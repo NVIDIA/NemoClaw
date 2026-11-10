@@ -2,16 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs, { existsSync, readFileSync, writeFileSync } from "node:fs";
-import assert from "node:assert/strict";
+
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path, { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import * as dockerRuntime from "../../../src/lib/onboard/runtime-provider/docker.ts";
-import * as podmanRuntime from "../../../src/lib/onboard/runtime-provider/podman.ts";
-import { isValidName } from "../../../src/lib/name-validation.ts";
-import { CleanupRegistry } from "../fixtures/cleanup.ts";
 
 import {
   approveOpenClawAdminScope,
@@ -29,7 +25,6 @@ import {
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   captureManagedImageOnboardPairingDiagnostics,
-  createLegacyManagedVolumeFixture,
   collectOnboardFailureRuntimeDiagnostics,
   externalImageActivationAgents,
   externalImageActivationMatches,
@@ -39,6 +34,7 @@ import {
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
   managedOpenClawSubagentCommand,
+  managedOpenClawSubagentSucceeded,
   normalizeExternalImageRuntimeId,
   ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
   preclean,
@@ -48,69 +44,6 @@ import {
   waitForManagedActivationSandboxAbsence,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 import { pendingAdminRequestId } from "../fixtures/issue-4462-admin-approval-evidence.ts";
-
-describe("legacy managed volume fixture", () => {
-  it.each(["docker", "podman"] as const)(
-    "seeds owned legacy state and removes only recorded fixtures through %s",
-    async (runtime) => {
-      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", runtime);
-      const provider =
-        runtime === "docker"
-          ? dockerRuntime.createDockerRuntimeProviderBundle()
-          : podmanRuntime.createCurrentPodmanRuntimeProviderBundle();
-      assert(provider.containerEngine.supported, "built-in engine required");
-      const helperId = "a".repeat(64);
-      const capture = vi
-        .spyOn(provider.containerEngine, "capture")
-        .mockImplementation((_operation, args) => ({
-          status: 0,
-          stdout: args[0] === "create" ? helperId : "",
-          stderr: "",
-        }));
-      vi.spyOn(dockerRuntime, "createDockerRuntimeProviderBundle").mockReturnValue(provider);
-      vi.spyOn(podmanRuntime, "createCurrentPodmanRuntimeProviderBundle").mockReturnValue(provider);
-      const cleanup = new CleanupRegistry();
-      const fixture = createLegacyManagedVolumeFixture(cleanup);
-      expect(isValidName(fixture.sandboxName)).toBe(true);
-      expect(capture).not.toHaveBeenCalled();
-      fixture.seed();
-      const commands = () => capture.mock.calls.map((call) => call[1]);
-      expect(commands().find((args) => args[0] === "volume" && args[1] === "create")).toEqual([
-        "volume",
-        "create",
-        ...Object.entries(fixture.root.ownershipLabels).flatMap(([key, value]) => [
-          "--label",
-          `${key}=${value}`,
-        ]),
-        fixture.root.resourceIdentity,
-      ]);
-      const probe = commands().find((args) => args[0] === "create")!;
-      expect(probe.at(-1)).toContain(JSON.stringify(fixture.marker));
-      expect(probe.join(" ")).toContain(
-        runtime === "docker"
-          ? `src=${fixture.root.resourceIdentity},dst=/state,volume-nocopy`
-          : `${fixture.root.resourceIdentity}:/state:rw,nocopy`,
-      );
-      expect(await cleanup.runAll()).toEqual({
-        passed: ["remove only the volume qualification fixtures"],
-        failures: [],
-      });
-      expect(commands().filter((args) => args[0] === "volume" && args[1] === "rm")).toEqual([
-        ["volume", "rm", fixture.root.resourceIdentity],
-      ]);
-      const failingCleanup = new CleanupRegistry();
-      createLegacyManagedVolumeFixture(failingCleanup).seed();
-      capture.mockImplementation((_operation, args) => ({
-        status: args[0] === "volume" && args[1] === "rm" ? 1 : 0,
-        stdout: "",
-        stderr: "volume is in use",
-      }));
-      const failedCleanup = await failingCleanup.runAll();
-      expect(failedCleanup.failures).toHaveLength(1);
-      expect(failedCleanup.failures[0]?.message).toContain("volume is in use");
-    },
-  );
-});
 
 const MANAGED_ADMIN_PUBLIC_KEY_BYTES = Buffer.from(
   Array.from({ length: 32 }, (_value, index) => index),
@@ -308,6 +241,30 @@ describe("managed image activation failure diagnostics", () => {
         );
       },
     },
+    ...[
+      ["selection-state-busy", "OpenClawPairingStateBusyError", "database is busy"],
+      ["selection-state-changed", "OpenClawPairingStateRetryableError", "WAL changed"],
+      ["selection-state-missing", "FileNotFoundError", "missing state"],
+      ["selection-state-unsafe", "OSError", "unsafe canonical pairing-state SQLite entry"],
+      ["selection-state-schema", "ValueError", "unsupported canonical device state schema"],
+      [
+        "selection-state-identity",
+        "ValueError",
+        "canonical primary device identity is unavailable",
+      ],
+      ["selection-state-read", "ValueError", "invalid canonical pairing-state JSON column"],
+    ].map(([diagnostic, errorType, message]) => ({
+      diagnostic: diagnostic!,
+      prepare: (env: NodeJS.ProcessEnv, _devices: unknown, secret: string) => {
+        const declaration = errorType!.startsWith("OpenClaw")
+          ? `class ${errorType}(OSError): pass\n`
+          : "";
+        writeFileSync(
+          env.NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER!,
+          `${declaration}def read_openclaw_pairing_state(*args, **kwargs):\n    raise ${errorType}("${message}: ${secret}")\n`,
+        );
+      },
+    })),
     {
       diagnostic: "selection-request-binding",
       expectedRequestId: "a96ada31-9cf9-4d99-97cc-978dcbb9fc39",
@@ -1288,6 +1245,34 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
       ]),
     );
   });
+
+  it.each([
+    { names: ["tool_call", "sessions_spawn"], failures: 0, aborted: false, expected: true },
+    { names: [], failures: 1, aborted: false, expected: false },
+    { names: ["tool_call"], failures: 0, aborted: false, expected: false },
+    { names: ["sessions_spawn"], failures: 1, aborted: false, expected: false },
+    { names: ["sessions_spawn"], failures: 0, aborted: true, expected: false },
+  ])("requires successful native spawn evidence: $names, $failures, $aborted", (row) => {
+    const response = {
+      status: "ok",
+      result: {
+        payloads: [{ text: "PONG" }],
+        meta: {
+          aborted: row.aborted,
+          toolSummary: { failures: row.failures },
+          agentMeta: { terminalReceipt: { successfulToolNames: row.names } },
+        },
+      },
+    };
+    expect(managedOpenClawSubagentSucceeded(JSON.stringify(response))).toBe(row.expected);
+  });
+
+  it.each(["PONG", "null", '{"status":"ok","result":{"payloads":[{"text":"PONG"}]}}'])(
+    "rejects a reply without native subagent evidence: %s",
+    (stdout) => {
+      expect(managedOpenClawSubagentSucceeded(stdout)).toBe(false);
+    },
+  );
 
   it("emits only the fixed setup signal from arbitrary container output (#8543)", () => {
     const secret = "untrusted-prompt-and-credential";

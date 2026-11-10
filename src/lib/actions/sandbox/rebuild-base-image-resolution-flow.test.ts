@@ -42,8 +42,7 @@ describe("rebuildSandbox base-image resolution flow", () => {
       const harness = createRebuildFlowHarness({
         sandboxEntry: {
           agent: "hermes",
-          provider: "nvidia-prod",
-          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+          provider: "build",
           imageTag: "nemoclaw-hermes:recorded",
           nemoclawVersion: "0.1.0",
         },

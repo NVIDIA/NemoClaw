@@ -219,10 +219,7 @@ Hermes live qualification for the new local lifecycle remains pending.
 Legacy Deep Agents Code standalone local sandboxes require backup and fresh recreation before native-provider onboarding; NemoClaw blocks their resume and rebuild. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without an attachment can retain its supported shared-route model switches, but cannot resume or rebuild. Back it up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`. New Local NVIDIA NIM sandboxes also use their recorded native attachment for resume and rebuild. Back up and recreate older shared-route NIM sandboxes before upgrading OpenShell.
 Refer to [About Inference Routing](../inference/about-inference-routing) for endpoints and route inspection.
 During onboarding, NemoClaw validates the selected provider and model, configures the applicable OpenShell route or provider attachment, and writes the matching model reference into the managed agent configuration.
-In both paths, provider credentials stay outside the sandbox and OpenShell mediates the requests.
-Bedrock AWS credentials stay in the host-local adapter.
-When you select Model Router, OpenShell attaches a native provider to the sandbox for the host router endpoint.
-The router chooses a model from the configured NVIDIA Endpoints pool for each request.
+In both paths, provider credentials stay outside the sandbox and OpenShell mediates the requests. Bedrock AWS credentials stay in the host-local adapter.
 
 <AgentOnly variant="hermes">
   For Hermes, `$$nemoclaw inference set` updates `/sandbox/.hermes/config.yaml` at runtime without

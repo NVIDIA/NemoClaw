@@ -11,7 +11,6 @@ import { createDeps, nativeLocalTestReceipt } from "../../../test/helpers/infere
 import { resolveOpenClawLocalSwitch } from "./inference-set/native-local";
 import { patchOpenClawInferenceConfig, runInferenceSet } from "./inference-set";
 import { nativeLocalIdentity } from "../inference/native-local/contract";
-import * as routerBlueprint from "../core/model-router-port";
 import * as routerProcess from "../onboard/model-router-process";
 import * as onboardSession from "../state/onboard-session";
 import type { ConfigObject } from "../security/credential-filter";
@@ -100,12 +99,8 @@ describe("OpenClaw native local live selection", () => {
           deps,
         ),
       ).rejects.toMatchObject({
-        ...(previous === "legacy router" ? { exitCode: 2 } : {}),
-        message: expect.stringContaining(
-          previous === "legacy router"
-            ? "Recreate this legacy Model Router sandbox"
-            : "ownership could not be verified",
-        ),
+        exitCode: 2,
+        message: expect.stringMatching(/Model Router has been removed/),
       });
 
       expect(create).not.toHaveBeenCalled();
@@ -149,112 +144,6 @@ describe("OpenClaw native local live selection", () => {
     },
   );
 
-  it("changes a configured router model with only its native instance registered", async () => {
-    vi.spyOn(routerBlueprint, "loadBlueprintProfile").mockReturnValue({
-      provider_name: "team-router",
-      model: "nvidia-routed",
-      endpoint: "http://localhost:4000/v1",
-      credential_env: "NVIDIA_INFERENCE_API_KEY",
-      router: { enabled: true, port: 4000 },
-    });
-    const credential = "test-router-key";
-    vi.spyOn(routerProcess, "doesModelRouterProcessOwnPort").mockReturnValue(true);
-    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
-      routerPort: 4000,
-      routerPid: 123,
-      routerCredentialHash: hashCredential(credential),
-    } as ReturnType<typeof onboardSession.loadSession>);
-    const binding = {
-      agent: "openclaw" as const,
-      provider: "team-router",
-      endpointUrl: "http://host.openshell.internal:4000/v1",
-      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-      authMode: "authenticated" as const,
-      gatewayName: "nemoclaw",
-      sandboxName: "alpha",
-    };
-    const receipt = {
-      ...binding,
-      ...nativeLocalIdentity(binding),
-      schemaVersion: 1 as const,
-      providerId: "owned-router",
-    };
-    const deps = createDeps({
-      config: {
-        agents: { defaults: { model: { primary: "inference/old-model" } } },
-        models: {
-          providers: {
-            inference: {
-              baseUrl: binding.endpointUrl,
-              apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-              api: "openai-completions",
-              models: [{ id: "old-model" }],
-            },
-          },
-        },
-      },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        gatewayName: "nemoclaw",
-        provider: "team-router",
-        model: "old-model",
-        endpointUrl: binding.endpointUrl,
-        preferredInferenceApi: "openai-completions",
-        nativeLocalProviderAttachment: receipt,
-      },
-      resolveCredentialValue: () => credential,
-    });
-    deps.resolveLocalSwitchRuntime = () => ({
-      endpointUrl: binding.endpointUrl,
-      credentialValue: credential,
-      authMode: "authenticated",
-      ownedProxy: false,
-    });
-    const list = vi.spyOn(deps.providerAdapter, "listProviders").mockResolvedValue({
-      ok: true,
-      value: { names: [receipt.providerName] },
-    });
-    const result = await runInferenceSet(
-      { provider: "team-router", model: "new-router-model", sandboxName: "alpha" },
-      deps,
-    );
-    expect(result.provider).toBe("team-router");
-    expect(JSON.stringify(deps.calls.setOpenClawConfigValues.mock.calls)).toContain(
-      "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-    );
-    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
-      expect.objectContaining({
-        nativeProvider: true,
-        nativeLocalProviderAttachment: receipt,
-        agentName: "openclaw",
-        model: "new-router-model",
-      }),
-    );
-    expect(deps.calls.restartSandboxGateway).toHaveBeenCalled();
-    expect(
-      deps.calls.captureOpenshell.mock.calls.some(
-        ([args]) => Array.isArray(args) && args[0] === "inference" && args[1] === "set",
-      ),
-    ).toBe(false);
-
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        provider: "team-router",
-        model: "new-router-model",
-        nativeLocalProviderAttachment: receipt,
-      }),
-    );
-    expect(list).not.toHaveBeenCalled();
-    await expect(
-      runInferenceSet(
-        { provider: "unconfigured-router", model: "new-router-model", sandboxName: "alpha" },
-        deps,
-      ),
-    ).rejects.toThrow("Unsupported provider");
-  });
-
   it("rejects Model Router endpoint overrides before touching provider state", async () => {
     const deps = fixture();
     const create = vi.spyOn(deps.providerAdapter, "createProvider");
@@ -270,7 +159,7 @@ describe("OpenClaw native local live selection", () => {
         },
         deps,
       ),
-    ).rejects.toThrow("Model Router uses its configured endpoint");
+    ).rejects.toThrow("Model Router has been removed because llm-router is deprecated.");
     expect(create).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
@@ -600,7 +489,7 @@ describe("OpenClaw native local live selection", () => {
 
     await expect(
       runInferenceSet(
-        { provider: "nvidia-router", model: "routed-model", sandboxName: "alpha" },
+        { provider: "vllm-local", model: "routed-model", sandboxName: "alpha" },
         deps,
       ),
     ).rejects.toThrow(/conflicting gateway identity/);

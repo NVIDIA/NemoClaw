@@ -2,6 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
+
+import * as agentDefs from "../../src/lib/agent/defs";
+import * as agentRuntime from "../../src/lib/agent/runtime";
+import * as mutableConfigPerms from "../../src/lib/sandbox/mutable-config-perms";
+import * as registry from "../../src/lib/state/registry";
+import * as sandboxVersion from "../../src/lib/sandbox/version";
+import { rebuildOnboardDependencies } from "../../src/lib/actions/sandbox/rebuild-onboard-dependencies";
+import * as pairingSettlement from "../../src/lib/onboard/machine/finalization-deps";
+import * as launchReadiness from "../../src/lib/actions/sandbox/launch-readiness";
+import * as portableReceipts from "../../src/lib/onboard/experimental/portable-runtime-receipt-readiness";
+import * as messagingHostForward from "../../src/lib/actions/sandbox/messaging-host-forward-lifecycle";
+import * as restoreWindow from "../../src/lib/actions/sandbox/runtime/openclaw-lifecycle";
+import * as rebuildHermesPostRestore from "../../src/lib/actions/sandbox/rebuild-hermes-post-restore";
+import * as rebuildMcp from "../../src/lib/actions/sandbox/rebuild-mcp-phase";
+import * as rebuildMessaging from "../../src/lib/actions/sandbox/rebuild-messaging-phase";
+
 import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
@@ -77,3 +93,132 @@ export const hermesRebuildVerificationCases = [
     recoveryDetail: "nemoclaw alpha recover",
   },
 ];
+
+export function installRebuildPostRestoreSpies(
+  getAgentName: () => keyof typeof runtimeKindByAgent,
+  order: string[],
+): void {
+  vi.spyOn(
+    rebuildOnboardDependencies,
+    "verifyRebuiltOpenClawCompatibleEndpoint",
+  ).mockImplementation(async () => {
+    order.push("inference-smoke");
+  });
+  vi.spyOn(console, "log").mockImplementation(() => undefined);
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.spyOn(agentRuntime, "getSessionAgent").mockImplementation(() =>
+    getAgentName() === "openclaw" ? null : ({ name: getAgentName() } as never),
+  );
+  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("test agent");
+  vi.spyOn(agentDefs, "loadAgent").mockImplementation(
+    () =>
+      ({
+        name: getAgentName(),
+        expectedVersion: null,
+        runtime: { kind: runtimeKindByAgent[getAgentName()] },
+      }) as never,
+  );
+  vi.spyOn(restoreWindow, "beginUnregisteredOpenClawBackupQuiesce").mockImplementation(
+    async (sandboxName, runtimeSelection) => {
+      order.push("maintenance-begin");
+      return {
+        ok: true,
+        window: {
+          sandboxName,
+          kind: "backup",
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+      };
+    },
+  );
+  vi.spyOn(restoreWindow, "prepareUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+    async ({ sandboxName, runtimeSelection }) => {
+      order.push("doctor");
+      return {
+        ok: true,
+        window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+      };
+    },
+  );
+  vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+    async () => {
+      order.push("native-start");
+      return { ok: true };
+    },
+  );
+  vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+    async () => {
+      order.push("doctor-abort");
+      return { ok: true };
+    },
+  );
+  vi.spyOn(rebuildMessaging, "reapplyMessagingManifestBeforeAgentStart").mockImplementation(
+    async () => {
+      order.push("messaging");
+    },
+  );
+  vi.spyOn(rebuildMessaging, "finalizePendingMessagingRemovalsAfterRestore").mockImplementation(
+    (plan) => plan,
+  );
+  vi.spyOn(mutableConfigPerms, "inspectMutableHermesConfigPerms").mockReturnValue({
+    verified: true,
+    errors: [],
+  });
+  vi.spyOn(rebuildMcp, "restoreMcpAfterRebuild").mockImplementation(async () => {
+    order.push("mcp");
+    return true;
+  });
+  vi.spyOn(rebuildHermesPostRestore, "refreshRestoredHermesInferenceRoute").mockResolvedValue(
+    undefined,
+  );
+  vi.spyOn(rebuildHermesPostRestore, "restartHermesGatewayAfterStateRestore").mockImplementation(
+    async (_sandboxName, targetAgentName) =>
+      targetAgentName === "hermes" ? "restarted" : "not-applicable",
+  );
+  vi.spyOn(rebuildHermesPostRestore, "verifyHermesGatewayAfterStateRestore").mockImplementation(
+    async (_sandboxName, targetAgentName) =>
+      targetAgentName === "hermes" ? "healthy" : "not-applicable",
+  );
+  vi.spyOn(
+    rebuildHermesPostRestore,
+    "verifyHermesGatewayAfterStateRestoreForCronGate",
+  ).mockResolvedValue({
+    state: "healthy",
+    replacementIdentity: { pid: 77, start_time: 903, drain_token: "restore-token" },
+  });
+  vi.spyOn(
+    rebuildHermesPostRestore,
+    "completeHermesCronRestoreAfterGatewayReplacement",
+  ).mockReturnValue({ pid: 77, start_time: 903, drain_token: "restore-token" });
+  vi.spyOn(
+    rebuildHermesPostRestore,
+    "isHermesCronRestoreDrainMarkerRollbackFailure",
+  ).mockReturnValue(false);
+  vi.spyOn(registry, "getSandbox").mockImplementation(
+    () => ({ agent: getAgentName() === "openclaw" ? null : getAgentName() }) as never,
+  );
+  vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+  vi.spyOn(portableReceipts, "classifyPortableLifecycleReceipt").mockReturnValue({
+    kind: "absent",
+  });
+  vi.spyOn(pairingSettlement, "settleOrdinaryOpenClawPairing").mockResolvedValue({
+    kind: "settled",
+  });
+  vi.spyOn(launchReadiness, "settlePortableOpenClawPairing").mockResolvedValue({
+    kind: "not-portable",
+  });
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
+    sandboxVersion: null,
+    expectedVersion: null,
+    isStale: false,
+    verificationFailed: true,
+    detectionMethod: "unavailable",
+    unavailableReason: "no-expected-version",
+  });
+  vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockImplementation(
+    async () => {
+      order.push("host-forward");
+      return true;
+    },
+  );
+}

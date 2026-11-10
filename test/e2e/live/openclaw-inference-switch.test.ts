@@ -230,6 +230,12 @@ async function sandboxShell(
   });
 }
 
+interface MockAnthropicProvider {
+  endpointUrl: string;
+  requests(): readonly MockAnthropicRequest[];
+  close(): Promise<void>;
+}
+
 function closeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
@@ -822,7 +828,11 @@ test(
       (value): value is string => typeof value === "string",
     );
 
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
+    // Gateway destruction requires trusted ancestors; a private directory under
+    // world-writable /tmp cannot supply that ownership authority.
+    const home = fs.mkdtempSync(
+      path.join(fs.realpathSync(os.homedir()), ".nemoclaw-openclaw-switch-home-"),
+    );
     let mockProvider: MockAnthropicProvider | undefined;
     const cleanupState = createOpenClawInferenceSwitchCleanup({
       host,

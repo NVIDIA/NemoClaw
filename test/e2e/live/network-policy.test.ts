@@ -181,7 +181,7 @@ network_policies:
   return target;
 }
 
-function buildWebFetchProbeScript(): string {
+export function buildWebFetchProbeScript(): string {
   return String.raw`
 import fs from "node:fs";
 import path from "node:path";
@@ -201,7 +201,7 @@ if (config?.tools?.web?.fetch?.useTrustedEnvProxy !== false) {
 const distDir = "/usr/local/lib/node_modules/openclaw/dist";
 const candidates = fs
   .readdirSync(distDir)
-  .filter((name) => /^openclaw-tools-(?!serve-config-).+\.js$/.test(name))
+  .filter((name) => /^openclaw-tools-(?!serve-config-).+\.m?js$/.test(name))
   .sort();
 const factories = [];
 for (const candidate of candidates) {
@@ -221,6 +221,7 @@ if (uniqueFactories.length !== 1) {
 const createOpenClawTools = uniqueFactories[0];
 const tools = createOpenClawTools({
   config,
+  agentSessionKey: "agent:main:main",
   sandboxed: true,
   workspaceDir: "/sandbox/.openclaw/workspace-main",
   wrapBeforeToolCallHook: false,

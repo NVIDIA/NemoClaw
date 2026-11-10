@@ -21,7 +21,7 @@ export {
   type NativeLocalBinding,
   type NativeLocalProviderAttachment,
 } from "./attachment";
-export { nativeLocalCredentialReference } from "./model-router";
+export { nativeLocalCredentialReference } from "./agent-config";
 
 export function normalizeNativeLocalProviderAuthorities(
   value: unknown,

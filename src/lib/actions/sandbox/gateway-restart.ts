@@ -6,6 +6,10 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
+import {
+  buildOpenClawRestoreLogCommand,
+  formatOpenClawRestoreLogs,
+} from "./gateway-wedge-diagnostics";
 
 export type GatewayRestartCommandResult = {
   status: number;
@@ -83,6 +87,10 @@ type SandboxExec = (
 ) => Promise<GatewayRestartCommandResult | null>;
 
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
+
+// OpenClaw 2026.10.5's resolveGatewayStartupTiming allows 45s on Linux.
+// A safe restart acknowledges admission before the replacement starts.
+const OPENCLAW_RESTART_READINESS_SECONDS = 45;
 
 export type GatewayRestartDeps = {
   getSessionAgent: typeof agentRuntime.getSessionAgent;
@@ -545,6 +553,7 @@ export async function restartSandboxGatewayWithDeps(
       managedProbeImpl: () => null,
       ...(agentName === "openclaw"
         ? {
+            timeoutSeconds: OPENCLAW_RESTART_READINESS_SECONDS,
             probeImpl: async (name: string) => {
               // Liveness stays green while OpenClaw refuses work during restart.
               // Readiness checks the same admission fence as user requests.
@@ -575,6 +584,18 @@ export async function restartSandboxGatewayWithDeps(
           samples: readinessSamples,
         })}`,
       );
+      // The legacy wedge signature misses failures during a fresh 10.5 process start.
+      let diagnostic: GatewayRestartCommandResult | null = null;
+      try {
+        diagnostic = await deps.executeSandboxExecCommand(
+          sandboxName,
+          buildOpenClawRestoreLogCommand(),
+          15_000,
+        );
+      } catch {
+        // Diagnostic transport cannot replace the original readiness failure.
+      }
+      for (const line of formatOpenClawRestoreLogs(diagnostic)) console.error(`  ${line}`);
     }
     await deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
     return { ok: false, failureLayer: "health timeout", detail };

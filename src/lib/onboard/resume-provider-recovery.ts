@@ -9,6 +9,7 @@
 // recorded `provider`/`model`, leaving the sandbox rebuild to fail with an
 // authentication error (#3278).
 
+import { rejectRetiredModelRouter } from "../inference/provider-key/contract";
 import { fixedNativeProvider } from "../inference/native-provider/fixed";
 import { getRemoteProviderConfigForName } from "./inference-providers/provider-selection-keys";
 
@@ -26,8 +27,6 @@ export type RemoteProviderConfigEntry = {
 
 export type ResumeProviderRecoveryDeps = {
   remoteProviderConfig: Record<string, RemoteProviderConfigEntry>;
-  defaultRouteCredentialEnv: string;
-  isRoutedInferenceProvider: (provider: string) => boolean;
   providerExistsInGateway: (name: string) => boolean | Promise<boolean>;
   hydrateCredentialEnv: (envName: string) => string | null;
   getProviderLabel: (key: string) => string;
@@ -60,14 +59,12 @@ export type ResumeProviderRecoveryResult = {
  * Choose the credential env used to recreate a missing provider during resume.
  */
 export function getResumeProviderCredentialEnv(
-  provider: string,
   config: RemoteProviderConfigEntry | null,
   credentialEnv: string | null | undefined,
-  deps: Pick<ResumeProviderRecoveryDeps, "defaultRouteCredentialEnv" | "isRoutedInferenceProvider">,
 ): string {
   if (credentialEnv) return credentialEnv;
   if (config?.credentialEnv) return config.credentialEnv;
-  return deps.isRoutedInferenceProvider(provider) ? deps.defaultRouteCredentialEnv : "";
+  return "";
 }
 
 /**
@@ -87,13 +84,7 @@ export async function ensureResumeProviderReady(
   credentialEnv: string | null | undefined,
   deps: ResumeProviderRecoveryDeps,
 ): Promise<ResumeProviderRecoveryResult> {
-  if (provider && deps.isRoutedInferenceProvider(provider)) {
-    // The logical routed name is not the sandbox-owned native provider name.
-    return {
-      forceInferenceSetup: true,
-      credentialEnv: credentialEnv || deps.defaultRouteCredentialEnv,
-    };
-  }
+  rejectRetiredModelRouter(provider);
   const native = fixedNativeProvider(provider);
   if (native && native.logicalProvider !== "nvidia-prod") {
     // Native setup verifies the persisted provider identity. The logical name
@@ -101,19 +92,14 @@ export async function ensureResumeProviderReady(
     return { forceInferenceSetup: true, credentialEnv: native.credentialEnv };
   }
   const config = getRemoteProviderConfigForName(provider, deps.remoteProviderConfig);
-  if (!provider || (!config && !deps.isRoutedInferenceProvider(provider))) {
+  if (!provider || !config) {
     return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
   }
   if (await deps.providerExistsInGateway(provider)) {
     return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
   }
 
-  const resolvedCredentialEnv = getResumeProviderCredentialEnv(
-    provider,
-    config,
-    credentialEnv,
-    deps,
-  );
+  const resolvedCredentialEnv = getResumeProviderCredentialEnv(config, credentialEnv);
   const credentialValue = deps.hydrateCredentialEnv(resolvedCredentialEnv);
   const providerLabel = config?.label || deps.getProviderLabel(provider) || provider;
   const helpUrl = config?.helpUrl || null;

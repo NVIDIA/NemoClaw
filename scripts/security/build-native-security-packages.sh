@@ -202,7 +202,7 @@ build_libssh2_package() {
   test -f "${install_root}/usr/lib/libssh2.so.1.0.1"
 
   download \
-    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/libs/libssh2/libssh2-1t64_${LIBSSH2_DEBIAN_VERSION}_${architecture}.deb" \
+    "https://deb.debian.org/debian/pool/main/libs/libssh2/libssh2-1t64_${LIBSSH2_DEBIAN_VERSION}_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   dpkg-deb -R "${original_deb}" "${package_root}"
@@ -264,7 +264,7 @@ build_zlib_package() {
     *) return 64 ;;
   esac
   download \
-    'https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/z/zlib/zlib_1.3.dfsg%2Breally1.3.1.orig.tar.gz' \
+    'https://deb.debian.org/debian/pool/main/z/zlib/zlib_1.3.dfsg%2Breally1.3.1.orig.tar.gz' \
     "${build_root}/zlib.tar.gz"
   verify_sha256 \
     '60dd315c07f616887caa029408308a018ace66e3d142726a97db164b3b8f69fb' \
@@ -317,7 +317,6 @@ build_zlib_package() {
 build_python_fix_package() {
   local architecture="$1"
   local original_sha256
-  local original_snapshot_file
   local original_deb="${build_root}/python-stdlib-original.deb"
   local original_root="${build_root}/python-stdlib-original"
   local package_root="${build_root}/python-htmlparser-fix"
@@ -326,11 +325,9 @@ build_python_fix_package() {
   case "${architecture}" in
     amd64)
       original_sha256="db161322a3481d2c0c3b9a3b9a03c3ab0e2b1718f54b88755fb4a3f939165b84"
-      original_snapshot_file="c8d9cc73aab111fac7dc1b26c6e2ffda7af08f04"
       ;;
     arm64)
       original_sha256="d1178d24e4d143cc6c577d9dc0f26dd982efccc2e600d25ce86361f168a22be0"
-      original_snapshot_file="35cc8669f33410e90648c1dee9ed1395920b9b9e"
       ;;
     *)
       printf 'Unsupported architecture: %s\n' "${architecture}" >&2
@@ -339,7 +336,7 @@ build_python_fix_package() {
   esac
 
   download \
-    "https://snapshot.debian.org/file/${original_snapshot_file}" \
+    "https://deb.debian.org/debian/pool/main/p/python3.13/libpython3.13-stdlib_${PYTHON_DEBIAN_VERSION}_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   dpkg-deb -x "${original_deb}" "${original_root}"

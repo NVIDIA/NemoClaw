@@ -125,14 +125,15 @@ if sys.argv[2] == 'cron-run':
             print('ADMIN_CRON_ERROR_SIGNATURES=' + (','.join(signatures) or 'unavailable'), file=sys.stderr)
             raise SystemExit(0)
 selection_checks=(
-    ('selection-state-busy', r'OpenClawPairingStateRetryableError: canonical pairing-state database is busy'),
-    ('selection-state-changed', r'OpenClawPairingStateRetryableError: canonical pairing-state .*changed'),
+    ('selection-state-busy', r'OpenClawPairingStateBusyError:|OpenClawPairingStateRetryableError: canonical pairing-state database is busy'),
     ('selection-state-wal-incomplete', r'OpenClawPairingStateRetryableError: canonical pairing-state WAL is missing its shared-memory sidecar'),
     ('selection-state-unvalidated', r'OpenClawPairingStateRetryableError: SQLite reopened an unvalidated pairing-state file identity'),
-    ('selection-state-unsafe', r'OSError: unsafe canonical pairing-state'),
-    ('selection-state-missing', r'FileNotFoundError:'),
+    ('selection-state-changed', r'OpenClawPairingStateRetryableError:'),
     ('selection-state-permission', r'PermissionError:'),
-    ('selection-state-schema', r'ValueError: unsupported canonical device state schema'),
+    ('selection-state-missing', r'FileNotFoundError:'),
+    ('selection-state-unsafe', r'OSError: unsafe canonical pairing-state'),
+    ('selection-state-schema', r'ValueError: (?:unsupported|ambiguous|invalid) canonical device state'),
+    ('selection-state-identity', r'ValueError: canonical primary device identity is unavailable'),
     ('selection-state-read', r'canonical pairing-state|canonical device state|canonical primary device identity|FileNotFoundError|PermissionError|sqlite3\.'),
     ('selection-local-identity', r'local CLI identity'),
     ('selection-pending-count', r'expected exactly one pending request, found [0-9]+'),

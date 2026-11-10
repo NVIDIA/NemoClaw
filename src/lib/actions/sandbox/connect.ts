@@ -3229,6 +3229,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
             (publication.diagnostic.pairingFailureCategory
               ? ` pairing=${publication.diagnostic.pairingFailureCategory}`
               : "") +
+            (publication.diagnostic.pairingFailureReason
+              ? ` reason=${publication.diagnostic.pairingFailureReason}`
+              : "") +
             formatOpenClawPairingMismatchField(publication.diagnostic.pairingMismatchField),
         );
       }

@@ -22,7 +22,6 @@ import {
   STABLE_ABSENCE_CHECKS,
 } from "./sandbox-gpu-fallback-constants";
 
-import { redactOnboardCommandDiagnosticText } from "./diagnostics/redaction";
 import {
   DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
   DOCKER_GPU_PATCH_TIMEOUT_MS,
@@ -44,18 +43,21 @@ export function requireCompatibilityLifecycleCommand(
     timeout: action === "stop" ? DOCKER_GPU_PATCH_STOP_TIMEOUT_MS : DOCKER_GPU_PATCH_TIMEOUT_MS,
   });
   if (Number(result.status ?? 1) !== 0 || result.error || ("signal" in result && result.signal)) {
-    const detail = redactOnboardCommandDiagnosticText(
-      [
-        `status=${String(result.status)}, signal=${String("signal" in result ? result.signal : null)}`,
-        result.error?.message,
-        result.stderr,
-        result.stdout,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    ).slice(0, 2_000);
+    // Keep native output private while retaining the reason needed to diagnose
+    // a failed cutover. In particular, a timed-out mutation is not a rejection.
+    let outcome = "missing exit status";
+    if (result.error) {
+      outcome =
+        "code" in result.error && result.error.code === "ETIMEDOUT"
+          ? "command timed out"
+          : "process error";
+    } else if ("signal" in result && result.signal) {
+      outcome = "terminated by signal";
+    } else if (Number.isSafeInteger(result.status)) {
+      outcome = `exit status ${result.status}`;
+    }
     throw new Error(
-      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover.\n${detail}`,
+      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover (${outcome}).`,
     );
   }
 }

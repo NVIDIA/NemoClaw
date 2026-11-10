@@ -1299,6 +1299,32 @@ describe("launch readiness validation", () => {
     expect(publishLease).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["state-read", "input-unavailable"],
+    ["state-changed", "state-changing"],
+    ["timeout", "deadline-exceeded"],
+  ] as const)(
+    "retains the pairing observation reason %s without publishing a lease",
+    async (failureReason, failureCategory) => {
+      const currentDeps = deps();
+      const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      const publication = publicationFromDecision(SANDBOX, first);
+      currentDeps.observeOpenClawPairingQualification = () => {
+        throw new OpenClawPairingQualificationError(failureReason);
+      };
+      expect(await publishLaunchReadiness(publication, currentDeps)).toEqual({
+        kind: "evidence-failed",
+        diagnostic: {
+          stage: "publication-validation",
+          reason: "pairing-observation-failed",
+          pairingFailureReason: failureReason,
+          pairingFailureCategory: failureCategory,
+        },
+      });
+      expect(publishedIdentity).toBeNull();
+    },
+  );
+
   it.each(["paired.clientMode", "secret-token"])(
     "reports incompatible pairing with only allowlisted field %s (#13668)",
     async (field) => {
@@ -1383,6 +1409,7 @@ describe("launch readiness validation", () => {
         stage: "publication-validation",
         reason: "pairing-observation-failed",
         pairingFailureCategory: "deadline-exceeded",
+        pairingFailureReason: "timeout",
       },
     });
 

@@ -5,6 +5,7 @@ import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import { assertDiscordGatewayCapture } from "./messaging-providers-helpers.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import {
   approveAndAssertPairing,
   assertOpenClawStateRoot,
@@ -136,6 +137,7 @@ test(
     expect(configSummary.hasAccountProxy, "Discord config must omit the account proxy").toBe(false);
     expect(configSummary.hasGlobalProxy, "OpenClaw config must omit the global proxy").toBe(false);
 
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, env, redactions, false);
     await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "discord", redactions);
 
     progress.phase("route Discord Gateway traffic through the managed policy");

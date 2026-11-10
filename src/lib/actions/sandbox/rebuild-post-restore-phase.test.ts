@@ -11,13 +11,14 @@ import * as openshellRuntime from "../../adapters/openshell/runtime";
 import YAML from "yaml";
 import { messagingSandboxFiles } from "../../../../test/support/messaging-sandbox-files";
 import {
+  installRebuildPostRestoreSpies,
   hermesTeamsPlan,
   hermesRebuildVerificationCases,
   rebuildPostRestoreInput,
   runtimeKindByAgent,
 } from "../../../../test/support/rebuild-post-restore-fixtures";
 import * as agentDefs from "../../agent/defs";
-import * as agentRuntime from "../../agent/runtime";
+
 import * as mutableConfigPerms from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
 import * as sandboxVersion from "../../sandbox/version";
@@ -40,120 +41,7 @@ describe("rebuild post-restore phase", () => {
   beforeEach(() => {
     agentName = "openclaw";
     order = [];
-    vi.spyOn(
-      rebuildOnboardDependencies,
-      "verifyRebuiltOpenClawCompatibleEndpoint",
-    ).mockImplementation(async () => {
-      order.push("inference-smoke");
-    });
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(agentRuntime, "getSessionAgent").mockImplementation(() =>
-      agentName === "openclaw" ? null : ({ name: agentName } as never),
-    );
-    vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("test agent");
-    vi.spyOn(agentDefs, "loadAgent").mockImplementation(
-      () =>
-        ({
-          name: agentName,
-          expectedVersion: null,
-          runtime: { kind: runtimeKindByAgent[agentName] },
-        }) as never,
-    );
-    vi.spyOn(restoreWindow, "beginUnregisteredOpenClawBackupQuiesce").mockImplementation(
-      async (sandboxName, runtimeSelection) => {
-        order.push("maintenance-begin");
-        return {
-          ok: true,
-          window: {
-            sandboxName,
-            kind: "backup",
-            ...(runtimeSelection ? { runtimeSelection } : {}),
-          },
-        };
-      },
-    );
-    vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
-      async () => {
-        order.push("native-start");
-        return { ok: true };
-      },
-    );
-    vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
-      async () => {
-        order.push("doctor-abort");
-        return { ok: true };
-      },
-    );
-    vi.spyOn(rebuildMessaging, "reapplyMessagingManifestBeforeAgentStart").mockImplementation(
-      async () => {
-        order.push("messaging");
-      },
-    );
-    vi.spyOn(rebuildMessaging, "finalizePendingMessagingRemovalsAfterRestore").mockImplementation(
-      (plan) => plan,
-    );
-    vi.spyOn(mutableConfigPerms, "inspectMutableHermesConfigPerms").mockReturnValue({
-      verified: true,
-      errors: [],
-    });
-    vi.spyOn(rebuildMcp, "restoreMcpAfterRebuild").mockImplementation(async () => {
-      order.push("mcp");
-      return true;
-    });
-    vi.spyOn(rebuildHermesPostRestore, "refreshRestoredHermesInferenceRoute").mockResolvedValue(
-      undefined,
-    );
-    vi.spyOn(rebuildHermesPostRestore, "restartHermesGatewayAfterStateRestore").mockImplementation(
-      async (_sandboxName, targetAgentName) =>
-        targetAgentName === "hermes" ? "restarted" : "not-applicable",
-    );
-    vi.spyOn(rebuildHermesPostRestore, "verifyHermesGatewayAfterStateRestore").mockImplementation(
-      async (_sandboxName, targetAgentName) =>
-        targetAgentName === "hermes" ? "healthy" : "not-applicable",
-    );
-    vi.spyOn(
-      rebuildHermesPostRestore,
-      "verifyHermesGatewayAfterStateRestoreForCronGate",
-    ).mockResolvedValue({
-      state: "healthy",
-      replacementIdentity: { pid: 77, start_time: 903, drain_token: "restore-token" },
-    });
-    vi.spyOn(
-      rebuildHermesPostRestore,
-      "completeHermesCronRestoreAfterGatewayReplacement",
-    ).mockReturnValue({ pid: 77, start_time: 903, drain_token: "restore-token" });
-    vi.spyOn(
-      rebuildHermesPostRestore,
-      "isHermesCronRestoreDrainMarkerRollbackFailure",
-    ).mockReturnValue(false);
-    vi.spyOn(registry, "getSandbox").mockImplementation(
-      () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
-    );
-    vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
-    vi.spyOn(portableReceipts, "classifyPortableLifecycleReceipt").mockReturnValue({
-      kind: "absent",
-    });
-    vi.spyOn(pairingSettlement, "settleOrdinaryOpenClawPairing").mockResolvedValue({
-      kind: "settled",
-    });
-    vi.spyOn(launchReadiness, "settlePortableOpenClawPairing").mockResolvedValue({
-      kind: "not-portable",
-    });
-    vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
-      sandboxVersion: null,
-      expectedVersion: null,
-      isStale: false,
-      verificationFailed: true,
-      detectionMethod: "unavailable",
-      unavailableReason: "no-expected-version",
-    });
-    vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockImplementation(
-      async () => {
-        order.push("host-forward");
-        return true;
-      },
-    );
+    installRebuildPostRestoreSpies(() => agentName, order);
   });
 
   afterEach(() => {
@@ -339,6 +227,7 @@ describe("rebuild post-restore phase", () => {
 
     expect(order).toEqual([
       "maintenance-begin",
+      "doctor",
       "messaging",
       "native-start",
       "mcp",
@@ -566,6 +455,25 @@ describe("rebuild post-restore phase", () => {
     }
   });
 
+  it("keeps restored state offline when migration fails before messaging writes", async () => {
+    vi.mocked(restoreWindow.prepareUnregisteredOpenClawPostRestoreDoctor).mockResolvedValue({
+      ok: false,
+      stage: "doctor",
+      detail: "sensitive restored config",
+    });
+    const args = input();
+    await runRebuildPostRestorePhase(args);
+    expect(rebuildMessaging.reapplyMessagingManifestBeforeAgentStart).not.toHaveBeenCalled();
+    expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(
+      restoreWindow.abortUnregisteredOpenClawPostRestoreDoctor,
+    ).toHaveBeenCalledExactlyOnceWith({ sandboxName: "alpha", kind: "backup" });
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw restored state could not be migrated before messaging configuration.",
+    );
+    expect(args.log.mock.calls.flat().join("\n")).not.toContain("sensitive restored config");
+  });
+
   it("reuses the maintenance window established before filesystem restore", async () => {
     const window = { sandboxName: "alpha", kind: "backup" } as const;
     vi.mocked(restoreWindow.beginUnregisteredOpenClawBackupQuiesce).mockClear();
@@ -573,8 +481,11 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase({ ...input(), openClawDoctorWindow: window });
 
     expect(restoreWindow.beginUnregisteredOpenClawBackupQuiesce).not.toHaveBeenCalled();
-    expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith(window);
-    expect(order).toEqual(["messaging", "native-start", "mcp", "host-forward"]);
+    expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+    });
+    expect(restoreWindow.prepareUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledWith(window);
+    expect(order).toEqual(["doctor", "messaging", "native-start", "mcp", "host-forward"]);
   });
 
   it("reuses the MCP rebuild target for every post-restore sandbox command (#10514)", async () => {
@@ -649,7 +560,6 @@ describe("rebuild post-restore phase", () => {
       restoreWindow.abortUnregisteredOpenClawPostRestoreDoctor,
     ).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
-      kind: "backup",
     });
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("OpenClaw native final start failed after offline restoration");
@@ -709,7 +619,7 @@ describe("rebuild post-restore phase", () => {
       ).not.toHaveBeenCalled();
       expect(
         vi.mocked(restoreWindow.abortUnregisteredOpenClawPostRestoreDoctor).mock.calls,
-      ).toEqual(agent === "openclaw" ? [[{ sandboxName: "alpha", kind: "backup" }]] : []);
+      ).toEqual(agent === "openclaw" ? [[{ sandboxName: "alpha" }]] : []);
       const output = [
         ...vi.mocked(console.error).mock.calls,
         ...vi.mocked(console.log).mock.calls,
@@ -743,7 +653,6 @@ describe("rebuild post-restore phase", () => {
       restoreWindow.abortUnregisteredOpenClawPostRestoreDoctor,
     ).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
-      kind: "backup",
     });
     expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
   });

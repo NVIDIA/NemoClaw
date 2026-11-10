@@ -66,17 +66,7 @@ function createDeps() {
     recordStepComplete: vi.fn(async () => createSession()),
     surfaceReady: vi.fn(() => true),
     reconcileRouter: vi.fn(async () => undefined),
-    reupsertRoutedProvider: vi.fn(
-      (
-        _gatewayName: string,
-        _provider: string,
-        endpointUrl: string | null,
-        _credentialEnv: string | null,
-      ) => ({
-        ok: true as const,
-        endpointUrl: endpointUrl ?? "http://host.openshell.internal:4000/v1",
-      }),
-    ),
+
     reserveRoute: vi.fn(() => true),
     updateSandbox: vi.fn(),
     log: vi.fn(),
@@ -90,8 +80,7 @@ function createDeps() {
     preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
     getSandboxRecoveryAuthority: (): "missing" => "missing",
     withGatewayRouteMutationLock: async (_gatewayName, operation) => await operation(),
-    withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
-    getModelRouterPort: () => 4000,
+
     normalizeHermesAuthMethod: () => null,
     setupNim: calls.setupNim,
     setupInference: calls.setupInference,
@@ -102,6 +91,11 @@ function createDeps() {
     toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
     skippedStepMessage: vi.fn(),
     ensureManagedLlamaCppResumeReady: vi.fn(async () => false),
+    probeLlamaCppSandboxReachability: vi.fn(async () => ({
+      ok: true as const,
+      reason: "ok" as const,
+      networkName: "openshell",
+    })),
     ensureResumeProviderReady: vi.fn(async (_gatewayName, _provider, credentialEnv) => ({
       forceInferenceSetup: false,
       credentialEnv: credentialEnv ?? null,
@@ -119,9 +113,7 @@ function createDeps() {
     getOpenshellBinary: () => "/usr/bin/openshell",
     needsBedrockRuntimeAdapter: () => false,
     isInferenceRouteReady: () => true,
-    isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
-    reconcileModelRouter: calls.reconcileRouter,
-    reupsertRoutedProvider: calls.reupsertRoutedProvider,
+
     reserveSandboxInferenceRoute: calls.reserveRoute,
     hasSandboxLifecycleAuthority: vi.fn(() => false),
     registryUpdateSandbox: calls.updateSandbox,
@@ -352,38 +344,6 @@ describe("provider route containment", () => {
     expect(inferenceOptions).toMatchObject({ endpointSource: null });
     expect(inferenceOptions).not.toHaveProperty("onboardEndpointUrl");
     expect(result).toMatchObject({ endpointSource: null, onboardEndpointUrl: null });
-  });
-
-  it("revalidates native Model Router setup on resume without reading the retired shared route", async () => {
-    const session = createSession({
-      provider: "nvidia-router",
-      model: "router/model",
-      endpointUrl: "http://host.openshell.internal:4000/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    });
-    session.steps.provider_selection.status = "complete";
-    const { calls, deps } = createDeps();
-    const routeReady = vi.fn(() => {
-      throw new Error("retired shared route read");
-    });
-    deps.isInferenceRouteReady = routeReady;
-    const options = resumeOptions(deps, session);
-    options.agent = { name: "openclaw" } as never;
-    await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
-      provider: "nvidia-router",
-    });
-    expect(calls.setupInference).toHaveBeenCalledWith(
-      "target-sandbox",
-      "router/model",
-      "nvidia-router",
-      "http://host.openshell.internal:4000/v1",
-      "NVIDIA_INFERENCE_API_KEY",
-      null,
-      [],
-      expect.objectContaining({ agentName: "openclaw", gatewayName: "nemoclaw-9090" }),
-    );
-    expect(routeReady).not.toHaveBeenCalled();
-    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
   });
 
   it("allows compatible-endpoint refresh to reach the final setup boundary (#6315)", async () => {

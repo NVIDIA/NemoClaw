@@ -7,6 +7,7 @@ import {
   INFERENCE_CURL_HTTP_CODE_MARKER,
   waitForMcpCurlPolicyDenial,
 } from "../fixtures/curl-policy-denial.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 import fs from "node:fs";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
@@ -1016,13 +1017,26 @@ test(
       {
         artifactName: "tc-inf-11-inference-set-https-pin-endpoint",
         artifacts,
-        env: { ...buildAvailabilityProbeEnv(), COMPATIBLE_API_KEY: apiKey },
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          COMPATIBLE_API_KEY: apiKey,
+          // This bounded probe owns route isolation, not optional telemetry delivery.
+          NEMOCLAW_DISABLE_TELEMETRY: "1",
+        },
         progress,
         redactionValues: [apiKey],
         // Match the OpenClaw switch lane: selection also restarts and pairs the gateway.
         timeoutMs: 120_000,
       },
     );
+    await captureOpenClawOnboardFailure(inferenceSet, sandbox, {
+      sandboxName,
+      artifactPrefix: "tc-inf-11-inference-set-https-pin-endpoint",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      runtime: runtimeProvider,
+      host,
+    });
     expect(
       inferenceSet.exitCode,
       `TC-INF-11 inference set https-pin endpoint failed\n${redactedResultText(inferenceSet)}`,

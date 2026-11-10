@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouter } from "../inference/provider-key/contract";
 import type {
   NativeLocalProvider,
   NativeLocalProviderAttachment,
@@ -44,10 +45,7 @@ import {
   formatGatewayRouteImpactWarning,
   isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
-import type {
-  withGatewayRouteMutationLock,
-  withModelRouterPortLifecycleLock,
-} from "../inference/gateway-route-mutation-lock";
+import type { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding, shouldFrontOllamaWithProxy } from "../inference/local";
 import {
   ensureNativeNvidiaProvider,
@@ -84,13 +82,6 @@ import type { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
-import {
-  isModelRouterProvider,
-  prepareNativeModelRouterSelection,
-  withRoutedInferencePortLock,
-  type RoutedProviderDeps,
-  upsertRoutedProvider as upsertRoutedInferenceProvider,
-} from "./routed-inference";
 
 export { assertNoOpenShellGatewayEndpointOverride };
 
@@ -165,7 +156,6 @@ import type {
   HermesDeps,
   OllamaDeps,
   RemoteProviderDeps,
-  RoutedDeps,
   SetupInferenceResult,
   VllmDeps,
 } from "./inference-providers";
@@ -235,8 +225,7 @@ type ProviderBranchDeps = Pick<
     | "getOllamaProxyToken"
     | "persistAndProbeOllamaProxy"
     | "localInference"
-  > &
-  Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
+  >;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
   sandboxPolicyReader?: Parameters<typeof readCustomNativeSandboxPolicy>[0]["reader"];
@@ -255,8 +244,6 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   trustedPrivateEndpointHosts?: readonly string[];
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
-  withModelRouterPortLifecycleLock?: typeof withModelRouterPortLifecycleLock;
-  getModelRouterPort?: () => number;
   withSandboxMutationLock: typeof withSandboxMutationLock;
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
@@ -299,7 +286,6 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
     apiKey: string;
   } | null;
   ollamaProxyCredentialEnv: string;
-  isRoutedInferenceProvider: (provider: string) => boolean;
   applyLocalInferenceRoute?: VllmDeps["applyLocalInferenceRoute"];
   // #6294 optional overrides for the remote-provider OpenAI-surface branch;
   // production omits these and remote.ts falls back to the real modules.
@@ -330,29 +316,6 @@ export function bindGatewayUpsertProvider(
           revalidateSandboxIdentity,
         })
       : upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
-}
-
-export function createRoutedResumeProviderUpsert(deps: {
-  upsertProvider: SetupInferenceDeps["upsertProvider"];
-  hydrateCredentialEnv: RoutedProviderDeps["hydrateCredentialEnv"];
-}) {
-  return async (
-    gatewayName: string,
-    provider: string,
-    endpointUrl: string | null,
-    credentialEnv: string | null,
-  ) => {
-    const result = await upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
-      upsertProvider: bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
-      hydrateCredentialEnv: deps.hydrateCredentialEnv,
-    });
-    return {
-      ok: result.ok,
-      endpointUrl: result.endpointUrl,
-      message: result.result.message,
-      status: result.result.status,
-    };
-  };
 }
 
 export async function selectGatewayForFollowupOrExit(
@@ -1100,17 +1063,6 @@ function createGatewayRouteStager(input: {
   };
 }
 
-function nativeRouterSetupResult(
-  routedProvider: boolean,
-  attachment: NativeLocalProviderAttachment | undefined,
-  credentialEnv: string | undefined,
-): Pick<Extract<SetupInferenceResult, { ok: true }>, "nativeInference"> {
-  if (!routedProvider || !attachment) return {};
-  return {
-    nativeInference: { endpointUrl: attachment.endpointUrl, credentialEnv: credentialEnv! },
-  };
-}
-
 export function createSetupInference(
   defaults: SetupInferenceDeps,
   overrides: Partial<SetupInferenceDeps> = {},
@@ -1127,6 +1079,7 @@ export function createSetupInference(
     hermesToolGateways: string[] = [],
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
+    rejectRetiredModelRouter(provider);
     const revalidateSandboxIdentity = sandboxName ? options.revalidateSandboxIdentity : undefined;
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
@@ -1142,15 +1095,12 @@ export function createSetupInference(
     }
     let selectingNativeLocal = false;
     let nativeLocalAgent: string | null | undefined;
-    const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
     const usesBedrockRuntimeAdapter =
       provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
     let shouldLogSuccessfulRoute = false;
     let selectedLocalNim = false;
     const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
-      deps.withGatewayRouteMutationLock(gatewayName, () =>
-        withRoutedInferencePortLock(routedProvider, operation, deps),
-      );
+      deps.withGatewayRouteMutationLock(gatewayName, operation);
     const mutateGatewayRoute = (): Promise<SetupInferenceResult> =>
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider onboarding centralizes route and two-phase transaction ordering.
       withInferenceMutationLocks(async () => {
@@ -1273,7 +1223,6 @@ export function createSetupInference(
         let nativeLocalRecreationSource: SandboxEntry | undefined;
         let nativeLocalProviderAttachment: NativeLocalProviderAttachment | undefined;
         let nativeProviderEndpoint: string | undefined;
-        let nativeProviderSmokeEndpoint: string | undefined;
         let nativeHostedCredentialEnv: string | undefined;
         let nativeHostedProviderAttachment: NativeProviderAttachment | undefined;
         let retainedNativeHostedCredential = false;
@@ -1440,9 +1389,7 @@ export function createSetupInference(
               // The sandbox phase reserves the replacement after backup succeeds.
               nativeLocalRecreationSource = structuredClone(recorded);
             }
-            nativeLocalProviderAttachment = await (
-              routedProvider ? prepareNativeModelRouterSelection : prepareNativeLocalSelection
-            )({
+            nativeLocalProviderAttachment = await prepareNativeLocalSelection({
               adapter: deps.providerAdapter,
               binding: {
                 provider: name as NativeLocalProvider,
@@ -1461,11 +1408,7 @@ export function createSetupInference(
                 gatewayName,
                 sandboxName,
               },
-              credentialValue:
-                recordedAttachment && nativeLocalRecreationSource && !routedProvider ? null : value,
-              ...(recordedAttachment && nativeLocalRecreationSource && routedProvider
-                ? { preserveProviderCredential: true }
-                : {}),
+              credentialValue: recordedAttachment && nativeLocalRecreationSource ? null : value,
               ownedProxy:
                 (name === "ollama-local" && !hostLocalRoute && deps.shouldFrontOllamaWithProxy()) ||
                 (name === "compatible-endpoint" &&
@@ -1480,13 +1423,6 @@ export function createSetupInference(
                 nativeLocalProviderAttachment.providerName !== recordedAttachment.providerName)
             )
               throw new Error("Published native provider ownership changed before sandbox backup.");
-            if (routedProvider) {
-              nativeProviderEndpoint = hostReachableEndpoint;
-              const hostSmokeUrl = new URL(hostReachableEndpoint);
-              hostSmokeUrl.hostname = "127.0.0.1";
-              nativeProviderSmokeEndpoint = hostSmokeUrl.href;
-              nativeHostedCredentialEnv = sourceCredentialEnv;
-            }
             return { ok: true };
           }
           const reused = routeStager.reusePublishedProvider(args[0]);
@@ -1946,18 +1882,6 @@ export function createSetupInference(
               }
               return outcome.result;
             }
-          } else if (routedProvider) {
-            await inferenceProviders.setupRoutedInference(
-              { model, provider, endpointUrl, credentialEnv },
-              {
-                ...commonDeps,
-                reconcileModelRouter: deps.reconcileModelRouter,
-                routedInference: deps.routedInference,
-                hydrateCredentialEnv: deps.hydrateCredentialEnv,
-                redact: deps.redact,
-                compactText: deps.compactText,
-              },
-            );
           } else {
             commonDeps.error(`  Unsupported provider configuration: ${provider}`);
             commonDeps.exitProcess(1);
@@ -1992,7 +1916,6 @@ export function createSetupInference(
               provider,
               model,
               endpointUrl:
-                nativeProviderSmokeEndpoint ??
                 nativeProviderEndpoint ??
                 nativeHostedProviderAttachment?.endpointUrl ??
                 hostedNativeProvider(provider)?.endpoint ??
@@ -2068,12 +1991,6 @@ export function createSetupInference(
           }
           revalidateSandboxIdentity?.("report successful inference provider setup");
           shouldLogSuccessfulRoute = true;
-          const nativeRouterInference = nativeRouterSetupResult(
-            routedProvider,
-            nativeLocalProviderAttachment,
-            nativeHostedCredentialEnv,
-          );
-
           if (
             nativeLocalRecreationSource &&
             nativeLocalProviderAttachment &&
@@ -2083,14 +2000,13 @@ export function createSetupInference(
           ) {
             return {
               ok: true,
-              ...nativeRouterInference,
               stagedNativeLocalRecreation: {
                 source: nativeLocalRecreationSource,
                 attachment: nativeLocalProviderAttachment,
               },
             };
           }
-          return { ...routeStager.successResult(), ...nativeRouterInference };
+          return routeStager.successResult();
         } catch (error) {
           if (!hostLocalRoute || !hostLocalSelection) {
             return rejectNativeLocalSetupFailure({
@@ -2177,10 +2093,6 @@ export function createSetupInference(
           provider,
           endpointUrl,
           options.localNimSelected ?? (provider === "vllm-local" && Boolean(recordedNimContainer)),
-        );
-      if (isModelRouterProvider(provider) && !selectingNativeLocal)
-        throw new Error(
-          "Model Router requires a native provider for the selected agent and configured endpoint.",
         );
       const preservingLegacyPiRoute =
         options.preserveLegacyPiSharedLocalRoute === true &&

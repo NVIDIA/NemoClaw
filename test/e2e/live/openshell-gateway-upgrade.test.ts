@@ -36,6 +36,7 @@ import {
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
 import { registerOpenShellHostMockFirewall } from "../fixtures/host-mock-firewall.ts";
+import { prepareGatewayUpgradeExecutableDirectory } from "../fixtures/gateway-upgrade-executable-directory.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -751,6 +752,7 @@ runOpenShellGatewayUpgrade(
     // Vitest retries execute in the same runner process. Tear down any failed
     // legacy gateway before each attempt so partial containerd layers from a
     // transient image-import failure cannot consume the next attempt's disk.
+    await prepareGatewayUpgradeExecutableDirectory(host, liveEnv());
     await prepareGatewayUpgradeUserManager(host, liveEnv(), VERIFY_SYSTEMD_UPGRADE);
     await preCleanUpgradeGateway(host, "pre-cleanup-gateway");
 

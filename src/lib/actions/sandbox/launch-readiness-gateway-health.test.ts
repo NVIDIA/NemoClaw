@@ -29,6 +29,7 @@ import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 import {
   isSandboxGatewayRunningForStatus,
   waitForStartedHermesGatewayProcess,
+  waitForStartedNativeGatewayProcess,
 } from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
@@ -53,6 +54,86 @@ describe("launch-readiness gateway health scope", () => {
       } as SandboxEntry),
     ).toBe(true);
   });
+
+  it.each([
+    ["becomes ready during cold startup", 32_000, true, 32_000],
+    ["never becomes ready", Infinity, false, 330_000],
+  ] as const)(
+    "uses the native startup default when OpenClaw %s",
+    async (_label, readyAt, expected, elapsed) => {
+      let clock = 0;
+      const probe = vi.fn(async () => clock >= readyAt);
+      await expect(
+        waitForStartedNativeGatewayProcess("alpha", "openclaw", "nemoclaw-19080", {
+          environment: {},
+          now: () => clock,
+          delay: async (milliseconds) => {
+            clock += milliseconds;
+          },
+          probe,
+        }),
+      ).resolves.toBe(expected);
+      expect(clock).toBe(elapsed);
+      expect(probe).toHaveBeenCalledWith("alpha", "nemoclaw-19080", {
+        startup: { timeoutMs: expect.any(Number) },
+      });
+    },
+  );
+
+  it.each([
+    ["becomes ready", [null, true], true, 2_000],
+    ["stays unavailable", [null, null], null, 3_000],
+  ] as const)(
+    "bounds OpenClaw startup when a timed-out health probe %s",
+    async (_case, results, expected, elapsed) => {
+      let clock = 0;
+      const observations = [...results];
+      const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(
+        async (request) => {
+          const ready = observations.shift() === true;
+          return {
+            outcome: { kind: "completed", exitCode: 0 },
+            stdout: execFileSync(
+              "sh",
+              [
+                "-c",
+                `curl() { printf '%s' '${ready ? "200" : "000"}'; return ${ready ? 0 : 28}; }; ${request.command.at(-1)}`,
+              ],
+              { encoding: "utf8" },
+            ),
+            stderr: "",
+          };
+        },
+      );
+      await expect(
+        waitForStartedNativeGatewayProcess("alpha", "openclaw", "nemoclaw-19080", {
+          environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "3" },
+          now: () => clock,
+          delay: async (ms) => {
+            clock += ms;
+          },
+          probe: async (name, gateway, options) =>
+            await isSandboxGatewayRunningForStatus(name, gateway, {
+              ...options,
+              getSessionAgent: () => null,
+              getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+              commandExecutor: { runBuffered },
+            }),
+        }),
+      ).resolves.toBe(expected);
+      expect(clock).toBe(elapsed);
+      expect(runBuffered).toHaveBeenCalledTimes(2);
+      expect(runBuffered.mock.calls.map(([request]) => request.timeoutMilliseconds)).toEqual([
+        3_000, 1_000,
+      ]);
+      expect(
+        runBuffered.mock.calls.every(
+          ([request]) =>
+            request.target.kind === "named" && request.target.gatewayName === "nemoclaw-19080",
+        ),
+      ).toBe(true);
+    },
+  );
 
   it.each([
     ["becomes observable", [null, null, null, null, null, true], true],
@@ -623,4 +704,125 @@ it("requires the recorded external identity before invoking its native route", a
   inferenceInvocationProbe.mockClear();
   await expect(requireNativeInferenceHealth(input)).rejects.toThrow("replaced");
   expect(inferenceInvocationProbe).not.toHaveBeenCalled();
+});
+
+describe("inference readiness failure diagnostics (#14066)", () => {
+  it.each([
+    ["HTTP rejection", { httpStatus: 503, detail: "upstream body must stay private" }, "HTTP 503"],
+    [
+      "curl receive failure",
+      { httpStatus: null, detail: "sandbox inference invocation probe exited with status 56" },
+      "curl_exit=56",
+    ],
+    [
+      "request timeout",
+      { httpStatus: null, detail: "request timed out", timedOut: true as const },
+      "timed_out=true",
+    ],
+    [
+      "invalid response",
+      {
+        httpStatus: 200,
+        detail: "sandbox inference invocation probe returned an invalid response body",
+      },
+      "response=invalid",
+    ],
+    [
+      "unavailable probe",
+      { httpStatus: null, detail: "sandbox inference invocation probe could not run" },
+      "response=unavailable",
+    ],
+    [
+      "hostile detail",
+      {
+        httpStatus: Number.NaN,
+        detail:
+          "Bearer private-value\n\u001b[31mhttps://user:password@example.test/?api_key=secret",
+      },
+      "HTTP unknown",
+    ],
+  ] as const)(
+    "reports bounded fields for %s without exposing probe data",
+    async (_name, failure, diagnostic) => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const invocation = {
+        ok: false as const,
+        ...failure,
+        endpoint: "https://user:password@example.test/?api_key=secret",
+      };
+      const input = {
+        sandboxName: "alpha",
+        gatewayName: "selected",
+        entry: {
+          name: "alpha",
+          agent: "openclaw",
+          provider: "nvidia-prod",
+          model: "fixture-model",
+          nativeNvidiaProviderAttachment: {
+            schemaVersion: 1 as const,
+            profileId: "nemoclaw-nvidia-inference-v1" as const,
+            providerName: "nemoclaw-nvidia-prod-v1" as const,
+            providerId: "owned-provider-id",
+          },
+        },
+        deps: {
+          verifyNativeNvidiaAttachment: vi.fn(async () => {}),
+          inferenceInvocationProbe: vi.fn(async () => invocation),
+        },
+      };
+      await expect(requireNativeInferenceHealth(input)).rejects.toEqual(
+        expect.objectContaining({ category: "health", failedCheck: "inference request" }),
+      );
+      expect(error).toHaveBeenCalledExactlyOnceWith(expect.stringContaining(diagnostic));
+      expect(error.mock.calls.flat().join("\n")).not.toMatch(
+        /private-value|upstream body|user:password|api_key|secret|\u001b/,
+      );
+    },
+  );
+
+  it("reports the same bounded failure for native-local and routed requests", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const invocation = {
+      ok: false as const,
+      httpStatus: null,
+      detail: "sandbox inference invocation probe exited with status 56",
+    };
+    const local = nativeLocalTestReceipt("vllm-local", "http://host.openshell.internal:8000/v1", {
+      agent: "hermes",
+      sandboxName: SANDBOX,
+      gatewayName: GATEWAY,
+    });
+    await expect(
+      requireNativeInferenceHealth({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY,
+        agentName: "hermes",
+        entry: {
+          name: SANDBOX,
+          agent: "hermes",
+          provider: "vllm-local",
+          model: MODEL,
+          nativeLocalProviderAttachment: local,
+        },
+        deps: {
+          verifyNativeLocalAttachment: vi.fn(async () => {}),
+          inferenceInvocationProbe: vi.fn(async () => invocation),
+        },
+      }),
+    ).rejects.toBeInstanceOf(LaunchReadinessObservationError);
+    await expect(
+      requireLaunchSemanticHealth(
+        SANDBOX,
+        GATEWAY,
+        "langchain-deepagents-code",
+        dcodeEntry(),
+        dcodeAgent,
+        true,
+        dcodeHealthDeps(invocation),
+      ),
+    ).rejects.toBeInstanceOf(LaunchReadinessObservationError);
+    expect(
+      error.mock.calls.flat().filter((line) => String(line).includes("curl_exit=56")),
+    ).toHaveLength(2);
+  });
 });

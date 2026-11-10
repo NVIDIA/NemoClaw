@@ -146,11 +146,7 @@ describe("rebuildSandbox flow: target image", () => {
 
   it("stops before sandbox mutation when Hermes base-image preflight fails (#11072)", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        agent: "hermes",
-        provider: "nvidia-prod",
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      },
+      sandboxEntry: { agent: "hermes", provider: "build" },
       baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
     });
 
@@ -384,7 +380,7 @@ describe("rebuildSandbox flow: target image", () => {
     }
   });
 
-  it("preserves a legacy Router target and unrelated session before rebuild (#5735)", async () => {
+  it("rejects a retired Hermes router with a non-matching session (#5735)", async () => {
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
       sandboxEntry: { provider: "nvidia-router", model: "router-model" },
@@ -395,10 +391,9 @@ describe("rebuildSandbox flow: target image", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Legacy shared local inference cannot be rebuilt safely");
+    ).rejects.toThrow("Model Router has been removed");
 
     expectNoSandboxDelete(harness.runOpenshellSpy);
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expect(harness.session.routerPid).toBe(4242);
     expect(harness.session.routerCredentialHash).toBe("router-credential-hash");

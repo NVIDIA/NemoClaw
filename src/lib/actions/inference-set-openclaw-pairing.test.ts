@@ -128,6 +128,24 @@ describe("settleInferenceSetOpenClawPairing", () => {
     });
   });
 
+  it("retains the safe observation failure code without publishing another request", () => {
+    const failure = new OpenClawPairingQualificationError("client-auth");
+    failure.message = "token=do-not-report";
+    const deps = pairingDeps({
+      observePairing: () => {
+        throw failure;
+      },
+    });
+
+    expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
+      ok: false,
+      failureLayer: "initial-state-unavailable:client-auth",
+      failureCategory: "input-unavailable",
+    });
+    expect(deps.publishScopeRequest).not.toHaveBeenCalled();
+    expect(deps.approveScopeRequest).not.toHaveBeenCalled();
+  });
+
   it("rejects approved scope state that does not settle (#9527)", () => {
     const deps = pairingDeps({
       observePairing: vi.fn(() => observation("pairing-only")),
@@ -233,7 +251,7 @@ it("retains the initial observation category without another approval", () => {
   const deps = pairingDeps({ observePairing });
   expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
     ok: false,
-    failureLayer: "initial-state-unavailable",
+    failureLayer: "initial-state-unavailable:timeout",
     failureCategory: "deadline-exceeded",
   });
   expect(deps.approveScopeRequest).toHaveBeenCalledTimes(0);
@@ -249,7 +267,7 @@ it("retains the final observation category without another approval", () => {
   const deps = pairingDeps({ observePairing });
   expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
     ok: false,
-    failureLayer: "final-state-unavailable",
+    failureLayer: "final-state-unavailable:timeout",
     failureCategory: "deadline-exceeded",
   });
   expect(deps.approveScopeRequest).toHaveBeenCalledTimes(1);

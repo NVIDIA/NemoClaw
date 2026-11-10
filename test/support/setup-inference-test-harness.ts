@@ -435,8 +435,7 @@ export function createDirectSetupInferenceHarnessFactory(
         _gatewayName: string,
         operation: () => Promise<T> | T,
       ) => await operation(),
-      withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
-        await operation(),
+
       withSandboxMutationLock: async <T>(_sandboxName: string, operation: () => Promise<T> | T) =>
         await operation(),
       step: () => {},

@@ -1683,6 +1683,22 @@ function applyAdapterCommands(
   mapped: ManagedStartupAgentEnvironment,
   identity?: ManagedStartupImageIdentity,
 ): void {
+  if (mapped.agent === "openclaw" && identity !== "root") {
+    // A replacement can retain a fresh native owner from another PID namespace.
+    // Prove it has ended before the generator or validator opens restored state.
+    execute(
+      [
+        "/usr/local/bin/node",
+        "/usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts",
+        "--wait-gateway-executable",
+        "/usr/local/bin/openclaw",
+        "2026.10.5",
+      ],
+      "sandbox",
+      mapped.configurationEnvironment,
+      mapped.applicationRuntime,
+    );
+  }
   const commandPlan = buildManagedStartupImageActionPlan({
     agent: mapped.agent,
     actions: mapped.actions,
@@ -1935,6 +1951,8 @@ export function prepareManagedStartupDelegatedRequest(
     profile,
     requestImageEnvironment(request, env),
   );
+  if (mapped.agent !== request.agent)
+    fail(`mapped ${mapped.agent} environment for ${request.agent}`);
   validateManagedStartupApplicationRuntimePlan(mapped.applicationRuntime);
   const prepared = prepareDelegatedApplication(request, bootstrapIdentity);
   if (prepared.status === "prepared") applyAdapterCommands(mapped, "root");
@@ -1955,6 +1973,8 @@ export function applyManagedStartupOwnerRequest(
     profile,
     requestImageEnvironment(request, env),
   );
+  if (mapped.agent !== request.agent)
+    fail(`mapped ${mapped.agent} environment for ${request.agent}`);
   validateManagedStartupApplicationRuntimePlan(mapped.applicationRuntime);
   if (!replay) applyAdapterCommands(mapped, "sandbox");
   let hermesPolicyB64: string | null = null;

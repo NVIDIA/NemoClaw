@@ -44,9 +44,6 @@ OpenClaw and Hermes compatible attachments preserve the selected Chat Completion
 Qualifying custom hosted endpoints use sandbox-attached providers.
 For a direct endpoint, the agent uses the recorded endpoint and a scoped credential reference.
 Bedrock uses the host-local adapter endpoint and an OpenShell adapter token.
-New Model Router selections use sandbox-attached providers for the configured router endpoint, normally `http://host.openshell.internal:4000/v1`.
-OpenShell authorizes model-list and Chat Completions requests and supplies the provider credential; the sandbox receives only an endpoint-bound credential reference.
-NemoClaw verifies the recorded router process, port, and credential identity before publishing the selection.
 Remaining shared custom selections and unchanged published Pi shared local selections retain the shared route.
 Shared `inference.local` routes require OpenShell `0.0.x`.
 Fresh installations without retained legacy state can install OpenShell `0.1.7` and use sandbox-attached native providers.
@@ -91,10 +88,9 @@ Legacy Deep Agents Code local sandboxes without an attachment require a backup a
 On OpenShell `0.0.x`, existing OpenClaw Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible sandboxes without an attachment retain supported shared-route model switches.
 They cannot resume or rebuild.
 Back one up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`.
-Legacy Model Router sandboxes without a native attachment require a backup and fresh recreation with `--fresh --name <sandbox-name> --recreate-sandbox`.
-NemoClaw preserves their legacy volumes and does not automatically copy the data.
-Native Model Router resume and model changes verify the existing provider and router ownership; uncertain ownership stops the operation and preserves recovery state.
-See [Set Up Model Router](hosted-inference/set-up-model-router) for its model pool and process lifecycle.
+The deprecated Model Router cannot onboard, resume, rebuild, or change models.
+Legacy metadata and owned resources remain available for explicit destroy or uninstall.
+See [Model Router Retirement](hosted-inference/set-up-model-router) before removing retained resources.
 New Local NVIDIA NIM sandboxes use their recorded native attachment for resume and rebuild.
 For older NIM sandboxes without a native attachment, preserve backups, the existing installation, and sandbox data.
 Follow the [OpenShell upgrade restrictions](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path).
@@ -111,7 +107,7 @@ When a rebuild reuses an automatically bridged compatible-endpoint route without
 
 For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Supported native hosted selections use the endpoints above.
 Direct hosted compatible selections use their recorded endpoint; Bedrock selections use the host-local adapter endpoint.
-New Ollama, vLLM, Local NVIDIA NIM, llama.cpp, Model Router, and qualifying local compatible selections use their qualified host-local endpoint through an attached provider. Other shared-route selections retain `https://inference.local/v1`.
+New Ollama, vLLM, Local NVIDIA NIM, llama.cpp, and qualifying local compatible selections use their qualified host-local endpoint through an attached provider. Other shared-route selections retain `https://inference.local/v1`.
 The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
 
 </AgentOnly>

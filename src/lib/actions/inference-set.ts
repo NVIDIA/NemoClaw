@@ -18,6 +18,7 @@ import {
   type SandboxRecreateObservation,
 } from "./inference-set/native";
 
+import { rejectRetiredModelRouter } from "../inference/config";
 import type { NativeLocalProviderAttachment } from "../inference/config";
 import {
   requireNativeProviderPolicy,
@@ -85,10 +86,7 @@ import * as registry from "../state/registry";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
 import { resolveRuntimeInferenceApi } from "./inference-route-api";
 import {
-  isModelRouterProvider,
   canonicalOwnedInferenceProviderName,
-  nativeModelRouterEndpoint,
-  withRoutedInferencePortLock,
   assertInferenceModelId,
   nativeSelectionConfigCredentials,
   prepareNativeTransitionAuthority,
@@ -296,7 +294,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
 
 const SUPPORTED_PROVIDER_NAMES = [
   "nvidia-prod",
-  "nvidia-router",
+  "nvidia-nim",
   "openai-api",
   "openrouter-api",
   "anthropic-prod",
@@ -348,8 +346,7 @@ const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   vllm: "vllm-local",
   nim: "vllm-local",
   "nim-local": "vllm-local",
-  "nvidia-nim": "nvidia-prod",
-  routed: "nvidia-router",
+  "nvidia-nim": "vllm-local",
 };
 
 const SUPPORTED_PROVIDER_NAME_SET: ReadonlySet<string> = new Set(SUPPORTED_PROVIDER_NAMES);
@@ -370,6 +367,7 @@ const SUPPORTED_PROVIDER_NAME_SET: ReadonlySet<string> = new Set(SUPPORTED_PROVI
  * unchanged.
  */
 export function normalizeInferenceSetProvider(provider: string): string {
+  rejectRetiredModelRouter(provider);
   const trimmed = provider.trim();
   const lowered = trimmed.toLowerCase();
   const directAlias = INSTALLER_PROVIDER_ALIASES[lowered];
@@ -460,7 +458,7 @@ async function assertSelectableProvider(
   gatewayName: string,
   deps: Pick<InferenceSetDeps, "providerAdapter" | "log">,
 ): Promise<void> {
-  if (getProviderSelectionConfig(provider, model) || isModelRouterProvider(provider)) return;
+  if (getProviderSelectionConfig(provider, model)) return;
   const registeredProviders = await queryRegisteredGatewayProviders(gatewayName, deps);
   if (registeredProviders?.includes(provider)) return;
   const providerGuidance =
@@ -1302,7 +1300,7 @@ async function resolveRegisteredConfigSelection(input: {
   const { options, deps, entry, provider, model, sandboxName, agentName, expectedGatewayName } =
     input;
   const previousRegistered = recordedRegisteredInferenceProviderAttachment(entry);
-  if (getProviderSelectionConfig(provider, model) || isModelRouterProvider(provider))
+  if (getProviderSelectionConfig(provider, model))
     return { previousRegistered, registeredConfig: undefined, registered: undefined };
   const registeredConfig = readInSandboxConfigOrFail(
     deps,
@@ -1452,15 +1450,6 @@ async function runInferenceSetWithoutHostLock(
   }
   const hasExplicitCustomRoute =
     !registered && Boolean(options.endpointUrl || options.credentialEnv || options.inferenceApi);
-  if (
-    isModelRouterProvider(provider) &&
-    (hasExplicitCustomRoute || !nativeModelRouterEndpoint(provider))
-  ) {
-    throw new InferenceSetError(
-      "Model Router uses its configured endpoint, API, and host credential.",
-      2,
-    );
-  }
   const customRoute = hasExplicitCustomRoute
     ? {
         ...options,
@@ -1542,7 +1531,9 @@ async function runInferenceSetWithoutHostLock(
     model,
     preparedRoute.preliminaryRegistryMetadata,
     localSwitch.selected ?? previousNativeLocalAttachment,
-    ["nim", "nim-local"].includes(options.provider.trim().toLowerCase().replaceAll("_", "-")),
+    ["nim", "nim-local", "nvidia-nim"].includes(
+      options.provider.trim().toLowerCase().replaceAll("_", "-"),
+    ),
   );
   const preMutationRoute = await observeInferenceRouteForSelection({
     nativeProvider: selectingNative,
@@ -2543,29 +2534,20 @@ export async function runInferenceSet(
       deps.runtimeProviders,
     );
     const gatewayName = resolveGatewayName(registryEntryGatewayPort(lockedSelection.entry));
-    const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
-      withRoutedInferencePortLock(
-        Boolean(
-          nativeModelRouterEndpoint(options.provider) ||
-          nativeModelRouterEndpoint(lockedSelection.entry.provider),
-        ),
-        async () => {
-          await reconcilePreviousOpenClawLocal({
-            entry: lockedSelection.entry,
-            sandboxName: selected.sandboxName,
-            gatewayName,
-            deps,
-          });
-          return await runInferenceSetWithoutHostLock(
-            { ...options, sandboxName: selected.sandboxName },
-            deps,
-            gatewayName,
-            runtimeProvider,
-          );
-        },
-        {},
-      ),
-    );
+    const mutation = await deps.withGatewayRouteMutationLock(gatewayName, async () => {
+      await reconcilePreviousOpenClawLocal({
+        entry: lockedSelection.entry,
+        sandboxName: selected.sandboxName,
+        gatewayName,
+        deps,
+      });
+      return await runInferenceSetWithoutHostLock(
+        { ...options, sandboxName: selected.sandboxName },
+        deps,
+        gatewayName,
+        runtimeProvider,
+      );
+    });
     // Retain the outer sandbox lifecycle lock so another process cannot replace
     // this sandbox between the committed write, an optional restart, and
     // device-scope convergence.

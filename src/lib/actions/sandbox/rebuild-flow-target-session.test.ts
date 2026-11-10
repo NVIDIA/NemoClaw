@@ -283,11 +283,7 @@ describe("rebuildSandbox flow: target session", () => {
 
     try {
       const harness = createRebuildFlowHarness({
-        sandboxEntry: {
-          agent: "hermes",
-          provider: "nvidia-prod",
-          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-        },
+        sandboxEntry: { agent: "hermes", provider: "build" },
         baseImagePreflight: {
           ok: true,
           imageRef: "nemoclaw-hermes-sandbox-base-local:12345678",

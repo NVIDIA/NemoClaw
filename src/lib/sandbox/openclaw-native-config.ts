@@ -4,7 +4,7 @@
 
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/client";
 import type { ConfigValue } from "../security/credential-filter";
-import { nativeLocalCredentialReference } from "../inference/native-local/model-router";
+import { nativeLocalCredentialReference } from "../inference/native-local/agent-config";
 import { usesNativeLocalInference } from "../inference/native-local/eligibility";
 import { NATIVE_LOCAL_CREDENTIAL_ENV } from "../inference/native-local/agent-config";
 const {

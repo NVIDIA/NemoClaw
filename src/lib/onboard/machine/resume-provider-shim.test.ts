@@ -20,24 +20,27 @@ describe("createResumeProviderShim", () => {
   it("sends routed recovery to native setup without querying a logical provider", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const providerExistsInGateway = vi.fn(() => false);
-    const isRoutedInferenceProvider = vi.fn(() => true);
     const replaceNamedCredential = vi.fn(async () => "fresh-key");
     const shim = createResumeProviderShim({
       isNonInteractive: () => false,
       providerExistsInGateway,
-      isRoutedInferenceProvider,
       replaceNamedCredential,
     });
 
     await expect(
-      shim.ensureResumeProviderReady("gateway-west", "routed-provider", null),
+      shim.ensureResumeProviderReady("gateway-west", "compatible-endpoint", null),
     ).resolves.toEqual({
       forceInferenceSetup: true,
-      credentialEnv: "OPENAI_API_KEY",
+      credentialEnv: "COMPATIBLE_API_KEY",
     });
-    expect(providerExistsInGateway).not.toHaveBeenCalled();
-    expect(isRoutedInferenceProvider).toHaveBeenCalledWith("routed-provider");
-    expect(replaceNamedCredential).not.toHaveBeenCalled();
+    expect(providerExistsInGateway).toHaveBeenCalledWith("compatible-endpoint", "gateway-west");
+    expect(replaceNamedCredential).toHaveBeenCalledWith(
+      "COMPATIBLE_API_KEY",
+      expect.any(String),
+      null,
+      expect.any(Function),
+      undefined,
+    );
   });
 
   it.each([null, "NVIDIA_INFERENCE_API_KEY", "TEAM_NVIDIA_KEY"])(
@@ -62,7 +65,7 @@ describe("createResumeProviderShim", () => {
         getSandbox,
         isNonInteractive: () => true,
         providerExistsInGateway,
-        isRoutedInferenceProvider: () => true,
+
         replaceNamedCredential,
       });
 
@@ -90,7 +93,7 @@ describe("createResumeProviderShim", () => {
         getSandbox: () => ({ nativeNvidiaProviderAttachment: attachment as never }),
         isNonInteractive: () => true,
         providerExistsInGateway,
-        isRoutedInferenceProvider: () => true,
+
         replaceNamedCredential,
       });
       await expect(
@@ -110,7 +113,7 @@ describe("createResumeProviderShim", () => {
       getSandbox: () => ({}),
       isNonInteractive: () => true,
       providerExistsInGateway,
-      isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
+
       replaceNamedCredential: vi.fn(async () => "unexpected"),
     });
     await expect(
@@ -129,7 +132,7 @@ describe("createResumeProviderShim", () => {
     const shim = createResumeProviderShim({
       isNonInteractive: () => true,
       providerExistsInGateway: () => true,
-      isRoutedInferenceProvider: () => false,
+
       replaceNamedCredential: vi.fn(async () => "unused"),
       resumeManagedLlamaCppRuntime,
     });
@@ -159,7 +162,7 @@ describe("createResumeProviderShim", () => {
     const shim = createResumeProviderShim({
       isNonInteractive: () => true,
       providerExistsInGateway: () => true,
-      isRoutedInferenceProvider: () => false,
+
       replaceNamedCredential: vi.fn(async () => "unused"),
       resumeManagedLlamaCppRuntime: vi.fn(async () => {
         throw ownershipConflict;
@@ -211,7 +214,7 @@ it.each([
       },
       isNonInteractive: () => true,
       providerExistsInGateway,
-      isRoutedInferenceProvider: () => false,
+
       replaceNamedCredential,
     });
     const result = await shim.ensureResumeProviderReady(
@@ -262,7 +265,7 @@ function nativeResumeHarness(provider: "compatible-endpoint" | "compatible-anthr
     getSandbox: () => ({ nativeHostedProviderAttachment: attachment }),
     isNonInteractive: () => true,
     providerExistsInGateway,
-    isRoutedInferenceProvider: () => false,
+
     replaceNamedCredential,
   });
   return { attachment, shim, providerExistsInGateway, replaceNamedCredential };
@@ -352,7 +355,6 @@ it.each(["retained", "recreated", "replaced", "wrong-endpoint"] as const)(
       providerAdapter: f.adapter,
       isNonInteractive: () => true,
       providerExistsInGateway: vi.fn(),
-      isRoutedInferenceProvider: () => false,
       replaceNamedCredential: vi.fn(),
     });
     f.state.id = state === "replaced" ? "replacement" : f.state.id;
@@ -409,7 +411,6 @@ it.each(["openclaw", "hermes"] as const)(
       }),
       isNonInteractive: () => true,
       providerExistsInGateway,
-      isRoutedInferenceProvider: () => false,
       replaceNamedCredential,
     });
     await expect(
@@ -487,7 +488,6 @@ it.each([
       }),
       isNonInteractive: () => true,
       providerExistsInGateway,
-      isRoutedInferenceProvider: () => false,
       replaceNamedCredential,
     });
     await expect(

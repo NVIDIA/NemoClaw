@@ -45,7 +45,10 @@ export interface ManagedStartupRootOwnedFileMaterial {
     | "/usr/local/share/nemoclaw/dcode-inference-base-url"
     | "/usr/local/share/nemoclaw/dcode-reasoning-effort"
     | "/usr/local/share/nemoclaw/dcode-upstream-provider"
-    | "/usr/local/share/nemoclaw/dcode-provider-route";
+    | "/usr/local/share/nemoclaw/dcode-provider-route"
+    | "/usr/local/share/nemoclaw/openclaw-proxy-url"
+    | "/usr/local/share/nemoclaw/pi-proxy-host"
+    | "/usr/local/share/nemoclaw/pi-proxy-port";
   readonly contents: string;
   readonly owner: "root";
   readonly group: "root";

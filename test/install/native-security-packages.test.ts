@@ -191,19 +191,11 @@ describe("native security package remediation", () => {
   });
 
   it.each([
-    [
-      "amd64",
-      "db161322a3481d2c0c3b9a3b9a03c3ab0e2b1718f54b88755fb4a3f939165b84",
-      "c8d9cc73aab111fac7dc1b26c6e2ffda7af08f04",
-    ],
-    [
-      "arm64",
-      "d1178d24e4d143cc6c577d9dc0f26dd982efccc2e600d25ce86361f168a22be0",
-      "35cc8669f33410e90648c1dee9ed1395920b9b9e",
-    ],
+    ["amd64", "db161322a3481d2c0c3b9a3b9a03c3ab0e2b1718f54b88755fb4a3f939165b84"],
+    ["arm64", "d1178d24e4d143cc6c577d9dc0f26dd982efccc2e600d25ce86361f168a22be0"],
   ] as const)(
-    "builds the Python fix from the reviewed %s snapshot artifact",
-    (architecture, hash, snapshotFile) => {
+    "builds the Python fix from the reviewed %s Debian artifact",
+    (architecture, hash) => {
       const { fixture, harnessLog, outputDir, result } = runPythonFixPackageHarness(architecture);
       try {
         expect({ status: result.status, stderr: result.stderr }).toEqual({
@@ -211,7 +203,9 @@ describe("native security package remediation", () => {
           stderr: "",
         });
         const calls = fs.readFileSync(path.join(harnessLog, "calls"), "utf-8");
-        expect(calls).toContain(`download https://snapshot.debian.org/file/${snapshotFile}`);
+        expect(calls).toContain(
+          `download https://deb.debian.org/debian/pool/main/p/python3.13/libpython3.13-stdlib_3.13.5-2+deb13u5_${architecture}.deb`,
+        );
         expect(calls).toContain(`verify ${hash} python-stdlib-original.deb`);
         expect(calls).toContain(
           "verify f91ec3de6331206bbe2ec3e54a05f646bd23d3c61a18d4a01b25164e070bacc9 parser.py",

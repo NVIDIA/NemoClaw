@@ -49,7 +49,11 @@ export function recordingProbeShell(
       );
       const run = spawnSync("/bin/sh", ["-c", command], {
         encoding: "utf8",
-        env: { PATH: `${bin}:${process.env.PATH ?? ""}`, ...environment },
+        env: {
+          TMPDIR: process.env.TMPDIR,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          ...environment,
+        },
       });
       try {
         requests.push(readFileSync(argv, "utf8").trimEnd().split("\n"));

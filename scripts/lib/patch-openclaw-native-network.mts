@@ -2,13 +2,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
-const VERSION = "2026.9.2";
+const VERSIONS = ["2026.9.2", "2026.10.5"] as const;
 
 // OpenShell 0.1.3 returns addresses from these pools after evaluating DNS policy.
 // Its supervisor checks each mapping again before connecting to the real target.
@@ -50,7 +51,7 @@ export function patchNativeNetworkText(source: string, kind: "dns" | "web-fetch"
   return (kind === "dns" ? SYNTHETIC_DNS_HELPER : "") + source.replace(original, replacement);
 }
 
-const TARGETS = [
+const LEGACY_TARGETS = [
   {
     file: "ssrf-0QyXWOVG.js",
     kind: "dns",
@@ -65,20 +66,36 @@ const TARGETS = [
   },
 ] as const;
 
+const CURRENT_TARGETS = [
+  {
+    file: "ssrf-CSTqLpY3.mjs",
+    kind: "dns",
+    before: "f287bae76bdbb5dd4bfbb2981ba8fe140b41a53525ffea4437ba70e86c2114b7",
+    after: "6b84013a7b1d0bed7a62c7ce90ac1f9310d72fc0f9131cdbfd3e0656d30672f3",
+  },
+  {
+    file: "web-guarded-fetch-Wz9HsvS5.mjs",
+    kind: "web-fetch",
+    before: "da6441f87975dc1dc29432fab09bdabde28a044bab884e157d4963eb0816bfe2",
+    after: "c00fd1a99f58c75904a799ee36696a7990de2a84344ba921b22e8e6d8ef038a7",
+  },
+] as const;
+
 function sha256(source: string): string {
   return createHash("sha256").update(source).digest("hex");
 }
 
 export function patchOpenClawNativeNetwork(distDirectory: string): void {
   const metadata = JSON.parse(fs.readFileSync(path.join(distDirectory, "../package.json"), "utf8"));
-  if (metadata.name !== "openclaw" || metadata.version !== VERSION) {
-    throw new Error(`Native network patch requires reviewed openclaw@${VERSION}`);
+  if (metadata.name !== "openclaw" || !VERSIONS.includes(metadata.version)) {
+    throw new Error(`Native network patch requires reviewed openclaw@${VERSIONS.join(" or ")}`);
   }
   const descriptors: number[] = [];
   try {
     // Keep validation and writes on the same files if a path is replaced.
     // Validate both modules before modifying either one.
-    const changes = TARGETS.map((target) => {
+    const targets = metadata.version === "2026.10.5" ? CURRENT_TARGETS : LEGACY_TARGETS;
+    const changes = targets.map((target) => {
       const file = path.join(distDirectory, target.file);
       const fd = fs.openSync(file, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
       descriptors.push(fd);
@@ -105,6 +122,17 @@ export function patchOpenClawNativeNetwork(distDirectory: string): void {
     }
   } finally {
     for (const fd of descriptors) fs.closeSync(fd);
+  }
+  if (metadata.version === "2026.10.5") {
+    execFileSync(
+      process.execPath,
+      [
+        path.join(path.dirname(SCRIPT_PATH), "patch-openclaw-worker-proxy.mts"),
+        distDirectory,
+        "--native",
+      ],
+      { timeout: 120000, stdio: "pipe" },
+    );
   }
 }
 

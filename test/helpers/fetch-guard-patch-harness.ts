@@ -4,6 +4,8 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { shellQuote } from "../../src/lib/core/shell-quote";
+import { OPENCLAW_WORKER_PROXY_SOURCE } from "../fixtures/openclaw-worker-proxy";
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "..", "Dockerfile");
 const OPENCLAW_VERSION_EXTRACTOR = path.join(
@@ -14,7 +16,7 @@ const OPENCLAW_VERSION_EXTRACTOR = path.join(
   "extract-semver.sh",
 );
 
-export const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.9.2";
+export const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.9.5";
 export const LEGACY_OPENCLAW_PATCH_FIXTURE_VERSION = "2026.7.1";
 
 export function dockerRunCommandBetween(startMarker: string, endMarker: string): string {
@@ -81,6 +83,33 @@ function createSedWrapper(tmp: string): string {
   return fakeBin;
 }
 
+function prepareReviewedWorkerFixture(dist: string): void {
+  // Legacy regular-module shapes still exercise the classifier independently;
+  // the shipped patch block also requires the pinned 9.5 worker distribution.
+  const worker = path.join(dist, "worker", "worker.mjs");
+  fs.mkdirSync(path.dirname(worker), { recursive: true });
+  try {
+    fs.writeFileSync(worker, OPENCLAW_WORKER_PROXY_SOURCE, { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return;
+    throw error;
+  }
+  const manifest = fs.openSync(
+    path.join(dist, "..", "package.json"),
+    fs.constants.O_RDWR | fs.constants.O_CREAT,
+    0o600,
+  );
+  try {
+    const source = fs.readFileSync(manifest, "utf8");
+    const metadata = source ? JSON.parse(source) : {};
+    const updated = Buffer.from(JSON.stringify({ ...metadata, version: "2026.9.5" }));
+    fs.writeSync(manifest, updated, 0, updated.length, 0);
+    fs.ftruncateSync(manifest, updated.length);
+  } finally {
+    fs.closeSync(manifest);
+  }
+}
+
 export function runDockerfilePatchBlock(
   dist: string,
   tmp: string,
@@ -88,6 +117,7 @@ export function runDockerfilePatchBlock(
   version = LEGACY_OPENCLAW_PATCH_FIXTURE_VERSION,
   legacyFixture = true,
 ) {
+  if (!["2026.9.2", "2026.10.5"].includes(version)) prepareReviewedWorkerFixture(dist);
   const command = dockerRunCommandBetween(
     "# Patch OpenClaw network boundaries for OpenShell 0.1.3.",
     endMarker,
@@ -100,6 +130,18 @@ export function runDockerfilePatchBlock(
           .join(import.meta.dirname, "../../scripts/lib/patch-openclaw-native-network.mts")
           .replaceAll("'", "'\\''") +
         "'",
+    )
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-explicit-proxy.mts",
+      shellQuote(
+        path.join(import.meta.dirname, "../../scripts/lib/patch-openclaw-explicit-proxy.mts"),
+      ),
+    )
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-worker-proxy.mts",
+      JSON.stringify(
+        path.join(import.meta.dirname, "../../scripts/lib/patch-openclaw-worker-proxy.mts"),
+      ),
     );
   const scriptPath = path.join(tmp, "patch.sh");
   fs.writeFileSync(
@@ -127,7 +169,7 @@ export function runDockerfilePatchBlock(
 export function runFetchGuardPatchBlock(
   dist: string,
   tmp: string,
-  version = LEGACY_OPENCLAW_PATCH_FIXTURE_VERSION,
+  version = CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
 ) {
   return runDockerfilePatchBlock(
     dist,

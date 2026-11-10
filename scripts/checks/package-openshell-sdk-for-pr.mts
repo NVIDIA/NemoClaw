@@ -102,7 +102,7 @@ export async function packageApprovedCandidateOpenShellSdk(
     if (
       before.configSource !== after.configSource ||
       JSON.stringify(before.sources) !== JSON.stringify(after.sources) ||
-      before.commentId !== after.commentId ||
+      before.reviewId !== after.reviewId ||
       before.reviewer !== after.reviewer
     ) {
       throw new Error("Candidate SDK admission changed during packaging");

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { nativeModelRouterEndpoint } from "./model-router";
 import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import { VLLM_PORT } from "../../core/vllm-port";
 import { LLAMA_CPP_PORT } from "../llama-cpp/contract";
@@ -14,8 +13,7 @@ export function usesNativeLocalInference(
   provider: string | null | undefined,
   endpointUrl?: string | null,
 ): boolean {
-  if (isLocalInferenceProvider(provider) || nativeModelRouterEndpoint(provider, endpointUrl))
-    return true;
+  if (isLocalInferenceProvider(provider)) return true;
   if (provider !== "compatible-endpoint" || !endpointUrl) return false;
   try {
     const endpoint = new URL(endpointUrl);
@@ -47,6 +45,7 @@ export function usesNativeLocalInferenceForAgent(
   endpointUrl?: string | null,
   _localNimSelected = false,
 ): boolean {
+  if (provider === "nvidia-router") return false;
   if (
     agentName === "pi" &&
     provider === "compatible-endpoint" &&
@@ -82,7 +81,7 @@ export function isPersistedPiSharedLocalInferenceRoute(
     typeof recorded.createdAt === "string" &&
     recorded.pendingRouteReservation !== true &&
     recorded.nativeLocalProviderAttachment === undefined &&
-    !nativeModelRouterEndpoint(recorded.provider, recorded.endpointUrl) &&
+    recorded.provider !== "nvidia-router" &&
     usesNativeLocalInferenceForAgent("pi", recorded.provider, recorded.endpointUrl) &&
     (!selected ||
       (recorded.provider === selected.provider &&
@@ -103,8 +102,6 @@ export function gatewayReachableCompatibleEndpointUrl(
   provider: string,
   endpointUrl: string | null | undefined,
 ): string | null | undefined {
-  const routerEndpoint = nativeModelRouterEndpoint(provider, endpointUrl);
-  if (routerEndpoint) return routerEndpoint;
   if (!LOOPBACK_BRIDGE_PROVIDERS.has(provider) || !endpointUrl) {
     return endpointUrl;
   }

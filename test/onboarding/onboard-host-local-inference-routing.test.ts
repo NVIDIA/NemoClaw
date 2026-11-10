@@ -458,6 +458,35 @@ describe("onboard host-local inference routing", () => {
     },
   );
 
+  it("explicitly clears stale host-local ownership for a remote route", async () => {
+    const harness = createHarness({
+      legacyCustomRoute: true,
+      overrides: { hydrateCredentialEnv: () => "test-only-remote-credential" },
+    });
+    const result = await harness.setupInference(
+      "sandbox-a",
+      "remote-model",
+      "compatible-endpoint",
+      "https://api.example.test/v1",
+      "REMOTE_API_KEY",
+      null,
+      [],
+      { endpointPinnedAddresses: ["93.184.216.34"] },
+    );
+    expect(result, JSON.stringify({ errors: harness.errors, logs: harness.logs })).toEqual({
+      ok: true,
+    });
+
+    expect(harness.updateSandbox).toHaveBeenCalledWith(
+      "sandbox-a",
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        model: "remote-model",
+        hostLocalInferenceReceipt: null,
+      }),
+    );
+  });
+
   it.each(SHARED_APPLICATIONS)(
     "routes explicit shared %s inference through inference.local without legacy host probes",
     async (application) => {

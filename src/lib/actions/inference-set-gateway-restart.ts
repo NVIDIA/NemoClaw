@@ -16,6 +16,7 @@ import {
   OpenClawPairingQualificationError,
   OPENCLAW_PAIRING_OBSERVATION_FAILURE_CATEGORIES,
   type OpenClawPairingObservationFailureCategory,
+  type OpenClawPairingObservationFailureReason,
   type OpenClawPairingSettlementObservation,
 } from "./sandbox/launch-readiness/openclaw-pairing-qualification";
 
@@ -29,6 +30,8 @@ export type InferenceSetOpenClawPairingTarget = {
 export type InferenceSetOpenClawPairingFailureLayer =
   | "initial-state-unavailable"
   | "final-state-unavailable"
+  | `initial-state-unavailable:${OpenClawPairingObservationFailureReason}`
+  | `final-state-unavailable:${OpenClawPairingObservationFailureReason}`
   | "final-state-unsettled"
   | "pairing-operation-failed"
   | "pairing-target-unavailable"
@@ -96,7 +99,10 @@ export function settleInferenceSetOpenClawPairing(
   } catch (error) {
     return {
       ok: false,
-      failureLayer: "initial-state-unavailable",
+      failureLayer:
+        error instanceof OpenClawPairingQualificationError && error.failureReason
+          ? `initial-state-unavailable:${error.failureReason}`
+          : "initial-state-unavailable",
       failureCategory: observationFailureCategory(error),
     };
   }
@@ -116,7 +122,10 @@ export function settleInferenceSetOpenClawPairing(
   } catch (error) {
     return {
       ok: false,
-      failureLayer: "final-state-unavailable",
+      failureLayer:
+        error instanceof OpenClawPairingQualificationError && error.failureReason
+          ? `final-state-unavailable:${error.failureReason}`
+          : "final-state-unavailable",
       failureCategory: observationFailureCategory(error),
     };
   }
