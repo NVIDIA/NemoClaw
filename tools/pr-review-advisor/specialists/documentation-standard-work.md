@@ -24,4 +24,4 @@ Determine whether the change introduces an inaccurate statement, leaves existing
 
 ## Findings
 
-For each documentation-drift issue caused, exposed, or materially worsened by the change, cite the changed behavior or ownership transition, parent comparison, affected reader-facing text or missing owning update, incorrect action or interpretation, and accurate remedy. Treat wording and terminology according to operational effect.
+Apply the shared finding eligibility rule to documentation drift. Cite the changed behavior or text, parent comparison, affected reader, concrete incorrect or unsafe action, and its behavioral or security consequence. Verify the affected provider, platform, and recovery branch before proposing a correction. Continue checking ownership and terminology, but do not turn extra detail or wording preferences into blockers. Preserve authorized post-merge documentation deferral when no blocking consequence is established.

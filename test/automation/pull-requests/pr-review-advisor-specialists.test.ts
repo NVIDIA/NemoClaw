@@ -218,6 +218,9 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requiredReadOneOfPaths).toEqual([context.diffPath]);
       expect(turn.prompt).toContain("Inspect changed files and their diffs on demand");
       expect(turn.prompt).toContain("do not try to preload the complete diff");
+      expect(turn.prompt).toContain(
+        "Apply the shared finding eligibility rule to every assigned concern",
+      );
       expect(turn.prompt).not.toContain(
         "Treat the trusted human review as the frozen review contract",
       );
@@ -252,6 +255,9 @@ describe("PR review advisor specialist prompts", () => {
     expect(turn.prompt).toContain("Do not restart the original full review");
     expect(turn.prompt).toContain("the follow-up delta introduces it");
     expect(turn.prompt).toContain("record a clear ledger");
+    expect(turn.prompt).toContain(
+      "Apply the shared finding eligibility rule to every assigned concern",
+    );
   });
 
   it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {

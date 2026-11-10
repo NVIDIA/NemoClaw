@@ -32,4 +32,4 @@ Define customer value before evaluating implementation effort. Apply pull: rejec
 
 ## Report a finding when
 
-The change produces a wrong result, omits a required result, accepts an invalid state, rejects a valid use, violates a supported contract, or adds product scope without accepted authority or a current consumer. State the recipient, required result, observed result, first failing owner, and smallest source correction.
+Under the shared finding eligibility rule, the change produces a wrong result, omits a required result, accepts an invalid state, rejects a valid use, or violates a supported behavior or security contract. Record missing product authorization separately under repository scope governance; it does not establish a regression by itself. State the recipient, required result, observed result, first failing owner, and smallest source correction.

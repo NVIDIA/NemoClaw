@@ -25,4 +25,4 @@ Trace each material change from trigger and changed-file classification through 
 
 ## Report a finding when
 
-A changed workflow, selector, action, script, configuration, or delivery contract causally introduces or worsens delay, repeated or stale work, an unnecessary handoff, incorrect dependency, missing or late evidence, loss of diagnostics, overly broad fan-out, or an artifact path that no longer reaches its decision. Cite the changed control point, parent behavior, proposed behavior, downstream effect, and flow-preserving correction.
+The delivery change meets the shared finding eligibility rule. Trace the changed control point through parent and proposed execution to a concrete failed requirement: stale or missing required evidence, unsafe publication, lost diagnostics needed for recovery, or a violated resource or execution bound. Investigate delay, repeated work, unnecessary handoffs, and broad fan-out, but establish their blocking consequence before reporting them. Name the smallest correction and protecting evidence.

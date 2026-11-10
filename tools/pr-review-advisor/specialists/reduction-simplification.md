@@ -29,4 +29,4 @@ Code growth is a signal to investigate, not a defect. A reduction is valid only 
 
 ## Report a finding when
 
-The pull request introduces, worsens, expands, or entrenches avoidable machinery with a present cost, and a concrete alternative reduces the total mechanism. Cite changed lines and parent-state evidence. Describe the simpler design, what can be removed or consolidated, and how to verify equivalent behavior.
+The proposed reduction fixes a concrete regression or security gap under the shared finding eligibility rule. Cite changed lines and parent-state evidence showing how the current mechanism causes that failure. Describe what can be removed or consolidated, how the reduction prevents the failure, and how required behavior and protections remain verified. Continue investigating avoidable machinery; a smaller equivalent implementation alone is not blocking evidence.

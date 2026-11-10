@@ -17,7 +17,7 @@ The ledger requires `version:1`, `revision:1`, `identity:"exact-head"`, `headSha
 `status:"clear"` requires an empty `findings` array and a nonempty normalized `noFindingsReason`.
 `status:"findings"` requires one to twenty findings and `noFindingsReason:null`.
 Each finding contains `id`, `interest`, `severity`, `kind`, `summary`, `path`, `line`, `impact`, `smallestSafeFix`, `regressionTest`, and `exclusions`.
-Only P0/P1 findings are accepted. All findings count as blockers, including every excluded finding.
+Only P0/P1 findings that meet the shared eligibility rule in `trusted-guidance.mts` may be submitted. The specialist must establish the trigger, causal path, parent comparison, and behavioral or security consequence in `impact`. The recorder validates structure and identity; it does not prove the model's causal claim. All submitted findings count as blockers, including every excluded finding.
 Exclusions describe constraints on a possible correction; they never remove a blocker.
 
 The trusted recorder normalizes text, sorts exclusions, and derives IDs before sorting findings by ID.
@@ -33,7 +33,7 @@ The ledger does not authenticate itself; bind its candidate and specialist to th
 
 The workflow's `Require no Advisor blockers` job validates every specialist ledger and E2E receipt.
 It binds that evidence to the head and base SHAs resolved by the trusted workflow gate.
-It fails when any P0/P1 finding or unresolved E2E recommendation remains, or when the evidence is incomplete or malformed.
+It fails when any P0/P1 finding remains, or when the evidence is incomplete or malformed. Unresolved E2E recommendations remain in the receipts and gate summary without independently blocking this defect gate. They still prevent a complete E2E decision; a clear defect gate does not establish validation completion, readiness, or merge authorization.
 For automatic `workflow_run` PR runs, the publication job still posts the run link after a blocker failure so the contributor can inspect the evidence.
 Trusted manual dispatch does not run the publisher or post a PR comment.
 

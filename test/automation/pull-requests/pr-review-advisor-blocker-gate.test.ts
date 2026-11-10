@@ -128,21 +128,29 @@ it("blocks a P0/P1 finding from any specialist", () => {
   });
 });
 
-it("blocks an unresolved E2E recommendation from any specialist", () => {
+it("retains unsupported E2E coverage without inventing a blocker", () => {
   const interest = "security-built-in-quality";
   expect(evaluate(artifactTree({ unresolvedInterest: interest }))).toMatchObject({
-    status: "blocked",
+    status: "clear",
+    findingCount: 0,
     unresolvedRecommendationCount: 1,
     unresolvedInterests: [interest],
   });
 });
 
 it.each([
-  ["clear", undefined, 0],
-  ["blocked", "security-built-in-quality", 1],
+  ["clear", undefined, undefined, 0],
+  ["blocked", "security-built-in-quality", undefined, 1],
+  ["coverage unresolved", undefined, "verification-mistake-proofing", 0],
+  [
+    "blocked with unresolved coverage",
+    "security-built-in-quality",
+    "verification-mistake-proofing",
+    1,
+  ],
 ] as const)(
   "returns CLI exit status for %s evidence",
-  (_result, findingInterest, expectedStatus) => {
+  (_result, findingInterest, unresolvedInterest, expectedStatus) => {
     const child = spawnSync(
       process.execPath,
       [
@@ -157,13 +165,19 @@ it.each([
           ...process.env,
           EXPECTED_BASE_SHA: BASE_SHA,
           EXPECTED_HEAD_SHA: HEAD_SHA,
-          PR_REVIEW_ADVISOR_ARTIFACTS: artifactTree({ findingInterest }),
+          PR_REVIEW_ADVISOR_ARTIFACTS: artifactTree({ findingInterest, unresolvedInterest }),
         },
       },
     );
 
     expect(child.error).toBeUndefined();
     expect(child.status).toBe(expectedStatus);
+    expect(child.stdout).toContain(
+      `${unresolvedInterest ? 1 : 0} unresolved E2E recommendation(s)`,
+    );
+    expect(child.stdout).toContain(
+      "This result does not establish E2E completion or merge readiness.",
+    );
   },
 );
 

@@ -29,4 +29,4 @@ Prefer one authoritative path for each decision and state transition. Distinguis
 
 ## Report a finding when
 
-The pull request introduces, worsens, or materially relies on unclear or duplicate authority, conflicting sources of truth, misplaced policy, an invalid dependency direction, or a responsibility boundary that permits components to disagree. Cite the changed lines that make the issue attributable to the pull request and the parent-state evidence needed to show the comparison. Explain the concrete failure mode or maintenance cost, identify the intended owner, and give a coherent remedy with a verification approach.
+The ownership concern meets the shared finding eligibility rule. Trace duplicate authority, conflicting state, or dependency direction to a concrete failing path introduced or worsened by the PR. Cite both owners, the triggering state, parent behavior, and the required result they fail to preserve. Maintenance cost remains an investigation signal; prove the behavioral or security consequence before requesting a change. Identify the smallest coherent correction and its verification.

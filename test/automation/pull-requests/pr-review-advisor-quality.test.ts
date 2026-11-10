@@ -39,6 +39,27 @@ describe("PR review advisor", () => {
     expect(buildSystemPrompt()).toContain(rubric);
   });
 
+  it("requires causal proof before reporting a blocker in any review area", () => {
+    const prompt = buildSystemPrompt();
+
+    expect(prompt).toContain(
+      "Publish only P0/P1 findings backed by a concrete regression or security gap introduced or worsened by the PR.",
+    );
+    expect(prompt).toContain("Compare parent and proposed behavior");
+    expect(prompt).toContain("Search for counterevidence");
+    expect(prompt).toContain("Missing proof is a reason to investigate further");
+    expect(prompt).toContain(
+      "show the specific regression or security violation that the changed evidence accepts",
+    );
+    expect(prompt).toContain(
+      "Keep the full architecture, simplification, migration, documentation, security, and test investigation",
+    );
+    expect(prompt).not.toContain("it does not require an externally visible behavior failure");
+    expect(prompt).not.toContain(
+      "If a finding asks the author to change code before merge, classify it as blocker",
+    );
+  });
+
   it("reports a missing trusted security rubric", () => {
     vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
       throw new Error("missing rubric fixture");
