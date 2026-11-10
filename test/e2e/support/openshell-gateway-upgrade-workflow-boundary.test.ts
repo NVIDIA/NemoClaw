@@ -48,6 +48,7 @@ describe("OpenShell gateway upgrade boundary", () => {
       expect(fs.statSync(path.join(home, ".local", "bin")).mode & 0o777).toBe(0o700);
       expect(fs.statSync(path.join(home, ".npm-global")).mode & 0o777).toBe(0o700);
       expect(gatewayUpgradeInstallEnv(home, "/toolchain/bin")).toEqual({
+        XDG_BIN_HOME: `${root}/home/.local/bin`,
         NPM_CONFIG_PREFIX: `${root}/home/.npm-global`,
         npm_config_prefix: `${root}/home/.npm-global`,
         PATH: `${root}/home/.local/bin:${root}/home/.npm-global/bin:/toolchain/bin`,

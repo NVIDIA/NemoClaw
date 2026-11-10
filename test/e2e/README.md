@@ -748,6 +748,9 @@ The historical fixtures retain these version boundaries:
 | `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prepare private OpenShell and npm install locations before the historical install, preserving existing private executables. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
+The gateway fixture sets a canonical private `XDG_BIN_HOME` for both installer generations.
+Its current installer still receives duplicate-slash `HOME` and `XDG_CONFIG_HOME` values for the systemd service scenario.
+
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
 The gateway fixture already binds its remote historical inputs to immutable commits and cryptographic digests.

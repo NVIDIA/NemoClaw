@@ -38,6 +38,7 @@ export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
 export function gatewayUpgradeInstallEnv(home: string, inheritedPath: string): NodeJS.ProcessEnv {
   const prefix = path.join(home, ".npm-global");
   return {
+    XDG_BIN_HOME: path.join(home, ".local", "bin"),
     NPM_CONFIG_PREFIX: prefix,
     npm_config_prefix: prefix,
     PATH: `${path.join(home, ".local", "bin")}:${path.join(prefix, "bin")}:${inheritedPath}`,
