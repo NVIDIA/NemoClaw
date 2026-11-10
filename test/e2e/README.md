@@ -511,13 +511,28 @@ retain prior records and revocations. Revoked hashes cannot authorize execution,
 even when retained in a historical record.
 
 The PR author may be a GitHub App bot on this repository. This manifest cannot
-approve itself. A different human with current repository
-`maintain` or `admin` permission must review the exact source and post one whole
-comment: `NemoClaw-Upgrade-E2E: approve <head-sha> <base-sha>`. The corresponding
-`revoke` command withdraws that decision. The latest eligible decision wins;
-edited comments, PR-author comments, stale commits, forks, and closed PRs do not
-authorize admission. The trusted reader rechecks the PR, comments, and current
-permissions before and after fetching the fixed source paths.
+approve itself. A different human with current repository `maintain` or `admin`
+permission must submit an **Approve** PR review. That review also authorizes
+candidate testing. No admission comment or copied commit identifiers are required.
+An outstanding maintainer request for changes blocks admission. Dismissed reviews,
+self-approvals, bot reviews, forks, and closed PRs do not authorize it.
+
+Approval can cover a later descendant commit when the consumer's selected source
+files and governing verification policy are unchanged. Unrelated tests or documentation
+can change without renewed test authorization. Installer admission also permits an
+unrelated lockfile synchronization. SDK admission includes its manifests, locks, and
+audit identity; changes to those files require another review.
+The verifier compares the reviewed commit with the candidate and checks trusted-base
+policy changes since their historical common ancestor. Policy changes require
+synchronizing the branch and obtaining another review. An incomplete comparison fails
+closed for that review; another independently verified approval can still cover the inputs.
+An incomplete candidate comparison requires a fresh review. An incomplete trusted-policy
+comparison requires synchronizing the branch and then obtaining a new review.
+The comparison includes renamed paths and file-mode changes.
+The trusted reader rechecks PR identity, review state, and reviewer permissions before
+and after fetching source data. GitHub review dismissal remains effective, including
+any dismissal caused by branch protection. Test authorization does not preserve a
+dismissed merge approval or replace evidence for the latest commit.
 
 The trusted installer checker compares local sources with the approved commit.
 It then verifies upstream checksum and formula records through the existing
@@ -533,10 +548,14 @@ After merge, the verifier reads the registry beside its trusted checkout, never
 from the candidate working directory. Normal branch protection and independent
 review govern that transition. An open PR's temporary admission is not merge authority.
 `Security / Candidate Upgrade Admission` refreshes the `check-hash` commit status
-on upstream PR changes and approval-comment creation, editing, or deletion.
+on upstream PR changes and review submission, editing, or dismissal.
+Review events run a signal workflow with `permissions: {}` and no checkout. Its completion
+wakes the default-branch controller, which reads current reviews through GitHub's API.
+The signal provides no approval authority or candidate artifacts.
 When `check-hash` is required, both that status and the native hash check must pass.
-An approval comment refreshes only the commit status. If the native hash check
-failed before approval, rerun that job after approval.
+Review events refresh the commit status. Candidate SDK packaging runs only when admission
+succeeds and the PR requires a new SDK archive. Rejected admission produces no candidate
+SDK artifact. If the native hash check failed before approval, rerun that job after approval.
 An interrupted refresh remains pending or fails; it cannot reuse an earlier success.
 
 For a new OpenShell TypeScript SDK version, the same approval also binds the root
@@ -555,8 +574,8 @@ commit, with the approved base and candidate as its two parents. The verifier re
 that commit's manifests and locks and compares them with the local files. The merged
 dependency graph must retain the approved SDK identity and pass the trusted package
 policy. Direct candidate E2E continues to require the approved candidate's file bytes.
-If the merge uses a newer base, synchronize the PR and refresh its commit-bound
-approval before rerunning candidate SDK CI.
+If the merge uses a newer base, synchronize the PR before rerunning candidate SDK CI.
+Obtain another review only when the admitted inputs or governing policy changed.
 The API credential is limited to trusted preparation and removed before npm runs.
 If CI starts before the approved artifact exists, wait for the admission workflow's
 SDK job, then rerun CI. Changed or revoked approval cannot reuse the older artifact.
@@ -2666,7 +2685,9 @@ Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
 The GPU job reads OpenShell sources from the candidate commit as data, then validates their pins and operational templates.
 When the candidate needs trust absent from the controller's registry, preparation, both verifications, and restoration recheck the [candidate approval](#candidate-openshell-release-admission).
-The approval must match the open PR, candidate commit, and base commit.
+The approval must cover the open PR's admitted inputs and governing policy.
+A later descendant commit remains eligible only when those inputs and policy are unchanged.
+If governing policy changes on the base branch, synchronize the PR and obtain another review.
 The approved registry and installer sources must match the candidate's committed files.
 Candidates covered by the controller's registry need no additional approval.
 The job exposes its GitHub token as `GITHUB_TOKEN` only to the four trusted source-projection steps, with `contents: read` and `pull-requests: read` permissions.

@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  CandidateReviewComparisonError,
+  candidateReviewCoversInputs,
+} from "./candidate-review-scope.mts";
+
 /** Authenticate permission to test candidate artifacts; never grants merge or host-code authority. */
 export interface CandidateUpgradeIdentity {
   prNumber: number;
@@ -62,76 +67,88 @@ function assertPullRequest(
   return author.login.toLowerCase();
 }
 
-async function comments(request: UpgradeRequest, prNumber: number): Promise<RecordValue[]> {
+async function reviews(request: UpgradeRequest, prNumber: number): Promise<RecordValue[]> {
   const result: RecordValue[] = [];
   const seen = new Set<number>();
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const values = await request(`${PREFIX}/issues/${prNumber}/comments?per_page=100&page=${page}`);
+    const values = await request(`${PREFIX}/pulls/${prNumber}/reviews?per_page=100&page=${page}`);
     if (!Array.isArray(values) || values.length > 100) {
-      throw new Error("Upgrade admission could not read complete PR comments");
+      throw new Error("Upgrade admission could not read complete PR reviews");
     }
     for (const value of values) {
       const entry = record(value);
       if (!Number.isSafeInteger(entry.id) || Number(entry.id) < 1 || seen.has(Number(entry.id))) {
-        throw new Error("Upgrade admission received duplicate or invalid comment identities");
+        throw new Error("Upgrade admission received duplicate or invalid review identities");
       }
       seen.add(Number(entry.id));
       result.push(entry);
     }
     if (values.length < 100) return result;
   }
-  throw new Error("Upgrade admission comment pagination exceeded its bound");
+  throw new Error("Upgrade admission review pagination exceeded its bound");
 }
 
-type Decision = { id: number; login: string; action: "approve" | "revoke" };
+type Decision = { id: number; login: string; commit: string };
 
 async function currentDecision(
   request: UpgradeRequest,
   identity: CandidateUpgradeIdentity,
   author: string,
+  paths: readonly string[],
 ): Promise<Decision> {
-  const candidates: Decision[] = [];
-  const permissions = new Map<string, boolean>();
-  for (const entry of await comments(request, identity.prNumber)) {
-    const match =
-      typeof entry.body === "string"
-        ? /^NemoClaw-Upgrade-E2E: (approve|revoke) ([a-f0-9]{40}) ([a-f0-9]{40})$/u.exec(entry.body)
-        : null;
-    if (
-      !match ||
-      match[0] !== entry.body ||
-      match[2] !== identity.candidateSha ||
-      match[3] !== identity.baseSha
-    )
-      continue;
-    // Edited records are not authority: moderation can retain the original author's identity.
-    if (
-      typeof entry.created_at !== "string" ||
-      !Number.isFinite(Date.parse(entry.created_at)) ||
-      entry.created_at !== entry.updated_at
-    )
-      continue;
+  const latest = new Map<string, RecordValue>();
+  for (const entry of await reviews(request, identity.prNumber)) {
     const user = record(entry.user);
     const login = typeof user.login === "string" ? user.login : "";
     if (user.type !== "User" || !LOGIN.test(login) || login.toLowerCase() === author) continue;
+    if (entry.state === "COMMENTED" || entry.state === "PENDING") continue;
+    if (!["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(String(entry.state)))
+      throw new Error("Upgrade admission received an unknown review state");
+    if (
+      typeof entry.submitted_at !== "string" ||
+      !Number.isFinite(Date.parse(entry.submitted_at)) ||
+      typeof entry.commit_id !== "string" ||
+      !SHA.test(entry.commit_id)
+    )
+      throw new Error("Upgrade admission received an invalid submitted review");
     const key = login.toLowerCase();
-    if (!permissions.has(key)) {
-      const response = record(await request(`${PREFIX}/collaborators/${login}/permission`));
-      // Repository membership or author_association is not a permission check.
-      const role = response.role_name;
-      permissions.set(key, role === "maintain" || role === "admin");
-    }
-    if (permissions.get(key)) {
-      candidates.push({ id: Number(entry.id), login, action: match[1] as Decision["action"] });
+    const prior = latest.get(key);
+    if (
+      !prior ||
+      Date.parse(entry.submitted_at) > Date.parse(String(prior.submitted_at)) ||
+      (entry.submitted_at === prior.submitted_at && Number(entry.id) > Number(prior.id))
+    )
+      latest.set(key, entry);
+  }
+  const candidates: Decision[] = [];
+  for (const entry of latest.values()) {
+    const login = String(record(entry.user).login);
+    const response = record(await request(`${PREFIX}/collaborators/${login}/permission`));
+    if (response.role_name !== "maintain" && response.role_name !== "admin") continue;
+    // A maintainer's outstanding objection must not be overridden by another approval.
+    if (entry.state === "CHANGES_REQUESTED")
+      throw new Error("Candidate upgrade has an independent maintainer's changes-requested review");
+    if (entry.state === "APPROVED")
+      candidates.push({ id: Number(entry.id), login, commit: String(entry.commit_id) });
+  }
+  let comparisonFailure = "";
+  for (const candidate of candidates.sort((a, b) => b.id - a.id)) {
+    try {
+      if (await candidateReviewCoversInputs(identity, candidate.commit, paths, request))
+        return candidate;
+    } catch (error) {
+      // Reject this review, not another independently verified approval. Review parsing,
+      // permission checks and maintainer objections remain outside this catch.
+      comparisonFailure ||=
+        error instanceof CandidateReviewComparisonError
+          ? error.message
+          : "Candidate review comparison was unavailable";
     }
   }
-  const latest = candidates.sort((left, right) => right.id - left.id)[0];
-  if (!latest || latest.action !== "approve") {
-    throw new Error(
-      "Candidate upgrade needs an independent maintainer's current commit-bound E2E approval",
-    );
-  }
-  return latest;
+  throw new Error(
+    "Candidate upgrade needs an independent maintainer's PR approval covering its inputs and policy" +
+      (comparisonFailure ? `: ${comparisonFailure}` : ""),
+  );
 }
 
 export async function readCandidateUpgradeSource(
@@ -179,7 +196,7 @@ export async function readApprovedCandidateUpgrade(
   paths: readonly string[],
   request: UpgradeRequest,
   mergeSha?: string,
-): Promise<{ sources: Readonly<Record<string, string>>; reviewer: string; commentId: number }> {
+): Promise<{ sources: Readonly<Record<string, string>>; reviewer: string; reviewId: number }> {
   const identity = Object.freeze({ ...input });
   const selection = [...paths];
   assertIdentity(identity);
@@ -194,7 +211,7 @@ export async function readApprovedCandidateUpgrade(
   }
   const prPath = `${PREFIX}/pulls/${identity.prNumber}`;
   const author = assertPullRequest(await request(prPath), identity, mergeSha);
-  const before = await currentDecision(request, identity, author);
+  const before = await currentDecision(request, identity, author, selection);
   if (mergeSha !== undefined) {
     const merge = record(await request(`${PREFIX}/git/commits/${mergeSha}`));
     if (
@@ -205,7 +222,7 @@ export async function readApprovedCandidateUpgrade(
       record(merge.parents[1]).sha !== identity.candidateSha
     )
       throw new Error(
-        "Upgrade admission merge parents differ from the approved base and candidate; synchronize the PR and refresh its commit-bound approval",
+        "Upgrade admission merge parents differ from the approved base and candidate; synchronize the PR and obtain a review covering the changed inputs and policy",
       );
   }
   const sources: Record<string, string> = Object.create(null);
@@ -218,9 +235,9 @@ export async function readApprovedCandidateUpgrade(
   if (assertPullRequest(await request(prPath), identity, mergeSha) !== author) {
     throw new Error("Upgrade admission PR author changed during source acquisition");
   }
-  const after = await currentDecision(request, identity, author);
-  if (before.id !== after.id || before.login !== after.login) {
+  const after = await currentDecision(request, identity, author, selection);
+  if (before.id !== after.id || before.login !== after.login || before.commit !== after.commit) {
     throw new Error("Upgrade admission decision changed during source acquisition");
   }
-  return { sources: Object.freeze(sources), reviewer: after.login, commentId: after.id };
+  return { sources: Object.freeze(sources), reviewer: after.login, reviewId: after.id };
 }
