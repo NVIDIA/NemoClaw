@@ -54,6 +54,7 @@ fi
 printf '%s\n' "$@" > arguments
 { printf '%s\n' "$@"; printf -- '--\n'; } >> invocations
 printf '%s\n' "${NEXTEST_TEST_THREADS-unset}" > test-threads-env
+printf '%s\n' "${CARGO_PROFILE_DEV_DEBUG-unset}" > profile-debug-env
 [ -n "${NEMOCLAW_HCL_CASE-}" ] && printf '%s\n' "$NEMOCLAW_HCL_CASE" >> hcl-cases
 if [ "$1" = build ]; then
     /bin/mkdir -p target/debug
@@ -751,6 +752,44 @@ fn a_failed_lifecycle_partition_fails_ci() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("CI step integration failed"));
+}
+
+/// Nothing in CI reads debug information, and it is most of each test
+/// archive, so CI builds and archives the workspace without it. Local runs keep
+/// the developer's setting, and a setting the caller passes wins.
+#[test]
+fn ci_builds_without_debug_information_unless_the_caller_sets_it() {
+    for (ci, explicit, expected) in [
+        (true, None, "0"),
+        (false, None, "unset"),
+        (true, Some("1"), "1"),
+    ] {
+        for step in ["build", "archive"] {
+            let fixture = Fixture::new();
+            fixture.seed_build_outputs();
+            let mut command = fixture.command(&[step]);
+            command.env_remove("CI").env_remove("GITHUB_ACTIONS");
+            if ci {
+                command.env("CI", "true");
+            }
+            match explicit {
+                Some(value) => command.env("CARGO_PROFILE_DEV_DEBUG", value),
+                None => command.env_remove("CARGO_PROFILE_DEV_DEBUG"),
+            };
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{step}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let seen = fs::read_to_string(fixture.0.path().join("profile-debug-env")).unwrap();
+            assert_eq!(
+                seen.trim(),
+                expected,
+                "{step} with CI={ci} and {explicit:?}"
+            );
+        }
+    }
 }
 
 #[test]

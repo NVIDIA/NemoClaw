@@ -526,6 +526,9 @@ These tests use fixtures and temporary files; they do not start deployment workl
 
 `CI / Bundle` disables incremental compilation.
 Development and test builds use `debug = 1`, retaining line-number backtraces without full local-variable debug data.
+On CI, `cargo ci` passes `CARGO_PROFILE_DEV_DEBUG=0` to the Cargo commands it runs, unless the caller sets that variable: nothing in CI reads debug data, and it is most of each test archive that test jobs download.
+CI backtraces therefore name functions without line numbers; panic messages keep their file and line.
+`cargo ci` sets the variable only for its own Cargo processes, so it is not part of the cache key, and third-party crates, which the profile already builds without debug data, keep their cached artifacts.
 Profiles live in `.cargo/config.toml`, whose hash and the current month are part of the CI dependency cache prefix.
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
 Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
