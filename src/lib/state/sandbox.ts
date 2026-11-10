@@ -1776,6 +1776,7 @@ function scanNativeTarFilePayload(
       textContainsCredential(credentialScanInput, {
         ...credentialOptions,
         privateKeyHeader,
+        scannedPrefixLength: overlap.length,
       })
     ) {
       return true;

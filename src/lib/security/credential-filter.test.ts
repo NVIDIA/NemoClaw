@@ -296,6 +296,8 @@ describe("textContainsCredential", () => {
 
   it.each([
     "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
+    "db.execute('SELECT id FROM users WHERE password=?')",
+    'db.execute("SELECT id FROM users WHERE ((password=?))")',
     'db.execute("select id from users where password = ?", (pw,))',
     "db.execute('SELECT id FROM users WHERE pass=? AND name=?', (pw, user))",
     "db.execute('SELECT id FROM users WHERE (password = ?)', (pw,))",
@@ -321,6 +323,8 @@ describe("textContainsCredential", () => {
     '{"password":?}',
     "'SELECT id FROM users WHERE password:?'",
     "'SELECT id FROM users WHERE password=?private-value'",
+    "db.execute('SELECT id FROM users WHERE password=?')private-value",
+    "db.execute('SELECT id FROM users WHERE password=?').get(pw)",
     "'SELECT id FROM users WHERE password=?123secret'",
     "'SELECT id FROM users WHERE (password=?private-value)'",
     "'SELECT id FROM users WHERE ((password=?))private-value'",

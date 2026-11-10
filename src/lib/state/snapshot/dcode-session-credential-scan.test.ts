@@ -122,6 +122,7 @@ describe("DCode session database credential scan", () => {
       const fixture = createDatabase();
       const content = [
         "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
+        "db.execute('SELECT id FROM users WHERE password=?')",
         "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
         "db.execute('SELECT id FROM users WHERE (password = ?)', (pw,))",
         'db.execute("SELECT id FROM users WHERE ((password = ?))", (pw,))',

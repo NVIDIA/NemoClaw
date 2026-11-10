@@ -22,58 +22,73 @@ afterAll(() => {
 });
 
 describe("DCode WAL snapshot persistence", () => {
-  it.each(["-journal", "-shm", "-wal", ".env"])(
-    "rejects credential-shaped text in sessions.db%s",
-    (suffix) => {
-      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-sidecar-secret-"));
-      try {
-        const nativeRoot = path.join(fixture, "native-home");
-        const databasePath = path.join(nativeRoot, ".deepagents", ".state", "sessions.db");
-        fs.mkdirSync(path.dirname(databasePath), { recursive: true });
-        const database = new DatabaseSync(databasePath);
-        database.exec("CREATE TABLE sessions (content TEXT)");
-        database.close();
-        const credential =
-          suffix === "-shm"
-            ? ["password=", "opaque-value-for-snapshot"].join("")
-            : ["ghp_", "a".repeat(36)].join("");
-        fs.writeFileSync(
-          `${databasePath}${suffix}`,
-          `db.execute('UPDATE users SET name=? WHERE ((password=?))', (user, pw))${suffix === ".env" ? "" : `\n${credential}`}`,
-        );
-
-        fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
-        fs.writeFileSync(
-          path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
-          JSON.stringify({
-            defaultSandbox: "alpha",
-            sandboxes: {
-              alpha: {
-                name: "alpha",
-                model: "m",
-                provider: "p",
-                gpuEnabled: false,
-                agent: null,
-              },
-            },
-          }),
-        );
-
-        const backup = sandboxState.backupSandboxState("alpha", {
-          nativeStateSource: {
-            root: "/sandbox",
-            directory: nativeRoot,
-            assertCurrent: () => undefined,
-          },
-        });
-
-        expect(backup.success).toBe(false);
-        expect(backup.error).toContain(`.deepagents/.state/sessions.db${suffix}`);
-      } finally {
-        fs.rmSync(fixture, { recursive: true, force: true });
-      }
+  it.each([
+    ...["-journal", "-shm", "-wal", ".env"].map((suffix) => ({
+      name: "credential-shaped text",
+      suffix,
+      content:
+        "db.execute('UPDATE users SET name=? WHERE ((password=?))', (user, pw))" +
+        (suffix === ".env"
+          ? ""
+          : `\n${suffix === "-shm" ? "password=opaque-value-for-snapshot" : `ghp_${"a".repeat(36)}`}`),
+    })),
+    {
+      name: "a bind marker that becomes a credential in the next chunk",
+      suffix: "-shm",
+      content: "x".repeat(65_318) + "'SELECT " + " ".repeat(200) + "password=?private-value'",
     },
-  );
+    {
+      name: "a new assignment after normalized overlap fixtures",
+      suffix: "-shm",
+      content: "[STRIPPED_BY_MIGRATION]".repeat(3_000).slice(0, 65_536) + "\npassword=?",
+    },
+    {
+      name: "a provider credential split across chunks",
+      suffix: "-shm",
+      content: "x".repeat(65_534) + `ghp_${"a".repeat(36)}`,
+    },
+  ])("rejects $name in sessions.db$suffix", ({ suffix, content }) => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-sidecar-secret-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const databasePath = path.join(nativeRoot, ".deepagents", ".state", "sessions.db");
+      fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+      const database = new DatabaseSync(databasePath);
+      database.exec("CREATE TABLE sessions (content TEXT)");
+      database.close();
+      fs.writeFileSync(`${databasePath}${suffix}`, content);
+
+      fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
+      fs.writeFileSync(
+        path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "alpha",
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "m",
+              provider: "p",
+              gpuEnabled: false,
+              agent: null,
+            },
+          },
+        }),
+      );
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: () => undefined,
+        },
+      });
+
+      expect(backup.success).toBe(false);
+      expect(backup.error).toContain(`.deepagents/.state/sessions.db${suffix}`);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
 
   it("stops a sidecar scan at the deadline and removes the unpublished backup", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-sidecar-deadline-"));
@@ -115,17 +130,27 @@ describe("DCode WAL snapshot persistence", () => {
   });
 
   it.each([
-    'Example configuration: {"model":"not-a-secret-marker"}',
+    ["ordinary conversation", 4_096, 'Example configuration: {"model":"not-a-secret-marker"}'],
     [
-      "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
-      "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
-      "db.execute('SELECT id FROM users WHERE (password = ?)', (pw,))",
-      'db.execute("SELECT id FROM users WHERE ((password = ?))", (pw,))',
-      "Do not use tools or execute SQL. Keep these examples as conversation context: " +
-        "'SELECT id FROM users WHERE (password = ?)' and " +
-        "'SELECT id FROM users WHERE ((password = ?))'. Reply with exactly one word: PONG",
-    ].join("\n"),
-  ])("preserves a live database and its conversation: %s", (content) => {
+      "SQL conversation",
+      4_096,
+      [
+        "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
+        "db.execute('SELECT id FROM users WHERE password=?')",
+        "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
+        "db.execute('SELECT id FROM users WHERE (password = ?)', (pw,))",
+        'db.execute("SELECT id FROM users WHERE ((password = ?))", (pw,))',
+        "Do not use tools or execute SQL. Keep these examples as conversation context: " +
+          "'SELECT id FROM users WHERE (password = ?)' and " +
+          "'SELECT id FROM users WHERE ((password = ?))'. Reply with exactly one word: PONG",
+      ].join("\n"),
+    ],
+    [
+      "SQL near the chunk overlap",
+      65_536,
+      "'SELECT " + " ".repeat(200) + "password=?' " + "x".repeat(4_050),
+    ],
+  ] as const)("preserves a live database and its %s", (_name, pageSize, content) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-state-"));
     let database: DatabaseSync | null = null;
     try {
@@ -133,7 +158,9 @@ describe("DCode WAL snapshot persistence", () => {
       const databasePath = path.join(nativeRoot, ".deepagents", ".state", "sessions.db");
       fs.mkdirSync(path.dirname(databasePath), { recursive: true });
       database = new DatabaseSync(databasePath);
-      database.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;");
+      database.exec(
+        `PRAGMA page_size = ${pageSize}; PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;`,
+      );
       database.exec("CREATE TABLE sessions (content TEXT)");
       database.prepare("INSERT INTO sessions VALUES (?)").run(content);
       expect(fs.statSync(`${databasePath}-wal`).size).toBeGreaterThan(0);
