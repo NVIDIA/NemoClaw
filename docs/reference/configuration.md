@@ -285,6 +285,7 @@ Paths:
 |---|---|---|---|---|
 | `filesystem_policy` | [PolicyFilesystem](#policyfilesystem) | No | — | Filesystem grants. Omission retains OpenShell filesystem defaults, not the isolated preset. |
 | `landlock` | [PolicyLandlock](#policylandlock) | No | — | Kernel filesystem enforcement compatibility. |
+| `network_middlewares` | map of [PolicyMiddleware](#policymiddleware) | No | — | Supervisor middleware attachments keyed by policy-local names, which OpenShell's logs report. Each names a built-in middleware or a service registered in the gateway's `openshell.supervisor.middleware` configuration, and selects the admitted destination hosts it runs for. |
 | `network_policies` | map of [PolicyRule](#policyrule) | Yes | — | Named egress rules. An empty map grants no general egress. |
 | `process` | [PolicyProcess](#policyprocess) | No | — | Sandbox process user and group. |
 | `version` | integer | Yes | — | Policy format version; currently 1. Constraints: `1`; minimum 0. |
@@ -982,6 +983,40 @@ Paths:
 | `max_body_bytes` | integer | No | — | Maximum buffered request bytes, 1 through 1048576. Constraints: minimum 1; maximum 1048576. |
 | `strict_tool_names` | boolean | No | — | Enforce standard MCP tool-name syntax; defaults to true. |
 | `versions` | array of string | No | — | Supported MCP protocol revisions; omission uses the pinned OpenShell default. |
+
+## PolicyMiddleware
+
+One supervisor middleware attachment. OpenShell validates the attachment, including unique orders and selectors that avoid `tls: skip` endpoints, and the named middleware validates `config`.
+
+Guide: [Sandbox policy](../security/sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes.{key}.network.policy.explicit.network_middlewares.{key}`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `config` | object | No | — | Settings passed to the middleware, which defines and validates their format. |
+| `endpoints` | [PolicyMiddlewareEndpoints](#policymiddlewareendpoints) | Yes | — | Admitted destination hosts the middleware runs for. |
+| `middleware` | string | Yes | — | A built-in middleware, such as `openshell/regex`, or the `name` of a service registered with the gateway. |
+| `name` | string | No | — | Display name; omission uses the attachment's key. |
+| `on_error` | string | No | — | fail_closed blocks the affected traffic when the middleware fails; fail_open lets it continue. Omission selects fail_closed. A middleware denial blocks traffic either way. Constraints: `"fail_closed"` or `"fail_open"`. |
+| `order` | integer | No | — | Position among attachments that select the same host; lower values run first. Orders must be unique within the policy; omission means 0. |
+
+## PolicyMiddlewareEndpoints
+
+Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax.
+
+Guide: [Sandbox policy](../security/sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes.{key}.network.policy.explicit.network_middlewares.{key}.endpoints`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `exclude` | array of string | No | — | Hosts to skip; exclusions take precedence over inclusions. |
+| `include` | array of string | Yes | — | Hosts to run the middleware for; OpenShell requires at least one. |
 
 ## PolicyProcess
 

@@ -57,7 +57,6 @@ resource openshell_kubernetes_auth (version 0)
   context: string, optional, computed
   endpoint: string, required
   environment: list(string), optional
-  gateway_values: string, computed
   generation: string, optional, computed
   id: string, computed
   kubeconfig_env: string, optional, computed
@@ -145,6 +144,24 @@ resource openshell_sandbox (version 2)
         > Kernel filesystem enforcement compatibility.
         compatibility: string, required
           > best_effort or hard_requirement.
+      block network_middlewares: map
+        > Supervisor middleware attachments keyed by policy-local names, which OpenShell's logs report. Each names a built-in middleware or a service registered in the gateway's `openshell.supervisor.middleware` configuration, and selects the admitted destination hosts it runs for.
+        config: string, optional
+          > Settings passed to the middleware, which defines and validates their format.
+        middleware: string, required
+          > A built-in middleware, such as `openshell/regex`, or the `name` of a service registered with the gateway.
+        name: string, optional
+          > Display name; omission uses the attachment's key.
+        on_error: string, optional
+          > fail_closed blocks the affected traffic when the middleware fails; fail_open lets it continue. Omission selects fail_closed. A middleware denial blocks traffic either way.
+        order: number, optional
+          > Position among attachments that select the same host; lower values run first. Orders must be unique within the policy; omission means 0.
+        block endpoints: single
+          > Admitted destination hosts the middleware runs for.
+          exclude: list(string), optional
+            > Hosts to skip; exclusions take precedence over inclusions.
+          include: list(string), required
+            > Hosts to run the middleware for; OpenShell requires at least one.
       block network_policies: map
         > Named egress rules. An empty map grants no general egress.
         name: string, required

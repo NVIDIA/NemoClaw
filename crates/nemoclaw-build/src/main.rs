@@ -175,6 +175,14 @@ enum Action {
         #[arg(long)]
         shards: String,
     },
+    /// Check that no executable under DIRECTORY needs a newer glibc than the
+    /// minimum, as CI does after building a Linux bundle.
+    CheckGlibc {
+        /// The oldest glibc the executables must run on, such as 2.35.
+        #[arg(long)]
+        minimum: String,
+        directory: PathBuf,
+    },
 }
 #[derive(Clone, clap::ValueEnum)]
 enum AssessmentFormat {
@@ -239,6 +247,16 @@ enum ImageAction {
         /// linux/arm64 or linux/amd64; must match the Docker host.
         #[arg(long)]
         platform: String,
+        /// Import each target's BuildKit layers from GitHub Actions' cache,
+        /// under SCOPE-TARGET-ARCH. Buildx reads the cache service from
+        /// ACTIONS_RUNTIME_TOKEN and ACTIONS_RESULTS_URL, and builds without
+        /// the cache when they are unset.
+        #[arg(long, value_name = "SCOPE")]
+        gha_cache: Option<String>,
+        /// Also save each target's layers, including its builder stages, to
+        /// the --gha-cache scope.
+        #[arg(long, requires = "gha_cache")]
+        save_gha_cache: bool,
         #[arg(required = true)]
         targets: Vec<String>,
     },
@@ -693,8 +711,17 @@ async fn main() -> Result<()> {
     if let Action::Images { action } = cli.command {
         let root = Path::new(".");
         return match action {
-            ImageAction::Build { platform, targets } => {
-                nemoclaw_build::images::build(root, &platform, &targets)
+            ImageAction::Build {
+                platform,
+                gha_cache,
+                save_gha_cache,
+                targets,
+            } => {
+                let cache = gha_cache.map(|scope| nemoclaw_build::images::GhaCache {
+                    scope,
+                    save: save_gha_cache,
+                });
+                nemoclaw_build::images::build(root, &platform, &targets, cache.as_ref())
             }
             ImageAction::Runtimes => {
                 nemoclaw_build::hcl_cases::runtimes(root).and_then(|runtimes| {
@@ -725,6 +752,10 @@ async fn main() -> Result<()> {
             }
         }
         .map_err(Into::into);
+    }
+    if let Action::CheckGlibc { minimum, directory } = &cli.command {
+        let minimum = nemoclaw_build::glibc::parse_minimum(minimum)?;
+        return nemoclaw_build::glibc::check(directory, minimum).map_err(Into::into);
     }
     if let Action::SuiteTiming {
         step,
@@ -915,7 +946,8 @@ async fn main() -> Result<()> {
         | Action::ReleaseAssess { .. }
         | Action::Images { .. }
         | Action::Changes { .. }
-        | Action::SuiteTiming { .. } => {
+        | Action::SuiteTiming { .. }
+        | Action::CheckGlibc { .. } => {
             unreachable!("CI, image, change, and timing commands returned before build tool checks")
         }
         #[cfg(feature = "sdk")]

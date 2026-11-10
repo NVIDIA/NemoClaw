@@ -344,11 +344,12 @@ Set `gateway.runtime.provider: openshift`; everything else matches the managed K
 Start from [the OpenShift example](../../examples/openshift/managed-development.yaml).
 
 OpenShift assigns each namespace a UID and group range and admits only those identities.
-After creating the namespace, the SDK waits up to 30 seconds for OpenShift to record that range, then runs the gateway as its first UID and group.
+The pinned chart runs the gateway as UID 1000 with `fsGroup: 1000`, which the `restricted-v2` security context constraint rejects.
+With `openshift`, NemoClaw sets the chart's `securityContext.runAsUser` and `podSecurityContext.fsGroup` to `null`, as [the chart's OpenShift install](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/deploy/helm/openshell/README.md#install-on-openshift) does, so `restricted-v2` runs the gateway as the range's first UID and group.
 OpenShell runs each sandbox as the same UID.
-If the range never appears, apply stops before installing the gateway with `OpenShift did not assign the namespace a UID range`; check that the context points at an OpenShift cluster.
+The [OpenShift Local qualification](https://github.com/NVIDIA/NemoClaw/issues/12733) predates this: there, NemoClaw read the namespace's range and passed its first UID and group to the chart.
+This has since run by hand on one OpenShift Local 4.22.14 node (linux/amd64): `restricted-v2` gave the gateway the range's first UID and `fsGroup`, and two agents replied through it with OIDC authentication; [current limits](../resources/limits.md#platforms-models-and-placement) lists what remains untested.
 
-The SDK records the range in its receipt, and a later apply refuses a namespace whose range has changed.
 The agent images need no OpenShift variant: any UID can read their workspace seed.
 
 ## Use an Existing Gateway

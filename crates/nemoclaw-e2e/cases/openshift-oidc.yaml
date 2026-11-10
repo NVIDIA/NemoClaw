@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Two agents with the openshift profile on a managed gateway in OpenShift,
+# each with its own sandbox and policy, sharing one inference route to a stub
+# model in its own namespace. OpenShift's restricted-v2 constraint gives the
+# gateway the namespace's first UID and group, and OpenShell runs each
+# sandbox as that UID. The gateway accepts tokens from an existing OIDC
+# issuer in another namespace, and the agent image comes from a private
+# registry through the pull Secret the operator created. No CI job has
+# OpenShift, so the case runs by hand, for example on OpenShift Local;
+# kind-kubernetes-oidc deploys the same agents on kind. Bind its UID, which
+# is also the token audience, its endpoint port, namespace, kubeconfig
+# context, and agent image to the run.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-openshift-agents
+  uid: e046a54d-77a5-4814-9a02-1734d847ba39
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: openshift
+    endpoint: https://127.0.0.1:17701
+    kubernetes:
+      kubeconfig:
+        env: NEMOCLAW_TEST_KUBECONFIG
+      context: openshift
+      namespace: nc-hcl-openshift
+      imagePullSecrets:
+        - agent-registry
+      authentication:
+        profile: oidc
+        caConfigMap: issuer-oidc-ca
+        token:
+          env: NEMOCLAW_TEST_OIDC_TOKEN
+    config:
+      openshell.gateway.oidc:
+        issuer: https://issuer-oidc.nc-hcl-openshift-issuer.svc.cluster.local:8443
+        audience: e046a54d-77a5-4814-9a02-1734d847ba39
+        roles_claim: roles
+        admin_role: nemoclaw-development-admin
+        user_role: nemoclaw-development-user
+        scopes_claim: scope
+  inferenceProviders:
+    stub:
+      provider: openai
+      endpoint: http://model.nc-hcl-openshift-model.svc.cluster.local:8000/v1
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: stub
+          overrides:
+            model: fixture-model
+            maxTokens: 2048
+  sandboxes:
+    assistant:
+      image:
+        ref: nc-registry:5000/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        metadata:
+          env: NEMOCLAW_TEST_AGENT_METADATA
+      network:
+        tier: isolated
+        grants:
+          assistant:
+            endpoints:
+              - host: assistant.example.test
+                port: 443
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: main
+        inferenceRef: chat
+    researcher:
+      image:
+        ref: nc-registry:5000/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        metadata:
+          env: NEMOCLAW_TEST_AGENT_METADATA
+      network:
+        tier: isolated
+        grants:
+          researcher:
+            endpoints:
+              - host: researcher.example.test
+                port: 443
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: researcher
+        inferenceRef: chat
