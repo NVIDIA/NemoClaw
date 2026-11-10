@@ -2773,11 +2773,8 @@ hermes_dashboard_healthy() {
   esac
 }
 
-# Qualification is process-local state, not a caller-controlled startup option.
-_HERMES_SWITCHYARD_JUDGE_QUALIFIED=0
-
+# Supervised recovery keeps this entrypoint alive, so each gateway launch must qualify.
 qualify_hermes_switchyard_judge() {
-  [ "${_HERMES_SWITCHYARD_JUDGE_QUALIFIED:-0}" -eq 1 ] && return 0
   if [ ! -e /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
     && [ ! -L /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
     && [ ! -e /usr/local/share/nemoclaw/hermes-switchyard-v1.toml ] \
@@ -2792,7 +2789,6 @@ qualify_hermes_switchyard_judge() {
     echo "[gateway] Switchyard judge qualification failed. Routing remains stopped. Check model access or select a supported judge in --switchyard-config and onboard with a new sandbox name." >&2
     return 1
   fi
-  _HERMES_SWITCHYARD_JUDGE_QUALIFIED=1
 }
 
 launch_hermes_gateway() {

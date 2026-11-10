@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
-import { extractShellFunction } from "../../support/hermes-shell-harness";
+import { bashPrintfQ, extractShellFunction } from "../../support/hermes-shell-harness";
 import { switchyardBindingFixture } from "../../helpers/hermes-switchyard";
 import {
   createHermesSwitchyardRoutingIntent,
@@ -142,7 +142,51 @@ function runFixture(options: Record<string, unknown>) {
 }
 
 describe("Switchyard judge startup qualification", () => {
-  it("ignores an inherited qualification flag and probes only once per startup (#13863)", () => {
+  it.each(["launch_hermes_gateway", "launch_hermes_gateway_current_user"])(
+    "keeps %s stopped when recovery qualification fails (#13863)",
+    (entry) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-judge-recovery-"));
+      const probes = path.join(directory, "probes");
+      const launches = path.join(directory, "launches");
+      try {
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            [
+              "set -euo pipefail",
+              `PROBES=${bashPrintfQ(probes)}; LAUNCHES=${bashPrintfQ(launches)}`,
+              "HERMES_DIR=/unused; _HERMES_PYTHON=judge_python; HERMES_RESTART_SEALED=1",
+              "HERMES=fake_gateway; HERMES_SANDBOX_LAZY_INSTALL_TARGET=/unused; INTERNAL_PORT=3000",
+              "STEP_DOWN_PREFIX_GATEWAY=(env); _HERMES_SWITCHYARD_JUDGE_QUALIFIED=0",
+              `HERMES_GATEWAY_RECOVERY_WAITING_FILE=${bashPrintfQ(path.join(directory, "absent-marker"))}`,
+              "id() { printf 1000; }",
+              '[() { if [[ "${3:-}" == /usr/local/share/nemoclaw/hermes-* ]]; then return 1; fi; builtin [ "$@"; }',
+              'judge_python() { local previous=0; [[ ! -f "$PROBES" ]] || previous=1; printf "probe\\n" >>"$PROBES"; return "$previous"; }',
+              "cleanup_stale_hermes_gateway_runtime() { :; }",
+              "hermes_capture_tracked_role() { :; }",
+              'nohup() { printf "launch\\n" >>"$LAUNCHES"; }',
+              extractShellFunction(start, "qualify_hermes_switchyard_judge"),
+              extractShellFunction(start, entry).replaceAll(
+                "/tmp/gateway.log",
+                path.join(directory, "gateway.log"),
+              ),
+              `${entry}; wait "$GATEWAY_PID"`,
+              `if ${entry}; then wait "$GATEWAY_PID"; exit 42; fi`,
+            ].join("\n"),
+          ],
+          { encoding: "utf8", timeout: 5000 },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(fs.readFileSync(probes, "utf8")).toBe("probe\nprobe\n");
+        expect(fs.readFileSync(launches, "utf8")).toBe("launch\n");
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("ignores an inherited qualification flag before every probe (#13863)", () => {
     const result = spawnSync(
       "bash",
       [
@@ -155,10 +199,7 @@ describe("Switchyard judge startup qualification", () => {
           '[() { if [[ "$3" == /usr/local/share/nemoclaw/hermes-* ]]; then return 1; fi; builtin [ "$@"; }',
           // Record invocation on a dedicated descriptor because production suppresses child output.
           "judge_python() { printf probe >&3; }",
-          start.slice(
-            start.indexOf("\n_HERMES_SWITCHYARD_JUDGE_QUALIFIED=0\n"),
-            start.indexOf("\nlaunch_hermes_gateway()"),
-          ),
+          extractShellFunction(start, "qualify_hermes_switchyard_judge"),
           "qualify_hermes_switchyard_judge 3>&1",
           "qualify_hermes_switchyard_judge 3>&1",
         ].join("\n"),
@@ -170,7 +211,7 @@ describe("Switchyard judge startup qualification", () => {
       },
     );
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("probe");
+    expect(result.stdout).toBe("probeprobe");
   });
 
   it.each([false, true])(
