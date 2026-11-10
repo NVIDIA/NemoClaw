@@ -150,6 +150,34 @@ export class LaunchReadinessObservationError extends Error {
   }
 }
 
+// Log only protocol fields, never endpoint URLs, response bodies, or command output.
+function failInferenceInvocation(
+  result: Extract<Awaited<ReturnType<typeof runSandboxInferenceInvocationProbe>>, { ok: false }>,
+): never {
+  const httpStatus =
+    result.httpStatus !== null &&
+    Number.isInteger(result.httpStatus) &&
+    result.httpStatus >= 100 &&
+    result.httpStatus < 600
+      ? result.httpStatus
+      : "unknown";
+  const curlExit =
+    /^sandbox inference invocation probe exited with status ([0-9]{1,3})$/.exec(
+      result.detail,
+    )?.[1] ?? "unknown";
+  const response =
+    result.detail === "sandbox inference invocation probe returned an invalid response body"
+      ? "invalid"
+      : result.detail === "sandbox inference invocation probe could not run" ||
+          result.detail === "sandbox inference invocation probe was unavailable"
+        ? "unavailable"
+        : "unverified";
+  console.error(
+    `  Inference request failed: HTTP ${httpStatus}; curl_exit=${curlExit}; timed_out=${String(result.timedOut === true)}; response=${response}.`,
+  );
+  throw new LaunchReadinessObservationError("health", "inference request");
+}
+
 /** The required observation could not produce authoritative evidence. */
 export class LaunchReadinessEvidenceError extends Error {
   constructor() {
@@ -267,7 +295,7 @@ export async function requireNativeInferenceHealth(input: {
       preferredInferenceApi: "openai-completions",
       nativeLocalProviderAttachment: expected,
     });
-    if (!result.ok) throw new LaunchReadinessObservationError("health", "inference request");
+    if (!result.ok) failInferenceInvocation(result);
     return true;
   }
   const expected = getNativeProviderAttachment(input.entry);
@@ -326,7 +354,7 @@ export async function requireNativeInferenceHealth(input: {
       console.error(`  Warning: NVIDIA inference is degraded (${invocation.detail}).`);
       return true;
     }
-    throw new LaunchReadinessObservationError("health", "inference request");
+    failInferenceInvocation(invocation);
   }
   return true;
 }
@@ -498,7 +526,7 @@ export async function requireLaunchSemanticHealth(
       }
       if (invocation.ok) return;
       recordLaunchReadinessObservationFailure(deps, "inference-route");
-      throw new LaunchReadinessObservationError("health", "inference request");
+      failInferenceInvocation(invocation);
     }
     if (inference.broken || (inference.httpStatus >= 100 && inference.httpStatus < 600)) {
       recordLaunchReadinessObservationFailure(deps, "inference-route");

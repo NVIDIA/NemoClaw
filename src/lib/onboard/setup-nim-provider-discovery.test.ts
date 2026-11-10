@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { makeDeps, unexpected } from "./__test-helpers__/setup-nim-flow";
+import { createSetupNim } from "./setup-nim-flow";
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 
 const interactiveDeps = {
@@ -33,6 +35,25 @@ const remoteProviderConfig = {
 };
 
 describe("prepareProviderDiscovery", () => {
+  it.each(["nvidia-router", "routed", "NVIDIA_ROUTER"])(
+    "rejects recovered retired provider %s before host probing or selection",
+    async (provider) => {
+      const detectInferenceProviderHostState = vi.fn(() => unexpected("host probe"));
+      const handleRemoteProviderSelection = vi.fn(async () => unexpected("provider selection"));
+      const setupNim = createSetupNim(
+        makeDeps({
+          isNonInteractive: () => true,
+          readRecordedProvider: () => provider,
+          detectInferenceProviderHostState,
+          handleRemoteProviderSelection,
+        }),
+      );
+      await expect(setupNim(null, "legacy")).rejects.toThrow("Model Router has been removed");
+      expect(detectInferenceProviderHostState).not.toHaveBeenCalled();
+      expect(handleRemoteProviderSelection).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not read recorded provider state when recovery is disabled (#8135)", () => {
     const readRecordedProvider = vi.fn(() => "vllm-local");
     const readRecordedNimContainer = vi.fn(() => "stale-nim-container");

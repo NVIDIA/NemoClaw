@@ -23,7 +23,7 @@ describe("protected NemoClaw host ports", () => {
     for (const home of tempHomes.splice(0)) fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("rejects the Model Router port configured by the routed blueprint", async () => {
+  it("reserves the legacy default and ignores removed blueprint router configuration", async () => {
     const root = tempHome();
     const blueprintDir = path.join(root, "nemoclaw-blueprint");
     fs.mkdirSync(blueprintDir, { recursive: true });
@@ -49,9 +49,10 @@ describe("protected NemoClaw host ports", () => {
     const { isLoopbackNoAuthCompatibleEndpointUrl } =
       await import("../onboard/inference-providers/compatible-endpoint-gateway-route");
 
-    expect(isProtectedNemoClawHostPort(23006)).toBe(true);
+    expect(isProtectedNemoClawHostPort(4000)).toBe(true);
+    expect(isProtectedNemoClawHostPort(23006)).toBe(false);
     expect(
-      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:23006/v1"),
+      isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", "http://localhost:4000/v1"),
     ).toBe(false);
   });
 

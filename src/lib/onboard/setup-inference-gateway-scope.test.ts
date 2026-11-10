@@ -6,7 +6,6 @@ import { scopeGatewayOpenshellArgs } from "../adapters/openshell/gateway-scope";
 import { createInferenceRouteHelpers } from "./inference-route";
 import {
   bindGatewayUpsertProvider,
-  createRoutedResumeProviderUpsert,
   createGatewayScopedOpenshellRunner,
   selectGatewayForFollowupOrExit,
 } from "./setup-inference";
@@ -138,42 +137,6 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
       "OPENAI_API_KEY",
       null,
       undefined,
-      GATEWAY,
-    );
-  });
-
-  it("binds a routed resume provider mutation to the selected gateway", async () => {
-    const events: string[] = [];
-    const upsert = vi.fn(async () => {
-      events.push("provider mutation");
-      return { ok: true };
-    });
-    const reupsertRoutedProvider = createRoutedResumeProviderUpsert({
-      upsertProvider: upsert,
-      hydrateCredentialEnv: () => "test-secret",
-    });
-
-    expect(
-      await reupsertRoutedProvider(
-        GATEWAY,
-        "nvidia-router",
-        "http://host.openshell.internal:4000/v1",
-        "NVIDIA_INFERENCE_API_KEY",
-      ),
-    ).toEqual({
-      ok: true,
-      endpointUrl: "http://host.openshell.internal:4000/v1",
-      message: undefined,
-      status: undefined,
-    });
-
-    expect(events).toEqual(["provider mutation"]);
-    expect(upsert).toHaveBeenCalledWith(
-      "nvidia-router",
-      "openai",
-      "NVIDIA_INFERENCE_API_KEY",
-      "http://host.openshell.internal:4000/v1",
-      { NVIDIA_INFERENCE_API_KEY: "test-secret" },
       GATEWAY,
     );
   });

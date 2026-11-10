@@ -40,12 +40,22 @@ function buildMenu(overrides: Partial<Parameters<typeof buildInferenceProviderMe
     winOllamaLoopbackOnly: false,
     ollamaInstallEntry: null,
     vllmEntries: [],
-    routedEnabled: false,
+
     ...overrides,
   });
 }
 
 describe("buildInferenceProviderMenu", () => {
+  it.each(["routed", "nvidia-router", "NVIDIA_ROUTER"])(
+    "rejects retired provider %s before host inspection or selection",
+    async (provider) => {
+      const deps = makeDeps({ getNonInteractiveProvider: () => provider });
+      await expect(createSetupNim(deps)(null)).rejects.toThrow("Model Router has been removed");
+      expect(deps.detectInferenceProviderHostState).not.toHaveBeenCalled();
+      expect(deps.handleRemoteProviderSelection).not.toHaveBeenCalled();
+    },
+  );
+
   it("returns the base remote providers in the existing prompt order", () => {
     const result = buildMenu();
 
@@ -62,7 +72,7 @@ describe("buildInferenceProviderMenu", () => {
     ]);
   });
 
-  it("adds local, routed, and agent-scoped providers after the base remote entries", () => {
+  it("adds local and agent-scoped providers after the base remote entries", () => {
     const result = buildMenu({
       agentProviderOptions: ["hermesProvider", "build"],
       experimental: true,
@@ -73,7 +83,6 @@ describe("buildInferenceProviderMenu", () => {
       isWsl: false,
       ollamaInstallEntry: { key: "install-ollama", label: "Install Ollama (Linux)" },
       vllmEntries: [{ key: "install-vllm", label: "Install vLLM (DGX Spark)" }],
-      routedEnabled: true,
     });
 
     expect(result.hermesProviderAvailable).toBe(true);
@@ -89,7 +98,6 @@ describe("buildInferenceProviderMenu", () => {
       "nim-local",
       "install-vllm",
       "install-ollama",
-      "routed",
       "hermesProvider",
       "llama-cpp",
     ]);
