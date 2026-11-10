@@ -60,6 +60,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/install/installer-directory-bsd-stat.test.ts"),
   },
   {
+    pattern: /(?:^|\/)tools\/e2e\/protected-openshell-filesystem\.py$/,
+    testsToRun: runTests(
+      "test/e2e/support/protected-openshell-filesystem.test.ts",
+      "test/e2e/support/protected-openshell-workspace.test.ts",
+    ),
+  },
+  {
     pattern:
       /(?:^|\/)test\/e2e\/(?:lib\/openclaw-owner-diagnostic|support\/openclaw-owner-diagnostic-cases)\.py$/,
     testsToRun: runTests("test/e2e/support/openclaw-owner-diagnostic.test.ts"),
