@@ -30,12 +30,34 @@ pub(super) fn package_inputs(tools: &Tools<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Each test layer's archive, which only that layer's jobs download, and the
+/// nextest profiles whose test binaries it holds. Nextest archives a package's
+/// executables only with one of its test binaries, so the contract archive
+/// also selects the fixture tests, whose packages hold the executables the
+/// contract tests start. Only Linux runs the live suites, from their own
+/// archive instead of compiling.
+pub(super) fn layers(platform: &str) -> Vec<(&'static str, &'static [&'static str])> {
+    let mut layers: Vec<(&'static str, &'static [&'static str])> = vec![
+        ("contract", &["contract", "fixtures"]),
+        ("integration", &["integration"]),
+    ];
+    if platform.starts_with("linux_") {
+        layers.push(("live", &["live-docker", "live-kind"]));
+    }
+    layers
+}
+
+/// Where `ci archive` writes a layer's archive.
+pub(super) fn file(layer: &str) -> PathBuf {
+    Path::new(".build/ci").join(format!("{layer}.tar.zst"))
+}
+
 /// Select from nextest's resolved profiles rather than maintaining a second
-/// suite list. Linux archives also hold the live suites, whose jobs run them
-/// from this archive instead of compiling.
+/// suite list.
 pub(super) fn selected_binaries(
     configure: &impl Fn(&mut Command),
-    platform: &str,
+    layer: &str,
+    profiles: &[&str],
 ) -> Result<String> {
     use serde::Deserialize;
     use std::collections::{BTreeMap, BTreeSet};
@@ -65,11 +87,6 @@ pub(super) fn selected_binaries(
         Mismatch,
     }
 
-    let profiles: &[&str] = if platform.starts_with("linux_") {
-        &["contract", "integration", "live-docker", "live-kind"]
-    } else {
-        &["contract", "integration"]
-    };
     let mut binaries = BTreeSet::new();
     for profile in profiles {
         let mut command = cargo();
@@ -109,7 +126,7 @@ pub(super) fn selected_binaries(
         );
     }
     if binaries.is_empty() {
-        return Err("no contract or integration test binaries were selected".into());
+        return Err(format!("no {layer} test binaries were selected").into());
     }
     Ok(binaries.into_iter().collect::<Vec<_>>().join(" | "))
 }

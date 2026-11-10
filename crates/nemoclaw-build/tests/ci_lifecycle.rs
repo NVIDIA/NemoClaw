@@ -52,6 +52,7 @@ if [ "$1 $2" = 'nextest --version' ]; then
     exit 0
 fi
 printf '%s\n' "$@" > arguments
+{ printf '%s\n' "$@"; printf -- '--\n'; } >> invocations
 printf '%s\n' "${NEXTEST_TEST_THREADS-unset}" > test-threads-env
 [ -n "${NEMOCLAW_HCL_CASE-}" ] && printf '%s\n' "$NEMOCLAW_HCL_CASE" >> hcl-cases
 if [ "$1" = build ]; then
@@ -68,6 +69,9 @@ if [ "$1 $2" = 'nextest list' ]; then
         previous=$argument
     done
     case $profile in
+        contract) printf '%s\n' "${CARGO_LIST_CONTRACT:-$CARGO_LIST}" ;;
+        fixtures) printf '%s\n' "${CARGO_LIST_FIXTURES:-$CARGO_LIST}" ;;
+        integration) printf '%s\n' "${CARGO_LIST_INTEGRATION:-$CARGO_LIST}" ;;
         live-docker) printf '%s\n' "${CARGO_LIST_LIVE_DOCKER:-$CARGO_LIST}" ;;
         live-kind) printf '%s\n' "${CARGO_LIST_LIVE_KIND:-$CARGO_LIST}" ;;
         *) printf '%s\n' "$CARGO_LIST" ;;
@@ -136,6 +140,25 @@ exit "${CARGO_RESULT:-0}"
 
     fn arguments(&self) -> String {
         fs::read_to_string(self.0.path().join("arguments")).unwrap()
+    }
+
+    /// Each `nextest archive` call's archive file and filterset, in order.
+    fn archives(&self) -> Vec<(String, String)> {
+        let invocations = fs::read_to_string(self.0.path().join("invocations")).unwrap_or_default();
+        invocations
+            .split("--\n")
+            .filter(|call| call.starts_with("nextest\narchive\n"))
+            .map(|call| {
+                let value = |option: &str| {
+                    call.lines()
+                        .skip_while(|arg| *arg != option)
+                        .nth(1)
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                (value("--archive-file"), value("--filterset"))
+            })
+            .collect()
     }
 
     /// Fake `docker` and `zstd` that record their calls in `docker.log` and
@@ -430,50 +453,73 @@ fn archive_packages_tools_and_the_ssh_relay_but_leaves_providers_to_the_bundle_a
     );
 }
 
-#[test]
-fn linux_archives_also_hold_the_live_suites_so_live_jobs_need_not_compile() {
-    let fixture = Fixture::new();
+/// Run `ci archive` with a distinct test binary selected by each profile.
+fn archive_layers(fixture: &Fixture, platform: &str) -> Output {
     fixture.seed_build_outputs();
-    let output = fixture
+    fixture
         .command(&["archive"])
+        .env("TEST_PLATFORM", platform)
+        .env("CARGO_LIST_CONTRACT", suite("contract-suite"))
+        .env("CARGO_LIST_FIXTURES", suite("fixture-suite"))
+        .env("CARGO_LIST_INTEGRATION", suite("integration-suite"))
         .env("CARGO_LIST_LIVE_DOCKER", suite("docker-suite"))
         .env("CARGO_LIST_LIVE_KIND", suite("kind-suite"))
         .output()
-        .unwrap();
+        .unwrap()
+}
+
+/// Each test job downloads only the executables its layer runs, so each layer
+/// gets its own archive. The contract archive also selects the fixture tests,
+/// whose packages' executables the contract tests start; Linux also archives
+/// the live suites, so live jobs need not compile.
+#[test]
+fn linux_archives_each_test_layer_separately_so_each_job_downloads_only_its_tests() {
+    let fixture = Fixture::new();
+    let output = archive_layers(&fixture, "linux_arm64");
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let args = fixture.arguments();
-    assert!(
-        args.contains(
-            "--filterset\nbinary_id(=docker-suite) | binary_id(=kind-suite) | binary_id(=selected-suite)\n"
-        ),
-        "{args}"
+    assert_eq!(
+        fixture.archives(),
+        [
+            (
+                ".build/ci/contract.tar.zst".to_owned(),
+                "binary_id(=contract-suite) | binary_id(=fixture-suite)".to_owned()
+            ),
+            (
+                ".build/ci/integration.tar.zst".to_owned(),
+                "binary_id(=integration-suite)".to_owned()
+            ),
+            (
+                ".build/ci/live.tar.zst".to_owned(),
+                "binary_id(=docker-suite) | binary_id(=kind-suite)".to_owned()
+            ),
+        ]
     );
 }
 
 #[test]
-fn other_platforms_archive_only_the_lifecycle_suite_because_live_suites_need_linux() {
+fn other_platforms_archive_no_live_suites_because_live_suites_need_linux() {
     let fixture = Fixture::new();
-    fixture.seed_build_outputs();
-    let output = fixture
-        .command(&["archive"])
-        .env("TEST_PLATFORM", "darwin_arm64")
-        .env("CARGO_LIST_LIVE_DOCKER", suite("docker-suite"))
-        .env("CARGO_LIST_LIVE_KIND", suite("kind-suite"))
-        .output()
-        .unwrap();
+    let output = archive_layers(&fixture, "darwin_arm64");
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let args = fixture.arguments();
-    assert!(
-        args.contains("--filterset\nbinary_id(=selected-suite)\n"),
-        "{args}"
+    let archives: Vec<_> = fixture
+        .archives()
+        .into_iter()
+        .map(|(file, _)| file)
+        .collect();
+    assert_eq!(
+        archives,
+        [
+            ".build/ci/contract.tar.zst",
+            ".build/ci/integration.tar.zst"
+        ]
     );
 }
 
@@ -673,17 +719,17 @@ fn bundle_builds_its_build_tool_so_it_can_run_without_the_build_step() {
 }
 
 #[test]
-fn archive_rejects_an_empty_lifecycle_selection_instead_of_publishing_no_tests() {
+fn archive_rejects_a_layer_that_selects_no_tests_instead_of_publishing_none() {
     let fixture = Fixture::new();
     let output = fixture
         .command(&["archive"])
-        .env("CARGO_LIST", r#"{"rust-suites":{}}"#)
+        .env("CARGO_LIST_INTEGRATION", r#"{"rust-suites":{}}"#)
         .output()
         .unwrap();
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(
-        error.contains("no contract or integration test binaries were selected"),
+        error.contains("no integration test binaries were selected"),
         "{error}"
     );
     assert!(

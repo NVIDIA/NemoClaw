@@ -66,8 +66,7 @@ threads-required = "num-test-threads"
 # Selecting the fake ssh relay's ignored test also archives nemoclaw-test-fixtures'
 # executables beside the extracted tests: the relay, which fake engines need on
 # platforms without Unix sockets, and the SSH simulator. The fixture provider's
-# ignored test does the same for the provider protocol tests. Contract tests
-# run from the same archive.
+# ignored test does the same for the provider protocol tests.
 [profile.integration]
 inherits = "ci"
 test-threads = 4
@@ -80,6 +79,16 @@ default-filter = '''
 
 [profile.integration.junit]
 path = "integration.xml"
+
+# Runs nothing in CI: `cargo ci archive` selects these binaries, which the
+# integration profile also selects, so the contract archive holds the fixture
+# executables that the contract tests start.
+[profile.fixtures]
+inherits = "ci"
+default-filter = '''
+(package(nemoclaw-test-fixtures) & binary(=ssh_relay))
+| (package(nemoclaw-fixture-provider) & binary(=archive))
+'''
 
 # The tofu test integration shards share one fixed engine socket.
 [[profile.integration.overrides]]
