@@ -12,6 +12,14 @@ on:
       candidate_sha:
         required: true
         type: string
+      upgrade_pr_number:
+        required: false
+        type: string
+        default: ""
+      upgrade_base_sha:
+        required: false
+        type: string
+        default: ""
       runtime_provider:
         required: true
         type: string
@@ -123,6 +131,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   run:
@@ -130,6 +139,9 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
+      UPGRADE_PR_NUMBER: ${{ inputs.upgrade_pr_number }}
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      UPGRADE_BASE_SHA: ${{ inputs.upgrade_base_sha }}
       E2E_JOB: "1"
       E2E_EXECUTION_ID: ${{ inputs.execution_id }}
       E2E_MANAGED_IMAGE_REVISION: ${{ inputs.managed_image_revision }}
@@ -433,7 +445,7 @@ jobs:
           install-dependencies: "false"
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@855b8b80e13c4dbd59411672e3c3dd7720bc590f
 
       - name: Restore exact-commit CLI artifact
         if: ${{ inputs.restore_cli }}

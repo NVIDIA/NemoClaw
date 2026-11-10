@@ -3,6 +3,9 @@
 
 // Reviewed environment identities prevent inherited shell or action initialization overrides.
 export const PRE_CANDIDATE_WORKFLOW_ENV = {
+  UPGRADE_PR_NUMBER: "${{ inputs.pr_number }}",
+  CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
+  UPGRADE_BASE_SHA: "${{ inputs.base_sha }}",
   NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
   NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.correlation_id }}",
   NEMOCLAW_E2E_SHARD: "default",
