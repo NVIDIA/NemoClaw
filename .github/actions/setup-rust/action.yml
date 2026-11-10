@@ -9,10 +9,11 @@ inputs:
   cache-prefix:
     # Bump a prefix's version to discard caches whose artifacts every build
     # would recompile, such as a change to the environment `cargo ci` gives
-    # Cargo; v4 and native-bundle-v3 drop the ring artifacts built while it
-    # passed `cargo run`'s OUT_DIR.
+    # Cargo; v5 and native-bundle-v4 drop the C objects compiled on Ubuntu
+    # 24.04, whose newer glibc headers Linux bundles must not need, now that
+    # Linux builds run on Ubuntu 22.04.
     description: Separate dependency caches for distinct build jobs.
-    default: native-deps-v4
+    default: native-deps-v5
   save-cache:
     description: Write Rust dependencies on v1; live jobs only restore the native cache.
     default: "true"

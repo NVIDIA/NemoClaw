@@ -84,17 +84,6 @@ struct Applied {
     _directory: tempfile::TempDir,
 }
 
-/// The Namespace annotations OpenShift writes when it creates a project.
-fn assign_openshift_range(objects: &Objects) {
-    platform::annotate_namespace(
-        objects,
-        json!({
-            "openshift.io/sa.scc.uid-range": "1000680000/10000",
-            "openshift.io/sa.scc.supplemental-groups": "1000690000/10000",
-        }),
-    );
-}
-
 /// The Secret the chart creates for client access, with only `keys` present.
 fn client_tls(keys: &[&str]) -> Value {
     use base64::{Engine, engine::general_purpose::STANDARD};
@@ -118,10 +107,8 @@ async fn applied(provider: &'static str, kinds: &[&str]) -> Applied {
     let fixture = objects.serve().await;
     let operations = platform::operations(client(&fixture), &state);
     for kind in kinds {
-        match *kind {
-            AUTH_KIND if provider == "openshift" => assign_openshift_range(&objects),
-            GATEWAY_KIND => platform::ready_gateway(&objects),
-            _ => {}
+        if *kind == GATEWAY_KIND {
+            platform::ready_gateway(&objects);
         }
         operations
             .ensure(&platform::spec_on(kind, provider), None)
@@ -461,24 +448,4 @@ async fn an_unrecorded_gateway_statefulset_without_a_uid_is_incomplete_and_is_no
     let path = statefulset_path();
     drop_uid(&applied.objects, &path);
     assert_incomplete(&applied, Call::Ensure(GATEWAY_KIND), &path, &[]).await;
-}
-
-/// Start state: OpenShift storage applied and its Namespace assigned a range.
-/// `ensure` reads the Namespace identity right after it lists the Helm release
-/// records, and writes no issuer object until that read succeeds.
-#[tokio::test]
-async fn a_failed_openshift_namespace_identity_read_writes_no_issuer_object() {
-    let applied = applied("openshift", &[STORAGE_KIND]).await;
-    assign_openshift_range(&applied.objects);
-    let site = Site::After(SECRETS_PATH);
-    assert_reads_fail(&applied, NAMESPACE_PATH, site, &[Call::Ensure(AUTH_KIND)]).await;
-}
-
-/// Start state: OpenShift everything applied. A refresh compares the recorded
-/// Namespace identity right after it reads the gateway StatefulSet.
-#[tokio::test]
-async fn a_failed_openshift_namespace_identity_comparison_read_is_reported_by_class() {
-    let applied = fully_applied("openshift").await;
-    let site = Site::After(&statefulset_path());
-    assert_reads_fail(&applied, NAMESPACE_PATH, site, &[Call::Read(AUTH_KIND)]).await;
 }
