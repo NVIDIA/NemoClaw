@@ -39,6 +39,12 @@ beforeEach(() => {
   vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
   });
+  vi.spyOn(restoreWindow, "prepareUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+    async ({ sandboxName, runtimeSelection }) => ({
+      ok: true,
+      window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+    }),
+  );
   vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
     ok: true,
   });
@@ -1276,6 +1282,12 @@ describe("restored OpenClaw selection reconciliation", () => {
   it("applies the selected model after restore and before restart and publication (#12667)", async () => {
     const order: string[] = [];
     const dependencies = deps(order);
+    vi.mocked(restoreWindow.prepareUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
+      async ({ sandboxName }) => {
+        order.push("doctor");
+        return { ok: true, window: { sandboxName } };
+      },
+    );
     vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
       async () => {
         order.push("restart");
@@ -1283,7 +1295,7 @@ describe("restored OpenClaw selection reconciliation", () => {
       },
     );
     await finalizeCreatedSandbox(options, dependencies);
-    expect(order).toEqual(["restore", "selection", "restart", "register"]);
+    expect(order).toEqual(["restore", "doctor", "selection", "restart", "register"]);
     expect(dependencies.writeRestoredOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
       "openclaw",
       "changed-model",
@@ -1319,6 +1331,22 @@ describe("restored OpenClaw selection reconciliation", () => {
     );
     expect(dependencies.writeRestoredOpenclawInferenceRoute).not.toHaveBeenCalled();
     expect(dependencies.register).not.toHaveBeenCalled();
+    expect(restoreWindow.abortUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
+  });
+
+  it("keeps restored state unpublished when migration fails before inference writes", async () => {
+    const dependencies = deps([]);
+    vi.mocked(restoreWindow.prepareUnregisteredOpenClawPostRestoreDoctor).mockResolvedValue({
+      ok: false,
+      stage: "doctor",
+      detail: "sensitive restored config",
+    });
+    await expect(finalizeCreatedSandbox(options, dependencies)).rejects.toThrow(
+      "OpenClaw restored state migration failed (doctor).",
+    );
+    expect(dependencies.writeRestoredOpenclawInferenceRoute).not.toHaveBeenCalled();
+    expect(dependencies.register).not.toHaveBeenCalled();
+    expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(restoreWindow.abortUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
   });
 

@@ -227,6 +227,7 @@
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "test/e2e/support/hosted-provider-smoke-selection.test.ts",
+        "test/e2e/support/openclaw-onboard-diagnostics.test.ts",
         "test/security/admin-approval-helper.test.ts"
       ]
     },
@@ -254,6 +255,7 @@
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/openclaw-agent-output.ts",
         "test/e2e/fixtures/native-plugin-evidence.ts"
       ],
       "fast": [
@@ -280,6 +282,7 @@
         "test/helpers/e2e-answer-assertions.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "test/security/admin-approval-helper.test.ts",
+        "test/e2e/support/native-plugin-invocation.test.ts",
         "test/install/install-npm-private-prefix.test.ts"
       ]
     },
@@ -313,6 +316,7 @@
     },
     {
       "live": "test/e2e/live/launchable-smoke.test.ts",
+      "liveSources": ["test/e2e/fixtures/bootstrap-install-command.ts"],
       "fast": [
         "test/automation/e2e/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
@@ -423,7 +427,10 @@
     {
       "live": "test/e2e/live/sandbox-operations.test.ts",
       "liveSources": ["test/e2e/fixtures/sandbox-failure-diagnostics.ts"],
-      "fast": ["test/e2e/support/mcp-bridge-hermes-http.test.ts"]
+      "fast": [
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts",
+        "test/e2e/support/openclaw-owner-diagnostic.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
@@ -453,7 +460,8 @@
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/mcp-bridge-hermes-http.test.ts"
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts",
+        "test/e2e/support/openclaw-owner-diagnostic.test.ts"
       ]
     },
     {
@@ -489,7 +497,8 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
-        "test/e2e/support/mcp-bridge-hermes-http.test.ts"
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts",
+        "test/e2e/support/openclaw-owner-diagnostic.test.ts"
       ]
     },
     {
@@ -549,7 +558,8 @@
         "src/lib/messaging/channels/openclaw-bridge-health.test.ts",
         "test/runtime/messaging/telegram-diagnostics.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
-        "test/e2e/support/hermes-discord-policy-binding.test.ts"
+        "test/e2e/support/hermes-discord-policy-binding.test.ts",
+        "test/e2e/support/openclaw-owner-diagnostic.test.ts"
       ],
       "liveSources": [
         "test/e2e/fixtures/sandbox-failure-diagnostics.ts",
@@ -573,7 +583,8 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/install/install-npm-private-prefix.test.ts",
-        "test/e2e/support/mcp-bridge-hermes-http.test.ts"
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts",
+        "test/e2e/support/openclaw-owner-diagnostic.test.ts"
       ],
       "liveSources": ["test/e2e/fixtures/sandbox-failure-diagnostics.ts"]
     },
@@ -605,6 +616,7 @@
     {
       "live": "test/e2e/live/concurrent-gateway-ports.test.ts",
       "fast": [
+        "test/e2e/support/gateway-runtime-start.test.ts",
         "src/lib/actions/maintenance.test.ts",
         "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
         "src/lib/actions/sandbox/destroy-gateway-scoping.test.ts",
@@ -614,12 +626,16 @@
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/openshell-sandbox-list.test.ts",
         "test/e2e/support/forward-restart-observation.test.ts",
-        "test/e2e/support/onboard-interactive-pty.test.ts"
+        "test/e2e/support/onboard-interactive-pty.test.ts",
+        "test/e2e/support/openclaw-owner-diagnostic.test.ts"
       ],
       "liveSources": [
         "test/e2e/fixtures/openshell-sandbox-list.ts",
+        "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/forward-restart-observation.ts",
-        "test/e2e/live/onboard-interactive-pty.ts"
+        "test/e2e/live/onboard-interactive-pty.ts",
+        "test/e2e/fixtures/sandbox-failure-diagnostics.ts",
+        "test/e2e/lib/openclaw-owner-diagnostic.py"
       ]
     },
     {
@@ -852,7 +868,9 @@
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
         "test/state/snapshot.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
-        "test/security/admin-approval-helper.test.ts"
+        "test/e2e/support/openclaw-stopped-recovery.test.ts",
+        "test/security/admin-approval-helper.test.ts",
+        "test/e2e/support/openclaw-owner-diagnostic.test.ts"
       ]
     },
     {
@@ -966,26 +984,33 @@
     {
       "live": "test/e2e/live/openclaw-slack-pairing.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/sandbox-failure-diagnostics.ts",
         "test/e2e/live/openclaw-pairing-helpers.ts",
         "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts",
         "test/e2e/support/discord-enrollment-child.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-owner-diagnostic.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/openshell-gateway-upgrade.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/gateway-upgrade-executable-directory.ts",
+        "test/e2e/fixtures/openclaw-onboard-diagnostics.ts",
         "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
         "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
       ],
       "fast": [
+        "test/e2e/support/gateway-upgrade-executable-directory.test.ts",
+        "test/e2e/support/openclaw-onboard-diagnostics.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-recovery.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-target-image.test.ts",
@@ -1037,7 +1062,8 @@
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/native-lifecycle-migration-contract.test.ts",
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
-        "test/e2e/support/managed-image-activation-diagnostics.test.ts"
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/openclaw-stopped-recovery.test.ts"
       ],
       "liveSources": [
         "test/e2e/live/openclaw-stopped-recovery.ts",
@@ -1056,8 +1082,10 @@
         "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-phase-lifecycle.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/native-plugin-invocation.test.ts"
+      ],
+      "liveSources": ["test/e2e/fixtures/openclaw-agent-output.ts"]
     },
     {
       "live": "test/e2e/live/sessions-agents-cli.test.ts",
@@ -1121,11 +1149,18 @@
     },
     {
       "live": "test/e2e/live/state-backup-restore.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/openclaw-restore-fixture.ts",
+        "test/e2e/fixtures/stopped-container-startup-log.ts"
+      ],
       "fast": [
         "src/lib/actions/sandbox/rebuild-backup-phase.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/state/snapshot.test.ts",
-        "test/e2e/support/host-container-discovery.test.ts"
+        "test/e2e/support/host-container-discovery.test.ts",
+        "test/e2e/support/openclaw-restore-fixture.test.ts",
+        "test/e2e/support/openclaw-restore-backup.test.ts",
+        "test/e2e/support/stopped-container-startup-log.test.ts"
       ]
     },
     {
@@ -1154,7 +1189,9 @@
         "test/e2e/live/channels-stop-start-googlechat-proof.ts",
         "test/e2e/live/channels-stop-start-helpers.ts",
         "test/e2e/live/channels-stop-start-plan-state.ts",
-        "test/e2e/live/phase6-messaging-helpers.ts"
+        "test/e2e/live/phase6-messaging-helpers.ts",
+        "test/e2e/fixtures/sandbox-failure-diagnostics.ts",
+        "test/e2e/lib/openclaw-owner-diagnostic.py"
       ],
       "fast": [
         "test/e2e/support/discord-enrollment-child.test.ts",
@@ -1167,7 +1204,8 @@
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
-        "test/e2e/support/workflow-e2e-progress.test.ts"
+        "test/e2e/support/workflow-e2e-progress.test.ts",
+        "test/e2e/support/openclaw-owner-diagnostic.test.ts"
       ]
     },
     {

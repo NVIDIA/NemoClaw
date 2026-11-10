@@ -1,0 +1,64 @@
+async function resolveDeviceIdentityForGatewayCall(sharedStateMode) {
+	try {
+		return sharedStateMode === "read-only" ? await loadDeviceIdentityIfPresentAsync() : await loadOrCreateDeviceIdentityAsync();
+	} catch (cause) {
+		throw new Error("Cannot load device identity. Check access to your OpenClaw state directory and run \"openclaw doctor --fix\", then retry.", { cause });
+	}
+}
+async function resolveGatewayCallDeviceAuth(params) {
+	const { opts } = params;
+	const isLoopback = isLoopbackGatewayUrl(params.url);
+	const clientOptions = {
+		clientName: opts.clientName,
+		mode: opts.mode,
+		requireLocalBackendSharedAuth: opts.requireLocalBackendSharedAuth
+	};
+	if (opts.allowLocalBackendAuthNone && params.authMode === "none" && params.isImplicitLocalTarget && isLoopback && opts.clientName === GATEWAY_CLIENT_NAMES.CLI && opts.mode === GATEWAY_CLIENT_MODES.CLI && opts.deviceIdentity === void 0 && !opts.useStoredDeviceAuth && !opts.preparedDeviceAuth && !opts.approvalRuntimeToken && !opts.agentRuntimeIdentityToken) {
+		clientOptions.clientName = GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT;
+		clientOptions.mode = GATEWAY_CLIENT_MODES.BACKEND;
+		clientOptions.requireLocalBackendSharedAuth = true;
+	}
+	const mode = clientOptions.mode ?? GATEWAY_CLIENT_MODES.CLI;
+	const clientName = clientOptions.clientName ?? GATEWAY_CLIENT_NAMES.CLI;
+	const allowAuthNone = clientOptions.requireLocalBackendSharedAuth === true && params.authMode === "none";
+	const hasSharedSecretAuth = params.authMode === "token" && Boolean(params.token) || params.authMode === "password" && Boolean(params.password);
+	const isLocalBackendSharedAuth = mode === GATEWAY_CLIENT_MODES.BACKEND && clientName === GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT && (hasSharedSecretAuth || allowAuthNone) && isLoopback;
+	const isLocalCliSharedAuth = mode === GATEWAY_CLIENT_MODES.CLI && clientName === GATEWAY_CLIENT_NAMES.CLI && hasSharedSecretAuth && isLoopback;
+	const omitDeviceIdentity = isLocalBackendSharedAuth || isLocalCliSharedAuth;
+	if (clientOptions.requireLocalBackendSharedAuth && !omitDeviceIdentity) throw new GatewayLocalBackendSharedAuthUnavailableError("local backend shared auth requires a loopback gateway with token/password credentials or auth mode none");
+	return {
+		clientOptions,
+		omitDeviceIdentity,
+		deviceIdentity: opts.deviceIdentity === void 0 ? omitDeviceIdentity ? null : await resolveDeviceIdentityForGatewayCall(opts.sharedStateMode) : opts.deviceIdentity
+	};
+}
+async function loadStoredOperatorDeviceAuthToken(deviceIdentity, deviceAuthScope, sharedStateMode, env = process.env) {
+	if (!deviceIdentity) return null;
+	try {
+		if (deviceAuthScope) return await (sharedStateMode === "read-only" ? loadOriginDeviceTokenReadOnly : loadOriginDeviceToken)({
+			gatewayScope: deviceAuthScope,
+			deviceId: deviceIdentity.deviceId,
+			role: "operator",
+			env
+		});
+		return await (sharedStateMode === "read-only" ? loadDeviceAuthTokenReadOnly : loadDeviceAuthToken)({
+			deviceId: deviceIdentity.deviceId,
+			role: "operator",
+			env
+		});
+	} catch {
+		return null;
+	}
+}
+
+async function gatewayAuthInvocation(input, url, resolvedAuth, urlOverrideSource, context, token, password, deviceAuthScope) {
+	const { clientOptions, omitDeviceIdentity, deviceIdentity } = await resolveGatewayCallDeviceAuth({
+		opts: input,
+		url,
+		authMode: resolvedAuth.mode,
+		isImplicitLocalTarget: !urlOverrideSource && !context.isRemoteMode,
+		token,
+		password
+	});
+return { clientOptions, omitDeviceIdentity, deviceIdentity };
+}

@@ -10,6 +10,7 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import { classifyGatewayRestartFailure } from "./gateway-restart";
 import { restartSandboxGateway, waitForRecoveredSandboxGateway } from "./process-recovery";
 import * as forwardRecovery from "./forward-recovery";
+import * as wait from "../../core/wait";
 
 const executeFile = promisify(execFile);
 
@@ -60,7 +61,7 @@ describe("restartSandboxGateway native lifecycle", () => {
       getSessionAgent: () => null,
       getSandbox: () => ({ name: "alpha", agent: "openclaw" }),
       resolveSandboxDashboardPort: () => 18789,
-      executeSandboxExecCommand: vi.fn(async () => ({
+      executeSandboxExecCommand: vi.fn(async (_sandboxName: string, _command: string) => ({
         status: 0,
         stdout: "",
         stderr: "",
@@ -114,6 +115,10 @@ describe("restartSandboxGateway native lifecycle", () => {
       "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH NEMOCLAW_OPENCLAW_HOST_RESTART=1 openclaw gateway restart --safe --skip-deferral --json",
       210000,
     );
+    expect(deps.waitForRecoveredSandboxGateway).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ timeoutSeconds: 45, initialManagedHealthPassed: false }),
+    );
   });
 
   it("asks Hermes to restart its gateway", async () => {
@@ -135,6 +140,39 @@ describe("restartSandboxGateway native lifecycle", () => {
       210000,
     );
   });
+
+  it.each([
+    { readyAt: 36, expected: true, elapsed: 61 },
+    { readyAt: 48, expected: false, elapsed: 45 },
+  ])(
+    "bounds native startup readiness at $readyAt seconds",
+    async ({ readyAt, expected, elapsed }) => {
+      silenceConsole();
+      let seconds = 0;
+      vi.spyOn(wait, "sleepSeconds").mockImplementation((delay) => {
+        seconds += delay;
+      });
+      vi.spyOn(forwardRecovery, "resolveSandboxHealthProbeUrl").mockReturnValue(
+        "http://127.0.0.1:18791/health",
+      );
+      const { waitForRecoveredSandboxGateway: _wait, ...deps } = baseDeps();
+      deps.executeSandboxExecCommand
+        .mockImplementation(async (_name, command) => {
+          expect(command).toMatch(
+            /http:\/\/127\.0\.0\.1:18791\/readyz|^\/usr\/bin\/python3 -I -S -c/,
+          );
+          return seconds >= readyAt
+            ? { status: 0, stdout: '{"ready":true}\n200', stderr: "" }
+            : { status: 22, stdout: '{"ready":false}\n503', stderr: "" };
+        })
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
+
+      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
+      expect(result.ok).toBe(expected);
+      expect(seconds).toBe(elapsed);
+      expect(deps.ensureSandboxPortForward).toHaveBeenCalledTimes(expected ? 1 : 0);
+    },
+  );
 
   it.each([
     { status: 200, body: '{"ready":true}', ready: true },
@@ -216,9 +254,56 @@ describe("restartSandboxGateway native lifecycle", () => {
       ok: false,
       failureLayer: "health timeout",
     });
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      label: "available",
+      expectedDiagnostic: "startup failed: <REDACTED>",
+      diagnostic: async () => ({
+        status: 0,
+        stdout: "startup failed: opaque-restart-diagnostic-secret",
+        stderr: "",
+      }),
+    },
+    {
+      label: "transport lost",
+      expectedDiagnostic: "command unavailable",
+      diagnostic: async () => {
+        throw new SandboxCommandTransportError("unavailable");
+      },
+    },
+  ])(
+    "retains OpenClaw readiness failure with bounded diagnostics ($label)",
+    async ({ diagnostic, expectedDiagnostic }) => {
+      silenceConsole();
+      const secret = "opaque-restart-diagnostic-secret";
+      vi.stubEnv("NVIDIA_API_KEY", secret);
+      const execute = vi
+        .fn(diagnostic)
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
+      const deps = baseDeps({
+        executeSandboxExecCommand: execute,
+        waitForRecoveredSandboxGateway: vi.fn(async () => false),
+      });
+      await expect(restartSandboxGateway("alpha", { quiet: true, deps })).resolves.toMatchObject({
+        ok: false,
+        failureLayer: "health timeout",
+      });
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute.mock.calls[1]).toEqual([
+        "alpha",
+        expect.stringContaining("/usr/bin/python3 -I -S -c"),
+        15_000,
+      ]);
+      const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(output).not.toContain(secret);
+      expect(output).toContain(expectedDiagnostic);
+      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+    },
+  );
 
   it("requires health proof when Hermes restart closes the exec relay before status", async () => {
     silenceConsole();
@@ -337,6 +422,7 @@ describe("restartSandboxGateway native lifecycle", () => {
       managedProbeImpl: expect.any(Function),
       probeImpl: expect.any(Function),
       quiet: true,
+      timeoutSeconds: 45,
     });
     expect(deps.printGatewayWedgeDiagnostics).toHaveBeenCalled();
   });
