@@ -496,12 +496,36 @@ pub fn labels(name: &str, catalog: Value) -> Result<Vec<(String, String)>> {
     Ok(vec![(CATALOG_LABEL.to_owned(), compact(&catalog)?)])
 }
 
+/// A GitHub Actions cache that keeps BuildKit's layers between workflow runs.
+/// Buildx reads the cache service's address and token from the Actions
+/// runtime variables, and builds without the cache when they are unset.
+pub struct GhaCache {
+    /// Each target keeps its layers under `SCOPE-TARGET-ARCH`, so builds of
+    /// other targets and platforms don't replace them.
+    pub scope: String,
+    /// Also save the layers the build used, not only import them.
+    pub save: bool,
+}
+
 /// Build each target labeled with the catalog it installs. Bake exports the
 /// target's `catalog` stage, then builds its `labeled` stage with that catalog,
 /// which the build checks against the installed one; both reuse the harness
-/// stage's cache, so the image Bake builds is the image we use.
-pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
+/// stage's cache, so the image Bake builds is the image we use. With `cache`,
+/// both import the target's layers from it, and the labeled build, which runs
+/// every stage the image needs, saves them when asked.
+pub fn build(
+    root: &Path,
+    platform: &str,
+    selection: &[String],
+    cache: Option<&GhaCache>,
+) -> Result<()> {
+    let arch = platform.trim_start_matches("linux/");
     for (name, _) in plan(root, platform, selection)? {
+        let entry = cache.map(|cache| format!("type=gha,scope={}-{name}-{arch}", cache.scope));
+        let import: Vec<String> = entry
+            .iter()
+            .flat_map(|entry| ["--set".into(), format!("{name}.cache-from={entry}")])
+            .collect();
         let bake = || {
             let mut command = docker();
             command
@@ -520,7 +544,8 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
                 .arg("--set")
                 .arg(format!("{name}.target=catalog"))
                 .arg("--set")
-                .arg(format!("{name}.output=type=local,dest={output}")),
+                .arg(format!("{name}.output=type=local,dest={output}"))
+                .args(&import),
             &format!("catalog {name}"),
         )?;
         let catalog = fs::read(exported.join("catalog.json"))
@@ -529,14 +554,22 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
             serde_json::from_slice(&catalog).map_err(|_| "the exported catalog is not JSON")?;
         let [(_, label)] = <[_; 1]>::try_from(labels(&name, catalog)?)
             .map_err(|_| "an image carries exactly one catalog label")?;
-        status(
-            bake()
-                .args(["--load", "--set"])
-                .arg(format!("{name}.target=labeled"))
-                .arg("--set")
-                .arg(format!("{name}.args.CATALOG={label}")),
-            &format!("build {name}"),
-        )?;
+        let mut labeled = bake();
+        labeled
+            .args(["--load", "--set"])
+            .arg(format!("{name}.target=labeled"))
+            .arg("--set")
+            .arg(format!("{name}.args.CATALOG={label}"))
+            .args(&import);
+        if let (Some(entry), Some(GhaCache { save: true, .. })) = (&entry, cache) {
+            // mode=max keeps the builder stages, such as the Fabric runtime's
+            // Rust build, which take most of the time. A cache service failure
+            // leaves the image built.
+            labeled.arg("--set").arg(format!(
+                "{name}.cache-to={entry},mode=max,ignore-error=true"
+            ));
+        }
+        status(&mut labeled, &format!("build {name}"))?;
     }
     Ok(())
 }

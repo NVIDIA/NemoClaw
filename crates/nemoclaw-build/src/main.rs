@@ -247,6 +247,16 @@ enum ImageAction {
         /// linux/arm64 or linux/amd64; must match the Docker host.
         #[arg(long)]
         platform: String,
+        /// Import each target's BuildKit layers from GitHub Actions' cache,
+        /// under SCOPE-TARGET-ARCH. Buildx reads the cache service from
+        /// ACTIONS_RUNTIME_TOKEN and ACTIONS_RESULTS_URL, and builds without
+        /// the cache when they are unset.
+        #[arg(long, value_name = "SCOPE")]
+        gha_cache: Option<String>,
+        /// Also save each target's layers, including its builder stages, to
+        /// the --gha-cache scope.
+        #[arg(long, requires = "gha_cache")]
+        save_gha_cache: bool,
         #[arg(required = true)]
         targets: Vec<String>,
     },
@@ -701,8 +711,17 @@ async fn main() -> Result<()> {
     if let Action::Images { action } = cli.command {
         let root = Path::new(".");
         return match action {
-            ImageAction::Build { platform, targets } => {
-                nemoclaw_build::images::build(root, &platform, &targets)
+            ImageAction::Build {
+                platform,
+                gha_cache,
+                save_gha_cache,
+                targets,
+            } => {
+                let cache = gha_cache.map(|scope| nemoclaw_build::images::GhaCache {
+                    scope,
+                    save: save_gha_cache,
+                });
+                nemoclaw_build::images::build(root, &platform, &targets, cache.as_ref())
             }
             ImageAction::Runtimes => {
                 nemoclaw_build::hcl_cases::runtimes(root).and_then(|runtimes| {
