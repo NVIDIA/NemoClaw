@@ -4,6 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
+import * as protectedFs from "../../../tools/e2e/protected-openshell-filesystem.mts";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,19 +26,18 @@ import {
   prepareProtectedOpenShellSdk,
 } from "../../../tools/e2e/protected-openshell-workspace.mts";
 
-vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:fs")>();
+vi.mock("../../../tools/e2e/protected-openshell-filesystem.mts", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("../../../tools/e2e/protected-openshell-filesystem.mts")>();
   return {
     ...original,
-    renameSync: vi.fn(original.renameSync),
-    openSync: vi.fn(original.openSync),
-    closeSync: vi.fn(original.closeSync),
+    safeFile: vi.fn(original.safeFile),
+    replaceSource: vi.fn(original.replaceSource),
   };
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
-  vi.mocked(fs.openSync).mockReset();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -258,8 +258,10 @@ describe("protected OpenShell workspace", () => {
     await manageProtectedOpenShellWorkspace("prepare", input);
     const versionPath = "src/lib/onboard/openshell-version.ts";
     const trustedVersion = git(input.trustedRoot, "show", `${input.workflowSha}:${versionPath}`);
-    const { renameSync: original } = await vi.importActual<typeof import("node:fs")>("node:fs");
-    vi.mocked(fs.renameSync)
+    const { replaceSource: original } = await vi.importActual<
+      typeof import("../../../tools/e2e/protected-openshell-filesystem.mts")
+    >("../../../tools/e2e/protected-openshell-filesystem.mts");
+    vi.mocked(protectedFs.replaceSource)
       .mockImplementationOnce(original)
       .mockImplementationOnce(() => {
         throw new Error("fixture recovery failure");
@@ -272,7 +274,38 @@ describe("protected OpenShell workspace", () => {
     );
     await manageProtectedOpenShellWorkspace("restore", input);
     expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
+  });
+
+  it("prepares a new projection after completed restoration", async () => {
+    const input = fixture();
     await manageProtectedOpenShellWorkspace("prepare", input);
+    await manageProtectedOpenShellWorkspace("restore", input);
+    await manageProtectedOpenShellWorkspace("prepare", input);
+    expect(git(input.trustedRoot, "diff", "--no-ext-diff")).not.toBe("");
+  });
+
+  it("rejects a parent swapped between restore validation and replacement and can recover", async () => {
+    const input = fixture();
+    await manageProtectedOpenShellWorkspace("prepare", input);
+    const parent = join(input.trustedRoot, "src/lib/onboard");
+    const outside = join(input.candidateRoot, "outside");
+    fs.mkdirSync(outside);
+    const sentinel = join(outside, "openshell-version.ts");
+    fs.writeFileSync(sentinel, "external sentinel");
+    const { replaceSource: original } = await vi.importActual<
+      typeof import("../../../tools/e2e/protected-openshell-filesystem.mts")
+    >("../../../tools/e2e/protected-openshell-filesystem.mts");
+    vi.mocked(protectedFs.replaceSource).mockImplementationOnce((...args) => {
+      expect(args[1]).toBe("src/lib/onboard/openshell-version.ts");
+      fs.renameSync(parent, `${parent}.held`);
+      fs.symlinkSync(outside, parent);
+      return original(...args);
+    });
+    await expect(manageProtectedOpenShellWorkspace("restore", input)).rejects.toThrow(/Unsafe/);
+    expect(fs.readFileSync(sentinel, "utf8")).toBe("external sentinel");
+    expect(fs.readdirSync(outside)).toEqual(["openshell-version.ts"]);
+    fs.unlinkSync(parent);
+    fs.renameSync(`${parent}.held`, parent);
     await manageProtectedOpenShellWorkspace("restore", input);
     expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
   });
@@ -417,12 +450,14 @@ describe("protected OpenShell workspace", () => {
     const path = join(input.trustedRoot, "scripts/install-openshell.sh");
     const retained = `${path}.retained`;
     const before = fs.statSync(path);
-    const { openSync: original } = await vi.importActual<typeof import("node:fs")>("node:fs");
-    vi.mocked(fs.openSync).mockImplementationOnce((file, flags, mode) => {
-      expect(file).toBe(path);
+    const { safeFile: original } = await vi.importActual<
+      typeof import("../../../tools/e2e/protected-openshell-filesystem.mts")
+    >("../../../tools/e2e/protected-openshell-filesystem.mts");
+    vi.mocked(protectedFs.safeFile).mockImplementationOnce((root, file) => {
+      expect(join(root, file)).toBe(path);
       fs.renameSync(path, retained);
       fs.symlinkSync(retained, path);
-      return original(file, flags, mode);
+      return original(root, file);
     });
     await expect(manageProtectedOpenShellWorkspace("prepare", input)).rejects.toThrow(/Unsafe/);
     expect(fs.readlinkSync(path)).toBe(retained);
@@ -433,23 +468,22 @@ describe("protected OpenShell workspace", () => {
     });
   });
 
-  it("rejects a hard-linked destination and closes its opened descriptor", async () => {
+  it("rejects a hard-linked destination without changing its contents", async () => {
     const input = fixture();
     const path = join(input.trustedRoot, "scripts/install-openshell.sh");
     fs.linkSync(path, `${path}.retained`);
-    vi.mocked(fs.openSync).mockClear();
-    vi.mocked(fs.closeSync).mockClear();
+    const before = git(input.trustedRoot, "diff", "--no-ext-diff");
     await expect(manageProtectedOpenShellWorkspace("prepare", input)).rejects.toThrow(/Unsafe/);
-    const opened = vi.mocked(fs.openSync).mock.results.map((result) => result.value);
-    expect(opened.length).toBeGreaterThan(0);
-    expect(vi.mocked(fs.closeSync).mock.calls.map(([fd]) => fd)).toEqual(opened);
+    expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
     expect(fs.statSync(path).nlink).toBe(2);
   });
 
   it("rolls back an incomplete prepare when a later replacement fails", async () => {
     const input = fixture();
-    const { renameSync: original } = await vi.importActual<typeof import("node:fs")>("node:fs");
-    vi.mocked(fs.renameSync)
+    const { replaceSource: original } = await vi.importActual<
+      typeof import("../../../tools/e2e/protected-openshell-filesystem.mts")
+    >("../../../tools/e2e/protected-openshell-filesystem.mts");
+    vi.mocked(protectedFs.replaceSource)
       .mockImplementationOnce(original)
       .mockImplementationOnce(original)
       .mockImplementationOnce(() => {
@@ -463,14 +497,16 @@ describe("protected OpenShell workspace", () => {
 
   it("runs workflow recovery after preparation and its rollback both fail", async () => {
     const input = fixture();
-    const { renameSync: original } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const { replaceSource: original } = await vi.importActual<
+      typeof import("../../../tools/e2e/protected-openshell-filesystem.mts")
+    >("../../../tools/e2e/protected-openshell-filesystem.mts");
     const failProjection = vi.fn(() => {
       throw new Error("fixture projection failure");
     });
     const failRollback = vi.fn(() => {
       throw new Error("fixture rollback failure");
     });
-    vi.mocked(fs.renameSync)
+    vi.mocked(protectedFs.replaceSource)
       .mockImplementationOnce(original)
       .mockImplementationOnce(original)
       .mockImplementationOnce(failProjection)

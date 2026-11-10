@@ -2,19 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  lstatSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { lstatSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { safeFile, replaceSource } from "./protected-openshell-filesystem.mts";
 import { isDeepStrictEqual } from "node:util";
 import { parseAuditConfig } from "../../scripts/audit-reviewed-npm-graph.mts";
 import { readApprovedOpenShellSdkConfig } from "../../scripts/checks/candidate-openshell-sdk.mts";
@@ -121,51 +112,6 @@ function committedSource(root: string, sha: string, path: string): string {
     throw new Error(`Invalid protected OpenShell source bytes: ${path}`);
   }
   return source;
-}
-
-function safeFile(root: string, path: string): { path: string; mode: number; source: string } {
-  const absoluteRoot = resolve(root);
-  const absolutePath = join(absoluteRoot, path);
-  // The caller supplies a fixed repository path, never a candidate-selected destination.
-  for (let parent = dirname(absolutePath); ; parent = dirname(parent)) {
-    const stat = lstatSync(parent);
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw new Error(`Unsafe source directory: ${path}`);
-    if (parent === absoluteRoot) break;
-    if (!relative(absoluteRoot, parent) || relative(absoluteRoot, parent).startsWith("..")) {
-      throw new Error("Source escaped the trusted workspace");
-    }
-  }
-  let fd: number;
-  try {
-    fd = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch (cause) {
-    throw new Error(`Unsafe protected OpenShell file: ${path}`, { cause });
-  }
-  try {
-    // Validate and read the same opened file; never reopen a checked pathname.
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size > MAX_SOURCE_BYTES) {
-      throw new Error(`Unsafe protected OpenShell file: ${path}`);
-    }
-    return {
-      path: absolutePath,
-      mode: stat.mode & 0o777,
-      source: readFileSync(fd, "utf8"),
-    };
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function replaceSource(path: string, source: string, mode: number): void {
-  const temporary = `${path}.openshell-projection-${randomUUID()}`;
-  try {
-    writeFileSync(temporary, source, { flag: "wx", mode });
-    renameSync(temporary, path);
-  } finally {
-    rmSync(temporary, { force: true });
-  }
 }
 
 /** Recheck approval for preparation and verification; recovery receipts cannot authorize candidate execution. */
@@ -372,12 +318,24 @@ function restoreProtectedOpenShellWorkspace(input: ProtectedOpenShellWorkspace) 
     if (current.source !== original && sha256(current.source) !== entry.sha256)
       throw new Error(`Unexpected restore source: ${entry.path}`);
     const tree = git(input.trustedRoot, ["ls-tree", "-z", input.workflowSha, "--", entry.path]);
-    return { ...current, original, mode: tree.startsWith("100755 ") ? 0o755 : 0o644 };
+    return {
+      ...current,
+      relativePath: entry.path,
+      original,
+      currentMode: current.mode,
+      mode: tree.startsWith("100755 ") ? 0o755 : 0o644,
+    };
   });
   // Leave completed recovery writes in place if a later write fails. The receipt permits resuming it.
   for (const entry of files) {
-    if (entry.source !== entry.original || (lstatSync(entry.path).mode & 0o777) !== entry.mode)
-      replaceSource(entry.path, entry.original, entry.mode);
+    if (entry.source !== entry.original || entry.currentMode !== entry.mode)
+      replaceSource(
+        input.trustedRoot,
+        entry.relativePath,
+        entry.original,
+        entry.mode,
+        entry.source,
+      );
   }
   return {
     schemaVersion: 1,
@@ -422,17 +380,19 @@ export async function manageProtectedOpenShellWorkspace(
       )
     )
       throw new Error("Protected OpenShell projection paths changed");
-    replaceSource(receiptPath(input), `${JSON.stringify(receipt)}\n`, 0o600);
+    receiptPath(input);
+    replaceSource(input.trustedRoot, RECEIPT_PATH, `${JSON.stringify(receipt)}\n`, 0o600);
     const written: typeof files = [];
     try {
       for (const file of files) {
         const next = file.projected;
         if (file.source === next) continue;
-        replaceSource(file.path, next, file.mode);
+        replaceSource(input.trustedRoot, file.relativePath, next, file.mode, file.source);
         written.push(file);
       }
     } catch (error) {
-      for (const file of written.reverse()) replaceSource(file.path, file.source, file.mode);
+      for (const file of written.reverse())
+        replaceSource(input.trustedRoot, file.relativePath, file.source, file.mode, file.projected);
       throw error;
     }
   }

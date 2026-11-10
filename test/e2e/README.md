@@ -2652,6 +2652,10 @@ An admission rejection changes no files.
 A failed verification blocks qualification.
 A failed restoration fails the job.
 Preparation records the dispatch commits, fixed projection paths, and original and projected digests in a mode-0600 recovery receipt under the trusted checkout's `.git` directory before changing sources.
+File reads and replacements use `/usr/bin/python3` in isolated mode with an empty environment.
+Its standard-library descriptor-relative operations open each directory with `O_NOFOLLOW`, keep temporary creation and rename bound to the opened parent, and reject detached directory chains.
+Projection, rollback, receipt publication, and restoration share this boundary; replacements recheck the expected source before publication.
+A rejected race retains the recovery receipt for reconciliation after the directory tree is safe again.
 Restoration validates that receipt, the trusted commit, and every destination before writing originals read from the trusted Git commit.
 It needs neither live admission nor the candidate checkout, so revoked approval cannot block cleanup.
 The receipt cannot supply replacement bytes or authorize candidate execution.

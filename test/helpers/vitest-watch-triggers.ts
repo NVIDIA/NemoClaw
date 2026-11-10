@@ -46,6 +46,13 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)tools\/e2e\/protected-openshell-filesystem\.py$/,
+    testsToRun: runTests(
+      "test/e2e/support/protected-openshell-filesystem.test.ts",
+      "test/e2e/support/protected-openshell-workspace.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)Dockerfile(?:\.base)?$/,
     testsToRun: (file) => {
       const relative = file.startsWith(`${REPO_ROOT}/`) ? file.slice(REPO_ROOT.length + 1) : file;
