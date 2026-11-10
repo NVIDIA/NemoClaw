@@ -601,6 +601,69 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
     runner.enqueue(shellResult(0, "200"));
   }
 
+  const threadId = "01900000-0000-7000-8000-000000000001";
+  const sqlPrompt =
+    "Do not use tools or execute SQL. Keep these examples as conversation context: " +
+    "'SELECT id FROM users WHERE (password = ?)' and " +
+    "'SELECT id FROM users WHERE ((password = ?))'. Reply with exactly one word: PONG";
+  const conversation = JSON.stringify({
+    thread: { thread_id: threadId },
+    turns: [
+      {
+        messages: [
+          { role: "user", content: sqlPrompt },
+          { role: "assistant", content: "PONG" },
+        ],
+      },
+    ],
+  });
+  function dcodeTurn(id = threadId): ShellProbeResult {
+    return shellResult(
+      0,
+      JSON.stringify({
+        schema_version: 1,
+        command: "non-interactive",
+        data: { status: "success", exit_code: 0, response: "PONG", completion: { thread_id: id } },
+      }),
+    );
+  }
+  function enqueueRebuild(
+    runner: FakeRunner,
+    overrides: Partial<Record<"seed" | "before" | "after" | "resume", ShellProbeResult>> = {},
+  ): void {
+    enqueuePreamble(runner);
+    runner.enqueue(shellResult(0)); // install invalid provider credential
+    runner.enqueue(shellResult(0, "401"));
+    runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
+    runner.enqueue(
+      shellResult(
+        1,
+        "Rebuild preflight failed: recorded inference credentials or route were rejected.\n" +
+          "existing sandbox inference probe returned HTTP 401\n" +
+          "Sandbox is untouched — no data was lost.\n",
+      ),
+    );
+    runner.enqueue(shellResult(0, "container-b\ncontainer-a\n"));
+    runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_REBUILD_MARKER"));
+    runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
+    runner.enqueue(shellResult(0)); // restore valid provider credential
+    runner.enqueue(shellResult(0, "200"));
+    runner.enqueue(overrides.seed ?? dcodeTurn());
+    runner.enqueue(overrides.before ?? shellResult(0, conversation));
+    runner.enqueue(shellResult(0, "rebuild complete"));
+    runner.enqueue(shellResult(0, "container-c\n"));
+    runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_REBUILD_MARKER"));
+    runner.enqueue(
+      shellResult(
+        0,
+        "unknown-home\nworkspace\npackage\nnpm-cache\nplugin\nhook\ncron\nchild-agent\nconfiguration\n",
+      ),
+    );
+    runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
+    runner.enqueue(overrides.after ?? shellResult(0, conversation));
+    runner.enqueue(overrides.resume ?? dcodeTurn());
+  }
+
   it.each([
     [
       "Docker",
@@ -630,48 +693,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       process.env.HOME = home;
       try {
         const runner = new FakeRunner();
-        enqueuePreamble(runner);
-        runner.enqueue(shellResult(0)); // install invalid provider credential
-        runner.enqueue(shellResult(0, "401"));
-        runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
-        runner.enqueue(
-          shellResult(
-            1,
-            "Rebuild preflight failed: recorded inference credentials or route were rejected.\n" +
-              "existing sandbox inference probe returned HTTP 401\n" +
-              "Sandbox is untouched — no data was lost.\n",
-          ),
-        );
-        runner.enqueue(shellResult(0, "container-b\ncontainer-a\n"));
-        runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_REBUILD_MARKER"));
-        runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
-        runner.enqueue(shellResult(0)); // restore valid provider credential
-        runner.enqueue(shellResult(0, "200"));
-        runner.enqueue(shellResult(0, "rebuild complete"));
-        runner.enqueue(shellResult(0, "container-c\n"));
-        runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_REBUILD_MARKER"));
-        runner.enqueue(
-          shellResult(
-            0,
-            "unknown-home\nworkspace\npackage\nnpm-cache\nplugin\nhook\ncron\nchild-agent\nconfiguration\n",
-          ),
-        );
-        runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
-        runner.enqueue(
-          shellResult(
-            0,
-            JSON.stringify({
-              schema_version: 1,
-              command: "non-interactive",
-              data: {
-                status: "success",
-                exit_code: 0,
-                response: "PONG",
-                completion: { thread_id: "thread-1", duration_ms: 1, response_bytes: 4 },
-              },
-            }),
-          ),
-        );
+        enqueueRebuild(runner);
         const cleanup = new FakeCleanup();
 
         const result = await fixture(runner, cleanup, runtimeEnvironment).simulate(
@@ -695,6 +717,9 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
             "marker-read:rebuilt",
             "native-state-read:rebuilt",
             "sandbox-ready:rebuilt",
+            "dcode-conversation:seed",
+            "dcode-conversation:before",
+            "dcode-conversation:rebuilt",
             "dcode-action:rebuilt",
           ]),
         );
@@ -788,10 +813,48 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
           sandboxName,
           "--",
           "dcode",
+          "-r",
+          threadId,
           "-n",
           "Reply with exactly one word: PONG",
           "--json",
         ]);
+        const seed = runner.calls.find(
+          (call) => call.options?.artifactName === "lifecycle-dcode-conversation-seed",
+        );
+        expect(seed?.args).toEqual([
+          "sandbox",
+          "exec",
+          "-n",
+          sandboxName,
+          "--",
+          "dcode",
+          "-n",
+          sqlPrompt,
+          "--json",
+        ]);
+        const reads = runner.calls.filter((call) =>
+          ["lifecycle-dcode-conversation-before", "lifecycle-dcode-conversation-rebuilt"].includes(
+            call.options?.artifactName ?? "",
+          ),
+        );
+        expect(reads).toHaveLength(2);
+        expect(reads[0].args).toEqual(reads[1].args);
+        expect(reads[0].args.slice(-5)).toEqual([
+          threadId,
+          "--db",
+          "/sandbox/.deepagents/.state/sessions.db",
+          "--mode",
+          "transcript",
+        ]);
+        expect(reads[0].options?.timeoutMs).toBe(30_000);
+        expect(reads[1].options?.timeoutMs).toBe(30_000);
+        const seedIndex = runner.calls.indexOf(seed!);
+        const rebuildIndex = runner.calls.indexOf(successfulRebuild!);
+        expect(seedIndex).toBeLessThan(runner.calls.indexOf(reads[0]));
+        expect(runner.calls.indexOf(reads[0])).toBeLessThan(rebuildIndex);
+        expect(rebuildIndex).toBeLessThan(runner.calls.indexOf(reads[1]));
+        expect(runner.calls.indexOf(reads[1])).toBeLessThan(runner.calls.indexOf(dcodeAction!));
         const containerIds = runner.calls.find(
           (call) => call.options?.artifactName === "lifecycle-dcode-container-ids-before",
         );
@@ -812,6 +875,44 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         const callCount = runner.calls.length;
         await cleanup.calls[0].run();
         expect(runner.calls).toHaveLength(callCount);
+      } finally {
+        restoreEnv("HOME", previousHome);
+        fs.rmSync(home, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each([
+    ["seed", shellResult(7, "native turn failed"), /run DCode action before/],
+    ["before", shellResult(7, conversation), /read native DCode conversation before/],
+    [
+      "before",
+      shellResult(0, JSON.stringify({ thread: { thread_id: threadId }, turns: [] })),
+      /did not persist/,
+    ],
+    ["after", shellResult(7, conversation), /read native DCode conversation rebuilt/],
+    [
+      "after",
+      shellResult(0, conversation.replace(sqlPrompt, "lost conversation")),
+      /changed or disappeared/,
+    ],
+    ["resume", dcodeTurn("01900000-0000-7000-8000-000000000002"), /resumed a different thread/],
+  ] as const)(
+    "rejects a failed native conversation proof at %s (%j)",
+    async (phase, response, expectedError) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-conversation-contract-"));
+      const previousHome = process.env.HOME;
+      process.env.HOME = home;
+      try {
+        const runner = new FakeRunner();
+        enqueueRebuild(runner, { [phase]: response });
+        await expect(
+          fixture(runner, new FakeCleanup()).simulate(
+            "dcode-rebuild-invalid-credential",
+            dcodeInstance(),
+            options,
+          ),
+        ).rejects.toThrow(expectedError);
       } finally {
         restoreEnv("HOME", previousHome);
         fs.rmSync(home, { force: true, recursive: true });
