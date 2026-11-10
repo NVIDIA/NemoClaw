@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Built-in defaults for `nemoclaw onboard` without a template. The journey
-# assigns a new deployment UID and leaves omitted settings at their defaults.
+# assigns a new deployment UID, suggests a name from the chosen agent, and
+# leaves omitted settings at their defaults.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
-metadata:
-  name: openclaw
+metadata: {}
 spec:
   gateway:
     management: managed
