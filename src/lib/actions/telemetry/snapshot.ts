@@ -28,7 +28,7 @@ import type {
 } from "../../domain/telemetry/event";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
 import { readAppliedPolicySelection } from "../../domain/telemetry/provenance";
-import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/attachment";
+import { authorizedNativeLocalAttachment } from "../../inference/native-local/recorded-selection";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { DCODE_OBSERVABILITY_FEATURE } from "../../onboard/observability-policy-presets";
 import {
@@ -234,15 +234,8 @@ function recordedNativeRoute(
   let valid = false;
   try {
     if (local === undefined && !recordedNativeProviderAttachment(entry)) return undefined;
-    const attachment = local === undefined ? null : normalizeNativeLocalProviderAttachment(local);
-    valid =
-      local === undefined ||
-      (!!attachment &&
-        attachment.provider === entry.provider &&
-        attachment.sandboxName === entry.name &&
-        attachment.gatewayName === gatewayName &&
-        entry.nativeNvidiaProviderAttachment === undefined &&
-        entry.nativeHostedProviderAttachment === undefined);
+    // The same validation as `inference get`, so both report one route authority.
+    valid = local === undefined || !!authorizedNativeLocalAttachment(entry, gatewayName);
   } catch {
     /* An invalid recorded attachment is reported as a route collection error. */
   }

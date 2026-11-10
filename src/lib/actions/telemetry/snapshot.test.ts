@@ -646,6 +646,12 @@ const nativeLocalBinding: NativeLocalBinding = {
   gatewayName: "nemoclaw",
   sandboxName: "native",
 };
+const nativeLocalAttachment = (binding: NativeLocalBinding) => ({
+  ...binding,
+  ...nativeLocalIdentity(binding),
+  schemaVersion: 1,
+  providerId: "provider-id",
+});
 
 // Native providers are attached to the sandbox, so the gateway keeps no shared route for them.
 const nativeRouteCases = [
@@ -712,12 +718,8 @@ const nativeRouteCases = [
         modelSource: "local",
         apiFamily: "openai-completions",
       },
-      nativeLocalProviderAttachment: {
-        ...nativeLocalBinding,
-        ...nativeLocalIdentity(nativeLocalBinding),
-        schemaVersion: 1,
-        providerId: "provider-id",
-      },
+      gatewayName: "nemoclaw",
+      nativeLocalProviderAttachment: nativeLocalAttachment(nativeLocalBinding),
     },
     route: {
       modelId: "qwen2.5:7b",
@@ -772,11 +774,23 @@ it("reports not_configured when the gateway has no route for a shared-route sand
   expect(isOperationEvent(event)).toBe(true);
 });
 
-it("marks an invalid recorded native selection as a route collection error (#14241)", async () => {
-  const { config, entry } = nativeRouteCases[0];
+it.each([
+  ["a native selection whose provider differs from its attachment", 0, { provider: "openai-api" }],
+  [
+    "a native-local attachment recorded for another agent",
+    2,
+    {
+      nativeLocalProviderAttachment: nativeLocalAttachment({
+        ...nativeLocalBinding,
+        agent: "openclaw",
+      }),
+    },
+  ],
+] as const)("marks %s as a route collection error (#14241)", async (_label, index, overrides) => {
+  const { config, entry } = nativeRouteCases[index];
   const event = await collectNativeConfiguration("hermes", hermesConfigPath, config, {
     ...entry,
-    provider: "openai-api",
+    ...overrides,
   } as unknown as Partial<SandboxEntry>);
   expect(event.parameters.configurations[0]).toMatchObject({
     currentInferenceRouteStatus: "collection_error",
