@@ -146,7 +146,7 @@ describe("rebuildSandbox flow: target image", () => {
 
   it("stops before sandbox mutation when Hermes base-image preflight fails (#11072)", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: { agent: "hermes", provider: "build" },
       baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
     });
 
@@ -380,7 +380,7 @@ describe("rebuildSandbox flow: target image", () => {
     }
   });
 
-  it("rebuilds a Hermes router with a non-matching session (#5735)", async () => {
+  it("rejects a retired Hermes router with a non-matching session (#5735)", async () => {
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
       sandboxEntry: { agent: "hermes", provider: "nvidia-router", model: "router-model" },
@@ -391,13 +391,10 @@ describe("rebuildSandbox flow: target image", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("Model Router has been removed");
 
-    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(harness.onboardSpy).toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
     expect(harness.session.routerPid).toBe(4242);
     expect(harness.session.routerCredentialHash).toBe("router-credential-hash");
   });
