@@ -140,14 +140,14 @@ jobs:
           if [[ -d $NEMOCLAW_HCL_RUN/deployment ]]; then
             "$NEMOCLAW_TEST_BUNDLE/bin/nemoclaw" destroy --output json --progress off \
               --state-dir "$NEMOCLAW_HCL_RUN/deployment" \
-              > "$NEMOCLAW_HCL_RUN/work/destroy.json" 2> "$NEMOCLAW_HCL_RUN/work/destroy.log"
-            jq -e '.outcome == "destroyed"' "$NEMOCLAW_HCL_RUN/work/destroy.json" > /dev/null
+              > "$NEMOCLAW_HCL_RUN/work/destroy.json" 2> "$NEMOCLAW_HCL_RUN/work/destroy.log" || exit 1
+            jq -e '.outcome == "destroyed"' "$NEMOCLAW_HCL_RUN/work/destroy.json" > /dev/null || exit 1
             uid=$(cat "$NEMOCLAW_HCL_RUN/uid")
-            [[ $uid =~ ^[a-f0-9-]{36}$ ]]
-            remaining=$(docker ps -aq --filter "label=nemoclaw.nvidia.com/uid=$uid")
-            [[ -z $remaining ]]
-            remaining_networks=$(docker network ls -q --filter "label=nemoclaw.nvidia.com/uid=$uid")
-            [[ -z $remaining_networks ]]
+            [[ $uid =~ ^[a-f0-9-]{36}$ ]] || exit 1
+            remaining=$(docker ps -aq --filter "label=nemoclaw.nvidia.com/uid=$uid") || exit 1
+            [[ -z $remaining ]] || exit 1
+            remaining_networks=$(docker network ls -q --filter "label=nemoclaw.nvidia.com/uid=$uid") || exit 1
+            [[ -z $remaining_networks ]] || exit 1
             jq '{outcome,retained}' "$NEMOCLAW_HCL_RUN/work/destroy.json" > "$NEMOCLAW_HCL_RUN/reports/cleanup.json"
           fi
       - name: Record the bounded outcome

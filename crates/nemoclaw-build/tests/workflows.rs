@@ -686,7 +686,7 @@ fn colossus_cleanup_fails_for_unobserved_or_remaining_owned_containers() {
         .unwrap();
         fs::set_permissions(&docker, fs::Permissions::from_mode(0o700)).unwrap();
         let output = Command::new("bash")
-            .args(["-e", "-o", "pipefail", "-c", script])
+            .args(["-e", "-x", "-o", "pipefail", "-c", script])
             .env_clear()
             .env(
                 "PATH",
@@ -700,7 +700,13 @@ fn colossus_cleanup_fails_for_unobserved_or_remaining_owned_containers() {
             .env("NEMOCLAW_TEST_BUNDLE", root.path().join("bundle"))
             .output()
             .unwrap();
-        assert_eq!(output.status.success(), scenario == "absent", "{scenario}");
+        assert_eq!(
+            output.status.success(),
+            scenario == "absent",
+            "{scenario}: stdout={}, stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert_eq!(
             root.path().join("reports/cleanup.json").exists(),
             scenario == "absent"
