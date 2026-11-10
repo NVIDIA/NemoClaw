@@ -617,7 +617,19 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       },
     ],
   });
-  function dcodeTurn(id = threadId): ShellProbeResult {
+  const resumedConversation = JSON.stringify({
+    thread: { thread_id: threadId },
+    turns: [
+      ...JSON.parse(conversation).turns,
+      {
+        messages: [
+          { role: "user", content: "Reply with exactly one word: PONG" },
+          { role: "assistant", content: "PONG" },
+        ],
+      },
+    ],
+  });
+  function dcodeTurn(id: string | null = threadId): ShellProbeResult {
     return shellResult(
       0,
       JSON.stringify({
@@ -629,7 +641,9 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
   }
   function enqueueRebuild(
     runner: FakeRunner,
-    overrides: Partial<Record<"seed" | "before" | "after" | "resume", ShellProbeResult>> = {},
+    overrides: Partial<
+      Record<"seed" | "before" | "after" | "resume" | "resumedHistory", ShellProbeResult>
+    > = {},
   ): void {
     enqueuePreamble(runner);
     runner.enqueue(shellResult(0)); // install invalid provider credential
@@ -661,7 +675,8 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
     );
     runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
     runner.enqueue(overrides.after ?? shellResult(0, conversation));
-    runner.enqueue(overrides.resume ?? dcodeTurn());
+    runner.enqueue(overrides.resume ?? dcodeTurn(null));
+    runner.enqueue(overrides.resumedHistory ?? shellResult(0, resumedConversation));
   }
 
   it.each([
@@ -721,6 +736,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
             "dcode-conversation:before",
             "dcode-conversation:rebuilt",
             "dcode-action:rebuilt",
+            "dcode-conversation:resumed",
           ]),
         );
         const providerUpdates = runner.calls.filter(
@@ -834,12 +850,15 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
           "--json",
         ]);
         const reads = runner.calls.filter((call) =>
-          ["lifecycle-dcode-conversation-before", "lifecycle-dcode-conversation-rebuilt"].includes(
-            call.options?.artifactName ?? "",
-          ),
+          [
+            "lifecycle-dcode-conversation-before",
+            "lifecycle-dcode-conversation-rebuilt",
+            "lifecycle-dcode-conversation-resumed",
+          ].includes(call.options?.artifactName ?? ""),
         );
-        expect(reads).toHaveLength(2);
+        expect(reads).toHaveLength(3);
         expect(reads[0].args).toEqual(reads[1].args);
+        expect(reads[0].args).toEqual(reads[2].args);
         expect(reads[0].args.slice(-5)).toEqual([
           threadId,
           "--db",
@@ -849,12 +868,14 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         ]);
         expect(reads[0].options?.timeoutMs).toBe(30_000);
         expect(reads[1].options?.timeoutMs).toBe(30_000);
+        expect(reads[2].options?.timeoutMs).toBe(30_000);
         const seedIndex = runner.calls.indexOf(seed!);
         const rebuildIndex = runner.calls.indexOf(successfulRebuild!);
         expect(seedIndex).toBeLessThan(runner.calls.indexOf(reads[0]));
         expect(runner.calls.indexOf(reads[0])).toBeLessThan(rebuildIndex);
         expect(rebuildIndex).toBeLessThan(runner.calls.indexOf(reads[1]));
         expect(runner.calls.indexOf(reads[1])).toBeLessThan(runner.calls.indexOf(dcodeAction!));
+        expect(runner.calls.indexOf(dcodeAction!)).toBeLessThan(runner.calls.indexOf(reads[2]));
         const containerIds = runner.calls.find(
           (call) => call.options?.artifactName === "lifecycle-dcode-container-ids-before",
         );
@@ -884,6 +905,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
 
   it.each([
     ["seed", shellResult(7, "native turn failed"), /run DCode action before/],
+    ["seed", dcodeTurn(null), /native thread UUID/],
     ["before", shellResult(7, conversation), /read native DCode conversation before/],
     [
       "before",
@@ -896,7 +918,30 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       shellResult(0, conversation.replace(sqlPrompt, "lost conversation")),
       /changed or disappeared/,
     ],
-    ["resume", dcodeTurn("01900000-0000-7000-8000-000000000002"), /resumed a different thread/],
+    ["resume", shellResult(7, "native resume failed"), /run DCode action after/],
+    ["resumedHistory", shellResult(7, conversation), /read native DCode conversation resumed/],
+    ["resumedHistory", shellResult(0, conversation), /not appended to the original thread/],
+    [
+      "resumedHistory",
+      shellResult(0, resumedConversation.replace(threadId, "01900000-0000-7000-8000-000000000002")),
+      /not appended to the original thread/,
+    ],
+    [
+      "resumedHistory",
+      shellResult(
+        0,
+        resumedConversation.replace(
+          '"content":"Reply with exactly one word: PONG"',
+          '"content":"other turn"',
+        ),
+      ),
+      /not appended to the original thread/,
+    ],
+    [
+      "resumedHistory",
+      shellResult(0, resumedConversation.replace(sqlPrompt, "lost conversation")),
+      /not appended to the original thread/,
+    ],
   ] as const)(
     "rejects a failed native conversation proof at %s (%j)",
     async (phase, response, expectedError) => {

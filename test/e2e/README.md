@@ -7,7 +7,8 @@ Direct E2E coverage runs through Vitest.
 
 The Deep Agents Code baseline target owns native conversation preservation across rebuild.
 Its existing invalid-credential lifecycle creates a real `dcode` thread containing parenthesized SQL bind markers.
-The installed thread inspector reads that conversation before and after sandbox replacement, then `dcode` resumes the same thread.
+The installed thread inspector reads that conversation before and after sandbox replacement.
+After `dcode` resumes, the inspector verifies the new user turn in the original thread.
 Classifier, SQLite TEXT/BLOB, and WAL archive tests own deterministic parsing, credential denials, and database immutability.
 A passing support test validates the scenario wiring; qualification still requires a live result for the tested revision.
 

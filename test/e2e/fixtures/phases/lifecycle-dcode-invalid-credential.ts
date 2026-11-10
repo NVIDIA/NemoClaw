@@ -332,7 +332,7 @@ function assertFailedBeforeDestructiveWork(result: ShellProbeResult): void {
   }
 }
 
-function assertDcodeActionSucceeded(result: ShellProbeResult, phase: string): string {
+function assertDcodeActionSucceeded(result: ShellProbeResult, phase: string): unknown {
   assertExitZero(result, `run DCode action ${phase}`);
   let envelope: unknown;
   try {
@@ -361,9 +361,7 @@ function assertDcodeActionSucceeded(result: ShellProbeResult, phase: string): st
     action.status !== "success" ||
     action.exit_code !== 0 ||
     typeof action.response !== "string" ||
-    action.response.trim() !== "PONG" ||
-    typeof threadId !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(threadId)
+    action.response.trim() !== "PONG"
   ) {
     throw new Error(`DCode action was not usable ${phase}: ${resultText(result)}`);
   }
@@ -588,6 +586,12 @@ export async function simulateDcodeInvalidCredentialRebuild(
     },
   );
   const threadId = assertDcodeActionSucceeded(seedConversation, "before successful rebuild");
+  if (
+    typeof threadId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(threadId)
+  ) {
+    throw new Error("DCode did not return a native thread UUID before rebuild");
+  }
   record("dcode-conversation:seed", seedConversation);
   const readConversation = async (phase: string): Promise<ShellProbeResult> => {
     const result = await deps.sandbox.exec(
@@ -707,9 +711,10 @@ export async function simulateDcodeInvalidCredentialRebuild(
     throw new Error("DCode SQL conversation changed or disappeared after successful rebuild");
   }
 
+  const resumePrompt = "Reply with exactly one word: PONG";
   const dcodeAction = await deps.sandbox.exec(
     instance.sandboxName,
-    ["dcode", "-r", threadId, "-n", "Reply with exactly one word: PONG", "--json"],
+    ["dcode", "-r", threadId, "-n", resumePrompt, "--json"],
     {
       artifactName: "lifecycle-dcode-action-rebuilt",
       env: gatewayEnv(options.gatewayName),
@@ -717,11 +722,20 @@ export async function simulateDcodeInvalidCredentialRebuild(
       timeoutMs: DCODE_ACTION_TIMEOUT_MS,
     },
   );
-  const resumedThreadId = assertDcodeActionSucceeded(dcodeAction, "after successful rebuild");
-  if (resumedThreadId !== threadId) {
-    throw new Error("DCode resumed a different thread after successful rebuild");
-  }
+  assertDcodeActionSucceeded(dcodeAction, "after successful rebuild");
   record("dcode-action:rebuilt", dcodeAction);
+
+  const conversationResumed = await readConversation("resumed");
+  const historyResumed = JSON.parse(conversationResumed.stdout) as typeof historyBefore;
+  if (
+    historyResumed.thread?.thread_id !== threadId ||
+    JSON.stringify(historyResumed.turns?.slice(0, -1)) !== JSON.stringify(historyRebuilt.turns) ||
+    !historyResumed.turns
+      ?.at(-1)
+      ?.messages?.some((message) => message.role === "user" && message.content === resumePrompt)
+  ) {
+    throw new Error("DCode resumed user turn was not appended to the original thread");
+  }
 
   return { profile: "dcode-rebuild-invalid-credential", steps };
 }
