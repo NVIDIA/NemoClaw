@@ -11,15 +11,16 @@ permissions:
 defaults:
   run:
     shell: bash
+env:
+  CARGO_INCREMENTAL: "0"
 jobs:
-  measure:
-    name: ${{ matrix.os }} ${{ matrix.order }} ${{ matrix.rep }}
+  synthetic:
+    name: synthetic ${{ matrix.os }} ${{ matrix.load }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04]
-        order: [docker-first, read-first]
-        rep: [1, 2]
+        load: [idle, dirty-pages]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -28,46 +29,89 @@ jobs:
           persist-credentials: false
       - name: Measure
         env:
-          ORDER: ${{ matrix.order }}
+          LOAD: ${{ matrix.load }}
         run: |
           set +e +o pipefail
-          majfault() { awk '/^pgmajfault/ {print $2}' /proc/vmstat; }
-          sectors() { awk '$3 ~ /^(sda|vda|nvme0n1)$/ {s += $6} END {print s+0}' /proc/diskstats; }
+          mem() { awk '/^(Dirty|Writeback):/ {printf "%s%dMB ", $1, $2/1024}' /proc/meminfo; }
           t() {
             local label=$1; shift
-            local f0 s0 a b
-            f0=$(majfault); s0=$(sectors); a=$(date +%s.%N)
-            "$@" >/tmp/out 2>/tmp/err; local rc=$?
+            local a b
+            a=$(date +%s.%N)
+            "$@" >/dev/null 2>&1
             b=$(date +%s.%N)
-            printf '%-40s %6.3f s rc=%d majfaults=%d readMB=%d\n' "$label" "$(echo "$b - $a" | bc)" "$rc" \
-              "$(( $(majfault) - f0 ))" "$(( ($(sectors) - s0) / 2048 ))"
+            printf '%-32s %6.3f s  %s\n' "$label" "$(echo "$b - $a" | bc)" "$(mem)"
           }
-          echo "uptime: $(cat /proc/uptime)"
-          echo "docker unit: $(systemctl is-active docker) since $(systemctl show docker -p ActiveEnterTimestampMonotonic --value) us after boot"
-          echo "docker.socket: $(systemctl is-active docker.socket)"
-          docker_bin=$(readlink -f "$(command -v docker)")
-          for buildx_bin in /usr/libexec/docker/cli-plugins/docker-buildx /usr/local/lib/docker/cli-plugins/docker-buildx; do [ -e "$buildx_bin" ] && break; done
-          ls -la "$docker_bin" "$buildx_bin"
-          lsblk -o NAME,SIZE,ROTA,TYPE,MOUNTPOINT | head -20
-          if [ "$ORDER" = read-first ]; then
-            t "cat docker binary" cat "$docker_bin"
-            t "cat buildx binary" cat "$buildx_bin"
+          echo "nproc $(nproc); $(free -m | awk '/Mem:/ {print "RAM " $2 " MB"}')"
+          if [ "$LOAD" = dirty-pages ]; then
+            # Like a large Cargo build: GBs written, not yet flushed to disk.
+            dd if=/dev/urandom of="$RUNNER_TEMP/big" bs=1M count=6000 status=none
+            echo "after writing 6 GB: $(mem)"
           fi
           t "docker buildx version (1st)" docker buildx version
           t "docker buildx version (2nd)" docker buildx version
-          t "bake --print dummy (1st)" docker buildx bake --print dummy
-          t "bake --print dummy (2nd)" docker buildx bake --print dummy
-          t "bake --print without a daemon" env DOCKER_HOST=unix:///nonexistent.sock docker buildx bake --print dummy
-          tail -2 /tmp/err
-          if [ "$ORDER" = docker-first ]; then
-            t "cat docker binary (after)" cat "$docker_bin"
-            t "cat buildx binary (after)" cat "$buildx_bin"
-          fi
+          t "bake --print dummy" docker buildx bake --print dummy
+          t "cat /usr/bin/dockerd" cat /usr/bin/dockerd
           echo "--- sockets bake --print connects to"
-          command -v strace >/dev/null || sudo apt-get install -y -q strace >/dev/null
-          strace -f -e trace=connect -o /tmp/st docker buildx bake --print dummy >/dev/null 2>&1 || true
-          grep -o 'sun_path="[^"]*"\|sin_addr=inet_addr("[^"]*")' /tmp/st | sort | uniq -c || echo none
-          echo "--- versions"
-          docker version --format 'client {{.Client.Version}} server {{.Server.Version}}'
-          docker buildx version
-          docker buildx ls
+          command -v strace >/dev/null || sudo apt-get install -y -q strace >/dev/null 2>&1
+          strace -f -e trace=connect -o /tmp/st docker buildx bake --print dummy >/dev/null 2>&1
+          echo "strace exit $?, $(wc -l < /tmp/st) connect calls"
+          cat /tmp/st | head
+
+  unit:
+    name: unit ${{ matrix.os }} ${{ matrix.rep }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04]
+        rep: [1, 2, 3]
+        include:
+          - os: ubuntu-24.04
+            rep: 1
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      TEST_PLATFORM: linux_amd64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: linux_amd64
+          save-cache: "false"
+      - run: cargo ci fmt
+      - run: cargo ci clippy
+      - run: cargo ci build
+      - name: Record each Docker call during the tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/wrap"
+          cat > "$RUNNER_TEMP/wrap/docker" <<'EOF'
+          #!/bin/bash
+          mem() { awk '/^(Dirty|Writeback):/ {printf "%s%dMB ", $1, $2/1024}' /proc/meminfo; }
+          f0=$(awk '/^pgmajfault/ {print $2}' /proc/vmstat)
+          a=$(date +%s.%N); m0=$(mem)
+          /usr/bin/docker "$@"; rc=$?
+          b=$(date +%s.%N)
+          f1=$(awk '/^pgmajfault/ {print $2}' /proc/vmstat)
+          cpu=$(times | tail -1)
+          printf '%s %6.3fs rc=%d sysmajfaults=%d cpu[%s] start[%s] end[%s] load[%s] %s\n' "$a" "$(echo "$b - $a" | bc)" "$rc" "$((f1 - f0))" "$cpu" "$m0" "$(mem)" "$(cut -d' ' -f1-3 /proc/loadavg)" "$*" >> "$DOCKER_LOG"
+          exit $rc
+          EOF
+          sed -i 's/^          //' "$RUNNER_TEMP/wrap/docker"
+          chmod +x "$RUNNER_TEMP/wrap/docker"
+          echo "$RUNNER_TEMP/wrap" >> "$GITHUB_PATH"
+          echo "DOCKER_LOG=$RUNNER_TEMP/docker.log" >> "$GITHUB_ENV"
+      - name: Run tests
+        continue-on-error: true
+        run: |
+          echo "before tests: $(awk '/^(Dirty|Writeback|MemFree|Cached):/ {printf "%s%dMB ", $1, $2/1024}' /proc/meminfo)"
+          set +e
+          vmstat -t 1 > "$RUNNER_TEMP/vmstat.log" &
+          vmstat_pid=$!
+          cargo ci test 2>&1 | grep -E '^\| [0-9.]+ s \| .*bake::|SLOW|Over budget|### test'
+          kill "$vmstat_pid"
+      - name: Report
+        if: always()
+        run: |
+          sort -n "$DOCKER_LOG"
+          head -45 "$RUNNER_TEMP/vmstat.log"
