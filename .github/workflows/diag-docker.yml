@@ -30,6 +30,7 @@ jobs:
         env:
           ORDER: ${{ matrix.order }}
         run: |
+          set +e +o pipefail
           majfault() { awk '/^pgmajfault/ {print $2}' /proc/vmstat; }
           sectors() { awk '$3 ~ /^(sda|vda|nvme0n1)$/ {s += $6} END {print s+0}' /proc/diskstats; }
           t() {
@@ -45,7 +46,7 @@ jobs:
           echo "docker unit: $(systemctl is-active docker) since $(systemctl show docker -p ActiveEnterTimestampMonotonic --value) us after boot"
           echo "docker.socket: $(systemctl is-active docker.socket)"
           docker_bin=$(readlink -f "$(command -v docker)")
-          buildx_bin=$(ls /usr/libexec/docker/cli-plugins/docker-buildx /usr/local/lib/docker/cli-plugins/docker-buildx 2>/dev/null | head -1)
+          for buildx_bin in /usr/libexec/docker/cli-plugins/docker-buildx /usr/local/lib/docker/cli-plugins/docker-buildx; do [ -e "$buildx_bin" ] && break; done
           ls -la "$docker_bin" "$buildx_bin"
           lsblk -o NAME,SIZE,ROTA,TYPE,MOUNTPOINT | head -20
           if [ "$ORDER" = read-first ]; then
