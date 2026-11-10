@@ -92,7 +92,7 @@ pub fn prepare(root: &Path, run: &Path) -> Result<()> {
     document["spec"]["services"]["super"]["serving"]["port"] = model_port.into();
     document["spec"]["services"]["super"]["image"] = runtime.clone().into();
     document["spec"]["sandboxes"]["assistant"]["image"]["ref"] = openclaw.clone().into();
-    let mut builder = fs::DirBuilder::new();
+    let builder = &mut fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;

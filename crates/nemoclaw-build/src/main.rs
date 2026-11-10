@@ -180,6 +180,14 @@ enum Action {
         #[arg(long)]
         shards: String,
     },
+    /// Check that no executable under DIRECTORY needs a newer glibc than the
+    /// minimum, as CI does after building a Linux bundle.
+    CheckGlibc {
+        /// The oldest glibc the executables must run on, such as 2.35.
+        #[arg(long)]
+        minimum: String,
+        directory: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -755,6 +763,10 @@ async fn main() -> Result<()> {
         }
         .map_err(Into::into);
     }
+    if let Action::CheckGlibc { minimum, directory } = &cli.command {
+        let minimum = nemoclaw_build::glibc::parse_minimum(minimum)?;
+        return nemoclaw_build::glibc::check(directory, minimum).map_err(Into::into);
+    }
     if let Action::SuiteTiming {
         step,
         directory,
@@ -945,7 +957,8 @@ async fn main() -> Result<()> {
         | Action::ReleaseAssess { .. }
         | Action::Images { .. }
         | Action::Changes { .. }
-        | Action::SuiteTiming { .. } => {
+        | Action::SuiteTiming { .. }
+        | Action::CheckGlibc { .. } => {
             unreachable!("CI, image, change, and timing commands returned before build tool checks")
         }
         #[cfg(feature = "sdk")]

@@ -28,11 +28,16 @@ jobs:
   # the HCL E2E cases that need a model; they use the inference secret, so a
   # fork's pull request skips them, and the ones on the NVIDIA GPU runner, which
   # refuses pull request jobs, run on v1 pushes and manual runs.
+  # Ubuntu 22.04 is the oldest supported Linux: its runners build the Linux
+  # bundles and test executables, and the bundle job checks that none needs a
+  # newer glibc. Test jobs run on the newer runners, which run them too.
   linux_arm64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: ubuntu-24.04-arm
+      build-runner: ubuntu-22.04-arm
+      glibc: "2.35"
       platform: linux_arm64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
@@ -44,6 +49,8 @@ jobs:
     uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: ubuntu-24.04
+      build-runner: ubuntu-22.04
+      glibc: "2.35"
       platform: linux_amd64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
