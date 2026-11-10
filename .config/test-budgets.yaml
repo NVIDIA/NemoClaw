@@ -63,7 +63,8 @@ live-docker:
 # 95.7 s) the step took 243.0 s and 232.6 s.
 # The NodePort case (#14313) makes three. In its first linux_amd64 run it took
 # 98.8 s, the development case 148.6 s and the OIDC case 111.6 s: 358.9 s
-# together.
+# together. In the next run the three took 340 s together on both linux_amd64
+# and linux_arm64, the NodePort case about 90 s.
 live-kind:
   wall_seconds: 450
   test_seconds: 180
