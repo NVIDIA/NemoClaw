@@ -311,13 +311,9 @@ describe("cross-process onboard lock", () => {
     }
   });
 
-  it.each([
-    { scenario: "valid", startedAt: () => new Date().toISOString() },
-    { scenario: "unverifiable", startedAt: () => "invalid-start" },
-  ])(
+  it.each([{ scenario: "valid" }, { scenario: "unverifiable" }])(
     "reports recorded holder details with $scenario start time when a competing write is blocked (#11052)",
-    async ({ startedAt }) => {
-      const holderStartedAt = startedAt();
+    async ({ scenario }) => {
       const childScript = `
       const fs = require("node:fs");
       const path = require("node:path");
@@ -326,7 +322,7 @@ describe("cross-process onboard lock", () => {
       const fd = fs.openSync(lockFile, "wx", 0o600);
       fs.writeSync(fd, JSON.stringify({
         pid: process.pid,
-        startedAt: ${JSON.stringify(holderStartedAt)},
+        startedAt: ${scenario === "valid" ? "new Date().toISOString()" : JSON.stringify("invalid-start")},
         command: "separate nemoclaw onboard process",
       }));
       process.stdout.write("locked\\n");
@@ -338,6 +334,9 @@ describe("cross-process onboard lock", () => {
       await once(child.stdout, "data");
 
       try {
+        const { startedAt: holderStartedAt } = JSON.parse(
+          fs.readFileSync(session.LOCK_FILE, "utf8"),
+        );
         const contend = () => session.listRetainedSandboxRecoveryRecords();
         expect(contend).toThrow(
           "Cannot update onboarding recovery because the onboarding lock is unavailable.",

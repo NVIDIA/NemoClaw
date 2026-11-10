@@ -1,0 +1,82 @@
+NemoClaw Native Windows Candidate Preview
+
+Product decision and ownership
+
+This PR-scoped package is an engineering candidate under NVIDIA/NemoClaw#8178.
+The maintainer decision accepts implementation and qualification in #12014,
+with Prekshi Vyas accountable for the work:
+https://github.com/NVIDIA/NemoClaw/issues/8178#issuecomment-5984526049
+The current maintainer-directed scope narrows the Windows candidate to OpenClaw
+and Hermes. This accepts development, not a supported release or the PR's code.
+
+Placement remains limited to explicitly dispatched PR workflow artifacts with
+their configured retention. There is no support or upgrade SLA. Compatibility
+claims are limited to the exact identities and results in each candidate's
+receipt. Release activation still requires an accepted exact OpenShell/MXC
+distribution, an evidence-backed Windows/build/backend matrix, signing and
+distribution authority, update and vulnerability-response ownership, and the
+required security and lifecycle evidence. Passing engineering validation does
+not satisfy those separate release gates. Do not publish a release, link this
+candidate from canonical onboarding, or represent it as supported while those
+gates remain unmet.
+
+Each finished installer contains the NemoClaw CLI and the agent selected when
+the package was built: OpenClaw or Hermes. Its embedded availability record
+disables the other agent. Standalone Pi, Deep Agents Code, and NemoCUA are no
+longer included. Historical state remains eligible for explicit owned-data cleanup.
+The MSI installs the selected agent's
+required native ARM64 runtime, OpenShell, and Microsoft MXC ProcessContainer
+components. WSL, Docker, Linux virtual machines, and unused MXC backend sidecars
+are not part of this package.
+
+Setup and onboarding share one native WPF window. Choose an agent once, select
+inference and supported optional services, and follow the named install phases.
+Configured sessions select supervised networking, not the Personal direct-network
+profile. Host settings remain outside the agent filesystem. Network-policy
+enforcement remains unqualified. Setup adds a NemoClaw Setup desktop shortcut and
+a shortcut with the selected agent's icon. OpenClaw and Hermes open their web
+interfaces in the default browser. Hermes also has an interactive console.
+A native control window stops each web session and cleans up its sandbox.
+
+Run NemoClaw Setup again to change settings or, when installed, uninstall.
+Uninstall retains personal data by default. Its explicit data-removal selection
+removes only the chosen agent's owned state, settings, and scoped stored keys.
+Shared on-device model files are separate from agent data.
+
+Inference keys are stored in Windows Credential Manager, bound to the agent,
+provider, and endpoint. The inference key stays in the host broker. Optional
+service keys use separate per-agent bindings and enter only the selected
+agent's process environment. Keys are not written into setup JSON or passed as
+process arguments. Native state ownership and the UI relay's native file owner
+protect their filesystem boundaries through shutdown.
+
+The host build pins OpenShell 624f55b3c6affedd4f2757c7eb32132196b4c3e8
+and source-built MXC 7cd00d1ee6af9208322c924ef64e5113f6704639.
+It includes the OpenShell supervisor, Windows sandbox executable, and Z3 DLL.
+The launcher writes the version 2 gateway configuration for that protocol.
+Build and startup evidence alone does not qualify the full installer journey.
+The separate Windows-tip cycles allowed host loopback. They do not establish
+denied host loopback, port-only isolation, live policy revocation, or production
+LPAC and governed network-policy parity. New package bytes need new acceptance.
+
+Microsoft MXC's native elevated system-drive and null-device preparation runs
+before MSI installation. Windows resets the null-device preparation at reboot;
+persistent production gateway-service ownership remains a separate gate.
+
+On RTX Spark N1X, eligible Windows ARM64 machines may select native on-device
+Express. Pinned llama.cpp/CUDA and Qwen model downloads require compatible
+drivers, sufficient memory/storage, complete GPU offload, and an authenticated
+real model response before Ready. This is an agent-independent local service;
+it does not run the Linux or WSL recipes. Generic ARM64 CI is not physical N1X
+qualification.
+
+Qualification must exercise the selected agent through native setup, its UI,
+desktop links, repair/reinstall, data preservation, explicit tester reset, and
+cleanup. Hermes requires both its interactive console and dashboard. Qualifying
+one package does not qualify agents absent from that package.
+Deterministic local inference proves runtime and transport behavior, not live
+commercial-provider or messaging-account qualification. Actual Windows screen
+captures and receipts identify the exact candidate being tested.
+
+This is an unsigned PR preview, not a production release. Production signing,
+broader host/runtime qualification, and governed deployment remain separate.

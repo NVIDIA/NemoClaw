@@ -1,0 +1,28 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <UseWPF Condition="'$(OS)' == 'Windows_NT'">true</UseWPF>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(UseWPF)' == 'true'">
+    <DefineConstants>$(DefineConstants);NATIVE_WPF_CONTROLS</DefineConstants>
+    <RuntimeIdentifier>win-arm64</RuntimeIdentifier>
+    <PlatformTarget>ARM64</PlatformTarget>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseWPF)' == 'true'">
+    <ProjectReference Include="../../bootstrapper/NemoClaw.Bootstrapper.csproj" Aliases="NativeBootstrapper" AdditionalProperties="ProductVersion=0.1.0;EnableWindowsTargeting=true" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../../bootstrapper/NativeCancellationState.cs" Link="NativeCancellationState.cs" />
+    <Compile Include="../../bootstrapper/NativeSetupConfiguration.cs" Link="NativeSetupConfiguration.cs" />
+    <Compile Include="../../bootstrapper/NativeSetupOperations.cs" Link="NativeSetupOperations.cs" />
+    <Compile Include="../../bootstrapper/NativeSetupOptions.cs" Link="NativeSetupOptions.cs" />
+  </ItemGroup>
+</Project>

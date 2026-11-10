@@ -24,6 +24,10 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const SRC_ROOT = path.join(REPO_ROOT, "src");
 const SKIP_DIRS = new Set([".git", "coverage", "dist", "node_modules"]);
 const PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES = [
+  "packaging/windows/runtime/run-installed-native-turn.mts",
+  "packaging/windows/runtime/run-installed-native-hermes-turn.mts",
+  "packaging/windows/runtime/run-installed-native-web-ui.mts",
+  "packaging/windows/runtime/run-installed-native-console-agent.mts",
   "src/lib/actions/sandbox/connect.ts",
   "src/lib/actions/sandbox/destroy-presence.ts",
   "src/lib/actions/sandbox/launch-readiness.ts",
@@ -731,9 +735,11 @@ export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] 
 export function findManagedRuntimeBoundaryViolations(): Violation[] {
   const violations: Violation[] = [];
   const isProviderImplementationImport = (specifier: string): boolean =>
-    /(?:^|\/)runtime-provider\/(?:docker|podman)(?:[-/.]|$)/.test(specifier);
+    /(?:^|\/)runtime-provider\/(?:docker|podman|mxc)(?:[-/.]|$)|(?:^|\/)(?:mxc-installed-session|native-gateway-session)\.mts$/.test(
+      specifier,
+    );
   const isProviderName = (node: ts.Node): boolean =>
-    ts.isStringLiteralLike(node) && (node.text === "docker" || node.text === "podman");
+    ts.isStringLiteralLike(node) && ["docker", "podman", "mxc"].includes(node.text);
   const isEqualityOperator = (kind: ts.SyntaxKind): boolean =>
     kind === ts.SyntaxKind.EqualsEqualsToken ||
     kind === ts.SyntaxKind.ExclamationEqualsToken ||
