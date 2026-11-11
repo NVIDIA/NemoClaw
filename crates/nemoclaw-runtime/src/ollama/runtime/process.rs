@@ -12,7 +12,8 @@ use std::{collections::BTreeMap, path::Path, process::Stdio, time::Duration};
 pub(crate) struct Readiness {
     endpoint: String,
     service: ManagedOllama,
-    budget: u64,
+    /// Everything the loaded model may hold across the selected GPUs.
+    limit: u64,
 }
 
 pub(crate) fn launch(
@@ -25,11 +26,8 @@ pub(crate) fn launch(
         .ok_or(Error::State("invalid Ollama model storage path"))?;
     let total = hardware_capacity::serving_memory(service, capacity)?;
     let budget = hardware_capacity::budget(service, capacity)?;
-    let overhead = capacity.gpu_memory.as_ref().map_or(Ok(0), |gpu| {
-        gpu.free.checked_sub(budget).ok_or(Error::Conflict(
-            "available GPU memory does not satisfy the Ollama budget",
-        ))
-    })?;
+    let overhead = hardware_capacity::overhead(service, capacity)?;
+    let limit = hardware_capacity::total_budget(service, capacity)?;
     if budget > total {
         return Err(Error::Conflict("invalid Ollama serving budget"));
     }
@@ -71,7 +69,7 @@ pub(crate) fn launch(
         Readiness {
             endpoint: format!("http://127.0.0.1:{}", service.serving.port),
             service: service.clone(),
-            budget,
+            limit,
         },
     ))
 }
@@ -95,7 +93,7 @@ pub(crate) async fn wait_ready(
         &client,
         &readiness.endpoint,
         &readiness.service,
-        readiness.budget,
+        readiness.limit,
     )
     .await?;
     let _ = ready.send(true).await;

@@ -761,8 +761,8 @@ Paths:
 |---|---|---|---|---|
 | `consecutiveSamples` | integer | No | `5` | Consecutive low-memory samples before stopping the owned process. Constraints: `0` or minimum 1; maximum 5. Omitted or zero selects the default. |
 | `freeGateGiB` | integer | No | `12` | Available-memory gate for the free-memory threshold. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
-| `gpuMemoryGiB` | integer | No | `0` | Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB. Constraints: `0` or minimum 0; maximum 96. Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB. |
-| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory. Constraints: minimum 0.05; maximum 0.95. |
+| `gpuMemoryGiB` | integer | No | `0` | Fixed serving budget in GiB for each selected GPU when utilization is omitted. Omission or zero selects 16 GiB. Constraints: `0` or minimum 0; maximum 96. Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB. |
+| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, applied to each selected GPU. Constraints: minimum 0.05; maximum 0.95. |
 | `hostReserveGiB` | integer | No | `32` | Host memory reserve excluded from serving. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile. Constraints: `0` or minimum 6; maximum 64. Omitted or zero selects the default. |
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold used by the bounded runtime watchdog. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
 | `minFreeGiB` | integer | No | `3` | Free-memory threshold used below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |

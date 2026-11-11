@@ -264,6 +264,9 @@ It checks hardware compatibility and declared GPU/host budgets.
 Plan does not query the model registry or run the SSH host collector.
 The Ollama weight-size check is a lower bound: all snapshot bytes plus 2 GiB must fit the declared GPU budget.
 Plan does not load the model or establish that its context and native KV cache will fit.
+Ollama's memory budget applies to each selected GPU.
+At start, every selected GPU must have the budget free, and Ollama keeps its own placement: one GPU when the model fits, several otherwise.
+Ollama reports the loaded model's GPU memory as one total, so readiness checks that the whole model is in GPU memory and within the number of selected GPUs times the budget, not each GPU's share.
 
 Apply downloads and verifies the native registry manifest and each blob using the shared resumable snapshot path.
 It then starts Ollama, checks the selected digest, and sends a load-only request without a prompt or generated response.

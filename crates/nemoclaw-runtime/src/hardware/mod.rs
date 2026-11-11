@@ -40,6 +40,19 @@ impl Capacity {
         }
         Ok(())
     }
+
+    /// Memory counters of every observed GPU. A capacity built without the
+    /// list falls back to its single-GPU counters.
+    pub fn gpu_memories(&self) -> Result<Vec<&GpuMemory>, Error> {
+        let memories: Option<Vec<_>> = if self.gpus.is_empty() {
+            self.gpu_memory.iter().map(Some).collect()
+        } else {
+            self.gpus.iter().map(|gpu| gpu.memory.as_ref()).collect()
+        };
+        memories
+            .filter(|memories| !memories.is_empty())
+            .ok_or(Error::State("dedicated GPU memory is unobservable"))
+    }
 }
 /// One GPU as `nvidia-smi` reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]

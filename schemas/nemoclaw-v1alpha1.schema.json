@@ -1918,13 +1918,13 @@
             }
           ],
           "default": 0,
-          "description": "Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB.",
+          "description": "Fixed serving budget in GiB for each selected GPU when utilization is omitted. Omission or zero selects 16 GiB.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory.",
+          "description": "Optional fraction of observed dedicated GPU memory, applied to each selected GPU.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,

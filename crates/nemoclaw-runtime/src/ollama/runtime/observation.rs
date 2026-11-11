@@ -82,7 +82,7 @@ pub(crate) async fn check(
     client: &reqwest::Client,
     endpoint: &str,
     service: &ManagedOllama,
-    budget: u64,
+    limit: u64,
 ) -> Result<(), Error> {
     let work = async {
         let result = client
@@ -90,14 +90,16 @@ pub(crate) async fn check(
             .send()
             .await
             .map_err(|_| Error::State("Ollama loaded-model observation failed"))?;
-        validate_loaded(service, budget, &response(result).await?)
+        validate_loaded(service, limit, &response(result).await?)
     };
     tokio::time::timeout(Duration::from_secs(10), work)
         .await
         .map_err(|_| Error::State("Ollama loaded-model observation timed out"))?
 }
 
-fn validate_loaded(service: &ManagedOllama, budget: u64, bytes: &[u8]) -> Result<(), Error> {
+/// `limit` is everything the model may hold on the selected GPUs: Ollama
+/// reports one `size_vram` total, not each GPU's share.
+fn validate_loaded(service: &ManagedOllama, limit: u64, bytes: &[u8]) -> Result<(), Error> {
     #[derive(Deserialize)]
     struct Inventory {
         models: Vec<Loaded>,
@@ -122,7 +124,7 @@ fn validate_loaded(service: &ManagedOllama, budget: u64, bytes: &[u8]) -> Result
         || model.digest != service.model.digest
         || model.size == 0
         || model.size_vram != model.size
-        || model.size_vram > budget
+        || model.size_vram > limit
         || model.context_length != service.serving.context_tokens as u64
     {
         return Err(Error::Conflict(
@@ -185,6 +187,17 @@ mod tests {
                 assert_eq!(requests[2], "POST /api/generate");
             }
         }
+    }
+
+    #[test]
+    fn resident_check_bounds_the_total_across_gpus() {
+        let service = service();
+        let loaded = |size: u64| {
+            serde_json::to_vec(&json!({"models":[{"name":service.model.name,"digest":service.model.digest,"size":size,"size_vram":size,"context_length":8192}]})).unwrap()
+        };
+        // Two GPUs with a 1024-byte budget each hold up to 2048 bytes.
+        validate_loaded(&service, 2048, &loaded(2048)).unwrap();
+        assert!(validate_loaded(&service, 2048, &loaded(2049)).is_err());
     }
 
     #[test]
