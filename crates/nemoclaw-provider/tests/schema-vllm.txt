@@ -99,8 +99,6 @@ data vllm_runtime (version 0)
         > Execution host CPU architecture.
       gpu: string, required
         > GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory.
-      gpu_count: number, optional
-        > Number of GPUs the recipe's budget was measured on. It sets the default tensor parallel size; vLLM checks the layout against the GPUs it sees.
       image_labels: map(string), required
         > Required org.nemoclaw.* labels. org.nemoclaw.recipe.protocol must equal v1.
       min_driver_major: number, required

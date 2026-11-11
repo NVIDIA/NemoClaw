@@ -122,7 +122,7 @@ Use the UUID that `nvidia-smi --query-gpu=uuid --format=csv,noheader` prints, as
 An index also works, but it can change when the host boots, and YAML needs it quoted, as in `gpuDevices: ["1"]`, because each entry is a string.
 Run `nvidia-smi` on the host whose Docker engine runs the service: with [SSH placement](remote-service.md), that's the remote host, not the machine where you run `nemoclaw`.
 Without `gpuDevices`, the container gets every GPU, and the model runtime stops unless the host has exactly one.
-For vLLM, the number of entries is also the default tensor parallel size when no parallel size is set; see [the parallel layout](models.md#set-the-parallel-layout).
+For a vLLM service without a recipe, the number of entries is also the default tensor parallel size when no parallel size is set; see [the parallel layout](models.md#set-the-parallel-layout).
 Native managed inference on Podman remains unsupported; a Podman gateway can consume a service on an explicitly selected remote Docker engine through [SSH placement](remote-service.md).
 These shared fields do not change [platform qualification limits](../resources/limits.md#platforms-models-and-placement).
 
@@ -269,9 +269,15 @@ Plan does not load the model or establish that its context and native KV cache w
 
 Apply downloads and verifies the native registry manifest and each blob using the shared resumable snapshot path.
 It then starts Ollama, checks the selected digest, and sends a load-only request without a prompt or generated response.
-The bounded readiness check requires Ollama to report the selected model fully on GPU, within the configured memory budget, and with the requested context length.
+The bounded readiness check requires Ollama to report the selected model fully on GPU, within the GPU budget times the number of GPUs the container sees, and with the requested context length.
 These checks are observations, not a hard GPU allocator quota; a model may exceed its budget during loading before the check fails.
-CPU offload is rejected; multi-GPU execution and CPU-only execution are not part of this shared adapter yet.
+CPU offload is rejected, and CPU-only execution is not part of this shared adapter yet.
+
+NemoClaw leaves placement across GPUs to Ollama and doesn't set `OLLAMA_SCHED_SPREAD`: Ollama loads the model on one GPU when it fits there and splits it across the container's GPUs otherwise.
+The runtime sets `OLLAMA_GPU_OVERHEAD`, which Ollama holds back on every GPU, to the largest free memory among those GPUs minus the GPU budget, so no GPU offers Ollama more than the budget.
+The runtime refuses to start when any of the GPUs has less than the budget free.
+Ollama's `/api/ps` reports one `size_vram` total, not each GPU's share, so the readiness check can't show which GPU exceeded its budget.
+`container.gpuDevices` takes one entry until serving one model across several GPUs is implemented ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)).
 
 Ollama sizes its KV cache and batching natively.
 Nonzero `kvCacheGiB` or `batchTokens`, vLLM parser/compilation settings, inline recipes, model aliases, and native bearer authentication are rejected.

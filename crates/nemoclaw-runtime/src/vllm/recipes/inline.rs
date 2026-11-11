@@ -47,9 +47,6 @@ pub struct Compatibility {
     pub architecture: String,
     /// GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory.
     pub gpu: String,
-    /// Number of GPUs the recipe's budget was measured on. It sets the default tensor parallel size; vLLM checks the layout against the GPUs it sees.
-    #[serde(default = "one", skip_serializing_if = "is_one")]
-    pub gpu_count: u64,
     /// Minimum NVIDIA driver major version.
     pub min_driver_major: u64,
     /// Minimum total host memory in GiB.
@@ -142,14 +139,6 @@ pub struct Reuse {
     pub snapshot_directory: String,
     /// SHA-256 preparation key identifying previously prepared data.
     pub preparation_key: String,
-}
-// Settings at their defaults stay out of the serialized recipe, and so out of
-// its preparation key, so recipes written before them keep their prepared data.
-fn one() -> u64 {
-    1
-}
-fn is_one(value: &u64) -> bool {
-    *value == 1
 }
 pub fn relative(path: &str) -> bool {
     !path.is_empty()
