@@ -269,6 +269,7 @@ Apply downloads and verifies the native registry manifest and each blob using th
 It then starts Ollama, checks the selected digest, and sends a load-only request without a prompt or generated response.
 The bounded readiness check requires Ollama to report the selected model fully on GPU, within the configured memory budget, and with the requested context length.
 These checks are observations, not a hard GPU allocator quota; a model may exceed its budget during loading before the check fails.
+When the runtime stops during readiness, the apply error includes the stop detail it recorded in `/data/status.json`, such as a memory protection stop; Ollama's own output stays in the container log.
 CPU offload is rejected; multi-GPU execution and CPU-only execution are not part of this shared adapter yet.
 
 Ollama sizes its KV cache and batching natively.

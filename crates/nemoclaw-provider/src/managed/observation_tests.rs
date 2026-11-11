@@ -547,9 +547,12 @@ async fn authenticated_vllm_readiness_rechecks_key_permissions() {
 
 #[tokio::test]
 async fn service_readiness_reports_why_the_runtime_stopped() {
-    let detail = "managed service process exited; correct the cause in its final output and reapply:\nValueError: Total number of attention heads (14) must be divisible by tensor parallel size (4).";
+    let detail = "managed service process exited; its final output follows, and the container log has all of it; correct the cause and reapply:\nValueError: Total number of attention heads (14) must be divisible by tensor parallel size (4).";
     // More than the SDK can show; the runtime never records this much.
-    let oversized = format!("{detail}\n{}", "x".repeat(12 << 10));
+    let oversized = format!(
+        "{detail}\n{}",
+        "x".repeat(nemoclaw_runtime::EXITED_OUTPUT_LIMIT + 1024)
+    );
     for source in [
         include_str!("../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml"),
         include_str!("../../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml"),

@@ -216,7 +216,8 @@ The managed vLLM supervisor continues checking host memory after the CLI exits.
 It stops its inference process on sustained pressure, failed memory observations, startup timeout, or an operator stop, and does not automatically restart inference.
 The container also stays stopped after a host reboot; see [host reboot recovery](../build-deploy/usage.md#recover-after-a-host-reboot).
 A native process exit also ends supervision of that process.
-When vLLM exits, the stop detail and the apply error include the end of vLLM's output, up to 8 KiB, with the inference key replaced by `[redacted]`.
+When vLLM exits, the stop detail and the apply error include the end of vLLM's output, up to 4 KiB, with the inference key replaced by `[redacted]`.
+If the cause isn't in the excerpt, read it in the container log.
 The model volume retains `/data/status.json` with `phase`, `detail`, `updated` (UTC timestamp), and `pid`.
 Phases are `initializing`, `downloading`, `preparing`, `loading`, `ready`, and `stopped`.
 Read `detail` with the timestamp: a `ready` file from an earlier container start does not prove current readiness.

@@ -15,9 +15,7 @@ pub(crate) struct Readiness {
     credential: Option<String>,
     interval: Duration,
 }
-/// The most of vLLM's output an exit error carries. The SDK withholds an
-/// OpenTofu diagnostic longer than 16 KiB, and other text shares that limit.
-const OUTPUT_LIMIT: usize = 8 << 10;
+const OUTPUT_LIMIT: usize = crate::EXITED_OUTPUT_LIMIT;
 /// vLLM's standard output and error, forwarded unchanged to the runtime's
 /// standard error for the container log. The end is kept for the error that
 /// reports vLLM's exit, because vLLM logs and raises its startup errors there.
@@ -260,33 +258,26 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn an_exit_error_carries_the_end_of_vllms_output_without_its_key() {
+    /// Run `script` as a fake vLLM under the supervisor until it exits, and
+    /// return the error the runtime reports and the bearer key, if any.
+    async fn exit_error(script: &str, bearer: bool) -> (String, Option<String>) {
         use crate::execution::supervisor::{self, Monitors};
         use process_wrap::tokio::{KillOnDrop, ProcessGroup};
         let root = tempfile::tempdir().unwrap();
         let mut service = crate::fixture();
-        service.authentication = Some(crate::vllm::ServiceAuthentication::Bearer);
-        let key = super::super::authentication::load(root.path()).unwrap();
+        let key = bearer.then(|| {
+            service.authentication = Some(crate::vllm::ServiceAuthentication::Bearer);
+            super::super::authentication::load(root.path()).unwrap()
+        });
         let bin = root.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        // A fake vLLM: a worker that keeps the output open, more log lines
-        // than the error keeps, its key, and a startup error on each stream.
-        crate::executable::write_executable(
-            &bin.join("python3"),
-            "#!/bin/sh\n/bin/sleep 100 &\ni=0\nwhile [ $i -lt 120 ]; do echo \"INFO loading line $i of a fake vLLM start that writes more than the error keeps\"; i=$((i+1)); done\necho \"(EngineCore pid=7) worker saw key $VLLM_API_KEY\"\necho 'ValueError: Total number of attention heads (14) must be divisible by tensor parallel size (4).' >&2\nexit 1\n",
-        );
+        crate::executable::write_executable(&bin.join("python3"), script);
         let prepared = PreparedModel {
             model: root.path().join("model"),
             environment: [("PATH".into(), bin.into_os_string())].into(),
         };
-        let (mut command, _, output) = launch(
-            &service,
-            &prepared,
-            121 * crate::hardware::GIB,
-            Some(key.clone()),
-        )
-        .unwrap();
+        let (mut command, _, output) =
+            launch(&service, &prepared, 121 * crate::hardware::GIB, key.clone()).unwrap();
         command.wrap(KillOnDrop).wrap(ProcessGroup::leader());
         let mut child = command.spawn().unwrap();
         drop(command);
@@ -318,16 +309,45 @@ mod tests {
             .expect("stopping the process group closes the output")
             .unwrap_err()
             .to_string();
-        let (message, final_output) = error.split_once('\n').expect("the error carries output");
+        (error, key)
+    }
+
+    const EXITED: &str = "managed service process exited; its final output follows, and the container log has all of it; correct the cause and reapply:";
+
+    #[tokio::test]
+    async fn an_exit_error_carries_vllms_whole_short_output() {
+        let (error, _) = exit_error(
+            "#!/bin/sh\necho 'INFO starting'\necho 'ValueError: Total number of attention heads (14) must be divisible by tensor parallel size (4).' >&2\nexit 1\n",
+            false,
+        )
+        .await;
         assert_eq!(
-            message,
-            "managed service process exited; correct the cause in its final output and reapply:"
+            error,
+            format!(
+                "{EXITED}\nINFO starting\nValueError: Total number of attention heads (14) must be divisible by tensor parallel size (4)."
+            )
         );
+    }
+
+    #[tokio::test]
+    async fn an_exit_error_carries_the_end_of_vllms_output_without_its_key() {
+        // A fake vLLM: a worker that keeps the output open, more log lines
+        // than the error keeps, its key, and a startup error on each stream.
+        let (error, key) = exit_error(
+            "#!/bin/sh\n/bin/sleep 100 &\ni=0\nwhile [ $i -lt 120 ]; do echo \"INFO loading line $i of a fake vLLM start that writes more than the error keeps\"; i=$((i+1)); done\necho \"(EngineCore pid=7) worker saw key $VLLM_API_KEY\"\necho 'ValueError: Total number of attention heads (14) must be divisible by tensor parallel size (4).' >&2\nexit 1\n",
+            true,
+        )
+        .await;
+        let (message, final_output) = error.split_once('\n').expect("the error carries output");
+        assert_eq!(message, EXITED);
         assert!(
             final_output.ends_with("worker saw key [redacted]\nValueError: Total number of attention heads (14) must be divisible by tensor parallel size (4)."),
             "{final_output}"
         );
-        assert!(!error.contains(&key), "the error must not carry the key");
+        assert!(
+            !error.contains(&key.unwrap()),
+            "the error must not carry the key"
+        );
         assert!(final_output.len() <= OUTPUT_LIMIT, "{}", final_output.len());
         assert!(
             final_output.starts_with("INFO loading line ")

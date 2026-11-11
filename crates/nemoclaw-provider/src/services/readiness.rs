@@ -52,9 +52,9 @@ impl Readiness {
     }
 }
 
-/// The most of a runtime's detail an error carries. The runtime bounds the
-/// output it adds; a longer detail would exceed the SDK's diagnostic limit.
-const DETAIL_LIMIT: usize = 12 << 10;
+/// The most of a runtime's detail an error carries: the process output the
+/// runtime bounds, and room for the runtime's own message.
+const DETAIL_LIMIT: usize = nemoclaw_runtime::EXITED_OUTPUT_LIMIT + 1024;
 
 /// The error for a runtime that stopped, with the reason it recorded when the
 /// status is this container's.

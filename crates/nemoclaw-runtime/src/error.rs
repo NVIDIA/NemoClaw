@@ -26,7 +26,9 @@ pub enum Error {
 
 fn exited_guidance(output: Option<&str>) -> String {
     match output {
-        Some(output) => format!("correct the cause in its final output and reapply:\n{output}"),
+        Some(output) => format!(
+            "its final output follows, and the container log has all of it; correct the cause and reapply:\n{output}"
+        ),
         None => "inspect retained logs and reapply".into(),
     }
 }
