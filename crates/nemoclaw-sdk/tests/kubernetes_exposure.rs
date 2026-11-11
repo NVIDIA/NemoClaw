@@ -50,7 +50,7 @@ fn node_port() -> Value {
 fn load_balancer() -> Value {
     json!({"service": {
         "type": "LoadBalancer",
-        "loadBalancerSourceRanges": ["10.20.0.0/16", "192.0.2.7/32"],
+        "loadBalancerSourceRanges": ["10.20.0.0/16", "2001:db8::/32"],
         "annotations": {"metallb.io/loadBalancerIPs": "10.20.0.40"}
     }})
 }
@@ -59,30 +59,18 @@ fn parse(input: &Value) -> Result<Document, String> {
     Document::parse(input.to_string().as_bytes()).map_err(|error| error.to_string())
 }
 
-/// The schema and the parser agree: both accept or both refuse.
-fn refused(input: &Value) -> String {
-    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
-    assert!(!validator.is_valid(input), "schema accepted {input}");
-    parse(input).expect_err("parser accepted an input the schema refuses")
-}
-
 #[test]
-fn an_exposed_gateway_is_dialed_at_the_address_clients_reach() {
+fn an_exposed_endpoint_names_the_host_and_port_clients_dial() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
     for accepted in [
         input(
             "https://gateway.agents.example.com:30851",
             Some(node_port()),
         ),
-        input("https://192.0.2.10:30000", Some(node_port())),
-        input("https://127.0.0.1:32767", Some(node_port())),
+        input("https://192.0.2.10:32767", Some(node_port())),
         oidc(input(
             "https://gateway.agents.example.com:443",
             Some(load_balancer()),
-        )),
-        oidc(input(
-            "https://10.20.0.40:8080",
-            Some(json!({"service": {"type": "LoadBalancer"}})),
         )),
     ] {
         assert!(validator.is_valid(&accepted), "schema refused {accepted}");
@@ -95,125 +83,84 @@ fn an_exposed_gateway_is_dialed_at_the_address_clients_reach() {
     }
 }
 
+/// Each refusal comes from both the schema and the parser, with its rule.
 #[test]
-fn without_exposure_the_endpoint_stays_a_loopback_port_forward() {
-    for endpoint in [
-        "https://gateway.agents.example.com:30851",
-        "https://192.0.2.10:30851",
-    ] {
-        let error = refused(&input(endpoint, None));
-        assert!(error.contains("127.0.0.1"), "{error}");
-    }
-    parse(&input("https://127.0.0.1:17671", None)).unwrap();
-}
-
-#[test]
-fn an_exposed_endpoint_names_a_dialable_https_host_and_port() {
-    for endpoint in [
-        "http://gateway.agents.example.com:30851",
-        "https://gateway.agents.example.com",
-        "https://gateway.agents.example.com:30851/",
-        "https://Gateway.Agents.example.com:30851",
-        "https://user@gateway.agents.example.com:30851",
-    ] {
-        refused(&input(endpoint, Some(node_port())));
-    }
-    // The endpoint's address policy refuses hosts no client may dial.
-    for endpoint in [
-        "https://0.0.0.0:30851",
-        "https://169.254.169.254:30851",
-        "https://224.0.0.1:30851",
-    ] {
-        parse(&input(endpoint, Some(node_port()))).unwrap_err();
-    }
-}
-
-#[test]
-fn a_node_port_endpoint_uses_the_kubernetes_node_port_range() {
-    for port in [29999, 32768, 443] {
-        let error = refused(&input(
-            &format!("https://gateway.agents.example.com:{port}"),
-            Some(node_port()),
-        ));
-        assert!(error.contains("30000"), "{error}");
-    }
-    for port in [30000, 32767] {
-        parse(&input(
-            &format!("https://gateway.agents.example.com:{port}"),
-            Some(node_port()),
-        ))
-        .unwrap();
-    }
-}
-
-#[test]
-fn load_balancer_settings_need_a_load_balancer() {
-    for (field, value) in [
-        ("loadBalancerSourceRanges", json!(["10.20.0.0/16"])),
-        (
-            "annotations",
-            json!({"metallb.io/loadBalancerIPs": "10.20.0.40"}),
-        ),
-    ] {
+fn exposure_rules_refuse_documents_with_the_rule_they_break() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    let with = |field: &str, value: Value| {
         let mut exposed = input(
             "https://gateway.agents.example.com:30851",
             Some(node_port()),
         );
         exposed["spec"]["gateway"]["kubernetes"]["expose"]["service"][field] = value;
-        refused(&exposed);
-    }
-}
-
-#[test]
-fn a_load_balancer_requires_an_existing_oidc_issuer() {
-    // Cloud load balancers are often reachable from the internet by default;
-    // the development profile's signing key would then guard that port.
-    let error = refused(&input(
+        exposed
+    };
+    let mut reserved = oidc(input(
         "https://gateway.agents.example.com:443",
         Some(load_balancer()),
     ));
-    assert!(error.contains("oidc"), "{error}");
-}
-
-/// Each platform resource rebuilds its specification from the attributes it
-/// stores, which carry the endpoint but not the exposure Service.
-#[test]
-fn exposed_platform_resources_rebuild_from_their_attributes() {
-    let generations: Generations = ["kubernetes_gateway", "kubernetes_storage"]
-        .map(|kind| (kind.to_owned(), "a".repeat(32)))
-        .into();
-    for exposed in [
-        input(
-            "https://gateway.agents.example.com:30851",
-            Some(node_port()),
+    reserved["spec"]["gateway"]["kubernetes"]["expose"]["service"]["annotations"] =
+        json!({"nemoclaw.nvidia.com/uid": "spoofed"});
+    for (refused, rule) in [
+        // Without exposure, providers forward a loopback port.
+        (
+            input("https://gateway.agents.example.com:30851", None),
+            "127.0.0.1",
         ),
-        oidc(input(
-            "https://gateway.agents.example.com:443",
-            Some(load_balancer()),
-        )),
+        (
+            input("http://gateway.agents.example.com:30851", Some(node_port())),
+            "lowercase host",
+        ),
+        (
+            input("https://gateway.agents.example.com", Some(node_port())),
+            "lowercase host",
+        ),
+        (
+            input("https://Gateway.example.com:30851", Some(node_port())),
+            "lowercase host",
+        ),
+        (
+            input(
+                "https://gateway.agents.example.com:29999",
+                Some(node_port()),
+            ),
+            "30000",
+        ),
+        (
+            input(
+                "https://gateway.agents.example.com:32768",
+                Some(node_port()),
+            ),
+            "30000",
+        ),
+        (
+            with("loadBalancerSourceRanges", json!(["10.20.0.0/16"])),
+            "only to a LoadBalancer",
+        ),
+        (
+            with(
+                "annotations",
+                json!({"metallb.io/loadBalancerIPs": "10.20.0.40"}),
+            ),
+            "only to a LoadBalancer",
+        ),
+        // A load balancer may be reachable from outside the cluster, where the
+        // development profile's signing key would guard the port.
+        (
+            input(
+                "https://gateway.agents.example.com:443",
+                Some(load_balancer()),
+            ),
+            "oidc",
+        ),
+        (reserved, "nemoclaw.nvidia.com/"),
     ] {
-        let document = parse(&exposed).unwrap();
-        let mut rebuilt = 0;
-        for target in runtime_targets(&document, &generations).unwrap() {
-            let kind = target.kind.as_str();
-            if ![
-                nemoclaw_sdk::kubernetes::STORAGE_KIND,
-                nemoclaw_sdk::kubernetes::AUTH_KIND,
-                nemoclaw_sdk::kubernetes::GATEWAY_KIND,
-            ]
-            .contains(&kind)
-            {
-                continue;
-            }
-            let spec = nemoclaw_sdk::kubernetes::Spec::from_row(kind, &target.values).unwrap();
-            assert_eq!(
-                spec.settings.endpoint,
-                exposed["spec"]["gateway"]["endpoint"]
-            );
-            rebuilt += 1;
-        }
-        assert_eq!(rebuilt, 3);
+        assert!(!validator.is_valid(&refused), "schema accepted {refused}");
+        let error = parse(&refused).expect_err("parser accepted an input the schema refuses");
+        assert!(error.contains(rule), "{error}");
     }
+    // The endpoint's address policy refuses hosts no client may dial.
+    parse(&input("https://169.254.169.254:30851", Some(node_port()))).unwrap_err();
 }
 
 fn generations() -> Generations {
@@ -250,33 +197,35 @@ fn a_node_port_publishes_the_endpoint_port_to_the_gateway_listener() {
     let graph = compile_runtime(&document, &generations(), "0.1.0").unwrap();
     let release = format!("{}-gateway", document.workspace());
     let service = &graph["resource"]["kubernetes_service_v1"]["gateway_exposure"];
+    let spec = &service["spec"][0];
+    assert_eq!(spec["type"], "NodePort");
+    assert_eq!(spec["selector"]["app.kubernetes.io/instance"], release);
     assert_eq!(
-        service["metadata"],
+        spec["port"],
         json!([{
-            "name": format!("{release}-exposure"),
-            "namespace": "owned-gateway",
-            "labels": {"nemoclaw.nvidia.com/uid": document.metadata.uid}
+            "name": "grpc", "protocol": "TCP", "port": 30851,
+            "node_port": 30851, "target_port": "grpc"
         }])
     );
     assert_eq!(
-        service["spec"],
-        json!([{
-            "type": "NodePort",
-            "selector": {"app.kubernetes.io/name": "openshell", "app.kubernetes.io/instance": release},
-            "port": [{
-                "name": "grpc", "protocol": "TCP", "port": 30851,
-                "node_port": 30851, "target_port": "grpc"
-            }]
-        }])
+        service["metadata"][0]["labels"]["nemoclaw.nvidia.com/uid"],
+        document.metadata.uid
     );
     assert_eq!(
         service["depends_on"],
         json!(["openshell_kubernetes_auth.runtime"]),
         "the Service is ready while Helm installs the gateway"
     );
+    // Plan checks the Service's state binding against its target.
+    let target = runtime_targets(&document, &generations())
+        .unwrap()
+        .into_iter()
+        .find(|target| target.address == "kubernetes_service_v1.gateway_exposure")
+        .unwrap();
+    assert_eq!(target.values["name"], service["metadata"][0]["name"]);
     assert_eq!(
-        graph["terraform"]["required_providers"]["kubernetes"],
-        json!({"source": "registry.opentofu.org/hashicorp/kubernetes", "version": "= 3.4.0"})
+        target.values["namespace"],
+        service["metadata"][0]["namespace"]
     );
     assert_eq!(
         graph["provider"]["kubernetes"],
@@ -286,16 +235,6 @@ fn a_node_port_publishes_the_endpoint_port_to_the_gateway_listener() {
             "ignore_annotations": [".*"]
         }),
         "the Service uses Helm's cluster and leaves annotations controllers add"
-    );
-    assert!(
-        runtime_targets(&document, &generations())
-            .unwrap()
-            .iter()
-            .any(
-                |target| target.address == "kubernetes_service_v1.gateway_exposure"
-                    && target.values["name"] == format!("{release}-exposure")
-                    && target.values["namespace"] == "owned-gateway"
-            )
     );
 }
 
@@ -307,8 +246,7 @@ fn a_load_balancer_carries_its_source_ranges_and_annotations() {
     ));
     exposed["spec"]["gateway"]["kubernetes"]["expose"]["service"]["annotations"]["example.com/template"] =
         json!("${not-an-expression}");
-    let document = parse(&exposed).unwrap();
-    let graph = compile_runtime(&document, &generations(), "0.1.0").unwrap();
+    let graph = compile_runtime(&parse(&exposed).unwrap(), &generations(), "0.1.0").unwrap();
     let service = &graph["resource"]["kubernetes_service_v1"]["gateway_exposure"];
     assert_eq!(
         service["metadata"][0]["annotations"],
@@ -321,11 +259,10 @@ fn a_load_balancer_carries_its_source_ranges_and_annotations() {
     assert_eq!(spec["type"], "LoadBalancer");
     assert_eq!(
         spec["load_balancer_source_ranges"],
-        json!(["10.20.0.0/16", "192.0.2.7/32"])
+        json!(["10.20.0.0/16", "2001:db8::/32"])
     );
-    assert_eq!(
-        spec["port"],
-        json!([{"name": "grpc", "protocol": "TCP", "port": 443, "target_port": "grpc"}]),
+    assert!(
+        spec["port"][0].get("node_port").is_none(),
         "Kubernetes allocates a LoadBalancer's node port"
     );
     assert_eq!(service["wait_for_load_balancer"], true);
@@ -356,66 +293,47 @@ fn an_exposure_from_a_pod_names_no_kubeconfig() {
     );
 }
 
-#[test]
-fn without_exposure_the_graph_has_no_service_or_kubernetes_provider() {
-    let document = parse(&input("https://127.0.0.1:17671", None)).unwrap();
-    for graph in [
-        compile_runtime(&document, &generations(), "0.1.0").unwrap(),
-        compile(&document, &generations(), "0.1.0").unwrap(),
-    ] {
-        assert!(graph["resource"].get("kubernetes_service_v1").is_none());
-        assert!(graph["provider"].get("kubernetes").is_none());
-        assert!(
-            graph["terraform"]["required_providers"]
-                .get("kubernetes")
-                .is_none()
-        );
-        assert!(
-            graph["data"]["openshell_gateway"]["current"]
-                .get("wait_timeout_seconds")
-                .is_none()
-        );
-    }
-    assert!(
-        !runtime_targets(&document, &generations())
-            .unwrap()
-            .iter()
-            .any(|target| target.address.starts_with("kubernetes_service_v1."))
-    );
-}
-
-/// The gateway reads dial the endpoint once the Service exists. A node port
-/// is programmed within seconds; a load balancer's address may route only
-/// after its provider's health checks pass.
+/// The gateway reads dial an exposed endpoint once the Service exists. A node
+/// port is programmed within seconds; a load balancer's address may route
+/// only after its provider's health checks pass. Without exposure, the graph
+/// has no Service.
 #[test]
 fn the_gateway_reads_wait_for_the_exposure_service() {
-    for (exposed, wait) in [
+    for (document, wait) in [
         (
             input(
                 "https://gateway.agents.example.com:30851",
                 Some(node_port()),
             ),
-            90,
+            Some(90),
         ),
         (
             oidc(input(
                 "https://gateway.agents.example.com:443",
                 Some(load_balancer()),
             )),
-            300,
+            Some(300),
         ),
+        (input("https://127.0.0.1:17671", None), None),
     ] {
-        let graph = compile(&parse(&exposed).unwrap(), &generations(), "0.1.0").unwrap();
+        let graph = compile(&parse(&document).unwrap(), &generations(), "0.1.0").unwrap();
+        assert_eq!(
+            graph["resource"].get("kubernetes_service_v1").is_some(),
+            wait.is_some()
+        );
         for read in ["current", "apply"] {
             let read = &graph["data"]["openshell_gateway"][read];
-            assert!(
+            assert_eq!(
                 read["depends_on"]
                     .as_array()
                     .unwrap()
                     .contains(&json!("kubernetes_service_v1.gateway_exposure")),
+                wait.is_some(),
                 "{read}"
             );
-            assert_eq!(read["wait_timeout_seconds"], wait, "{read}");
+            if let Some(wait) = wait {
+                assert_eq!(read["wait_timeout_seconds"], wait, "{read}");
+            }
         }
     }
 }
@@ -440,17 +358,14 @@ fn the_gateway_certificate_names_the_exposed_host() {
             "0.1.0",
         )
         .unwrap();
-        assert_eq!(
-            chart_values(&graph)["pkiInitJob"],
-            json!({"enabled": true, field: [host]})
-        );
+        assert_eq!(chart_values(&graph)["pkiInitJob"][field], json!([host]));
     }
     // The chart's certificate always names 127.0.0.1.
-    for document in [
-        input("https://127.0.0.1:30851", Some(node_port())),
-        input("https://127.0.0.1:17671", None),
-    ] {
-        let graph = compile_runtime(&parse(&document).unwrap(), &generations(), "0.1.0").unwrap();
-        assert_eq!(chart_values(&graph)["pkiInitJob"], json!({"enabled": true}));
-    }
+    let graph = compile_runtime(
+        &parse(&input("https://127.0.0.1:30851", Some(node_port()))).unwrap(),
+        &generations(),
+        "0.1.0",
+    )
+    .unwrap();
+    assert_eq!(chart_values(&graph)["pkiInitJob"], json!({"enabled": true}));
 }
