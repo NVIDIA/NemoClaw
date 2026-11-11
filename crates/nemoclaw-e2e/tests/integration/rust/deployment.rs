@@ -470,14 +470,13 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
     lifecycle.destroy();
 }
 
-/// A changed, added, or removed service exposure updates the sandbox's
-/// endpoints in place, as `openshell service expose` and `openshell service
-/// delete` would: the sandbox and its agent keep running, and apply reports
-/// the URLs the gateway gave the new endpoints.
+/// A changed, added, or removed service exposure updates the sandbox in
+/// place: the sandbox and its agent keep running, and apply reports the URLs
+/// of the declared endpoints. The provider's sandbox contract scenario checks
+/// the endpoints the gateway holds.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn changed_service_exposures_keep_the_sandbox_and_its_agent() {
-    use openshell_core::proto::ServiceAuthorizationMode;
     let mut document =
         Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
             .unwrap();
@@ -512,7 +511,6 @@ async fn changed_service_exposures_keep_the_sandbox_and_its_agent() {
         .apply(&changed, &lifecycle.cancel)
         .await
         .unwrap();
-    let workspace = lifecycle.document.workspace();
     {
         let state = lifecycle.fixture.state.lock().unwrap();
         assert_eq!(
@@ -524,31 +522,8 @@ async fn changed_service_exposures_keep_the_sandbox_and_its_agent() {
             state.fabric_starts, starts,
             "the change restarted the agent"
         );
-        let held: Vec<_> = state
-            .services
-            .iter()
-            .filter(|((held, sandbox, _), _)| *held == workspace && sandbox == "assistant")
-            .map(|((_, _, name), endpoint)| {
-                (
-                    name.as_str(),
-                    endpoint.target_port,
-                    endpoint.authorization_mode,
-                )
-            })
-            .collect();
-        assert_eq!(
-            held,
-            [
-                ("dashboard", 18801, ServiceAuthorizationMode::Strip as i32),
-                (
-                    "web",
-                    3000,
-                    ServiceAuthorizationMode::BearerPassthrough as i32
-                ),
-            ],
-            "the gateway must hold the changed and added endpoints, not the removed one"
-        );
     }
+    let workspace = lifecycle.document.workspace();
     let url =
         |service: &str| format!("http://{workspace}--assistant--{service}.services.fixture.test/");
     let expected: BTreeMap<_, _> = [(
