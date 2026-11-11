@@ -63,31 +63,54 @@ pub fn validate_capacity_contracts(
 ) -> Result<(), Error> {
     parse(engine, contracts).map(|_| ())
 }
-/// Accept one GPU named as `container.gpu` names it: a UUID or an index.
-pub fn validate_capacity_gpu(gpu: &str) -> Result<(), Error> {
-    if regex::Regex::new(nemoclaw_sdk::config::GPU_DEVICE)
-        .expect("the GPU pattern compiles")
-        .is_match(gpu)
-    {
-        Ok(())
-    } else {
-        Err(Error::Conflict(
-            "capacity gpu must name one GPU by its UUID or index",
-        ))
+/// The error for a `gpu_devices` entry that names no single GPU.
+pub(crate) const GPU_DEVICES_ENTRY: &str =
+    "each gpu_devices entry must be a lowercase GPU UUID or an index from \"0\" to \"999\"";
+/// Accept the GPUs a capacity read observes as `container.gpuDevices` lists them:
+/// UUIDs or indexes, without repeats, and exactly one for now. `None` is an
+/// entry not yet known.
+pub fn validate_capacity_gpu_devices(devices: &[Option<&str>]) -> Result<(), Error> {
+    let pattern =
+        regex::Regex::new(nemoclaw_sdk::config::GPU_DEVICE).expect("the GPU pattern compiles");
+    let mut seen = std::collections::BTreeSet::new();
+    for device in devices.iter().flatten() {
+        if !pattern.is_match(device) {
+            return Err(Error::Conflict(GPU_DEVICES_ENTRY));
+        }
+        if !seen.insert(device) {
+            return Err(Error::Conflict("gpu_devices must not repeat a GPU"));
+        }
     }
+    // Serving one model across several GPUs will lift this limit; the rules
+    // above already refuse repeats.
+    if devices.len() != 1 {
+        return Err(Error::Conflict(
+            "gpu_devices must list exactly one GPU: serving one model across several GPUs isn't implemented yet",
+        ));
+    }
+    Ok(())
 }
 /// Read total capacity without treating an existing process's allocations as new demand.
-/// With `gpu`, a GPU UUID or index, only that GPU is observed.
+/// With `gpu_devices`, only the listed GPU is observed.
 pub async fn observe_service_capacity(
     connections: &Connections,
     endpoint: &str,
     contracts: &[String],
-    gpu: Option<&str>,
+    gpu_devices: Option<&[String]>,
 ) -> Result<ServiceCapacity, Error> {
     let services = parse(Some(endpoint), contracts)?;
-    if let Some(gpu) = gpu {
-        validate_capacity_gpu(gpu)?;
-    }
+    let gpu = match gpu_devices {
+        Some(devices) => {
+            validate_capacity_gpu_devices(
+                &devices
+                    .iter()
+                    .map(|device| Some(device.as_str()))
+                    .collect::<Vec<_>>(),
+            )?;
+            devices.first().map(String::as_str)
+        }
+        None => None,
+    };
     let engine = crate::managed::service_engine(connections, endpoint)?;
     let work = async {
         let host = engine.host_observer.observe(&engine, gpu).await?;

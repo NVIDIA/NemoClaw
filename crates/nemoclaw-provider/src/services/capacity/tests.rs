@@ -208,11 +208,17 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
             .await
             .is_err()
         );
-        for gpu in ["all", "0,1"] {
+        for gpu_devices in [vec![], vec!["all"], vec!["0", "1"], vec!["0", "0"]] {
+            let gpu_devices: Vec<String> = gpu_devices.into_iter().map(Into::into).collect();
             assert!(
-                observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs, Some(gpu))
-                    .await
-                    .is_err()
+                observe_service_capacity(
+                    &connections,
+                    "ssh://operator@gpu-box",
+                    &specs,
+                    Some(&gpu_devices)
+                )
+                .await
+                .is_err()
             );
         }
         assert_eq!(

@@ -852,9 +852,10 @@ Each takes an `engine` and `contracts`, the `spec` of each of that runtime's con
 No data source combines services of different runtimes on one host.
 It reports required and observed bytes and compatibility using the selected execution host's measurements.
 The SDK's default service graph does not use it as an admission gate.
-Without `gpu`, its host observation reads every GPU on the engine and refuses a host with two or more.
-`gpu` takes one GPU's UUID or index, as `container.gpu` does; with it, the observation reads only that GPU, through `nvidia-smi --id`.
-The data source then describes that one GPU, so list only the contracts of services whose `container.gpu` names it, and use one data source for each GPU.
+Without `gpu_devices`, its host observation reads every GPU on the engine and refuses a host with two or more.
+`gpu_devices` lists GPUs as `container.gpuDevices` does, as in `gpu_devices = ["1"]`: each entry a lowercase GPU UUID or an index from `"0"` to `"999"`, and exactly one entry, because serving one model across several GPUs isn't implemented yet.
+With it, the observation reads only the listed GPU, through `nvidia-smi --id`.
+The data source then describes that one GPU, so list only the contracts of services whose `container.gpuDevices` lists it, and use one data source for each GPU.
 It can't check which GPU a contract's service uses, because a contract doesn't carry the service's `container` settings.
 Per-service runtime protection does not reserve capacity across deployments or schedule shared GPUs.
 Operators must choose budgets appropriate for the shared host.
