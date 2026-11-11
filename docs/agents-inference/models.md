@@ -70,7 +70,7 @@ An inline recipe supplies its own compatibility requirements and excludes `hardw
 Backend startup still establishes actual model compatibility.
 
 Optional `serving.toolParser` and `serving.reasoningParser` select native vLLM parsers.
-Unsupported names are rejected.
+NemoClaw checks only the name's form, lowercase letters, digits, and underscores; vLLM rejects an unknown parser when it starts, and the runtime stops with vLLM's error in its [stop detail](#diagnose-and-recover-a-stopped-runtime).
 `serving.mambaBackend: flashinfer` selects the native FlashInfer Mamba backend.
 `serving.enforceEager: false` leaves compilation and CUDA graphs at vLLM's native defaults; omission retains eager execution.
 Inline recipes supply their own model name and execution settings and reject these ordinary-service overrides.
@@ -99,7 +99,7 @@ serving:
 - [vLLM's parallelism guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/serving/parallelism_scaling.md) recommends pipeline parallelism when the GPU count doesn't divide the model evenly, and when the GPUs have no NVLink.
 - An inline recipe sets its own layout, whose omitted sizes get vLLM's default of 1, and rejects these settings; see [recipes](recipes.md#declaration).
 
-`container.gpuDevices` takes one entry until serving one model across several GPUs is implemented, so vLLM refuses a layout larger than one GPU.
+`container.gpuDevices` takes one entry until serving one model across several GPUs is implemented ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)), so vLLM refuses a layout larger than one GPU; the statements above about several selected GPUs apply once that limit is lifted.
 
 ### Retained Model Files
 
@@ -223,6 +223,7 @@ It stops its inference process on sustained pressure, failed memory observations
 The container also stays stopped after a host reboot; see [host reboot recovery](../build-deploy/usage.md#recover-after-a-host-reboot).
 A native process exit also ends supervision of that process.
 When vLLM exits, the stop detail and the apply error include the end of vLLM's output, up to 4 KiB, with the inference key replaced by `[redacted]`.
+When one command's OpenTofu diagnostics together exceed 16 KiB, as several failed services' excerpts can, the apply error shows `child output exceeds the supported limit` in their place ([#14399](https://github.com/NVIDIA/NemoClaw/issues/14399)); the stop detail stays in `/data/status.json`.
 If the cause isn't in the excerpt, read it in the container log.
 The model volume retains `/data/status.json` with `phase`, `detail`, `updated` (UTC timestamp), and `pid`.
 Phases are `initializing`, `downloading`, `preparing`, `loading`, `ready`, and `stopped`.
@@ -278,7 +279,7 @@ Its source pins and adaptation are recorded in the [vLLM runtime notice](../../i
 It uses ordinary `kind: vllm` serving with no preparation recipe.
 
 The example requires an existing OpenShell gateway and a Linux AMD64 Docker host reached through SSH.
-That host must expose exactly one NVIDIA GPU with compute capability at least 9.0, at least 96,000,000,000 bytes of dedicated GPU memory, and driver major 580 or newer.
+The model container must see exactly one NVIDIA GPU, so the host must have one or the service must select one with [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy); that GPU needs compute capability at least 9.0, at least 96,000,000,000 bytes of dedicated memory, and driver major 580 or newer.
 Follow the [SSH placement prerequisites](remote-service.md), build the [AMD64 runtime image](../build-deploy/build.md#build-a-runtime-image) on a matching host, and load it into the selected Docker daemon.
 Replace the zero image digest, SSH alias, gateway endpoint, private publication address, and deployment UID before applying.
 Build a compatible OpenClaw sandbox image using the [agent image procedure](../build-deploy/build.md#build-agent-images), replace `sandboxes.<name>.image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.

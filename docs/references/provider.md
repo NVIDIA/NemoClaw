@@ -179,7 +179,7 @@ Plans reject a missing `server` or `binaries`; the schema lists them as optional
 A rotated credential reference updates the registration in place. Adding or removing authentication, or any other change, replaces the resource, and removal deletes both objects.
 A sandbox that attaches it also needs a policy that allows traffic to the server's endpoint.
 Its `ref` has type `openshell_provider`, so sandboxes take it in `providers`.
-Generated graphs register each selected inference provider this way, passing a literal `inference_server` object built from the provider definition. Reading servers instead depends on one OpenTofu root ([#13254](https://github.com/NVIDIA/NemoClaw/issues/13254)) and on checking external servers ([#13256](https://github.com/NVIDIA/NemoClaw/issues/13256)).
+Generated graphs register each selected inference provider this way, passing a literal `inference_server` object built from the provider definition rather than a readiness read's `ref`; by design, they don't check external servers ([#13256](https://github.com/NVIDIA/NemoClaw/issues/13256)).
 
 ```hcl
 resource "openshell_inference" "nemotron" {
@@ -630,9 +630,9 @@ A positive timeout retries only transport failures, not authentication failures,
 For a managed gateway, the generated graph sets this timeout to 90 seconds and reads capabilities after gateway reconciliation.
 The capability postcondition must succeed before OpenShell resource refresh proceeds.
 
-For managed Docker gateways, the runtime graph first reads `data.openshell_docker_gateway_readiness.current` and orders the capability read after it.
+For managed Docker gateways, the generated graph first reads `data.openshell_docker_gateway_readiness.current` and orders the capability read after it.
 `openshell_docker_gateway_readiness` takes the container's `engine`, `container_id`, `name`, and `owner`, the gateway `endpoint`, and optional `wait_timeout_seconds` and `read_trigger`.
-The runtime graph waits 90 seconds and takes `container_id` from the Docker provider's process resource, so the read waits until apply.
+The generated graph waits 90 seconds and takes `container_id` from the Docker provider's process resource, so the read waits until apply.
 The data source checks the exact container ID, name, and owner through read-only engine inspection while waiting for the gateway to answer its OpenShell health call without credentials, then returns `ready`.
 Two matching stopped or absent observations, separated by 200 milliseconds, stop a positive readiness wait; a restarting process can recover within the existing timeout.
 A zero timeout reports a stopped process on its first observation and continues inspecting a running process while the single API request is pending.
@@ -811,7 +811,7 @@ A successful plan therefore does not establish that a model will fit or load.
 
 The hosted runtime checks its hardware, startup headroom, model artifacts, and available memory before serving.
 Its resident supervisor continues protecting host memory after the CLI exits and does not automatically restart a stopped workload.
-The runtime graph uses `vllm_readiness` and `ollama_readiness` to wait for current application status from the Docker provider's container ID.
+Generated graphs use `vllm_readiness` and `ollama_readiness` to wait for current application status from the Docker provider's container ID.
 Each validates the runtime contract and container identity, reads the service's status contract, and checks generated vLLM credential permissions when the contract enables authentication.
 It does not repeat model-file verification, collect hardware inventory, or request model responses.
 Startup phases may be polled; stopped services, failed observations, and malformed status fail the read.
@@ -825,7 +825,7 @@ It reads readiness in one of two modes:
 The `ref` is `{ type = "inference_server", endpoint, model, credential_env, credential_source }`: `endpoint` is the sandbox endpoint, `model` the contract's served model, `credential_env` empty, and `credential_source` set only for a server that requires its generated key. It names the key's location and never holds the key.
 
 Setting both modes' inputs fails validation, as does endpoint mode with an authenticated contract.
-Until inference registrations take the `ref`, pass its endpoint: `endpoint = data.vllm_readiness.NAME.ref.endpoint`.
+Pass the `ref` as `openshell_inference`'s `server`, as in [Inference Providers](#inference-providers).
 
 ```hcl
 data "vllm_readiness" "qwen" {
@@ -841,8 +841,7 @@ Successful reads return `ready: true`; unsuccessful reads report an error.
 The optional `read_trigger` has the same scheduling semantics as the gateway trigger above.
 The compiler references the container's `id` and uses `timestamp() != ""` to defer readiness until apply, including unchanged apply.
 This apply-time read appears as `unverified` in SDK plan results; it does not make an otherwise resolved resource plan incomplete or relax the apply gate.
-The runtime graph must succeed before the SDK proceeds to the OpenShell graph.
-The OpenShell graph uses `ollama_proxy_readiness` for Ollama proxies, with a 30-second wait and dependencies from their selected provider registrations.
+Within one apply, OpenShell objects wait for every runtime resource and readiness read; `ollama_proxy_readiness` reads each Ollama proxy with a 30-second wait.
 For a proxy contract, the observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
 It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
 The SDK runs no readiness loop of its own.
@@ -894,7 +893,7 @@ The deployment lock excludes other NemoClaw operations using the same state dire
 
 ## Managed Kubernetes Gateway
 
-The runtime graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
+The generated graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
 
 1. `openshell_kubernetes_storage.runtime` binds the namespace by UID, creating it if it doesn't exist, and creates the encryption key; it retains both, with `prevent_destroy`.
 2. `openshell_kubernetes_auth.runtime` prepares the development token issuer.

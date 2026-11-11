@@ -36,6 +36,7 @@ Recipe memory requirements are checked against measurements from the execution h
 `compatibility.gpu` must belong to the GPU family of a [hardware profile](models.md#choose-a-hardware-profile); other names are rejected.
 A recipe's `serving.tensorParallelSize` and `serving.pipelineParallelSize` name the layout its budget was measured on, as vLLM names it.
 An omitted size gets vLLM's default of 1, whatever GPUs the service selects; vLLM checks the layout when it starts, as for an [ordinary service](models.md#set-the-parallel-layout).
+With a recipe, the service's `serving.speculativeTokens`, from 0 to 3, sets vLLM's MTP speculative decoding through `--speculative-config`; zero leaves it off, and services without a recipe must leave it zero.
 That profile's memory architecture decides how the serving GPU budget, `resources.gpuMemoryBytes`, is checked; on dedicated memory, the budget applies to each selected GPU:
 
 | Memory architecture | GPU budget must fit | `--gpu-memory-utilization` | Host available memory at startup |

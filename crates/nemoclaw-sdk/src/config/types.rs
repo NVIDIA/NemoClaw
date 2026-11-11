@@ -462,7 +462,7 @@ pub struct Route {
 /// Model settings for one named inference choice.
 pub struct Overrides {
     #[serde(rename = "model")]
-    /// Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository.
+    /// Model identifier. For a managed service, match its served model: vLLM's recipe serving.modelName, serving.modelName, or model.repository; Ollama's model.name; an Ollama proxy's upstream.model.name.
     pub model: String,
     #[serde(flatten)]
     /// Shared public model limits. Native model settings belong in settings.
