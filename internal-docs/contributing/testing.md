@@ -298,7 +298,7 @@ Documentation previews publish only for PRs targeting `v1`.
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
 | E2E / Colossus runner connectivity | Manual, on `v1` only: `smoke` runs `true` on the `colossus-gb300-pilot` runner without credentials, and `bundle` runs the Linux ARM64 bundle, unit, contract, and integration jobs there one after another, to compare their times with the hosted runners'; it restores the hosted runners' Rust caches but never saves them |
 
-The `v1` ruleset requires the first eight checks.
+The `v1` ruleset requires the four `Test /` checks, the two `Build /` checks, `Policy`, and `Validate`; `Python scripts` isn't required.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
 A `Test / PLATFORM` check succeeds only when every job of that platform that runs succeeds: its unit, contract, and integration tests, and, on Linux, its selected live suites. A job the plan doesn't select is skipped.
 
