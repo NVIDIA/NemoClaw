@@ -360,7 +360,7 @@
     },
     "DedicatedHardware": {
       "additionalProperties": false,
-      "description": "Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.",
+      "description": "Requirements each selected NVIDIA GPU with dedicated memory on Linux AMD64 must meet. Declaring requirements does not qualify a model or host.",
       "properties": {
         "architecture": {
           "const": "amd64",
@@ -382,7 +382,7 @@
           "type": "integer"
         },
         "minGpuMemoryBytes": {
-          "description": "Minimum total dedicated GPU memory in bytes. Host RAM is measured separately.",
+          "description": "Minimum total dedicated memory of each selected GPU in bytes. Host RAM is measured separately.",
           "format": "uint64",
           "maximum": 4398046511104,
           "minimum": 4294967296,
@@ -1703,7 +1703,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
         "gpuMemoryGiB": {
-          "description": "Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.",
+          "description": "GPU budget in GiB for each selected GPU without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.",
           "format": "int64",
           "maximum": 96,
           "minimum": 0,
@@ -1711,7 +1711,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
+          "description": "Optional fraction of each selected GPU's observed dedicated memory, from 0.05 through 0.95, which vLLM's --gpu-memory-utilization applies to each GPU's own total. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,
@@ -1735,7 +1735,7 @@
         },
         "kvCacheGiB": {
           "default": 8,
-          "description": "KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.",
+          "description": "KV cache allocation in GiB on each selected GPU for ordinary vLLM, passed as --kv-cache-memory-bytes. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.",
           "format": "int64",
           "minimum": 0,
           "type": "integer",
@@ -1910,13 +1910,13 @@
             }
           ],
           "default": 0,
-          "description": "Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB.",
+          "description": "Fixed serving budget in GiB for each selected GPU when utilization is omitted. Omission or zero selects 16 GiB.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory.",
+          "description": "Optional fraction of observed dedicated GPU memory, taken of the smallest selected GPU; the resulting budget applies to each selected GPU.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,
@@ -2585,7 +2585,7 @@
       "description": "Resource declarations checked against host observations and produced data.",
       "properties": {
         "gpuMemoryBytes": {
-          "description": "Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.",
+          "description": "Serving GPU budget in bytes for each selected GPU, including its share of the model, caches, and other allocations. Checked against each selected GPU's memory on dedicated-memory GPUs, and against host memory with the host reserve on unified memory.",
           "format": "uint64",
           "maximum": 4398046511104,
           "minimum": 4294967296,
@@ -3581,7 +3581,7 @@
       "anyOf": [
         {
           "$ref": "#/$defs/DedicatedHardware",
-          "description": "One NVIDIA GPU with dedicated memory on Linux AMD64."
+          "description": "NVIDIA GPUs with dedicated memory on Linux AMD64; each selected GPU must meet the requirements."
         },
         {
           "additionalProperties": false,
@@ -3655,7 +3655,7 @@
               "type": "string"
             },
             "minGpuMemoryBytes": {
-              "description": "Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity.",
+              "description": "Minimum dedicated memory of each selected GPU in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity.",
               "format": "uint64",
               "maximum": 4398046511104,
               "minimum": 4294967296,

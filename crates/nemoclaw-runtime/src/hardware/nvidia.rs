@@ -126,16 +126,8 @@ pub fn apply_observations(
     processes: &str,
 ) -> Result<(), Error> {
     let (gpus, processes) = inventory(gpus, processes)?;
-    let one = match gpus.as_slice() {
-        [gpu] => Some(gpu),
-        _ => None,
-    };
-    capacity.gpu = one.map(|gpu| gpu.name.clone()).unwrap_or_default();
-    capacity.driver_major = one.map_or(0, |gpu| gpu.driver_major);
-    capacity.compute_capability = one.map_or(0, |gpu| gpu.compute_capability);
-    capacity.gpu_memory = one.and_then(|gpu| gpu.memory.clone());
     capacity.foreign_gpu_processes = processes;
-    capacity.gpus = gpus;
+    capacity.set_gpus(gpus);
     Ok(())
 }
 

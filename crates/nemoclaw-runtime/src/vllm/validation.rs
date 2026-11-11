@@ -35,6 +35,9 @@ pub fn validate(service: &Service) -> Result<(), ConfigError> {
     }
     Ok(())
 }
+/// A lower bound on fit: each GPU holds at least its share of the weights,
+/// split over tensor × pipeline parallel size, plus the KV cache and 2 GiB, all
+/// within the per-GPU budget. vLLM's split and other allocations can need more.
 pub fn validate_weights(service: &Service, manifest: &Manifest) -> Result<(), Error> {
     if service.recipe.is_some() {
         return Ok(());
@@ -45,8 +48,11 @@ pub fn validate_weights(service: &Service, manifest: &Manifest) -> Result<(), Er
         .filter(|f| f.name.ends_with(".safetensors"))
         .map(|f| f.size)
         .sum();
+    let (tensor, pipeline) = service.parallel_sizes();
+    let gpus = tensor.saturating_mul(pipeline).max(1);
     if weights == 0
         || weights
+            .div_ceil(gpus)
             .checked_add((service.memory.kv_cache_gib as u64 + 2) * GIB)
             .is_none_or(|bytes| bytes > gpu_bytes(service))
     {
