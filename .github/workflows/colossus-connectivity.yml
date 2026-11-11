@@ -88,9 +88,10 @@ jobs:
           mkdir -p "$parent"
           run="$parent/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           test ! -e "$run"
+          mkdir "$run"
           {
             echo "NEMOCLAW_HCL_RUN=$run"
-            echo "NEMOCLAW_HCL_DOCUMENT=$run/case.json"
+            echo "NEMOCLAW_HCL_DOCUMENT=$run/case.yaml"
             echo "NEMOCLAW_TEST_BUNDLE=$GITHUB_WORKSPACE/dist/linux_arm64"
           } >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-rust
@@ -104,16 +105,31 @@ jobs:
           executable=$(cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json |
             jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test) | .executable' | tail -1)
           test -x "$executable"
-          echo "NEMOCLAW_E2E_EXECUTABLE=$executable" >> "$GITHUB_ENV"
           cargo images build --platform linux/arm64 openclaw
           docker buildx bake vllm --set "vllm.args.VLLM_IMAGE=$STATION_VLLM_BASE" \
             --set vllm.tags=nc-prototype-vllm:station
-          docker run --rm --gpus all --entrypoint nvidia-smi nc-prototype-vllm:station
-          target/ci-runner/debug/nemoclaw-build station prepare --run "$NEMOCLAW_HCL_RUN"
-          # Keep the original bundle for recovery after a later checkout cleans
-          # the Actions workspace. Deployment state must never outlive its CLI.
+          # Keep the original bundle with private recovery state.
           cp -a "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_HCL_RUN/bundle"
+          cp "$executable" "$NEMOCLAW_HCL_RUN/e2e"
+          echo "NEMOCLAW_E2E_EXECUTABLE=$NEMOCLAW_HCL_RUN/e2e" >> "$GITHUB_ENV"
           echo "NEMOCLAW_TEST_BUNDLE=$NEMOCLAW_HCL_RUN/bundle" >> "$GITHUB_ENV"
+      - name: Bind the Station example
+        run: |
+          # As in Live / HCL, bind an owned copy to this run's images and UID.
+          # The single runner serializes uses of the example's fixed ports;
+          # the HCL harness selects a subnet clear of retained networks.
+          id() { docker image inspect --format '{{.Id}}' "$1"; }
+          openclaw=$(id nc-fabric:openclaw)
+          runtime=$(id nc-prototype-vllm:station)
+          uid=$(cat /proc/sys/kernel/random/uuid)
+          umask 077
+          sed -e "s#^  uid: .*#  uid: $uid#" \
+            -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$openclaw#" \
+            -e "s#nc-prototype-vllm@sha256:0\{64\}#nc-prototype-vllm@$runtime#" \
+            -e 's#nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4#nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4#' \
+            -e 's#ff433f5493e25d631c9f12b5d55c674229923d02#da5b2650a835292c678994a1fa3fb653250fb508#' \
+            -e 's#nemotron-3-super#nemotron-3.5-super-vl#g' \
+            examples/gtc-dc/openclaw-dgx-station.yaml > "$NEMOCLAW_HCL_DOCUMENT"
       - name: Run deployment, inference, and teardown
         timeout-minutes: 45
         working-directory: crates/nemoclaw-e2e
@@ -123,8 +139,13 @@ jobs:
         timeout-minutes: 10
         run: |
           [[ -n ${NEMOCLAW_HCL_RUN:-} && -f "$NEMOCLAW_HCL_RUN/case.json" ]] || exit 0
-          target/ci-runner/debug/nemoclaw-build station cleanup \
-            --run "$NEMOCLAW_HCL_RUN" --bundle "$NEMOCLAW_TEST_BUNDLE"
+          state="$NEMOCLAW_HCL_RUN/deployment"
+          if [[ -d $state ]]; then
+            "$NEMOCLAW_TEST_BUNDLE/bin/nemoclaw" destroy --output json --progress off --state-dir "$state" \
+              > "$NEMOCLAW_HCL_RUN/work/destroy.stdout" 2> "$NEMOCLAW_HCL_RUN/work/destroy.stderr"
+            jq -e '.outcome == "destroyed"' "$NEMOCLAW_HCL_RUN/work/destroy.stdout"
+          fi
+          "$NEMOCLAW_E2E_EXECUTABLE" station::cleanup --exact --ignored --nocapture
       - name: Upload outcome evidence
         if: always() && env.NEMOCLAW_HCL_RUN != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

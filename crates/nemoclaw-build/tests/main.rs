@@ -42,6 +42,4 @@ mod release_assessment;
 mod release_gate;
 #[path = "schema.rs"]
 mod schema;
-#[cfg(unix)]
-mod station;
 mod workflows;

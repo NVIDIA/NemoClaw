@@ -39,6 +39,11 @@ fn case() {
         fs::create_dir_all(directory).unwrap();
     }
     let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap_or_else(|_| format!("cases/{case}.yaml"));
+    let config = if case == "dgx-station-openclaw-nemotron" {
+        super::station::bind(&run, &config)
+    } else {
+        config
+    };
     let context = json!({
         "config": fs::canonicalize(config).unwrap(),
         "state_dir": run.join("deployment"),

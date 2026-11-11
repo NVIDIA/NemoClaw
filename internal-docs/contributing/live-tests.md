@@ -169,21 +169,22 @@ The job checks these prerequisites; it does not install system packages, restart
 Use a Station dedicated to CI with one runner agent. The existing concurrency group serializes whole Colossus runs without cancelling an active run.
 
 The case reuses [the GTC OpenClaw Station example](../../examples/gtc-dc/openclaw-dgx-station.yaml); it adds no separate deployment YAML.
-`station prepare` keeps its topology, serving limits, and memory settings, and selects `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` at revision `da5b2650a835292c678994a1fa3fb653250fb508`, with the matching serving and route name `nemotron-3.5-super-vl`.
+The workflow keeps its topology, serving limits, and memory settings, and selects `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` at revision `da5b2650a835292c678994a1fa3fb653250fb508`, with the matching serving and route name `nemotron-3.5-super-vl`.
 The committed example remains on Nemotron 3 Super; the generated `case.json` and identity report record the selected model and revision for this run.
 The workflow builds the candidate's bundle, E2E executable, OpenClaw image, and vLLM supervisor locally.
 The Station runtime overrides `VLLM_IMAGE` with the immutable upstream ARM64 image in the workflow, from vLLM commit `cf5cea2da37d3dfed27d2e0aa3041c3e553c2d57`, which includes [vLLM #64506](https://github.com/vllm-project/vllm/pull/64506).
 It applies no runtime source patches. Other runtime builds keep their existing default base.
 This upstream image differs from Rebecca's patched manual precursor; that precursor does not qualify this automated candidate.
 
-Each attempt creates a fresh UID, free ports and subnet, configuration, and deployment state.
+Each attempt gets a fresh UID, configuration, and deployment state.
+The dedicated runner uses the example's gateway/model ports, 17903 and 19103; a conflict fails setup. The HCL harness chooses an unused test subnet because earlier runs retain gateway networks.
 The HCL scenario applies the case, requests `READY` through OpenClaw, and destroys the deployment.
 The `remote_service` integration scenarios cover unchanged plans and reapply against fixtures; this live case checks the hardware, inference, and cleanup boundary.
-A separate cleanup step retries SDK destroy after a failed or interrupted scenario and independently checks Docker for owned workloads and unexpected retained objects.
+A separate `always()` step calls the bundled `nemoclaw destroy`, then the E2E executable's read-only `station::cleanup` probe checks Docker for owned workloads and unexpected retained objects.
 Cleanup failure fails the job. It never removes unrelated resources or uses Docker prune.
 
 The published reports contain candidate/model/image identities, inference outcome, and cleanup outcome; the job summary contains HCL operation timings.
-Raw responses, credentials, deployment state, and the original bundle remain private under:
+Raw responses, credentials, deployment state, the bundle, and the E2E executable remain private under:
 
 ```text
 ~/.local/state/nemoclaw-ci/colossus/<run-id>-<attempt>/
@@ -195,12 +196,12 @@ Record cold preparation separately from cached preparation if a future approved 
 Retained storage consumes disk space and requires explicit operator retirement after diagnosis.
 
 If the runner disappears or is forcibly stopped before cleanup, inspect its private run directory after recovery.
-From the same candidate checkout, use the preserved bundle to resume cleanup:
+Use the preserved executables to resume cleanup:
 
 ```sh
-cargo run --locked --no-default-features -p nemoclaw-build -- station cleanup \
-  --run /absolute/path/to/retained-run \
-  --bundle /absolute/path/to/retained-run/bundle
+run=/absolute/path/to/retained-run
+"$run/bundle/bin/nemoclaw" destroy --state-dir "$run/deployment" &&
+  NEMOCLAW_HCL_RUN="$run" "$run/e2e" station::cleanup --exact --ignored --nocapture
 ```
 
 A normal rerun uses a new attempt and fresh deployment; it refuses active NemoClaw workloads left on the host.
