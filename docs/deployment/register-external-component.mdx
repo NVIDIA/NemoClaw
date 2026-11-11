@@ -291,9 +291,9 @@ NemoClaw does not yet offer an import or apply workflow that uses this component
 
 NemoClaw records the component's participation only after it returns `activated` and the sandbox evidence still matches.
 This lets export distinguish a component used during onboarding from one registered later.
-At export, NemoClaw compares that record with the live sandbox identity, gateway configuration, and current component declaration.
+At export, NemoClaw compares that record with the live sandbox identity, recorded lifecycle generation, gateway configuration, and current component declaration.
 If a component is configured without matching activation evidence, export stops without a document.
-Changing the component, gateway, or sandbox identity also stops export.
+Changing the component, gateway, sandbox identity, or lifecycle generation also stops export.
 Export for the external component's version 2 protocol is not qualified.
 
 ## Keep Credentials Outside the Contract
