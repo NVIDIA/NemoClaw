@@ -14,7 +14,7 @@ pub async fn observe_host_hardware(
 ) -> HardwareObservation {
     let work = async {
         let info = engine.info().await?;
-        let host = observer.observe(engine).await?;
+        let host = observer.observe(engine, None).await?;
         let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
         if capacity.architecture.is_empty()
             || capacity.total == 0

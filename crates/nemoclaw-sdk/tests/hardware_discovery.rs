@@ -15,7 +15,11 @@ struct FixedHost {
 }
 #[async_trait::async_trait]
 impl HostObserver for FixedHost {
-    async fn observe(&self, _: &Engine) -> Result<HostObservation, nemoclaw_sdk::Error> {
+    async fn observe(
+        &self,
+        _: &Engine,
+        _: Option<&str>,
+    ) -> Result<HostObservation, nemoclaw_sdk::Error> {
         Ok(HostObservation {
             engine_id: self.daemon.into(),
             capacity: Capacity {
@@ -102,7 +106,11 @@ fn engine_feature_projection_preserves_unknowns_and_advertises_networking_withou
 struct IncompleteHost;
 #[async_trait::async_trait]
 impl HostObserver for IncompleteHost {
-    async fn observe(&self, _: &Engine) -> Result<HostObservation, nemoclaw_sdk::Error> {
+    async fn observe(
+        &self,
+        _: &Engine,
+        _: Option<&str>,
+    ) -> Result<HostObservation, nemoclaw_sdk::Error> {
         Ok(HostObservation {
             engine_id: "selected-daemon".into(),
             capacity: Capacity::default(),
@@ -130,7 +138,11 @@ async fn explicit_observer_cannot_promote_incomplete_zero_values_to_available_ha
 struct CpuOnlyHost;
 #[async_trait::async_trait]
 impl HostObserver for CpuOnlyHost {
-    async fn observe(&self, _: &Engine) -> Result<HostObservation, nemoclaw_sdk::Error> {
+    async fn observe(
+        &self,
+        _: &Engine,
+        _: Option<&str>,
+    ) -> Result<HostObservation, nemoclaw_sdk::Error> {
         Ok(HostObservation {
             engine_id: "selected-daemon".into(),
             capacity: Capacity {

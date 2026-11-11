@@ -6,10 +6,13 @@ use crate::{Error, docker::Engine};
 
 /// Fixed, read-only collection on the SSH execution host. It needs only a
 /// POSIX shell, `uname`, `stat`, `head`, `docker`, and `nvidia-smi`: no
-/// interpreter and no user-supplied hooks. A marker line precedes each
-/// command's output, and the provider parses and validates it.
+/// interpreter and no user-supplied hooks. Its one optional argument names
+/// the GPU to read. A marker line precedes each command's output, and the
+/// provider parses and validates it.
 const COLLECT: &str = r#"set -eu
+gpu=${1-}
 section() { printf '\n==nemoclaw:%s==\n' "$1"; }
+smi() { nvidia-smi "$1" --format=csv,noheader,nounits ${gpu:+"--id=$gpu"}; }
 section os; uname -s
 section machine; uname -m
 section context; docker context inspect --format '{{.Endpoints.docker.Host}}'
@@ -19,10 +22,10 @@ root=$(docker info --format '{{.DockerRootDir}}')
 case $root in /*) ;; *) exit 1 ;; esac
 section disk; stat -f -c '%a %S' -- "$root"
 section memory; head -c 65537 /proc/meminfo
-section gpu; nvidia-smi --query-gpu=name,driver_version --format=csv,noheader,nounits
-section compute_capability; nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits
-section gpu_memory; nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits
-section processes; nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits
+section gpu; smi --query-gpu=name,driver_version
+section compute_capability; smi --query-gpu=compute_cap
+section gpu_memory; smi --query-gpu=memory.total,memory.free
+section processes; smi --query-compute-apps=pid
 "#;
 
 const MARKER: &str = "\n==nemoclaw:";
@@ -44,7 +47,7 @@ const SECTIONS: [&str; 11] = [
 pub struct SshHost;
 #[async_trait::async_trait]
 impl HostObserver for SshHost {
-    async fn observe(&self, engine: &Engine) -> Result<HostObservation, Error> {
+    async fn observe(&self, engine: &Engine, gpu: Option<&str>) -> Result<HostObservation, Error> {
         if !engine.endpoint().starts_with("ssh://") {
             return Err(Error::Conflict(
                 "SSH host observation requires an SSH engine",
@@ -52,11 +55,10 @@ impl HostObserver for SshHost {
         }
         {
             use std::{process::Stdio, time::Duration};
-            let script = format!("'{}'", COLLECT.replace('\'', "'\\''"));
             let result = tokio::time::timeout(
                 Duration::from_secs(60),
                 crate::docker::ssh_command(engine.endpoint())
-                    .args(["sh", "-c", &script])
+                    .arg(remote_command(gpu))
                     .stdin(Stdio::null())
                     .stderr(Stdio::null())
                     .output(),
@@ -70,6 +72,17 @@ impl HostObserver for SshHost {
             decode(&result.stdout)
         }
     }
+}
+
+/// The collector as the remote login shell receives it. OpenSSH joins its
+/// arguments into one command line, so each word is quoted here.
+fn remote_command(gpu: Option<&str>) -> String {
+    let quote = |word: &str| format!("'{}'", word.replace('\'', "'\\''"));
+    let mut command = format!("sh -c {}", quote(COLLECT));
+    if let Some(gpu) = gpu {
+        command = format!("{command} sh {}", quote(gpu));
+    }
+    command
 }
 
 /// Each known section exactly once, after nothing but the first marker.
@@ -325,43 +338,70 @@ mod tests {
         }
     }
 
+    /// Fake `docker` and `nvidia-smi` on PATH beside the real `uname`, `stat`,
+    /// and `/proc/meminfo` of this Linux host. Every fake call is logged.
+    #[cfg(target_os = "linux")]
+    struct FakeHost {
+        root: tempfile::TempDir,
+    }
+    #[cfg(target_os = "linux")]
+    impl FakeHost {
+        fn new(nvidia_smi: &str) -> Self {
+            use std::fs;
+            let root = tempfile::tempdir().unwrap();
+            let bin = root.path().join("bin");
+            let docker_root = root.path().join("docker-root");
+            fs::create_dir(&bin).unwrap();
+            fs::create_dir(&docker_root).unwrap();
+            let info = json!({"ID": "fixture", "OSType": "linux",
+                "Architecture": std::env::consts::ARCH, "DockerRootDir": docker_root});
+            let fakes = [
+                (
+                    "docker",
+                    format!(
+                        "case \"$1 $2\" in\n'context inspect') echo unix:///var/run/docker.sock ;;\n'info --format') if [ \"$3\" = '{{{{json .}}}}' ]; then echo '{info}'; else echo '{root}'; fi ;;\n*) exit 2 ;;\nesac\n",
+                        root = docker_root.display()
+                    ),
+                ),
+                ("nvidia-smi", nvidia_smi.into()),
+            ];
+            for (name, body) in fakes {
+                crate::executable::write_executable(
+                    &bin.join(name),
+                    format!(
+                        "#!/bin/sh\nprintf '%s\\n' \"{name} $*\" >> '{}'\n{body}",
+                        root.path().join("calls").display()
+                    ),
+                );
+            }
+            Self { root }
+        }
+        /// Run a command line as the SSH host's login shell would.
+        fn run(&self, command: &str) -> std::process::Output {
+            let bin = self.root.path().join("bin");
+            let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+            std::fs::remove_file(self.root.path().join("calls")).ok();
+            std::process::Command::new("sh")
+                .args(["-c", command])
+                .env("PATH", path)
+                .env_remove("DOCKER_HOST")
+                .output()
+                .unwrap()
+        }
+        fn calls(&self) -> String {
+            std::fs::read_to_string(self.root.path().join("calls")).unwrap()
+        }
+    }
+
     /// Run the shipped script with fake `docker` and `nvidia-smi` on PATH, and
     /// the real `uname`, `stat`, and `/proc/meminfo` of this Linux host.
     #[cfg(target_os = "linux")]
     #[test]
     fn collector_script_queries_compute_and_memory_and_parses_on_linux() {
-        use std::{fs, process::Command};
-        let root = tempfile::tempdir().unwrap();
-        let bin = root.path().join("bin");
-        let docker_root = root.path().join("docker-root");
-        let calls = root.path().join("calls");
-        fs::create_dir(&bin).unwrap();
-        fs::create_dir(&docker_root).unwrap();
-        let info = json!({"ID": "fixture", "OSType": "linux",
-            "Architecture": std::env::consts::ARCH, "DockerRootDir": docker_root});
-        let fakes = [
-            ("docker", format!(
-                "case \"$1 $2\" in\n'context inspect') echo unix:///var/run/docker.sock ;;\n'info --format') if [ \"$3\" = '{{{{json .}}}}' ]; then echo '{info}'; else echo '{root}'; fi ;;\n*) exit 2 ;;\nesac\n",
-                root = docker_root.display()
-            )),
-            ("nvidia-smi", "[ \"$2\" = --format=csv,noheader,nounits ] || exit 2\ncase \"$1\" in\n--query-gpu=name,driver_version) echo 'NVIDIA GB10, 580.0' ;;\n--query-gpu=compute_cap) echo 12.1 ;;\n--query-gpu=memory.total,memory.free) echo '[N/A], [N/A]' ;;\n--query-compute-apps=pid) ;;\n*) exit 2 ;;\nesac\n".into()),
-        ];
-        for (name, body) in fakes {
-            crate::executable::write_executable(
-                &bin.join(name),
-                format!(
-                    "#!/bin/sh\nprintf '%s\\n' \"{name} $*\" >> '{}'\n{body}",
-                    calls.display()
-                ),
-            );
-        }
-        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-        let result = Command::new("sh")
-            .args(["-c", COLLECT])
-            .env("PATH", path)
-            .env_remove("DOCKER_HOST")
-            .output()
-            .unwrap();
+        let host = FakeHost::new(
+            "[ \"$2\" = --format=csv,noheader,nounits ] || exit 2\ncase \"$1\" in\n--query-gpu=name,driver_version) echo 'NVIDIA GB10, 580.0' ;;\n--query-gpu=compute_cap) echo 12.1 ;;\n--query-gpu=memory.total,memory.free) echo '[N/A], [N/A]' ;;\n--query-compute-apps=pid) ;;\n*) exit 2 ;;\nesac\n",
+        );
+        let result = host.run(&remote_command(None));
         assert!(
             result.status.success(),
             "{}",
@@ -372,7 +412,7 @@ mod tests {
         assert_eq!(observation.capacity.compute_capability, 121);
         assert!(observation.capacity.gpu_memory.is_none());
         assert!(observation.capacity.total > 0 && observation.capacity.disk_free > 0);
-        let calls = fs::read_to_string(calls).unwrap();
+        let calls = host.calls();
         for query in [
             "--query-gpu=name,driver_version",
             "--query-gpu=compute_cap",
@@ -384,5 +424,45 @@ mod tests {
                 "{calls}"
             );
         }
+    }
+
+    /// A named GPU limits every `nvidia-smi` query to that GPU. Without one, a
+    /// host with two GPUs is refused rather than measured as one.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_collector_reads_only_a_named_gpu_and_refuses_two_without_one() {
+        let host = FakeHost::new(crate::hardware::TWO_GPUS);
+        for (gpu, name, compute, total_mib) in [
+            ("1", "NVIDIA L4", 89, 23034),
+            (
+                "GPU-00000000-0000-0000-0000-000000000000",
+                "NVIDIA H100 80GB HBM3",
+                90,
+                81559,
+            ),
+        ] {
+            let result = host.run(&remote_command(Some(gpu)));
+            assert!(result.status.success(), "{gpu}");
+            let capacity = super::decode(&result.stdout).unwrap().capacity;
+            assert_eq!(capacity.gpu, name);
+            assert_eq!(capacity.compute_capability, compute);
+            assert_eq!(capacity.gpu_memory.unwrap().total, total_mib << 20);
+            let calls = host.calls();
+            let queries: Vec<_> = calls
+                .lines()
+                .filter(|line| line.starts_with("nvidia-smi "))
+                .collect();
+            assert_eq!(queries.len(), 4, "{calls}");
+            for query in queries {
+                assert!(query.ends_with(&format!(" --id={gpu}")), "{query}");
+            }
+        }
+        // A GPU the host doesn't have stops collection instead of reading every GPU.
+        assert!(!host.run(&remote_command(Some("5"))).status.success());
+        let result = host.run(&remote_command(None));
+        assert!(result.status.success());
+        let error = super::decode(&result.stdout).err().unwrap().to_string();
+        assert!(error.contains("exactly one observable GPU"), "{error}");
+        assert!(!host.calls().contains("--id"));
     }
 }
