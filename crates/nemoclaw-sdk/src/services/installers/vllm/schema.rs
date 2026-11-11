@@ -33,4 +33,21 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>, normalized: b
         "sharedMemoryGiB",
         json!({"minimum":1,"maximum":64}),
     );
+    // Serving one model across several GPUs will lift maxItems; the item
+    // rules already refuse duplicates.
+    property(
+        &mut defs["ServiceContainer"],
+        "gpuDevices",
+        json!({
+            "minItems": 1,
+            "maxItems": 1,
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "pattern": constraints::GPU_DEVICE,
+                "x-nemoclaw-error": "each container.gpuDevices entry must be a lowercase GPU UUID or an index from \"0\" to \"999\""
+            },
+            "x-nemoclaw-error": "container.gpuDevices must list exactly one GPU: serving one model across several GPUs isn't implemented yet"
+        }),
+    );
 }
