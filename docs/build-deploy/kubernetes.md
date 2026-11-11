@@ -391,7 +391,8 @@ spec:
       ca: {env: GATEWAY_CA}
 ```
 
-- **`endpoint`:** the listener certificate must name the endpoint's host, which must also be one of the chart's `grpcRoute.hostnames` when the operator sets them; otherwise NemoClaw reports `the gateway's TLS server certificate does not name the endpoint's host`.
+- **`endpoint`:** the listener certificate must name the endpoint's host; otherwise NemoClaw reports `the gateway's TLS server certificate does not name the endpoint's host`.
+  When the operator sets the chart's `grpcRoute.hostnames`, the host must be one of them.
 - **`tls.ca`:** a variable holding the path of a CA certificate file, as for [any external gateway](usage.md#supply-credential-references).
   Give the CA that signed the certificate in the Secret the listener's `certificateRefs` names, `openshell-ingress-tls` in the guide; that is the chart's own CA only when the listener reuses the chart's server certificate Secret.
   Omit `tls` when a publicly trusted CA signed the listener certificate.
