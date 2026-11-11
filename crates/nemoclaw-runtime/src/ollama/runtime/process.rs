@@ -3,7 +3,7 @@
 
 use crate::{
     Error,
-    hardware::{Capacity, Gpu},
+    hardware::Capacity,
     ollama::{ManagedOllama, hardware_capacity},
 };
 use process_wrap::tokio::CommandWrap;
@@ -12,56 +12,13 @@ use std::{collections::BTreeMap, path::Path, process::Stdio, time::Duration};
 pub(crate) struct Readiness {
     endpoint: String,
     service: ManagedOllama,
-    resident: u64,
-}
-
-/// Ollama's GPU memory settings for a budget that applies to each GPU.
-#[derive(Debug, PartialEq, Eq)]
-struct GpuLimits {
-    /// `OLLAMA_GPU_OVERHEAD`, which Ollama holds back on every GPU it sees.
-    overhead: u64,
     /// The most GPU memory the loaded model may hold, summed over the GPUs.
     resident: u64,
 }
-
-/// Ollama loads a model on one GPU when it fits there and splits it across
-/// the GPUs it sees otherwise. A reserve of the largest free memory minus the
-/// budget leaves no GPU more than the budget, and every GPU must have the
-/// budget free. Ollama's `/api/ps` reports one total instead of each GPU's
-/// share, so the resident bound is the budget times the number of GPUs.
-fn gpu_limits(budget: u64, gpus: &[Gpu]) -> Result<GpuLimits, Error> {
-    let count = u64::try_from(gpus.len())
-        .ok()
-        .filter(|count| *count > 0)
-        .ok_or(Error::State("GPU inventory is unobservable"))?;
-    let resident = budget
-        .checked_mul(count)
-        .ok_or(Error::Conflict("invalid Ollama serving budget"))?;
-    // Unified-memory GPUs report no framebuffer counters, and Ollama gets no reserve.
-    if gpus.iter().all(|gpu| gpu.memory.is_none()) {
-        return Ok(GpuLimits {
-            overhead: 0,
-            resident,
-        });
-    }
-    let mut largest = 0;
-    for gpu in gpus {
-        let memory = gpu
-            .memory
-            .as_ref()
-            .ok_or(Error::State("dedicated GPU memory is unobservable"))?;
-        if memory.free < budget {
-            return Err(Error::Conflict(
-                "available GPU memory does not satisfy the Ollama budget",
-            ));
-        }
-        largest = largest.max(memory.free);
-    }
-    Ok(GpuLimits {
-        overhead: largest - budget,
-        resident,
-    })
-}
+/// llama.cpp's own per-device `--fit` margin, `fit_params_target` in
+/// `common/common.h` of the llama.cpp revision Ollama v0.40.14 pins (b11963).
+/// NemoClaw never sets a smaller one.
+const LLAMA_FIT_TARGET_MIB: u64 = 1024;
 
 pub(crate) fn launch(
     service: &ManagedOllama,
@@ -73,11 +30,30 @@ pub(crate) fn launch(
         .ok_or(Error::State("invalid Ollama model storage path"))?;
     let total = hardware_capacity::serving_memory(service, capacity)?;
     let budget = hardware_capacity::budget(service, capacity)?;
-    let limits = gpu_limits(budget, &capacity.gpus)?;
+    // `ollama serve --help` documents OLLAMA_GPU_OVERHEAD as a reserve on each
+    // GPU, so the GPU with the most free memory sets it. Unified-memory GPUs
+    // report no framebuffer counters and get no reserve. Ollama v0.40.14 reads
+    // it only for logs, the default context size, and its MLX runner; GGUF
+    // layer fitting uses llama.cpp's margin, LLAMA_ARG_FIT_TARGET, below.
+    let overhead = capacity
+        .gpus
+        .iter()
+        .filter_map(|gpu| gpu.memory.as_ref().map(|memory| memory.free))
+        .max()
+        .map_or(Ok(0), |free| {
+            free.checked_sub(budget).ok_or(Error::Conflict(
+                "available GPU memory does not satisfy the Ollama budget",
+            ))
+        })?;
+    // Ollama's /api/ps reports one total, not each GPU's share.
+    let resident = u64::try_from(capacity.gpus.len())
+        .ok()
+        .and_then(|gpus| budget.checked_mul(gpus))
+        .ok_or(Error::Conflict("invalid Ollama serving budget"))?;
     if budget > total {
         return Err(Error::Conflict("invalid Ollama serving budget"));
     }
-    let environment: BTreeMap<String, String> = [
+    let mut environment: BTreeMap<String, String> = [
         ("OLLAMA_HOST", format!("0.0.0.0:{}", service.serving.port)),
         ("OLLAMA_MODELS", directory.into()),
         (
@@ -90,7 +66,7 @@ pub(crate) fn launch(
         ),
         ("OLLAMA_MAX_LOADED_MODELS", "1".into()),
         ("OLLAMA_KEEP_ALIVE", "-1".into()),
-        ("OLLAMA_GPU_OVERHEAD", limits.overhead.to_string()),
+        ("OLLAMA_GPU_OVERHEAD", overhead.to_string()),
         (
             "OLLAMA_LOAD_TIMEOUT",
             format!("{}s", service.serving.startup_timeout_seconds),
@@ -102,6 +78,12 @@ pub(crate) fn launch(
     .into_iter()
     .map(|(key, value)| (key.into(), value))
     .collect();
+    // The same reserve, rounded up to whole MiB, as llama.cpp's per-device
+    // margin. Below llama.cpp's own margin, upstream's default applies.
+    let fit_target = overhead.div_ceil(1 << 20);
+    if fit_target >= LLAMA_FIT_TARGET_MIB {
+        environment.insert("LLAMA_ARG_FIT_TARGET".into(), fit_target.to_string());
+    }
     let command = CommandWrap::with_new("/bin/ollama", |command| {
         command
             .arg("serve")
@@ -115,7 +97,7 @@ pub(crate) fn launch(
         Readiness {
             endpoint: format!("http://127.0.0.1:{}", service.serving.port),
             service: service.clone(),
-            resident: limits.resident,
+            resident,
         },
     ))
 }
@@ -150,67 +132,14 @@ pub(crate) async fn wait_ready(
 mod tests {
     use super::*;
     use crate::{
-        hardware::{GIB, Gpu, GpuMemory, nvidia},
-        vllm::{DedicatedHardware, ServiceHardware},
+        hardware::{GIB, GpuMemory, nvidia},
+        vllm::{DedicatedHardware, HardwareProfile, ServiceHardware},
     };
 
-    fn gpu(index: u32, memory: Option<(u64, u64)>) -> Gpu {
-        Gpu {
-            index,
-            uuid: format!("GPU-{index}"),
-            name: "NVIDIA H100 80GB HBM3".into(),
-            driver_major: 580,
-            compute_capability: 90,
-            memory: memory.map(|(total, free)| GpuMemory { total, free }),
-        }
-    }
+    const H100: &str = "0, GPU-b1b1b1b1-0000-0000-0000-000000000000, NVIDIA H100 80GB HBM3, 9.0, 81920, 71680, 580.65.06";
 
-    #[test]
-    fn ollama_keeps_the_budget_free_on_every_gpu_and_holds_the_model_within_each_gpus_budget() {
-        let budget = 16 * GIB;
-        let one = [gpu(0, Some((80 * GIB, 70 * GIB)))];
-        assert_eq!(
-            gpu_limits(budget, &one).unwrap(),
-            GpuLimits {
-                overhead: 54 * GIB,
-                resident: budget,
-            }
-        );
-        let unified = [gpu(0, None)];
-        assert_eq!(
-            gpu_limits(budget, &unified).unwrap(),
-            GpuLimits {
-                overhead: 0,
-                resident: budget,
-            }
-        );
-        let two = [
-            gpu(0, Some((80 * GIB, 70 * GIB))),
-            gpu(1, Some((80 * GIB, 30 * GIB))),
-        ];
-        assert_eq!(
-            gpu_limits(budget, &two).unwrap(),
-            GpuLimits {
-                overhead: 54 * GIB,
-                resident: 2 * budget,
-            }
-        );
-        let short = [
-            gpu(0, Some((80 * GIB, 70 * GIB))),
-            gpu(1, Some((80 * GIB, 15 * GIB))),
-        ];
-        let error = gpu_limits(budget, &short).unwrap_err().to_string();
-        assert!(
-            error.contains("does not satisfy the Ollama budget"),
-            "{error}"
-        );
-        let partly_unobservable = [gpu(0, Some((80 * GIB, 70 * GIB))), gpu(1, None)];
-        assert!(gpu_limits(budget, &partly_unobservable).is_err());
-        assert!(gpu_limits(budget, &[]).is_err());
-    }
-
-    #[test]
-    fn one_gpu_keeps_its_overhead_and_ollama_keeps_its_own_placement() {
+    /// A dedicated-memory service with the default 16 GiB budget.
+    fn service() -> ManagedOllama {
         let mut service = ManagedOllama {
             hardware: Some(ServiceHardware::Dedicated(DedicatedHardware {
                 architecture: "amd64".into(),
@@ -221,15 +150,19 @@ mod tests {
             ..Default::default()
         };
         service.defaults();
-        let mut capacity = Capacity::default();
-        nvidia::apply_observations(
-            &mut capacity,
-            "0, GPU-b1b1b1b1-0000-0000-0000-000000000000, NVIDIA H100 80GB HBM3, 9.0, 81920, 71680, 580.65.06",
-            "",
-        )
-        .unwrap();
-        let (command, readiness) = launch(&service, Path::new("/data/ollama"), &capacity).unwrap();
-        let environment: BTreeMap<_, _> = command
+        service
+    }
+
+    fn launched(capacity: &Capacity) -> (BTreeMap<String, Option<String>>, u64) {
+        launched_with(&service(), capacity)
+    }
+
+    fn launched_with(
+        service: &ManagedOllama,
+        capacity: &Capacity,
+    ) -> (BTreeMap<String, Option<String>>, u64) {
+        let (command, readiness) = launch(service, Path::new("/data/ollama"), capacity).unwrap();
+        let environment = command
             .command()
             .as_std()
             .get_envs()
@@ -240,11 +173,79 @@ mod tests {
                 )
             })
             .collect();
+        (environment, readiness.resident)
+    }
+
+    #[test]
+    fn one_gpu_keeps_its_overhead_and_llama_cpp_keeps_the_same_margin() {
+        let mut capacity = Capacity::default();
+        nvidia::apply_observations(&mut capacity, H100, "").unwrap();
+        let (environment, resident) = launched(&capacity);
         assert_eq!(
             environment["OLLAMA_GPU_OVERHEAD"],
             Some((54 * GIB).to_string())
         );
+        assert_eq!(
+            environment["LLAMA_ARG_FIT_TARGET"],
+            Some((54 * 1024).to_string())
+        );
         assert!(!environment.contains_key("OLLAMA_SCHED_SPREAD"));
-        assert_eq!(readiness.resident, 16 * GIB);
+        assert_eq!(resident, 16 * GIB);
+    }
+
+    #[test]
+    fn a_reserve_below_llama_cpps_own_margin_leaves_its_default() {
+        let barely = "0, GPU-b1b1b1b1-0000-0000-0000-000000000000, NVIDIA H100 80GB HBM3, 9.0, 81920, 17407, 580.65.06";
+        let unified = "0, GPU-a0a0a0a0-0000-0000-0000-000000000000, NVIDIA GB10, 12.1, [N/A], [N/A], 580.95.05";
+        let mut spark = service();
+        spark.hardware = Some(ServiceHardware::Profile {
+            profile: HardwareProfile::DgxSpark,
+            architecture: None,
+            min_gpu_memory_bytes: None,
+        });
+        for (gpu, service, overhead) in [(barely, service(), 1023 << 20), (unified, spark, 0)] {
+            let mut capacity = Capacity {
+                total: 128 * GIB,
+                ..Default::default()
+            };
+            nvidia::apply_observations(&mut capacity, gpu, "").unwrap();
+            let (environment, _) = launched_with(&service, &capacity);
+            assert_eq!(
+                environment["OLLAMA_GPU_OVERHEAD"],
+                Some(u64::to_string(&overhead)),
+                "{gpu}"
+            );
+            assert!(!environment.contains_key("LLAMA_ARG_FIT_TARGET"), "{gpu}");
+        }
+    }
+
+    /// `populate` still refuses two GPUs, so this capacity is built by hand:
+    /// the inventory of two GPUs, and one GPU's counters for the budget.
+    #[test]
+    fn several_gpus_take_the_overhead_from_the_most_free_memory_and_bound_the_total() {
+        let mut capacity = Capacity::default();
+        nvidia::apply_observations(
+            &mut capacity,
+            &format!(
+                "{H100}\n1, GPU-c2c2c2c2-0000-0000-0000-000000000000, NVIDIA H100 80GB HBM3, 9.0, 81920, 30720, 580.65.06"
+            ),
+            "",
+        )
+        .unwrap();
+        capacity.gpu_memory = Some(GpuMemory {
+            total: 80 * GIB,
+            free: 70 * GIB,
+        });
+        let (environment, resident) = launched(&capacity);
+        assert_eq!(
+            environment["OLLAMA_GPU_OVERHEAD"],
+            Some((54 * GIB).to_string())
+        );
+        assert_eq!(
+            environment["LLAMA_ARG_FIT_TARGET"],
+            Some((54 * 1024).to_string())
+        );
+        assert!(!environment.contains_key("OLLAMA_SCHED_SPREAD"));
+        assert_eq!(resident, 2 * 16 * GIB);
     }
 }
