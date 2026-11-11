@@ -9,6 +9,9 @@ use std::{collections::BTreeMap, path::Path, process::Stdio, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::task::AbortOnDropHandle;
 
+/// Longest diagnostic text an error carries.
+const DIAGNOSTIC_LIMIT: usize = 16384;
+
 async fn capture(
     mut pipe: impl AsyncRead + Unpin,
     limit: usize,
@@ -191,7 +194,7 @@ pub(crate) async fn run_with_progress(
             }
         )
     };
-    let ((output, overflow, valid_ui), (mut diagnostic, mut diagnostic_overflow, _)) = tokio::select! {
+    let ((output, overflow, valid_ui), (mut diagnostic, diagnostic_overflow, _)) = tokio::select! {
         ()=cancel.cancelled()=>return Err(Error::Cancelled),
         result=tokio::time::timeout(Duration::from_secs(5),capture)=>result.map_err(|_|Error::State("child exited but its output streams did not close; retain state for reconciliation"))??,
     };
@@ -215,27 +218,11 @@ pub(crate) async fn run_with_progress(
     };
     let mut message = String::from_utf8_lossy(&diagnostic).into_owned();
     diagnostic.fill(0);
-    if message.is_empty() {
-        for line in output.split(|byte| *byte == b'\n') {
-            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(line)
-                && value["type"] == "diagnostic"
-            {
-                for key in ["summary", "detail"] {
-                    if let Some(text) = value["diagnostic"][key].as_str() {
-                        if message.len() + text.len() + 1 > 16384 {
-                            diagnostic_overflow = true;
-                            break;
-                        }
-                        message.push_str(text);
-                        message.push('\n');
-                    }
-                }
-            }
-        }
-    }
     if withhold_child_text {
         message =
             "child diagnostic withheld because a credential is too short for safe redaction".into();
+    } else if message.is_empty() {
+        message = json_diagnostics(&output, &redactions);
     } else {
         redact(&mut message, &redactions);
     }
@@ -247,6 +234,51 @@ pub(crate) async fn run_with_progress(
         diagnostic: message.trim().into(),
         postcondition_failures,
     })
+}
+
+/// Redacted OpenTofu diagnostics that fit `DIAGNOSTIC_LIMIT`. Whole
+/// diagnostics are kept while they fit; the next one is cut and the rest are
+/// counted. Each is redacted before any cut, so a credential cannot be split.
+fn json_diagnostics(output: &[u8], secrets: &[String]) -> String {
+    let chunks: Vec<String> = output
+        .split(|byte| *byte == b'\n')
+        .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
+        .filter(|value| value["type"] == "diagnostic")
+        .map(|value| {
+            let mut chunk = String::new();
+            for key in ["summary", "detail"] {
+                if let Some(text) = value["diagnostic"][key].as_str() {
+                    chunk.push_str(text);
+                    chunk.push('\n');
+                }
+            }
+            redact(&mut chunk, secrets);
+            chunk
+        })
+        .collect();
+    if chunks.iter().map(String::len).sum::<usize>() <= DIAGNOSTIC_LIMIT {
+        return chunks.concat();
+    }
+    // Leave room for the marker so the total stays within the limit.
+    let budget = DIAGNOSTIC_LIMIT - 128;
+    let mut message = String::new();
+    for (index, chunk) in chunks.iter().enumerate() {
+        if message.len() + chunk.len() <= budget {
+            message.push_str(chunk);
+            continue;
+        }
+        let mut cut = (budget - message.len()).min(chunk.len());
+        while !chunk.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        message.push_str(&chunk[..cut]);
+        message.push_str(&format!(
+            "\n[truncated; {} more omitted]",
+            chunks.len() - index - 1
+        ));
+        break;
+    }
+    message
 }
 
 fn secret_values(overrides: &BTreeMap<String, String>) -> Vec<String> {
@@ -1037,4 +1069,36 @@ async fn short_credentials_withhold_child_text_without_preventing_execution() {
         );
     }
     assert!(messages.windows(2).all(|pair| pair[0] == pair[1]));
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn oversized_json_diagnostics_are_truncated_not_withheld() {
+    let directory = tempfile::tempdir().unwrap();
+    let script = r#"
+printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"diagnostic","diagnostic":{"summary":"first failure","detail":"kept-sentinel"}}'
+long=$(head -c 20000 /dev/zero | tr '\0' x)
+printf '{"type":"diagnostic","diagnostic":{"summary":"long failure","detail":"secret-sentinel %s"}}\n' "$long"
+printf '%s\n' '{"type":"diagnostic","diagnostic":{"summary":"last failure"}}'
+exit 1
+"#;
+    let error = run_with_progress(
+        directory.path(),
+        Path::new("/bin/sh"),
+        &["-c", script],
+        &[("CUSTOM_CREDENTIAL".into(), "secret-sentinel".into())].into(),
+        &CancellationToken::new(),
+        None,
+        Some(std::sync::Arc::new(|_| {})),
+    )
+    .await
+    .unwrap_err();
+    let Error::Execution { diagnostic, .. } = error else {
+        panic!("expected child failure")
+    };
+    assert!(diagnostic.starts_with("first failure\nkept-sentinel\nlong failure\n[redacted]"));
+    assert!(diagnostic.ends_with("[truncated; 1 more omitted]"));
+    assert!(diagnostic.len() <= DIAGNOSTIC_LIMIT);
+    assert!(!diagnostic.contains("secret-sentinel"));
+    assert!(!diagnostic.contains("last failure"));
 }
