@@ -42,7 +42,7 @@ Native reasoning changes remain an adapter operation.
 Each managed `service` serves one pinned model; routes must use its declared served model.
 An Ollama proxy also selects one externally managed model.
 Additional models can use external providers alongside that managed provider.
-Changing model configuration reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when provider attachments and sandbox policy remain unchanged.
+Changing model configuration replaces the agent's sandbox, deleting its files and conversations, as [the change path](../build-deploy/usage.md#choose-the-change-path) describes.
 For Pi, see [model selection and updates](agents.md#pi-model-selection).
 
 ## Combine Local and Hosted Providers
@@ -114,7 +114,7 @@ updatePolicy: Preserve
 `cpuLimitMillis: 4000` caps CPU use at four cores; `memoryLimitGiB` limits the container's system memory.
 These fields do not set the GPU budget: `memory.gpuMemoryGiB`, `memory.gpuMemoryUtilization`, and backend-specific cache settings retain their runtime meanings.
 The runtime's resident host-memory monitor reads `/proc`, not cgroup memory pressure, so the kernel can OOM-kill a container that reaches `memoryLimitGiB` before the monitor stops inference.
-Docker defaults to a 104 GiB memory limit and no CPU cap when these limits are omitted.
+When these limits are omitted, NemoClaw sets a 104 GiB memory limit and no CPU cap.
 
 On a host with two or more GPUs, `container.gpuDevices` lists the GPU to request for the container, as `docker run --gpus device=` does.
 List exactly one GPU: serving one model across several GPUs isn't implemented yet, so the parser rejects a longer list.
@@ -192,14 +192,14 @@ If the machine running NemoClaw does not trust the certificate, onboarding repor
 Explicit API selection, tuning, and authentication require an agent image built from this revision; [build it](../build-deploy/build.md#build-agent-images) and use its immutable digest in `sandboxes.<name>.image.ref`.
 The [tuning example](../../examples/inference-tuning.yaml) and [Hermes authentication example](../../examples/hermes-auth.yaml) contain zero-digest placeholders that must be replaced before deployment.
 Set their gateway and inference endpoints and model IDs for your services, and assign a fresh deployment UID.
-Model and native settings changes restart the runtime inside the existing sandbox; changing its image requires a separate deployment, as described in [the change path](../build-deploy/usage.md#choose-the-change-path).
+Changing the model, native settings, or image replaces the agent's sandbox, deleting its files and conversations, as described in [the change path](../build-deploy/usage.md#choose-the-change-path).
 
 ## Run Managed Ollama
 
 Declare `kind: ollama` under `spec.services` to run Ollama through the same package-independent installer contract as vLLM.
 The [GPU example](../../examples/managed-ollama-gpu.yaml) selects DGX Spark and a pinned public Qwen3 model.
 Before applying, choose a fresh deployment UID and state directory, a current agent image, and a hardware profile matching the inference host.
-The inference host needs Linux, Docker with NVIDIA container GPU access, one observable NVIDIA GPU, and enough host/GPU memory and disk for the declared budget.
+The inference host needs Linux, Docker with NVIDIA container GPU access, an NVIDIA GPU for the container (the host's only GPU, or the one that [`container.gpuDevices`](#set-container-limits-and-update-policy) selects), and enough host/GPU memory and disk for the declared budget.
 Use the [hardware profile reference](models.md#choose-a-hardware-profile) for other GPU families and explicit CPU architecture.
 Local placement uses the managed gateway's Docker engine; [SSH placement](remote-service.md) uses the same `placement` and `publication` fields as vLLM.
 
@@ -286,7 +286,7 @@ The per-GPU budget is a margin that llama.cpp keeps, not a guarantee that NemoCl
 `container.gpuDevices` takes one entry until serving one model across several GPUs is implemented ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)).
 
 Ollama sizes its KV cache and batching natively.
-Nonzero `kvCacheGiB` or `batchTokens`, vLLM parser/compilation settings, inline recipes, model aliases, and native bearer authentication are rejected.
+A `kind: ollama` service has no `kvCacheGiB`, `batchTokens`, vLLM parser or compilation settings, `recipe`, `serving.modelName` alias, or `authentication` field, so the parser rejects any of them, including a zero value.
 Context and concurrency use the common `serving.contextTokens` and `serving.maxSequences` fields.
 A dedicated-memory profile can use the common `gpuMemoryUtilization` setting with an explicit minimum GPU memory requirement.
 
@@ -297,7 +297,7 @@ Destroy removes owned runtime resources and retains the model volume.
 Verified cached snapshots can be reused without querying a subsequently changed registry tag.
 
 Configuration, registry download, startup protocol, memory checks, and removal behavior are covered by fixtures.
-Live image builds, GPU inference, tools and agent replies with this adapter have not been tested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
+The `docker-openclaw-hermes-ollama` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) gets a Hermes reply through a managed Ollama model on CI's Linux AMD64 NVIDIA GPU runner; no test covers tool use through this adapter or other GPUs and hosts ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## Authenticate a Managed vLLM Service
 
@@ -472,7 +472,8 @@ The pinned Hermes Agent requires a model context window of at least 64,000 token
 It reads the window from the model server; route settings do not change it.
 For a Hermes route to managed vLLM or Ollama, set `serving.contextTokens` between `64000` and the schema maximum, `65536`, and choose a model that supports that context.
 The [managed Hermes example](../../examples/managed-hermes.yaml) serves `nemotron-3-nano:4b`, whose 256K-token native window covers that range.
-`qwen3:0.6b` and `Qwen/Qwen3-4B`, used by the other managed Ollama examples and the [Spark vLLM example](../../examples/spark/vllm.yaml), have 40,960-token native windows and cannot serve Hermes.
+`qwen3:0.6b` and `Qwen/Qwen3-4B`, used by the other managed Ollama examples and the [Spark vLLM example](../../examples/spark/vllm.yaml), have 40,960-token native windows, below Hermes's minimum, so they can't serve Hermes through managed vLLM.
+Through managed Ollama, Hermes starts with `qwen3:0.6b`, as the `docker-openclaw-hermes-ollama` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) shows, and longer conversations are cut off, as the next paragraph describes.
 In one operator test, Hermes answered a request through cluster vLLM serving `Qwen/Qwen3-4B-Instruct-2507` with `serving.contextTokens: 65536`; that test does not qualify the model.
 
 NemoClaw doesn't check the window for Hermes.
@@ -608,5 +609,5 @@ The documented service paths are external API endpoints, managed Ollama, [extern
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
 Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
-A managed NVIDIA NIM service is tracked in [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649).
+A managed NVIDIA NIM service is not planned: use NIM as an external OpenAI-compatible endpoint ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)).
 None of these limits prevents using a separately verified external endpoint with an accepted API.

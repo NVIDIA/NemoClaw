@@ -2865,7 +2865,7 @@
     },
     "ServiceContainer": {
       "additionalProperties": false,
-      "description": "Managed inference CPU and memory limits, IPC, and shared-memory settings.",
+      "description": "Managed inference CPU and memory limits, GPU selection, IPC, and shared-memory settings.",
       "properties": {
         "cpuLimitMillis": {
           "description": "CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container.",
@@ -2892,7 +2892,7 @@
           "description": "IPC namespace. Omission uses private; host shares the execution host's IPC namespace."
         },
         "memoryLimitGiB": {
-          "description": "Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container.",
+          "description": "Container memory limit in GiB, independent of the model's GPU budget. Omission sets a 104 GiB limit. Changing the limit replaces the model container.",
           "format": "uint64",
           "maximum": 8589934591,
           "minimum": 1,
@@ -3031,7 +3031,7 @@
           "properties": {
             "container": {
               "$ref": "#/$defs/ServiceContainer",
-              "description": "Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+              "description": "Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
             },
             "hardware": {
               "$ref": "#/$defs/ServiceHardware",
@@ -3402,7 +3402,7 @@
             },
             "container": {
               "$ref": "#/$defs/ServiceContainer",
-              "description": "Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+              "description": "Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
             },
             "hardware": {
               "$ref": "#/$defs/ServiceHardware",

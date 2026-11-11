@@ -21,7 +21,7 @@ Deployment-owned fields, including metadata, adapter identity, and resolved mode
 See [the SDK configuration projection](../../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
 
 Plan checks that the selected image provides the harness at NemoClaw's Fabric revision; a mismatched revision leaves compatibility unknown.
-Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
+Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply; [#14148](https://github.com/NVIDIA/NemoClaw/issues/14148) tracks checking it at plan time.
 Neither check establishes successful model inference.
 
 ## Choose Native Access

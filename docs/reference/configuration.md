@@ -308,7 +308,7 @@ Paths:
 
 External Ollama daemon observed by the managed proxy installer.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy).
 
 Paths:
 
@@ -323,7 +323,7 @@ Paths:
 
 Existing Ollama model installation, independently owned outside the deployment.
 
-Guide: [Inference configuration](../agents-inference/inference.md).
+Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy).
 
 Paths:
 
@@ -750,7 +750,7 @@ Paths:
 
 Ollama GPU budget and host memory protection.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
 
 Paths:
 
@@ -770,7 +770,7 @@ Paths:
 
 One immutable Ollama registry model installation.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
 
 Paths:
 
@@ -785,7 +785,7 @@ Paths:
 
 Native Ollama serving controls supported by the managed installer.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
 
 Paths:
 
@@ -1215,7 +1215,7 @@ Paths:
 
 Bearer authentication for a managed inference service.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Managed vLLM authentication](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
 
 Paths:
 
@@ -1227,9 +1227,9 @@ Constraints: `"bearer"`.
 
 ## ServiceContainer
 
-Managed inference CPU and memory limits, IPC, and shared-memory settings.
+Managed inference CPU and memory limits, GPU selection, IPC, and shared-memory settings.
 
-Guide: [Managed models](../agents-inference/models.md).
+Guide: [Container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy).
 
 Paths:
 
@@ -1240,7 +1240,7 @@ Paths:
 | `cpuLimitMillis` | integer | No | — | CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container. Constraints: minimum 1; maximum 4294967295. |
 | `gpuDevices` | array of string | No | — | The GPUs the model container gets on a host with several, as `docker run --gpus device=` names them: each a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index as a string, such as "1", which can change when the host boots. List exactly one: serving one model across several GPUs isn't implemented yet. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing the list replaces the model container. Constraints: minimum items 1; maximum items 1; items: pattern `^(?:GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\|0\|[1-9][0-9]{0,2})$`. |
 | `ipc` | [ServiceIpc](#serviceipc) | No | — | IPC namespace. Omission uses private; host shares the execution host's IPC namespace. |
-| `memoryLimitGiB` | integer | No | — | Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container. Constraints: minimum 1; maximum 8589934591. |
+| `memoryLimitGiB` | integer | No | — | Container memory limit in GiB, independent of the model's GPU budget. Omission sets a 104 GiB limit. Changing the limit replaces the model container. Constraints: minimum 1; maximum 8589934591. |
 | `sharedMemoryGiB` | integer | No | — | Shared-memory size in GiB, from 1 through 64. Omission uses 8; host IPC uses the host's existing shared-memory mount instead. Constraints: minimum 1; maximum 64. |
 
 ## ServiceDefinition
@@ -1262,7 +1262,7 @@ Managed Ollama daemon and selected model.
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Explicit supported GPU or system profile. |
 | `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
@@ -1296,7 +1296,7 @@ Managed vLLM runtime and immutable model snapshot.
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime uses a key supplied in NEMOCLAW_INFERENCE_KEY, or generates and retains one in its credential storage; omission preserves unauthenticated serving. |
-| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
 | `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
@@ -1414,7 +1414,7 @@ Paths:
 
 Whether updates may stop an existing model service before its replacement is ready.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy).
 
 Paths:
 
