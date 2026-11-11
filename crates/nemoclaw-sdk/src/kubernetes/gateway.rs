@@ -76,6 +76,8 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         values["service"] = json!({
             "type": expose.service.service_type.as_str(),
             "nodePort": port,
+            // NVIDIA/OpenShell#5478 replaces this with metrics.enabled: false;
+            // the chart contract's exposed scenario catches the pin bump.
             "metricsPort": 0,
         });
         match endpoint.host() {
