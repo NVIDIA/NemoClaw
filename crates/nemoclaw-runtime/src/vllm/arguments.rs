@@ -38,16 +38,9 @@ impl<'a> Settings<'a> {
                     Some(c) => serde_json::json!({"mode":c.mode,"cudagraph_mode":c.cudagraph_mode,"cudagraph_capture_sizes":c.capture_sizes}).to_string(),
                     None => "{\"mode\":0}".into(),
                 }),
-                // Tensor parallelism defaults to the GPU count the recipe's
-                // budget was measured on, unless the recipe sets only a
-                // pipeline size: vLLM's guide then keeps tensor size 1.
-                tensor_parallel_size: s.tensor_parallel_size.unwrap_or(
-                    if s.pipeline_parallel_size.is_none() {
-                        recipe.compatibility.gpu_count
-                    } else {
-                        1
-                    },
-                ),
+                // A recipe's layout is its own; omitted sizes get vLLM's
+                // default of 1.
+                tensor_parallel_size: s.tensor_parallel_size.unwrap_or(1),
                 pipeline_parallel_size: s.pipeline_parallel_size.unwrap_or(1),
             }
             }

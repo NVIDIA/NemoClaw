@@ -1105,19 +1105,11 @@ fn vllm_parallel_sizes_are_bounded_positive_integers_or_omitted() {
         value["spec"]["services"]["qwen"]["serving"][field] = json!(2);
         agrees(&validator, &value, false);
     }
-    // gpuCount documents the layout a recipe's budget was measured on; vLLM,
-    // not NemoClaw, checks a layout against the GPUs it sees.
-    for (count, accepted) in [
-        (json!(1), true),
-        (json!(2), true),
-        (json!(0), false),
-        (json!(17), false),
-        (json!(-1), false),
-    ] {
-        let mut value = input(RECIPE);
-        value["spec"]["services"]["qwen"]["recipe"]["compatibility"]["gpuCount"] = count;
-        agrees(&validator, &value, accepted);
-    }
+    // A recipe names its layout only as vLLM does, in serving; it has no GPU
+    // count.
+    let mut value = input(RECIPE);
+    value["spec"]["services"]["qwen"]["recipe"]["compatibility"]["gpuCount"] = json!(1);
+    agrees(&validator, &value, false);
 }
 
 #[test]
