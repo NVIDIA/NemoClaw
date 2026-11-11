@@ -48,8 +48,8 @@ run "contracts" {
   }
 
   assert {
-    condition     = data.ollama_runtime.qwen.requirements.gpu_count == length(data.ollama_runtime.qwen.gpu_devices)
-    error_message = "The Ollama requirements must ask for the GPUs gpu_devices lists: ${jsonencode(data.ollama_runtime.qwen.requirements)}"
+    condition     = data.ollama_runtime.qwen.requirements.gpu_count == data.ollama_runtime.qwen.gpu_count
+    error_message = "The Ollama requirements must report the gpu_count input: ${jsonencode(data.ollama_runtime.qwen.requirements)}"
   }
 
   assert {

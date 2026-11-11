@@ -320,14 +320,13 @@ fn container(target: &Target) -> Result<Value, Error> {
     }
     Ok(attrs)
 }
-/// Runtime contract settings with the GPUs the service's container gets, from
-/// which the contract's `requirements.gpu_count` tells other placements how
-/// many to request.
-fn with_gpu_devices(mut settings: Value, target: &Target) -> Result<Value, Error> {
+/// Runtime contract settings with the number of GPUs the service selects,
+/// which the contract's `requirements.gpu_count` reports to other placements.
+fn with_gpu_count(mut settings: Value, target: &Target) -> Result<Value, Error> {
     if let Some(crate::managed::Gpus::Devices(devices)) =
         spec(target)?.process.map(|process| process.gpus)
     {
-        settings["gpu_devices"] = json!(devices);
+        settings["gpu_count"] = json!(devices.len());
     }
     Ok(settings)
 }
@@ -415,7 +414,7 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             vllm::SERVICE_KIND => Some((
                 vllm::RUNTIME_DATA_SOURCE,
                 "NEMOCLAW_RUNTIME_SPEC",
-                with_gpu_devices(
+                with_gpu_count(
                     crate::hcl_schema::to_hcl(
                         &vllm::runtime_fields().map_err(|_| {
                             Error::State("the vLLM runtime contract has no OpenTofu schema")
@@ -429,7 +428,7 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             ollama::SERVICE_KIND => Some((
                 ollama::RUNTIME_DATA_SOURCE,
                 "NEMOCLAW_RUNTIME_SPEC",
-                with_gpu_devices(
+                with_gpu_count(
                     crate::hcl_schema::to_hcl(
                         &ollama::runtime_fields().map_err(|_| {
                             Error::State("the Ollama runtime contract has no OpenTofu schema")

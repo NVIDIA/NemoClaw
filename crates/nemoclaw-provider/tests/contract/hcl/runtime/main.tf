@@ -28,7 +28,7 @@ data "vllm_runtime" "qwen" {
 }
 
 data "ollama_runtime" "qwen" {
-  gpu_devices = ["GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3"]
+  gpu_count = 1
   hardware {
     profile = "dgx-spark"
   }
