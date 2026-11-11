@@ -112,7 +112,7 @@ const REGISTRY_OWNING_PATHS = [
   "test/e2e/registry/",
   "tools/e2e/onboard-timeout-contract.mts",
 ] as const;
-const DCODE_SKILL_OWNING_PATHS = [
+const DCODE_OWNING_PATHS = [
   "agents/langchain-deepagents-code/manifest.yaml",
   "src/commands/sandbox/skill.ts",
   "src/commands/sandbox/skill/",
@@ -120,6 +120,8 @@ const DCODE_SKILL_OWNING_PATHS = [
   "src/lib/adapters/openshell/sandbox-command-sdk.ts",
   "src/lib/agent/skill-integration.ts",
   "src/lib/skill-install.ts",
+  "src/lib/state/sandbox.ts",
+  "src/lib/state/snapshot/sqlite-credential-scan.ts",
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
   "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
 ] as const;
@@ -478,9 +480,7 @@ function registryTargetsForChangedFiles(
   ) {
     return buildLiveTargetMatrix([], gatewayRuntimes);
   }
-  return changedFiles.some((file) =>
-    DCODE_SKILL_OWNING_PATHS.some((owner) => pathMatches(file, owner)),
-  )
+  return changedFiles.some((file) => DCODE_OWNING_PATHS.some((owner) => pathMatches(file, owner)))
     ? buildLiveTargetMatrix(["ubuntu-repo-cloud-langchain-deepagents-code"], gatewayRuntimes)
     : [];
 }
