@@ -92,6 +92,14 @@ impl Scenario {
         self.remote.path()
     }
 
+    /// Replace `old` with `new` in the configuration.
+    pub(crate) fn reconfigure(&self, old: &str, new: &str) {
+        let path = self.workspace.path().join("main.tf");
+        let body = fs::read_to_string(&path).unwrap();
+        assert!(body.contains(old), "{body}");
+        fs::write(path, body.replace(old, new)).unwrap();
+    }
+
     pub(crate) fn tofu(&self, args: &[&str]) -> Vec<u8> {
         let output = self
             .workspace

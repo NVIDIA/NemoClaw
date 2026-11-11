@@ -262,19 +262,25 @@ sha256sum ollama-model-manifest.json
 During startup, the hosted runtime resolves uncached manifest and parameter metadata and rejects a tag whose manifest differs from `model.digest`.
 It checks hardware compatibility and declared GPU/host budgets.
 Plan does not query the model registry or run the SSH host collector.
-The Ollama weight-size check is a lower bound: all snapshot bytes plus 2 GiB must fit the declared GPU budget.
+Plan doesn't compare the model's size with the GPU budget; the readiness check compares what Ollama loaded.
 Plan does not load the model or establish that its context and native KV cache will fit.
 
 Apply downloads and verifies the native registry manifest and each blob using the shared resumable snapshot path.
 It then starts Ollama, checks the selected digest, and sends a load-only request without a prompt or generated response.
 The bounded readiness check requires Ollama to report the selected model fully on GPU, within the GPU budget times the number of GPUs the container sees, and with the requested context length.
 These checks are observations, not a hard GPU allocator quota; a model may exceed its budget during loading before the check fails.
+When the runtime stops during readiness, the apply error includes the stop detail it recorded in `/data/status.json`, such as a memory protection stop; Ollama's own output stays in the container log.
 CPU offload is rejected, and CPU-only execution is not part of this shared adapter yet.
 
-NemoClaw leaves placement across GPUs to Ollama and doesn't set `OLLAMA_SCHED_SPREAD`: Ollama loads the model on one GPU when it fits there and splits it across the container's GPUs otherwise.
-The runtime sets `OLLAMA_GPU_OVERHEAD`, which Ollama holds back on every GPU, to the largest free memory among those GPUs minus the GPU budget, so no GPU offers Ollama more than the budget.
-The runtime refuses to start when any of the GPUs has less than the budget free.
-Ollama's `/api/ps` reports one `size_vram` total, not each GPU's share, so the readiness check can't show which GPU exceeded its budget.
+NemoClaw leaves placement across GPUs to Ollama and doesn't set `OLLAMA_SCHED_SPREAD`.
+The runtime computes one per-GPU reserve, the largest free memory among the container's GPUs minus the GPU budget, and passes it in two settings that `ollama serve --help` documents:
+
+- `OLLAMA_GPU_OVERHEAD`, "Reserve a portion of VRAM per GPU (bytes)". Ollama v0.40.14, the version the runtime image pins, reads it for its logs and its default context size, not to place a GGUF model.
+- `LLAMA_ARG_FIT_TARGET`, "Target free VRAM margin per device for llama.cpp fit (MiB)", rounded up to whole MiB. llama.cpp leaves this much free on each GPU when it fits the model's layers. When the reserve is below llama.cpp's own margin of 1024 MiB, the runtime leaves the setting unset and llama.cpp's margin applies. When it's set, Ollama doesn't add its own margin for a model's vision projector.
+
+Ollama chooses its GPUs from their raw free memory, so a model can land on one GPU with part of it offloaded to the CPU instead of spreading across GPUs, and readiness then fails.
+NemoClaw enforces the budget only on the total, after the load, through `/api/ps`, which reports one `size_vram` total and not each GPU's share.
+The per-GPU budget is a margin that llama.cpp keeps, not a guarantee that NemoClaw checks.
 `container.gpuDevices` takes one entry until serving one model across several GPUs is implemented ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)).
 
 Ollama sizes its KV cache and batching natively.

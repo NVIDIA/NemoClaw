@@ -216,6 +216,8 @@ The managed vLLM supervisor continues checking host memory after the CLI exits.
 It stops its inference process on sustained pressure, failed memory observations, startup timeout, or an operator stop, and does not automatically restart inference.
 The container also stays stopped after a host reboot; see [host reboot recovery](../build-deploy/usage.md#recover-after-a-host-reboot).
 A native process exit also ends supervision of that process.
+When vLLM exits, the stop detail and the apply error include the end of vLLM's output, up to 4 KiB, with the inference key replaced by `[redacted]`.
+If the cause isn't in the excerpt, read it in the container log.
 The model volume retains `/data/status.json` with `phase`, `detail`, `updated` (UTC timestamp), and `pid`.
 Phases are `initializing`, `downloading`, `preparing`, `loading`, `ready`, and `stopped`.
 Read `detail` with the timestamp: a `ready` file from an earlier container start does not prove current readiness.
@@ -242,7 +244,7 @@ printf 'Diagnostics: %s\n' "$diagnostic_dir"
 ```
 
 These commands read the selected container, including a stopped container, and write local diagnostic files.
-The container log includes supervisor diagnostics and inherited native process output; inspect it privately before sharing.
+The container log includes supervisor diagnostics and native process output; vLLM's standard output and error both appear on the container's standard error. Inspect the log privately before sharing.
 If status is missing or the engine is unreachable, retain the original apply error and deployment state; failed observation does not prove resource absence.
 
 | Stop detail | Recovery decision |
@@ -250,7 +252,7 @@ If status is missing or the engine is unreachable, retain the original apply err
 | Host memory pressure | Restore host headroom; reduce only workloads you own or ask the host operator; do not disable protection |
 | Memory observation failed or sample stream closed | Restore the host observation prerequisites; increasing a timeout does not fix an unreadable memory source |
 | Loading exceeded startup budget | Inspect backend output for loading/capacity errors before considering a supported startup-budget change |
-| Inference process exited | Diagnose the native error using runtime logs, the selected model and image, and the recipe configuration |
+| Inference process exited | Diagnose the native error in the detail's final vLLM output or the runtime log, using the selected model and image and the recipe configuration |
 | Operator stop or protection trip | Establish why the stop was requested before explicitly resuming inference |
 
 After correcting the conditions, follow [interrupted-operation recovery](../build-deploy/usage.md#recover-an-interrupted-operation) from the client with the original YAML, bundle, and state directory.
