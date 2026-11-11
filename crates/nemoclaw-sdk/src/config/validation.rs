@@ -61,6 +61,7 @@ impl Document {
                 schema::validate_definition("FileRef", metadata)?;
             }
             sandbox.network.validate()?;
+            self.validate_sandbox_providers(sandbox)?;
             let web_search = self.web_search(sandbox)?;
             crate::image_runtime::policy_input(self, sandbox)?;
             if let Some(search) = web_search {

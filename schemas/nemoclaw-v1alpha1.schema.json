@@ -4027,7 +4027,7 @@
     },
     "Spec": {
       "additionalProperties": false,
-      "description": "The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.",
+      "description": "The configuration requires at least one named sandbox and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.",
       "properties": {
         "gateway": {
           "$ref": "#/$defs/Gateway",
@@ -4085,8 +4085,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/Sandbox"
           },
-          "description": "One to 32 named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.",
-          "maxProperties": 32,
+          "description": "Named sandboxes: one to 256 with a kubernetes or openshift gateway runtime, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent.",
           "minProperties": 1,
           "propertyNames": {
             "pattern": "^[a-z][a-z0-9-]{0,39}$"
@@ -4522,6 +4521,66 @@
         ],
         "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
       }
+    },
+    {
+      "else": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "maxProperties": 32,
+                "x-nemoclaw-error": "a document holds at most 32 sandboxes with a Docker or Podman gateway, which runs every sandbox on one host; Kubernetes and OpenShift allow 256"
+              }
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "runtime": {
+                    "properties": {
+                      "provider": {
+                        "enum": [
+                          "kubernetes",
+                          "openshift"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "provider"
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime"
+                ]
+              }
+            },
+            "required": [
+              "gateway"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "maxProperties": 256,
+                "x-nemoclaw-error": "a document holds at most 256 sandboxes with a Kubernetes or OpenShift gateway, which bounds what one gateway and state affect; split a larger fleet across documents"
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "description": "Desired configuration for one deployment. Fields describe authored input before SDK normalization.",
@@ -4564,7 +4623,7 @@
     "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
     "Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.",
     "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
-    "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
+    "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 providers attached to one sandbox (its inference providers, web search, and api integrations, OpenShell's limit per sandbox), incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; that a recipe's GPU belongs to a hardware profile's GPU family; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
   ]

@@ -123,6 +123,69 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
         doc
     );
 }
+/// OpenShell attaches at most 32 providers to one sandbox; a deployment has no
+/// such limit, so sandboxes with their own credentials scale with the fleet.
+#[test]
+fn a_kubernetes_deployment_selects_a_provider_for_each_of_256_sandboxes() {
+    let mut value: Value = serde_saphyr::from_str(include_str!(
+        "../../../examples/kubernetes/managed-development.yaml"
+    ))
+    .unwrap();
+    let mut sandbox = value["spec"]["sandboxes"]["assistant"].clone();
+    sandbox["inferenceProviders"] =
+        json!({"own": value["spec"]["inferenceProviders"]["hosted-nvidia"]});
+    sandbox["agent"] = json!({"name": "primary", "inference": {"routes": [
+        {"name": "primary", "providerRef": "own", "overrides": {"model": "nvidia/nemotron-3-ultra-550b-a55b"}}
+    ]}});
+    value["spec"]["sandboxes"] = Value::Object(
+        (0..256)
+            .map(|index| (format!("agent-{index}"), sandbox.clone()))
+            .collect(),
+    );
+    let document = Document::parse(value.to_string().as_bytes()).unwrap();
+    assert_eq!(document.selected_inference_providers().unwrap().len(), 256);
+}
+
+/// Inference providers, web search, and `api` integrations each attach one
+/// provider to the sandbox, and OpenShell refuses a sandbox with more than 32.
+#[test]
+fn a_sandbox_with_more_than_32_attached_providers_is_rejected_by_name() {
+    let input: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/web-search.yaml")).unwrap();
+    // The researcher attaches web search beside its inference providers.
+    let attach = |providers: usize| {
+        let mut value = input.clone();
+        let researcher = &mut value["spec"]["sandboxes"]["researcher"];
+        researcher["inferenceProviders"] = Value::Object(
+            (0..providers)
+                .map(|index| {
+                    (
+                        format!("p{index}"),
+                        json!({"provider": "openai", "endpoint": "http://172.20.0.1:11446/v1"}),
+                    )
+                })
+                .collect(),
+        );
+        researcher["agent"]["inference"] = json!({
+            "default": "r0",
+            "routes": (0..providers)
+                .map(|index| json!({"name": format!("r{index}"), "providerRef": format!("p{index}"), "overrides": {"model": "qwen3:4b"}}))
+                .collect::<Vec<_>>()
+        });
+        value
+    };
+    Document::parse(attach(31).to_string().as_bytes()).unwrap();
+    let error = Document::parse(attach(32).to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("spec.sandboxes[researcher]")
+            && error.contains("33")
+            && error.contains("32"),
+        "{error}"
+    );
+}
+
 #[test]
 fn managed_inference_remains_owned_when_the_default_uses_a_hosted_provider() {
     let mut value: Value =

@@ -44,7 +44,8 @@ See [CLI options and output](../references/cli.md) for bundle selection, formats
 
 ## Configure Sandboxes and Inference
 
-A document contains one to 32 sandboxes keyed by name, each with one harness and one agent.
+A document contains sandboxes keyed by name, each with one harness and one agent: up to 256 with a Kubernetes or OpenShift gateway, and up to 32 with Docker or Podman, which run every sandbox on one host.
+See [sandbox count and cluster size](kubernetes.md#sandbox-count-and-cluster-size) for the reasons.
 Use the [multiple-sandbox example](../../examples/multiple-sandboxes.yaml) to share inference across different harnesses.
 [OpenClaw and Pi](../agents-inference/agents.md) can select multiple models; each Deep Agents instance selects one.
 
