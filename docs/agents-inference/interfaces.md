@@ -150,7 +150,7 @@ Agent interfaces:
     export OPENSHELL_WORKSPACE=nc-1234567890abcdef
   claw/dashboard on port 18789
     Forward:  openshell forward service claw --target-port 18789 --local 127.0.0.1:18789
-    Token:    openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token
+    Token:    openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/main/interfaces/dashboard.token
     Sign in:  open http://127.0.0.1:18789/#token=TOKEN, replacing TOKEN with the token
     Terminal: openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token
 ```
@@ -161,7 +161,7 @@ The gateway selection follows [Select the Gateway and Workspace](#select-the-gat
 1. Run the forward in its own terminal and keep it running.
 2. Read the token with the `Token` command, in another terminal with the same selection.
    The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
-   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
+   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as OpenClaw and Hermes, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user; stopping the runtime removes it.
    After the runtime restarts, apply prints the new path; read the token again.
 3. Sign in:
@@ -191,7 +191,7 @@ Run it from a terminal on the client host with the gateway and workspace selecte
 To keep the token out of your shell history, read it into a variable with the `Token` command:
 
 ```sh
-TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
+TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/main/interfaces/dashboard.token)
 openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
 unset TOKEN
 ```
