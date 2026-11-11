@@ -8,7 +8,7 @@ Agents run inside their sandboxes; you reach them through OpenShell commands, no
 
 ## Select the Gateway and Workspace
 
-Use an OpenShell CLI matching the deployment implementation revision on the client host. For the [source-pinned tutorial](../get-started/first-deployment.md), use OpenShell 0.1.6 from its inspected `versions.json`; this documentation checkout’s `versions.json` may specify a different version.
+Use an OpenShell CLI matching the deployment implementation revision on the client host. For the [source-pinned tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
 These selectors choose an existing OpenShell gateway and deployment; they do not create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.
 
