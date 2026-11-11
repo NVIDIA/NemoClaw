@@ -263,6 +263,8 @@ During startup, the hosted runtime resolves uncached manifest and parameter meta
 It checks hardware compatibility and declared GPU/host budgets.
 Plan does not query the model registry or run the SSH host collector.
 The Ollama weight-size check is a lower bound: all snapshot bytes plus 2 GiB must fit the declared GPU budget.
+`gpuMemoryGiB` and `hardware.minGpuMemoryBytes` apply to each selected GPU, and each selected GPU must match the hardware profile and have room for the budget.
+Ollama reserves one amount on every GPU, so `gpuMemoryUtilization` is taken of the smallest selected GPU's total.
 Plan does not load the model or establish that its context and native KV cache will fit.
 
 Apply downloads and verifies the native registry manifest and each blob using the shared resumable snapshot path.

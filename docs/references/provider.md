@@ -854,11 +854,16 @@ See [runtime ownership](../../internal-docs/design/runtime.md) and [recovery](..
 The optional `vllm_capacity` and `ollama_capacity` data sources observe capacity for one runtime's services on an engine.
 Each takes an `engine` and `contracts`, the `spec` of each of that runtime's contract data sources on the engine, and rejects a contract listed twice or one for another runtime.
 No data source combines services of different runtimes on one host.
-It reports required and observed bytes and compatibility using the selected execution host's measurements.
+It reports required and observed bytes and compatibility using the selected execution host's measurements:
+
+- On dedicated memory, a service's budget applies to each GPU it selects, so each selected GPU must hold the sum of the listed services' budgets on it. A `gpuMemoryUtilization` is taken of each GPU's own total for vLLM, and of the smallest selected GPU's total for Ollama.
+- On unified memory, the budgets and the largest host reserve must fit the host's total memory.
+- `gpus` lists each selected GPU's `uuid`, `index`, `required_bytes`, and `observed_bytes`. On unified memory, the entry repeats the host figures.
+- `required_bytes` and `observed_bytes` are those of the GPU with the least room, so `compatible` is true only when every selected GPU fits.
 The SDK's default service graph does not use it as an admission gate.
 Without `gpu_devices`, its host observation reads every GPU on the engine and refuses a host with two or more.
 `gpu_devices` lists GPUs as `container.gpuDevices` does, as in `gpu_devices = ["1"]`: each entry a lowercase GPU UUID or an index from `"0"` to `"999"`, and exactly one entry, because serving one model across several GPUs isn't implemented yet.
-With it, the observation reads only the listed GPU, through `nvidia-smi --id`.
+With it, the observation reads only the listed GPU, through `nvidia-smi --id`, and reports it by the UUID the host measures for the entry.
 The data source then describes that one GPU, so list only the contracts of services whose `container.gpuDevices` lists it, and use one data source for each GPU.
 It can't check which GPU a contract's service uses, because a contract doesn't carry the service's `container` settings.
 Per-service runtime protection does not reserve capacity across deployments or schedule shared GPUs.

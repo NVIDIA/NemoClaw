@@ -120,7 +120,7 @@ pub struct Serving {
 #[serde(default, deny_unknown_fields)]
 /// Resident watchdog thresholds are validated before runtime creation. The parser also checks relationships between thresholds.
 pub struct Memory {
-    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
+    /// Optional fraction of each selected GPU's observed dedicated memory, from 0.05 through 0.95, which vLLM's --gpu-memory-utilization applies to each GPU's own total. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
     #[serde(
         rename = "gpuMemoryUtilization",
         skip_serializing_if = "Option::is_none"
@@ -129,7 +129,7 @@ pub struct Memory {
     pub gpu_memory_utilization: Option<serde_json::Number>,
     #[serde(rename = "gpuMemoryGiB", skip_serializing_if = "is_zero")]
     #[schemars(default)]
-    /// Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.
+    /// GPU budget in GiB for each selected GPU without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.
     pub gpu_memory_gib: i64,
     #[serde(rename = "hostReserveGiB")]
     #[schemars(default)]
@@ -137,7 +137,7 @@ pub struct Memory {
     pub host_reserve_gib: i64,
     #[serde(rename = "kvCacheGiB")]
     #[schemars(default)]
-    /// KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.
+    /// KV cache allocation in GiB on each selected GPU for ordinary vLLM, passed as --kv-cache-memory-bytes. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.
     pub kv_cache_gib: i64,
     #[serde(rename = "minAvailableGiB")]
     #[schemars(default)]

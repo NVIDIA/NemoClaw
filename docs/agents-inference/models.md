@@ -49,9 +49,11 @@ The native safetensors, configuration, tokenizer, license and notice files at th
 Python repository code is not executed.
 Gated repositories, custom remote-code models, GGUF, and nested checkpoint layouts are outside this first generic backend.
 
-`memory.gpuMemoryGiB` budgets the model, runtime and KV cache together; its default is 16 GiB.
-`kvCacheGiB` is part of that budget.
+`memory.gpuMemoryGiB` budgets the model, runtime and KV cache together on each GPU the service selects; its default is 16 GiB.
+`kvCacheGiB` is part of that budget, and vLLM allocates it on each GPU.
 Capacity checks reject snapshots whose weights cannot fit the declared budget.
+The check is a lower bound: each GPU's share of the weights, the safetensors bytes divided by tensor × pipeline parallel size, plus `kvCacheGiB` and 2 GiB, must fit the per-GPU budget.
+vLLM can need more on a GPU than that share, so passing the check doesn't establish that the model loads.
 Declare exactly one of `hardware` or `recipe`; there is no implicit hardware profile.
 For ordinary models on DGX Spark, select the existing Linux ARM64 contract explicitly:
 
@@ -89,6 +91,11 @@ serving:
 - When only `pipelineParallelSize` is set, tensor parallelism stays at vLLM's default of 1, so `pipelineParallelSize: 2` with two GPUs uses both GPUs as pipeline stages.
 - Pipeline parallelism defaults to 1.
 - vLLM uses tensor × pipeline parallel size GPUs. Selected GPUs that the layout doesn't use stay reserved but idle.
+- The memory budget, `kvCacheGiB`, and `hardware.minGpuMemoryBytes` apply to each selected GPU, and each selected GPU must match the hardware profile and have room for the budget. Selected GPUs don't need to be identical.
+  - `gpuMemoryUtilization` is a fraction of each GPU's own total, as vLLM's `--gpu-memory-utilization` is.
+  - With a fixed `gpuMemoryGiB`, vLLM sizes the KV cache from `kvCacheGiB` (`--kv-cache-memory-bytes`), and NemoClaw passes the budget over the largest selected GPU's total as `--gpu-memory-utilization`, because vLLM requires that fraction of each GPU's total to be free when it starts. Every GPU then gets the same budget.
+  - A recipe's `resources.gpuMemoryBytes` is converted the same way, but the recipe's KV cache takes that fraction of each GPU, so a smaller GPU gets less than the budget.
+- The host reserve applies once for the service, and the container's memory limit covers all of vLLM's worker processes.
 - NemoClaw passes the layout as written. When vLLM starts, it rejects a layout that needs more GPUs than the container sees, or that the model doesn't support, such as a tensor size that doesn't divide the model's attention heads. The runtime then stops, and the [container log](#diagnose-and-recover-a-stopped-runtime) keeps vLLM's error.
 - [vLLM's parallelism guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/serving/parallelism_scaling.md) recommends pipeline parallelism when the GPU count doesn't divide the model evenly, and when the GPUs have no NVLink.
 - An inline recipe sets its own layout and rejects these settings; see [recipes](recipes.md#declaration).
@@ -200,8 +207,8 @@ memory:
   gpuMemoryUtilization: 0.75
 ```
 
-This example checks weights against a 48 GiB budget derived from the declared minimum, then uses 75% of observed GPU capacity for serving.
-It rejects GPUs below the declared 64 GiB minimum.
+This example checks weights against a 48 GiB budget derived from the declared minimum, then uses 75% of each selected GPU's observed capacity for serving.
+It rejects a selected GPU below the declared 64 GiB minimum.
 Omit fixed GPU and KV-cache budgets in fractional mode.
 Unified-memory profiles reject both `minGpuMemoryBytes` and fractional allocation and retain host-memory reserve checks.
 All profiles retain the resident host-memory watchdog.

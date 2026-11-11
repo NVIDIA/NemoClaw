@@ -74,7 +74,7 @@ pub struct Resources {
     pub prepared_bytes: u64,
     /// Preparation memory requirement in GiB, in addition to the service host reserve.
     pub preparation_memory_gi_b: u64,
-    /// Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.
+    /// Serving GPU budget in bytes for each selected GPU, including its share of the model, caches, and other allocations. Checked against each selected GPU's memory on dedicated-memory GPUs, and against host memory with the host reserve on unified memory.
     pub gpu_memory_bytes: u64,
     /// Host available memory in GiB required at startup, beyond the GPU budget on unified memory or beyond the host reserve on a dedicated-memory GPU.
     pub startup_headroom_gi_b: u64,

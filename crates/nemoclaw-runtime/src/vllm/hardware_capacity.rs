@@ -39,7 +39,8 @@ pub fn check_capacity(
 }
 
 /// Verify the declared host/GPU contract and memory headroom independently of storage.
-/// Dedicated GPU budgets use observed VRAM; the host watchdog remains active.
+/// A dedicated GPU budget applies to each selected GPU, checked against its
+/// observed VRAM; the host reserve applies once, and the host watchdog remains active.
 pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(), Error> {
     service.validate()?;
     check_compatibility(service, c)?;
@@ -49,21 +50,16 @@ pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(
         .map_or(20, |r| r.resources.startup_headroom_gi_b)
         * GIB;
     if service.memory_architecture()? == MemoryArchitecture::Dedicated {
-        let gpu = c
-            .gpu_memory
-            .as_ref()
-            .ok_or(Error::State("dedicated GPU memory is unobservable"))?;
-        let budget = service
-            .memory
-            .gpu_memory_utilization
-            .as_ref()
-            .and_then(serde_json::Number::as_f64)
-            .map_or(service.gpu_bytes()?, |r| {
-                (gpu.total as f64 * r).floor() as u64
-            });
-        at_least("GPU total memory (bytes)", budget, gpu.total)?;
-        if starting {
-            at_least("GPU free memory (bytes)", budget, gpu.free)?;
+        for gpu in c.selected_gpus().iter() {
+            let gpu = gpu
+                .memory
+                .as_ref()
+                .ok_or(Error::State("dedicated GPU memory is unobservable"))?;
+            let budget = gpu_budget(service, gpu.total)?;
+            at_least("GPU total memory (bytes)", budget, gpu.total)?;
+            if starting {
+                at_least("GPU free memory (bytes)", budget, gpu.free)?;
+            }
         }
         let reserve = service.memory.host_reserve_gib as u64 * GIB;
         at_least("host total memory (bytes)", reserve, c.total)?;
@@ -91,21 +87,49 @@ pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(
     Ok(())
 }
 
-/// Total memory used to translate the serving budget into vLLM's utilization setting.
+/// The service's budget on a dedicated GPU with `total` bytes: a utilization
+/// fraction of that GPU's own total, as vLLM applies it to each GPU, or the
+/// fixed per-GPU budget.
+pub fn gpu_budget(service: &Service, total: u64) -> Result<u64, Error> {
+    Ok(service
+        .memory
+        .gpu_memory_utilization
+        .as_ref()
+        .and_then(serde_json::Number::as_f64)
+        .map_or(service.gpu_bytes()?, |ratio| {
+            (total as f64 * ratio).floor() as u64
+        }))
+}
+
+/// Total memory used to translate a fixed serving budget into vLLM's
+/// utilization fraction: the host's on unified memory, or the largest selected
+/// GPU's. vLLM requires that fraction of each GPU's own total to be free when
+/// it starts, so the largest total keeps the request within the budget on
+/// every GPU. Without a recipe, vLLM sizes the KV cache from
+/// --kv-cache-memory-bytes, so GPUs of different sizes get the same budget; a
+/// recipe's KV cache takes the fraction of each GPU, so a smaller one gets less.
 pub fn serving_memory(service: &Service, capacity: &Capacity) -> Result<u64, Error> {
     if service.memory_architecture()? == MemoryArchitecture::Dedicated {
-        capacity
-            .gpu_memory
-            .as_ref()
-            .map(|gpu| gpu.total)
-            .ok_or(Error::State("dedicated GPU memory is unobservable"))
+        let mut largest = 0;
+        for gpu in capacity.selected_gpus().iter() {
+            let gpu = gpu
+                .memory
+                .as_ref()
+                .ok_or(Error::State("dedicated GPU memory is unobservable"))?;
+            largest = largest.max(gpu.total);
+        }
+        Ok(largest)
     } else {
         Ok(capacity.total)
     }
 }
 
 fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
-    if !(10..=999).contains(&c.compute_capability) {
+    let gpus = c.selected_gpus();
+    if gpus
+        .iter()
+        .any(|gpu| !(10..=999).contains(&gpu.compute_capability))
+    {
         return Err(Error::State("GPU compute capability is unobservable"));
     }
     if let Some(hardware) = &service.hardware {
@@ -113,9 +137,10 @@ fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
     } else if let Some(recipe) = &service.recipe {
         let required = &recipe.compatibility;
         if c.architecture != required.architecture
-            || c.gpu != required.gpu
-            || (c.driver_major as u64) < required.min_driver_major
             || c.total < required.min_host_memory_gi_b * GIB
+            || gpus.iter().any(|gpu| {
+                gpu.name != required.gpu || (gpu.driver_major as u64) < required.min_driver_major
+            })
         {
             return Err(Error::Conflict(
                 "execution host does not satisfy recipe compatibility requirements",

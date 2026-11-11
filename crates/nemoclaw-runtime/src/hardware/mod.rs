@@ -5,7 +5,7 @@
 //! Source revision and attribution: crates/nemoclaw-runtime/NOTICE.md.
 //! Host observations and validated memory protection, independent of a recipe.
 use crate::Error;
-use std::{collections::BTreeMap, io::Read};
+use std::{borrow::Cow, collections::BTreeMap, io::Read};
 mod diagnostic;
 pub use diagnostic::HardwareDiagnostic;
 pub use diagnostic::{architecture, at_least};
@@ -39,6 +39,36 @@ impl Capacity {
             ));
         }
         Ok(())
+    }
+    /// Record `gpus`, and fill the single-GPU fields when there's exactly one.
+    pub fn set_gpus(&mut self, gpus: Vec<Gpu>) {
+        let one = match gpus.as_slice() {
+            [gpu] => Some(gpu),
+            _ => None,
+        };
+        self.gpu = one.map(|gpu| gpu.name.clone()).unwrap_or_default();
+        self.driver_major = one.map_or(0, |gpu| gpu.driver_major);
+        self.compute_capability = one.map_or(0, |gpu| gpu.compute_capability);
+        self.gpu_memory = one.and_then(|gpu| gpu.memory.clone());
+        self.gpus = gpus;
+    }
+    /// The GPUs a service on this host uses, which the per-GPU checks cover:
+    /// every observed GPU, because a container sees only the GPUs it selects
+    /// and a capacity read observes only the listed ones. Measurements built
+    /// without a GPU list describe one GPU through the single-GPU fields.
+    pub fn selected_gpus(&self) -> Cow<'_, [Gpu]> {
+        if self.gpus.is_empty() {
+            Cow::Owned(vec![Gpu {
+                index: 0,
+                uuid: String::new(),
+                name: self.gpu.clone(),
+                driver_major: self.driver_major,
+                compute_capability: self.compute_capability,
+                memory: self.gpu_memory.clone(),
+            }])
+        } else {
+            Cow::Borrowed(&self.gpus)
+        }
     }
 }
 /// One GPU as `nvidia-smi` reports it.

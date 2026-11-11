@@ -10,6 +10,15 @@ use nemoclaw_runtime::{RuntimeSpec, ollama::ManagedOllama};
 pub struct ServiceCapacity {
     pub required_bytes: u64,
     pub observed_bytes: u64,
+    pub gpus: Vec<GpuCapacity>,
+}
+/// One selected GPU's share of [`ServiceCapacity`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpuCapacity {
+    pub uuid: String,
+    pub index: u32,
+    pub required_bytes: u64,
+    pub observed_bytes: u64,
 }
 impl ServiceCapacity {
     pub fn compatible(&self) -> bool {
@@ -99,24 +108,17 @@ pub async fn observe_service_capacity(
     gpu_devices: Option<&[String]>,
 ) -> Result<ServiceCapacity, Error> {
     let services = parse(Some(endpoint), contracts)?;
-    let gpu = match gpu_devices {
-        Some(devices) => {
-            validate_capacity_gpu_devices(
-                &devices
-                    .iter()
-                    .map(|device| Some(device.as_str()))
-                    .collect::<Vec<_>>(),
-            )?;
-            devices.first().map(String::as_str)
-        }
-        None => None,
-    };
+    if let Some(devices) = gpu_devices {
+        validate_capacity_gpu_devices(
+            &devices
+                .iter()
+                .map(|device| Some(device.as_str()))
+                .collect::<Vec<_>>(),
+        )?;
+    }
     let engine = crate::managed::service_engine(connections, endpoint)?;
     let work = async {
-        let host = engine.host_observer.observe(&engine, gpu).await?;
-        host.capacity.require_one_gpu()?;
-        let info = engine.info().await?;
-        let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
+        let capacity = observe_selected(&engine, gpu_devices).await?;
         Ok(account(&services, &capacity)?.total)
     };
     tokio::time::timeout(std::time::Duration::from_secs(30), work)
@@ -124,43 +126,66 @@ pub async fn observe_service_capacity(
         .map_err(|_| Error::State("combined capacity observation timed out"))?
 }
 
+/// Observe the engine's host and the GPUs `gpu_devices` lists, each through
+/// its own read so that only listed GPUs are observed. Each entry, an index or
+/// a UUID, resolves to the GPU the host reports for it, so two entries that
+/// name one GPU are refused. Without the list, the host must show one GPU.
+async fn observe_selected(
+    engine: &crate::docker::Engine,
+    gpu_devices: Option<&[String]>,
+) -> Result<Capacity, Error> {
+    let devices: Vec<Option<&str>> = match gpu_devices {
+        Some(devices) => devices.iter().map(|device| Some(device.as_str())).collect(),
+        None => vec![None],
+    };
+    let mut observations = Vec::new();
+    for device in devices {
+        let observation = engine.host_observer.observe(engine, device).await?;
+        observation.capacity.require_one_gpu()?;
+        observations.push(observation);
+    }
+    let info = engine.info().await?;
+    let mut host: Option<Capacity> = None;
+    let mut gpus: Vec<crate::hardware::Gpu> = Vec::new();
+    for observation in observations {
+        let capacity = observation.for_engine(info.id.as_deref().unwrap_or(""))?;
+        let gpu = capacity.gpus[0].clone();
+        if gpus.iter().any(|seen| seen.uuid == gpu.uuid) {
+            return Err(Error::Conflict("gpu_devices lists one GPU twice"));
+        }
+        gpus.push(gpu);
+        host.get_or_insert(capacity);
+    }
+    let mut host = host.ok_or(Error::Conflict("gpu_devices must list a GPU"))?;
+    host.set_gpus(gpus);
+    Ok(host)
+}
+
 struct Accounting {
     total: ServiceCapacity,
 }
+/// Add up the budgets on each selected GPU. A dedicated-memory budget applies to
+/// each GPU the services select, so every selected GPU must hold the sum of
+/// the services' budgets on it; unified memory budgets host memory, with the
+/// largest host reserve once.
 fn account(services: &[(CapacityService, bool)], capacity: &Capacity) -> Result<Accounting, Error> {
-    let mut total_budget = 0_u64;
+    use nemoclaw_runtime::{ollama::hardware_capacity as ollama, vllm::hardware_capacity as vllm};
     let mut reserve = 0_u64;
     let mut architecture = None;
     for (service, starting) in services {
-        let (kind, budget, host_reserve) = match service {
+        let (kind, host_reserve) = match service {
             CapacityService::Ollama(service) => {
-                nemoclaw_runtime::ollama::hardware_capacity::check_memory(
-                    service, capacity, *starting,
-                )?;
+                ollama::check_memory(service, capacity, *starting)?;
                 (
                     service.memory_architecture()?,
-                    nemoclaw_runtime::ollama::hardware_capacity::budget(service, capacity)?,
-                    service.memory.host_reserve_gib as u64 * crate::hardware::GIB,
+                    service.memory.host_reserve_gib,
                 )
             }
             CapacityService::Vllm(service) => {
-                nemoclaw_runtime::vllm::hardware_capacity::check_memory(
-                    service, capacity, *starting,
-                )?;
-                let total =
-                    nemoclaw_runtime::vllm::hardware_capacity::serving_memory(service, capacity)?;
-                let budget = service
-                    .memory
-                    .gpu_memory_utilization
-                    .as_ref()
-                    .and_then(serde_json::Number::as_f64)
-                    .map_or(service.gpu_bytes()?, |ratio| {
-                        (total as f64 * ratio).floor() as u64
-                    });
+                vllm::check_memory(service, capacity, *starting)?;
                 (
                     service.memory_architecture()?,
-                    budget,
-                    service.memory.host_reserve_gib as u64 * crate::hardware::GIB,
+                    service.memory.host_reserve_gib,
                 )
             }
         };
@@ -170,29 +195,59 @@ fn account(services: &[(CapacityService, bool)], capacity: &Capacity) -> Result<
             ));
         }
         architecture = Some(kind);
-        total_budget = total_budget
-            .checked_add(budget)
-            .ok_or(crate::Error::State("combined GPU budget overflow"))?;
-        reserve = reserve.max(host_reserve);
+        reserve = reserve.max(host_reserve as u64 * crate::hardware::GIB);
     }
+    let overflow = || Error::State("combined GPU budget overflow");
+    // The services' budgets on memory of `total` bytes: a vLLM utilization is
+    // taken of each GPU's own total; Ollama's budget is one amount on every GPU.
+    let budgets = |total: u64| {
+        services.iter().try_fold(0_u64, |sum, (service, _)| {
+            let budget = match service {
+                CapacityService::Ollama(service) => ollama::budget(service, capacity)?,
+                CapacityService::Vllm(service) => vllm::gpu_budget(service, total)?,
+            };
+            sum.checked_add(budget).ok_or_else(overflow)
+        })
+    };
     let dedicated = architecture == Some(nemoclaw_runtime::vllm::MemoryArchitecture::Dedicated);
+    let gpus = capacity
+        .selected_gpus()
+        .iter()
+        .map(|gpu| {
+            let (required_bytes, observed_bytes) = if dedicated {
+                let total = gpu
+                    .memory
+                    .as_ref()
+                    .ok_or(Error::State("dedicated GPU memory is unobservable"))?
+                    .total;
+                (budgets(total)?, total)
+            } else {
+                (
+                    budgets(capacity.total)?
+                        .checked_add(reserve)
+                        .ok_or_else(overflow)?,
+                    capacity.total,
+                )
+            };
+            Ok(GpuCapacity {
+                uuid: gpu.uuid.clone(),
+                index: gpu.index,
+                required_bytes,
+                observed_bytes,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    // The totals describe the GPU with the least room, so they're compatible
+    // exactly when every GPU is.
+    let (required_bytes, observed_bytes) = gpus
+        .iter()
+        .min_by_key(|gpu| i128::from(gpu.observed_bytes) - i128::from(gpu.required_bytes))
+        .map(|gpu| (gpu.required_bytes, gpu.observed_bytes))
+        .ok_or(Error::State("no GPU was observed"))?;
     let total = ServiceCapacity {
-        required_bytes: if dedicated {
-            total_budget
-        } else {
-            total_budget
-                .checked_add(reserve)
-                .ok_or(Error::State("combined GPU budget overflow"))?
-        },
-        observed_bytes: if dedicated {
-            capacity
-                .gpu_memory
-                .as_ref()
-                .ok_or(Error::State("dedicated GPU memory is unobservable"))?
-                .total
-        } else {
-            capacity.total
-        },
+        required_bytes,
+        observed_bytes,
+        gpus,
     };
     Ok(Accounting { total })
 }

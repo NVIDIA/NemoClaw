@@ -24,6 +24,29 @@ pub(crate) struct CapacityState {
     required_bytes: Value<u64>,
     observed_bytes: Value<u64>,
     compatible: Value<bool>,
+    gpus: Value<Vec<Value<GpuCapacityState>>>,
+}
+/// One selected GPU in `gpus`.
+#[derive(Serialize, Deserialize)]
+struct GpuCapacityState {
+    uuid: Value<String>,
+    index: Value<u64>,
+    required_bytes: Value<u64>,
+    observed_bytes: Value<u64>,
+}
+/// The OpenTofu type of a `gpus` entry.
+fn gpu_capacity_type() -> AttributeType {
+    AttributeType::Object(
+        [
+            ("uuid", AttributeType::String),
+            ("index", AttributeType::Number),
+            ("required_bytes", AttributeType::Number),
+            ("observed_bytes", AttributeType::Number),
+        ]
+        .into_iter()
+        .map(|(name, attr_type)| (name.into(), attr_type))
+        .collect(),
+    )
 }
 fn requirements(
     config: &CapacityState,
@@ -113,6 +136,11 @@ impl DataSource for CapacityDataSource {
                     (
                         "compatible",
                         AttributeType::Bool,
+                        AttributeConstraint::Computed,
+                    ),
+                    (
+                        "gpus",
+                        AttributeType::List(Box::new(gpu_capacity_type())),
                         AttributeConstraint::Computed,
                     ),
                 ]
@@ -215,6 +243,20 @@ impl DataSource for CapacityDataSource {
                 config.compatible = Value::Value(observed.compatible());
                 config.required_bytes = Value::Value(observed.required_bytes);
                 config.observed_bytes = Value::Value(observed.observed_bytes);
+                config.gpus = Value::Value(
+                    observed
+                        .gpus
+                        .into_iter()
+                        .map(|gpu| {
+                            Value::Value(GpuCapacityState {
+                                uuid: Value::Value(gpu.uuid),
+                                index: Value::Value(gpu.index.into()),
+                                required_bytes: Value::Value(gpu.required_bytes),
+                                observed_bytes: Value::Value(gpu.observed_bytes),
+                            })
+                        })
+                        .collect(),
+                );
                 Some(config)
             }
             Err(error) => {
@@ -270,6 +312,7 @@ mod tests {
                         required_bytes: Value::Null,
                         observed_bytes: Value::Null,
                         compatible: Value::Null,
+                        gpus: Value::Null,
                     },
                 )
                 .await;
@@ -304,6 +347,7 @@ mod tests {
                 required_bytes: Value::Null,
                 observed_bytes: Value::Null,
                 compatible: Value::Null,
+                gpus: Value::Null,
             };
             assert!(source.validate(&mut diagnostics, state).await.is_none());
             let message = format!("{diagnostics:?}");
@@ -361,6 +405,7 @@ mod tests {
                 required_bytes: Value::Null,
                 observed_bytes: Value::Null,
                 compatible: Value::Null,
+                gpus: Value::Null,
             };
             let read = source
                 .read(&mut diagnostics, state, ValueEmpty::default())
@@ -422,6 +467,7 @@ mod tests {
                 required_bytes: Value::Null,
                 observed_bytes: Value::Null,
                 compatible: Value::Null,
+                gpus: Value::Null,
             };
             let result = source.validate(&mut diagnostics, state).await;
             assert_eq!(result.is_none(), error.is_some(), "{gpu_devices:?}");
