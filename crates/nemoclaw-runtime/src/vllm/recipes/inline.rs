@@ -47,6 +47,9 @@ pub struct Compatibility {
     pub architecture: String,
     /// GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory.
     pub gpu: String,
+    /// Number of GPUs the recipe's budget was measured on. It sets the default tensor parallel size; vLLM checks the layout against the GPUs it sees.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub gpu_count: u64,
     /// Minimum NVIDIA driver major version.
     pub min_driver_major: u64,
     /// Minimum total host memory in GiB.
@@ -111,6 +114,14 @@ pub struct Settings {
     #[schemars(default)]
     /// VLLM_* variables mapped to paths beneath verified prepared data; . selects its root. Names must not also appear in environment.
     pub prepared_environment: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    /// vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts.
+    pub tensor_parallel_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    /// vLLM's --pipeline-parallel-size: how many GPU stages each hold a range of layers.
+    pub pipeline_parallel_size: Option<u64>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -131,6 +142,14 @@ pub struct Reuse {
     pub snapshot_directory: String,
     /// SHA-256 preparation key identifying previously prepared data.
     pub preparation_key: String,
+}
+// Settings at their defaults stay out of the serialized recipe, and so out of
+// its preparation key, so recipes written before them keep their prepared data.
+fn one() -> u64 {
+    1
+}
+fn is_one(value: &u64) -> bool {
+    *value == 1
 }
 pub fn relative(path: &str) -> bool {
     !path.is_empty()

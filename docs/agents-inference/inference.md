@@ -122,6 +122,7 @@ Use the UUID that `nvidia-smi --query-gpu=uuid --format=csv,noheader` prints, as
 An index also works, but it can change when the host boots, and YAML needs it quoted, as in `gpuDevices: ["1"]`, because each entry is a string.
 Run `nvidia-smi` on the host whose Docker engine runs the service: with [SSH placement](remote-service.md), that's the remote host, not the machine where you run `nemoclaw`.
 Without `gpuDevices`, the container gets every GPU, and the model runtime stops unless the host has exactly one.
+For vLLM, the number of entries is also the default tensor parallel size when no parallel size is set; see [the parallel layout](models.md#set-the-parallel-layout).
 Native managed inference on Podman remains unsupported; a Podman gateway can consume a service on an explicitly selected remote Docker engine through [SSH placement](remote-service.md).
 These shared fields do not change [platform qualification limits](../resources/limits.md#platforms-models-and-placement).
 

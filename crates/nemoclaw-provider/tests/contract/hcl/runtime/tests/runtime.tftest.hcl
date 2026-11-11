@@ -31,6 +31,7 @@ run "contracts" {
   assert {
     condition = (
       local.requirements.gpu
+      && local.requirements.gpu_count == 1
       && local.requirements.shared_memory_bytes == 8192 * 1048576
       && local.requirements.ulimits.memlock == -1
       && local.requirements.ulimits.stack == 67108864
@@ -44,6 +45,11 @@ run "contracts" {
       && jsondecode(data.ollama_runtime.qwen.spec).model.name == "qwen3:0.6b"
     )
     error_message = "The Ollama contract must carry its model: ${data.ollama_runtime.qwen.spec}"
+  }
+
+  assert {
+    condition     = data.ollama_runtime.qwen.requirements.gpu_count == data.ollama_runtime.qwen.gpu_count
+    error_message = "The Ollama requirements must report the gpu_count input: ${jsonencode(data.ollama_runtime.qwen.requirements)}"
   }
 
   assert {
