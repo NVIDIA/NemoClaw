@@ -41,7 +41,7 @@ Success exits 0; failure and unsupported operations exit 1.
 Requests are limited to 512 KiB and responses to 4 MiB.
 Diagnostics carry only Fabric's fixed stages and codes, never its messages.
 A timeout, malformed response, or disconnection leaves the outcome unconfirmed; callers do not replay starts or invocations.
-Fabric's [runtime server documentation](https://github.com/NVIDIA/NeMo-Fabric/blob/1b5c8ce5057f846dd86db6788e0be38c6b3675af/sdk/python/nemo-fabric-runtime/src/nemo_fabric/runtime_server/README.md) defines the commands.
+Fabric's [runtime server documentation](https://github.com/NVIDIA/NeMo-Fabric/blob/cc6f6ba153f25a9e5746ea794d6c2282d86539e0/sdk/python/nemo-fabric-runtime/src/nemo_fabric/runtime_server/README.md) defines the commands.
 
 Fabric can start another runtime in a sandbox after a stop.
 After a start whose effects Fabric reports as uncertain, another start returns `runtime_exists`, which the provider reports with guidance to replace the sandbox.
