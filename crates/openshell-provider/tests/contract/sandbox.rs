@@ -9,7 +9,9 @@ use serde_json::json;
 /// numbers and an omitted authorization mode included. A driver
 /// configuration changed behind OpenTofu is drift that replaces the sandbox;
 /// a declared service endpoint changed or deleted behind it is drift that an
-/// in-place update restores.
+/// in-place update restores. An endpoint under a name the configuration
+/// doesn't declare stays through those updates and the removal of every
+/// declared one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn sandbox_settings_read_back_and_drift_is_restored() {
@@ -72,16 +74,46 @@ async fn sandbox_settings_read_back_and_drift_is_restored() {
     assert_eq!(actions(), [replaced.clone(), vec![caller.clone()]].concat());
     fixture.state.lock().unwrap().sandboxes = sandboxes;
     assert_eq!(actions(), vec![]);
+    // An endpoint exposed outside OpenTofu, as `openshell service expose`
+    // would, under a name the configuration doesn't declare.
+    let extra = {
+        let mut state = fixture.state.lock().unwrap();
+        let (key, endpoint) = state.services.first_key_value().unwrap();
+        let key = (key.0.clone(), key.1.clone(), "extra".to_owned());
+        let endpoint = openshell_core::proto::ServiceEndpoint {
+            name: "extra".into(),
+            target_port: 4321,
+            ..endpoint.clone()
+        };
+        state.services.insert(key.clone(), endpoint);
+        key
+    };
+    let extra_port = || {
+        let state = fixture.state.lock().unwrap();
+        state
+            .services
+            .get(&extra)
+            .map(|endpoint| endpoint.target_port)
+    };
+    assert_eq!(actions(), vec![], "an undeclared endpoint is not drift");
     let ports = || -> Vec<u32> {
         let state = fixture.state.lock().unwrap();
         state
             .services
-            .values()
-            .map(|service| service.target_port)
+            .iter()
+            .filter(|(key, _)| **key != extra)
+            .map(|(_, service)| service.target_port)
             .collect()
     };
     let declared = ports();
-    for service in fixture.state.lock().unwrap().services.values_mut() {
+    for (_, service) in fixture
+        .state
+        .lock()
+        .unwrap()
+        .services
+        .iter_mut()
+        .filter(|(key, _)| **key != extra)
+    {
         service.target_port = 1234;
     }
     // The update's URLs are unknown until it applies.
@@ -99,11 +131,26 @@ async fn sandbox_settings_read_back_and_drift_is_restored() {
             "restoring {drift} replaced the sandbox"
         );
         assert_eq!(ports(), declared, "the update left {drift}");
+        assert_eq!(extra_port(), Some(4321), "restoring {drift} changed extra");
         assert_eq!(actions(), vec![], "{drift}");
     };
     restored("a changed endpoint");
     // A declared endpoint deleted behind OpenTofu is restored the same way.
-    fixture.state.lock().unwrap().services.pop_first();
+    {
+        let mut state = fixture.state.lock().unwrap();
+        let declared = state.services.keys().find(|key| **key != extra).cloned();
+        state.services.remove(&declared.unwrap());
+    }
     assert_eq!(actions(), updated);
     restored("a deleted endpoint");
+    // Removing every declared exposure leaves the undeclared one, and a plan
+    // with no exposures then changes nothing.
+    run(&["apply", "-auto-approve", "-var=services={}"]);
+    assert_eq!(ports(), Vec::<u32>::new(), "removed exposures stayed");
+    assert_eq!(
+        extra_port(),
+        Some(4321),
+        "removing the exposures removed extra"
+    );
+    run(&["plan", "-detailed-exitcode", "-var=services={}"]);
 }
