@@ -815,7 +815,7 @@ Paths:
 | `extensions` | object | No | — | Model fields the selected adapter declares as extensions, such as Pi's context_window; Fabric validates them. |
 | `harnessProvider` | string | No | — | Fabric model provider the harness uses, such as custom. Defaults to the inference provider's API family. |
 | `maxTokens` | integer | No | — | Maximum output tokens requested from the native adapter. Planning rejects this field when the bundled adapter does not accept it. Constraints: minimum 1; maximum 4294967295. |
-| `model` | string | Yes | — | Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
+| `model` | string | Yes | — | Model identifier. For a managed service, match its served model: vLLM's recipe serving.modelName, serving.modelName, or model.repository; Ollama's model.name; an Ollama proxy's upstream.model.name. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `settings` | object | No | — | Opaque native model settings validated by Fabric's selected model schema. |
 | `temperature` | number | No | — | Sampling temperature, passed to Fabric's temperature. Planning checks bundled adapter field support; Fabric validates the range. |
 | `topP` | number | No | — | Nucleus sampling probability, passed to Fabric's top_p. Planning checks bundled adapter field support; Fabric validates the range. |

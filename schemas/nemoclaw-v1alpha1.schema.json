@@ -2086,7 +2086,7 @@
           "type": "integer"
         },
         "model": {
-          "description": "Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository.",
+          "description": "Model identifier. For a managed service, match its served model: vLLM's recipe serving.modelName, serving.modelName, or model.repository; Ollama's model.name; an Ollama proxy's upstream.model.name.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$",
           "type": "string"
         },

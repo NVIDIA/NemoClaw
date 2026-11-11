@@ -280,7 +280,7 @@ The runtime computes one per-GPU reserve, the largest free memory among the cont
 - `OLLAMA_GPU_OVERHEAD`, "Reserve a portion of VRAM per GPU (bytes)". Ollama v0.40.14, the version the runtime image pins, reads it for its logs and its default context size, not to place a GGUF model.
 - `LLAMA_ARG_FIT_TARGET`, "Target free VRAM margin per device for llama.cpp fit (MiB)", rounded up to whole MiB. llama.cpp leaves this much free on each GPU when it fits the model's layers. When the reserve is below llama.cpp's own margin of 1024 MiB, the runtime leaves the setting unset and llama.cpp's margin applies. When it's set, Ollama doesn't add its own margin for a model's vision projector.
 
-Ollama chooses its GPUs from their raw free memory, so a model can land on one GPU with part of it offloaded to the CPU instead of spreading across GPUs, and readiness then fails.
+With several GPUs, once [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) lifts the one-entry limit below, Ollama chooses its GPUs from their raw free memory, so a model can land on one GPU with part of it offloaded to the CPU instead of spreading across GPUs, and readiness then fails.
 NemoClaw enforces the budget only on the total, after the load, through `/api/ps`, which reports one `size_vram` total and not each GPU's share.
 The per-GPU budget is a margin that llama.cpp keeps, not a guarantee that NemoClaw checks.
 `container.gpuDevices` takes one entry until serving one model across several GPUs is implemented ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)).
@@ -472,13 +472,13 @@ The pinned Hermes Agent requires a model context window of at least 64,000 token
 It reads the window from the model server; route settings do not change it.
 For a Hermes route to managed vLLM or Ollama, set `serving.contextTokens` between `64000` and the schema maximum, `65536`, and choose a model that supports that context.
 The [managed Hermes example](../../examples/managed-hermes.yaml) serves `nemotron-3-nano:4b`, whose 256K-token native window covers that range.
-`qwen3:0.6b` and `Qwen/Qwen3-4B`, used by the other managed Ollama examples and the [Spark vLLM example](../../examples/spark/vllm.yaml), have 40,960-token native windows, below Hermes's minimum, so they can't serve Hermes through managed vLLM.
-Through managed Ollama, Hermes starts with `qwen3:0.6b`, as the `docker-openclaw-hermes-ollama` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) shows, and longer conversations are cut off, as the next paragraph describes.
+`Qwen/Qwen3-4B`, used by the [Spark vLLM example](../../examples/spark/vllm.yaml), has a 40,960-token native window, so it can't be served at Hermes's 64,000-token minimum.
+With `qwen3:0.6b` at `serving.contextTokens: 32768`, below Hermes's minimum, Hermes still started and replied in the `docker-openclaw-hermes-ollama` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios); one reply doesn't qualify that setup.
 In one operator test, Hermes answered a request through cluster vLLM serving `Qwen/Qwen3-4B-Instruct-2507` with `serving.contextTokens: 65536`; that test does not qualify the model.
 
 NemoClaw doesn't check the window for Hermes.
 Hermes checks the window the model server reports when the agent starts, and its error names the server setting to raise, which for a managed service is `serving.contextTokens`.
-Ollama reports the model's native window rather than `serving.contextTokens`, so Hermes doesn't reject a smaller managed Ollama window, and longer conversations are cut off at that window instead ([current limits](../resources/limits.md#inference)).
+Hermes doesn't reject a managed Ollama window below its minimum, so a Hermes route through managed Ollama gets no error for a small `serving.contextTokens` ([current limits](../resources/limits.md#inference)).
 
 ## Authenticate Hermes through the Provider
 

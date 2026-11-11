@@ -70,7 +70,7 @@ An inline recipe supplies its own compatibility requirements and excludes `hardw
 Backend startup still establishes actual model compatibility.
 
 Optional `serving.toolParser` and `serving.reasoningParser` select native vLLM parsers.
-Unsupported names are rejected.
+NemoClaw checks only the name's form, lowercase letters, digits, and underscores; vLLM rejects an unknown parser when it starts, and the runtime stops with vLLM's error in its [stop detail](#diagnose-and-recover-a-stopped-runtime).
 `serving.mambaBackend: flashinfer` selects the native FlashInfer Mamba backend.
 `serving.enforceEager: false` leaves compilation and CUDA graphs at vLLM's native defaults; omission retains eager execution.
 Inline recipes supply their own model name and execution settings and reject these ordinary-service overrides.
@@ -99,7 +99,7 @@ serving:
 - [vLLM's parallelism guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/serving/parallelism_scaling.md) recommends pipeline parallelism when the GPU count doesn't divide the model evenly, and when the GPUs have no NVLink.
 - An inline recipe sets its own layout, whose omitted sizes get vLLM's default of 1, and rejects these settings; see [recipes](recipes.md#declaration).
 
-`container.gpuDevices` takes one entry until serving one model across several GPUs is implemented, so vLLM refuses a layout larger than one GPU.
+`container.gpuDevices` takes one entry until serving one model across several GPUs is implemented ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)), so vLLM refuses a layout larger than one GPU; the statements above about several selected GPUs apply once that limit is lifted.
 
 ### Retained Model Files
 
