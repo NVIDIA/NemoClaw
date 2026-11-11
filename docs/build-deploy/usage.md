@@ -296,7 +296,8 @@ Check whether the desired edit updates a running resource, replaces it, or requi
 |---|---|
 | Models, settings, or public Fabric configuration within the selected adapter | Replaces the agent and its sandbox, deleting the sandbox's files and conversations; review the plan |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; a change to a sandbox's launch specification replaces the sandbox |
-| Harness adapter, sandbox image, driver configuration, service exposures, agent identity, or provider attachments | Replaces the sandbox, deleting its files and conversations |
+| Harness adapter, sandbox image, driver configuration, agent identity, or provider attachments | Replaces the sandbox, deleting its files and conversations |
+| Service exposures | Updates the sandbox's endpoints in place; the sandbox keeps its files and conversations |
 | Sandbox network policy | Replaces the sandbox, deleting its files and conversations (except on mounted volumes); see [policy changes](../security/sandbox-network.md#verify-and-change-the-configuration) |
 | Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy), and [model constraints](../agents-inference/models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation may replace the proxy container while retaining its independently bound credential storage |

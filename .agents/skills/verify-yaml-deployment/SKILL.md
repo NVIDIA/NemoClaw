@@ -142,7 +142,7 @@ tail -20 "$EVIDENCE/apply.txt"
 `--non-interactive` applies only to `plan` and `apply`; `export` and `destroy` reject it.
 The target file gives the `nc` variant for its Docker access and credential passing.
 The first plan lists the gateway, provider, sandbox, and workspace to create; apply ends with `Apply complete` and prints `OpenShell workspace: $WORKSPACE`.
-When the YAML declares `serviceExposures`, apply also lists each one's URL under **Service URLs**, as `assistant/SERVICE: URL`; plan never does, because the gateway assigns the URL at creation.
+When the YAML declares `serviceExposures`, apply also lists each one's URL under **Service URLs**, as `assistant/SERVICE: URL`; plan never does, because the gateway assigns the URL when it exposes the service.
 When it declares `harness.settings.interfaces`, apply lists each interface under **Agent interfaces** with its `Forward`, `Token`, and `Sign in` commands, and never a token value.
 It also prints `Model and agent responses were not tested.`: the deployment isn't ready until [deploy-and-answer](features/deploy-and-answer.md) gets a reply.
 
