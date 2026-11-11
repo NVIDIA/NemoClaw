@@ -175,7 +175,7 @@
         },
         "gpuCount": {
           "default": 1,
-          "description": "Number of GPUs the recipe's budget was measured on. The service must select this many GPUs: the number of container.gpuDevices entries, or 1 without them.",
+          "description": "Number of GPUs the recipe's budget was measured on. It sets the default tensor parallel size; vLLM checks the layout against the GPUs it sees.",
           "format": "uint64",
           "maximum": 16,
           "minimum": 1,
@@ -3308,30 +3308,18 @@
                               "required": [
                                 "enforceEager"
                               ]
+                            },
+                            {
+                              "required": [
+                                "tensorParallelSize"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "pipelineParallelSize"
+                              ]
                             }
                           ]
-                        }
-                      }
-                    }
-                  },
-                  {
-                    "properties": {
-                      "serving": {
-                        "properties": {
-                          "tensorParallelSize": {
-                            "const": 0
-                          }
-                        }
-                      }
-                    }
-                  },
-                  {
-                    "properties": {
-                      "serving": {
-                        "properties": {
-                          "pipelineParallelSize": {
-                            "const": 0
-                          }
                         }
                       }
                     }
@@ -3838,11 +3826,11 @@
         },
         "pipelineParallelSize": {
           "description": "vLLM's --pipeline-parallel-size without a recipe: how many GPU stages each hold a range of layers. vLLM uses tensor × pipeline parallel size GPUs; selected GPUs the layout doesn't use stay reserved but idle.",
-          "format": "int64",
+          "format": "uint64",
           "maximum": 16,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
-          "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document, and vLLM gets 1. Must be omitted or zero with a recipe, which sets its own."
+          "x-nemoclaw-default-rule": "Omission gives vLLM's default of 1. Must be omitted with a recipe, which sets its own."
         },
         "port": {
           "anyOf": [
@@ -3892,11 +3880,11 @@
         },
         "tensorParallelSize": {
           "description": "vLLM's --tensor-parallel-size without a recipe: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts, and fails startup if they don't support it.",
-          "format": "int64",
+          "format": "uint64",
           "maximum": 16,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
-          "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. vLLM then gets the number of container.gpuDevices entries, or 1 without them. Must be omitted or zero with a recipe, which sets its own."
+          "x-nemoclaw-default-rule": "Omission gives vLLM the number of container.gpuDevices entries, or 1 without them, when pipelineParallelSize is also omitted, and vLLM's default of 1 when it's set. Must be omitted with a recipe, which sets its own."
         },
         "toolParser": {
           "default": "",
@@ -3982,9 +3970,9 @@
           "description": "vLLM's --pipeline-parallel-size: how many GPU stages each hold a range of layers.",
           "format": "uint64",
           "maximum": 16,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
-          "x-nemoclaw-default-rule": "Omitted or zero selects 1."
+          "x-nemoclaw-default-rule": "Omission selects vLLM's default of 1."
         },
         "preparedEnvironment": {
           "additionalProperties": {
@@ -4021,9 +4009,9 @@
           "description": "vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts.",
           "format": "uint64",
           "maximum": 16,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
-          "x-nemoclaw-default-rule": "Omitted or zero selects compatibility.gpuCount."
+          "x-nemoclaw-default-rule": "Omission selects compatibility.gpuCount when pipelineParallelSize is also omitted, and vLLM's default of 1 when it's set."
         },
         "toolParser": {
           "anyOf": [

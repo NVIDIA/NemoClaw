@@ -246,10 +246,14 @@ fn vllm_gets_the_parallel_layout_of_the_service_or_its_recipe() {
     let recipe = service.recipe.as_mut().unwrap();
     recipe.compatibility.gpu_count = 2;
     assert_eq!(layout(&service), ("2".into(), "1".into()));
+    // A pipeline-only layout keeps vLLM's tensor default of 1, as vLLM's guide
+    // sets for an uneven split or GPUs without NVLink.
     let recipe = service.recipe.as_mut().unwrap();
-    recipe.serving.tensor_parallel_size = 1;
-    recipe.serving.pipeline_parallel_size = 2;
+    recipe.serving.pipeline_parallel_size = Some(2);
     assert_eq!(layout(&service), ("1".into(), "2".into()));
+    let recipe = service.recipe.as_mut().unwrap();
+    recipe.serving.tensor_parallel_size = Some(4);
+    assert_eq!(layout(&service), ("4".into(), "2".into()));
 
     service.recipe = None;
     service.hardware = Some(super::ServiceHardware::Profile {
@@ -260,25 +264,24 @@ fn vllm_gets_the_parallel_layout_of_the_service_or_its_recipe() {
     assert_eq!(layout(&service), ("1".into(), "1".into()));
     // NemoClaw passes the layout as written; vLLM checks it against the GPUs
     // it sees and the model.
-    service.serving.tensor_parallel_size = 4;
-    service.serving.pipeline_parallel_size = 3;
+    service.serving.tensor_parallel_size = Some(4);
+    service.serving.pipeline_parallel_size = Some(3);
     assert_eq!(layout(&service), ("4".into(), "3".into()));
 }
 
 #[test]
-fn tensor_parallelism_defaults_to_the_number_of_selected_gpus() {
+fn tensor_parallelism_defaults_to_the_selected_gpus_without_a_pipeline_size() {
     let document =
         Document::parse(include_str!("../../../../tests/fixtures/config/spark.yaml").as_bytes())
             .unwrap();
     let generations = [(super::SERVICE_KIND.into(), "a".repeat(32))].into();
-    let runtime = |service: &Service| {
+    let layout = |service: &Service| {
         let spec = super::specification(&document, "qwen", service, &generations).unwrap();
-        let configuration: serde_json::Value =
-            serde_json::from_str(spec.runtime_configuration().unwrap()).unwrap();
-        (
-            super::configured_service(&spec).unwrap().serving,
-            configuration["serving"].clone(),
-        )
+        let serving = super::configured_service(&spec).unwrap().serving;
+        (serving.tensor_parallel_size, serving.pipeline_parallel_size)
+    };
+    let devices = |devices: serde_json::Value| {
+        Some(serde_json::from_value(serde_json::json!({ "gpuDevices": devices })).unwrap())
     };
     let mut service = service();
     service.recipe = None;
@@ -287,35 +290,22 @@ fn tensor_parallelism_defaults_to_the_number_of_selected_gpus() {
         architecture: None,
         min_gpu_memory_bytes: None,
     });
-    for (devices, expected) in [
-        (serde_json::json!(["0", "1"]), 2),
-        (serde_json::json!(["0", "1", "2", "3"]), 4),
-    ] {
-        service.container =
-            Some(serde_json::from_value(serde_json::json!({ "gpuDevices": devices })).unwrap());
-        let (serving, _) = runtime(&service);
-        assert_eq!(serving.tensor_parallel_size, expected, "{devices}");
-        assert_eq!(serving.pipeline_parallel_size, 0, "{devices}");
-    }
-    // An explicit size stays as written.
-    service.serving.tensor_parallel_size = 1;
-    service.serving.pipeline_parallel_size = 2;
-    let (serving, _) = runtime(&service);
-    assert_eq!(
-        (serving.tensor_parallel_size, serving.pipeline_parallel_size),
-        (1, 2)
-    );
-    // One GPU leaves the setting out, so a single-GPU service's runtime
-    // specification, and with it its container, stays as it was.
-    service.serving.tensor_parallel_size = 0;
-    service.serving.pipeline_parallel_size = 0;
-    for container in [
-        None,
-        Some(serde_json::from_value(serde_json::json!({ "gpuDevices": ["0"] })).unwrap()),
+    for (container, expected) in [
+        (None, 1),
+        (devices(serde_json::json!(["0"])), 1),
+        (devices(serde_json::json!(["0", "1"])), 2),
+        (devices(serde_json::json!(["0", "1", "2", "3"])), 4),
     ] {
         service.container = container;
-        let (_, serving) = runtime(&service);
-        assert!(serving.get("tensorParallelSize").is_none(), "{serving}");
-        assert!(serving.get("pipelineParallelSize").is_none(), "{serving}");
+        assert_eq!(layout(&service), (Some(expected), None));
     }
+    // With only a pipeline size, the tensor size stays at vLLM's default of 1,
+    // so two GPUs get pipeline parallelism 2 rather than a layout of 4.
+    service.container = devices(serde_json::json!(["0", "1"]));
+    service.serving.pipeline_parallel_size = Some(2);
+    assert_eq!(layout(&service), (Some(1), Some(2)));
+    // An explicit size stays as written.
+    service.serving.tensor_parallel_size = Some(1);
+    service.serving.pipeline_parallel_size = None;
+    assert_eq!(layout(&service), (Some(1), None));
 }

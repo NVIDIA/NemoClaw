@@ -35,8 +35,9 @@ It contains:
 Recipe memory requirements are checked against measurements from the execution host.
 `compatibility.gpu` must belong to the GPU family of a [hardware profile](models.md#choose-a-hardware-profile); other names are rejected.
 `compatibility.gpuCount`, 1 by default, is the number of GPUs the recipe's budget was measured on.
-The service must select that many GPUs: its `container.gpuDevices` entries, or 1 without them.
-`serving.tensorParallelSize` defaults to `compatibility.gpuCount`, and `serving.pipelineParallelSize` to 1; vLLM checks the layout when it starts, as for an [ordinary service](models.md#set-the-parallel-layout).
+When the recipe omits both parallel sizes, `serving.tensorParallelSize` defaults to `compatibility.gpuCount`; with only `serving.pipelineParallelSize` set, it stays at vLLM's default of 1.
+`serving.pipelineParallelSize` defaults to 1.
+NemoClaw doesn't compare `gpuCount` with the GPUs the service selects: vLLM checks the layout when it starts, as for an [ordinary service](models.md#set-the-parallel-layout).
 That profile's memory architecture decides how the serving GPU budget, `resources.gpuMemoryBytes`, is checked:
 
 | Memory architecture | GPU budget must fit | `--gpu-memory-utilization` | Host available memory at startup |

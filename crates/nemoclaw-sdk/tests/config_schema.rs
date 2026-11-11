@@ -1079,17 +1079,15 @@ fn gpu_devices_stay_unique_without_the_one_entry_limit() {
 }
 
 #[test]
-fn vllm_parallel_sizes_are_small_positive_integers_or_omitted() {
+fn vllm_parallel_sizes_are_bounded_positive_integers_or_omitted() {
     const RECIPE: &str = "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml";
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (size, accepted) in [
-        (json!(0), true),
+        (json!(0), false),
         (json!(1), true),
         (json!(16), true),
         (json!(17), false),
         (json!(-1), false),
-        (json!(1.5), false),
-        (json!("2"), false),
     ] {
         for field in ["tensorParallelSize", "pipelineParallelSize"] {
             let mut value = input("spark/vllm.yaml");
@@ -1107,8 +1105,11 @@ fn vllm_parallel_sizes_are_small_positive_integers_or_omitted() {
         value["spec"]["services"]["qwen"]["serving"][field] = json!(2);
         agrees(&validator, &value, false);
     }
+    // gpuCount documents the layout a recipe's budget was measured on; vLLM,
+    // not NemoClaw, checks a layout against the GPUs it sees.
     for (count, accepted) in [
         (json!(1), true),
+        (json!(2), true),
         (json!(0), false),
         (json!(17), false),
         (json!(-1), false),
@@ -1116,26 +1117,6 @@ fn vllm_parallel_sizes_are_small_positive_integers_or_omitted() {
         let mut value = input(RECIPE);
         value["spec"]["services"]["qwen"]["recipe"]["compatibility"]["gpuCount"] = count;
         agrees(&validator, &value, accepted);
-    }
-}
-
-#[test]
-fn a_recipe_serves_on_as_many_gpus_as_its_budget_was_measured_on() {
-    let recipe = || input("../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml");
-    let parse = |value: &Value| Document::parse(value.to_string().as_bytes());
-    let mut value = recipe();
-    value["spec"]["services"]["qwen"]["container"] = json!({"gpuDevices": ["0"]});
-    parse(&value).unwrap();
-    // Two GPUs can't be selected yet, so a two-GPU recipe fits no service.
-    for container in [None, Some(json!({"gpuDevices": ["0"]}))] {
-        let mut value = recipe();
-        let service = &mut value["spec"]["services"]["qwen"];
-        service["recipe"]["compatibility"]["gpuCount"] = json!(2);
-        if let Some(container) = container {
-            service["container"] = container;
-        }
-        let error = parse(&value).unwrap_err().to_string();
-        assert!(error.contains("compatibility.gpuCount"), "{error}");
     }
 }
 

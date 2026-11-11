@@ -19,10 +19,6 @@ struct Settings<'a> {
     tensor_parallel_size: u64,
     pipeline_parallel_size: u64,
 }
-/// A parallel size as written, or `default` when it's omitted or zero.
-fn size(value: u64, default: u64) -> u64 {
-    if value == 0 { default } else { value }
-}
 impl<'a> Settings<'a> {
     fn resolve(service: &'a Service, mode: super::VllmLaunchMode<'a>) -> Self {
         match mode {
@@ -42,10 +38,17 @@ impl<'a> Settings<'a> {
                     Some(c) => serde_json::json!({"mode":c.mode,"cudagraph_mode":c.cudagraph_mode,"cudagraph_capture_sizes":c.capture_sizes}).to_string(),
                     None => "{\"mode\":0}".into(),
                 }),
-                // The recipe's budget holds for the GPU count it was measured
-                // on, which the SDK requires the service to select.
-                tensor_parallel_size: size(s.tensor_parallel_size, recipe.compatibility.gpu_count),
-                pipeline_parallel_size: size(s.pipeline_parallel_size, 1),
+                // Tensor parallelism defaults to the GPU count the recipe's
+                // budget was measured on, unless the recipe sets only a
+                // pipeline size: vLLM's guide then keeps tensor size 1.
+                tensor_parallel_size: s.tensor_parallel_size.unwrap_or(
+                    if s.pipeline_parallel_size.is_none() {
+                        recipe.compatibility.gpu_count
+                    } else {
+                        1
+                    },
+                ),
+                pipeline_parallel_size: s.pipeline_parallel_size.unwrap_or(1),
             }
             }
             super::VllmLaunchMode::Native { .. } => Self {
@@ -63,16 +66,10 @@ impl<'a> Settings<'a> {
                 lazy_loading: false,
                 chunked_prefill: false,
                 compilation: None,
-                // The SDK sets the tensor size from the selected GPUs when the
-                // service omits it; one GPU leaves it at zero.
-                tensor_parallel_size: size(
-                    u64::try_from(service.serving.tensor_parallel_size).unwrap_or(0),
-                    1,
-                ),
-                pipeline_parallel_size: size(
-                    u64::try_from(service.serving.pipeline_parallel_size).unwrap_or(0),
-                    1,
-                ),
+                // The SDK resolves the tensor size from the selected GPUs; a
+                // runtime specification without one gets vLLM's default.
+                tensor_parallel_size: service.serving.tensor_parallel_size.unwrap_or(1),
+                pipeline_parallel_size: service.serving.pipeline_parallel_size.unwrap_or(1),
             },
         }
     }

@@ -153,8 +153,6 @@ fn a_recipe_at_the_default_parallel_layout_keeps_its_preparation_key() {
     assert_eq!(key(&value), KEY);
     let recipe = &mut value["spec"]["services"]["qwen"]["recipe"];
     recipe["compatibility"]["gpuCount"] = 1.into();
-    recipe["serving"]["tensorParallelSize"] = 0.into();
-    recipe["serving"]["pipelineParallelSize"] = 0.into();
     assert_eq!(key(&value), KEY);
 }
 

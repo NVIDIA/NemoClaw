@@ -16,7 +16,7 @@ pub fn constrain(defs: &mut serde_json::Map<String, Value>, normalized: bool) {
         {"oneOf":[{"required":["hardware"]},{"required":["recipe"]}]},
         {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
         {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[at("hardware/minGpuMemoryBytes",json!({}),true),at("hardware/profile",json!({"not":{"enum":super::HardwareProfile::UNIFIED_MEMORY}}),false),forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
-        {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false),at("serving/tensorParallelSize",json!({"const":0}),false),at("serving/pipelineParallelSize",json!({"const":0}),false)]}},
+        {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager","tensorParallelSize","pipelineParallelSize"]),false)]}},
         {"if":{"anyOf":[{"required":["recipe"]},at("hardware/profile",json!({"enum":super::HardwareProfile::UNIFIED_MEMORY}),true)]},
          "then":at("memory/hostReserveGiB",json!({"anyOf":constraints::bounds(c::UNIFIED_HOST_RESERVE_MIN,c::HOST_RESERVE.max,normalized)}),false)}
     ]);
@@ -68,14 +68,14 @@ pub fn constrain(defs: &mut serde_json::Map<String, Value>, normalized: bool) {
     property(
         serving,
         "tensorParallelSize",
-        json!({"minimum": 0, "maximum": c::PARALLEL_SIZE_MAX,
-        "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. vLLM then gets the number of container.gpuDevices entries, or 1 without them. Must be omitted or zero with a recipe, which sets its own."}),
+        json!({"minimum": 1, "maximum": c::PARALLEL_SIZE_MAX,
+        "x-nemoclaw-default-rule": "Omission gives vLLM the number of container.gpuDevices entries, or 1 without them, when pipelineParallelSize is also omitted, and vLLM's default of 1 when it's set. Must be omitted with a recipe, which sets its own."}),
     );
     property(
         serving,
         "pipelineParallelSize",
-        json!({"minimum": 0, "maximum": c::PARALLEL_SIZE_MAX,
-        "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document, and vLLM gets 1. Must be omitted or zero with a recipe, which sets its own."}),
+        json!({"minimum": 1, "maximum": c::PARALLEL_SIZE_MAX,
+        "x-nemoclaw-default-rule": "Omission gives vLLM's default of 1. Must be omitted with a recipe, which sets its own."}),
     );
     property(
         serving,
@@ -254,12 +254,12 @@ fn recipe(defs: &mut serde_json::Map<String, Value>) {
     property(
         settings,
         "tensorParallelSize",
-        json!({"minimum": 0, "maximum": c::PARALLEL_SIZE_MAX, "x-nemoclaw-default-rule": "Omitted or zero selects compatibility.gpuCount."}),
+        json!({"minimum": 1, "maximum": c::PARALLEL_SIZE_MAX, "x-nemoclaw-default-rule": "Omission selects compatibility.gpuCount when pipelineParallelSize is also omitted, and vLLM's default of 1 when it's set."}),
     );
     property(
         settings,
         "pipelineParallelSize",
-        json!({"minimum": 0, "maximum": c::PARALLEL_SIZE_MAX, "x-nemoclaw-default-rule": "Omitted or zero selects 1."}),
+        json!({"minimum": 1, "maximum": c::PARALLEL_SIZE_MAX, "x-nemoclaw-default-rule": "Omission selects vLLM's default of 1."}),
     );
     for field in ["environment", "preparedEnvironment"] {
         property(
