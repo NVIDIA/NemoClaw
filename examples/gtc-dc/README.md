@@ -36,7 +36,8 @@ KV and SSM cache dtypes use runtime defaults; model output accuracy and tool cal
 
 Ubuntu 24.04 is the assumed Linux environment, including the WSL2 distribution.
 Use [the build prerequisites](../../docs/build-deploy/build.md), Docker with NVIDIA GPU access and the containerd image store, and driver major 580 or newer.
-Each target requires exactly one visible NVIDIA GPU; these configurations provide neither CPU offloading nor multi-GPU serving.
+Each model container must see exactly one NVIDIA GPU; on a host with more, set the service's [`container.gpuDevices`](../../docs/agents-inference/inference.md#set-container-limits-and-update-policy) to the target GPU.
+These configurations provide neither CPU offloading nor multi-GPU serving.
 
 | Target | Hardware requirement | Memory accounting |
 |---|---|---|

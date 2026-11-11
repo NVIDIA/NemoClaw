@@ -65,11 +65,11 @@ pub struct OllamaMemory {
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(default, with = "f64")]
-    /// Optional fraction of observed dedicated GPU memory.
+    /// Optional fraction of observed dedicated GPU memory, taken of the smallest selected GPU; the resulting budget applies to each selected GPU.
     pub gpu_memory_utilization: Option<serde_json::Number>,
     #[serde(rename = "gpuMemoryGiB", skip_serializing_if = "is_zero")]
     #[schemars(default)]
-    /// Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB.
+    /// Fixed serving budget in GiB for each selected GPU when utilization is omitted. Omission or zero selects 16 GiB.
     pub gpu_memory_gib: i64,
     #[serde(rename = "hostReserveGiB")]
     #[schemars(default)]

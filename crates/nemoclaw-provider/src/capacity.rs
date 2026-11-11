@@ -322,9 +322,14 @@ mod tests {
             gpu: Option<&str>,
         ) -> Result<crate::hardware::HostObservation, nemoclaw_sdk::Error> {
             self.0.lock().unwrap().push(gpu.map(Into::into));
+            // Report the listed GPU, as `nvidia-smi --id` does.
+            let mut capacity = crate::services::capacity::tests::capacity();
+            if let Some(index) = gpu.and_then(|gpu| gpu.parse().ok()) {
+                capacity.gpus[0].index = index;
+            }
             Ok(crate::hardware::HostObservation {
                 engine_id: "engine".into(),
-                capacity: crate::services::capacity::tests::capacity(),
+                capacity,
             })
         }
     }

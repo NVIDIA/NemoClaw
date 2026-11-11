@@ -138,7 +138,7 @@ spec:
         user_role: openshell-users
 ```
 
-- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
+- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
 - `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it in the namespace before the first apply, or after NemoClaw creates the namespace and then rerun apply with the same state directory.
 - `token.env` names the variable holding the bearer token NemoClaw sends to the gateway.
 
@@ -229,7 +229,7 @@ Destroy removes the Service; a load balancer's controller must still run, since 
 With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](../agents-inference/interfaces.md#invoke-an-agent) and run other `openshell` commands.
 It needs three things: a port forward to the gateway pod, the gateway's client certificate, and an OpenShell gateway entry that signs in through your identity provider.
 A [published gateway](#publish-the-gateway-outside-the-cluster) needs no forward: skip the first step, and add the gateway at `gateway.endpoint` instead of `https://127.0.0.1:17671`.
-These steps have not been run on a cluster.
+No automated test covers these steps; [#14131](https://github.com/NVIDIA/NemoClaw/issues/14131) records one manual run against a bare-metal single-node OpenShift 4.22 cluster with Keycloak as the issuer.
 
 In one terminal, forward the port in `gateway.endpoint` to the gateway, which listens on port 8080 in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets.
 Leave the forward running:
@@ -258,7 +258,11 @@ done
 chmod 600 "$mtls/tls.key"
 ```
 
-Then add the gateway with the issuer and audience from `openshell.gateway.oidc`, and the client ID your identity provider registered for the OpenShell CLI with a localhost redirect.
+Then add the gateway with the issuer and audience from `openshell.gateway.oidc`, and the client ID your identity provider registered for the OpenShell CLI.
+The CLI receives the sign-in on `http://127.0.0.1` at a free port, path `/callback`, so that client must accept that redirect on any port.
+The CLI checks the issuer's certificate against the client host's trusted CAs.
+If the host doesn't trust the CA that signed it, such as the CA in `caConfigMap`, save that CA's certificate in a PEM file and set `SSL_CERT_FILE` to its path for every `openshell` command; the CLI then trusts only the certificates in that file, and it contacts the issuer whenever it refreshes your token.
+The browser that opens for the sign-in must trust that CA too, or it warns about the issuer's certificate.
 The CLI opens a browser to sign in, and presents the client certificate together with your token:
 
 ```sh
@@ -273,7 +277,7 @@ openshell status
 `openshell status` reports the gateway as connected and authenticated.
 Then [select the gateway and workspace](../agents-inference/interfaces.md#select-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
 The client certificate's key grants transport access to the gateway; keep it private and delete the `mtls` directory when you no longer need access.
-See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
+See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
 ### Reference Registry Credentials
 

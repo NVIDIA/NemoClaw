@@ -7,13 +7,13 @@ pub(crate) const DEFAULT_MEMORY_LIMIT_GIB: u64 = 104;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Managed inference CPU and memory limits, IPC, and shared-memory settings.
+/// Managed inference CPU and memory limits, GPU selection, IPC, and shared-memory settings.
 pub struct ServiceContainer {
     /// CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "u32", range(min = 1, max = 4294967295_u64))]
     pub cpu_limit_millis: Option<u32>,
-    /// Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container.
+    /// Container memory limit in GiB, independent of the model's GPU budget. Omission sets a 104 GiB limit. Changing the limit replaces the model container.
     #[serde(
         rename = "memoryLimitGiB",
         default,

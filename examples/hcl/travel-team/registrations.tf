@@ -52,7 +52,7 @@ resource "openshell_web_search" "research" {
 # The booking service's API key, attached to the buyer only. OpenShell puts it
 # into a request in place of its placeholder, so the agent never sees the key.
 # Hermes doesn't send the placeholder to MCP servers yet, so the service
-# receives no key until it does (NVIDIA/NemoClaw#13313).
+# receives no key until it does (NVIDIA/NemoClaw#14417).
 resource "openshell_api" "bookings" {
   gateway        = local.gateway
   workspace      = openshell_workspace.team.ref
