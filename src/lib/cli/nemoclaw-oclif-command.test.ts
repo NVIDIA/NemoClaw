@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { Args, Flags } from "@oclif/core";
+import { Args, Command, Flags } from "@oclif/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { launchSandbox } from "../actions/sandbox/launch";
 import * as portableAgentLifecycle from "../onboard/experimental/portable-agent-lifecycle";
@@ -993,4 +993,25 @@ describe("NemoClawCommand", () => {
     expect(classify).toHaveBeenCalledWith(expect.any(String), "use");
     expect(GlobalUseMutationCommand.ran).toBe(false);
   });
+
+  it.each(["--help", "-h"])(
+    "renders help once without early lifecycle pre-parsing for sandbox %s (#14079)",
+    async (flag) => {
+      const parseSpy = vi.spyOn(
+        Command.prototype as unknown as { parse: (...args: unknown[]) => Promise<unknown> },
+        "parse",
+      );
+      let ranOperation = false;
+      ParsedSupportedSandboxCommand.operation = async () => {
+        ranOperation = true;
+      };
+
+      await expect(
+        ParsedSupportedSandboxCommand.run(["alpha", flag], process.cwd()),
+      ).rejects.toThrow("Parsing --help");
+
+      expect(parseSpy).toHaveBeenCalledOnce();
+      expect(ranOperation).toBe(false);
+    },
+  );
 });

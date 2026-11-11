@@ -333,6 +333,11 @@ export abstract class NemoClawCommand extends Command {
       const sandboxName = this.argv[0];
       return sandboxName && sandboxName !== "--help" && sandboxName !== "-h" ? sandboxName : null;
     }
+    // Help renders inside super._run() and throws ExitError(0); parsing early here would
+    // print help once, swallow the exit error, and let super._run() print it again (#14079).
+    if (portablePolicy.helpRequested) {
+      return null;
+    }
     try {
       const parsed = await super.parse();
       this.lifecycleParserOutput = parsed;
