@@ -2812,7 +2812,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/ServiceExposure"
           },
-          "description": "OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names. Changing them updates the running sandbox's endpoints in place.",
+          "description": "OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks each name when it exposes the service. Changing them updates the running sandbox's endpoints in place.",
           "maxProperties": 32,
           "type": "object"
         }

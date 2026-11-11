@@ -313,7 +313,7 @@ pub struct Sandbox {
         skip_serializing_if = "std::collections::BTreeMap::is_empty"
     )]
     #[schemars(default)]
-    /// OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names. Changing them updates the running sandbox's endpoints in place.
+    /// OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks each name when it exposes the service. Changing them updates the running sandbox's endpoints in place.
     pub service_exposures: std::collections::BTreeMap<String, ServiceExposure>,
     #[serde(rename = "agent")]
     /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
