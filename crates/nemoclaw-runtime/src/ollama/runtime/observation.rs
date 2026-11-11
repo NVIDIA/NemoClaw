@@ -82,7 +82,7 @@ pub(crate) async fn check(
     client: &reqwest::Client,
     endpoint: &str,
     service: &ManagedOllama,
-    budget: u64,
+    resident: u64,
 ) -> Result<(), Error> {
     let work = async {
         let result = client
@@ -90,14 +90,16 @@ pub(crate) async fn check(
             .send()
             .await
             .map_err(|_| Error::State("Ollama loaded-model observation failed"))?;
-        validate_loaded(service, budget, &response(result).await?)
+        validate_loaded(service, resident, &response(result).await?)
     };
     tokio::time::timeout(Duration::from_secs(10), work)
         .await
         .map_err(|_| Error::State("Ollama loaded-model observation timed out"))?
 }
 
-fn validate_loaded(service: &ManagedOllama, budget: u64, bytes: &[u8]) -> Result<(), Error> {
+/// Ollama reports one `size_vram` total, not each GPU's share, so
+/// `resident` bounds the sum over every GPU.
+fn validate_loaded(service: &ManagedOllama, resident: u64, bytes: &[u8]) -> Result<(), Error> {
     #[derive(Deserialize)]
     struct Inventory {
         models: Vec<Loaded>,
@@ -122,7 +124,7 @@ fn validate_loaded(service: &ManagedOllama, budget: u64, bytes: &[u8]) -> Result
         || model.digest != service.model.digest
         || model.size == 0
         || model.size_vram != model.size
-        || model.size_vram > budget
+        || model.size_vram > resident
         || model.context_length != service.serving.context_tokens as u64
     {
         return Err(Error::Conflict(
@@ -214,5 +216,13 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn resident_check_bounds_the_total_that_ollama_reports_across_gpus() {
+        let service = service();
+        let split = serde_json::to_vec(&json!({"models":[{"name":service.model.name,"digest":service.model.digest,"size":3072,"size_vram":3072,"context_length":8192}]})).unwrap();
+        validate_loaded(&service, 2 * 2048, &split).unwrap();
+        assert!(validate_loaded(&service, 2048, &split).is_err());
     }
 }
