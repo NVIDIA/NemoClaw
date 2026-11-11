@@ -172,6 +172,7 @@ mod tests {
 
     const GB10: &str =
         "0, GPU-a0a0a0a0-0000-0000-0000-000000000000, NVIDIA GB10, 12.1, [N/A], [N/A], 580.95.05";
+    #[cfg(target_os = "linux")]
     const H100: &str = "0, GPU-b1b1b1b1-0000-0000-0000-000000000000, NVIDIA H100 80GB HBM3, 9.0, 81920, 71680, 580.65.06";
 
     /// Eight H200 NVL GPUs at indexes 0 to 7, with the display GPU of a
