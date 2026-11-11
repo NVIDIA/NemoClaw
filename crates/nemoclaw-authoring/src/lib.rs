@@ -32,8 +32,8 @@ pub use journey_definition::{
     JourneyDefinition, JourneyScope, JourneySelector, TargetPrerequisite,
 };
 pub use journey_state::{
-    DecisionStatus, JourneyQuestion, JourneyQuestionKind, JourneyQuestionReason, JourneyResolution,
-    JourneyState,
+    CredentialNote, DecisionStatus, JourneyQuestion, JourneyQuestionKind, JourneyQuestionReason,
+    JourneyResolution, JourneyState,
 };
 pub use partial_document::{PartialAssessment, PartialDocument, PartialIssue, PartialIssueKind};
 pub use provider_presets::ProviderPreset;

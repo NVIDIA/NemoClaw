@@ -50,7 +50,8 @@ fn report_at(root: &Path, phase: &str, detail: &str, pid: u32) -> Result<(), Err
         .map_err(|_| Error::State("cannot timestamp runtime status"))?;
     let value = serde_json::json!({"phase":phase,"detail":detail,"updated":updated,"pid":pid});
     crate::files::save_json(&root.join("status.json"), &value)?;
-    eprintln!("{phase}: {detail}");
+    // Later lines of a detail repeat process output the container log already has.
+    eprintln!("{phase}: {}", detail.lines().next().unwrap_or_default());
     Ok(())
 }
 

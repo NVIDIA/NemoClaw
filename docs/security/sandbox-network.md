@@ -49,9 +49,10 @@ A binary grant for curl does not grant the same access to Python or Node.js.
 
 The input supports TCP destinations and REST, WebSocket, JSON-RPC, and MCP inspection settings.
 Unknown fields and unsupported combinations are rejected.
-Middleware, inline credentials, credential-provider bindings, GraphQL, and SQL policy settings are outside this configuration contract.
+Inline credentials, credential-provider bindings, GraphQL, and SQL policy settings are outside this configuration contract.
+To attach supervisor middleware, see [Attach Network Middleware](#attach-network-middleware).
 The pinned OpenShell parser and validator check protocol-specific rules, destination restrictions, paths, and process identities.
-See the [generated field reference](../references/v1-configuration.md#explicitpolicy) for the complete input surface.
+See the [generated field reference](../reference/configuration.md#explicitpolicy) for the complete input surface.
 
 `landlock.compatibility: best_effort` permits startup when the host cannot enforce Landlock restrictions.
 Use `hard_requirement` to require enforcement.
@@ -91,7 +92,7 @@ For an explicit endpoint with a supported application protocol, choose TLS handl
 | `enforcement: enforce` | Enforce the configured application-level request rules on inspected traffic |
 | `enforcement: audit`, or omit `enforcement` | Audit application-level decisions rather than block requests based on those rules |
 
-`tls: terminate` and `tls: passthrough` are rejected by OpenShell v0.1.6.
+`tls: terminate` and `tls: passthrough` are rejected by OpenShell v0.1.7.
 Remove either field to keep automatic TLS handling.
 
 Destination and executable grants still determine which connections are allowed.
@@ -100,15 +101,87 @@ Do not choose `tls: skip` for an endpoint that relies on those controls, includi
 Use explicit `enforcement: enforce` when the policy must reject disallowed inspected requests.
 The checked-in example uses that enforcement setting with automatic TLS handling.
 
-The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
+The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
 The [SDK policy validator](../../crates/nemoclaw-openshell/src/policy.rs) accepts only supported field combinations; a field's presence in the schema does not bypass protocol validation.
 Live enforcement and application trust on your host remain qualification requirements.
 Follow [policy change constraints](#verify-and-change-the-configuration) before changing a deployed policy.
 
+## Attach Network Middleware
+
+OpenShell supervisor middleware inspects a sandbox's admitted HTTP requests, responses, and WebSocket messages, and can allow, change, or block them.
+Using a middleware service takes two steps, with different owners:
+
+1. **Run and register the service.** Running the service is the operator's or platform's job; NemoClaw doesn't start, package, or monitor it.
+   Start it before the gateway, where both the gateway and the sandbox supervisors can reach it, and keep it available: the gateway doesn't start while a registered service is unavailable.
+   For a managed gateway, register it in `spec.gateway.config`; an external gateway's operator registers it in that gateway's configuration.
+   Built-in middleware, such as `openshell/regex`, needs no registration.
+2. **Bind it in the sandbox policy.** Add an entry to `network_middlewares` in `policy.explicit`, naming the middleware and the destination hosts it runs for.
+
+```yaml
+spec:
+  gateway:
+    management: managed
+    config:
+      openshell.supervisor.middleware:
+        - name: decision-guard
+          grpc_endpoint: http://guard.example.internal:50051
+          allow_insecure_transport: true
+          max_payload_bytes: 262144
+          timeout: 500ms
+  sandboxes:
+    assistant:
+      network:
+        policy:
+          explicit:
+            version: 1
+            network_policies:
+              documentation:
+                name: documentation
+                endpoints:
+                  - host: docs.example.com
+                    port: 443
+                    protocol: rest
+                    enforcement: enforce
+                    access: read-only
+                binaries:
+                  - path: /usr/bin/curl
+            network_middlewares:
+              guard:
+                middleware: decision-guard
+                order: 10
+                on_error: fail_closed
+                config:
+                  mode: block
+                endpoints:
+                  include: [docs.example.com]
+```
+
+The registration's `name` is what a binding's `middleware` field refers to.
+`allow_insecure_transport` permits a plaintext endpoint without authentication; use it only for local development or on a network that already authenticates callers.
+The service validates its `config`, and the gateway asks it to before accepting the policy, so keep the service running when you apply.
+
+In each binding:
+
+- The map key names the binding in OpenShell's logs; `name` is an optional display name.
+- `endpoints.include` selects admitted destination hosts, in endpoint-host syntax; `endpoints.exclude` removes hosts from that selection.
+- `order` sets which binding runs first when several select the same host, lowest first; orders must be unique within the policy.
+- `on_error` sets what happens when the middleware can't complete its check, for example when its service is down: `fail_closed`, the default, blocks the traffic, and `fail_open` lets it continue.
+  A middleware's denial blocks traffic either way, even on an `enforcement: audit` endpoint.
+- A fail-closed binding can't select an endpoint with `tls: skip`, whose traffic OpenShell can't inspect.
+
+NemoClaw checks the fields' shape and keeps each binding as written through planning, apply, refresh, and export.
+The pinned OpenShell validator checks the rest, and OpenShell intercepts and enforces the traffic; NemoClaw adds no enforcement of its own.
+Changing a binding is a policy change; see [Verify and Change the Configuration](#verify-and-change-the-configuration).
+Changing a managed gateway's registration restarts the gateway, as other [gateway configuration](../build-deploy/usage.md#configure-a-managed-gateway) changes do.
+
+OpenShell describes supervisor middleware as a research preview whose policy and service contracts can change.
+Its [middleware guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/extensibility/supervisor-middleware/configure.mdx) for the pinned release describes registration fields, failure behavior, and the decisions it logs.
+
+
 ## Use an Upstream Proxy
 
 OpenShell owns the workload's proxy environment and routes traffic through its policy proxy.
-To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-supervisor-network/src/upstream_proxy.rs).
+To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-supervisor-network/src/upstream_proxy.rs).
 At this revision, chaining applies to TLS CONNECT traffic; plain HTTP still connects directly.
 An external gateway's operator sets the proxy.
 
@@ -127,7 +200,7 @@ spec:
 ```
 
 Use `openshell.drivers.podman` for a Podman gateway, and `openshell.drivers.kubernetes` for a Kubernetes or OpenShift gateway.
-OpenShell's configuration reference describes each setting for [Docker](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/configuration.mdx#L1133-L1146), [Podman](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/configuration.mdx#L1254-L1331) and [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/configuration.mdx#L943-L980).
+OpenShell's configuration reference describes each setting for [Docker](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/configuration.mdx#L1410-L1423), [Podman](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/configuration.mdx#L1531-L1608) and [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/configuration.mdx#L1220-L1257).
 NemoClaw passes them through unchecked; OpenShell validates them when the gateway starts.
 
 A Kubernetes or OpenShift gateway reads proxy credentials from a Secret in the deployment's namespace, whose key holds `user:pass`.
@@ -167,14 +240,13 @@ Export compares the observed policy and launch settings with retained intent and
 OpenShell can add filesystem grants of its own to the loaded policy revision without recording their source.
 When a policy first loads, NemoClaw accepts those additions as long as every declared rule is intact, and records the loaded revision's hash; it keeps no list of OpenShell's additions.
 Afterwards the loaded policy must keep that hash: any change, including new additions, or an incomplete observation stops export and preserves state.
-OpenShell v0.1.6 applies GPU filesystem additions inside the workload without writing them back to the gateway policy.
+OpenShell v0.1.7 applies GPU filesystem additions inside the workload without writing them back to the gateway policy.
 This removes the upstream cause of suspected GPU false drift; live GPU export and reapply remain unverified.
 Missing policy observations or drift do not produce a partial configuration.
 
-Policy changes require sandbox replacement, which apply rejects.
-External OpenShell policy edits conflict with the declared policy and stop export; they do not bypass that rejection.
-Back up sandbox files and conversation history before using the explicit [destroy and recreate procedure](../build-deploy/usage.md#destroy).
-Destroy deletes those sandbox files; retained workspace and model storage follow the existing lifecycle rules.
+A policy change replaces the sandbox, deleting its files and conversations (except on [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes)); back them up first.
+External OpenShell policy edits conflict with the declared policy and stop export; change the policy in the YAML instead.
+Retained workspace and model storage follow the existing lifecycle rules.
 If an operation fails, preserve the state directory, resolve the reported observation or configuration problem, and retry with the retained configuration.
 
 ### Recover from Runtime Policy Rejection
@@ -188,7 +260,7 @@ A sandbox that has not reported rejection still follows the startup wait.
 Preserve the state directory: failed apply retains created resource bindings.
 If the problem is an attached-provider or credential configuration that can be repaired without replacing the sandbox, correct it and reapply using the retained state.
 Apply can deliver that repair; completion still requires OpenShell to accept the configuration.
-If the authored sandbox policy must change, change it and apply; a policy that needs a new sandbox replaces it, deleting its files.
+If the authored sandbox policy must change, change it and apply; that replaces the sandbox, deleting its files and conversations (except on mounted volumes).
 Destroy remains available after the failed first apply and does not require successful admission or readiness.
 
 Local fixture tests exercise creation, rejection, drift detection, and export/reapply behavior.

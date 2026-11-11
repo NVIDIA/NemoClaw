@@ -1263,7 +1263,7 @@ fn the_selection_names_where_each_selected_case_runs() {
     let (_, selection) = repo.selected(&base, &[]);
     assert_eq!(
         selection["runners"],
-        serde_json::json!({"gpu": ["docker-one"], "hosted": [], "live-docker": [], "live-kind": []}),
+        serde_json::json!({"gpu": ["docker-one"], "hosted": [], "live-docker": [], "live-kind": [], "openshift": []}),
         "{selection}"
     );
     assert_eq!(
@@ -1296,7 +1296,7 @@ fn all_selects_every_case_without_analysis() {
     );
     assert_eq!(
         selection["runners"],
-        serde_json::json!({"gpu": ["docker-one"], "hosted": [], "live-docker": [], "live-kind": ["kind-two"]}),
+        serde_json::json!({"gpu": ["docker-one"], "hosted": [], "live-docker": [], "live-kind": ["kind-two"], "openshift": []}),
         "{selection}"
     );
 }

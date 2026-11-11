@@ -67,7 +67,7 @@ SUBNET=172.30.190.0/24
 echo "$GATEWAY_PORT $SUBNET" >> "$EVIDENCE/identity.txt"
 ```
 
-The committed examples use gateway ports 17901–17909 and networks 172.30.180.0/24–172.30.188.0/24; stay outside them and outside anything already listed.
+The GTC DC examples use gateway ports 17901–17909 and networks 172.30.180.0/24–172.30.188.0/24, and the other committed examples use lower ones; stay outside them and outside anything already listed.
 The target file says how this host reaches Docker; where it uses sudo, put `sudo` before every `docker` command in this skill.
 
 ### Build the Bundle and Image

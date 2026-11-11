@@ -7,8 +7,10 @@ pub mod ci;
 pub mod docker_provider;
 #[cfg(feature = "sdk")]
 pub mod docs;
+pub mod download;
 #[cfg(feature = "sdk")]
 pub mod fern;
+pub mod glibc;
 pub mod hcl_cases;
 #[cfg(feature = "sdk")]
 pub mod helm_provider;

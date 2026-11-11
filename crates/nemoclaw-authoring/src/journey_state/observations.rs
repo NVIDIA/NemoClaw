@@ -77,15 +77,19 @@ impl JourneyState {
             }) else {
                 continue;
             };
-            let guidance = " Interactive plan asks for it; set it first for a non-interactive run.";
-            let (state, guidance) = match credential.status {
-                ObservationStatus::Available => ("is set", ""),
-                ObservationStatus::Unavailable => ("is not set", guidance),
-                ObservationStatus::Unknown => ("could not be read", guidance),
+            let (state, guidance, missing) = match credential.status {
+                ObservationStatus::Available => ("is set", String::new(), false),
+                ObservationStatus::Unavailable => ("is not set", missing_guidance(reference), true),
+                ObservationStatus::Unknown => {
+                    ("could not be read", missing_guidance(reference), true)
+                }
             };
-            resolution.credentials.push(format!(
-                "{reference} {state} in this environment.{guidance}"
-            ));
+            resolution
+                .credentials
+                .push(crate::journey_state::CredentialNote {
+                    text: format!("{reference} {state} in this environment.{guidance}"),
+                    missing,
+                });
         }
         let Some(request) = crate::inference_request_for_document(document, self.current_route())
             .ok()
@@ -187,7 +191,12 @@ impl JourneyState {
                     "Select each inference route before delegating its questions.",
                 ));
             }
-            let value = question.suggestion.clone();
+            // A choice that cannot be omitted takes its schema default.
+            let value = question.suggestion.clone().or_else(|| {
+                (!question.omittable())
+                    .then(|| question.schema.get("default").cloned())
+                    .flatten()
+            });
             if value.is_none() && question.required {
                 return Err(diagnostic(
                     "delegation",
@@ -284,4 +293,16 @@ fn catalog_credential_note(
     request.credential_env.as_ref().map(|reference| format!(
         "Model catalog needs credential {reference}. Set it to see model suggestions and use bulk acceptance, or enter a model identifier to continue individually."
     ))
+}
+
+/// What to do about a credential that is missing, in terms a newcomer can act on.
+fn missing_guidance(reference: &str) -> String {
+    let mut guidance =
+        format!(" Run `export {reference}=...` before `nemoclaw plan`, or plan asks you for it.");
+    if let Some(url) = crate::ProviderPreset::for_credential_reference(reference)
+        .and_then(crate::ProviderPreset::key_url)
+    {
+        guidance.push_str(&format!(" Get a key at {url}."));
+    }
+    guidance
 }

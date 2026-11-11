@@ -4,10 +4,10 @@
 //! scenario is a test file whose runs name the modules they apply:
 //! `./cases/<name>`, a document in the crate's `cases`, shared with the live
 //! E2E suites; `./examples/<path>`, a NemoClaw document `examples/<path>.yaml`;
-//! or `./examples/<path>`, an authored HCL directory `examples/<path>`. The
+//! or `./examples/<path>`, an authored HCL directory or explicit `.tf` file. The
 //! runner compiles each document with the SDK against the fixtures into that
 //! module path of a work copy of the integration root, beside a copy of
-//! `harness/main.tf`, and copies each authored directory there with the
+//! `harness/main.tf`, and copies each authored HCL input there with the
 //! bundle's NVIDIA provider versions pinned. It then runs each test file with
 //! fixtures reset and checks what teardown leaves, which no run block sees.
 
@@ -31,11 +31,13 @@ const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/integration/hcl")
 /// The live E2E test files, which name their documents by file name.
 const LIVE_TESTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/e2e/hcl/tests");
 const EXAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples");
-const GENERATIONS: [&str; 8] = [
+const GENERATIONS: [&str; 10] = [
     "workspace",
     "provider",
     "sandbox",
     "managed_gateway",
+    "kubernetes_gateway",
+    "kubernetes_storage",
     "inference_service",
     "ollama",
     "ollama_service",
@@ -134,7 +136,7 @@ fn test_files() -> Vec<(String, String)> {
     tests
 }
 
-/// The quoted values assigned to `key` at the start of a test file's lines.
+/// The quoted values assigned to `key` at the start of HCL lines.
 fn quoted<'a>(text: &'a str, key: &'a str) -> impl Iterator<Item = &'a str> {
     text.lines().filter_map(move |line| {
         let value = line
@@ -169,7 +171,7 @@ fn fixture_credential(name: &str) -> String {
     format!("fixture-credential-{}", name.to_lowercase())
 }
 
-/// Where a module's input is: a NemoClaw document, or an authored HCL directory.
+/// Where a module's input is: a NemoClaw document, or authored HCL.
 enum Input {
     Document(PathBuf),
     Authored(PathBuf),
@@ -181,6 +183,9 @@ fn input(module: &str) -> Option<Input> {
         return path.is_file().then_some(Input::Document(path));
     }
     let path = Path::new(EXAMPLES).join(module.strip_prefix("examples/")?);
+    if path.extension().is_some_and(|extension| extension == "tf") && path.is_file() {
+        return Some(Input::Authored(path));
+    }
     let document = path.with_extension("yaml");
     if document.is_file() {
         Some(Input::Document(document))
@@ -204,7 +209,18 @@ fn prepare(
     let target = work.join(module);
     let source = match input(module).unwrap_or_else(|| panic!("{module} has no input")) {
         Input::Authored(path) => {
-            copy(&path, &target);
+            let mut image_metadata = Vec::new();
+            if path.is_file() {
+                fs::create_dir_all(&target).unwrap();
+                fs::copy(&path, target.join("main.tf")).unwrap();
+                fs::copy(
+                    Path::new(EXAMPLES).join("../versions.json"),
+                    target.join("versions.json"),
+                )
+                .unwrap();
+            } else {
+                copy(&path, &target);
+            }
             for entry in fs::read_dir(&target).unwrap().flatten() {
                 if entry
                     .path()
@@ -212,12 +228,13 @@ fn prepare(
                     .is_some_and(|extension| extension == "tf")
                 {
                     let text = fs::read_to_string(entry.path()).unwrap();
+                    image_metadata.extend(quoted(&text, "metadata_env").map(str::to_owned));
                     fs::write(entry.path(), pin_versions(&text, version)).unwrap();
                 }
             }
             return Prepared {
                 credentials: Vec::new(),
-                image_metadata: Vec::new(),
+                image_metadata,
                 engine_socket: false,
             };
         }
@@ -364,6 +381,7 @@ async fn run_shard(shard: usize) {
         ("HOME", directory.path().display().to_string()),
         ("TF_CLI_CONFIG_FILE", configuration.display().to_string()),
         ("TF_IN_AUTOMATION", "1".into()),
+        ("TF_VAR_fixture_image", fixture_image),
         ("CHECKPOINT_DISABLE", "1".into()),
         ("NEMOCLAW_FIXTURE_CONTROL", fixtures.control.clone()),
         (
