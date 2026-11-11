@@ -100,7 +100,7 @@ An accepted example is a configuration contract, not evidence that the combinati
 
 ## Set Container Limits and Update Policy
 
-Managed `kind: vllm` and `kind: ollama` services use `container` for CPU and system-memory limits on Docker.
+Managed `kind: vllm` and `kind: ollama` services use `container` for CPU and system-memory limits and GPU selection on Docker.
 Set these fields under the service, alongside its model and serving settings:
 
 ```yaml
@@ -115,12 +115,19 @@ updatePolicy: Preserve
 These fields do not set the GPU budget: `memory.gpuMemoryGiB`, `memory.gpuMemoryUtilization`, and backend-specific cache settings retain their runtime meanings.
 The runtime's resident host-memory monitor reads `/proc`, not cgroup memory pressure, so the kernel can OOM-kill a container that reaches `memoryLimitGiB` before the monitor stops inference.
 Docker defaults to a 104 GiB memory limit and no CPU cap when these limits are omitted.
+
+On a host with two or more GPUs, `container.gpuDevices` lists the GPU to request for the container, as `docker run --gpus device=` does.
+List exactly one GPU: serving one model across several GPUs isn't implemented yet, so the parser rejects a longer list.
+Use the UUID that `nvidia-smi --query-gpu=uuid --format=csv,noheader` prints, as in `gpuDevices: [GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3]`.
+An index also works, but it can change when the host boots, and YAML needs it quoted, as in `gpuDevices: ["1"]`, because each entry is a string.
+Run `nvidia-smi` on the host whose Docker engine runs the service: with [SSH placement](remote-service.md), that's the remote host, not the machine where you run `nemoclaw`.
+Without `gpuDevices`, the container gets every GPU, and the model runtime stops unless the host has exactly one.
 Native managed inference on Podman remains unsupported; a Podman gateway can consume a service on an explicitly selected remote Docker engine through [SSH placement](remote-service.md).
 These shared fields do not change [platform qualification limits](../resources/limits.md#platforms-models-and-placement).
 
 The service-level `updatePolicy` defaults to `Preserve`.
 For Docker, this refuses an update that would replace a running managed model container.
-Changing the image, model, serving settings, `cpuLimitMillis`, or `memoryLimitGiB` replaces the container; declaring the omitted 104 GiB default as `memoryLimitGiB: 104` does not.
+Changing the image, model, serving settings, `cpuLimitMillis`, `memoryLimitGiB`, or `gpuDevices` replaces the container; declaring the omitted 104 GiB default as `memoryLimitGiB: 104` does not.
 Earlier bundles replaced a running Docker model container for image, model, and serving changes without a policy; to keep that behavior, for example when automation updates images, set `spec.services.<name>.updatePolicy: Recreate`.
 Set `updatePolicy: Recreate` only when accepting sequential replacement and possible downtime if the replacement cannot start.
 The opt-in persists for later updates until removed or changed to `Preserve`; changing only this policy does not restart the workload.
@@ -199,11 +206,13 @@ Build the supervisor image from this checkout using the [runtime build prerequis
 From the repository root, on a Linux ARM64 or AMD64 build host matching the model host:
 
 ```sh
+cargo images fetch
 docker buildx bake ollama
 docker image inspect nc-prototype-ollama:rust-v1 --format '{{index .RepoDigests 0}}'
 ```
 
-The command builds and loads a local image for the build host's architecture.
+`cargo images fetch` downloads the Ollama license that the image retains, as `versions.json` pins it; Bake reads it from `.build/image-sources`.
+The build loads a local image for the build host's architecture.
 Use the immutable image reference that inspection prints in `spec.services.<name>.image` and make the image available on the selected engine.
 The example image digest is a placeholder; a bare upstream `ollama/ollama` image lacks the required supervisor.
 The [runtime notice](../../image/ollama/NOTICE.md) identifies the pinned upstream image and retained sources.

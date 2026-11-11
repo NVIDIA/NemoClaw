@@ -3,7 +3,8 @@
 # The Docker and Kubernetes live suites for one Linux platform, from the test
 # inputs and bundle that its Bundle platform run uploaded, which calls it as
 # that platform's E2E jobs whenever the plan selects the live suites, including
-# on pull requests. CI / Bundle reports it in the required E2E check.
+# on pull requests, and on Linux AMD64 the HCL E2E cases. CI / Bundle reports
+# it in the required E2E check.
 name: E2E platform
 on:
   workflow_call:
@@ -28,6 +29,10 @@ on:
         default: ""
       hcl:
         description: Also run the HCL E2E cases that use NVIDIA hosted inference; the caller passes the inference secret.
+        type: boolean
+        default: false
+      hcl-gpu:
+        description: Also run the HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs; the caller passes the inference secret.
         type: boolean
         default: false
       hcl-cases:
@@ -64,6 +69,12 @@ jobs:
         with:
           platform: ${{ inputs.platform }}
           save-cache: "false"
+      # The image builds' pinned sources, as CI / Images saved them.
+      - name: Restore the verified image sources
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build/downloads
+          key: image-sources-v1-${{ hashFiles('versions.json') }}
       - uses: ./.github/actions/containerd-store
       # Buildx reads the Actions cache service from these variables, which
       # GitHub passes to actions but not to run steps.
@@ -242,3 +253,26 @@ jobs:
           path: ${{ runner.temp }}/hcl/reports/*.json
           if-no-files-found: ignore
           retention-days: 7
+
+  # The selected HCL E2E cases on the NVIDIA GPU runner, which refuses pull
+  # request jobs, from the same test archive, bundle, and live images: built on
+  # Ubuntu 22.04, they run on that runner too.
+  gpu:
+    name: E2E GPU
+    needs: [live-images]
+    # Runs after Build images, or in its place when the plan names a v1
+    # commit's images.
+    if: >-
+      ${{ !cancelled() && inputs.hcl-gpu && fromJSON(inputs.hcl-cases).runners.gpu[0] != null &&
+      (needs.live-images.result == 'success' ||
+      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
+    uses: ./.github/workflows/hcl-e2e.yml
+    with:
+      hosted: false
+      cases: ${{ inputs.hcl-cases }}
+      tests: ${{ inputs.tests }}
+      bundle: ${{ inputs.bundle }}
+      live-images: ${{ needs.live-images.outputs.artifact }}
+      live-images-commit: ${{ inputs.live-images-commit }}
+    # The Ollama case reads NVIDIA_API_KEY.
+    secrets: inherit

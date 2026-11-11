@@ -430,6 +430,74 @@ pub fn write_bundle(bundle: &[u8], output: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Where each image's pinned remote sources go: one directory for each image
+/// directory under `image/`, which Bake passes to that image's build as its
+/// `sources` context.
+pub const SOURCES: &str = ".build/image-sources";
+
+/// The remote files that image builds copy, by image directory and file name,
+/// as `versions.json` pins them under `imageSources`.
+pub type SourcePins = BTreeMap<String, BTreeMap<String, crate::download::Artifact>>;
+
+/// Read the image sources that ROOT's `versions.json` pins.
+pub fn source_pins(root: &Path) -> Result<SourcePins> {
+    #[derive(serde::Deserialize)]
+    struct Pins {
+        #[serde(rename = "imageSources")]
+        image_sources: SourcePins,
+    }
+    let pins = fs::read(root.join("versions.json")).map_err(|_| "cannot read versions.json")?;
+    let pins: Pins = serde_json::from_slice(&pins)
+        .map_err(|error| format!("versions.json pins no valid imageSources: {error}"))?;
+    Ok(pins.image_sources)
+}
+
+/// Download each pinned image source, or take it from earlier verified
+/// downloads, and place it in [`SOURCES`] for Bake. Files that no pin names
+/// are removed, so a build can't copy a stale source.
+pub async fn fetch_sources(root: &Path) -> Result<()> {
+    let plain = |name: &str| {
+        let simple = !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\']);
+        simple
+            .then_some(())
+            .ok_or_else(|| format!("imageSources names {name:?}, which is not a plain file name"))
+    };
+    for (image, files) in source_pins(root)? {
+        plain(&image)?;
+        let directory = root.join(SOURCES).join(&image);
+        let failed = |error: std::io::Error| format!("cannot place {image}'s sources: {error}");
+        fs::create_dir_all(&directory).map_err(failed)?;
+        for entry in fs::read_dir(&directory).map_err(failed)? {
+            let entry = entry.map_err(failed)?;
+            if !files.contains_key(&*entry.file_name().to_string_lossy()) {
+                fs::remove_file(entry.path()).map_err(failed)?;
+            }
+        }
+        for (name, artifact) in &files {
+            plain(name)?;
+            let bytes = crate::download::download(artifact)
+                .await
+                .map_err(|error| format!("{image}/{name}: {error}"))?;
+            place(&directory, name, &bytes).map_err(failed)?;
+        }
+    }
+    Ok(())
+}
+
+/// Write `bytes` to DIRECTORY/NAME whole, or not at all. The file gets the
+/// mode, 0600, and time, the Unix epoch, that BuildKit gave a file it
+/// downloaded from a URL whose response had no Last-Modified, such as GitHub's
+/// source archives, so the layers that retain them don't change.
+fn place(directory: &Path, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+    std::io::Write::write_all(&mut temporary, bytes)?;
+    temporary
+        .as_file()
+        .set_modified(std::time::SystemTime::UNIX_EPOCH)?;
+    temporary.persist(directory.join(name))?;
+    Ok(())
+}
+
 /// Bake targets for `selection`, each with the tags it should publish locally.
 pub fn plan(
     root: &Path,

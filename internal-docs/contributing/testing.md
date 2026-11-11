@@ -323,7 +323,7 @@ Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workf
 1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables.
 2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
 3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions, and `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets.
-4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E build images` with `cargo ci live-images`, and `E2E Docker tests` and `E2E Kubernetes (kind) tests`, from the platform's archive and bundle. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, from the same artifacts, and `E2E GPU` for those on the NVIDIA GPU runner; see [live suites](#live-suites).
+4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E build images` with `cargo ci live-images`, and `E2E Docker tests` and `E2E Kubernetes (kind) tests`, from the platform's archive and bundle. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, and `E2E GPU` for those on the NVIDIA GPU runner, from the same artifacts; see [live suites](#live-suites).
 
 When a pull request changes no image input since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
 
@@ -407,8 +407,9 @@ Only the hosted and GPU jobs receive the key, and a GPU case receives it only wh
 `E2E Kubernetes (kind) tests` runs only HCL cases, so it is skipped when none is selected; `cargo ci live-docker` and `live-kind` take the selection as `--hcl-cases`, and without it run every case placed on them.
 
 Whenever the plan selects a hosted case, Linux AMD64 runs it as `linux_amd64 / E2E / E2E HCL CASE`, from the same test archive, bundle, and live images as the live suites, except on a fork's pull request, which cannot use the inference secret.
-On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts, so a pull request never runs them.
-Live / HCL builds its own bundle, test executable, and agent images on Ubuntu 22.04, whose older glibc the GPU runner can run, and each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services. Dispatch it to run the hosted or GPU cases alone against that build.
+On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts, so a pull request never runs them.
+Live / HCL's `Cases` job lists the cases and fetches the model runtime images' pinned sources, and each case's job runs the same test archive, bundle, and live images as the hosted cases, which the GPU runner can run because CI / Bundle builds them on Ubuntu 22.04. Each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services.
+Dispatch Live / HCL to run the hosted or GPU cases alone: without CI / Bundle's artifacts, its `Build` job builds the bundle, test executable, and agent images on Ubuntu 22.04 from the dispatched branch.
 
 To see which live HCL cases a pull request affects, such as before dispatching the GPU cases, which its CI does not run, run from a clean checkout of its commit:
 
@@ -455,11 +456,13 @@ For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
 cargo test -p nemoclaw-build --test integration bake::
+cargo images fetch
 AGENT_PLATFORM=linux/arm64 docker buildx bake --check dummy agents ollama-proxy
 AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
 The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
+`cargo images fetch` places the remote files that `versions.json` pins under `imageSources` in `.build/image-sources`, where Bake reads them, even to check the Dockerfiles.
 Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, reference-backend tests without Fabric, and generic runtime behavior tests against Fabric's installed fixture adapter.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
 Checks produce build cache entries and no tagged runtime images.

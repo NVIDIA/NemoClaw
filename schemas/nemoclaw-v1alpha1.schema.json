@@ -3019,6 +3019,19 @@
           "minimum": 1,
           "type": "integer"
         },
+        "gpuDevices": {
+          "description": "The GPUs the model container gets on a host with several, as `docker run --gpus device=` names them: each a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index as a string, such as \"1\", which can change when the host boots. List exactly one: serving one model across several GPUs isn't implemented yet. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing the list replaces the model container.",
+          "items": {
+            "pattern": "^(?:GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|0|[1-9][0-9]{0,2})$",
+            "type": "string",
+            "x-nemoclaw-error": "each container.gpuDevices entry must be a lowercase GPU UUID or an index from \"0\" to \"999\""
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+          "x-nemoclaw-error": "container.gpuDevices must list exactly one GPU: serving one model across several GPUs isn't implemented yet"
+        },
         "ipc": {
           "$ref": "#/$defs/ServiceIpc",
           "description": "IPC namespace. Omission uses private; host shares the execution host's IPC namespace."
