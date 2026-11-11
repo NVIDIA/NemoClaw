@@ -62,7 +62,7 @@ The following endpoint groups are allowed by default:
 
 | Policy | Endpoints | Binaries | Rules |
 | --- | --- | --- | --- |
-| `nvidia` | `integrate.api.nvidia.com:443` | `/usr/local/bin/openclaw` | Retained baseline compatibility rule: POST to inference and embedding paths, GET to model listings. NVIDIA Endpoints selection uses the narrower attached-provider rule described below. |
+| `nvidia` | `integrate.api.nvidia.com:443` | `/usr/local/bin/openclaw` | Baseline compatibility rule: POST to inference and embedding paths, GET to model listings. Attached NVIDIA providers use the rules described below. |
 | `clawhub` | `clawhub.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET, POST, including scoped package paths |
 | `openclaw_api` | `openclaw.ai:443`, `catalog.openclaw.ai:443` | `/usr/local/bin/openclaw`, `/usr/local/bin/node` | GET and POST to `openclaw.ai`; GET only to `catalog.openclaw.ai` |
 | `openclaw_docs` | `docs.openclaw.ai:443` | `/usr/local/bin/openclaw` | GET only |
@@ -90,10 +90,25 @@ When you select NVIDIA Endpoints, NemoClaw attaches the `nemoclaw-nvidia-prod-v1
 This attached provider is the effective NVIDIA Endpoints route. Its profile permits only `GET /v1/models` and `POST /v1/chat/completions` at `integrate.api.nvidia.com:443` from the listed agent-runtime and readiness-verification binaries.
 The NVIDIA API key remains in OpenShell provider state and does not enter the sandbox.
 
+<AgentOnly variant="openclaw">
+
+When an attached custom provider uses `https://integrate.api.nvidia.com/v1`, NemoClaw removes the `nvidia` rule only if it matches the unchanged bundled rule.
+Operator-edited rules remain authoritative and must pass endpoint-pin validation.
+
+</AgentOnly>
+
 OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider also use sandbox-attached native providers.
 NemoClaw derives the `native_hosted_inference` policy from the selected provider profile, restricting endpoint hosts, request paths, methods, and agent-runtime binaries.
 OpenShell replaces credential placeholders at that boundary; raw provider credentials remain outside the sandbox.
 Refer to [Inference](#inference) for the local-provider and custom-endpoint routing rules.
+
+<AgentOnly variant="openclaw">
+
+An attached custom provider for `https://integrate.api.nvidia.com/v1` owns its endpoint pins without a duplicate `native_hosted_inference` base rule.
+During rebuild, NemoClaw removes an older base rule only if it matches the generated provider policy.
+If the rule differs, rebuild stops before sandbox replacement and leaves the live policy unchanged.
+
+</AgentOnly>
 
 The baseline HTTPS endpoint groups above use TLS termination on port `443`. Local inference and other explicit policy entries can use different ports.
 
@@ -208,8 +223,9 @@ The Restricted tier suppresses this agent-required preset during onboarding and 
 An operator can add it manually after reviewing the additional egress, but the next Restricted reconciliation removes it.
 </AgentOnly>
 The applied set therefore reflects the chosen tier *plus* any agent-required presets, so `policy list` may show one or more presets that do not appear in the tier table above.
-The `policy list` provenance tags are inferred from the current tier YAML and the active agent at display time and are not persisted per preset.
-A preset whose name matches an entry in the sandbox's current tier definition is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding; agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches.
+The `policy list` provenance tags are inferred from the active agent at display time and are not persisted per preset.
+`policy list` does not tag tier presets, so it labels them `[user-added]`.
+Agent-specific preset names are labelled `[from <agent> agent]` only when the active agent matches.
 Claude Code direct egress is not included in the Restricted, Balanced, or Open tiers.
 Personal's broad route permits its port `443` transport but does not install or configure Claude Code; on other tiers, apply the `claude-code` preset explicitly if you install and run the CLI inside the sandbox with its own credentials.
 NemoClaw-managed Anthropic inference remains mediated by OpenShell.

@@ -64,16 +64,26 @@ export function candidateSdkFixture() {
   const approval = {
     id: 50,
     user: { login: "reviewer", type: "User" },
-    created_at: "2026-10-14T00:00:00Z",
-    updated_at: "2026-10-14T00:00:00Z",
-    body: `NemoClaw-Upgrade-E2E: approve ${sdkCandidateIdentity.candidateSha} ${sdkCandidateIdentity.baseSha}`,
+    submitted_at: "2026-10-14T00:00:00Z",
+    state: "APPROVED",
+    commit_id: sdkCandidateIdentity.candidateSha,
   };
   const records = [approval];
   const permission = { role_name: "maintain" };
   const request = vi.fn(async (route: string): Promise<unknown> => {
     if (route.endsWith("/pulls/123")) return pr;
+    if (
+      route ===
+      `/repos/NVIDIA/NemoClaw/compare/${sdkCandidateIdentity.baseSha}...${sdkCandidateIdentity.candidateSha}?per_page=1`
+    )
+      return {
+        status: "ahead",
+        base_commit: { sha: sdkCandidateIdentity.baseSha },
+        merge_base_commit: { sha: sdkCandidateIdentity.baseSha },
+        files: [],
+      };
     if (route.endsWith("/permission")) return permission;
-    if (route.includes("/comments?")) return records;
+    if (route.includes("/reviews?")) return records;
     const match = /^\/repos\/NVIDIA\/NemoClaw\/contents\/(.+)\?ref=([a-f0-9]{40})$/u.exec(route);
     if (!match || match[2] !== sdkCandidateIdentity.candidateSha || !sources[match[1]!]) {
       throw new Error("Unexpected SDK fixture request");

@@ -127,6 +127,7 @@ export const MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
 export const MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
   { channelId: "a2a", pluginId: "a2a" },
   { channelId: "reef", pluginId: "reef" },
+  { channelId: "x", pluginId: "x" },
 ] as const;
 const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
@@ -675,6 +676,8 @@ const REASONING_EFFORT_PROVIDER = "compatible-endpoint";
 function buildReasoningEffortParams(env: Env): JsonObject {
   const raw = (env.NEMOCLAW_REASONING_EFFORT || "").trim().toLowerCase();
   const upstreamProvider = (env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim();
+  if (["routed", "nvidia-router"].includes(upstreamProvider.toLowerCase().replaceAll("_", "-")))
+    throw new Error("Model Router has been removed; choose a supported inference provider.");
   if (!raw || raw === REASONING_EFFORT_DEFAULT) return {};
   if (upstreamProvider !== REASONING_EFFORT_PROVIDER) return {};
   if (!REASONING_EFFORT_VALUES.includes(raw)) {
@@ -878,6 +881,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
     maxSearchLimit: 20,
   };
   const upstreamProvider = (env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim();
+  if (["routed", "nvidia-router"].includes(upstreamProvider.toLowerCase().replaceAll("_", "-")))
+    throw new Error("Model Router has been removed; choose a supported inference provider.");
   const openclawTools: JsonObject = {
     ...openclawToolOverrides,
     alsoAllow: ["bundle-mcp"],
@@ -991,9 +996,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     });
   }
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, inferenceBaseUrl);
-  const nativeLocal = ["ollama-local", "vllm-local", "llama-cpp-local", "nvidia-router"].includes(
-    upstreamProvider,
-  )
+  const nativeLocal = ["ollama-local", "vllm-local", "llama-cpp-local"].includes(upstreamProvider)
     ? nativeLocalCredentialReference(upstreamProvider, inferenceBaseUrl, "openclaw")
     : null;
   const providers = {
@@ -1053,6 +1056,13 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (Object.keys(extraAgentsPayload.defaults.subagents).length > 0) {
     agentDefaults.subagents = extraAgentsPayload.defaults.subagents;
   }
+  // OpenClaw 10.5 retires roster default markers. Preserve the primary agent's
+  // ambient responsibilities when the roster contains secondary agents.
+  if (extraAgents.length > 0) {
+    agentDefaults.systemAgent = { agentId: "main" };
+    agentDefaults.sessionStore = { agentId: "main" };
+    agentDefaults.heartbeat ??= { agentId: "main" };
+  }
 
   // OpenClaw 2026.9.1 retired the configurable reserveTokens and
   // reserveTokensFloor fields. Its agent runtime now clamps the effective
@@ -1080,9 +1090,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const config: JsonObject = {
     agents: {
+      ...(extraAgents.length > 0 ? { ownership: "explicit" } : {}),
       defaults: agentDefaults,
       entries: buildAgentEntries(extraAgents, extraAgentsPayload.main),
     },
+    ...(extraAgents.length > 0 ? { talk: { agentId: "main" } } : {}),
     ...(providerless ? {} : { models: { mode: "merge", providers } }),
     channels,
     tools: openclawTools,

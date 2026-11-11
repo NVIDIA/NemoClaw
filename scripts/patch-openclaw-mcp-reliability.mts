@@ -8,7 +8,12 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
-export const MARKER = "/* nemoclaw mcp transient startup recovery (#7958) */";
+const { MARKER, INJECTED_START_RETRY_HELPER, ABORTABLE_RETRY_HELPER } = await import(
+  fs.existsSync(path.join(import.meta.dirname, "lib/openclaw-mcp-retry-payloads.mts"))
+    ? "./lib/openclaw-mcp-retry-payloads.mts"
+    : "./openclaw-mcp-retry-payloads.mts"
+);
+export { MARKER, INJECTED_START_RETRY_HELPER };
 
 /** Client identity that only the compiled bundle-mcp session runtime carries. */
 const TARGET_SIGNATURE = '"openclaw-bundle-mcp"';
@@ -288,141 +293,208 @@ const SHAPE_20260902 = {
   replacements: SERVER_REPLACEMENTS,
 } as const;
 
-/**
- * Injected compatibility runtime for OpenClaw `bundle-mcp`.
- *
- * Retries exactly one classified transient Streamable HTTP server *startup*
- * failure with a fresh transport and bounded jitter. Legacy layouts also give
- * a tool-capable Streamable HTTP server that returns an empty initial list one
- * idempotent list retry on the established transport. OpenClaw 2026.9.1 uses
- * its newer listAllTools lifecycle instead. The patch also stops a catalog
- * that carries any server diagnostic from becoming the session's stable
- * catalog. A credential, TLS, policy, or configuration rejection is never
- * retried, and keeps its own diagnostic.
- */
-export const INJECTED_START_RETRY_HELPER = [
-  MARKER,
-  'const NEMOCLAW_MCP_START_FAILURE = Symbol.for("nemoclaw.bundleMcpStartFailure");',
-  "const NEMOCLAW_MCP_RETRY_BASE_DELAY_MS = 120;",
-  "const NEMOCLAW_MCP_RETRY_JITTER_MS = 180;",
-  "const NEMOCLAW_MCP_RETRY_CONNECT_TIMEOUT_MS = 1e4;",
-  "const NEMOCLAW_MCP_ERROR_CHAIN_LIMIT = 8;",
-  'const NEMOCLAW_MCP_TRANSIENT_DIAGNOSTIC_SUFFIX = " (temporary MCP transport failure; NemoClaw retried this startup once with a fresh transport. Credentials and configuration were not rejected. The server is retried on the next agent run.)";',
-  // A refused, unreachable, or unresolvable destination is excluded because an
-  // OpenShell L4 policy denial reaches the client as a refused connection.
-  // Retrying refusals could therefore repeat a policy denial, so only in-flight
-  // transport faults after a reachable connect are transient.
-  "const NEMOCLAW_MCP_TRANSIENT_CODES = new Set([",
-  '\t"ECONNABORTED",',
-  '\t"ECONNRESET",',
-  '\t"ENETRESET",',
-  '\t"EPIPE",',
-  '\t"ERR_STREAM_PREMATURE_CLOSE",',
-  '\t"ETIMEDOUT",',
-  '\t"UND_ERR_BODY_TIMEOUT",',
-  '\t"UND_ERR_CONNECT_TIMEOUT",',
-  '\t"UND_ERR_HEADERS_TIMEOUT",',
-  '\t"UND_ERR_SOCKET"',
-  "]);",
-  "const NEMOCLAW_MCP_BLOCKED_CODE_PATTERN = /^(?:CERT_|DEPTH_ZERO|EPROTO|ERR_INVALID_URL|ERR_SSL|ERR_TLS|SELF_SIGNED|UNABLE_TO_)/;",
-  "const NEMOCLAW_MCP_BLOCKED_TEXT_PATTERN = /\\bunauthorized\\b|\\bforbidden\\b|invalid[_ ](?:client|grant|token)|\\bcertificate\\b|self[- ]signed|\\btls\\b|\\bssrf\\b|blocked by|not allowed|\\bdenied\\b|\\bhttp 4\\d\\d\\b/i;",
-  // `TypeError: fetch failed` is deliberately absent. undici reports every
-  // failure that way, including refused, unreachable, and TLS-rejected
-  // destinations, so classification reads the cause chain instead.
-  "const NEMOCLAW_MCP_TRANSIENT_TEXT_PATTERN = /socket hang up|other side closed|premature close|before headers|connection reset|request timed out|-32001|mcp server connection timed out after \\d+ms/i;",
-  "function nemoClawMcpErrorChain(error) {",
-  "\tconst chain = [];",
-  "\tlet current = error;",
-  "\tfor (let depth = 0; depth < NEMOCLAW_MCP_ERROR_CHAIN_LIMIT && current; depth += 1) {",
-  '\t\tif (typeof current !== "object" && typeof current !== "string") break;',
-  "\t\tchain.push(current);",
-  '\t\tcurrent = typeof current === "object" ? current.cause : void 0;',
-  "\t}",
-  "\tif (current !== void 0 && current !== null) return [];",
-  "\treturn chain;",
-  "}",
-  "function nemoClawMcpErrorText(entry) {",
-  '\tif (typeof entry === "string") return entry;',
-  '\tconst name = typeof entry.name === "string" ? entry.name : "";',
-  '\tconst message = typeof entry.message === "string" ? entry.message : "";',
-  "\treturn `${name} ${message}`;",
-  "}",
-  "function nemoClawMcpErrorCodes(entry) {",
-  '\tif (typeof entry !== "object") return [];',
-  '\treturn [entry.code, entry.errno].filter((value) => typeof value === "string");',
-  "}",
-  "function nemoClawIsTransientMcpStartFailure(error) {",
-  "\tconst chain = nemoClawMcpErrorChain(error);",
-  "\tif (chain.length === 0) return false;",
-  "\tfor (const entry of chain) {",
-  "\t\tfor (const code of nemoClawMcpErrorCodes(entry)) {",
-  "\t\t\tif (NEMOCLAW_MCP_BLOCKED_CODE_PATTERN.test(code)) return false;",
-  "\t\t}",
-  "\t\tif (NEMOCLAW_MCP_BLOCKED_TEXT_PATTERN.test(nemoClawMcpErrorText(entry))) return false;",
-  "\t}",
-  "\tfor (const entry of chain) {",
-  '\t\tif (typeof entry === "object" && entry.code === -32001) return true;',
-  "\t\tfor (const code of nemoClawMcpErrorCodes(entry)) {",
-  "\t\t\tif (NEMOCLAW_MCP_TRANSIENT_CODES.has(code)) return true;",
-  "\t\t}",
-  "\t\tif (NEMOCLAW_MCP_TRANSIENT_TEXT_PATTERN.test(nemoClawMcpErrorText(entry))) return true;",
-  "\t}",
-  "\treturn false;",
-  "}",
-  "function nemoClawMcpRetryDelay() {",
-  "\tconst delayMs = NEMOCLAW_MCP_RETRY_BASE_DELAY_MS + Math.floor(Math.random() * NEMOCLAW_MCP_RETRY_JITTER_MS);",
-  "\treturn new Promise((resolve) => setTimeout(resolve, delayMs));",
-  "}",
-  // The suffix is the user-facing attribution for an exhausted retry. Add it
-  // only when the surviving failure is itself transient, so a retry that lands
-  // on a real 401, TLS, or policy rejection keeps its own diagnostic instead of
-  // claiming that credentials were not rejected.
-  "function nemoClawFinalizeMcpStartResult(result, retried) {",
-  '\tif (!result || typeof result !== "object") return result;',
-  "\tconst failure = result[NEMOCLAW_MCP_START_FAILURE];",
-  "\tif (!failure) return result;",
-  "\tconst next = { ...result };",
-  "\tdelete next[NEMOCLAW_MCP_START_FAILURE];",
-  "\tconst transient = retried && nemoClawIsTransientMcpStartFailure(failure.error);",
-  "\tif (transient && Array.isArray(next.diagnostics)) next.diagnostics = next.diagnostics.map((diagnostic) => ({",
-  "\t\t...diagnostic,",
-  "\t\tmessage: `${diagnostic.message}${NEMOCLAW_MCP_TRANSIENT_DIAGNOSTIC_SUFFIX}`",
-  "\t}));",
-  "\treturn next;",
-  "}",
-  "function nemoClawWithMcpStartRetry(params) {",
-  "\treturn async () => {",
-  "\t\tconst first = await params.attempt(params.initialResolved);",
-  '\t\tconst failure = first && typeof first === "object" ? first[NEMOCLAW_MCP_START_FAILURE] : void 0;',
-  "\t\tif (!failure || failure.reusedSession) return nemoClawFinalizeMcpStartResult(first, false);",
-  '\t\tif (params.initialResolved.transportType !== "streamable-http") return nemoClawFinalizeMcpStartResult(first, false);',
-  "\t\tif (!nemoClawIsTransientMcpStartFailure(failure.error)) return nemoClawFinalizeMcpStartResult(first, false);",
-  "\t\tlet retryResolved;",
-  "\t\ttry {",
-  "\t\t\tretryResolved = params.resolveTransport();",
-  "\t\t} catch {",
-  "\t\t\tretryResolved = null;",
-  "\t\t}",
-  "\t\tif (!retryResolved) return nemoClawFinalizeMcpStartResult(first, false);",
-  '\t\tlogWarn(`bundle-mcp: retrying transient startup failure for server "${params.serverName}" once with a fresh transport.`);',
-  "\t\tawait nemoClawMcpRetryDelay();",
-  "\t\tconst second = await params.attempt({",
-  "\t\t\t...retryResolved,",
-  "\t\t\tconnectionTimeoutMs: Math.min(retryResolved.connectionTimeoutMs, NEMOCLAW_MCP_RETRY_CONNECT_TIMEOUT_MS)",
-  "\t\t});",
-  "\t\treturn nemoClawFinalizeMcpStartResult(second, true);",
-  "\t};",
-  "}",
-  // A catalog carrying any server diagnostic is degraded, so it must not become
-  // the session's stable catalog. Upstream fills `catalog.diagnostics` only from
-  // a per-server start or refresh failure and omits the key entirely when no
-  // server produced a diagnostic.
-  "function nemoClawCatalogHasStartDiagnostics(catalog) {",
-  "\tif (!catalog || !Array.isArray(catalog.diagnostics)) return false;",
-  "\treturn catalog.diagnostics.length > 0;",
-  "}",
+// 2026.10.5 serializes startup through shared backoff. Keep the bounded retry
+// inside that admitted operation, and rebuild only after confirmed disposal.
+const SERVER_SESSION_20261005 = [
+  "\t\t\tif (!session) {",
+  "\t\t\t\tconst client = new Client({",
+  '\t\t\t\t\tname: "openclaw-bundle-mcp",',
+  '\t\t\t\t\tversion: "0.0.0"',
+  "\t\t\t\t}, {",
+  "\t\t\t\t\tcapabilities: buildMcpClientCapabilities(mcpAppsEnabled),",
+  "\t\t\t\t\tjsonSchemaValidator: schemaValidator,",
+  "\t\t\t\t\tlistChanged: { tools: {",
+  "\t\t\t\t\t\tautoRefresh: false,",
+  "\t\t\t\t\t\tdebounceMs: 0,",
+  "\t\t\t\t\t\tonChanged: (error) => {",
+  '\t\t\t\t\t\t\tif (error) logWarn(`bundle-mcp: failed to refresh changed tool list for server "${serverName}": ${redactMcpDiagnosticError(error)}`);',
+  "\t\t\t\t\t\t\tinvalidateCatalog();",
+  "\t\t\t\t\t\t}",
+  "\t\t\t\t\t} }",
+  "\t\t\t\t});",
+  "\t\t\t\tconst createdSession = {",
+  "\t\t\t\t\tserverName,",
+  "\t\t\t\t\tclient,",
+  "\t\t\t\t\t...mcpAppsEnabled ? { withElicitation: bindMcpClientElicitation(client) } : {},",
+  "\t\t\t\t\ttransport: resolved.transport,",
+  "\t\t\t\t\ttransportType: resolved.transportType,",
+  "\t\t\t\t\trequestTimeoutMs: resolved.requestTimeoutMs,",
+  "\t\t\t\t\tconnected: false,",
+  "\t\t\t\t\tretiring: false,",
+  "\t\t\t\t\tdetachStderr: resolved.detachStderr",
+  "\t\t\t\t};",
+  "\t\t\t\tclient.onclose = () => {",
+  "\t\t\t\t\tconst wasConnected = createdSession.connected;",
+  "\t\t\t\t\tcreatedSession.connected = false;",
+  '\t\t\t\t\tcreatedSession.disconnectReason = "mcp transport closed";',
+  "\t\t\t\t\tif (wasConnected && !retiredCatalog && !createdSession.retiring && currentSession === createdSession) {",
+  '\t\t\t\t\t\tscheduleCatalogServerRetry("mcp transport closed");',
+  '\t\t\t\t\t\tlogWarn(`bundle-mcp: server "${serverName}" closed; next request reconnects`);',
+  "\t\t\t\t\t}",
+  "\t\t\t\t};",
+  "\t\t\t\tsession = createdSession;",
+  "\t\t\t\tcurrentSession = session;",
+  "\t\t\t}",
   "",
 ].join("\n");
+const SERVER_SESSION_20261005_PATCHED = [
+  "\t\t\tconst nemoClawCreateSession = (resolved) => {",
+  "\t\t\t\tconst client = new Client({",
+  '\t\t\t\t\tname: "openclaw-bundle-mcp",',
+  '\t\t\t\t\tversion: "0.0.0"',
+  "\t\t\t\t}, {",
+  "\t\t\t\t\tcapabilities: buildMcpClientCapabilities(mcpAppsEnabled),",
+  "\t\t\t\t\tjsonSchemaValidator: schemaValidator,",
+  "\t\t\t\t\tlistChanged: { tools: {",
+  "\t\t\t\t\t\tautoRefresh: false,",
+  "\t\t\t\t\t\tdebounceMs: 0,",
+  "\t\t\t\t\t\tonChanged: (error) => {",
+  '\t\t\t\t\t\t\tif (error) logWarn(`bundle-mcp: failed to refresh changed tool list for server "${serverName}": ${redactMcpDiagnosticError(error)}`);',
+  "\t\t\t\t\t\t\tinvalidateCatalog();",
+  "\t\t\t\t\t\t}",
+  "\t\t\t\t\t} }",
+  "\t\t\t\t});",
+  "\t\t\t\tconst createdSession = {",
+  "\t\t\t\t\tserverName,",
+  "\t\t\t\t\tclient,",
+  "\t\t\t\t\t...mcpAppsEnabled ? { withElicitation: bindMcpClientElicitation(client) } : {},",
+  "\t\t\t\t\ttransport: resolved.transport,",
+  "\t\t\t\t\ttransportType: resolved.transportType,",
+  "\t\t\t\t\trequestTimeoutMs: resolved.requestTimeoutMs,",
+  "\t\t\t\t\tconnected: false,",
+  "\t\t\t\t\tretiring: false,",
+  "\t\t\t\t\tdetachStderr: resolved.detachStderr",
+  "\t\t\t\t};",
+  "\t\t\t\tclient.onclose = () => {",
+  "\t\t\t\t\tconst wasConnected = createdSession.connected;",
+  "\t\t\t\t\tcreatedSession.connected = false;",
+  '\t\t\t\t\tcreatedSession.disconnectReason = "mcp transport closed";',
+  "\t\t\t\t\tif (wasConnected && !retiredCatalog && !createdSession.retiring && currentSession === createdSession) {",
+  '\t\t\t\t\t\tscheduleCatalogServerRetry("mcp transport closed");',
+  '\t\t\t\t\t\tlogWarn(`bundle-mcp: server "${serverName}" closed; next request reconnects`);',
+  "\t\t\t\t\t}",
+  "\t\t\t\t};",
+  "\t\t\t\treturn createdSession;",
+  "\t\t\t};",
+  "\t\t\tif (!session) currentSession = session = nemoClawCreateSession(resolved);",
+  "",
+].join("\n");
+const SERVER_CONNECT_20261005 = [
+  "\t\t\t\t\tconst connectingSession = session;",
+  "\t\t\t\t\tawait connectWithMcpStartupBackoff(startupKey, lifecycleAbortController.signal, () => ensureSessionConnected(connectingSession, resolved.connectionTimeoutMs), BUNDLE_MCP_CATALOG_FAILURE_RETRY_MS);",
+].join("\n");
+const SERVER_CONNECT_20261005_PATCHED = [
+  "\t\t\t\t\tawait connectWithMcpStartupBackoff(startupKey, lifecycleAbortController.signal, async () => {",
+  "\t\t\t\t\t\tconst signal = lifecycleAbortController.signal;",
+  "\t\t\t\t\t\tsignal.throwIfAborted();",
+  "\t\t\t\t\t\ttry {",
+  "\t\t\t\t\t\t\tawait ensureSessionConnected(session, resolved.connectionTimeoutMs);",
+  "\t\t\t\t\t\t} catch (error) {",
+  "\t\t\t\t\t\t\tsignal.throwIfAborted();",
+  '\t\t\t\t\t\t\tif (reusedSession || resolved.transportType !== "streamable-http" || !nemoClawIsTransientMcpStartFailure(error)) throw error;',
+  "\t\t\t\t\t\t\tif (!await retireSessionIfCurrent(session) || cleanupFailed) throw error;",
+  "\t\t\t\t\t\t\tawait nemoClawMcpAbortableRetryDelay(signal);",
+  "\t\t\t\t\t\t\tfailIfDisposed();",
+  "\t\t\t\t\t\t\tconst retryResolved = resolveMcpTransport(serverName, transportSource, {",
+  "\t\t\t\t\t\t\t\tcfg: params.cfg,",
+  "\t\t\t\t\t\t\t\tagentDir: params.agentDir,",
+  "\t\t\t\t\t\t\t\tprepareDataDir: loaded.prepareDataDirsByServer?.[serverName]?.dataDir,",
+  "\t\t\t\t\t\t\t\trequesterScope: params.requesterScope",
+  "\t\t\t\t\t\t\t});",
+  '\t\t\t\t\t\t\tif (!retryResolved || retryResolved.transportType !== "streamable-http") throw error;',
+  "\t\t\t\t\t\t\tresolved = retryResolved;",
+  "\t\t\t\t\t\t\tcurrentSession = session = nemoClawCreateSession(resolved);",
+  '\t\t\t\t\t\t\tlogWarn(`bundle-mcp: retrying transient startup failure for server "${serverName}" once with a fresh transport.`);',
+  "\t\t\t\t\t\t\ttry {",
+  "\t\t\t\t\t\t\t\tawait ensureSessionConnected(session, Math.min(resolved.connectionTimeoutMs, NEMOCLAW_MCP_RETRY_CONNECT_TIMEOUT_MS));",
+  "\t\t\t\t\t\t\t} catch (retryError) {",
+  "\t\t\t\t\t\t\t\tsignal.throwIfAborted();",
+  "\t\t\t\t\t\t\t\tif (!nemoClawIsTransientMcpStartFailure(retryError)) throw retryError;",
+  "\t\t\t\t\t\t\t\tthrow new Error(`${redactMcpDiagnosticError(retryError)}${NEMOCLAW_MCP_TRANSIENT_DIAGNOSTIC_SUFFIX}`, { cause: retryError });",
+  "\t\t\t\t\t\t\t}",
+  "\t\t\t\t\t\t}",
+  "\t\t\t\t\t}, BUNDLE_MCP_CATALOG_FAILURE_RETRY_MS);",
+].join("\n");
+const SERVER_LEASE_20261005_PATCHED = [
+  "\t\tacquireLease() {",
+  "\t\t\tif (activeLeases === 0 && nemoClawCatalogHasStartDiagnostics(catalog)) {",
+  "\t\t\t\tresetMcpStartupBackoff(startupKey, lifecycleAbortController.signal);",
+  "\t\t\t\tinvalidateCatalog();",
+  "\t\t\t}",
+  "\t\t\tactiveLeases += 1;",
+].join("\n");
+const SERVER_REPLACEMENTS_20261005 = [
+  [SERVER_TRANSPORT_PATTERN, SERVER_TRANSPORT_PATTERN.replace("const resolved", "let resolved")],
+  [SERVER_SESSION_20261005, SERVER_SESSION_20261005_PATCHED],
+  [SERVER_CONNECT_20261005, SERVER_CONNECT_20261005_PATCHED],
+  [ACQUIRE_LEASE_PATTERN, SERVER_LEASE_20261005_PATCHED],
+] as const;
+const SERVER_LIFECYCLE_20261005 = [
+  [
+    "\tconst disposeSession = (session) => {",
+    "\t\tif (session.disposePromise) return session.disposePromise;",
+    "\t\tconst closing = disposeBundleMcpSession(session).then((outcome) => {",
+    '\t\t\tif (outcome === "uncertain") {',
+    "\t\t\t\tcleanupFailed = true;",
+    "\t\t\t\trecordAgentCleanupFailure();",
+    "\t\t\t}",
+    "\t\t}).catch((error) => {",
+    "\t\t\tcleanupFailed = true;",
+    "\t\t\trecordAgentCleanupFailure();",
+    "\t\t\tthrow error;",
+    "\t\t}).finally(() => pendingDisposals.delete(closing));",
+    "\t\tsession.disposePromise = closing;",
+    "\t\tpendingDisposals.add(closing);",
+    "\t\treturn closing;",
+    "\t};",
+    "",
+  ].join("\n"),
+  [
+    "\tconst ensureSessionConnected = async (session, connectionTimeoutMs) => {",
+    '\t\tif (session.retiring) throw new Error(`bundle-mcp server "${session.serverName}" is retiring`);',
+    "\t\tif (session.connected) return;",
+    "\t\tsession.connectPromise ??= connectMcpClient({",
+    "\t\t\tclient: session.client,",
+    "\t\t\ttransport: session.transport,",
+    "\t\t\ttimeoutMs: connectionTimeoutMs",
+    "\t\t}).catch((error) => {",
+    '\t\t\tif (error instanceof McpClientConnectTimeoutError) throw new Error(`MCP server "${session.serverName}" timed out: did not complete initialize within ${connectionTimeoutMs / 1e3}s`, { cause: error });',
+    "\t\t\tthrow error;",
+    "\t\t}).then(() => {",
+    "\t\t\tsession.connected = true;",
+    "\t\t}).finally(() => {",
+    "\t\t\tsession.connectPromise = void 0;",
+    "\t\t});",
+    "\t\tawait session.connectPromise;",
+    "\t};",
+    "\tconst retireSessionIfCurrent = async (session) => {",
+    "\t\tif (currentSession !== session) return false;",
+    "\t\tsession.retiring = true;",
+    "\t\tcurrentSession = void 0;",
+    "\t\tawait disposeSession(session);",
+    "\t\treturn true;",
+    "\t};",
+    "",
+  ].join("\n"),
+];
+const SHAPE_20261005 = {
+  unpatched: SERVER_REPLACEMENTS_20261005.map(([upstream]) => upstream),
+  required: [
+    "const lifecycleAbortController = new AbortController();",
+    "let cleanupFailed = false;",
+    ...SERVER_LIFECYCLE_20261005,
+    ...SERVER_REPLACEMENTS_20261005.map(([upstream]) => upstream),
+  ],
+  patched: [
+    MARKER,
+    ...SERVER_LIFECYCLE_20261005,
+    ...SERVER_REPLACEMENTS_20261005.map(([, patched]) => patched),
+  ],
+  replacements: SERVER_REPLACEMENTS_20261005,
+} as const;
+
+// Archived copies are composed by patch-openclaw-worker-proxy.mts, which owns
+// full native-manifest admission. Both layouts use the shared retry payload.
 
 type PatchStatus = "already-patched" | "patched";
 
@@ -490,13 +562,19 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
     source.includes(TASK_OPEN_20260901_PATTERN) ||
     source.includes(TASK_OPEN_20260901_REPLACEMENT) ||
     (source.includes("policyToolEntries: []") && source.includes("launchDescription"));
-  const shape = source.includes("function createServerMcpRuntime(params) {")
-    ? SHAPE_20260902
-    : currentLayout
-      ? SHAPE_20260901
-      : LEGACY_SHAPE;
+  const shape = source.includes("connectWithMcpStartupBackoff(startupKey,")
+    ? SHAPE_20261005
+    : source.includes("function createServerMcpRuntime(params) {")
+      ? SHAPE_20260902
+      : currentLayout
+        ? SHAPE_20260901
+        : LEGACY_SHAPE;
   if (source.includes(MARKER)) {
-    for (const pattern of shape.patched) {
+    for (const pattern of [
+      ...shape.patched,
+      INJECTED_START_RETRY_HELPER,
+      ...(shape === SHAPE_20261005 ? [ABORTABLE_RETRY_HELPER] : []),
+    ]) {
       const count = countOccurrences(source, pattern);
       if (count !== 1) {
         throw new Error(
@@ -531,12 +609,16 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
     throw new Error(`${filePath}: bundle-mcp runtime has no import prologue to anchor the helper`);
   }
 
-  let text = `${source.slice(0, importMatch[0].length)}${INJECTED_START_RETRY_HELPER}${source.slice(
+  let text = `${source.slice(0, importMatch[0].length)}${INJECTED_START_RETRY_HELPER}${shape === SHAPE_20261005 ? ABORTABLE_RETRY_HELPER : ""}${source.slice(
     importMatch[0].length,
   )}`;
   for (const [upstream, patched] of shape.replacements) text = text.replace(upstream, patched);
 
-  for (const pattern of shape.patched) {
+  for (const pattern of [
+    ...shape.patched,
+    INJECTED_START_RETRY_HELPER,
+    ...(shape === SHAPE_20261005 ? [ABORTABLE_RETRY_HELPER] : []),
+  ]) {
     const count = countOccurrences(text, pattern);
     if (count !== 1) {
       throw new Error(
@@ -545,6 +627,99 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
     }
   }
   return { patched: true, status: "patched", text };
+}
+
+const STARTUP_RESET_20261005 = [
+  "function resetMcpStartupBackoff(key) {",
+  "\tif (key === void 0) startups.clear();",
+  "\telse startups.delete(key);",
+  "}",
+  "",
+].join("\n");
+const STARTUP_RESET_20261005_PATCHED = [
+  "/* nemoclaw owner-scoped MCP next-lease recovery (#7958) */",
+  "function resetMcpStartupBackoff(key, owner) {",
+  "\tif (owner !== void 0) {",
+  "\t\tconst state = startups.get(key);",
+  "\t\tif (state?.owner === owner && !state.pending) startups.delete(key);",
+  "\t\treturn;",
+  "\t}",
+  "\tif (key === void 0) startups.clear();",
+  "\telse startups.delete(key);",
+  "}",
+  "",
+].join("\n");
+const STARTUP_BACKOFF_20261005 = [
+  "async function connectWithMcpStartupBackoff(key, signal, connect, recoveryRetryMs) {",
+  "\twhile (startups.get(key)?.pending) await racePromiseWithAbortSignal(startups.get(key).pending.catch(() => void 0), signal);",
+  "\tsignal.throwIfAborted();",
+  "\tconst state = startups.get(key) ?? {",
+  "\t\towner: signal,",
+  "\t\tdelayMs: 15e3,",
+  "\t\tretryAfterMs: 0,",
+  '\t\tmessage: ""',
+  "\t};",
+  "\tconst retryAfterMs = () => state.owner === signal && state.delayMs === 3e4 ? state.retryAfterMs - state.delayMs + recoveryRetryMs : state.retryAfterMs;",
+  "\tif (Date.now() < retryAfterMs()) throw new McpStartupBackoffError(state, false, retryAfterMs());",
+  "\tstartups.set(key, state);",
+  "\ttry {",
+  "\t\tstate.pending = connect();",
+  "\t\tawait state.pending;",
+  "\t\tif (startups.get(key) === state) startups.delete(key);",
+  "\t} catch (error) {",
+  "\t\tif (signal.aborted) {",
+  "\t\t\tif (startups.get(key) === state) startups.delete(key);",
+  "\t\t\tthrow error;",
+  "\t\t}",
+  "\t\tstate.delayMs = Math.min(state.delayMs * 2, 6e5);",
+  "\t\tstate.retryAfterMs = Date.now() + state.delayMs;",
+  "\t\tstate.message = redactMcpDiagnosticError(error);",
+  "\t\tthrow new McpStartupBackoffError(state, true, retryAfterMs());",
+  "\t} finally {",
+  "\t\tstate.pending = void 0;",
+  "\t\tfor (const [oldKey, oldState] of startups) {",
+  "\t\t\tif (startups.size <= 1024) break;",
+  "\t\t\tif (!oldState.pending) startups.delete(oldKey);",
+  "\t\t}",
+  "\t}",
+  "}",
+  "",
+].join("\n");
+
+/** Only the owning runtime may clear an idle failure at its next lease. */
+export function patchMcpStartupBackoffText(source: string, filePath: string): PatchTextResult {
+  const patched = source.includes("/* nemoclaw owner-scoped MCP next-lease recovery (#7958) */");
+  const expected = patched ? STARTUP_RESET_20261005_PATCHED : STARTUP_RESET_20261005;
+  if (
+    countOccurrences(source, "/* nemoclaw owner-scoped MCP next-lease recovery (#7958) */") !==
+      Number(patched) ||
+    countOccurrences(source, expected) !== 1 ||
+    countOccurrences(source, STARTUP_BACKOFF_20261005) !== 1 ||
+    (patched && source.includes(STARTUP_RESET_20261005))
+  ) {
+    throw new Error(
+      `${filePath}: MCP startup backoff owner guard has an unreviewed or partial shape`,
+    );
+  }
+  return {
+    patched: !patched,
+    status: patched ? "already-patched" : "patched",
+    text: patched ? source : source.replace(expected, STARTUP_RESET_20261005_PATCHED),
+  };
+}
+
+function prepareStartupBackoffPatch(
+  distDir: string,
+  source: string,
+): { file: string; result: PatchTextResult } | undefined {
+  if (!source.includes("connectWithMcpStartupBackoff(startupKey,")) return;
+  const imports = [
+    ...source.matchAll(/from "(\.\.\/agent-bundle-mcp-manager-api-[A-Za-z0-9_-]+\.mjs)";/g),
+  ];
+  if (imports.length !== 1)
+    throw new Error("Expected one reviewed MCP startup backoff manager import");
+  const file = path.join(distDir, path.basename(imports[0][1]));
+  return { file, result: patchMcpStartupBackoffText(fs.readFileSync(file, "utf8"), file) };
 }
 
 function resolveBundleMcpRuntimeFile(distDir: string): string {
@@ -567,9 +742,12 @@ export function patchOpenClawMcpReliability(distDir: string): {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
   const target = resolveBundleMcpRuntimeFile(resolvedDist);
-  const result = patchBundleMcpRuntimeText(fs.readFileSync(target, "utf-8"), target);
+  const source = fs.readFileSync(target, "utf-8");
+  const result = patchBundleMcpRuntimeText(source, target);
+  const backoff = prepareStartupBackoffPatch(resolvedDist, source);
+  if (backoff?.result.patched) fs.writeFileSync(backoff.file, backoff.result.text);
   if (result.patched) fs.writeFileSync(target, result.text);
-  return { status: result.status, file: target, version };
+  return { status: backoff?.result.patched ? "patched" : result.status, file: target, version };
 }
 
 export function auditOpenClawMcpReliability(distDir: string): {
@@ -584,6 +762,9 @@ export function auditOpenClawMcpReliability(distDir: string): {
     throw new Error(`${target}: MCP startup recovery patch is not applied`);
   }
   const result = patchBundleMcpRuntimeText(source, target);
+  const backoff = prepareStartupBackoffPatch(resolvedDist, source);
+  if (backoff?.result.patched)
+    throw new Error(`${backoff.file}: MCP startup backoff owner guard is not applied`);
   if (result.status !== "already-patched") {
     throw new Error(`${target}: MCP startup recovery patch state is not stable`);
   }

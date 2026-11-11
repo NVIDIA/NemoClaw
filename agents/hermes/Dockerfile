@@ -78,6 +78,7 @@ COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemocl
 COPY agents/hermes/generate-config.ts agents/hermes/check-native-credentials.ts /opt/nemoclaw-hermes-config/
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
+COPY agents/hermes/qualify-switchyard-judge.py /opt/nemoclaw-hermes-config/qualify-switchyard-judge.py
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-mcp-http-proxy.py /opt/nemoclaw-hermes-config/patch-mcp-http-proxy.py
@@ -99,6 +100,7 @@ COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-lo
 COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
+COPY scripts/lib/verify-openclaw-official-plugin.mts /scripts/lib/verify-openclaw-official-plugin.mts
 
 FROM scratch AS hermes-runtime-payload
 
@@ -426,6 +428,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/hermes-switchyard-routing.ts /src/lib/tool-disclosure.ts /src/lib/providerless-inference.ts /src/lib/inference-credential.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
         /scripts/lib/openclaw-npm-remediation.mts /scripts/lib/reviewed-npm-audit.mts \
+        /scripts/lib/verify-openclaw-official-plugin.mts \
         /scripts/lib/reviewed-npm-identity.mts \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/lib/patch-bundled-npm-ip-address.mts \
         /scripts/patch-bundled-npm-tar.mts /scripts/upgrade-bundled-npm.mts \

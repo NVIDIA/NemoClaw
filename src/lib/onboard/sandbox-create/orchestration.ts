@@ -91,6 +91,7 @@ import {
   resolveProviderAdapter,
   usesNativeNvidiaProvider,
   usesNativeHostedProvider,
+  requiresNativeHostedBasePolicy,
   validateAttachedNativeProfileBeforeSandboxCreation,
   validateAttachedOwnedProfilesBeforeSandboxCreation,
   validateAttachedHermesToolGatewayProfileBeforeSandboxCreation,
@@ -98,6 +99,9 @@ import {
   validateAttachedMessagingProvidersBeforeSandboxCreation,
   verifyNativeLocalAttachmentAfterCreate,
   verifyNativeNvidiaAttachmentAfterCreate,
+  validateAttachedSwitchyardProvidersBeforeSandboxCreation,
+  verifySwitchyardAttachmentAfterCreate,
+  runWithVerifiedSwitchyardAttachments,
 } from "./provider-publication";
 import {
   materializeRebuildPolicyHandoff,
@@ -401,16 +405,17 @@ export function selectRebuildCreatePolicy(
   requiredNetworkPolicyKeys: readonly string[],
   removedNetworkPolicyKeys: readonly string[],
   requiredNetworkPolicyPresetNames: readonly string[],
-  messagingAgent: string | null | undefined,
+  agentName: string | null | undefined,
   messagingConfig: MessagingChannelConfig | null | undefined,
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
   policySource?: string,
   inferenceProvider: string | null = null,
+  nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"],
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
-      agent: messagingAgent,
+      agent: agentName,
       sandboxName,
       messagingConfig,
     });
@@ -423,13 +428,22 @@ export function selectRebuildCreatePolicy(
   });
   return materializeRebuildPolicyHandoff({
     sandboxName,
+    agentName,
     livePolicyPath: policySourcePath,
     ...(policySource === undefined ? {} : { livePolicySource: policySource }),
     replacementPolicy: generatedPolicy,
+    inferenceProvider,
+    nativeHostedProviderAttachment,
     requiredNetworkPolicyKeys: [
       ...requiredNetworkPolicyKeys,
       ...(usesNativeNvidiaProvider(inferenceProvider) ? ["native_nvidia_inference"] : []),
-      ...(usesNativeHostedProvider(inferenceProvider) ? ["native_hosted_inference"] : []),
+      ...(requiresNativeHostedBasePolicy(
+        inferenceProvider,
+        nativeHostedProviderAttachment,
+        agentName,
+      )
+        ? ["native_hosted_inference"]
+        : []),
     ],
     removedNetworkPolicyKeys: [
       ...removedNetworkPolicyKeys,
@@ -1474,6 +1488,7 @@ export function createProviderEffectBoundary(input: {
   let verifiedOwnedProfileIds: readonly string[] = [];
   let verifiedHermesToolGatewayProfileId: string | null = null;
   const validate = async () => {
+    await validateAttachedSwitchyardProvidersBeforeSandboxCreation(input.preparationInput, deps);
     await validateAttachedMessagingProvidersBeforeSandboxCreation(input.preparationInput, deps);
     if (!input.deferred && !input.resumingVerifiedCreate) {
       verifiedOwnedProfileIds = await validateAttachedOwnedProfilesBeforeSandboxCreation(
@@ -1519,6 +1534,12 @@ export function createProviderEffectBoundary(input: {
   const attachAndVerifyNativeInferenceProvider = async (
     context: VerifiedSandboxCreateEffectsContext,
   ) => {
+    const switchyard = input.preparationInput.hermesSwitchyard;
+    if (switchyard) {
+      context.revalidateSandboxIdentity("verify Switchyard provider attachments");
+      await verifySwitchyardAttachmentAfterCreate(input.sandboxName, input.preparationInput, deps);
+      return;
+    }
     if (input.expectedNativeLocalProviderAttachment) {
       context.revalidateSandboxIdentity(
         `attaching native local provider for sandbox '${input.sandboxName}'`,
@@ -2015,6 +2036,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       },
     );
     const resolvedCreateIntent = preparedCreateIntent.intent;
+    sandboxReuse.bindHermesSwitchyardCreateEnvironment(
+      resolvedCreateIntent.hermesSwitchyard,
+      process.env,
+    );
     const messagingCapabilities = preparedCreateIntent.messagingCapabilities;
     const manageDashboard = sandboxGpuCreateFlow.shouldManageHermesPortableDashboard(
       dashboardRuntime.shouldManageDashboardForAgent(agent),
@@ -2467,6 +2492,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         env: process.env,
         recreate: isRecreateSandbox(createIntent?.recreate),
         sandboxState: existingSandboxState,
+        reservationSessionId: inferenceRouteReservationAuthority?.sessionId,
       });
       const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
       let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
@@ -3057,6 +3083,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildPolicyProviderAuthority,
           rebuildPolicySource?.document,
           resolvedCreateIntent.inferenceProvider,
+          resolvedCreateIntent.nativeHostedProviderAttachment,
         )
       : materializedInitialSandboxPolicy;
     const createRequestPlan = selectRebuildCreateRequestPlan({
@@ -3491,31 +3518,37 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   let managedStartupTransaction: ProviderManagedStartupTransaction | null;
                   const progress: { phase: "apply" | "commit" | "release" } = { phase: "apply" };
                   try {
-                    managedStartupTransaction =
-                      managedWorkloadOnboard.completeProviderManagedStartup(
-                        {
-                          runtimeProvider: managedStartupRuntimeProvider,
-                          sandboxName,
-                          sandboxId: identity.sandboxId,
-                          bootstrapIdentity: managedBootstrapIdentity,
-                          request: managedStartupRootApplyRequest,
-                          ...(expectedContainerId ? { expectedContainerId } : {}),
-                        },
-                        {
-                          onApplied(transaction) {
-                            managedStartupProtocol = transaction?.protocol ?? "identity-bound";
-                            console.log("  ✓ Applied the managed startup profile");
+                    managedStartupTransaction = await runWithVerifiedSwitchyardAttachments(
+                      sandboxName,
+                      providerPreparationInput,
+                      providerPreparationDeps,
+                      context.revalidateSandboxIdentity,
+                      () =>
+                        managedWorkloadOnboard.completeProviderManagedStartup(
+                          {
+                            runtimeProvider: managedStartupRuntimeProvider,
+                            sandboxName,
+                            sandboxId: identity.sandboxId,
+                            bootstrapIdentity: managedBootstrapIdentity,
+                            request: managedStartupRootApplyRequest,
+                            ...(expectedContainerId ? { expectedContainerId } : {}),
                           },
-                          onPhase(phase) {
-                            progress.phase = phase;
-                            if (phase === "commit")
-                              console.log("  Committing managed startup shared state...");
-                            if (phase === "release")
-                              console.log("  ✓ Committed managed startup shared state");
+                          {
+                            onApplied(transaction) {
+                              managedStartupProtocol = transaction?.protocol ?? "identity-bound";
+                              console.log("  ✓ Applied the managed startup profile");
+                            },
+                            onPhase(phase) {
+                              progress.phase = phase;
+                              if (phase === "commit")
+                                console.log("  Committing managed startup shared state...");
+                              if (phase === "release")
+                                console.log("  ✓ Committed managed startup shared state");
+                            },
                           },
-                        },
-                        managedWorkloadOnboard,
-                      );
+                          managedWorkloadOnboard,
+                        ),
+                    );
                   } catch (error) {
                     const prefix = {
                       apply: "Managed startup root apply failed",
@@ -3788,6 +3821,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
       extraProviders: resolvedCreateIntent.extraProviders,
       directCreateProviderNames,
+      hermesSwitchyard: resolvedCreateIntent.hermesSwitchyard,
       gatewayName: GATEWAY_NAME,
       ...directCreateHermesToolGatewayProfile({
         enabled: resolvedCreateIntent.hermesToolGateways.length > 0,

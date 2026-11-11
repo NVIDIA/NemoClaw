@@ -33,6 +33,16 @@ function withInstalledCliPath(base: NodeJS.ProcessEnv, home: string): NodeJS.Pro
   };
 }
 
+export function hostCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const home = env.HOME;
+  if (!home || env.NPM_CONFIG_PREFIX !== undefined || env.npm_config_prefix !== undefined) {
+    return env;
+  }
+  // Hosted Node tool caches can be shared. Exercise installation in the
+  // fixture HOME without changing that cache or relaxing installer path checks.
+  return { ...env, NPM_CONFIG_PREFIX: path.join(home, ".npm-global") };
+}
+
 export function commandEnvironment(
   extra: NodeJS.ProcessEnv = {},
   source: NodeJS.ProcessEnv = process.env,

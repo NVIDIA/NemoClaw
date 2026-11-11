@@ -2,6 +2,11 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
+      "file": "test/repository/colossus-connectivity-registration.test.ts",
+      "test": "keeps default-branch SSH registration non-executing",
+      "category": "security"
+    },
+    {
       "file": "test/repository/dockerignore-security-contract.test.ts",
       "test": "excludes secret-bearing names at every directory depth",
       "category": "security"
@@ -505,6 +510,16 @@
       "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
       "test": "budgets WSL shard 1 for serial live tests, cleanup and evidence upload",
       "category": "compatibility"
+    },
+    {
+      "file": "test/repository/code-scanning-workflow.test.ts",
+      "test": "preserves complete JavaScript coverage across disjoint query partitions",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/candidate-upgrade-admission-workflow.test.ts",
+      "test": "refreshes admission through the configured %s review handoff after %s",
+      "category": "security"
     }
   ]
 }

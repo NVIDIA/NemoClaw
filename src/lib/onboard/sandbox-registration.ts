@@ -36,6 +36,7 @@ import {
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import {
   retainedNativeLocalProviderAttachment,
+  requireSwitchyardBindingForSelection,
   type QualifiedSandboxInferenceRouteReservation,
 } from "../state/registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
@@ -94,6 +95,7 @@ export interface CreatedSandboxRegistryEntryInput {
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
+  hermesSwitchyard?: SandboxEntry["hermesSwitchyard"];
   deferredN1xManagedVllmPreviewIntent?: true;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
@@ -342,6 +344,14 @@ export function buildCreatedSandboxRegistryEntry(
       : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
+    ...(input.hermesSwitchyard
+      ? {
+          hermesSwitchyard: requireSwitchyardBindingForSelection({
+            ...input.inferenceSelection,
+            hermesSwitchyard: input.hermesSwitchyard,
+          }),
+        }
+      : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
@@ -437,6 +447,7 @@ export function prepareCreatedSandboxRegistration(
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
     nativeHostedProviderAttachment: pendingNativeHostedProviderAttachment,
+    hermesSwitchyard: input.hermesSwitchyard ?? pending?.hermesSwitchyard,
     inferenceSelection: pendingRoute
       ? { ...input.inferenceSelection, ...pendingRoute }
       : effectiveSelection,
@@ -587,7 +598,16 @@ export function nativeInferenceCreateIntentFields(
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
+  hermesSwitchyard?: SandboxEntry["hermesSwitchyard"];
 } {
+  const hermesSwitchyard = requireSwitchyardBindingForSelection({
+    provider,
+    model: entry?.model,
+    hermesSwitchyard: entry?.hermesSwitchyard,
+  });
+  if (hermesSwitchyard) {
+    return { inferenceProvider: null, hermesSwitchyard };
+  }
   // Local NIM keeps its shared route even if a stale vLLM attachment exists.
   const nativeLocalProviderAttachment =
     provider === "vllm-local" && (localNimSelected || entry?.nimContainer)

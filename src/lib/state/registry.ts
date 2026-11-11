@@ -30,6 +30,7 @@ import {
   normalizeNativeLocalProviderAttachment,
   retainedNativeLocalProviderAttachment,
   nativeHostedReservationAttachment,
+  requireSwitchyardBindingForSelection,
   isCurrentSandboxInferenceRouteReservation,
   isCurrentPendingSandboxCreateReservation,
   normalizeSandboxInferenceRouteSelection,
@@ -359,6 +360,18 @@ export function registerSandbox(
   return withLock(() => {
     const data = load();
     const recordedEntry = data.sandboxes[entry.name];
+    if (
+      recordedEntry?.pendingRouteReservation === true &&
+      recordedEntry.hermesSwitchyard !== undefined &&
+      !isDeepStrictEqual(
+        requireSwitchyardBindingForSelection(entry),
+        recordedEntry.hermesSwitchyard,
+      )
+    ) {
+      throw new Error(
+        "Cannot register a sandbox after its recorded Switchyard provider bindings changed",
+      );
+    }
     if (entry.pendingCreateIdentity !== undefined) {
       throw new Error("Cannot publish a caller-supplied pending create identity");
     }
@@ -578,6 +591,7 @@ export function registerSandbox(
       ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
       ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
+      hermesSwitchyard: requireSwitchyardBindingForSelection(entry),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
@@ -632,6 +646,7 @@ type SandboxInferenceRouteReservation = Pick<
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
+  hermesSwitchyard?: SandboxEntry["hermesSwitchyard"];
 };
 
 interface SandboxInferenceRouteReservationOptions {
@@ -673,6 +688,7 @@ export function reserveSandboxInferenceRoute(
     )
       return false;
     const normalized = normalizeInferenceSelection(route);
+    const hermesSwitchyard = requireSwitchyardBindingForSelection(route);
     const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
       route.nativeLocalProviderAttachment,
     );
@@ -765,6 +781,10 @@ export function reserveSandboxInferenceRoute(
             nativeNvidiaProviderAttachment ?? existing.nativeNvidiaProviderAttachment,
           ) &&
           isDeepStrictEqual(
+            existing.hermesSwitchyard,
+            hermesSwitchyard ?? existing.hermesSwitchyard,
+          ) &&
+          isDeepStrictEqual(
             normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(existing)),
             normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(route)),
           ));
@@ -783,6 +803,11 @@ export function reserveSandboxInferenceRoute(
         );
       }
       return true;
+    }
+    if (existing?.hermesSwitchyard && !hermesSwitchyard) {
+      throw new Error(
+        `Cannot reserve sandbox '${name}' without its recorded Switchyard provider bindings. Existing bindings were not changed. Switchyard onboarding requires a fresh sandbox; provider reuse is not supported.`,
+      );
     }
     const existingForReservation: SandboxEntry = existing
       ? { ...existing }
@@ -813,6 +838,7 @@ export function reserveSandboxInferenceRoute(
         existing ?? undefined,
         { ...normalized, gatewayName: route.gatewayName },
       ),
+      hermesSwitchyard,
       nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
         ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
         : undefined,
