@@ -360,8 +360,8 @@ Sandboxes still need `image.metadata`.
 
 ### Reach an External Gateway Through an Ingress
 
-NemoClaw sets none of the chart values that expose a managed gateway, so from outside the cluster a managed gateway is reachable only through port forwards ([current limits](../resources/limits.md#platforms-models-and-placement)).
-To reach OpenShell from outside the cluster, the platform operator installs the OpenShell chart behind a Gateway API ingress, following OpenShell's [Kubernetes ingress guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/ingress.mdx).
+NemoClaw doesn't put a managed gateway behind an ingress or an OpenShift Route: it passes none of the chart's `grpcRoute` or `openshiftRoute` values ([current limits](../resources/limits.md#platforms-models-and-placement)).
+Instead, the platform operator installs the OpenShell chart behind a Gateway API ingress, following OpenShell's [Kubernetes ingress guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/ingress.mdx).
 Give the guide's `helm` commands the `openshell` version in this revision's [`versions.json`](../../versions.json); NemoClaw rejects a gateway that reports any other OpenShell version.
 The deployment then connects to that gateway with `management: external`.
 The ingress terminates TLS, so the gateway never receives a client certificate, and clients authenticate with OIDC bearer tokens.
