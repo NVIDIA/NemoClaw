@@ -120,25 +120,8 @@ fn targets_with_plans(
         document.sandbox_harness(sandbox)?;
         let web_search = document.web_search(sandbox)?;
         let image_scope = document.image_scope(sandbox)?;
-        let mut provider_names = document
-            .sandbox_inference_providers(sandbox)?
-            .iter()
-            .map(|provider| provider.key.clone())
-            .collect::<Vec<_>>();
-        if let Some(search) = &web_search {
-            provider_names.push(
-                nemoclaw_openshell::search::web_search_names(
-                    search.provider,
-                    &search.credential.env,
-                    &image_scope,
-                )
-                .1,
-            );
-        }
+        let provider_names = document.sandbox_provider_names(sandbox)?;
         let apis = document.apis(sandbox)?;
-        for api in &apis {
-            provider_names.push(api.registration(&image_scope));
-        }
 
         let mut values: Row = [
             ("name".into(), sandbox.name.to_owned()),

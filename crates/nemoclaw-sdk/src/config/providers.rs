@@ -3,7 +3,7 @@
 use super::references::{ScopedInference, diagnostic_name, missing_reference};
 use super::source::DefinitionSource;
 use super::{ConfigError, Document, Inference, InferenceProvider, NamedSandbox, Route};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 // The resource key identifies the registration; the authored path distinguishes
 // separate definitions with identical values and lets export edit the right one.
@@ -225,19 +225,56 @@ impl Document {
                 }
             }
         }
-        if selected.is_empty()
-            || selected
-                .values()
-                .map(|provider| &provider.path)
-                .collect::<BTreeSet<_>>()
-                .len()
-                > 32
-        {
+        if selected.is_empty() {
             return Err(ConfigError::new(
-                "a deployment requires between one and 32 selected providers",
+                "a deployment requires at least one selected provider",
             ));
         }
         Ok(selected.into_values().collect())
+    }
+
+    /// The OpenShell providers a sandbox attaches: its selected inference
+    /// providers, its web search, and its `api` integrations, in that order.
+    pub(crate) fn sandbox_provider_names(
+        &self,
+        sandbox: NamedSandbox<'_>,
+    ) -> Result<Vec<String>, ConfigError> {
+        let image_scope = self.image_scope(sandbox)?;
+        let mut names = self
+            .sandbox_inference_providers(sandbox)?
+            .into_iter()
+            .map(|provider| provider.key)
+            .collect::<Vec<_>>();
+        if let Some(search) = self.web_search(sandbox)? {
+            names.push(
+                nemoclaw_openshell::search::web_search_names(
+                    search.provider,
+                    &search.credential.env,
+                    &image_scope,
+                )
+                .1,
+            );
+        }
+        for api in self.apis(sandbox)? {
+            names.push(api.registration(&image_scope));
+        }
+        Ok(names)
+    }
+
+    /// OpenShell refuses a sandbox that attaches more providers than its limit.
+    pub(super) fn validate_sandbox_providers(
+        &self,
+        sandbox: NamedSandbox<'_>,
+    ) -> Result<(), ConfigError> {
+        let attached = self.sandbox_provider_names(sandbox)?.len();
+        if attached > nemoclaw_openshell::SANDBOX_PROVIDERS {
+            return Err(ConfigError(format!(
+                "{}: a sandbox attaches at most {} providers, OpenShell's limit per sandbox, counting its inference providers, web search, and api integrations; it attaches {attached}",
+                sandbox_path(sandbox.name),
+                nemoclaw_openshell::SANDBOX_PROVIDERS,
+            )));
+        }
+        Ok(())
     }
 
     pub(crate) fn sandbox_inference_providers<'a>(
