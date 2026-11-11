@@ -128,7 +128,7 @@ pub(crate) async fn run_with_progress(
     )));
     let stderr = AbortOnDropHandle::new(tokio::spawn(capture(
         child.stderr().take().expect("piped stderr"),
-        16384,
+        DIAGNOSTIC_LIMIT,
         None,
     )));
     let status = tokio::select! {
@@ -191,7 +191,7 @@ pub(crate) async fn run_with_progress(
             }
         )
     };
-    let ((output, overflow, valid_ui), (mut diagnostic, mut diagnostic_overflow, _)) = tokio::select! {
+    let ((output, overflow, valid_ui), (mut diagnostic, diagnostic_overflow, _)) = tokio::select! {
         ()=cancel.cancelled()=>return Err(Error::Cancelled),
         result=tokio::time::timeout(Duration::from_secs(5),capture)=>result.map_err(|_|Error::State("child exited but its output streams did not close; retain state for reconciliation"))??,
     };
@@ -215,30 +215,32 @@ pub(crate) async fn run_with_progress(
     };
     let mut message = String::from_utf8_lossy(&diagnostic).into_owned();
     diagnostic.fill(0);
-    if message.is_empty() {
-        for line in output.split(|byte| *byte == b'\n') {
-            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(line)
-                && value["type"] == "diagnostic"
-            {
-                for key in ["summary", "detail"] {
-                    if let Some(text) = value["diagnostic"][key].as_str() {
-                        if message.len() + text.len() + 1 > 16384 {
-                            diagnostic_overflow = true;
-                            break;
-                        }
-                        message.push_str(text);
-                        message.push('\n');
-                    }
-                }
-            }
-        }
-    }
     if withhold_child_text {
         message =
             "child diagnostic withheld because a credential is too short for safe redaction".into();
+    } else if message.is_empty() {
+        let diagnostics = output
+            .split(|byte| *byte == b'\n')
+            .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
+            .filter(|value| value["type"] == "diagnostic")
+            .map(|value| {
+                // Redact each part whole before any cut, so a cut cannot leave
+                // the start of a credential that no longer matches.
+                let [summary, detail] = ["summary", "detail"].map(|key| {
+                    let mut text = value["diagnostic"][key].as_str().map(str::to_owned);
+                    if let Some(text) = &mut text {
+                        redact(text, &redactions);
+                    }
+                    text
+                });
+                Diagnostic { summary, detail }
+            })
+            .collect::<Vec<_>>();
+        message = fit_diagnostics(&diagnostics, DIAGNOSTIC_LIMIT);
     } else {
         redact(&mut message, &redactions);
     }
+    // Truncated child output can end inside a credential, so it is withheld.
     if overflow || diagnostic_overflow {
         message = "child output exceeds the supported limit".into();
     }
@@ -247,6 +249,81 @@ pub(crate) async fn run_with_progress(
         diagnostic: message.trim().into(),
         postcondition_failures,
     })
+}
+
+/// The most bytes of child diagnostics that a failed command's error carries.
+const DIAGNOSTIC_LIMIT: usize = 16384;
+
+/// One OpenTofu diagnostic, redacted.
+struct Diagnostic {
+    summary: Option<String>,
+    detail: Option<String>,
+}
+
+/// Joins whole diagnostics, in order, while they fit in `limit` bytes, and
+/// counts the ones left out, so a long diagnostic cannot hide the others. One
+/// too long to fit even alone keeps its summary and the whole lines of its
+/// detail that fit.
+fn fit_diagnostics(diagnostics: &[Diagnostic], limit: usize) -> String {
+    let kib = limit / 1024;
+    let left_out = |count: usize| match count {
+        0 => String::new(),
+        1 => format!("\n[1 more diagnostic left out to keep this error within {kib} KiB]"),
+        count => {
+            format!("\n[{count} more diagnostics left out to keep this error within {kib} KiB]")
+        }
+    };
+    let cut_marker =
+        format!("\n[rest of this diagnostic left out to keep this error within {kib} KiB]");
+    let mut message = String::new();
+    // Each text is the summary followed by the detail on the next line; the
+    // number is where the summary ends.
+    let texts = diagnostics
+        .iter()
+        .filter_map(|diagnostic| {
+            let summary = diagnostic.summary.as_deref();
+            let text = [summary, diagnostic.detail.as_deref()]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!text.is_empty()).then(|| (summary.map_or(0, str::len), text))
+        })
+        .collect::<Vec<_>>();
+    for (index, (summary, text)) in texts.iter().enumerate() {
+        let separator = if message.is_empty() { "" } else { "\n" };
+        let after = left_out(texts.len() - index - 1);
+        let used = message.len() + separator.len();
+        if used + text.len() + after.len() <= limit {
+            message.push_str(separator);
+            message.push_str(text);
+            continue;
+        }
+        // A diagnostic that would fit in an error of its own is left whole
+        // for the count; one that never fits is cut instead of hidden.
+        let available = limit
+            .saturating_sub(used + after.len() + cut_marker.len())
+            .min(text.len());
+        if text.len() + after.len() > limit && (available >= *summary || message.is_empty()) {
+            let end = if available >= *summary {
+                // The summary ends at a line break, so this keeps it.
+                text.as_bytes()[..=available.min(text.len() - 1)]
+                    .iter()
+                    .rposition(|byte| *byte == b'\n')
+                    .unwrap_or(*summary)
+            } else {
+                text.floor_char_boundary(available)
+            };
+            message.push_str(separator);
+            message.push_str(&text[..end]);
+            message.push_str(&cut_marker);
+            message.push_str(&after);
+        } else {
+            message.push_str(&left_out(texts.len() - index));
+        }
+        return message;
+    }
+    message
 }
 
 fn secret_values(overrides: &BTreeMap<String, String>) -> Vec<String> {
@@ -819,6 +896,177 @@ async fn json_diagnostics_preserve_failures_and_redact_credentials() {
     assert!(error.to_string().contains("provider failed"));
     assert!(error.to_string().contains("[redacted]"));
     assert!(!error.to_string().contains("secret-sentinel"));
+}
+
+/// OpenTofu diagnostics past the error's 16 KiB: report those that fit and
+/// count the rest instead of withholding them all (#14399).
+#[cfg(all(test, unix))]
+mod diagnostic_limit_tests {
+    use super::*;
+
+    const LIMIT: usize = 16384;
+
+    /// `count` numbered lines of `width` bytes, so a cut shows which survived.
+    fn detail(service: usize, count: usize, width: usize) -> String {
+        (0..count)
+            .map(|line| {
+                let mut text = format!("s{service} line {line:05} ");
+                while text.len() < width {
+                    text.push('x');
+                }
+                text
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Runs a fake OpenTofu plan that reports `diagnostics` (summary, detail)
+    /// and fails, and returns the error's diagnostic.
+    async fn failed_plan(diagnostics: &[(String, String)], secret: Option<&str>) -> String {
+        let directory = tempfile::tempdir().unwrap();
+        let mut lines = vec![serde_json::json!({"type": "version", "ui": "1.2"}).to_string()];
+        for (summary, detail) in diagnostics {
+            lines.push(
+                serde_json::json!({
+                    "type": "diagnostic",
+                    "diagnostic": {"severity": "error", "summary": summary, "detail": detail}
+                })
+                .to_string(),
+            );
+        }
+        std::fs::write(
+            directory.path().join("output.jsonl"),
+            lines.join("\n") + "\n",
+        )
+        .unwrap();
+        let binary = directory.path().join("tofu");
+        crate::executable::write_executable(&binary, "#!/bin/sh\ncat output.jsonl\nexit 1\n");
+        let overrides = secret
+            .map(|secret| BTreeMap::from([("CUSTOM_CREDENTIAL".into(), secret.into())]))
+            .unwrap_or_default();
+        let error = run_with_progress(
+            directory.path(),
+            &binary,
+            &["plan", "-json"],
+            &overrides,
+            &CancellationToken::new(),
+            None,
+            Some(std::sync::Arc::new(|_| {})),
+        )
+        .await
+        .unwrap_err();
+        let Error::Execution { diagnostic, .. } = error else {
+            panic!("expected the plan's failure, got {error:?}");
+        };
+        diagnostic
+    }
+
+    fn joined(diagnostics: &[(String, String)]) -> String {
+        diagnostics
+            .iter()
+            .map(|(summary, detail)| format!("{summary}\n{detail}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[tokio::test]
+    async fn diagnostics_that_fill_the_limit_exactly_are_reported_unchanged() {
+        let mut diagnostics: Vec<_> = (0..3)
+            .map(|service| {
+                (
+                    format!("service {service} failed readiness"),
+                    detail(service, 40, 99),
+                )
+            })
+            .collect();
+        let summary = "service 3 failed readiness".to_owned();
+        let used = joined(&diagnostics).len() + 1 + summary.len() + 1;
+        diagnostics.push((summary, "y".repeat(LIMIT - used)));
+        let expected = joined(&diagnostics);
+        assert_eq!(expected.len(), LIMIT);
+        let diagnostic = failed_plan(&diagnostics, None).await;
+        assert!(
+            diagnostic == expected,
+            "the diagnostics changed; got {} bytes ending {:?}",
+            diagnostic.len(),
+            &diagnostic[diagnostic.len().saturating_sub(200)..]
+        );
+    }
+
+    #[tokio::test]
+    async fn diagnostics_past_the_limit_keep_those_that_fit_whole_and_count_the_rest() {
+        let secret = "secret-sentinel-value";
+        let diagnostics: Vec<_> = (0..6)
+            .map(|service| {
+                let mut detail = detail(service, 50, 99);
+                if service == 1 || service == 4 {
+                    detail.push_str(&format!("\nkey={secret}"));
+                }
+                (format!("service {service} failed readiness"), detail)
+            })
+            .collect();
+        let diagnostic = failed_plan(&diagnostics, Some(secret)).await;
+        let kept = joined(&diagnostics[..3]).replace(secret, "[redacted]");
+        assert!(
+            diagnostic.starts_with(&format!("{kept}\n")),
+            "the first three diagnostics are not reported whole and in order: {diagnostic}"
+        );
+        let rest = &diagnostic[kept.len() + 1..];
+        assert_eq!(
+            rest.lines().count(),
+            1,
+            "more than the omitted count follows: {rest}"
+        );
+        assert!(
+            rest.contains("3 more diagnostics"),
+            "the omitted count is missing: {rest}"
+        );
+        assert!(!diagnostic.contains(secret), "a credential leaked");
+        assert!(diagnostic.len() <= LIMIT, "the error exceeds the limit");
+    }
+
+    #[tokio::test]
+    async fn an_oversized_diagnostic_keeps_its_summary_and_the_whole_lines_that_fit() {
+        let diagnostics = vec![
+            ("service 0 failed readiness".to_owned(), detail(0, 10, 99)),
+            ("vLLM exited during startup".to_owned(), detail(1, 400, 99)),
+            ("service 2 failed readiness".to_owned(), detail(2, 10, 99)),
+        ];
+        let diagnostic = failed_plan(&diagnostics, None).await;
+        let first = joined(&diagnostics[..1]);
+        assert!(
+            diagnostic.starts_with(&format!("{first}\n")),
+            "the diagnostic before the oversized one is not whole: {diagnostic}"
+        );
+        let mut lines = diagnostic[first.len() + 1..].lines();
+        assert_eq!(lines.next(), Some("vLLM exited during startup"));
+        let original: Vec<_> = diagnostics[1].1.lines().collect();
+        let kept = lines
+            .clone()
+            .take_while(|line| line.starts_with("s1 line "))
+            .count();
+        assert_eq!(
+            lines.by_ref().take(kept).collect::<Vec<_>>(),
+            original[..kept],
+            "the kept detail is not whole lines from its start"
+        );
+        assert!(kept > 140, "only {kept} lines of the oversized detail fit");
+        let rest: Vec<_> = lines.collect();
+        assert_eq!(
+            rest.len(),
+            2,
+            "expected a cut marker and the omitted count: {rest:?}"
+        );
+        assert!(
+            rest[1].contains("1 more diagnostic"),
+            "the omitted count is missing: {rest:?}"
+        );
+        assert!(
+            !diagnostic.contains("service 2"),
+            "a diagnostic after the cut one was kept"
+        );
+        assert!(diagnostic.len() <= LIMIT, "the error exceeds the limit");
+    }
 }
 
 // An unrelated credential must not erase a safe diagnostic produced by a

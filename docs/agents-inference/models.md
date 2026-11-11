@@ -223,7 +223,7 @@ It stops its inference process on sustained pressure, failed memory observations
 The container also stays stopped after a host reboot; see [host reboot recovery](../build-deploy/usage.md#recover-after-a-host-reboot).
 A native process exit also ends supervision of that process.
 When vLLM exits, the stop detail and the apply error include the end of vLLM's output, up to 4 KiB, with the inference key replaced by `[redacted]`.
-When one command's OpenTofu diagnostics together exceed 16 KiB, as several failed services' excerpts can, the apply error shows `child output exceeds the supported limit` in their place ([#14399](https://github.com/NVIDIA/NemoClaw/issues/14399)); the stop detail stays in `/data/status.json`.
+When one command's OpenTofu diagnostics together exceed 16 KiB, as several failed services' excerpts can, the apply error lists those that fit and how many it left out; the stop detail stays in `/data/status.json`.
 If the cause isn't in the excerpt, read it in the container log.
 The model volume retains `/data/status.json` with `phase`, `detail`, `updated` (UTC timestamp), and `pid`.
 Phases are `initializing`, `downloading`, `preparing`, `loading`, `ready`, and `stopped`.
