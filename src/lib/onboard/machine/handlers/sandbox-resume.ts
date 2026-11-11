@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ServingProfileProvenance } from "../../../inference/serving/types";
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { isN1xManagedVllmProviderModel } from "../../../domain/sandbox/n1x-managed-vllm-rebuild";
@@ -38,6 +39,24 @@ export function isValidSavedResourceProfile(
   }
 }
 
+/**
+ * Managed vLLM recipes that serve Muse Glimmer with a 32,768-token context window.
+ * Direct disclosure puts about 31K tokens of tool schemas in the first request,
+ * which leaves no room for a reply (#14065).
+ */
+const MUSE_GLIMMER_VLLM_RECIPE_IDS: ReadonlySet<string> = new Set([
+  "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
+  "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
+]);
+
+function isMuseGlimmerManagedVllmSelection(
+  provenance: ServingProfileProvenance | null | undefined,
+): boolean {
+  return (
+    provenance?.recipe.backend === "vllm" && MUSE_GLIMMER_VLLM_RECIPE_IDS.has(provenance.recipe.id)
+  );
+}
+
 /** Choose the initial local OpenClaw default only for this session's new reservation. */
 export function initialOpenClawToolDisclosure(input: {
   fresh: boolean;
@@ -45,6 +64,7 @@ export function initialOpenClawToolDisclosure(input: {
   provider: string;
   model: string;
   deferredN1xManagedVllmPreviewIntent?: boolean;
+  servingProfileProvenance?: ServingProfileProvenance | null;
   entry: SandboxEntry | null;
   sessionId: string | undefined;
   env: NodeJS.ProcessEnv;
@@ -63,7 +83,15 @@ export function initialOpenClawToolDisclosure(input: {
     input.deferredN1xManagedVllmPreviewIntent === true &&
     isN1xManagedVllmProviderModel(input.provider, input.model) &&
     input.entry?.model === input.model;
-  return resolveToolDisclosureRequest(null, input.env) ?? (n1xDefault ? "progressive" : "direct");
+  // The Muse Glimmer managed vLLM profiles share the same 32K window (#14065).
+  const museDefault =
+    input.provider === "vllm-local" &&
+    isMuseGlimmerManagedVllmSelection(input.servingProfileProvenance) &&
+    input.entry?.model === input.model;
+  return (
+    resolveToolDisclosureRequest(null, input.env) ??
+    (n1xDefault || museDefault ? "progressive" : "direct")
+  );
 }
 
 export interface SandboxResumeSignals {

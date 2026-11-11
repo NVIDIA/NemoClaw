@@ -2125,6 +2125,7 @@ class SandboxStateFlow<
           provider: this.options.provider,
           model: this.options.model,
           deferredN1xManagedVllmPreviewIntent: this.options.deferredN1xManagedVllmPreviewIntent,
+          servingProfileProvenance: state.session?.servingProfileProvenance ?? null,
           entry: registeredEntry,
           sessionId: state.session?.sessionId,
           env: this.options.env,
