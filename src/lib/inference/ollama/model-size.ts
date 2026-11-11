@@ -98,7 +98,11 @@ export function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;
   let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
+  // 1048575 / 1024 is 1023.9990234375, and toFixed(2) prints that as 1024.00.
+  // The unit follows that printed label.
+  while (unit < units.length - 1) {
+    const digits = unit === 0 ? 0 : 2;
+    if (Number(value.toFixed(digits)) < 1024) break;
     value /= 1024;
     unit += 1;
   }
