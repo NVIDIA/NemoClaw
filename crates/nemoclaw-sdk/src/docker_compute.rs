@@ -283,11 +283,20 @@ fn container(target: &Target) -> Result<Value, Error> {
             json!({"type":"volume","source":format!("{}-auth",spec.name),"target":"/credentials"}),
         );
     }
-    if process.gpu {
-        attrs["gpus"] = match &process.gpu_device {
-            Some(device) => json!(format!("device={device}")),
-            None => json!("all"),
-        };
+    match &process.gpus {
+        crate::managed::Gpus::None => {}
+        crate::managed::Gpus::All => attrs["gpus"] = json!("all"),
+        // Docker provider v4.6.0 splits `gpus` on commas, so it would read
+        // `device=0,1` as GPU 0 and a count of 1, a request Docker refuses.
+        // The parser allows one device until multi-GPU serving exists.
+        crate::managed::Gpus::Devices(devices) => match devices.as_slice() {
+            [device] => attrs["gpus"] = json!(format!("device={device}")),
+            _ => {
+                return Err(Error::Conflict(
+                    "the pinned Docker provider can't request several GPU devices through gpus",
+                ));
+            }
+        },
     }
     // Labels force replacement because Docker provider v4.6.0 updates limits in
     // place: its Update omits CFS quota, and lowering memory on a running
@@ -1066,5 +1075,39 @@ mod tests {
                     .any(|value| value.as_str().unwrap().starts_with("docker_network."))
             );
         }
+    }
+    // The parser allows one GPU device for now. A list reaches Docker's native
+    // request whole, but Docker provider v4.6.0 reads `device=0,1` as one
+    // device and a count, so the OpenTofu graph refuses it instead of
+    // requesting the wrong GPUs.
+    #[test]
+    fn several_gpu_devices_reach_the_native_request_and_are_refused_for_the_docker_provider() {
+        let document =
+            Document::parse(include_bytes!("../tests/fixtures/config/spark.yaml").as_slice())
+                .unwrap();
+        let generations = crate::state::Record::new(document.clone())
+            .unwrap()
+            .generations;
+        let (_, mut raw) = runtime_graph(&document, &generations, "0.1.0").unwrap();
+        let service = raw
+            .iter_mut()
+            .find(|target| target.kind == "inference_service")
+            .unwrap();
+        let devices = vec![
+            "0".to_owned(),
+            "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3".to_owned(),
+        ];
+        let mut spec = spec(service).unwrap();
+        spec.process.as_mut().unwrap().gpus = crate::managed::Gpus::Devices(devices.clone());
+        let host = spec.container("/data").unwrap().host_config.unwrap();
+        let requests = host.device_requests.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].device_ids, Some(devices));
+        assert_eq!(requests[0].count, None);
+        service
+            .values
+            .insert("spec".into(), serde_json::to_string(&spec).unwrap());
+        let error = container(service).unwrap_err().to_string();
+        assert!(error.contains("several GPU devices"), "{error}");
     }
 }
