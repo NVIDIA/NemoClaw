@@ -170,7 +170,6 @@ Paths:
 |---|---|---|---|---|
 | `architecture` | string | Yes | — | Execution host CPU architecture. Constraints: `"arm64"` or `"amd64"`. |
 | `gpu` | string | Yes | — | GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory. Constraints: minimum characters 1. |
-| `gpuCount` | integer | No | `1` | Number of GPUs the recipe's budget was measured on. It sets the default tensor parallel size; vLLM checks the layout against the GPUs it sees. Constraints: minimum 1; maximum 16. |
 | `imageLabels` | map of string | Yes | — | Required org.nemoclaw.* labels. org.nemoclaw.recipe.protocol must equal v1. Constraints: keys: pattern `^org\.nemoclaw\.`; values: minimum characters 1; maximum characters 256. |
 | `minDriverMajor` | integer | Yes | — | Minimum NVIDIA driver major version. Constraints: minimum 1; maximum 10000. |
 | `minHostMemoryGiB` | integer | Yes | — | Minimum total host memory in GiB. Constraints: minimum 1; maximum 4096. |
@@ -1504,7 +1503,7 @@ Paths:
 | `pipelineParallelSize` | integer | No | — | vLLM's --pipeline-parallel-size: how many GPU stages each hold a range of layers. Constraints: minimum 1; maximum 16. Omission selects vLLM's default of 1. |
 | `preparedEnvironment` | map of string | No | `{}` | VLLM_* variables mapped to paths beneath verified prepared data; . selects its root. Names must not also appear in environment. Constraints: keys: pattern `^VLLM_[A-Z0-9_]*$`. |
 | `reasoningParser` | string | No | `""` | Native vLLM reasoning parser supplied by the runtime image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
-| `tensorParallelSize` | integer | No | — | vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts. Constraints: minimum 1; maximum 16. Omission selects compatibility.gpuCount when pipelineParallelSize is also omitted, and vLLM's default of 1 when it's set. |
+| `tensorParallelSize` | integer | No | — | vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts. Constraints: minimum 1; maximum 16. Omission selects vLLM's default of 1. |
 | `toolParser` | string | No | `""` | Native vLLM tool parser supplied by the runtime image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
 
 ## Spec

@@ -180,11 +180,6 @@ fn recipe(defs: &mut serde_json::Map<String, Value>) {
     property(compatibility, "gpu", json!({"minLength": 1}));
     property(
         compatibility,
-        "gpuCount",
-        json!({"minimum": 1, "maximum": c::PARALLEL_SIZE_MAX, "default": 1}),
-    );
-    property(
-        compatibility,
         "minDriverMajor",
         json!({"minimum": 1, "maximum": r::DRIVER_MAX}),
     );
@@ -254,7 +249,7 @@ fn recipe(defs: &mut serde_json::Map<String, Value>) {
     property(
         settings,
         "tensorParallelSize",
-        json!({"minimum": 1, "maximum": c::PARALLEL_SIZE_MAX, "x-nemoclaw-default-rule": "Omission selects compatibility.gpuCount when pipelineParallelSize is also omitted, and vLLM's default of 1 when it's set."}),
+        json!({"minimum": 1, "maximum": c::PARALLEL_SIZE_MAX, "x-nemoclaw-default-rule": "Omission selects vLLM's default of 1."}),
     );
     property(
         settings,

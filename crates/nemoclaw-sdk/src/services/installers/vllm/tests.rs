@@ -241,19 +241,18 @@ fn vllm_gets_the_parallel_layout_of_the_service_or_its_recipe() {
     };
     let mut service = service();
     assert_eq!(layout(&service), ("1".into(), "1".into()));
-    // A recipe's tensor parallelism defaults to the GPU count its budget was
-    // measured on.
-    let recipe = service.recipe.as_mut().unwrap();
-    recipe.compatibility.gpu_count = 2;
-    assert_eq!(layout(&service), ("2".into(), "1".into()));
-    // A pipeline-only layout keeps vLLM's tensor default of 1, as vLLM's guide
-    // sets for an uneven split or GPUs without NVLink.
+    // A recipe's layout is its own: an omitted size gets vLLM's default of 1,
+    // whatever GPUs the service selects.
+    service.container =
+        Some(serde_json::from_value(serde_json::json!({ "gpuDevices": ["0", "1"] })).unwrap());
+    assert_eq!(layout(&service), ("1".into(), "1".into()));
     let recipe = service.recipe.as_mut().unwrap();
     recipe.serving.pipeline_parallel_size = Some(2);
     assert_eq!(layout(&service), ("1".into(), "2".into()));
     let recipe = service.recipe.as_mut().unwrap();
     recipe.serving.tensor_parallel_size = Some(4);
     assert_eq!(layout(&service), ("4".into(), "2".into()));
+    service.container = None;
 
     service.recipe = None;
     service.hardware = Some(super::ServiceHardware::Profile {
