@@ -50,6 +50,3 @@ pub(crate) const CLUSTER_SANDBOXES: usize = 256;
 /// Sandboxes in a document with a Docker or Podman gateway, which runs every
 /// sandbox on one host.
 pub(crate) const HOST_SANDBOXES: usize = 32;
-/// Providers OpenShell attaches to one sandbox: `MAX_PROVIDERS` in the pinned
-/// OpenShell's gateway, which refuses a sandbox with more.
-pub(crate) const SANDBOX_PROVIDERS: usize = 32;

@@ -152,9 +152,18 @@ fn a_kubernetes_deployment_selects_a_provider_for_each_of_256_sandboxes() {
 fn a_sandbox_with_more_than_32_attached_providers_is_rejected_by_name() {
     let input: Value =
         serde_saphyr::from_str(include_str!("../../../examples/web-search.yaml")).unwrap();
-    // The researcher attaches web search beside its inference providers.
-    let attach = |providers: usize| {
+    // The researcher attaches web search beside its inference providers,
+    // and with `api`, an api integration.
+    let attach = |providers: usize, api: bool| {
         let mut value = input.clone();
+        if api {
+            value["spec"]["integrations"]["bookings"] = json!({
+                "kind": "api", "endpoint": "https://bookings.example.com/mcp",
+                "credential": {"env": "BOOKINGS_API_KEY"}
+            });
+            value["spec"]["sandboxes"]["researcher"]["agent"]["integrationRefs"] =
+                json!(["search", "bookings"]);
+        }
         let researcher = &mut value["spec"]["sandboxes"]["researcher"];
         researcher["inferenceProviders"] = Value::Object(
             (0..providers)
@@ -174,16 +183,21 @@ fn a_sandbox_with_more_than_32_attached_providers_is_rejected_by_name() {
         });
         value
     };
-    Document::parse(attach(31).to_string().as_bytes()).unwrap();
-    let error = Document::parse(attach(32).to_string().as_bytes())
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains("spec.sandboxes[researcher]")
-            && error.contains("33")
-            && error.contains("32"),
-        "{error}"
-    );
+    for (providers, api) in [(31, false), (30, true)] {
+        Document::parse(attach(providers, api).to_string().as_bytes())
+            .unwrap_or_else(|error| panic!("{providers} providers, api {api}: {error}"));
+    }
+    for (providers, api) in [(32, false), (31, true)] {
+        let error = Document::parse(attach(providers, api).to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("spec.sandboxes[researcher]")
+                && error.contains("attaches 33")
+                && error.contains("at most 32"),
+            "{providers} providers, api {api}: {error}"
+        );
+    }
 }
 
 #[test]

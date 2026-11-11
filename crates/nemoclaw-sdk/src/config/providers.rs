@@ -267,11 +267,11 @@ impl Document {
         sandbox: NamedSandbox<'_>,
     ) -> Result<(), ConfigError> {
         let attached = self.sandbox_provider_names(sandbox)?.len();
-        if attached > super::constraints::SANDBOX_PROVIDERS {
+        if attached > nemoclaw_openshell::SANDBOX_PROVIDERS {
             return Err(ConfigError(format!(
                 "{}: a sandbox attaches at most {} providers, OpenShell's limit per sandbox, counting its inference providers, web search, and api integrations; it attaches {attached}",
                 sandbox_path(sandbox.name),
-                super::constraints::SANDBOX_PROVIDERS,
+                nemoclaw_openshell::SANDBOX_PROVIDERS,
             )));
         }
         Ok(())

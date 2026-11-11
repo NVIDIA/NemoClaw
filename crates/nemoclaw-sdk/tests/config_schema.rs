@@ -693,8 +693,11 @@ fn the_gateway_runtime_sets_how_many_sandboxes_a_document_holds() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (example, cap, runtime) in [
         ("kubernetes/managed-development.yaml", 256, "Kubernetes"),
+        ("kubernetes/external-gateway.yaml", 256, "Kubernetes"),
         ("openshift/managed-development.yaml", 256, "OpenShift"),
         ("local.yaml", 32, "Docker"),
+        // An omitted runtime selects Docker.
+        ("web-search.yaml", 32, "Docker"),
         ("managed-podman.yaml", 32, "Podman"),
     ] {
         let value = input(example);

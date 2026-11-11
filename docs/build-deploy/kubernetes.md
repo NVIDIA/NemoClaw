@@ -81,7 +81,7 @@ A document has one gateway, one namespace and one OpenTofu state, so the cap als
 Size the cluster for the sandboxes you declare:
 
 - **Pods:** each sandbox runs in its own pod. At the kubelet's default of 110 pods per node, 256 sandboxes need at least three nodes, plus room for the gateway, the issuer and the cluster's own pods.
-- **Storage:** a managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless you [choose another](#destroy-a-deployment).
+- **Storage:** a managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless `workspace_storage_class` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) names another.
 - **Gateway:** the managed gateway is limited to 1 CPU and 1 GiB of memory, and the limit can't be changed yet ([#13835](https://github.com/NVIDIA/NemoClaw/issues/13835)).
   No apply of 256 sandboxes has been recorded, so it is unverified whether the gateway serves that many at this limit ([#14403](https://github.com/NVIDIA/NemoClaw/issues/14403)).
 
