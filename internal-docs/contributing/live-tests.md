@@ -98,7 +98,8 @@ Destroy keeps the gateway's volume; with a `Retain` StorageClass, such as OpenSh
 
 ## HCL E2E Scenarios
 
-Each HCL E2E scenario deploys one document from `crates/nemoclaw-e2e/cases` and runs the matching `tests/e2e/hcl/tests/<case>.tftest.hcl` under the bundled OpenTofu `tofu test`.
+Each HCL E2E scenario deploys the document selected by `nemoclaw_build::hcl_cases::files` and runs `tests/e2e/hcl/tests/<case>.tftest.hcl` under the bundled OpenTofu `tofu test`.
+Most documents live in `crates/nemoclaw-e2e/cases`; the Station case reuses the existing GTC Station example.
 `hcl_live::case` sets the run's context and starts `tofu test`; the run blocks own the sequence and the assertions.
 When `tofu test` ends, `hcl_live::case` prints how long each run block took, and the cleanup that destroys their state, with the total; with `GITHUB_STEP_SUMMARY` set, it also appends the table to the job summary.
 It reads the times from OpenTofu's debug log, which can hold deployment values: the test creates it owner-only in the run's `work` directory, never prints it, and deletes it once read, and reports run names and seconds only.
@@ -116,7 +117,7 @@ Run blocks call these modules:
 | `docker-openclaw-nvidia` | Live / HCL | OpenClaw on NVIDIA hosted inference; any reply. |
 | `docker-openclaw-v0-parity` | Live / HCL and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
 | `docker-hermes-v0-parity` | Live / HCL | The hosted parity Hermes document; `FOUR`. |
-| `dgx-station-openclaw-nemotron` | Manual Colossus workflow, GB300 ARM64 | OpenClaw on local Nemotron 3.5 Super VL; `READY`, unchanged apply, and verified runtime cleanup. |
+| `dgx-station-openclaw-nemotron` | Manual Colossus workflow, GB300 ARM64 | OpenClaw on local Nemotron 3.5 Super VL; `READY` and verified runtime cleanup. |
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
 | `docker-openclaw-vllm-shared` | Live / HCL, NVIDIA GPU runner | Two OpenClaw agents sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
@@ -167,13 +168,17 @@ The runner must already provide Ubuntu 24 on ARM64, a GB300, the pinned Rust too
 The job checks these prerequisites; it does not install system packages, restart Docker, or manage the Colossus lease.
 Use a Station dedicated to CI with one runner agent. The existing concurrency group serializes whole Colossus runs without cancelling an active run.
 
-The case builds the candidate's bundle, E2E executable, OpenClaw image, and vLLM supervisor locally.
+The case reuses [the GTC OpenClaw Station example](../../examples/gtc-dc/openclaw-dgx-station.yaml); it adds no separate deployment YAML.
+`station prepare` keeps its topology, serving limits, and memory settings, and selects `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` at revision `da5b2650a835292c678994a1fa3fb653250fb508`, with the matching serving and route name `nemotron-3.5-super-vl`.
+The committed example remains on Nemotron 3 Super; the generated `case.json` and identity report record the selected model and revision for this run.
+The workflow builds the candidate's bundle, E2E executable, OpenClaw image, and vLLM supervisor locally.
 The Station runtime overrides `VLLM_IMAGE` with the immutable upstream ARM64 image in the workflow, from vLLM commit `cf5cea2da37d3dfed27d2e0aa3041c3e553c2d57`, which includes [vLLM #64506](https://github.com/vllm-project/vllm/pull/64506).
 It applies no runtime source patches. Other runtime builds keep their existing default base.
 This upstream image differs from Rebecca's patched manual precursor; that precursor does not qualify this automated candidate.
 
 Each attempt creates a fresh UID, free ports and subnet, configuration, and deployment state.
-The HCL scenario applies the case, requests `READY` through OpenClaw, checks an unchanged plan and reapply with the same agent identities, and destroys the deployment.
+The HCL scenario applies the case, requests `READY` through OpenClaw, and destroys the deployment.
+The `remote_service` integration scenarios cover unchanged plans and reapply against fixtures; this live case checks the hardware, inference, and cleanup boundary.
 A separate cleanup step retries SDK destroy after a failed or interrupted scenario and independently checks Docker for owned workloads and unexpected retained objects.
 Cleanup failure fails the job. It never removes unrelated resources or uses Docker prune.
 
@@ -186,7 +191,7 @@ Raw responses, credentials, deployment state, and the original bundle remain pri
 
 Model and gateway storage, service credentials, and images remain after destroy according to the SDK lifecycle.
 A fresh UID gets a fresh model volume: this case does not import another deployment's weights or claim a warm model-cache run. Rust and image build caches can still be reused.
-Record cold preparation separately from cached preparation if a future approved cache-import path is used; unchanged apply is not a cached model-startup measurement.
+Record cold preparation separately from cached preparation if a future approved cache-import path is used.
 Retained storage consumes disk space and requires explicit operator retirement after diagnosis.
 
 If the runner disappears or is forcibly stopped before cleanup, inspect its private run directory after recovery.

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # OpenClaw and Nemotron 3.5 Super VL on the manual Colossus GB300 runner.
-# Reuses the vLLM lifecycle scenario at 02e69d1, adding unchanged apply and
-# retained bearer credentials. The caller independently verifies cleanup.
+# Reuses the GTC Station example with the bound 3.5 model and candidate images.
+# The caller independently verifies cleanup; integration tests cover unchanged
+# reconciliation without reserving a GPU.
 
 run "apply" {
   module {
@@ -40,40 +41,6 @@ run "reply" {
   assert {
     condition     = length(output.failed) == 0
     error_message = "failed: ${join(", ", output.failed)}"
-  }
-}
-
-run "unchanged_apply" {
-  module {
-    source = "./cli"
-  }
-
-  variables {
-    operation       = "apply"
-    baseline_agents = run.apply.result.agents
-  }
-
-  assert {
-    condition = (
-      output.exit_code == 0 && output.result.outcome == "succeeded"
-      && output.changes == {} && output.result.agents == var.baseline_agents
-    )
-    error_message = "Unchanged apply changed resources or replaced the agent runtime."
-  }
-}
-
-run "unchanged_plan" {
-  module {
-    source = "./cli"
-  }
-
-  variables {
-    operation = "plan"
-  }
-
-  assert {
-    condition     = output.exit_code == 0 && output.changes == {}
-    error_message = "A plan of the applied deployment has changes or failed: ${output.error}"
   }
 }
 

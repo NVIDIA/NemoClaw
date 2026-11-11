@@ -58,9 +58,22 @@ fn station_preparation_binds_candidate_images_and_fresh_inputs_once() {
         String::from_utf8_lossy(&result.stderr)
     );
     let doc: Value = serde_json::from_slice(&fs::read(run.join("case.json")).unwrap()).unwrap();
+    let service = &doc["spec"]["services"]["super"];
+    assert_eq!(
+        service["model"],
+        serde_json::json!({
+            "repository": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+            "revision": "da5b2650a835292c678994a1fa3fb653250fb508",
+        })
+    );
+    assert_eq!(service["serving"]["modelName"], "nemotron-3.5-super-vl");
+    assert_eq!(
+        doc["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]["model"],
+        service["serving"]["modelName"]
+    );
     assert_ne!(
         doc["metadata"]["uid"],
-        "26a7dbd6-a34b-467f-9b0c-de3081a998b7"
+        "abee9b58-3ab4-4066-a533-629570c7b1e5"
     );
     assert_eq!(doc["spec"]["gateway"]["networkCIDR"], "172.30.201.0/24");
     assert_eq!(

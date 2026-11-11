@@ -79,6 +79,17 @@ pub fn prepare(root: &Path, run: &Path) -> Result<()> {
     let uid = live::uuid()?;
     let template = fs::read_to_string(root.join(crate::hcl_cases::files(CASE)[0].clone()))?;
     let mut document: Value = serde_saphyr::from_str(&template)?;
+    // Reuse the GTC Station topology, selecting the 3.5 reference model rather
+    // than the example's 3 Super model. Other serving and memory settings stay
+    // with the example; only run identities, endpoints, and image pins vary.
+    let service = &mut document["spec"]["services"]["super"];
+    service["model"] = json!({
+        "repository": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+        "revision": "da5b2650a835292c678994a1fa3fb653250fb508",
+    });
+    service["serving"]["modelName"] = "nemotron-3.5-super-vl".into();
+    document["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]["model"] =
+        "nemotron-3.5-super-vl".into();
     document["metadata"]["uid"] = uid.clone().into();
     let gateway_port = live::free_port()?;
     let model_port = (0..8)
@@ -217,25 +228,23 @@ pub fn cleanup(run: &Path, bundle: &Path) -> Result<()> {
             &workspace,
         )?;
         let filter = format!("label={OWNER}={uid}");
-        verify_retained(
-            &docker(&[
-                "network",
-                "ls",
-                "--format",
-                "{{.Name}}",
-                "--filter",
-                &filter,
-            ])?,
-            &[format!("{workspace}-network")],
-        )?;
-        verify_retained(
-            &docker(&["volume", "ls", "--format", "{{.Name}}", "--filter", &filter])?,
-            &[
-                format!("{workspace}-gateway-data"),
-                format!("{workspace}-inference-super-data"),
-                format!("{workspace}-inference-super-auth"),
-            ],
-        )
+        for (kind, retained) in [
+            ("network", vec![format!("{workspace}-network")]),
+            (
+                "volume",
+                vec![
+                    format!("{workspace}-gateway-data"),
+                    format!("{workspace}-inference-super-data"),
+                    format!("{workspace}-inference-super-auth"),
+                ],
+            ),
+        ] {
+            verify_retained(
+                &docker(&[kind, "ls", "--format", "{{.Name}}", "--filter", &filter])?,
+                &retained,
+            )?;
+        }
+        Ok(())
     })();
     fs::write(
         run.join("reports/cleanup.json"),

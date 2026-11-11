@@ -28,7 +28,7 @@ use std::{
 const CASES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/cases");
 /// The integration `tofu test` root.
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/integration/hcl");
-/// The live E2E test files, which name their documents by file name.
+/// The live E2E test files, paired with case documents or the Station example.
 const LIVE_TESTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/e2e/hcl/tests");
 const EXAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples");
 const GENERATIONS: [&str; 10] = [
@@ -89,7 +89,7 @@ async fn scenarios_in_shard_4() {
     run_shard(3).await;
 }
 
-/// Every live E2E test file names a document in `cases`, and every
+/// Every live E2E test file has a case document or existing example, and every
 /// integration test file applies at least one document or authored example
 /// that exists, so a renamed or removed input fails with the unit tests,
 /// before a bundle is built.
@@ -100,7 +100,11 @@ fn every_scenario_test_names_its_inputs() {
         .filter_map(|entry| {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
             let scenario = name.strip_suffix(".tftest.hcl")?.to_owned();
-            let case = Path::new(CASES).join(format!("{scenario}.yaml"));
+            let case = if scenario == "dgx-station-openclaw-nemotron" {
+                Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-station.yaml")
+            } else {
+                Path::new(CASES).join(format!("{scenario}.yaml"))
+            };
             (!case.is_file()).then(|| format!("e2e/hcl/tests/{name}"))
         })
         .collect();

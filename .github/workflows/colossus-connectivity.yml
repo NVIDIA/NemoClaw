@@ -114,7 +114,7 @@ jobs:
           # the Actions workspace. Deployment state must never outlive its CLI.
           cp -a "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_HCL_RUN/bundle"
           echo "NEMOCLAW_TEST_BUNDLE=$NEMOCLAW_HCL_RUN/bundle" >> "$GITHUB_ENV"
-      - name: Run inference, unchanged reconciliation, and teardown
+      - name: Run deployment, inference, and teardown
         timeout-minutes: 45
         working-directory: crates/nemoclaw-e2e
         run: '"$NEMOCLAW_E2E_EXECUTABLE" hcl_live::case --exact --ignored --nocapture'

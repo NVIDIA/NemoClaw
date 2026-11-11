@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! The live HCL E2E cases: each scenario in [`SCENARIOS`] with a case
-//! document of the same name in [`DOCUMENTS`], and where each one runs.
+//! document selected by [`files`], and where each one runs.
 
 use serde_json::Value;
 use std::{
@@ -73,10 +73,13 @@ pub struct Needs {
 
 /// A case's document and scenario.
 pub fn files(id: &str) -> [String; 2] {
-    [
-        format!("{DOCUMENTS}/{id}.yaml"),
-        format!("{SCENARIOS}/{id}.tftest.hcl"),
-    ]
+    let document = match id {
+        // The Station run binds the published example rather than keeping a
+        // second deployment document in the live-case directory.
+        "dgx-station-openclaw-nemotron" => "examples/gtc-dc/openclaw-dgx-station.yaml".into(),
+        _ => format!("{DOCUMENTS}/{id}.yaml"),
+    };
+    [document, format!("{SCENARIOS}/{id}.tftest.hcl")]
 }
 
 /// The live cases under `root`.
