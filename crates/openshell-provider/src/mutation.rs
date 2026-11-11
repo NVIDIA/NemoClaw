@@ -49,9 +49,10 @@ impl OpenShell {
         Ok(())
     }
     /// Bring a live sandbox's declared endpoints to `want`, as `openshell
-    /// service delete` and `openshell service expose` would: delete those the
-    /// prior binding declared and `want` doesn't, then expose those missing or
-    /// different. Endpoints under names neither declares are left alone.
+    /// service expose` and `openshell service delete` would: expose those
+    /// missing or different, then delete those the prior binding declared and
+    /// `want` doesn't, so an exposure the gateway rejects removes nothing.
+    /// Endpoints under names neither declares are left alone.
     async fn update_services(
         &self,
         want: &Row,
@@ -60,15 +61,6 @@ impl OpenShell {
     ) -> Result<(), ObservationError> {
         let workspace = value(want, "workspace");
         let wanted = services::exposures(value(want, services::FIELD))?;
-        if let Some(prior) = prior {
-            for name in services::names(value(prior, services::FIELD))? {
-                if !wanted.iter().any(|exposure| exposure.name == name) {
-                    self.gateway
-                        .delete_service(workspace, sandbox, &name)
-                        .await?;
-                }
-            }
-        }
         for exposure in &wanted {
             let served = self
                 .gateway
@@ -79,6 +71,15 @@ impl OpenShell {
                 self.gateway
                     .expose_service(workspace, sandbox, exposure)
                     .await?;
+            }
+        }
+        if let Some(prior) = prior {
+            for name in services::names(value(prior, services::FIELD))? {
+                if !wanted.iter().any(|exposure| exposure.name == name) {
+                    self.gateway
+                        .delete_service(workspace, sandbox, &name)
+                        .await?;
+                }
             }
         }
         Ok(())
