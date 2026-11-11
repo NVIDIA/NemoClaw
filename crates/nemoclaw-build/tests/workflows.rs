@@ -112,15 +112,12 @@ fn colossus_runs_are_manual_and_v1_only() {
     assert_eq!(events.len(), 1, "the pilot runner takes manual runs only");
     let suite = &workflow["on"]["workflow_dispatch"]["inputs"]["suite"];
     assert_eq!(suite["type"], "choice");
-    assert_eq!(
-        suite["options"],
-        serde_json::json!(["smoke", "bundle", "station"])
-    );
+    assert_eq!(suite["options"], serde_json::json!(["smoke", "bundle"]));
     assert_eq!(suite["default"], "smoke");
     let jobs = workflow["jobs"].as_object().expect("workflow jobs");
     assert_eq!(
         jobs.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["bundle", "smoke", "station"]
+        ["bundle", "smoke"]
     );
     for (name, job) in jobs {
         assert_eq!(
@@ -164,9 +161,23 @@ fn colossus_smoke_checks_the_gpu_without_credentials() {
 }
 
 #[test]
-fn colossus_station_uses_arm64_and_always_checks_cleanup() {
-    let workflow = colossus_workflow();
+fn station_is_manual_v1_only_and_always_checks_cleanup() {
+    let workflow: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/station.yml")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        workflow["on"],
+        serde_json::json!({"workflow_dispatch": null})
+    );
+    assert_eq!(workflow["concurrency"], colossus_workflow()["concurrency"]);
+    assert_eq!(workflow["permissions"], serde_json::json!({}));
+    assert!(!workflow.to_string().contains("secrets"));
     let job = &workflow["jobs"]["station"];
+    assert_eq!(
+        job["if"],
+        "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'"
+    );
     assert_eq!(job["runs-on"], "colossus-gb300-pilot");
     assert_eq!(job["env"]["TEST_PLATFORM"], "linux_arm64");
     assert_eq!(workflow["concurrency"]["cancel-in-progress"], false);

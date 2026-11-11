@@ -18,7 +18,7 @@ fn docker(args: &[&str]) -> String {
 }
 
 fn free_subnet(networks: &[Value]) -> Option<String> {
-    let used: Vec<&str> = networks
+    let used: Vec<ipnet::IpNet> = networks
         .iter()
         .flat_map(|network| {
             network["IPAM"]["Config"]
@@ -27,10 +27,16 @@ fn free_subnet(networks: &[Value]) -> Option<String> {
                 .flatten()
                 .filter_map(|config| config["Subnet"].as_str())
         })
+        .map(|subnet| subnet.parse().expect("valid Docker subnet"))
         .collect();
     (200..=254)
-        .map(|n| format!("172.30.{n}.0/24"))
-        .find(|subnet| !used.contains(&subnet.as_str()))
+        .map(|n| format!("172.30.{n}.0/24").parse::<ipnet::IpNet>().unwrap())
+        .find(|subnet| {
+            !used
+                .iter()
+                .any(|network| network.contains(subnet) || subnet.contains(network))
+        })
+        .map(|subnet| subnet.to_string())
 }
 
 /// Finish the workflow's copied example without changing the source or an
@@ -144,6 +150,16 @@ fn subnet_selection_skips_retained_networks_and_refuses_exhaustion() {
         Some("172.30.201.0/24")
     );
     assert_eq!(free_subnet(&networks), None);
+    for (occupied, expected) in [
+        ("172.30.200.0/23", Some("172.30.202.0/24")),
+        ("172.30.200.128/25", Some("172.30.201.0/24")),
+        ("172.30.0.0/16", None),
+        ("172.31.0.0/16", Some("172.30.200.0/24")),
+        ("fd00::/64", Some("172.30.200.0/24")),
+    ] {
+        let network = json!({"IPAM":{"Config":[{"Subnet":occupied}]}});
+        assert_eq!(free_subnet(&[network]).as_deref(), expected, "{occupied}");
+    }
 }
 
 #[test]
@@ -171,7 +187,7 @@ fn workflow_binds_the_example_and_refuses_a_failed_image_lookup() {
     use std::os::unix::fs::PermissionsExt;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let workflow: Value = serde_saphyr::from_str(
-        &fs::read_to_string(root.join(".github/workflows/colossus-connectivity.yml")).unwrap(),
+        &fs::read_to_string(root.join(".github/workflows/station.yml")).unwrap(),
     )
     .unwrap();
     let script = workflow["jobs"]["station"]["steps"]

@@ -3111,6 +3111,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "http",
+ "ipnet",
  "k8s-openapi 0.28.0",
  "kube 4.2.0",
  "nemoclaw-backend",

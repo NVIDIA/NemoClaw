@@ -155,18 +155,19 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 
 ## DGX Station Reference
 
-The manually dispatched `E2E / Colossus runner connectivity` workflow offers three suites:
-`smoke` runs `nvidia-smi`; `bundle` builds and tests Linux ARM64; `station` runs the reference case for [#13937](https://github.com/NVIDIA/NemoClaw/issues/13937).
+The manually dispatched `Live / DGX Station` workflow (`station.yml`) runs the reference case for [#13937](https://github.com/NVIDIA/NemoClaw/issues/13937).
+`E2E / Colossus runner connectivity` keeps its `smoke` (`nvidia-smi`) and `bundle` (Linux ARM64 build/tests) suites.
 Only canonical `v1` manual dispatches can use the leased `colossus-gb300-pilot` runner.
+Manual dispatch also requires the same workflow path registered on default branch `main`, using an inert job as `colossus-connectivity.yml` does; the E2E implementation stays on `v1`.
 The change planner places this case in `dgx-station`, separately from the existing AMD64 `gpu` cases; selecting it does not add automatic PR, push, or release execution.
 
 ```sh
-gh workflow run colossus-connectivity.yml --repo NVIDIA/NemoClaw --ref v1 -f suite=station
+gh workflow run station.yml --repo NVIDIA/NemoClaw --ref v1
 ```
 
 The runner must already provide Ubuntu 24 on ARM64, a GB300, the pinned Rust toolchain, Docker with the containerd image store, and NVIDIA GPU access as the runner service user.
 The job checks these prerequisites; it does not install system packages, restart Docker, or manage the Colossus lease.
-Use a Station dedicated to CI with one runner agent. The existing concurrency group serializes whole Colossus runs without cancelling an active run.
+Use a Station dedicated to CI with one runner agent. Both workflows share the existing concurrency group, so their runs serialize without cancelling an active run.
 
 The case reuses [the GTC OpenClaw Station example](../../examples/gtc-dc/openclaw-dgx-station.yaml); it adds no separate deployment YAML.
 The workflow keeps its topology, serving limits, and memory settings, and selects `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` at revision `da5b2650a835292c678994a1fa3fb653250fb508`, with the matching serving and route name `nemotron-3.5-super-vl`.
