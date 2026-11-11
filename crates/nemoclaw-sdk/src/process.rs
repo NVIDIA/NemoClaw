@@ -325,11 +325,14 @@ fn fit_diagnostics(
                 _ => text.floor_char_boundary(room),
             }
         };
-        if text[..end].trim().is_empty() {
+        // Trailing line breaks add nothing, and a cut of only whitespace
+        // keeps nothing, so the diagnostic is counted instead.
+        let kept = text[..end].trim_end();
+        if kept.trim_start().is_empty() {
             message.push_str(&omitted(count));
         } else {
             message.push_str(separator);
-            message.push_str(&text[..end]);
+            message.push_str(kept);
             message.push_str(&marker);
         }
         return message;
@@ -1117,28 +1120,31 @@ mod diagnostic_limit_tests {
     /// show an empty cut.
     #[test]
     fn any_mix_of_diagnostics_stays_within_the_limit() {
-        for limit in [512, LIMIT] {
+        // The byte arithmetic doesn't depend on the limit's size, so small
+        // limits keep this fast; other tests cover 16 KiB.
+        let mut full = 0;
+        for limit in [256, 512] {
             let summaries = [
                 None,
                 Some(String::new()),
                 Some("summary".into()),
-                Some("é".repeat(limit)),
+                Some("é".repeat(limit / 2)),
             ];
             let details = [
                 None,
                 Some(String::new()),
                 Some("short".into()),
-                Some("日本".repeat(limit)),
-                Some(vec!["é".repeat(37); limit / 20].join("\n")),
+                Some("日本".repeat(limit / 3)),
+                Some(vec!["é".repeat(7); limit / 8].join("\n")),
             ];
-            for fill in (0..48).map(|slack| limit - 230 - slack) {
+            // From a first diagnostic that leaves no room at all down to one
+            // that leaves room for part of the next.
+            for fill in (limit - 230..=limit - 6).rev() {
+                let first = "é".repeat(fill / 2) + &"x".repeat(fill % 2);
                 for summary in &summaries {
                     for detail in &details {
                         for third in [false, true] {
-                            let mut diagnostics = vec![[
-                                Some("first".into()),
-                                Some("é".repeat(fill / 2) + &"x".repeat(fill % 2)),
-                            ]];
+                            let mut diagnostics = vec![[Some("first".into()), Some(first.clone())]];
                             diagnostics.push([summary.clone(), detail.clone()]);
                             if third {
                                 diagnostics.push([Some("third".into()), None]);
@@ -1158,11 +1164,20 @@ mod diagnostic_limit_tests {
                                 message.matches("left out").count() <= 1,
                                 "more than one marker: {case}"
                             );
+                            if message.starts_with(&format!("first\n{first}\n["))
+                                && !message.contains("[rest")
+                            {
+                                full += 1;
+                            }
                         }
                     }
                 }
             }
         }
+        assert!(
+            full > 0,
+            "no case filled the error so the next diagnostic had no room"
+        );
     }
 
     /// Runs a fake OpenTofu plan that reports `diagnostics` and fails, and
