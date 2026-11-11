@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-classify-ci-failure
 description: "Classify one failed NemoClaw GitHub Actions job using bounded, redacted logs and optional retained artifacts."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

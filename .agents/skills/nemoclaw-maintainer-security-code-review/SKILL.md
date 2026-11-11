@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-security-code-review
 description: "Perform a requested security review of a NemoClaw PR or a PR linked to an issue. Use for vulnerability or trust-boundary assessment."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-evening
 description: "Complete the NemoClaw end-of-day documentation and release handoff. Cut a release tag only when requested."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

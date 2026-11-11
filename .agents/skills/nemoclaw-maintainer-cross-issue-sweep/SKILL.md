@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-cross-issue-sweep
 description: "Find open issues that a NemoClaw PR may also fix or conflict with. Use when related-issue analysis is requested."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

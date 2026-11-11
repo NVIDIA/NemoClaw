@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-normalize-title-tags
 description: "Remove bracketed NemoClaw tags from GitHub issue and PR titles. Use for a requested title cleanup."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

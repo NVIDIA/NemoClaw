@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-policies
 description: "Answer NemoClaw maintainer policy questions about triage, labels, Project fields, releases, or competing contributions. Read-only."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

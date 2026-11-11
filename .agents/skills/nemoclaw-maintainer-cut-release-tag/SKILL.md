@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
 description: "Prepare and cut one signed NemoClaw semver release tag, then follow release workflows and draft the Announcement."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
