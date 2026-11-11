@@ -18,7 +18,8 @@ function createResumeScenario(editing: boolean) {
     const path = require("node:path");
     const load = (name) => require(path.join(process.cwd(), "src/lib", name));
     const attempt = process.env.TEST_ATTEMPT;
-    const fresh = attempt === "fresh";
+    const vllmInstall = attempt === "vllm install";
+    const fresh = attempt === "fresh" || vllmInstall;
     const unattended = process.env.NEMOCLAW_NON_INTERACTIVE === "1";
     const editing = ${editing};
     const reviewedRoute = {
@@ -75,6 +76,11 @@ function createResumeScenario(editing: boolean) {
       if (fresh) state.saveSession(state.createSession({ sandboxName: name, agent: "openclaw" }));
       if (fresh && editing) await sandbox.checkpointSandboxName(name, agent, state.updateSession);
       const session = state.markStepStarted("provider_selection", fresh && editing ? reviewedRoute : {});
+      if (vllmInstall) {
+        state.checkpointVllmInstallModel("example/local-model");
+        state.markStepFailed("provider_selection", "vLLM install interrupted");
+        return;
+      }
       // The sandbox does not exist yet, so registry and gateway recovery are disabled.
       const select = () => setupNim(null, name, agent, false, null, "nemoclaw", undefined,
         undefined, session.sessionId);
@@ -85,6 +91,7 @@ function createResumeScenario(editing: boolean) {
       }
       const selection = await select();
       assert.equal(selection.provider, "nvidia-prod");
+      assert.equal(state.loadSession().vllmInstallModel, null);
       assert.equal(selection.model, editing ? chosenModel : load("inference/config.ts").resolveAgentDefaultCloudModel(agent));
       if (editing) assert.equal(selection.modelSelectionProvenance?.modelSource, "product_catalog");
     }
@@ -115,6 +122,13 @@ function createResumeScenario(editing: boolean) {
 
 const timeout = { timeout: testTimeout(60_000) };
 const unattendedEnv = { NEMOCLAW_NON_INTERACTIVE: "1", NVIDIA_INFERENCE_API_KEY: "nvapi-fixture" };
+
+it("resumes NVIDIA Endpoints after switching from an interrupted vLLM install", timeout, () => {
+  const run = createResumeScenario(false);
+  run("vllm install");
+  run("build key", { NEMOCLAW_PROVIDER: "build" });
+  run("unattended", unattendedEnv);
+});
 
 it(
   "resumes NVIDIA Endpoints after interrupting the first key prompt on WSL (#13968)",

@@ -48,9 +48,11 @@ export function checkpointPendingNvidiaModel(
   if (model === null) {
     // Returning to the key prompt keeps any model the operator already chose.
     if (session.pendingNvidiaModel !== undefined) return;
-    // The new choice supersedes the route saved for an earlier configuration review.
+    // The cloud choice supersedes a previous route or interrupted local install.
     session.provider = null;
     session.model = null;
+    session.vllmInstallModel = null;
+    session.servingProfileProvenance = null;
     session.endpointUrl = null;
     session.credentialEnv = null;
     session.preferredInferenceApi = null;

@@ -106,7 +106,7 @@ describe("managed vLLM resume checkpoint persistence", () => {
 });
 
 describe("managed llama.cpp resume checkpoint persistence", () => {
-  it("retains the exact selected recipe during an interrupted provider install", () => {
+  it("retains the interrupted install recipe until the operator selects NVIDIA Endpoints", async () => {
     const provenance = {
       schemaVersion: 1 as const,
       catalogDigest: `sha256:${"a".repeat(64)}`,
@@ -147,6 +147,15 @@ describe("managed llama.cpp resume checkpoint persistence", () => {
       provider: "llama-cpp-local",
       model: "qwen3.6-35b-a3b",
       servingProfileProvenance: provenance,
+    });
+    const { checkpointPendingNvidiaModel } = await import("../onboard/provider-recovery");
+    session.markStepStarted("provider_selection");
+    checkpointPendingNvidiaModel(loaded.sessionId, null);
+    expect(requireLoadedSession()).toMatchObject({
+      provider: null,
+      model: null,
+      servingProfileProvenance: null,
+      pendingNvidiaModel: null,
     });
   });
 });
