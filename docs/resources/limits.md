@@ -75,7 +75,8 @@ Access paths and diagnostic signals depend on the gateway and harness in use.
 |---|---|
 | The OpenClaw request walkthrough, rehearsed once OpenClaw starts in a sandbox | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
 | A live rehearsal against an external gateway that requires an issuer or mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| An error holds at most 16 KiB of a command's OpenTofu diagnostics, such as several managed services' [stop details](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime): it lists the whole diagnostics that fit and counts the rest, and cuts a diagnostic longer than 16 KiB after its last whole line that fits | By design: bounds the error's size |
+| An error holds at most 16 KiB of a command's OpenTofu diagnostics, such as several managed services' [stop details](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime): it lists the whole diagnostics that fit, then the next one's summary and a count of the rest; a diagnostic longer than 16 KiB keeps as much of its detail as fits | By design: bounds the error's size |
+| An error shows `child output exceeds the supported limit` in place of a command's output when OpenTofu writes more than 16 KiB to standard error, as a provider crash can, or more than 64 MiB to standard output: cut output can end inside a credential that redaction no longer recognizes | By design: keeps credentials out of errors |
 | A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli), which no automated test covers | By design: the development issuer serves only NemoClaw |
 
 ## Data and Cleanup

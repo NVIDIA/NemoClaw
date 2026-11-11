@@ -68,7 +68,7 @@ Plan, apply, and diagnostics:
 - The sandbox deletion warning ends with "except on mounted volumes".
 - Adding a sandbox whose name sorts first leaves the other sandboxes unchanged.
 - `metadata.uid` accepts uppercase hexadecimal digits.
-- When a command's OpenTofu diagnostics together exceed 16 KiB, its error lists the whole diagnostics that fit and how many it left out, instead of replacing them all with `child output exceeds the supported limit`.
+- When a command's OpenTofu diagnostics together exceed 16 KiB, its error lists the whole diagnostics that fit, the next one's summary, and how many it left out, instead of replacing them all with `child output exceeds the supported limit`.
 
 Onboarding:
 
