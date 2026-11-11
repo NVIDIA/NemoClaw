@@ -3,8 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { buildConfig as buildOpenClawConfig } from "../../../../../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "../../../../../test/helpers/openclaw-env-fixture";
 import { loadServingCatalog } from "../../../inference/serving/catalog-loader";
 import { createSession, type Session } from "../../../state/onboard-session";
+import { resolveSandboxToolDisclosure, type ToolDisclosure } from "../../../tool-disclosure";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
@@ -50,6 +53,21 @@ const servingProfileProvenanceFor = (recipeId: string, backend: string) => ({
   estimatedImageDownloadBytes: null,
   estimatedModelDownloadBytes: null,
 });
+
+const STRUCTURED_TOOL_SEARCH = { mode: "tools", searchDefaultLimit: 8, maxSearchLimit: 20 };
+
+/** Feeds the create intent through the sandbox-create resolver and the OpenClaw config generator. */
+const generatedToolSearch = (createIntent: unknown) =>
+  buildOpenClawConfig({
+    ...baseOpenClawGenerationEnv(),
+    NEMOCLAW_TOOL_DISCLOSURE: resolveSandboxToolDisclosure({
+      requested: (createIntent as { toolDisclosure: ToolDisclosure }).toolDisclosure,
+      recorded: undefined,
+      session: undefined,
+      sandboxExists: false,
+      recreate: false,
+    }),
+  }).tools?.toolSearch;
 
 describe("handleSandboxState tool disclosure", () => {
   it.each([
@@ -131,6 +149,7 @@ describe("handleSandboxState tool disclosure", () => {
       "vllm",
       null,
       "progressive",
+      "muse-glimmer",
     ],
     [
       "Muse Glimmer on Linux amd64",
@@ -140,6 +159,7 @@ describe("handleSandboxState tool disclosure", () => {
       "vllm",
       null,
       "progressive",
+      "muse-glimmer",
     ],
     [
       "Muse Glimmer with an explicit direct choice",
@@ -149,6 +169,7 @@ describe("handleSandboxState tool disclosure", () => {
       "vllm",
       "direct",
       "direct",
+      "muse-glimmer",
     ],
     [
       "another managed vLLM recipe",
@@ -158,6 +179,7 @@ describe("handleSandboxState tool disclosure", () => {
       "vllm",
       null,
       "direct",
+      "qwen3-6-27b",
     ],
     [
       "a Muse recipe recorded for another provider",
@@ -167,10 +189,21 @@ describe("handleSandboxState tool disclosure", () => {
       "vllm",
       null,
       "direct",
+      "muse-glimmer",
+    ],
+    [
+      "a Muse reservation that records another model",
+      "vllm-local",
+      "muse-glimmer",
+      "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
+      "vllm",
+      null,
+      "direct",
+      "another-model",
     ],
   ] as const)(
     "selects tool disclosure for %s (#14065)",
-    async (_case, provider, model, recipeId, backend, requested, expected) => {
+    async (_case, provider, model, recipeId, backend, requested, expected, entryModel) => {
       const session = createSession({
         servingProfileProvenance: servingProfileProvenanceFor(recipeId, backend),
       });
@@ -179,7 +212,7 @@ describe("handleSandboxState tool disclosure", () => {
           getSandboxRegistryEntry: (name) =>
             registeredEntry(name, {
               provider,
-              model,
+              model: entryModel,
               pendingRouteReservation: true,
               reservationSessionId: session.sessionId,
             }),
@@ -197,6 +230,9 @@ describe("handleSandboxState tool disclosure", () => {
 
       const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
       expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: expected });
+      expect(generatedToolSearch(createSandboxCall[15])).toEqual(
+        expected === "progressive" ? STRUCTURED_TOOL_SEARCH : false,
+      );
       expect(calls.removeSandbox).not.toHaveBeenCalled();
     },
   );
@@ -213,37 +249,6 @@ describe("handleSandboxState tool disclosure", () => {
       ["vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1", 32768],
       ["vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1", 32768],
     ]);
-  });
-
-  it("keeps direct disclosure for Muse Glimmer when the reservation records another model (#14065)", async () => {
-    const session = createSession({
-      servingProfileProvenance: servingProfileProvenanceFor(
-        "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
-        "vllm",
-      ),
-    });
-    const { deps, calls } = createDeps(
-      {
-        getSandboxRegistryEntry: (name) =>
-          registeredEntry(name, {
-            provider: "vllm-local",
-            model: "another-model",
-            pendingRouteReservation: true,
-            reservationSessionId: session.sessionId,
-          }),
-      },
-      session,
-    );
-
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      provider: "vllm-local",
-      model: "muse-glimmer",
-      agent: { name: "openclaw" },
-    });
-
-    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
-    expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: "direct" });
   });
 
   it.each(["progressive", "direct"] as const)(
