@@ -65,10 +65,19 @@ pub struct Process {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_limit_millis: Option<u32>,
     pub memory_bytes: u64,
-    pub gpu: bool,
-    /// With `gpu`, the one GPU to expose instead of every GPU.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gpu_device: Option<String>,
+    pub gpus: Gpus,
+}
+
+/// The GPUs a container gets.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Gpus {
+    #[default]
+    None,
+    /// Every GPU on the engine.
+    All,
+    /// These GPUs, by UUID or index, as `nvidia-smi` names them.
+    Devices(Vec<String>),
 }
 
 /// Launch settings when the image owns its entrypoint, command, and health check.
@@ -685,13 +694,16 @@ impl Spec {
                 host["CpuPeriod"] = json!(CPU_PERIOD_MICROS);
                 host["CpuQuota"] = json!(cpu_quota_micros(limit));
             }
-            if process.gpu {
-                host["DeviceRequests"] = match &process.gpu_device {
-                    Some(device) => {
-                        json!([{"Driver":"","DeviceIDs":[device],"Capabilities":[["gpu"]]}])
-                    }
-                    None => json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]),
-                };
+            match &process.gpus {
+                Gpus::None => {}
+                Gpus::All => {
+                    host["DeviceRequests"] =
+                        json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
+                }
+                Gpus::Devices(devices) => {
+                    host["DeviceRequests"] =
+                        json!([{"Driver":"","DeviceIDs":devices,"Capabilities":[["gpu"]]}]);
+                }
             }
             if process.image_owned.is_none() {
                 host["Ulimits"] = json!(

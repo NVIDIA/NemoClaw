@@ -649,7 +649,7 @@ async fn gpu_change_replaces_the_container_with_one_device(
 ) {
     const GPU: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
     let mut changed = read(&s.root, "config.yaml");
-    changed["spec"]["services"]["qwen"]["container"]["gpu"] = json!(GPU);
+    changed["spec"]["services"]["qwen"]["container"]["gpuDevices"] = json!([GPU]);
     change_plans_compute_replacement_without_effects(s, stable, state, changed.clone()).await;
     changed["spec"]["services"]["qwen"]["updatePolicy"] = json!("Recreate");
     save(&s.root, "gpu.yaml", &changed);

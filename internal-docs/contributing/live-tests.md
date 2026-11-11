@@ -137,7 +137,7 @@ The hosted cases make real hosted inference requests, which may incur charges.
 
 The workflows destroy each deployment in a separate step after success, failure, or cancellation and upload outcome reports with the destroy receipt.
 Requests, replies, command output, and credentials stay in the run's private `work` directory.
-CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, or run a case by hand as below.
+CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL, from the same artifacts, on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, which builds its own candidate from the dispatched branch, or run a case by hand as below.
 
 To run a case by hand on Linux with Docker, load the candidate images, bind the case's image templates and `uid` as the `Live / HCL` workflow does, and run from `crates/nemoclaw-e2e`:
 

@@ -110,9 +110,9 @@ The hosted runtime checks named profiles against its GPU family, CPU architectur
 Configuration parsing validates the profile declaration without collecting host measurements.
 They do not choose a model, runtime image, or GPU count.
 Every profile currently requires Linux, driver major 580 or newer, and exactly one GPU visible to `nvidia-smi` in the model container; multi-GPU and multi-host serving are not implemented.
-Without [`container.gpu`](inference.md#set-container-limits-and-update-policy), the model container sees every GPU, so the runtime stops on a host with two or more, such as a DGX Station with an additional RTX or display GPU.
+Without [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy), the model container sees every GPU, so the runtime stops on a host with two or more, such as a DGX Station with an additional RTX or display GPU.
 `CUDA_VISIBLE_DEVICES` doesn't select one, because `nvidia-smi` ignores it.
-`container.gpu` asks Docker for one named GPU, as `docker run --gpus device=` does, so the model container sees only that GPU.
+`container.gpuDevices` asks Docker for the one GPU it lists, as `docker run --gpus device=` does, so the model container sees only that GPU.
 The backend uses tensor parallel size 1.
 GB200/GB300 profiles describe one observed GPU in a Grace Blackwell system; they do not enable a full compute tray or NVL72 rack.
 

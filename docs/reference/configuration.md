@@ -285,6 +285,7 @@ Paths:
 |---|---|---|---|---|
 | `filesystem_policy` | [PolicyFilesystem](#policyfilesystem) | No | — | Filesystem grants. Omission retains OpenShell filesystem defaults, not the isolated preset. |
 | `landlock` | [PolicyLandlock](#policylandlock) | No | — | Kernel filesystem enforcement compatibility. |
+| `network_middlewares` | map of [PolicyMiddleware](#policymiddleware) | No | — | Supervisor middleware attachments keyed by policy-local names, which OpenShell's logs report. Each names a built-in middleware or a service registered in the gateway's `openshell.supervisor.middleware` configuration, and selects the admitted destination hosts it runs for. |
 | `network_policies` | map of [PolicyRule](#policyrule) | Yes | — | Named egress rules. An empty map grants no general egress. |
 | `process` | [PolicyProcess](#policyprocess) | No | — | Sandbox process user and group. |
 | `version` | integer | Yes | — | Policy format version; currently 1. Constraints: `1`; minimum 0. |
@@ -983,6 +984,40 @@ Paths:
 | `strict_tool_names` | boolean | No | — | Enforce standard MCP tool-name syntax; defaults to true. |
 | `versions` | array of string | No | — | Supported MCP protocol revisions; omission uses the pinned OpenShell default. |
 
+## PolicyMiddleware
+
+One supervisor middleware attachment. OpenShell validates the attachment, including unique orders and selectors that avoid `tls: skip` endpoints, and the named middleware validates `config`.
+
+Guide: [Sandbox policy](../security/sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes.{key}.network.policy.explicit.network_middlewares.{key}`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `config` | object | No | — | Settings passed to the middleware, which defines and validates their format. |
+| `endpoints` | [PolicyMiddlewareEndpoints](#policymiddlewareendpoints) | Yes | — | Admitted destination hosts the middleware runs for. |
+| `middleware` | string | Yes | — | A built-in middleware, such as `openshell/regex`, or the `name` of a service registered with the gateway. |
+| `name` | string | No | — | Display name; omission uses the attachment's key. |
+| `on_error` | string | No | — | fail_closed blocks the affected traffic when the middleware fails; fail_open lets it continue. Omission selects fail_closed. A middleware denial blocks traffic either way. Constraints: `"fail_closed"` or `"fail_open"`. |
+| `order` | integer | No | — | Position among attachments that select the same host; lower values run first. Orders must be unique within the policy; omission means 0. |
+
+## PolicyMiddlewareEndpoints
+
+Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax.
+
+Guide: [Sandbox policy](../security/sandbox-network.md).
+
+Paths:
+
+- `spec.sandboxes.{key}.network.policy.explicit.network_middlewares.{key}.endpoints`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `exclude` | array of string | No | — | Hosts to skip; exclusions take precedence over inclusions. |
+| `include` | array of string | Yes | — | Hosts to run the middleware for; OpenShell requires at least one. |
+
 ## PolicyProcess
 
 Process identity resolved inside the sandbox image.
@@ -1203,7 +1238,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `cpuLimitMillis` | integer | No | — | CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container. Constraints: minimum 1; maximum 4294967295. |
-| `gpu` | string | No | — | The one GPU the model container gets on a host with several, as `docker run --gpus device=` names it: a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index as a string, such as "1", which can change when the host boots. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing it replaces the model container. Constraints: pattern `^(?:GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\|0\|[1-9][0-9]{0,2})$`. |
+| `gpuDevices` | array of string | No | — | The GPUs the model container gets on a host with several, as `docker run --gpus device=` names them: each a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index as a string, such as "1", which can change when the host boots. List exactly one: serving one model across several GPUs isn't implemented yet. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing the list replaces the model container. Constraints: minimum items 1; maximum items 1; items: pattern `^(?:GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\|0\|[1-9][0-9]{0,2})$`. |
 | `ipc` | [ServiceIpc](#serviceipc) | No | — | IPC namespace. Omission uses private; host shares the execution host's IPC namespace. |
 | `memoryLimitGiB` | integer | No | — | Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container. Constraints: minimum 1; maximum 8589934591. |
 | `sharedMemoryGiB` | integer | No | — | Shared-memory size in GiB, from 1 through 64. Omission uses 8; host IPC uses the host's existing shared-memory mount instead. Constraints: minimum 1; maximum 64. |

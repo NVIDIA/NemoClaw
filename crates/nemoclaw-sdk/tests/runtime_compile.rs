@@ -123,7 +123,7 @@ fn a_named_gpu_reaches_opentofu_and_the_native_device_request() {
                 .unwrap()
                 .values_mut()
             {
-                service["container"] = json!({"gpu": gpu});
+                service["container"] = json!({"gpuDevices": [gpu]});
             }
             let document = Document::parse(value.to_string().as_bytes()).unwrap();
             let exported = serde_json::to_value(&document).unwrap();
@@ -132,7 +132,7 @@ fn a_named_gpu_reaches_opentofu_and_the_native_device_request() {
                     .as_object()
                     .unwrap()
                     .values()
-                    .all(|service| service["container"]["gpu"] == gpu)
+                    .all(|service| service["container"]["gpuDevices"] == json!([gpu]))
             );
             let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
             for target in runtime_targets(&document, &generations)
