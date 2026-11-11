@@ -356,7 +356,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                     gateway,
                     field,
                     json!({"x-nemoclaw-default-rule": if field == "endpoint" {
-                        "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
+                        "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS endpoint and port: 127.0.0.1 without kubernetes.expose, or the address clients dial with it."
                     } else if field == "networkCIDR" {
                         "Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes."
                     } else {
@@ -365,11 +365,14 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 );
             }
             gateway["if"] = json!({"required": ["kubernetes"]});
+            // Whether the host must be 127.0.0.1 depends on kubernetes.expose,
+            // a document rule below: platform resources rebuild this
+            // definition from their attributes, which carry no exposure.
             gateway["then"] = json!({
                 "required": ["endpoint"],
-                "properties": {"endpoint": {"pattern": c::KUBERNETES_GATEWAY_ENDPOINT}},
+                "properties": {"endpoint": {"pattern": c::KUBERNETES_EXPOSED_GATEWAY_ENDPOINT}},
                 "allOf": [forbid(&["engine", "imagePullPolicy", "networkCIDR"])],
-                "x-nemoclaw-error": "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings"
+                "x-nemoclaw-error": "managed Kubernetes requires an explicit HTTPS endpoint with a lowercase host and a nonzero port and excludes local engine settings"
             });
             gateway["else"] = local;
             // Podman's socket depends on the host user, so it has no default.
@@ -426,6 +429,16 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "else": at("spec/gateway/runtime/provider", json!({"enum":["docker", "podman"]}), false)
         }
     }));
+    // Without kubernetes.expose, providers forward a free local port to the
+    // gateway pod, and the certificate names 127.0.0.1.
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at("spec/gateway", json!({
+            "required": ["kubernetes"],
+            "properties": {"kubernetes": {"not": {"required": ["expose"]}}}
+        }), true),
+        "then": at("spec/gateway/endpoint", json!({"pattern": c::KUBERNETES_GATEWAY_ENDPOINT}), true),
+        "x-nemoclaw-error": "managed Kubernetes without kubernetes.expose requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port"
+    }));
     // Cluster sandboxes need an explicit image, since no local engine supplies
     // a default; image metadata stands in for engine inspection only there.
     root["allOf"].as_array_mut().unwrap().push(json!({
@@ -462,7 +475,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-        "Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
+        "Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without kubernetes.expose, its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path; with it, the endpoint names a lowercase DNS name or IPv4 address and an explicit port, which the chart's NodePort Service publishes; Kubernetes checks that the port is in the cluster's node-port range. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
         "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",

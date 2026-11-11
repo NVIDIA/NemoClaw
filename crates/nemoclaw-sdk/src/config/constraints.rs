@@ -42,6 +42,10 @@ pub(crate) const GATEWAY_ENDPOINT: &str = "http://127.0.0.1:17681";
 /// The engine a managed gateway uses when none is configured: Docker's default socket.
 pub const GATEWAY_ENGINE: &str = "unix:///var/run/docker.sock";
 pub(crate) const KUBERNETES_GATEWAY_ENDPOINT: &str = r"^https://127\.0\.0\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$";
+/// The address clients dial for a managed Kubernetes gateway with
+/// `kubernetes.expose`: a lowercase DNS name or IPv4 address and an explicit
+/// nonzero port.
+pub(crate) const KUBERNETES_EXPOSED_GATEWAY_ENDPOINT: &str = r"^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$";
 pub(crate) const NETWORK_TIER: &str = "isolated";
 /// Sandboxes in a document with a Kubernetes or OpenShift gateway. The cluster
 /// schedules their pods; a document is one gateway, namespace and state, so

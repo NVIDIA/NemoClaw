@@ -90,7 +90,7 @@ Each sandbox also attaches at most 32 providers, OpenShell's limit; see [inferen
 ## Deploy with a Managed Gateway
 
 The SDK binds the namespace, creating it if it doesn't exist, adds a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
-The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs.
+The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs, also when you [publish the gateway](#publish-the-gateway-outside-the-cluster).
 Start from [the Kubernetes example](../../examples/kubernetes/managed-development.yaml). Replace these deployment-specific inputs before running the commands:
 
 - `metadata.uid` to a new UUID.
@@ -168,10 +168,43 @@ OpenShell accepts a token for up to 60 seconds after its `exp`, the default leew
 The gateway still requires its client certificate; the token adds user identity on top.
 With this profile, the namespace holds no development issuer, and the state directory holds no issuer keys.
 
+### Publish the Gateway Outside the Cluster
+
+Like a Docker gateway's published port, `gateway.kubernetes.expose` publishes the gateway at `gateway.endpoint`, where other clients, such as the OpenShell CLI, dial it without a port forward.
+NemoClaw's own plan, apply and destroy still reach the gateway through port forwards, so they still need `pods/portforward`; [#14422](https://github.com/NVIDIA/NemoClaw/issues/14422) tracks letting them dial the endpoint instead.
+NemoClaw sets the OpenShell chart's own gateway Service to `NodePort` at the endpoint's port, which forwards to the gateway's TLS listener, so TLS and client certificates pass through unchanged.
+The gateway certificate names the endpoint's host.
+The Service doesn't publish the gateway's plaintext metrics port, and the gateway then serves no metrics.
+CI publishes a gateway with the `oidc` profile on kind, where two agents reply to a client that dials the node's address with the gateway's client certificate.
+
+```yaml
+spec:
+  gateway:
+    endpoint: https://gateway.agents.example.com:30851
+    kubernetes:
+      # ...the target and authentication above...
+      expose:
+        service:
+          type: NodePort
+```
+
+- **Endpoint:** `https://`, a lowercase DNS name or IPv4 address, and a port in the cluster's node-port range, 30000 through 32767 by default; ports 30000 through 30085 are the least likely to be taken. Apply fails if Kubernetes refuses the port or another Service holds it.
+- **The address must be known before apply,** because plan binds the endpoint and the chart writes its host into the certificate: a node's address, or a DNS name for the nodes.
+- **Fixed after the first plan:** `expose` and its Service type select the address the endpoint names. Like the endpoint, changing them needs a new deployment.
+- **The port is open on every node.** Restrict who can reach it with your network's own controls; the gateway still requires its client certificate.
+- **No `LoadBalancer` yet:** the pinned chart's Service takes no annotations or source ranges, and listens on the gateway's own port ([#14421](https://github.com/NVIDIA/NemoClaw/issues/14421)).
+
+Sandbox [service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) skip the gateway's sign-in, so anyone who reaches the endpoint with a service's host name reaches that service, which must authenticate its own clients.
+The URLs that apply prints don't open remotely yet ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
+
+The chart writes the certificate once, when it creates the Secrets `<release>-server-tls`, `<release>-client-tls` and `<release>-jwt-keys`, and destroy keeps them.
+A new deployment with the same `metadata.uid` in the same namespace reuses the retained Secrets, whose certificate may not name its host; delete the three Secrets before its first apply.
+
 ### Reach the Gateway from the OpenShell CLI
 
 With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](../agents-inference/interfaces.md#invoke-an-agent) and run other `openshell` commands.
 It needs three things: a port forward to the gateway pod, the gateway's client certificate, and an OpenShell gateway entry that signs in through your identity provider.
+A [published gateway](#publish-the-gateway-outside-the-cluster) needs no forward: skip the first step, and add the gateway at `gateway.endpoint` instead of `https://127.0.0.1:17671`.
 No automated test covers these steps; [#14131](https://github.com/NVIDIA/NemoClaw/issues/14131) records one manual run against a bare-metal single-node OpenShift 4.22 cluster with Keycloak as the issuer.
 
 In one terminal, forward the port in `gateway.endpoint` to the gateway, which listens on port 8080 in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets.

@@ -3,13 +3,17 @@
 
 # Two agents on a managed gateway in kind, in a namespace annotated with
 # OpenShift's UID range, so OpenShell runs each sandbox as its first UID:
-# apply, a reply from each agent's recorded runtime, an unchanged plan, and
-# destroy that keeps only the gateway's storage. cargo ci live-kind runs it.
+# apply, with the chart's NodePort Service publishing the gateway; a reply
+# from each agent's recorded runtime; an unchanged plan; and destroy that
+# keeps only the gateway's storage. cargo ci live-kind runs it.
 # The stub's reply shows each request reached it; no model runs. The agent
 # image comes from the run's private registry with the operator's pull
 # Secret, and the CLI and the probe reach the gateway with a token from an
 # existing OIDC issuer, so apply and the replies show that the gateway
-# accepts that issuer's tokens.
+# accepts that issuer's tokens. The CLI reaches the gateway through the SDK's
+# port-forward; the probe dials the node's address that the chart's NodePort
+# Service publishes, as another client would, with the gateway's client
+# certificate, and verifies the gateway's certificate there.
 
 run "cluster" {
   module {
