@@ -62,7 +62,6 @@ import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-
 import {
   applyVllmInstallResumeDefaults,
   checkpointPendingNvidiaModel,
-  clearPendingNvidiaModelOnSwitch,
   selectedProviderModelProvenance,
   type SelectedModelOrigin,
   resolveSelectedEndpointSource,
@@ -1302,7 +1301,6 @@ export function createSetupNim(
             log: deps.log,
             selectFromNumberedMenu: deps.selectFromNumberedMenu,
           });
-          clearPendingNvidiaModelOnSwitch(recoverySessionId, selected.key);
         }
 
         selected = requireSelectedProvider(selected, deps);

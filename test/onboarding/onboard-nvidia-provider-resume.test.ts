@@ -55,7 +55,7 @@ function createResumeScenario(editing: boolean) {
       };
     }
     load("onboard/provider-host-state.ts").detectInferenceProviderHostState = () => ({
-      isWsl: true, hasOllama: true, ollamaRunning: true, ollamaHost: "localhost",
+      isWsl: true, hasOllama: true, ollamaRunning: true, ollamaHost: "localhost", gpuNimCapable: false,
       windowsHostOllamaDockerRequirement: { supported: true }, vllmEntries: [], ollamaInstallMenu: {},
     });
     const wrongProvider = () => { throw new Error("resume selected local Ollama"); };
@@ -99,13 +99,17 @@ function createResumeScenario(editing: boolean) {
       console.log("scenario completed");
     });
   `;
-  return function run(attempt: string, overrides: NodeJS.ProcessEnv = {}) {
+  return function run(
+    attempt: string,
+    overrides: NodeJS.ProcessEnv = {},
+    expected = { status: 0, output: "scenario completed" },
+  ) {
     const result = workspace.runNodeSource(script, {
       timeout: execTimeout(30_000),
       env: { ...env, TEST_ATTEMPT: attempt, ...overrides },
     });
-    expect(result.status, result.output).toBe(0);
-    expect(result.stdout).toContain("scenario completed");
+    expect(result.status, result.output).toBe(expected.status);
+    expect(result.output).toContain(expected.output);
   };
 }
 
@@ -123,13 +127,22 @@ it(
 );
 
 it(
-  "keeps the chosen NVIDIA model across interrupted provider and key prompts on WSL (#13968)",
+  "keeps the chosen NVIDIA model across interrupted prompts and an unavailable Local NIM switch on WSL (#13968)",
   timeout,
   () => {
     const run = createResumeScenario(true);
     run("fresh");
     run("provider menu");
     run("build key", { NEMOCLAW_PROVIDER: "build" });
+    run(
+      "unavailable Local NIM",
+      {
+        NEMOCLAW_EXPERIMENTAL: "1",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "nim-local",
+      },
+      { status: 1, output: "Requested provider 'nim-local' is not available" },
+    );
     run("unattended", unattendedEnv);
   },
 );

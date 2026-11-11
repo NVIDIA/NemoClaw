@@ -2478,6 +2478,7 @@ export function checkpointVllmInstallModel(modelId: string): Session {
         "Managed vLLM install intent can only be checkpointed during provider selection.",
       );
     }
+    delete session.pendingNvidiaModel;
     session.vllmInstallModel = model;
   });
 }
@@ -2499,6 +2500,7 @@ export function checkpointManagedLlamaCppSelection(input: {
         "Managed llama.cpp selection can only be checkpointed during provider selection.",
       );
     }
+    delete session.pendingNvidiaModel;
     session.provider = "llama-cpp-local";
     session.model = model;
     session.servingProfileProvenance = provenance;

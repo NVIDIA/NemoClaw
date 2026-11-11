@@ -110,7 +110,7 @@ describe("prepareProviderDiscovery", () => {
     { nonInteractive: true, explicitModel: undefined },
     { nonInteractive: true, explicitModel: "openai/explicit" },
   ])(
-    "drops the pending NVIDIA choice on a provider switch (non-interactive $nonInteractive, explicit model $explicitModel)",
+    "ignores the pending NVIDIA choice while discovering a different provider (non-interactive $nonInteractive, explicit model $explicitModel)",
     async ({ nonInteractive, explicitModel }) => {
       vi.stubEnv("NEMOCLAW_MODEL", explicitModel);
       vi.stubEnv("NEMOCLAW_PROVIDER_MODEL", "nvidia/stale");
@@ -124,7 +124,8 @@ describe("prepareProviderDiscovery", () => {
 
       expect(result.requestedProvider).toBe("openai");
       expect(result.requestedModel).toBe(explicitModel ?? null);
-      expect(session.loadSession()?.pendingNvidiaModel).toBeUndefined();
+      expect(result.resumedNvidiaModel).toBeUndefined();
+      expect(session.loadSession()?.pendingNvidiaModel).toBeNull();
     },
   );
 

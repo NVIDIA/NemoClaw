@@ -3,11 +3,7 @@
 
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
-import {
-  clearPendingNvidiaModelOnSwitch,
-  providerNameToOptionKey,
-  readPendingNvidiaModel,
-} from "./provider-recovery";
+import { providerNameToOptionKey, readPendingNvidiaModel } from "./provider-recovery";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 
 interface ProviderDiscoveryDeps {
@@ -141,10 +137,9 @@ export function prepareProviderDiscovery(options: {
   );
   const nonInteractive = deps.isNonInteractive();
   const explicitProvider = deps.getNonInteractiveProvider();
-  let providerChanged = clearPendingNvidiaModelOnSwitch(recoverySessionId, explicitProvider);
-  const pendingNvidiaModel =
-    nonInteractive && !providerChanged ? readPendingNvidiaModel(recoverySessionId) : undefined;
+  const pendingNvidiaModel = nonInteractive ? readPendingNvidiaModel(recoverySessionId) : undefined;
   const requestedProvider = explicitProvider ?? (pendingNvidiaModel !== undefined ? "build" : null);
+  let providerChanged = pendingNvidiaModel !== undefined && requestedProvider !== "build";
   if (!providerChanged && nonInteractive && requestedProvider && recoverProvider) {
     const recordedProviderName = recordedProviderReaders.readRecordedProvider(sandboxName);
     const hasRecordedNimContainer =
@@ -207,7 +202,8 @@ export function prepareProviderDiscovery(options: {
   return {
     requestedProvider,
     requestedModel,
-    resumedNvidiaModel: nonInteractive && !requestedModel ? pendingNvidiaModel : undefined,
+    resumedNvidiaModel:
+      requestedProvider === "build" && !requestedModel ? pendingNvidiaModel : undefined,
     recoveredRegistryRoute,
     recordedProviderReaders,
     // Interactive menus always probe: the probe only drives status display

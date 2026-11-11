@@ -42,12 +42,12 @@ export function readPendingNvidiaModel(sessionId: string | null | undefined) {
 export function checkpointPendingNvidiaModel(
   sessionId: string | null | undefined,
   model: onboardSession.PendingNvidiaModel | null | undefined,
-): boolean {
+): void {
   const session = activeProviderSelectionSession(sessionId);
-  if (!session || session.pendingNvidiaModel === model) return false;
+  if (!session || session.pendingNvidiaModel === model) return;
   if (model === null) {
     // Returning to the key prompt keeps any model the operator already chose.
-    if (session.pendingNvidiaModel !== undefined) return false;
+    if (session.pendingNvidiaModel !== undefined) return;
     // The new choice supersedes the route saved for an earlier configuration review.
     session.provider = null;
     session.model = null;
@@ -58,18 +58,6 @@ export function checkpointPendingNvidiaModel(
   }
   session.pendingNvidiaModel = model;
   onboardSession.saveSession(session);
-  return true;
-}
-
-export function clearPendingNvidiaModelOnSwitch(
-  sessionId: string | null | undefined,
-  providerKey: string | null,
-): boolean {
-  return (
-    providerKey !== null &&
-    providerKey !== "build" &&
-    checkpointPendingNvidiaModel(sessionId, undefined)
-  );
 }
 
 interface VllmInstallResumeSession {
