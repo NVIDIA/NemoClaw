@@ -595,7 +595,7 @@ No GPU advertisement means unknown inventory, not zero GPUs.
 
 For complete host measurements, the provider library exposes `hardware_observation::observe_host_hardware` with the selected engine and a `HostObserver`.
 The operation checks the collector's daemon identity before accepting measurements and has a 30-second bound.
-It reports unsupported GPU memory counters separately from unobserved counters.
+It reports every GPU the collector reads, each with its UUID as `id`, and reports unsupported GPU memory counters separately from unobserved counters.
 Collector failure never falls back to the client's hardware.
 `host_engine` uses passive engine information and does not execute a collector or launch a probe container.
 Existing configured service-capacity checks retain their daemon-bound `HostObserver` collectors; this passive source neither replaces nor disables those checks.

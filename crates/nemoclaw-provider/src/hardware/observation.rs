@@ -110,7 +110,7 @@ mod tests {
     /// The local collector, against a fake engine and a fake `nvidia-smi` that
     /// reports two GPUs, beside this host's real memory and filesystem.
     #[tokio::test]
-    async fn the_local_collector_reads_only_a_named_gpu_and_refuses_two_without_one() {
+    async fn the_local_collector_reads_only_a_named_gpu_and_every_gpu_without_one() {
         let root = tempfile::tempdir().unwrap();
         let docker_root = root.path().to_str().unwrap().to_owned();
         let fixture = Fixture::engine(move |request| {
@@ -124,7 +124,10 @@ mod tests {
         let nvidia_smi = root.path().join("nvidia-smi");
         crate::executable::write_executable(
             &nvidia_smi,
-            format!("#!/bin/sh\n{}", crate::hardware::TWO_GPUS),
+            format!(
+                "#!/bin/sh\n{}",
+                crate::hardware::fake_nvidia_smi(&crate::hardware::TWO_GPUS)
+            ),
         );
         let host = LocalHost { nvidia_smi };
         for (gpu, name) in [
@@ -151,7 +154,14 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(error.contains("GPU observation failed"), "{error}");
-        let error = host.observe(&engine, None).await.err().unwrap().to_string();
+        let capacity = host.observe(&engine, None).await.unwrap().capacity;
+        let gpus: Vec<_> = capacity
+            .gpus
+            .iter()
+            .map(|gpu| (gpu.index, gpu.name.as_str()))
+            .collect();
+        assert_eq!(gpus, [(0, "NVIDIA H100 80GB HBM3"), (1, "NVIDIA L4")]);
+        let error = capacity.require_one_gpu().unwrap_err().to_string();
         assert!(error.contains("exactly one observable GPU"), "{error}");
     }
 }

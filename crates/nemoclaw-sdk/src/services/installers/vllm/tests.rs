@@ -28,6 +28,7 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
         free: 110 * GIB,
         disk_free: 200 * GIB,
         foreign_gpu_processes: 0,
+        ..Default::default()
     };
     let download = service
         .recipe

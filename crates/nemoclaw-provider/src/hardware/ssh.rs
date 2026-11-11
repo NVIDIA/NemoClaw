@@ -22,14 +22,12 @@ root=$(docker info --format '{{.DockerRootDir}}')
 case $root in /*) ;; *) exit 1 ;; esac
 section disk; stat -f -c '%a %S' -- "$root"
 section memory; head -c 65537 /proc/meminfo
-section gpu; smi --query-gpu=name,driver_version
-section compute_capability; smi --query-gpu=compute_cap
-section gpu_memory; smi --query-gpu=memory.total,memory.free
+section gpu; smi --query-gpu=index,uuid,name,compute_cap,memory.total,memory.free,driver_version
 section processes; smi --query-compute-apps=pid
 "#;
 
 const MARKER: &str = "\n==nemoclaw:";
-const SECTIONS: [&str; 11] = [
+const SECTIONS: [&str; 9] = [
     "os",
     "machine",
     "context",
@@ -38,8 +36,6 @@ const SECTIONS: [&str; 11] = [
     "disk",
     "memory",
     "gpu",
-    "compute_capability",
-    "gpu_memory",
     "processes",
 ];
 
@@ -164,13 +160,7 @@ fn decode(bytes: &[u8]) -> Result<HostObservation, Error> {
     }
     let mut capacity = super::read_memory(memory.as_bytes())?;
     capacity.architecture = daemon_architecture.into();
-    super::nvidia::apply_observations(
-        &mut capacity,
-        get("gpu")?,
-        get("processes")?,
-        get("compute_capability")?,
-        get("gpu_memory")?,
-    )?;
+    super::nvidia::apply_observations(&mut capacity, get("gpu")?, get("processes")?)?;
     capacity.disk_free = disk_free;
     Ok(HostObservation {
         engine_id: info.id,
@@ -190,7 +180,9 @@ mod tests {
     }
 
     /// The collector's output for a host described by `value`. A field that
-    /// is absent, or not a string, omits its section.
+    /// is absent, or not a string, omits its section. The GPU's `gpu` (its
+    /// name), `compute_capability`, `gpu_memory`, and `driver` form the one
+    /// row of the `gpu` section, which is omitted when any of them is absent.
     fn output(value: &Value) -> Vec<u8> {
         let field = |name: &str| value.get(name).and_then(Value::as_str).map(str::to_owned);
         let machine = field("architecture");
@@ -215,15 +207,17 @@ mod tests {
         push(&mut text, "info", Some(format!("{info}\n")));
         let disk = value.get("disk_free").and_then(Value::as_u64);
         push(&mut text, "disk", disk.map(|free| format!("{free} 1\n")));
-        for name in [
-            "memory",
-            "gpu",
-            "compute_capability",
-            "gpu_memory",
-            "processes",
-        ] {
-            push(&mut text, name, field(name));
-        }
+        push(&mut text, "memory", field("memory"));
+        let gpu = match ["gpu", "compute_capability", "gpu_memory", "driver"].map(field) {
+            [Some(name), Some(compute), Some(memory), Some(driver)] => Some(format!(
+                "0, GPU-00000000-0000-0000-0000-000000000000, {name}, {}, {}, {driver}\n",
+                compute.trim(),
+                memory.trim()
+            )),
+            _ => None,
+        };
+        push(&mut text, "gpu", gpu);
+        push(&mut text, "processes", field("processes"));
         text.into_bytes()
     }
 
@@ -235,7 +229,7 @@ mod tests {
         json!({
             "daemon":"remote", "architecture":"aarch64",
             "memory":"MemTotal: 128000000 kB\nMemAvailable: 96000000 kB\nMemFree: 64000000 kB\n",
-            "gpu":"NVIDIA GB10, 580.0\n", "processes":"", "disk_free":1000000000000_u64,
+            "gpu":"NVIDIA GB10", "driver":"580.0", "processes":"", "disk_free":1000000000000_u64,
             "compute_capability":"12.1\n", "gpu_memory":"[N/A], [N/A]\n"
         })
     }
@@ -269,7 +263,7 @@ mod tests {
 
     #[test]
     fn arm64_blackwell_requires_observed_hbm_instead_of_host_ram() {
-        let mut value = json!({"daemon":"remote", "architecture":"aarch64", "memory":"MemTotal: 496000000 kB\nMemAvailable: 396000000 kB\nMemFree: 320000000 kB\n", "gpu":"NVIDIA GB300, 610.0\n", "processes":"", "disk_free":1000000000000_u64, "gpu_memory":"245760, 204800\n", "compute_capability":"10.3\n"});
+        let mut value = json!({"daemon":"remote", "architecture":"aarch64", "memory":"MemTotal: 496000000 kB\nMemAvailable: 396000000 kB\nMemFree: 320000000 kB\n", "gpu":"NVIDIA GB300", "driver":"610.0", "processes":"", "disk_free":1000000000000_u64, "gpu_memory":"245760, 204800\n", "compute_capability":"10.3\n"});
         let capacity = decode(&value).unwrap().capacity;
         assert_eq!(capacity.gpu_memory.unwrap().total, 240 * super::super::GIB);
         value["gpu_memory"] = "[N/A], [N/A]\n".into();
@@ -282,7 +276,7 @@ mod tests {
 
     #[test]
     fn amd64_measurements_require_dedicated_gpu_memory_and_compute_capability() {
-        let mut value = json!({"daemon":"remote", "architecture":"x86_64", "memory":"MemTotal: 256000000 kB\nMemAvailable: 196000000 kB\nMemFree: 64000000 kB\n", "gpu":"NVIDIA H100, 580.0\n", "processes":"", "disk_free":1000000000000_u64, "compute_capability":"9.0\n"});
+        let mut value = json!({"daemon":"remote", "architecture":"x86_64", "memory":"MemTotal: 256000000 kB\nMemAvailable: 196000000 kB\nMemFree: 64000000 kB\n", "gpu":"NVIDIA H100", "driver":"580.0", "processes":"", "disk_free":1000000000000_u64, "compute_capability":"9.0\n"});
         assert!(decode(&value).is_err());
         value["gpu_memory"] = "98304, 90112\n".into();
         let capacity = decode(&value).unwrap().for_engine("remote").unwrap();
@@ -308,6 +302,7 @@ mod tests {
             "daemon",
             "memory",
             "gpu",
+            "driver",
             "disk_free",
             "processes",
             "compute_capability",
@@ -330,7 +325,7 @@ mod tests {
             valid.replace("unix:///var/run/docker.sock", "tcp://10.0.0.8:2375"),
             valid.replace("docker_host==\n\n", "docker_host==\nssh://elsewhere\n"),
             valid.replace("/var/lib/docker", "relative"),
-            format!("{valid}{MARKER}gpu==\nNVIDIA GB10, 580.0\n"),
+            format!("{valid}{MARKER}gpu==\n0, GPU-1, NVIDIA GB10, 12.1, [N/A], [N/A], 580.0\n"),
             format!("{valid}{MARKER}unexpected==\n"),
             format!("noise{valid}"),
         ] {
@@ -398,9 +393,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn collector_script_queries_compute_and_memory_and_parses_on_linux() {
-        let host = FakeHost::new(
-            "[ \"$2\" = --format=csv,noheader,nounits ] || exit 2\ncase \"$1\" in\n--query-gpu=name,driver_version) echo 'NVIDIA GB10, 580.0' ;;\n--query-gpu=compute_cap) echo 12.1 ;;\n--query-gpu=memory.total,memory.free) echo '[N/A], [N/A]' ;;\n--query-compute-apps=pid) ;;\n*) exit 2 ;;\nesac\n",
-        );
+        let host = FakeHost::new(&crate::hardware::fake_nvidia_smi(&[
+            "0, GPU-00000000-0000-0000-0000-000000000000, NVIDIA GB10, 12.1, [N/A], [N/A], 580.0",
+        ]));
         let result = host.run(&remote_command(None));
         assert!(
             result.status.success(),
@@ -414,10 +409,8 @@ mod tests {
         assert!(observation.capacity.total > 0 && observation.capacity.disk_free > 0);
         let calls = host.calls();
         for query in [
-            "--query-gpu=name,driver_version",
-            "--query-gpu=compute_cap",
-            "--query-gpu=memory.total,memory.free",
-            "--query-compute-apps=pid",
+            super::super::nvidia::GPU_QUERY,
+            super::super::nvidia::PROCESS_QUERY,
         ] {
             assert!(
                 calls.contains(&format!("nvidia-smi {query} --format=csv,noheader,nounits")),
@@ -426,12 +419,14 @@ mod tests {
         }
     }
 
-    /// A named GPU limits every `nvidia-smi` query to that GPU. Without one, a
-    /// host with two GPUs is refused rather than measured as one.
+    /// A named GPU limits every `nvidia-smi` query to that GPU. Without one,
+    /// the collector reads every GPU, and managed inference refuses two.
     #[cfg(target_os = "linux")]
     #[test]
-    fn the_collector_reads_only_a_named_gpu_and_refuses_two_without_one() {
-        let host = FakeHost::new(crate::hardware::TWO_GPUS);
+    fn the_collector_reads_only_a_named_gpu_and_every_gpu_without_one() {
+        let host = FakeHost::new(&crate::hardware::fake_nvidia_smi(
+            &crate::hardware::TWO_GPUS,
+        ));
         for (gpu, name, compute, total_mib) in [
             ("1", "NVIDIA L4", 89, 23034),
             (
@@ -447,12 +442,13 @@ mod tests {
             assert_eq!(capacity.gpu, name);
             assert_eq!(capacity.compute_capability, compute);
             assert_eq!(capacity.gpu_memory.unwrap().total, total_mib << 20);
+            assert_eq!(capacity.gpus.len(), 1);
             let calls = host.calls();
             let queries: Vec<_> = calls
                 .lines()
                 .filter(|line| line.starts_with("nvidia-smi "))
                 .collect();
-            assert_eq!(queries.len(), 4, "{calls}");
+            assert_eq!(queries.len(), 2, "{calls}");
             for query in queries {
                 assert!(query.ends_with(&format!(" --id={gpu}")), "{query}");
             }
@@ -461,8 +457,69 @@ mod tests {
         assert!(!host.run(&remote_command(Some("5"))).status.success());
         let result = host.run(&remote_command(None));
         assert!(result.status.success());
-        let error = super::decode(&result.stdout).err().unwrap().to_string();
+        let capacity = super::decode(&result.stdout).unwrap().capacity;
+        let gpus: Vec<_> = capacity
+            .gpus
+            .iter()
+            .map(|gpu| (gpu.index, gpu.uuid.as_str(), gpu.name.as_str()))
+            .collect();
+        assert_eq!(
+            gpus,
+            [
+                (
+                    0,
+                    "GPU-00000000-0000-0000-0000-000000000000",
+                    "NVIDIA H100 80GB HBM3"
+                ),
+                (1, "GPU-11111111-1111-1111-1111-111111111111", "NVIDIA L4"),
+            ]
+        );
+        assert!(capacity.gpu.is_empty() && capacity.gpu_memory.is_none());
+        let error = capacity.require_one_gpu().unwrap_err().to_string();
         assert!(error.contains("exactly one observable GPU"), "{error}");
         assert!(!host.calls().contains("--id"));
+    }
+
+    /// Eight GPUs: seven H200 NVL and, at index 3, a different GPU whose
+    /// framebuffer counters read `[N/A]`. The collector reads them whole and
+    /// one at a time.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_collector_reads_eight_gpus_with_their_own_names_and_memory() {
+        let rows: Vec<String> = (0..8)
+            .map(|index| {
+                let gpu = if index == 3 {
+                    "NVIDIA GB10, 12.1, [N/A], [N/A]"
+                } else {
+                    "NVIDIA H200 NVL, 9.0, 143771, 143000"
+                };
+                format!("{index}, GPU-{index}0000000-0000-0000-0000-000000000000, {gpu}, 580.65")
+            })
+            .collect();
+        let host = FakeHost::new(&crate::hardware::fake_nvidia_smi(&rows));
+        let result = host.run(&remote_command(None));
+        assert!(result.status.success());
+        let capacity = super::decode(&result.stdout).unwrap().capacity;
+        assert_eq!(capacity.gpus.len(), 8);
+        assert!(capacity.require_one_gpu().is_err());
+        let other = &capacity.gpus[3];
+        assert_eq!(
+            (other.index, other.compute_capability, &other.memory),
+            (3, 121, &None)
+        );
+        assert_eq!(other.name, "NVIDIA GB10");
+        for gpu in capacity.gpus.iter().filter(|gpu| gpu.index != 3) {
+            assert_eq!(gpu.name, "NVIDIA H200 NVL");
+            assert_eq!(gpu.memory.as_ref().unwrap().total, 143771 << 20);
+        }
+        for id in ["7", "GPU-70000000-0000-0000-0000-000000000000"] {
+            let result = host.run(&remote_command(Some(id)));
+            assert!(result.status.success(), "{id}");
+            let capacity = super::decode(&result.stdout).unwrap().capacity;
+            capacity.require_one_gpu().unwrap();
+            assert_eq!(capacity.gpus[0].index, 7);
+            assert_eq!(capacity.gpu, "NVIDIA H200 NVL");
+            assert_eq!(capacity.gpu_memory.unwrap().free, 143000 << 20);
+        }
     }
 }
