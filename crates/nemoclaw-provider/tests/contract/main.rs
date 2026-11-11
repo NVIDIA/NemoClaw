@@ -30,6 +30,10 @@ mod image_runtime;
 
 mod failures;
 mod fakes;
+// The bundled Docker provider reaches its engine with its own ssh arguments,
+// which the relay does not accept.
+#[cfg(unix)]
+mod gpu_requests;
 mod provider_protocol;
 mod readiness_refs;
 mod references;

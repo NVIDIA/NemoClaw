@@ -430,7 +430,11 @@ mod tests {
             assert_eq!(serde_json::json!(environment), docker["Env"], "{kind}");
             assert_eq!(launch["port"], process.port, "{kind}");
             assert_eq!(launch["data_path"], process.mount_target, "{kind}");
-            assert_eq!(requirements["gpu"], process.gpu, "{kind}");
+            assert_eq!(
+                requirements["gpu"],
+                process.gpus != nemoclaw_sdk::managed::Gpus::None,
+                "{kind}"
+            );
             assert_eq!(
                 requirements["shared_memory_bytes"], process.shared_memory_bytes,
                 "{kind}"
