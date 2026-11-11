@@ -10,7 +10,7 @@ Managed services have a separate rule: every entry in `spec.services` is install
 
 The authoring library and its [example TUI](../../crates/nemoclaw-onboarding/README.md) can generate a validated starter document without resolving credentials, planning, or applying.
 The questionnaire edits a single-sandbox deployment and derives native settings questions from Fabric schemas.
-Other deployment shapes remain available through hand-authored YAML according to the [field reference](../references/v1-configuration.md).
+Other deployment shapes remain available through hand-authored YAML according to the [field reference](../reference/configuration.md).
 Generated and hand-authored files use the same lifecycle CLI `plan` and `apply` implementations.
 
 ## The Authoring Rule
@@ -38,7 +38,7 @@ Paths below are relative to `spec`; `agent` is inside `sandboxes.<sandbox>` and 
 
 | Family | Enclosing definitions | Consumer selection | Current runtime limit |
 |---|---|---|---|
-| Inference provider | `inferenceProviders.<name>` or `sandboxes.<sandbox>.inferenceProviders.<name>` | Route `provider` or `providerRef` | Up to 32 selected providers; each uses an external endpoint or references a named service |
+| Inference provider | `inferenceProviders.<name>` or `sandboxes.<sandbox>.inferenceProviders.<name>` | Route `provider` or `providerRef` | Up to 32 providers attached to each sandbox, counting its web search and `api` integrations; each uses an external endpoint or references a named service |
 | Inference | `inferences.<name>` or `sandboxes.<sandbox>.inferences.<name>` | Agent `inference` or `inferenceRef` | An explicit default selects a Fabric model role; Fabric validates the adapter's supported roles |
 | Harness | `harnesses.<name>` or `sandboxes.<sandbox>.harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration and one agent per sandbox |
 | Integration | `integrations.<name>` or `sandboxes.<sandbox>.integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Brave or Tavily `webSearch` credentials and grants; one attached search definition per sandbox |
@@ -47,7 +47,7 @@ Sandboxes, inference providers, inferences, harnesses, and integrations are maps
 An inline provider has no key, so it requires `name`.
 Deployment-level provider names identify their OpenShell registrations; sandbox-local providers receive stable identities derived from the sandbox and provider names.
 Different sandboxes can reuse a local definition name without sharing its registration.
-A document supports one to 32 named sandboxes; OpenClaw agents can select models from different providers.
+A document supports one to 256 named sandboxes with a Kubernetes or OpenShift gateway, and one to 32 with Docker or Podman; OpenClaw agents can select models from different providers.
 See [multiple model choices](../agents-inference/inference.md#give-an-agent-multiple-model-choices) for defaults and current service limits.
 Multiple OpenClaw agents can reference the same provider and integration; distinct inline instances are not shared implicitly.
 
@@ -185,7 +185,7 @@ No single active configuration exercises every schema branch:
 | Hermes provider authentication or Relay tracing | [Authentication](../../examples/hermes-auth.yaml), [Relay](../agents-inference/agents.md#hermes-relay-tracing) | The full-featured example selects OpenClaw |
 | Pi model extensions | [Pi example](../../examples/fabric-pi.yaml) | Pi needs a context window for a model it does not ship |
 | Model preparation recipe | [Recipe declaration](../agents-inference/recipes.md#declaration) | Separate model, image, and hardware contract |
-| External gateway credentials and mTLS | [Gateway fields](../references/v1-configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |
+| External gateway credentials and mTLS | [Gateway fields](../reference/configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |
 
 The [multiple-provider example](../../examples/multiple-providers.yaml) combines selected local and hosted endpoints.
 Unselected definitions do not exercise another provider's runtime.
@@ -199,6 +199,6 @@ Managed services are named definitions under `spec.services`; providers select t
 Services have no inline provider form or sandbox-local scope, and every declared service participates in apply and destroy.
 Use [service configuration](../agents-inference/inference.md#choose-a-service-mode) for the available installers and lifecycle limits.
 
-The [field reference](../references/v1-configuration.md) lists exact shapes and constraints.
+The [field reference](../reference/configuration.md) lists exact shapes and constraints.
 Editor schema checks cover structure and conditional forms; the SDK parser also resolves names and checks selected-provider compatibility when multiple named definitions exist.
 Validate connectivity and inference separately using the [deployment verification steps](../agents-inference/inference.md#verify-the-result).

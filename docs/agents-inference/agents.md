@@ -21,7 +21,7 @@ Deployment-owned fields, including metadata, adapter identity, and resolved mode
 See [the SDK configuration projection](../../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
 
 Plan checks that the selected image provides the harness at NemoClaw's Fabric revision; a mismatched revision leaves compatibility unknown.
-Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
+Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply; [#14148](https://github.com/NVIDIA/NemoClaw/issues/14148) tracks checking it at plan time.
 Neither check establishes successful model inference.
 
 ## Choose Native Access
@@ -58,17 +58,17 @@ Headless operation follows the same public Fabric invocation boundary.
 The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/f33fa19a1aff584625e02af9007d8113e7b95dd8/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
-With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID and send a request:
+With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID from a plan, as the [tutorial](../get-started/first-deployment.md#send-a-verification-request) does, and send a request:
 
 ```sh
-RUNTIME_ID=$(jq -er '.resources[] | select(.mode == "managed" and .type == "fabric_agent" and .name == "assistant") | .instances[].attributes.runtime_id | select(type == "string" and length > 0)' .local/first-deployment/state/terraform.tfstate) || exit 1
+RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml | jq -er '.agents.assistant.runtimeId') || exit 1
 openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
 "Reply with exactly READY."
 JSON
 ```
 
 The command's `--agent` selects the deployment's YAML `agent.name`; the input is one JSON value, here the prompt string.
-Stop if the ID lookup fails; inspect state and the apply result rather than invoking with an empty ID. On success, check `result.status: succeeded` and inspect `result.output` for the adapter's reply. Do not assume every adapter uses the same output fields or that one reply establishes general model compatibility.
+Stop if the ID lookup fails; inspect the apply result rather than invoking with an empty ID. On success, check `result.status: succeeded` and inspect `result.output` for the adapter's reply. Do not assume every adapter uses the same output fields or that one reply establishes general model compatibility.
 If later invocations fail with `runtime_unavailable`, plan and apply again: apply starts a new runtime in the same sandbox. If the plan shows no change, replace the sandbox using the [CLI replacement procedure](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).
 

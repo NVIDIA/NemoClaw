@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::{Service, arguments};
 use crate::config::{Document, ServiceDefinition};
-use nemoclaw_runtime::hardware::{Capacity, GIB};
+use nemoclaw_runtime::hardware::{Capacity, GIB, Gpu};
 
 fn service() -> Service {
     let mut document =
@@ -17,12 +17,8 @@ fn service() -> Service {
 #[test]
 fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
     let service = service();
-    let good = Capacity {
+    let mut good = Capacity {
         architecture: "arm64".into(),
-        gpu: "NVIDIA GB10".into(),
-        driver_major: 580,
-        compute_capability: 121,
-        gpu_memory: None,
         total: 121 * GIB,
         available: 116 * GIB,
         free: 110 * GIB,
@@ -30,6 +26,14 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
         foreign_gpu_processes: 0,
         ..Default::default()
     };
+    good.set_gpus(vec![Gpu {
+        index: 0,
+        uuid: "GPU-00000000-0000-0000-0000-000000000000".into(),
+        name: "NVIDIA GB10".into(),
+        driver_major: 580,
+        compute_capability: 121,
+        memory: None,
+    }]);
     let download = service
         .recipe
         .as_ref()
@@ -54,9 +58,9 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
         match dimension {
             "memory" => bad.available = 60 * GIB,
             "disk" => bad.disk_free = 40 * GIB,
-            "gpu" => bad.gpu = "unknown".into(),
+            "gpu" => bad.gpus[0].name = "unknown".into(),
             "architecture" => bad.architecture = "amd64".into(),
-            "driver" => bad.driver_major = 570,
+            "driver" => bad.gpus[0].driver_major = 570,
             "reserve" => spec.memory.host_reserve_gib = 64,
             _ => unreachable!(),
         }

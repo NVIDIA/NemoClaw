@@ -27,7 +27,7 @@ Empty or zero selects a default only where stated.
 - The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.
 - Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.
 - Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.
-- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.
+- The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 providers attached to one sandbox (its inference providers, web search, and api integrations, OpenShell's limit per sandbox), incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.
 - The parser checks memory threshold ordering and GPU/KV budget relationships; that a recipe's GPU belongs to a hardware profile's GPU family; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
 
@@ -268,7 +268,7 @@ Paths:
 
 ## DedicatedHardware
 
-Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.
+Requirements each selected NVIDIA GPU with dedicated memory on Linux AMD64 must meet. Declaring requirements does not qualify a model or host.
 
 Guide: [Managed models](../agents-inference/models.md).
 
@@ -281,7 +281,7 @@ Paths:
 | `architecture` | string | Yes | — | CPU architecture; this dedicated-memory contract requires amd64. Constraints: `"amd64"`. |
 | `minComputeCapability` | integer | Yes | — | Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0. Constraints: minimum 10; maximum 999. |
 | `minDriverMajor` | integer | Yes | — | Minimum installed NVIDIA driver major version. Constraints: minimum 1; maximum 9999. |
-| `minGpuMemoryBytes` | integer | Yes | — | Minimum total dedicated GPU memory in bytes. Host RAM is measured separately. Constraints: minimum 4294967296; maximum 4398046511104. |
+| `minGpuMemoryBytes` | integer | Yes | — | Minimum total dedicated memory of each selected GPU in bytes. Host RAM is measured separately. Constraints: minimum 4294967296; maximum 4398046511104. |
 
 ## ExplicitPolicy
 
@@ -320,7 +320,7 @@ Paths:
 
 External Ollama daemon observed by the managed proxy installer.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy).
 
 Paths:
 
@@ -335,7 +335,7 @@ Paths:
 
 Existing Ollama model installation, independently owned outside the deployment.
 
-Guide: [Inference configuration](../agents-inference/inference.md).
+Guide: [External Ollama through a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy).
 
 Paths:
 
@@ -705,10 +705,10 @@ Paths:
 |---|---|---|---|---|
 | `consecutiveSamples` | integer | No | `5` | Consecutive low-memory samples before the watchdog stops the owned process. Constraints: `0` or minimum 1; maximum 5. Omitted or zero selects the default. |
 | `freeGateGiB` | integer | No | `12` | Available-memory gate in GiB for minFreeGiB. Must be at least minAvailableGiB after defaults. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
-| `gpuMemoryGiB` | integer | No | — | Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget. Constraints: minimum 0; maximum 96. Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here. |
-| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively. Constraints: minimum 0.05; maximum 0.95. |
+| `gpuMemoryGiB` | integer | No | — | GPU budget in GiB for each selected GPU without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget. Constraints: minimum 0; maximum 96. Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here. |
+| `gpuMemoryUtilization` | number | No | — | Optional fraction of each selected GPU's observed dedicated memory, from 0.05 through 0.95, which vLLM's --gpu-memory-utilization applies to each GPU's own total. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively. Constraints: minimum 0.05; maximum 0.95. |
 | `hostReserveGiB` | integer | No | `32` | Host memory reserve in GiB excluded from the serving budget. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile or a recipe. Constraints: `0` or minimum 6; maximum 64. Omitted or zero selects the default. |
-| `kvCacheGiB` | integer | No | `8` | KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag. Constraints: minimum 0. Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache. |
+| `kvCacheGiB` | integer | No | `8` | KV cache allocation in GiB on each selected GPU for ordinary vLLM, passed as --kv-cache-memory-bytes. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag. Constraints: minimum 0. Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache. |
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold in GiB that contributes a low-memory sample. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
 | `minFreeGiB` | integer | No | `3` | Free-memory threshold in GiB, used when available memory is below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
 
@@ -764,7 +764,7 @@ Paths:
 
 Ollama GPU budget and host memory protection.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
 
 Paths:
 
@@ -774,8 +774,8 @@ Paths:
 |---|---|---|---|---|
 | `consecutiveSamples` | integer | No | `5` | Consecutive low-memory samples before stopping the owned process. Constraints: `0` or minimum 1; maximum 5. Omitted or zero selects the default. |
 | `freeGateGiB` | integer | No | `12` | Available-memory gate for the free-memory threshold. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
-| `gpuMemoryGiB` | integer | No | `0` | Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB. Constraints: `0` or minimum 0; maximum 96. Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB. |
-| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory. Constraints: minimum 0.05; maximum 0.95. |
+| `gpuMemoryGiB` | integer | No | `0` | Fixed serving budget in GiB for each selected GPU when utilization is omitted. Omission or zero selects 16 GiB. Constraints: `0` or minimum 0; maximum 96. Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB. |
+| `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, taken of the smallest selected GPU; the resulting budget applies to each selected GPU. Constraints: minimum 0.05; maximum 0.95. |
 | `hostReserveGiB` | integer | No | `32` | Host memory reserve excluded from serving. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile. Constraints: `0` or minimum 6; maximum 64. Omitted or zero selects the default. |
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold used by the bounded runtime watchdog. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
 | `minFreeGiB` | integer | No | `3` | Free-memory threshold used below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
@@ -784,7 +784,7 @@ Paths:
 
 One immutable Ollama registry model installation.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
 
 Paths:
 
@@ -799,7 +799,7 @@ Paths:
 
 Native Ollama serving controls supported by the managed installer.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Managed Ollama](../agents-inference/inference.md#run-managed-ollama).
 
 Paths:
 
@@ -829,7 +829,7 @@ Paths:
 | `extensions` | object | No | — | Model fields the selected adapter declares as extensions, such as Pi's context_window; Fabric validates them. |
 | `harnessProvider` | string | No | — | Fabric model provider the harness uses, such as custom. Defaults to the inference provider's API family. |
 | `maxTokens` | integer | No | — | Maximum output tokens requested from the native adapter. Planning rejects this field when the bundled adapter does not accept it. Constraints: minimum 1; maximum 4294967295. |
-| `model` | string | Yes | — | Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
+| `model` | string | Yes | — | Model identifier. For a managed service, match its served model: vLLM's recipe serving.modelName, serving.modelName, or model.repository; Ollama's model.name; an Ollama proxy's upstream.model.name. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
 | `settings` | object | No | — | Opaque native model settings validated by Fabric's selected model schema. |
 | `temperature` | number | No | — | Sampling temperature, passed to Fabric's temperature. Planning checks bundled adapter field support; Fabric validates the range. |
 | `topP` | number | No | — | Nucleus sampling probability, passed to Fabric's top_p. Planning checks bundled adapter field support; Fabric validates the range. |
@@ -1123,7 +1123,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `gpuMemoryBytes` | integer | Yes | — | Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory. Constraints: minimum 4294967296; maximum 4398046511104. |
+| `gpuMemoryBytes` | integer | Yes | — | Serving GPU budget in bytes for each selected GPU, including its share of the model, caches, and other allocations. Checked against each selected GPU's memory on dedicated-memory GPUs, and against host memory with the host reserve on unified memory. Constraints: minimum 4294967296; maximum 4398046511104. |
 | `preparationMemoryGiB` | integer | Yes | — | Preparation memory requirement in GiB, in addition to the service host reserve. Constraints: minimum 1; maximum 4096. |
 | `preparedBytes` | integer | Yes | — | Maximum total prepared-data bytes. Constraints: minimum 1; maximum 1099511627776. |
 | `startupHeadroomGiB` | integer | Yes | — | Host available memory in GiB required at startup, beyond the GPU budget on unified memory or beyond the host reserve on a dedicated-memory GPU. Constraints: minimum 0; maximum 4096. |
@@ -1198,7 +1198,7 @@ Paths:
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
-| `serviceExposures` | map of [ServiceExposure](#serviceexposure) | No | — | OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names when it creates the sandbox. Exposures belong to the sandbox's creation: changing them replaces the sandbox. Constraints: maximum entries 32. |
+| `serviceExposures` | map of [ServiceExposure](#serviceexposure) | No | — | OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks each name when it exposes the service. Changing them updates the running sandbox's endpoints in place. Constraints: maximum entries 32. |
 
 ## SearchProvider
 
@@ -1243,7 +1243,7 @@ Paths:
 
 Bearer authentication for a managed inference service.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Managed vLLM authentication](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
 
 Paths:
 
@@ -1255,9 +1255,9 @@ Constraints: `"bearer"`.
 
 ## ServiceContainer
 
-Managed inference CPU and memory limits, IPC, and shared-memory settings.
+Managed inference CPU and memory limits, GPU selection, IPC, and shared-memory settings.
 
-Guide: [Managed models](../agents-inference/models.md).
+Guide: [Container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy).
 
 Paths:
 
@@ -1268,7 +1268,7 @@ Paths:
 | `cpuLimitMillis` | integer | No | — | CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container. Constraints: minimum 1; maximum 4294967295. |
 | `gpuDevices` | array of string | No | — | The GPUs the model container gets on a host with several, as `docker run --gpus device=` names them: each a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index as a string, such as "1", which can change when the host boots. List exactly one: serving one model across several GPUs isn't implemented yet. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing the list replaces the model container. Constraints: minimum items 1; maximum items 1; items: pattern `^(?:GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\|0\|[1-9][0-9]{0,2})$`. |
 | `ipc` | [ServiceIpc](#serviceipc) | No | — | IPC namespace. Omission uses private; host shares the execution host's IPC namespace. |
-| `memoryLimitGiB` | integer | No | — | Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container. Constraints: minimum 1; maximum 8589934591. |
+| `memoryLimitGiB` | integer | No | — | Container memory limit in GiB, independent of the model's GPU budget. Omission sets a 104 GiB limit. Changing the limit replaces the model container. Constraints: minimum 1; maximum 8589934591. |
 | `sharedMemoryGiB` | integer | No | — | Shared-memory size in GiB, from 1 through 64. Omission uses 8; host IPC uses the host's existing shared-memory mount instead. Constraints: minimum 1; maximum 64. |
 
 ## ServiceDefinition
@@ -1290,7 +1290,7 @@ Managed Ollama daemon and selected model.
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Explicit supported GPU or system profile. |
 | `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
@@ -1324,7 +1324,7 @@ Managed vLLM runtime and immutable model snapshot.
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `authentication` | [ServiceAuthentication](#serviceauthentication) | No | — | Optional native bearer authentication. The runtime uses a key supplied in NEMOCLAW_INFERENCE_KEY, or generates and retains one in its credential storage; omission preserves unauthenticated serving. |
-| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
 | `hardware` | [ServiceHardware](#servicehardware) | Without recipe | — | Explicit hardware contract: a named GPU or system profile, or dedicated GPU requirements for Linux AMD64. Required without an inline recipe; excludes recipe. |
 | `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
@@ -1391,7 +1391,7 @@ A named hardware contract with fixed compatibility requirements.
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `architecture` | string | No | — | Host CPU architecture: amd64 or arm64. Required for GPU profiles; system profiles fix arm64 and reject a conflicting value. Constraints: `"amd64"` or `"arm64"`. |
-| `minGpuMemoryBytes` | integer | No | — | Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity. Constraints: minimum 4294967296; maximum 4398046511104. |
+| `minGpuMemoryBytes` | integer | No | — | Minimum dedicated memory of each selected GPU in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity. Constraints: minimum 4294967296; maximum 4398046511104. |
 | `profile` | [HardwareProfile](#hardwareprofile) | Yes | — | GPU family and memory architecture. Every profile requires observed compute capability and driver major 580 or newer. Unified-memory profiles budget host RAM; dedicated-memory profiles require GPU total/free counters. |
 
 ## ServiceIpc
@@ -1442,7 +1442,7 @@ Paths:
 
 Whether updates may stop an existing model service before its replacement is ready.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy).
 
 Paths:
 
@@ -1505,7 +1505,7 @@ Paths:
 
 ## Spec
 
-The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.
+The configuration requires at least one named sandbox and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
@@ -1521,7 +1521,7 @@ Paths:
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `registries` | array of [Registry](#registry) | No | — | Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store. Constraints: maximum items 32. |
-| `sandboxes` | map of [Sandbox](#sandbox) | Yes | — | One to 32 named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent. Constraints: minimum entries 1; maximum entries 32; keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `sandboxes` | map of [Sandbox](#sandbox) | Yes | — | Named sandboxes: one to 256 with a kubernetes or openshift gateway runtime, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent. Constraints: minimum entries 1; keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## TLS

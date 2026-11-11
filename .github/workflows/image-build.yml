@@ -123,8 +123,8 @@ jobs:
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           printf 'ollama-proxy\tnc-fabric:ollama-proxy\n' >> .build-image-list
-          # The live suites pull the reference image with the agent and proxy
-          # when a pull request changes no image input; releases don't ship it.
+          # The live suites pull the reference image with the OpenClaw and Hermes
+          # images when a pull request changes no image input; releases don't ship it.
           printf 'dummy\tnc-fabric:dummy\n' >> .build-image-list
           tag="$GITHUB_SHA-${PLATFORM#linux_}"
           {

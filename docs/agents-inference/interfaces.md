@@ -8,7 +8,7 @@ Agents run inside their sandboxes; you reach them through OpenShell commands, no
 
 ## Select the Gateway and Workspace
 
-Use an OpenShell CLI matching the deployment implementation revision on the client host. For the [source-pinned tutorial](../get-started/first-deployment.md), use OpenShell 0.1.6 from its inspected `versions.json`; this documentation checkout’s `versions.json` may specify a different version.
+Use an OpenShell CLI matching the deployment implementation revision on the client host. For the [source-pinned tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
 These selectors choose an existing OpenShell gateway and deployment; they do not create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.
 
@@ -236,9 +236,10 @@ sandboxes:
 
 Each entry maps to an OpenShell service exposure: its key is the service name, and it takes `targetPort` and an optional `authorizationMode` (`STRIP` or `BEARER_PASSTHROUGH`).
 OpenShell applies `STRIP` when the mode is omitted, and the empty key `""` is the unnamed endpoint.
-OpenShell checks the names when it creates the sandbox; see its [service exposure rules](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/overview.mdx#expose-long-running-services).
+OpenShell checks the names when it creates the sandbox or exposes a service; see its [service exposure rules](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/overview.mdx#expose-long-running-services).
 A sandbox takes at most 32 exposures.
-Exposures belong to the sandbox's creation, so adding, changing, or removing one replaces the sandbox, deleting its files and conversations.
+Adding, changing, or removing an exposure updates the running sandbox's endpoints in place, as `openshell service expose` and `openshell service delete` do, so the sandbox keeps its files and conversations.
+Apply also restores a declared endpoint that was changed or deleted on the gateway, and leaves endpoints under other names alone.
 In HCL, use `openshell_sandbox`'s [`service` blocks](../references/provider.md#openshell-resources-and-data-sources).
 
 Requests to the URL skip OpenShell's gateway authentication: they use no OIDC or CLI login, and only the gateway listener's TLS, including any required client certificate, applies.

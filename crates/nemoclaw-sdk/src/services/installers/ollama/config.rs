@@ -18,7 +18,7 @@ pub struct ManagedOllama {
         skip_serializing_if = "crate::services::ServiceUpdatePolicy::is_preserve"
     )]
     pub update_policy: crate::services::ServiceUpdatePolicy,
-    /// Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory.
+    /// Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceContainer")]
     pub container: Option<ServiceContainer>,

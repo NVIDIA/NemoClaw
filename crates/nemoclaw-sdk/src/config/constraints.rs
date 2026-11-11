@@ -43,3 +43,10 @@ pub(crate) const GATEWAY_ENDPOINT: &str = "http://127.0.0.1:17681";
 pub const GATEWAY_ENGINE: &str = "unix:///var/run/docker.sock";
 pub(crate) const KUBERNETES_GATEWAY_ENDPOINT: &str = r"^https://127\.0\.0\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$";
 pub(crate) const NETWORK_TIER: &str = "isolated";
+/// Sandboxes in a document with a Kubernetes or OpenShift gateway. The cluster
+/// schedules their pods; a document is one gateway, namespace and state, so
+/// this bounds what one gateway outage or slow plan affects.
+pub(crate) const CLUSTER_SANDBOXES: usize = 256;
+/// Sandboxes in a document with a Docker or Podman gateway, which runs every
+/// sandbox on one host.
+pub(crate) const HOST_SANDBOXES: usize = 32;
