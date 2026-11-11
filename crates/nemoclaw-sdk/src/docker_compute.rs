@@ -320,6 +320,17 @@ fn container(target: &Target) -> Result<Value, Error> {
     }
     Ok(attrs)
 }
+/// Runtime contract settings with the GPUs the service's container gets, from
+/// which the contract's `requirements.gpu_count` tells other placements how
+/// many to request.
+fn with_gpu_devices(mut settings: Value, target: &Target) -> Result<Value, Error> {
+    if let Some(crate::managed::Gpus::Devices(devices)) =
+        spec(target)?.process.map(|process| process.gpus)
+    {
+        settings["gpu_devices"] = json!(devices);
+    }
+    Ok(settings)
+}
 fn push_label(attrs: &mut Value, label: &str, value: impl ToString) {
     attrs["labels"]
         .as_array_mut()
@@ -404,24 +415,30 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             vllm::SERVICE_KIND => Some((
                 vllm::RUNTIME_DATA_SOURCE,
                 "NEMOCLAW_RUNTIME_SPEC",
-                crate::hcl_schema::to_hcl(
-                    &vllm::runtime_fields().map_err(|_| {
-                        Error::State("the vLLM runtime contract has no OpenTofu schema")
-                    })?,
-                    &serde_json::to_value(vllm::configured_service(&spec(target)?)?)
-                        .map_err(|_| Error::State("cannot encode runtime settings"))?,
-                ),
+                with_gpu_devices(
+                    crate::hcl_schema::to_hcl(
+                        &vllm::runtime_fields().map_err(|_| {
+                            Error::State("the vLLM runtime contract has no OpenTofu schema")
+                        })?,
+                        &serde_json::to_value(vllm::configured_service(&spec(target)?)?)
+                            .map_err(|_| Error::State("cannot encode runtime settings"))?,
+                    ),
+                    target,
+                )?,
             )),
             ollama::SERVICE_KIND => Some((
                 ollama::RUNTIME_DATA_SOURCE,
                 "NEMOCLAW_RUNTIME_SPEC",
-                crate::hcl_schema::to_hcl(
-                    &ollama::runtime_fields().map_err(|_| {
-                        Error::State("the Ollama runtime contract has no OpenTofu schema")
-                    })?,
-                    &serde_json::to_value(ollama::configured_service(&spec(target)?)?)
-                        .map_err(|_| Error::State("cannot encode runtime settings"))?,
-                ),
+                with_gpu_devices(
+                    crate::hcl_schema::to_hcl(
+                        &ollama::runtime_fields().map_err(|_| {
+                            Error::State("the Ollama runtime contract has no OpenTofu schema")
+                        })?,
+                        &serde_json::to_value(ollama::configured_service(&spec(target)?)?)
+                            .map_err(|_| Error::State("cannot encode runtime settings"))?,
+                    ),
+                    target,
+                )?,
             )),
             ollama::proxy::PROXY => {
                 let proxy = ollama::proxy::row_spec(&target.values)?;

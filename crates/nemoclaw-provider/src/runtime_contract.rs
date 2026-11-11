@@ -18,10 +18,11 @@ pub(crate) type RuntimeState = BTreeMap<String, Value<Dynamic>>;
 const SPEC: &str = "spec";
 const LAUNCH: &str = "launch";
 const REQUIREMENTS: &str = "requirements";
+const GPU_DEVICES: &str = "gpu_devices";
 
 /// What any platform runs for a runtime specification, and what the runtime
 /// needs from it: the launch and requirements Docker placement uses.
-fn placement(spec: &str) -> Option<(serde_json::Value, serde_json::Value)> {
+fn placement(spec: &str, gpu_count: u64) -> Option<(serde_json::Value, serde_json::Value)> {
     use nemoclaw_sdk::managed::{
         RUNTIME_DATA_PATH, RUNTIME_ENTRYPOINT, RUNTIME_SPEC_ENV, RUNTIME_ULIMITS,
         default_shared_memory_bytes,
@@ -49,6 +50,7 @@ fn placement(spec: &str) -> Option<(serde_json::Value, serde_json::Value)> {
         }),
         serde_json::json!({
             "gpu": true,
+            "gpu_count": gpu_count,
             "shared_memory_bytes": default_shared_memory_bytes(),
             "ulimits": ulimits,
         }),
@@ -77,6 +79,33 @@ fn dynamic(value: serde_json::Value) -> Value<Dynamic> {
     }
 }
 
+/// The number of GPUs the runtime needs: the length of `gpu_devices`, the
+/// service's `container.gpuDevices`, or 1 without it, because the container
+/// then gets every GPU and the runtime requires exactly one. `None` while the
+/// list or an entry is unknown.
+fn gpu_count(config: &RuntimeState) -> Result<Option<u64>, nemoclaw_sdk::Error> {
+    use crate::services::{capacity::GPU_DEVICES_ENTRY, validate_capacity_gpu_devices};
+    let devices = match config.get(GPU_DEVICES) {
+        None | Some(Value::Null) => return Ok(Some(1)),
+        Some(Value::Unknown) => return Ok(None),
+        Some(Value::Value(Dynamic::List(devices))) => devices,
+        Some(Value::Value(_)) => return Err(crate::Error::Conflict(GPU_DEVICES_ENTRY)),
+    };
+    let devices = devices
+        .iter()
+        .map(|device| match device {
+            Value::Value(Dynamic::String(device)) => Ok(Some(device.as_str())),
+            Value::Unknown => Ok(None),
+            _ => Err(crate::Error::Conflict(GPU_DEVICES_ENTRY)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_capacity_gpu_devices(&devices)?;
+    Ok(devices
+        .iter()
+        .all(Option::is_some)
+        .then_some(devices.len() as u64))
+}
+
 /// The OpenTofu types of `launch` and `requirements`.
 fn placement_types() -> [(&'static str, AttributeType, &'static str); 2] {
     use AttributeType::{Bool, List, Map, Number, Object, String};
@@ -97,10 +126,11 @@ fn placement_types() -> [(&'static str, AttributeType, &'static str); 2] {
             REQUIREMENTS,
             Object(std::collections::HashMap::from([
                 ("gpu".into(), Bool),
+                ("gpu_count".into(), Number),
                 ("shared_memory_bytes".into(), Number),
                 ("ulimits".into(), Map(Box::new(Number))),
             ])),
-            "What the runtime needs from its platform: a GPU, shared memory (a recommended minimum), and process limits by name, where -1 is unlimited. Platforms that cannot set process limits leave them to the node.",
+            "What the runtime needs from its platform: a GPU and how many to give it (gpu_count: the length of gpu_devices, or 1 without it), shared memory (a recommended minimum), and process limits by name, where -1 is unlimited. Platforms that cannot set process limits leave them to the node.",
         ),
     ]
 }
@@ -146,7 +176,11 @@ impl RuntimeDataSource {
         config: &RuntimeState,
     ) -> Result<Option<String>, (AttributePath, String)> {
         let mut settings = serde_json::Map::new();
-        for (name, value) in config.iter().filter(|(name, _)| *name != SPEC) {
+        // `gpu_devices` is placement input, not a runtime setting.
+        for (name, value) in config
+            .iter()
+            .filter(|(name, _)| *name != SPEC && *name != GPU_DEVICES)
+        {
             let Some(value) = json(value) else {
                 return Ok(None);
             };
@@ -262,6 +296,17 @@ impl DataSource for RuntimeDataSource {
                 ..Default::default()
             },
         );
+        block.attributes.insert(
+            GPU_DEVICES.into(),
+            Attribute {
+                attr_type: AttributeType::List(Box::new(AttributeType::String)),
+                description: Description::plain(
+                    "The GPUs the service's container gets, as its container.gpuDevices lists them: each a lowercase GPU UUID or an index from \"0\" to \"999\", and exactly one entry, because serving one model across several GPUs isn't implemented yet. It sets requirements.gpu_count and leaves spec unchanged. Omission means the container gets every GPU, and the runtime then requires exactly one.",
+                ),
+                constraint: AttributeConstraint::Optional,
+                ..Default::default()
+            },
+        );
         for (name, attr_type, description) in placement_types() {
             block.attributes.insert(
                 name.into(),
@@ -277,6 +322,14 @@ impl DataSource for RuntimeDataSource {
     }
 
     async fn validate<'a>(&self, diags: &mut Diagnostics, config: RuntimeState) -> Option<()> {
+        if let Err(error) = gpu_count(&config) {
+            diags.error(
+                "Invalid runtime GPU devices",
+                error.to_string(),
+                AttributePath::new(GPU_DEVICES),
+            );
+            return None;
+        }
         match self.specification(&config) {
             Ok(_) => Some(()),
             Err((path, detail)) => {
@@ -292,9 +345,24 @@ impl DataSource for RuntimeDataSource {
         mut config: RuntimeState,
         _: ValueEmpty,
     ) -> Option<RuntimeState> {
+        let gpu_count = match gpu_count(&config) {
+            Ok(Some(gpu_count)) => gpu_count,
+            Ok(None) => {
+                diags.root_error_short("Runtime settings are not yet known");
+                return None;
+            }
+            Err(error) => {
+                diags.error(
+                    "Invalid runtime GPU devices",
+                    error.to_string(),
+                    AttributePath::new(GPU_DEVICES),
+                );
+                return None;
+            }
+        };
         match self.specification(&config) {
             Ok(Some(spec)) => {
-                let Some((launch, requirements)) = placement(&spec) else {
+                let Some((launch, requirements)) = placement(&spec, gpu_count) else {
                     diags.root_error_short("Runtime specification has no serving port");
                     return None;
                 };
@@ -359,22 +427,38 @@ mod tests {
 
     #[test]
     fn generated_settings_reproduce_the_compiled_runtime_contract() {
-        use nemoclaw_sdk::{compile, config::Document};
-        for (kind, data, yaml) in [
+        use nemoclaw_sdk::{compile, config::Document, managed::Gpus};
+        const UUID: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
+        for (kind, data, yaml, gpu) in [
             (
                 "inference_service",
                 "vllm_runtime",
                 include_str!("../../../examples/spark/vllm.yaml"),
+                None,
             ),
             (
                 "inference_service",
                 "vllm_runtime",
                 include_str!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml"),
+                None,
+            ),
+            (
+                "inference_service",
+                "vllm_runtime",
+                include_str!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml"),
+                Some("1"),
             ),
             (
                 "ollama_service",
                 "ollama_runtime",
                 include_str!("../../../examples/managed-ollama.yaml"),
+                None,
+            ),
+            (
+                "ollama_service",
+                "ollama_runtime",
+                include_str!("../../../examples/managed-ollama.yaml"),
+                Some(UUID),
             ),
         ] {
             let source = if kind == "ollama_service" {
@@ -382,7 +466,19 @@ mod tests {
             } else {
                 RuntimeDataSource::vllm().unwrap()
             };
-            let document = Document::parse(yaml.as_bytes()).unwrap();
+            let mut document = Document::parse(yaml.as_bytes()).unwrap();
+            if let Some(gpu) = gpu {
+                let mut value = serde_json::to_value(&document).unwrap();
+                for service in value["spec"]["services"]
+                    .as_object_mut()
+                    .unwrap()
+                    .values_mut()
+                    .filter(|service| matches!(service["kind"].as_str(), Some("vllm" | "ollama")))
+                {
+                    service["container"]["gpuDevices"] = serde_json::json!([gpu]);
+                }
+                document = Document::parse(value.to_string().as_bytes()).unwrap();
+            }
             let generations = [
                 "workspace",
                 "provider",
@@ -412,11 +508,18 @@ mod tests {
                 .replace("$${", "${")
                 .replace("%%{", "%{");
             let config: RuntimeState = serde_json::from_str(&settings).unwrap();
+            // The generated settings carry the service's GPU selection.
+            assert_eq!(
+                config.get(GPU_DEVICES).and_then(json),
+                gpu.map(|gpu| serde_json::json!([gpu])),
+                "{kind}"
+            );
             let computed = source.specification(&config).unwrap().unwrap();
             let process = spec.process.clone().unwrap();
             assert_eq!(computed, process.configuration);
             // The platform-neutral launch is what Docker placement runs.
-            let (launch, requirements) = placement(&computed).unwrap();
+            let (launch, requirements) =
+                placement(&computed, gpu_count(&config).unwrap().unwrap()).unwrap();
             let docker =
                 serde_json::to_value(spec.container(&process.mount_target).unwrap()).unwrap();
             assert_eq!(launch["entrypoint"], docker["Entrypoint"], "{kind}");
@@ -430,11 +533,20 @@ mod tests {
             assert_eq!(serde_json::json!(environment), docker["Env"], "{kind}");
             assert_eq!(launch["port"], process.port, "{kind}");
             assert_eq!(launch["data_path"], process.mount_target, "{kind}");
+            assert_eq!(requirements["gpu"], process.gpus != Gpus::None, "{kind}");
+            // Without a selection the container gets every GPU, and the
+            // runtime requires exactly one; a selection counts its devices.
+            let gpu_count = match &process.gpus {
+                Gpus::None => 0,
+                Gpus::All => 1,
+                Gpus::Devices(devices) => devices.len(),
+            };
             assert_eq!(
-                requirements["gpu"],
-                process.gpus != nemoclaw_sdk::managed::Gpus::None,
+                matches!(process.gpus, Gpus::Devices(_)),
+                gpu.is_some(),
                 "{kind}"
             );
+            assert_eq!(requirements["gpu_count"], gpu_count, "{kind} {gpu:?}");
             assert_eq!(
                 requirements["shared_memory_bytes"], process.shared_memory_bytes,
                 "{kind}"
@@ -486,10 +598,60 @@ mod tests {
     #[test]
     fn the_launch_names_the_key_variable_only_for_authenticated_servers() {
         let authenticated = r#"{"serving":{"port":8000},"authentication":"bearer"}"#;
-        let (launch, _) = placement(authenticated).unwrap();
+        let (launch, _) = placement(authenticated, 1).unwrap();
         assert_eq!(launch["key_env"], nemoclaw_runtime::INFERENCE_KEY_ENV);
         let open = r#"{"serving":{"port":8000}}"#;
-        let (launch, _) = placement(open).unwrap();
+        let (launch, _) = placement(open, 1).unwrap();
         assert_eq!(launch["key_env"], "");
+    }
+
+    /// `gpu_devices` lists GPUs as `container.gpuDevices` does, exactly one for
+    /// now; anything else fails at that attribute without repeating the value.
+    #[tokio::test]
+    async fn runtime_gpu_devices_list_one_uuid_or_index() {
+        let source = RuntimeDataSource::vllm().unwrap();
+        let entry = "each gpu_devices entry must be a lowercase GPU UUID or an index";
+        let one = "serving one model across several GPUs isn't implemented yet";
+        for (gpu_devices, error) in [
+            (Value::Unknown, None),
+            (value(serde_json::json!(["1"])), None),
+            (
+                value(serde_json::json!([
+                    "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3"
+                ])),
+                None,
+            ),
+            (value(serde_json::json!(["0", "1"])), Some(one)),
+            (value(serde_json::json!([])), Some(one)),
+            (
+                value(serde_json::json!(["0", "0"])),
+                Some("gpu_devices must not repeat a GPU"),
+            ),
+            (value(serde_json::json!([null])), Some(entry)),
+            (value(serde_json::json!(["PRIVATE_SENTINEL"])), Some(entry)),
+        ] {
+            let mut diagnostics = Diagnostics::default();
+            let config = RuntimeState::from([
+                (
+                    "hardware".into(),
+                    value(serde_json::json!([{"profile": "dgx-spark"}])),
+                ),
+                (
+                    "model".into(),
+                    value(serde_json::json!({
+                        "repository": "Qwen/Qwen3-4B", "revision": "1cfa9a7208912126459214e8b04321603b3df60c"
+                    })),
+                ),
+                (GPU_DEVICES.into(), gpu_devices.clone()),
+            ]);
+            let result = source.validate(&mut diagnostics, config).await;
+            assert_eq!(result.is_none(), error.is_some(), "{gpu_devices:?}");
+            let message = format!("{diagnostics:?}");
+            assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
+            if let Some(error) = error {
+                assert!(message.contains(error), "{message}");
+                assert!(message.contains("\"gpu_devices\""), "{message}");
+            }
+        }
     }
 }
