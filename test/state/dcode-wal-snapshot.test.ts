@@ -15,6 +15,7 @@ process.env.HOME = TMP_HOME;
 
 const sandboxState = await import("../../src/lib/state/sandbox.js");
 const QUICKJS_DIAGNOSTIC = "\0unexpected token: '%.*s'\0";
+const ADJACENT_DIAGNOSTICS = QUICKJS_DIAGNOSTIC + QUICKJS_DIAGNOSTIC.slice(1);
 
 function captureSidecar(entry: string, content: string) {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-sidecar-"));
@@ -70,6 +71,21 @@ describe("DCode WAL snapshot persistence", () => {
       expectAcceptedSidecar(`.deepagents/.state/sessions.db${suffix}`, QUICKJS_DIAGNOSTIC),
   );
 
+  it.each(["-journal", "-shm", "-wal"])(
+    "accepts diagnostics sharing a NUL delimiter in a sessions.db%s sidecar",
+    (suffix) =>
+      expectAcceptedSidecar(`.deepagents/.state/sessions.db${suffix}`, ADJACENT_DIAGNOSTICS),
+  );
+
+  it.each(Array.from({ length: ADJACENT_DIAGNOSTICS.length - 1 }, (_, index) => index + 1))(
+    "preserves adjacent diagnostics split after byte %i at the scan boundary",
+    (split) =>
+      expectAcceptedSidecar(
+        ".deepagents/.state/sessions.db-wal",
+        "\0".repeat(64 * 1024 - split) + ADJACENT_DIAGNOSTICS,
+      ),
+  );
+
   it.each(Array.from({ length: QUICKJS_DIAGNOSTIC.length - 1 }, (_, index) => index + 1))(
     "preserves a sidecar diagnostic split after byte %i at the scan boundary",
     (split) =>
@@ -98,6 +114,8 @@ describe("DCode WAL snapshot persistence", () => {
     ["incomplete diagnostic at EOF", "\0".repeat(64 * 1024 - 22) + "\0unexpected token: '%.*s'"],
     ["adjacent provider credential", QUICKJS_DIAGNOSTIC + `ghp_${"a".repeat(36)}`],
     ["adjacent opaque credential", QUICKJS_DIAGNOSTIC + '\0password="private-value"'],
+    ["credential after shared delimiters", ADJACENT_DIAGNOSTICS + 'password="private-value"'],
+    ["changed diagnostic sharing a delimiter", QUICKJS_DIAGNOSTIC + "unexpected token: '%s'\0"],
     [
       "credential before a split diagnostic",
       `password="private-value"\0` + "\0".repeat(64 * 1024 - 30) + QUICKJS_DIAGNOSTIC,
@@ -211,6 +229,7 @@ describe("DCode WAL snapshot persistence", () => {
   it.each([
     ["ordinary interpreter state", Buffer.from("ordinary interpreter state")],
     ["the accepted QuickJS diagnostic", Buffer.from("\0unexpected token: '%.*s'\0")],
+    ["adjacent QuickJS diagnostics sharing a NUL delimiter", Buffer.from(ADJACENT_DIAGNOSTICS)],
   ])("preserves %s from an active WAL through archive readback", (_label, payload) => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-state-"));
     let database: DatabaseSync | null = null;

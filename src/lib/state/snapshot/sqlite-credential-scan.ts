@@ -22,7 +22,8 @@ export function normalizeDcodeSessionDiagnostic(text: string): string {
   // quickjs-rs 0.2.5 checkpoints include this NUL-delimited engine diagnostic.
   // Its printf format is public code, not a token assignment. Normalize only
   // that exact constant; scan the rest of the interpreter memory as before.
-  return text.replaceAll(DCODE_QUICKJS_DIAGNOSTIC, "\0unexpected syntax: '%.*s'\0");
+  // Leave the closing NUL available as the next diagnostic's opening delimiter.
+  return text.replace(/\0unexpected token: '%\.\*s'(?=\0)/gu, "\0unexpected syntax: '%.*s'");
 }
 
 type InspectionFailure = "integrity-check" | "table-name" | "sqlite-query" | "file-access";
