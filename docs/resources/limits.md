@@ -78,7 +78,7 @@ Access paths and diagnostic signals depend on the gateway and harness in use.
 | A live rehearsal against an external gateway that requires an issuer or mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | An error shows `child output exceeds the supported limit` in place of a command's OpenTofu diagnostics once together they exceed 16 KiB, such as several managed services' [stop details](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime) | [#14399](https://github.com/NVIDIA/NemoClaw/issues/14399) |
 | A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli), which no automated test covers | By design: the development issuer serves only NemoClaw |
-| [Service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) on a managed Kubernetes or OpenShift gateway: a client reaches them only through a port forward to the gateway, sending the URL's host name | [#14316](https://github.com/NVIDIA/NemoClaw/issues/14316) |
+| [Service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) on a managed Kubernetes or OpenShift gateway name `openshell.localhost` and the gateway pod's port, 8080; a client reaches them only through a port forward to the gateway, sending the URL's host name | [#14316](https://github.com/NVIDIA/NemoClaw/issues/14316) |
 
 ## Data and Cleanup
 
