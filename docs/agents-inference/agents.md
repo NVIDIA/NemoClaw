@@ -21,7 +21,7 @@ Deployment-owned fields, including metadata, adapter identity, and resolved mode
 See [the SDK configuration projection](../../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
 
 Plan checks that the selected image provides the harness at NemoClaw's Fabric revision; a mismatched revision leaves compatibility unknown.
-Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
+Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply; [#14148](https://github.com/NVIDIA/NemoClaw/issues/14148) tracks checking it at plan time.
 Neither check establishes successful model inference.
 
 ## Choose Native Access
@@ -55,20 +55,20 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/f33fa19a1aff584625e02af9007d8113e7b95dd8/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
-With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID and send a request:
+With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID from a plan, as the [tutorial](../get-started/first-deployment.md#send-a-verification-request) does, and send a request:
 
 ```sh
-RUNTIME_ID=$(jq -er '.resources[] | select(.mode == "managed" and .type == "fabric_agent" and .name == "assistant") | .instances[].attributes.runtime_id | select(type == "string" and length > 0)' .local/first-deployment/state/terraform.tfstate) || exit 1
+RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml | jq -er '.agents.assistant.runtimeId') || exit 1
 openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
 "Reply with exactly READY."
 JSON
 ```
 
 The command's `--agent` selects the deployment's YAML `agent.name`; the input is one JSON value, here the prompt string.
-Stop if the ID lookup fails; inspect state and the apply result rather than invoking with an empty ID. On success, check `result.status: succeeded` and inspect `result.output` for the adapter's reply. Do not assume every adapter uses the same output fields or that one reply establishes general model compatibility.
+Stop if the ID lookup fails; inspect the apply result rather than invoking with an empty ID. On success, check `result.status: succeeded` and inspect `result.output` for the adapter's reply. Do not assume every adapter uses the same output fields or that one reply establishes general model compatibility.
 If later invocations fail with `runtime_unavailable`, plan and apply again: apply starts a new runtime in the same sandbox. If the plan shows no change, replace the sandbox using the [CLI replacement procedure](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).
 
@@ -164,7 +164,7 @@ For OpenClaw and Hermes, each path is a skill or a folder of skills:
 - A folder that holds no skills, such as a new, empty volume, adds none.
 
 The agent doesn't start when a path doesn't exist or isn't a folder, when Fabric can't list a path that has no `SKILL.md` of its own, when a skill's `SKILL.md` can't be read, or when two skills have the same name; Fabric's error names the path or both skills' folders.
-For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/adapters) say what a path must hold.
+For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/f33fa19a1aff584625e02af9007d8113e7b95dd8/adapters) say what a path must hold.
 
 To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
 The gateway must allow driver configuration: for a managed gateway, set `allow_driver_config: true` in the driver's table of `spec.gateway.config` when you create the deployment (see [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes)); for an external gateway, its administrator enables OpenShell's `allow_driver_config`.
@@ -258,7 +258,7 @@ Fabric decides which folders are skills, but the harness loads them, and Hermes 
 | A Hermes path uses `~` or `${VAR}` | Fabric doesn't expand them, unlike Hermes's own `skills.external_dirs`; use absolute sandbox paths. |
 
 To avoid these differences, keep one skill per folder, don't nest skill folders, and give each skill a name that differs from every skill folder name.
-The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
+The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/f33fa19a1aff584625e02af9007d8113e7b95dd8/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
 
 ## Web Search
 

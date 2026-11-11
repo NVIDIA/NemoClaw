@@ -50,7 +50,7 @@ on:
         type: boolean
         default: false
       hcl-gpu:
-        description: Run the HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs; the caller passes the inference secret.
+        description: With e2e, also run the HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs; the caller passes the inference secret.
         type: boolean
         default: false
       hcl-cases:
@@ -110,6 +110,13 @@ jobs:
           path: target/cargo-timings/*.html
           if-no-files-found: ignore
           retention-days: 14
+      # The Bake tests' first Docker call reads the Docker CLI and its Buildx
+      # plugin, about 110 MB, from the runner's disk; under the test run's load,
+      # that took up to 5.5 s on some hosted runners. Reading them here keeps
+      # that out of the tests' time limits. Without Docker, the tests skip.
+      - name: Load Docker Buildx from disk
+        if: runner.os == 'Linux'
+        run: docker buildx version || true
       - name: Run tests
         run: cargo ci test
       - name: Upload test timings
@@ -345,8 +352,8 @@ jobs:
           shards=$(jq -c --arg layer "$LAYER" '[.[] | select(.layer == $layer) | .shard]' <<< "$PARTITIONS")
           "$tool" suite-timing "$LAYER" .build/ci/timings --platform "$TEST_PLATFORM" --shards "$shards"
 
-  # The Docker and Kubernetes live suites, from this platform's test archive and
-  # bundle.
+  # The Docker and Kubernetes live suites and the HCL E2E cases, from this
+  # platform's test archive and bundle.
   e2e:
     name: E2E
     needs: [build, bundle]
@@ -359,19 +366,7 @@ jobs:
       bundle: ${{ needs.bundle.outputs.artifact }}
       live-images-commit: ${{ inputs.live-images-commit }}
       hcl: ${{ inputs.hcl }}
+      hcl-gpu: ${{ inputs.hcl-gpu }}
       hcl-cases: ${{ inputs.hcl-cases }}
     # The HCL cases read NVIDIA_API_KEY.
-    secrets: inherit
-
-  # The HCL E2E cases on the NVIDIA GPU runner, which refuses pull request
-  # jobs. Live / HCL builds them a candidate against an older glibc, which the
-  # runner can run.
-  gpu:
-    name: E2E GPU
-    if: inputs.hcl-gpu
-    uses: ./.github/workflows/hcl-e2e.yml
-    with:
-      hosted: false
-      cases: ${{ inputs.hcl-cases }}
-    # The Ollama case reads NVIDIA_API_KEY.
     secrets: inherit

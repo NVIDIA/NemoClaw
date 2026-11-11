@@ -360,7 +360,7 @@
     },
     "DedicatedHardware": {
       "additionalProperties": false,
-      "description": "Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.",
+      "description": "Requirements each selected NVIDIA GPU with dedicated memory on Linux AMD64 must meet. Declaring requirements does not qualify a model or host.",
       "properties": {
         "architecture": {
           "const": "amd64",
@@ -382,7 +382,7 @@
           "type": "integer"
         },
         "minGpuMemoryBytes": {
-          "description": "Minimum total dedicated GPU memory in bytes. Host RAM is measured separately.",
+          "description": "Minimum total dedicated memory of each selected GPU in bytes. Host RAM is measured separately.",
           "format": "uint64",
           "maximum": 4398046511104,
           "minimum": 4294967296,
@@ -1703,7 +1703,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
         "gpuMemoryGiB": {
-          "description": "Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.",
+          "description": "GPU budget in GiB for each selected GPU without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.",
           "format": "int64",
           "maximum": 96,
           "minimum": 0,
@@ -1711,7 +1711,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
+          "description": "Optional fraction of each selected GPU's observed dedicated memory, from 0.05 through 0.95, which vLLM's --gpu-memory-utilization applies to each GPU's own total. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,
@@ -1735,7 +1735,7 @@
         },
         "kvCacheGiB": {
           "default": 8,
-          "description": "KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.",
+          "description": "KV cache allocation in GiB on each selected GPU for ordinary vLLM, passed as --kv-cache-memory-bytes. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.",
           "format": "int64",
           "minimum": 0,
           "type": "integer",
@@ -1910,13 +1910,13 @@
             }
           ],
           "default": 0,
-          "description": "Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB.",
+          "description": "Fixed serving budget in GiB for each selected GPU when utilization is omitted. Omission or zero selects 16 GiB.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory.",
+          "description": "Optional fraction of observed dedicated GPU memory, taken of the smallest selected GPU; the resulting budget applies to each selected GPU.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,
@@ -2086,7 +2086,7 @@
           "type": "integer"
         },
         "model": {
-          "description": "Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository.",
+          "description": "Model identifier. For a managed service, match its served model: vLLM's recipe serving.modelName, serving.modelName, or model.repository; Ollama's model.name; an Ollama proxy's upstream.model.name.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$",
           "type": "string"
         },
@@ -2585,7 +2585,7 @@
       "description": "Resource declarations checked against host observations and produced data.",
       "properties": {
         "gpuMemoryBytes": {
-          "description": "Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.",
+          "description": "Serving GPU budget in bytes for each selected GPU, including its share of the model, caches, and other allocations. Checked against each selected GPU's memory on dedicated-memory GPUs, and against host memory with the host reserve on unified memory.",
           "format": "uint64",
           "maximum": 4398046511104,
           "minimum": 4294967296,
@@ -2865,7 +2865,7 @@
     },
     "ServiceContainer": {
       "additionalProperties": false,
-      "description": "Managed inference CPU and memory limits, IPC, and shared-memory settings.",
+      "description": "Managed inference CPU and memory limits, GPU selection, IPC, and shared-memory settings.",
       "properties": {
         "cpuLimitMillis": {
           "description": "CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container.",
@@ -2874,12 +2874,25 @@
           "minimum": 1,
           "type": "integer"
         },
+        "gpuDevices": {
+          "description": "The GPUs the model container gets on a host with several, as `docker run --gpus device=` names them: each a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index as a string, such as \"1\", which can change when the host boots. List exactly one: serving one model across several GPUs isn't implemented yet. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing the list replaces the model container.",
+          "items": {
+            "pattern": "^(?:GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|0|[1-9][0-9]{0,2})$",
+            "type": "string",
+            "x-nemoclaw-error": "each container.gpuDevices entry must be a lowercase GPU UUID or an index from \"0\" to \"999\""
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+          "x-nemoclaw-error": "container.gpuDevices must list exactly one GPU: serving one model across several GPUs isn't implemented yet"
+        },
         "ipc": {
           "$ref": "#/$defs/ServiceIpc",
           "description": "IPC namespace. Omission uses private; host shares the execution host's IPC namespace."
         },
         "memoryLimitGiB": {
-          "description": "Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container.",
+          "description": "Container memory limit in GiB, independent of the model's GPU budget. Omission sets a 104 GiB limit. Changing the limit replaces the model container.",
           "format": "uint64",
           "maximum": 8589934591,
           "minimum": 1,
@@ -3018,7 +3031,7 @@
           "properties": {
             "container": {
               "$ref": "#/$defs/ServiceContainer",
-              "description": "Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+              "description": "Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
             },
             "hardware": {
               "$ref": "#/$defs/ServiceHardware",
@@ -3287,6 +3300,16 @@
                               "required": [
                                 "enforceEager"
                               ]
+                            },
+                            {
+                              "required": [
+                                "tensorParallelSize"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "pipelineParallelSize"
+                              ]
                             }
                           ]
                         }
@@ -3379,7 +3402,7 @@
             },
             "container": {
               "$ref": "#/$defs/ServiceContainer",
-              "description": "Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+              "description": "Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
             },
             "hardware": {
               "$ref": "#/$defs/ServiceHardware",
@@ -3558,7 +3581,7 @@
       "anyOf": [
         {
           "$ref": "#/$defs/DedicatedHardware",
-          "description": "One NVIDIA GPU with dedicated memory on Linux AMD64."
+          "description": "NVIDIA GPUs with dedicated memory on Linux AMD64; each selected GPU must meet the requirements."
         },
         {
           "additionalProperties": false,
@@ -3632,7 +3655,7 @@
               "type": "string"
             },
             "minGpuMemoryBytes": {
-              "description": "Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity.",
+              "description": "Minimum dedicated memory of each selected GPU in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity.",
               "format": "uint64",
               "maximum": 4398046511104,
               "minimum": 4294967296,
@@ -3793,6 +3816,14 @@
           "description": "Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name.",
           "type": "string"
         },
+        "pipelineParallelSize": {
+          "description": "vLLM's --pipeline-parallel-size without a recipe: how many GPU stages each hold a range of layers. vLLM uses tensor × pipeline parallel size GPUs; selected GPUs the layout doesn't use stay reserved but idle.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission gives vLLM's default of 1. Must be omitted with a recipe, which sets its own."
+        },
         "port": {
           "anyOf": [
             {
@@ -3838,6 +3869,14 @@
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "tensorParallelSize": {
+          "description": "vLLM's --tensor-parallel-size without a recipe: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts, and fails startup if they don't support it.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission gives vLLM the number of container.gpuDevices entries, or 1 without them, when pipelineParallelSize is also omitted, and vLLM's default of 1 when it's set. Must be omitted with a recipe, which sets its own."
         },
         "toolParser": {
           "default": "",
@@ -3919,6 +3958,14 @@
           "pattern": "^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$",
           "type": "string"
         },
+        "pipelineParallelSize": {
+          "description": "vLLM's --pipeline-parallel-size: how many GPU stages each hold a range of layers.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission selects vLLM's default of 1."
+        },
         "preparedEnvironment": {
           "additionalProperties": {
             "type": "string"
@@ -3949,6 +3996,14 @@
           "description": "Native vLLM reasoning parser supplied by the runtime image. Empty omits the flag.",
           "maxLength": 256,
           "type": "string"
+        },
+        "tensorParallelSize": {
+          "description": "vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission selects vLLM's default of 1."
         },
         "toolParser": {
           "anyOf": [

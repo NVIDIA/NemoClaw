@@ -17,7 +17,7 @@ The new scenarios use managed Docker gateways and authenticated vLLM services.
 | [two-models.yaml](two-models.yaml) | Pi with Qwen3-4B and Qwen3.6-27B NVFP4 | Fast/smart route selection with two independently managed services |
 | [local-and-hosted.yaml](local-and-hosted.yaml) | OpenClaw with local Qwen3.8-27B NVFP4 and an operator-selected hosted model | Managed local inference plus a hosted model; the local route is the default |
 | [vllm.yaml](vllm.yaml) | OpenClaw with Qwen3-4B | The original ordinary-vLLM example |
-| [remote-vllm.yaml](remote-vllm.yaml) | OpenClaw with SSH-managed Qwen3-4B and an external Podman gateway | Separate sandbox and model engines; the current OpenShell Podman pin has the [TLS initialization blocker](https://github.com/NVIDIA/OpenShell/issues/3427) |
+| [remote-vllm.yaml](remote-vllm.yaml) | OpenClaw with SSH-managed Qwen3-4B and an external Podman gateway | Separate sandbox and model engines; Podman with a remote model service is [untested](../../docs/resources/limits.md#platforms-models-and-placement) |
 
 The Deep Agents researcher has `tools.allow: [read]`; the writer retains the harness's default tools.
 Each agent receives its own sandbox, workspace, and artifact directory.
@@ -39,7 +39,7 @@ Build the ordinary runtime and the harnesses selected by your example:
 
 ```sh
 docker buildx bake vllm
-AGENT_PLATFORM=linux/arm64 docker buildx bake pi deepagents openclaw --load
+cargo images build --platform linux/arm64 pi deepagents openclaw
 cargo run -p nemoclaw-build -- bundle
 ```
 

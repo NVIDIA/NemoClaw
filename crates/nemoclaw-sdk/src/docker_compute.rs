@@ -283,8 +283,24 @@ fn container(target: &Target) -> Result<Value, Error> {
             json!({"type":"volume","source":format!("{}-auth",spec.name),"target":"/credentials"}),
         );
     }
-    if process.gpu {
-        attrs["gpus"] = json!("all");
+    match &process.gpus {
+        crate::managed::Gpus::None => {}
+        crate::managed::Gpus::All => attrs["gpus"] = json!("all"),
+        // Docker provider v4.6.0 splits `gpus` on commas, so it would read
+        // `device=0,1` as GPU 0 and a count of 1, a request Docker refuses
+        // (https://github.com/kreuzwerker/terraform-provider-docker/issues/1019);
+        // several GPUs use its `device_requests` block until a release fixes it.
+        crate::managed::Gpus::Devices(devices) => {
+            if let [device] = devices.as_slice() {
+                attrs["gpus"] = json!(format!("device={device}"));
+            } else {
+                attrs["device_requests"] = json!([{
+                    "driver": crate::managed::gpu_device_driver(devices),
+                    "device_ids": devices,
+                    "capabilities": ["gpu"],
+                }]);
+            }
+        }
     }
     // Labels force replacement because Docker provider v4.6.0 updates limits in
     // place: its Update omits CFS quota, and lowering memory on a running
@@ -307,6 +323,16 @@ fn container(target: &Target) -> Result<Value, Error> {
         );
     }
     Ok(attrs)
+}
+/// Runtime contract settings with the number of GPUs the service selects,
+/// which the contract's `requirements.gpu_count` reports to other placements.
+fn with_gpu_count(mut settings: Value, target: &Target) -> Result<Value, Error> {
+    if let Some(crate::managed::Gpus::Devices(devices)) =
+        spec(target)?.process.map(|process| process.gpus)
+    {
+        settings["gpu_count"] = json!(devices.len());
+    }
+    Ok(settings)
 }
 fn push_label(attrs: &mut Value, label: &str, value: impl ToString) {
     attrs["labels"]
@@ -392,24 +418,30 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             vllm::SERVICE_KIND => Some((
                 vllm::RUNTIME_DATA_SOURCE,
                 "NEMOCLAW_RUNTIME_SPEC",
-                crate::hcl_schema::to_hcl(
-                    &vllm::runtime_fields().map_err(|_| {
-                        Error::State("the vLLM runtime contract has no OpenTofu schema")
-                    })?,
-                    &serde_json::to_value(vllm::configured_service(&spec(target)?)?)
-                        .map_err(|_| Error::State("cannot encode runtime settings"))?,
-                ),
+                with_gpu_count(
+                    crate::hcl_schema::to_hcl(
+                        &vllm::runtime_fields().map_err(|_| {
+                            Error::State("the vLLM runtime contract has no OpenTofu schema")
+                        })?,
+                        &serde_json::to_value(vllm::configured_service(&spec(target)?)?)
+                            .map_err(|_| Error::State("cannot encode runtime settings"))?,
+                    ),
+                    target,
+                )?,
             )),
             ollama::SERVICE_KIND => Some((
                 ollama::RUNTIME_DATA_SOURCE,
                 "NEMOCLAW_RUNTIME_SPEC",
-                crate::hcl_schema::to_hcl(
-                    &ollama::runtime_fields().map_err(|_| {
-                        Error::State("the Ollama runtime contract has no OpenTofu schema")
-                    })?,
-                    &serde_json::to_value(ollama::configured_service(&spec(target)?)?)
-                        .map_err(|_| Error::State("cannot encode runtime settings"))?,
-                ),
+                with_gpu_count(
+                    crate::hcl_schema::to_hcl(
+                        &ollama::runtime_fields().map_err(|_| {
+                            Error::State("the Ollama runtime contract has no OpenTofu schema")
+                        })?,
+                        &serde_json::to_value(ollama::configured_service(&spec(target)?)?)
+                            .map_err(|_| Error::State("cannot encode runtime settings"))?,
+                    ),
+                    target,
+                )?,
             )),
             ollama::proxy::PROXY => {
                 let proxy = ollama::proxy::row_spec(&target.values)?;
@@ -1062,6 +1094,59 @@ mod tests {
                     .iter()
                     .any(|value| value.as_str().unwrap().starts_with("docker_network."))
             );
+        }
+    }
+    // Docker provider v4.6.0 reads `gpus = "device=0,1"` as one device and a
+    // count, so one GPU keeps `gpus` and a list uses a `device_requests`
+    // block. The native request names the same driver, IDs, and capability.
+    #[test]
+    fn several_gpu_devices_reach_docker_as_one_nvidia_device_request() {
+        const UUID: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
+        let document =
+            Document::parse(include_bytes!("../tests/fixtures/config/spark.yaml").as_slice())
+                .unwrap();
+        let generations = crate::state::Record::new(document.clone())
+            .unwrap()
+            .generations;
+        let (_, mut raw) = runtime_graph(&document, &generations, "0.1.0").unwrap();
+        let service = raw
+            .iter_mut()
+            .find(|target| target.kind == "inference_service")
+            .unwrap();
+        for (devices, driver) in [
+            (vec!["1"], ""),
+            (vec![UUID, "0"], "nvidia"),
+            (vec!["2", "0", "1"], "nvidia"),
+        ] {
+            let devices: Vec<String> = devices.into_iter().map(str::to_owned).collect();
+            let mut spec = spec(service).unwrap();
+            spec.process.as_mut().unwrap().gpus = crate::managed::Gpus::Devices(devices.clone());
+            let host = spec.container("/data").unwrap().host_config.unwrap();
+            let requests = host.device_requests.unwrap();
+            assert_eq!(requests.len(), 1, "{devices:?}");
+            assert_eq!(requests[0].driver.as_deref(), Some(driver), "{devices:?}");
+            assert_eq!(requests[0].device_ids, Some(devices.clone()), "{devices:?}");
+            assert_eq!(requests[0].count, None, "{devices:?}");
+            assert_eq!(
+                requests[0].capabilities,
+                Some(vec![vec!["gpu".to_owned()]]),
+                "{devices:?}"
+            );
+            service
+                .values
+                .insert("spec".into(), serde_json::to_string(&spec).unwrap());
+            let attrs = container(service).unwrap();
+            if let [device] = devices.as_slice() {
+                assert_eq!(attrs["gpus"], format!("device={device}"));
+                assert!(attrs.get("device_requests").is_none(), "{attrs}");
+            } else {
+                assert!(attrs.get("gpus").is_none(), "{attrs}");
+                assert_eq!(
+                    attrs["device_requests"],
+                    json!([{"driver": "nvidia", "device_ids": devices, "capabilities": ["gpu"]}]),
+                    "{devices:?}"
+                );
+            }
         }
     }
 }

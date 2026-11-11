@@ -26,6 +26,10 @@ pub use execution::run;
 /// The launch environment variable holding a user-supplied API key for an
 /// authenticated server. When set, the runtime uses it instead of generating one.
 pub const INFERENCE_KEY_ENV: &str = "NEMOCLAW_INFERENCE_KEY";
+/// The most of a service process's output that [`Error::Exited`] carries. The
+/// SDK withholds every OpenTofu diagnostic of a command once together they pass
+/// 16 KiB (#14399), so the errors of several failed services must fit.
+pub const EXITED_OUTPUT_LIMIT: usize = 4 << 10;
 #[derive(
     Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]

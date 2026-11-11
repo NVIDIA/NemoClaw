@@ -113,9 +113,9 @@ Run blocks call these modules:
 
 | Case | Runner | Checks |
 |---|---|---|
-| `docker-openclaw-nvidia` | Live / HCL | OpenClaw on NVIDIA hosted inference; any reply. |
-| `docker-openclaw-v0-parity` | Live / HCL and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
-| `docker-hermes-v0-parity` | Live / HCL | The hosted parity Hermes document; `FOUR`. |
+| `docker-openclaw-nvidia` | CI / Bundle's `E2E HCL CASE` | OpenClaw on NVIDIA hosted inference; any reply. |
+| `docker-openclaw-v0-parity` | CI / Bundle's `E2E HCL CASE`, and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
+| `docker-hermes-v0-parity` | CI / Bundle's `E2E HCL CASE` | The hosted parity Hermes document; `FOUR`. |
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
 | `docker-openclaw-vllm-shared` | Live / HCL, NVIDIA GPU runner | Two OpenClaw agents sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
@@ -137,7 +137,7 @@ The hosted cases make real hosted inference requests, which may incur charges.
 
 The workflows destroy each deployment in a separate step after success, failure, or cancellation and upload outcome reports with the destroy receipt.
 Requests, replies, command output, and credentials stay in the run's private `work` directory.
-CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, or run a case by hand as below.
+CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL, from the same artifacts, on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, which builds its own candidate from the dispatched branch, or run a case by hand as below.
 
 To run a case by hand on Linux with Docker, load the candidate images, bind the case's image templates and `uid` as the `Live / HCL` workflow does, and run from `crates/nemoclaw-e2e`:
 
@@ -173,8 +173,8 @@ Image compilation happens on the CI runner.
 A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
 The check list shows bundle build, image build, preparation, image loading, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
 The workflow requires repository secrets named `BREV_API_KEY` and `NVIDIA_API_KEY`.
-While `v1` is not the repository's default branch, run it by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`.
-After the workflow file reaches the default branch, select `v1` with `workflow_dispatch` instead.
+Run it on `v1` with `gh workflow run brev.yml --ref v1`, or by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`; a dispatch from any other branch skips every job.
+GitHub's documentation requires a dispatched workflow on the default branch, but GitHub has accepted dispatches of this one on `v1`.
 
 The reviewed Brev startup script installs the required host packages, enables Docker, and waits on a readiness sentinel before candidate transfer.
 The VM must be AMD64, expose a working Docker daemon with Buildx and a Landlock kernel ABI, and have at least 80 GiB free during the initial fresh-host check.

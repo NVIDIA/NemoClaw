@@ -34,7 +34,7 @@ pub(crate) async fn supervise(
         tokio::select! {
             ()=cancel.cancelled()=>break Err(Error::Conflict("runtime stopped by operator; persistent data retained")),
             ()=monitors.trip.cancelled()=>break Err(Error::Conflict("memory protection tripped by operator; reapply required")),
-            _=child.wait()=>break Err(Error::Conflict("managed service process exited; inspect retained logs and reapply")),
+            _=child.wait()=>break Err(Error::Exited(None)),
             Some(true)=monitors.ready.recv()=>{
                 ready=true;
                 if let Err(error)=(monitors.report)("ready","managed service readiness confirmed",child.id().unwrap_or(0)) {break Err(error);}

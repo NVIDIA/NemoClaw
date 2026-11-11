@@ -21,7 +21,8 @@ async fn main() -> std::process::ExitCode {
     }
     .await;
     if let Err(error) = result {
-        eprintln!("{error}");
+        // Later lines repeat process output the container log already has.
+        eprintln!("{}", error.to_string().lines().next().unwrap_or_default());
         return std::process::ExitCode::FAILURE;
     }
     std::process::ExitCode::SUCCESS
