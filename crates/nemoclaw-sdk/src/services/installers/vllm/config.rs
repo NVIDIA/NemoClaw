@@ -57,7 +57,24 @@ impl std::ops::DerefMut for Service {
     }
 }
 impl Service {
+    /// The number of GPUs the service selects: its container.gpuDevices
+    /// entries, or 1 without them, when the runtime requires exactly one.
+    pub(crate) fn gpu_count(&self) -> usize {
+        self.container
+            .as_ref()
+            .and_then(|container| container.gpu_devices.as_ref())
+            .map_or(1, Vec::len)
+    }
+
     pub(crate) fn runtime_settings(&self) -> nemoclaw_runtime::vllm::Service {
-        self.runtime.clone()
+        let mut runtime = self.runtime.clone();
+        // Tensor parallelism defaults to the selected GPUs. The runtime reads
+        // an omitted size as 1, so one GPU leaves it unset and keeps a
+        // single-GPU service's specification, and its container, unchanged.
+        let serving = &mut runtime.serving;
+        if runtime.recipe.is_none() && serving.tensor_parallel_size == 0 && self.gpu_count() > 1 {
+            serving.tensor_parallel_size = self.gpu_count() as i64;
+        }
+        runtime
     }
 }

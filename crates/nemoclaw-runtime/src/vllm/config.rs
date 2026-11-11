@@ -97,6 +97,14 @@ pub struct Serving {
     #[schemars(default)]
     /// Seconds allowed for backend readiness before startup fails.
     pub startup_timeout_seconds: i64,
+    #[serde(rename = "tensorParallelSize", skip_serializing_if = "is_zero")]
+    #[schemars(default)]
+    /// vLLM's --tensor-parallel-size without a recipe: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts, and fails startup if they don't support it.
+    pub tensor_parallel_size: i64,
+    #[serde(rename = "pipelineParallelSize", skip_serializing_if = "is_zero")]
+    #[schemars(default)]
+    /// vLLM's --pipeline-parallel-size without a recipe: how many GPU stages each hold a range of layers. vLLM uses tensor × pipeline parallel size GPUs; selected GPUs the layout doesn't use stay reserved but idle.
+    pub pipeline_parallel_size: i64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

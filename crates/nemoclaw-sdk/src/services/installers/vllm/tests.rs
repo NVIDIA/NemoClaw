@@ -220,3 +220,102 @@ fn bearer_docker_install_requires_an_image_that_restricts_routes() {
             .contains_key("org.nemoclaw.inference.routes")
     );
 }
+
+/// The value vLLM receives for `flag`.
+fn flag<'a>(arguments: &'a [String], flag: &str) -> &'a str {
+    let index = arguments
+        .iter()
+        .position(|argument| argument == flag)
+        .unwrap_or_else(|| panic!("{flag} is missing from {arguments:?}"));
+    &arguments[index + 1]
+}
+
+#[test]
+fn vllm_gets_the_parallel_layout_of_the_service_or_its_recipe() {
+    let layout = |service: &Service| {
+        let arguments = arguments::arguments(service, "/data/model", 121 * GIB).unwrap();
+        (
+            flag(&arguments, "--tensor-parallel-size").to_owned(),
+            flag(&arguments, "--pipeline-parallel-size").to_owned(),
+        )
+    };
+    let mut service = service();
+    assert_eq!(layout(&service), ("1".into(), "1".into()));
+    // A recipe's tensor parallelism defaults to the GPU count its budget was
+    // measured on.
+    let recipe = service.recipe.as_mut().unwrap();
+    recipe.compatibility.gpu_count = 2;
+    assert_eq!(layout(&service), ("2".into(), "1".into()));
+    let recipe = service.recipe.as_mut().unwrap();
+    recipe.serving.tensor_parallel_size = 1;
+    recipe.serving.pipeline_parallel_size = 2;
+    assert_eq!(layout(&service), ("1".into(), "2".into()));
+
+    service.recipe = None;
+    service.hardware = Some(super::ServiceHardware::Profile {
+        profile: super::HardwareProfile::DgxSpark,
+        architecture: None,
+        min_gpu_memory_bytes: None,
+    });
+    assert_eq!(layout(&service), ("1".into(), "1".into()));
+    // NemoClaw passes the layout as written; vLLM checks it against the GPUs
+    // it sees and the model.
+    service.serving.tensor_parallel_size = 4;
+    service.serving.pipeline_parallel_size = 3;
+    assert_eq!(layout(&service), ("4".into(), "3".into()));
+}
+
+#[test]
+fn tensor_parallelism_defaults_to_the_number_of_selected_gpus() {
+    let document =
+        Document::parse(include_str!("../../../../tests/fixtures/config/spark.yaml").as_bytes())
+            .unwrap();
+    let generations = [(super::SERVICE_KIND.into(), "a".repeat(32))].into();
+    let runtime = |service: &Service| {
+        let spec = super::specification(&document, "qwen", service, &generations).unwrap();
+        let configuration: serde_json::Value =
+            serde_json::from_str(spec.runtime_configuration().unwrap()).unwrap();
+        (
+            super::configured_service(&spec).unwrap().serving,
+            configuration["serving"].clone(),
+        )
+    };
+    let mut service = service();
+    service.recipe = None;
+    service.hardware = Some(super::ServiceHardware::Profile {
+        profile: super::HardwareProfile::DgxSpark,
+        architecture: None,
+        min_gpu_memory_bytes: None,
+    });
+    for (devices, expected) in [
+        (serde_json::json!(["0", "1"]), 2),
+        (serde_json::json!(["0", "1", "2", "3"]), 4),
+    ] {
+        service.container =
+            Some(serde_json::from_value(serde_json::json!({ "gpuDevices": devices })).unwrap());
+        let (serving, _) = runtime(&service);
+        assert_eq!(serving.tensor_parallel_size, expected, "{devices}");
+        assert_eq!(serving.pipeline_parallel_size, 0, "{devices}");
+    }
+    // An explicit size stays as written.
+    service.serving.tensor_parallel_size = 1;
+    service.serving.pipeline_parallel_size = 2;
+    let (serving, _) = runtime(&service);
+    assert_eq!(
+        (serving.tensor_parallel_size, serving.pipeline_parallel_size),
+        (1, 2)
+    );
+    // One GPU leaves the setting out, so a single-GPU service's runtime
+    // specification, and with it its container, stays as it was.
+    service.serving.tensor_parallel_size = 0;
+    service.serving.pipeline_parallel_size = 0;
+    for container in [
+        None,
+        Some(serde_json::from_value(serde_json::json!({ "gpuDevices": ["0"] })).unwrap()),
+    ] {
+        service.container = container;
+        let (_, serving) = runtime(&service);
+        assert!(serving.get("tensorParallelSize").is_none(), "{serving}");
+        assert!(serving.get("pipelineParallelSize").is_none(), "{serving}");
+    }
+}

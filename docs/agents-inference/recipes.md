@@ -21,19 +21,22 @@ All vLLM services use `kind: vllm`.
 The contract is inline, with `apiVersion: nemoclaw.nvidia.com/recipe/v1`.
 It contains:
 
-- `compatibility`: target architecture, GPU name, minimum driver and host memory, and required image labels.
+- `compatibility`: target architecture, GPU name and count, minimum driver and host memory, and required image labels.
   Images must declare `org.nemoclaw.recipe.protocol: v1`.
   Other labels describe required features.
 - `preparation` and `verification`: absolute executable paths inside the image and SHA-256 hashes.
   These are executable files, not shell command strings.
 - `resources`: maximum prepared bytes, preparation memory in GiB, serving GPU budget in bytes, and startup headroom in GiB.
   The serving GPU budget includes the model, caches, and other GPU allocations.
-- `serving`: model name, parser names, cache dtypes, lazy loading, chunked prefill, optional typed compilation settings, and `VLLM_` environment values.
+- `serving`: model name, parser names, cache dtypes, lazy loading, chunked prefill, optional typed compilation settings, the parallel layout, and `VLLM_` environment values.
   `preparedEnvironment` maps environment names to paths relative to the verified preparation directory; `.` selects that directory.
 - `licenses` and `sourceNotices`: paths to retained files inside the pinned image.
 
 Recipe memory requirements are checked against measurements from the execution host.
 `compatibility.gpu` must belong to the GPU family of a [hardware profile](models.md#choose-a-hardware-profile); other names are rejected.
+`compatibility.gpuCount`, 1 by default, is the number of GPUs the recipe's budget was measured on.
+The service must select that many GPUs: its `container.gpuDevices` entries, or 1 without them.
+`serving.tensorParallelSize` defaults to `compatibility.gpuCount`, and `serving.pipelineParallelSize` to 1; vLLM checks the layout when it starts, as for an [ordinary service](models.md#set-the-parallel-layout).
 That profile's memory architecture decides how the serving GPU budget, `resources.gpuMemoryBytes`, is checked:
 
 | Memory architecture | GPU budget must fit | `--gpu-memory-utilization` | Host available memory at startup |

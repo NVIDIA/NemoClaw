@@ -170,6 +170,7 @@ Paths:
 |---|---|---|---|---|
 | `architecture` | string | Yes | — | Execution host CPU architecture. Constraints: `"arm64"` or `"amd64"`. |
 | `gpu` | string | Yes | — | GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory. Constraints: minimum characters 1. |
+| `gpuCount` | integer | No | `1` | Number of GPUs the recipe's budget was measured on. The service must select this many GPUs: the number of container.gpuDevices entries, or 1 without them. Constraints: minimum 1; maximum 16. |
 | `imageLabels` | map of string | Yes | — | Required org.nemoclaw.* labels. org.nemoclaw.recipe.protocol must equal v1. Constraints: keys: pattern `^org\.nemoclaw\.`; values: minimum characters 1; maximum characters 256. |
 | `minDriverMajor` | integer | Yes | — | Minimum NVIDIA driver major version. Constraints: minimum 1; maximum 10000. |
 | `minHostMemoryGiB` | integer | Yes | — | Minimum total host memory in GiB. Constraints: minimum 1; maximum 4096. |
@@ -1442,10 +1443,12 @@ Paths:
 | `mambaBackend` | string | No | `""` | Native Mamba backend without a recipe. Empty uses vLLM's default; flashinfer selects the pinned image's FlashInfer backend. Constraints: `""` or `"flashinfer"`. |
 | `maxSequences` | integer | No | `1` | Maximum concurrent sequences. Constraints: `0` or minimum 1; maximum 2. Omitted or zero selects the default. |
 | `modelName` | string | No | `""` | Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`. |
+| `pipelineParallelSize` | integer | No | — | vLLM's --pipeline-parallel-size without a recipe: how many GPU stages each hold a range of layers. vLLM uses tensor × pipeline parallel size GPUs; selected GPUs the layout doesn't use stay reserved but idle. Constraints: minimum 0; maximum 16. Omitted or zero stays zero in the document, and vLLM gets 1. Must be omitted or zero with a recipe, which sets its own. |
 | `port` | integer | No | `18888` | Inference listening port. Explicit publication must use this port. Constraints: `0` or minimum 1024; maximum 65535. Omitted or zero selects the default. |
 | `reasoningParser` | string | No | `""` | Native vLLM reasoning parser used when no recipe is declared. Empty omits the parser flag. Constraints: pattern `^[a-z0-9_]*$`. |
 | `speculativeTokens` | integer | No | `0` | MTP speculative tokens. Must be zero without a recipe. Constraints: minimum 0; maximum 3. |
 | `startupTimeoutSeconds` | integer | No | `1800` | Seconds allowed for backend readiness before startup fails. Constraints: `0` or minimum 60; maximum 3600. Omitted or zero selects the default. |
+| `tensorParallelSize` | integer | No | — | vLLM's --tensor-parallel-size without a recipe: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts, and fails startup if they don't support it. Constraints: minimum 0; maximum 16. Omitted or zero stays zero in the document. vLLM then gets the number of container.gpuDevices entries, or 1 without them. Must be omitted or zero with a recipe, which sets its own. |
 | `toolParser` | string | No | `""` | Native vLLM tool-call parser used when no recipe is declared. Empty omits the parser flag. Constraints: pattern `^[a-z0-9_]*$`. |
 
 ## Settings
@@ -1467,8 +1470,10 @@ Paths:
 | `lazyLoading` | boolean | No | `false` | Enable the lazy safetensors loading strategy. |
 | `mambaCacheDtype` | string | No | `""` | Mamba SSM cache dtype understood by the pinned vLLM image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
 | `modelName` | string | Yes | — | Model identifier advertised by vLLM. The primary route model must match it. Constraints: pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`; maximum characters 256. |
+| `pipelineParallelSize` | integer | No | — | vLLM's --pipeline-parallel-size: how many GPU stages each hold a range of layers. Constraints: minimum 0; maximum 16. Omitted or zero selects 1. |
 | `preparedEnvironment` | map of string | No | `{}` | VLLM_* variables mapped to paths beneath verified prepared data; . selects its root. Names must not also appear in environment. Constraints: keys: pattern `^VLLM_[A-Z0-9_]*$`. |
 | `reasoningParser` | string | No | `""` | Native vLLM reasoning parser supplied by the runtime image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
+| `tensorParallelSize` | integer | No | — | vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts. Constraints: minimum 0; maximum 16. Omitted or zero selects compatibility.gpuCount. |
 | `toolParser` | string | No | `""` | Native vLLM tool parser supplied by the runtime image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
 
 ## Spec

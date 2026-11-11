@@ -70,5 +70,8 @@ pub const CONSECUTIVE_SAMPLES: DefaultedInteger = DefaultedInteger {
     max: 5,
 };
 pub const SPECULATIVE_TOKENS_MAX: i64 = 3;
+/// The largest tensor or pipeline parallel size and recipe GPU count: more
+/// GPUs than one host holds. vLLM checks a layout against the GPUs it sees.
+pub const PARALLEL_SIZE_MAX: i64 = 16;
 pub const GPU_MEMORY_MAX: i64 = 96;
 pub const GPU_MEMORY_DEFAULT: i64 = 16;

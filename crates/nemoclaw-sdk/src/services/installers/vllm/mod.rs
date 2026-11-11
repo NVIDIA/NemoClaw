@@ -49,6 +49,14 @@ impl Service {
         if let Some(placement) = self.published_placement()? {
             placement.validate(self.serving.port)?;
         }
+        // A recipe's budget holds for the GPU count it was measured on, as it
+        // does for its GPU name. The parallel layout itself is vLLM's to check.
+        if let Some(recipe) = &self.recipe {
+            crate::config::validation::require(
+                recipe.compatibility.gpu_count == self.gpu_count() as u64,
+                "recipe compatibility.gpuCount must equal the number of container.gpuDevices entries, or 1 without them",
+            )?;
+        }
         self.runtime.validate()
     }
 }
