@@ -81,7 +81,7 @@ Its modules run the `nemoclaw` types against fake Docker engines, SSH hosts, and
 | `failures/service_storage` | Checks an invalid owner, an unchanged plan of intact storage, missing, foreign, or substituted storage, and a lost creation reply |
 | `failures/discovery` | Fabric requirements and compiled discovery that read image metadata |
 | `replacement_cleanup` | On Unix, the plans and state the SDK reads after a container replacement whose cleanup is unfinished |
-| `gpu_requests` | The device requests the bundled Docker provider sends a fake engine: one named GPU reaches Docker and reads back unchanged, and a list of GPUs reaches it as one NVIDIA request, and changing the GPUs replaces the container |
+| `gpu_requests` | On Unix, the device requests the bundled Docker provider sends a fake engine: one named GPU reaches Docker and reads back unchanged; a list of GPUs, which the SDK writes as a `device_requests` block, reaches it as one NVIDIA request; and changing the GPUs replaces the container |
 | `readiness_refs` | Container-mode readiness exports the `inference_server` reference that registrations take, with the generated key's location as observed from the container |
 | `references` | A typed reference carries one resource's identity to another, replacement follows it, and a reference of another type fails validation |
 

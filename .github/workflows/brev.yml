@@ -4,8 +4,8 @@ name: Live / Brev
 
 on:
   workflow_dispatch:
-  # GitHub dispatches it on v1, the only branch its jobs accept, although v1
-  # isn't the default branch; pushes to run-brev-v1-e2e/** remain opt-in.
+  # Its jobs accept a dispatch only on v1, which GitHub has accepted although
+  # v1 isn't the default branch; pushes to run-brev-v1-e2e/** remain opt-in.
   push:
     branches: [run-brev-v1-e2e/**]
 

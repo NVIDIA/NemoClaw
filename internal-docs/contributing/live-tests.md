@@ -173,7 +173,8 @@ Image compilation happens on the CI runner.
 A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
 The check list shows bundle build, image build, preparation, image loading, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
 The workflow requires repository secrets named `BREV_API_KEY` and `NVIDIA_API_KEY`.
-Run it on `v1` with `gh workflow run brev.yml --ref v1`, which GitHub accepts although `v1` is not the default branch, or by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`; a dispatch from any other branch skips every job.
+Run it on `v1` with `gh workflow run brev.yml --ref v1`, or by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`; a dispatch from any other branch skips every job.
+GitHub's documentation requires a dispatched workflow on the default branch, but GitHub has accepted dispatches of this one on `v1`.
 
 The reviewed Brev startup script installs the required host packages, enables Docker, and waits on a readiness sentinel before candidate transfer.
 The VM must be AMD64, expose a working Docker daemon with Buildx and a Landlock kernel ABI, and have at least 80 GiB free during the initial fresh-host check.
