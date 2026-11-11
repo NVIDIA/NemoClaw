@@ -195,24 +195,27 @@ fn h100_host(gpus: Vec<Gpu>) -> Capacity {
 #[test]
 fn accounting_adds_the_budgets_of_the_services_on_each_selected_gpu() {
     let services = h100_services();
-    let observed = account(&services, &h100_host(vec![h100(0, 80), h100(1, 80)])).unwrap();
-    let gpu = |index, required, observed| GpuCapacity {
-        uuid: uuid(index),
-        index,
-        required_bytes: required * GIB,
-        observed_bytes: observed * GIB,
+    let totals = |host: &Capacity| {
+        let observed = account(&services, host).unwrap().total;
+        (
+            observed.required_bytes / GIB,
+            observed.observed_bytes / GIB,
+            observed.compatible(),
+        )
     };
-    assert_eq!(observed.total.gpus, [gpu(0, 70, 80), gpu(1, 70, 80)]);
-    assert!(observed.total.compatible());
-    // A smaller second GPU doesn't fit both budgets; the totals report the
-    // GPU with the least room.
-    let observed = account(&services, &h100_host(vec![h100(0, 80), h100(1, 64)])).unwrap();
-    assert_eq!(observed.total.gpus, [gpu(0, 70, 80), gpu(1, 70, 64)]);
+    // Each GPU holds both budgets, 70 GiB.
     assert_eq!(
-        (observed.total.required_bytes, observed.total.observed_bytes),
-        (70 * GIB, 64 * GIB)
+        totals(&h100_host(vec![h100(0, 80), h100(1, 80)])),
+        (70, 80, true)
     );
-    assert!(!observed.total.compatible());
+    // A smaller GPU doesn't; the totals report the GPU with the least room,
+    // wherever it is in the list.
+    for gpus in [
+        vec![h100(0, 80), h100(1, 64)],
+        vec![h100(0, 64), h100(1, 80)],
+    ] {
+        assert_eq!(totals(&h100_host(gpus)), (70, 64, false));
+    }
     // A utilization fraction is taken of each GPU's own total.
     let mut services = h100_services();
     let service = vllm(&mut services[0].0);
@@ -225,9 +228,24 @@ fn accounting_adds_the_budgets_of_the_services_on_each_selected_gpu() {
     service.memory.gpu_memory_gib = 0;
     service.memory.kv_cache_gib = 0;
     service.memory.gpu_memory_utilization = Some(serde_json::Number::from_f64(0.5).unwrap());
-    let observed = account(&services, &h100_host(vec![h100(0, 80), h100(1, 96)])).unwrap();
-    assert_eq!(observed.total.gpus, [gpu(0, 80, 80), gpu(1, 88, 96)]);
-    assert!(observed.total.compatible());
+    let totals = |host: &Capacity| {
+        let observed = account(&services, host).unwrap().total;
+        (
+            observed.required_bytes / GIB,
+            observed.observed_bytes / GIB,
+            observed.compatible(),
+        )
+    };
+    // Half of 80 GiB plus 40 fits the first GPU exactly; half of 64 plus 40
+    // doesn't fit the second.
+    assert_eq!(
+        totals(&h100_host(vec![h100(0, 80), h100(1, 96)])),
+        (80, 80, true)
+    );
+    assert_eq!(
+        totals(&h100_host(vec![h100(0, 80), h100(1, 64)])),
+        (72, 64, false)
+    );
 }
 
 /// A fake host with `gpus` that reads only the GPU `--id` names, by index or
@@ -283,18 +301,17 @@ async fn capacity_reads_resolve_each_listed_gpu_by_index_or_uuid() {
             .collect::<Vec<_>>(),
         [(2, uuid(2)), (1, uuid(1))]
     );
-    assert_eq!(reads.load(Ordering::SeqCst), 2);
     let error = observe_selected(&engine, Some(&devices(&["0", &uuid(0)])))
         .await
         .unwrap_err()
         .to_string();
     assert!(error.contains("gpu_devices lists one GPU twice"), "{error}");
-    assert!(
-        observe_selected(&engine, Some(&devices(&["0", "7"])))
-            .await
-            .is_err()
-    );
-    // Through the data source's read, one listed GPU is reported by UUID.
+    let error = observe_selected(&engine, Some(&devices(&["0", "7"])))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("names no GPU"), "{error}");
+    // Through the data source's read, the one listed GPU is checked alone.
     let observed = observe_service_capacity(
         &connections,
         "ssh://operator@gpu-box",
@@ -303,15 +320,6 @@ async fn capacity_reads_resolve_each_listed_gpu_by_index_or_uuid() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        observed.gpus,
-        [GpuCapacity {
-            uuid: uuid(2),
-            index: 2,
-            required_bytes: 70 * GIB,
-            observed_bytes: 96 * GIB,
-        }]
-    );
     assert_eq!(
         (observed.required_bytes, observed.observed_bytes),
         (70 * GIB, 96 * GIB)

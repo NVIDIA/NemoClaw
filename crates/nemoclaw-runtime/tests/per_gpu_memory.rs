@@ -14,6 +14,8 @@ use nemoclaw_runtime::{
 use serde_json::{Value, json};
 
 const MIB: u64 = 1 << 20;
+/// The UUID of the GPU at index 1, which errors name.
+const SECOND: &str = "GPU-11111111-0000-0000-0000-000000000000";
 
 /// One `nvidia-smi` row: an H100 with 80 GiB at `index`, `free` GiB free.
 fn h100(index: u32, total_gib: u64, free_gib: u64) -> String {
@@ -97,10 +99,23 @@ fn a_vllm_budget_applies_to_each_selected_gpu() {
     assert_eq!(
         error,
         format!(
-            "GPU free memory (bytes) requires at least {}; observed {}",
+            "{SECOND}: GPU free memory (bytes) requires at least {}; observed {}",
             40 * GIB,
             30 * GIB
         )
+    );
+}
+
+#[test]
+fn a_gpu_without_a_standard_uuid_is_named_by_its_index() {
+    let service = vllm(json!({"gpuMemoryGiB": 40, "kvCacheGiB": 8}), json!({}));
+    let busy = h100(1, 80, 30).replace(SECOND, "MIG-fixture");
+    let error = hardware_capacity::check_memory(&service, &host(&[h100(0, 80, 79), busy]), true)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.starts_with("GPU 1: GPU free memory (bytes)"),
+        "{error}"
     );
 }
 
@@ -112,7 +127,10 @@ fn each_selected_gpu_must_match_the_hardware_profile() {
         hardware_capacity::check_memory(&service, &host(&[h100(0, 80, 79), l4.into()]), false)
             .unwrap_err()
             .to_string();
-    assert!(error.contains("hardware.profile"), "{error}");
+    assert_eq!(
+        error,
+        format!("{SECOND}: hardware.profile requires H100; observed different GPU family")
+    );
     let old_driver = h100(1, 80, 79).replace("580.65", "570.10");
     let error =
         hardware_capacity::check_memory(&service, &host(&[h100(0, 80, 79), old_driver]), false)
@@ -120,7 +138,7 @@ fn each_selected_gpu_must_match_the_hardware_profile() {
             .to_string();
     assert_eq!(
         error,
-        "hardware.minDriverMajor requires at least 580; observed 570"
+        format!("{SECOND}: hardware.minDriverMajor requires at least 580; observed 570")
     );
     // minGpuMemoryBytes applies to each selected GPU.
     let error = hardware_capacity::check_memory(
@@ -133,7 +151,7 @@ fn each_selected_gpu_must_match_the_hardware_profile() {
     assert_eq!(
         error,
         format!(
-            "hardware.minGpuMemoryBytes requires at least {}; observed {}",
+            "{SECOND}: hardware.minGpuMemoryBytes requires at least {}; observed {}",
             80 * GIB,
             64 * GIB
         )
@@ -156,7 +174,7 @@ fn a_vllm_utilization_applies_to_each_selected_gpus_own_total() {
     assert_eq!(
         error,
         format!(
-            "GPU free memory (bytes) requires at least {}; observed {}",
+            "{SECOND}: GPU free memory (bytes) requires at least {}; observed {}",
             47 * GIB,
             46 * GIB
         )
@@ -254,7 +272,10 @@ fn an_ollama_budget_applies_to_each_selected_gpu() {
     let error = ollama::check_memory(&service, &busy, true)
         .unwrap_err()
         .to_string();
-    assert!(error.starts_with("GPU free memory (bytes)"), "{error}");
+    assert!(
+        error.starts_with(&format!("{SECOND}: GPU free memory (bytes)")),
+        "{error}"
+    );
     let l4 = "1, GPU-11111111-0000-0000-0000-000000000000, NVIDIA L4, 8.9, 23034, 22000, 580.65";
     assert!(ollama::check_memory(&service, &host(&[h100(0, 80, 79), l4.into()]), false).is_err());
     // Ollama reserves one amount on every GPU, so a utilization fraction is

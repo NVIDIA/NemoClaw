@@ -48,13 +48,8 @@ pub fn validate_weights(service: &Service, manifest: &Manifest) -> Result<(), Er
         .filter(|f| f.name.ends_with(".safetensors"))
         .map(|f| f.size)
         .sum();
-    // The sizes vLLM gets; see arguments.rs.
-    let gpus = service
-        .serving
-        .tensor_parallel_size
-        .unwrap_or(1)
-        .saturating_mul(service.serving.pipeline_parallel_size.unwrap_or(1))
-        .max(1);
+    let (tensor, pipeline) = service.parallel_sizes();
+    let gpus = tensor.saturating_mul(pipeline).max(1);
     if weights == 0
         || weights
             .div_ceil(gpus)

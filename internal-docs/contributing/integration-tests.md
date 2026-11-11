@@ -76,7 +76,7 @@ Its modules run the `nemoclaw` types against fake Docker engines, SSH hosts, and
 | `hcl/host` | Host checks against a fake engine, health endpoint, and model server: engine facts, image compatibility, container health by engine state, HTTP, or status file, and endpoint readiness; failed checks stop the plan |
 | `hcl/storage` | Retained credential storage keeps its authored or generated identity on its volume |
 | `provider_protocol` | The fixture provider from `nemoclaw-fixture-provider`, and on Unix the provider against a fake Docker API: network and image planning, including prerequisite changes before saved-plan application |
-| `failures/service_capacity` | `vllm_capacity` through an isolated SSH simulator (shared-host overcommit, the per-GPU report, deferred reads, state kept after failed observations, and cleanup without capacity checks), and Ollama readiness and capacity rejecting a vLLM contract |
+| `failures/service_capacity` | `vllm_capacity` through an isolated SSH simulator (shared-host overcommit, deferred reads, state kept after failed observations, and cleanup without capacity checks), and Ollama readiness and capacity rejecting a vLLM contract |
 | `failures/service_readiness` | Standalone service readiness; see [below](#standalone-service-readiness) |
 | `failures/service_storage` | Checks an invalid owner, an unchanged plan of intact storage, missing, foreign, or substituted storage, and a lost creation reply |
 | `failures/discovery` | Fabric requirements and compiled discovery that read image metadata |

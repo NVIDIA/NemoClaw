@@ -5,18 +5,10 @@ use crate::{Error, docker::Connections, hardware::Capacity};
 use nemoclaw_runtime::{RuntimeSpec, ollama::ManagedOllama};
 
 /// Total serving memory required by the selected services on one execution engine.
-/// Unified memory includes the largest host reserve once; dedicated memory uses VRAM.
+/// Unified memory includes the largest host reserve once; dedicated memory uses
+/// each selected GPU's VRAM, and the bytes describe the GPU with the least room.
 #[derive(Debug)]
 pub struct ServiceCapacity {
-    pub required_bytes: u64,
-    pub observed_bytes: u64,
-    pub gpus: Vec<GpuCapacity>,
-}
-/// One selected GPU's share of [`ServiceCapacity`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GpuCapacity {
-    pub uuid: String,
-    pub index: u32,
     pub required_bytes: u64,
     pub observed_bytes: u64,
 }
@@ -126,38 +118,40 @@ pub async fn observe_service_capacity(
         .map_err(|_| Error::State("combined capacity observation timed out"))?
 }
 
-/// Observe the engine's host and the GPUs `gpu_devices` lists, each through
-/// its own read so that only listed GPUs are observed. Each entry, an index or
-/// a UUID, resolves to the GPU the host reports for it, so two entries that
-/// name one GPU are refused. Without the list, the host must show one GPU.
+/// Observe the engine's host in one read and resolve each `gpu_devices`
+/// entry, an index or a UUID, to the GPU the host reports for it, so two
+/// entries that name one GPU are refused. A single entry is read alone through
+/// `nvidia-smi --id`. Without the list, the host must show one GPU.
 async fn observe_selected(
     engine: &crate::docker::Engine,
     gpu_devices: Option<&[String]>,
 ) -> Result<Capacity, Error> {
-    let devices: Vec<Option<&str>> = match gpu_devices {
-        Some(devices) => devices.iter().map(|device| Some(device.as_str())).collect(),
-        None => vec![None],
+    let only = match gpu_devices {
+        Some([device]) => Some(device.as_str()),
+        _ => None,
     };
-    let mut observations = Vec::new();
-    for device in devices {
-        let observation = engine.host_observer.observe(engine, device).await?;
-        observation.capacity.require_one_gpu()?;
-        observations.push(observation);
-    }
+    let observation = engine.host_observer.observe(engine, only).await?;
     let info = engine.info().await?;
-    let mut host: Option<Capacity> = None;
-    let mut gpus: Vec<crate::hardware::Gpu> = Vec::new();
-    for observation in observations {
-        let capacity = observation.for_engine(info.id.as_deref().unwrap_or(""))?;
-        let gpu = capacity.gpus[0].clone();
-        if gpus.iter().any(|seen| seen.uuid == gpu.uuid) {
+    let mut host = observation.for_engine(info.id.as_deref().unwrap_or(""))?;
+    let Some(devices) = gpu_devices else {
+        host.require_one_gpu()?;
+        return Ok(host);
+    };
+    let mut selected: Vec<crate::hardware::Gpu> = Vec::new();
+    for device in devices {
+        let gpu = host
+            .gpus
+            .iter()
+            .find(|gpu| gpu.uuid == *device || gpu.index.to_string() == *device)
+            .ok_or(Error::Conflict(
+                "a gpu_devices entry names no GPU on the engine's host",
+            ))?;
+        if selected.iter().any(|seen| seen.uuid == gpu.uuid) {
             return Err(Error::Conflict("gpu_devices lists one GPU twice"));
         }
-        gpus.push(gpu);
-        host.get_or_insert(capacity);
+        selected.push(gpu.clone());
     }
-    let mut host = host.ok_or(Error::Conflict("gpu_devices must list a GPU"))?;
-    host.set_gpus(gpus);
+    host.set_gpus(selected);
     Ok(host)
 }
 
@@ -210,44 +204,37 @@ fn account(services: &[(CapacityService, bool)], capacity: &Capacity) -> Result<
         })
     };
     let dedicated = architecture == Some(nemoclaw_runtime::vllm::MemoryArchitecture::Dedicated);
+    // Each selected GPU's required and observed bytes.
     let gpus = capacity
-        .selected_gpus()
+        .selected_gpus()?
         .iter()
         .map(|gpu| {
-            let (required_bytes, observed_bytes) = if dedicated {
+            if dedicated {
                 let total = gpu
                     .memory
                     .as_ref()
                     .ok_or(Error::State("dedicated GPU memory is unobservable"))?
                     .total;
-                (budgets(total)?, total)
+                Ok((budgets(total)?, total))
             } else {
-                (
+                Ok((
                     budgets(capacity.total)?
                         .checked_add(reserve)
                         .ok_or_else(overflow)?,
                     capacity.total,
-                )
-            };
-            Ok(GpuCapacity {
-                uuid: gpu.uuid.clone(),
-                index: gpu.index,
-                required_bytes,
-                observed_bytes,
-            })
+                ))
+            }
         })
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect::<Result<Vec<(u64, u64)>, Error>>()?;
     // The totals describe the GPU with the least room, so they're compatible
     // exactly when every GPU is.
     let (required_bytes, observed_bytes) = gpus
-        .iter()
-        .min_by_key(|gpu| i128::from(gpu.observed_bytes) - i128::from(gpu.required_bytes))
-        .map(|gpu| (gpu.required_bytes, gpu.observed_bytes))
+        .into_iter()
+        .min_by_key(|(required, observed)| i128::from(*observed) - i128::from(*required))
         .ok_or(Error::State("no GPU was observed"))?;
     let total = ServiceCapacity {
         required_bytes,
         observed_bytes,
-        gpus,
     };
     Ok(Accounting { total })
 }

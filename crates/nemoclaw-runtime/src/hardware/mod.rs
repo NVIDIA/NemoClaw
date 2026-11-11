@@ -5,10 +5,10 @@
 //! Source revision and attribution: crates/nemoclaw-runtime/NOTICE.md.
 //! Host observations and validated memory protection, independent of a recipe.
 use crate::Error;
-use std::{borrow::Cow, collections::BTreeMap, io::Read};
+use std::{collections::BTreeMap, io::Read};
 mod diagnostic;
 pub use diagnostic::HardwareDiagnostic;
-pub use diagnostic::{architecture, at_least};
+pub use diagnostic::{GpuLabel, architecture, at_least, on_gpu};
 pub const GIB: u64 = 1 << 30;
 /// Host measurements. The single-GPU fields describe the observed GPU only
 /// when `gpus` holds exactly one; otherwise they keep their defaults.
@@ -54,21 +54,13 @@ impl Capacity {
     }
     /// The GPUs a service on this host uses, which the per-GPU checks cover:
     /// every observed GPU, because a container sees only the GPUs it selects
-    /// and a capacity read observes only the listed ones. Measurements built
-    /// without a GPU list describe one GPU through the single-GPU fields.
-    pub fn selected_gpus(&self) -> Cow<'_, [Gpu]> {
+    /// and a capacity read observes only the listed ones. Refuses an
+    /// observation without a GPU, so no check passes for want of one.
+    pub fn selected_gpus(&self) -> Result<&[Gpu], Error> {
         if self.gpus.is_empty() {
-            Cow::Owned(vec![Gpu {
-                index: 0,
-                uuid: String::new(),
-                name: self.gpu.clone(),
-                driver_major: self.driver_major,
-                compute_capability: self.compute_capability,
-                memory: self.gpu_memory.clone(),
-            }])
-        } else {
-            Cow::Borrowed(&self.gpus)
+            return Err(Error::State("GPU compute capability is unobservable"));
         }
+        Ok(&self.gpus)
     }
 }
 /// One GPU as `nvidia-smi` reports it.

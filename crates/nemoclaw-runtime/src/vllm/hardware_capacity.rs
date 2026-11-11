@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Host-reserve policy informed by MiaAI Lab's single-Spark start.sh (AGPL-3.0-or-later).
 // Source revision and attribution: crates/nemoclaw-runtime/NOTICE.md.
-use crate::hardware::{Capacity, GIB, at_least};
+use crate::hardware::{Capacity, GIB, at_least, on_gpu};
 use crate::{
     Error,
     vllm::{MemoryArchitecture, Service},
@@ -50,15 +50,21 @@ pub fn check_memory(service: &Service, c: &Capacity, starting: bool) -> Result<(
         .map_or(20, |r| r.resources.startup_headroom_gi_b)
         * GIB;
     if service.memory_architecture()? == MemoryArchitecture::Dedicated {
-        for gpu in c.selected_gpus().iter() {
-            let gpu = gpu
+        for gpu in c.selected_gpus()? {
+            let memory = gpu
                 .memory
                 .as_ref()
                 .ok_or(Error::State("dedicated GPU memory is unobservable"))?;
-            let budget = gpu_budget(service, gpu.total)?;
-            at_least("GPU total memory (bytes)", budget, gpu.total)?;
+            let budget = gpu_budget(service, memory.total)?;
+            on_gpu(
+                gpu,
+                at_least("GPU total memory (bytes)", budget, memory.total),
+            )?;
             if starting {
-                at_least("GPU free memory (bytes)", budget, gpu.free)?;
+                on_gpu(
+                    gpu,
+                    at_least("GPU free memory (bytes)", budget, memory.free),
+                )?;
             }
         }
         let reserve = service.memory.host_reserve_gib as u64 * GIB;
@@ -106,12 +112,11 @@ pub fn gpu_budget(service: &Service, total: u64) -> Result<u64, Error> {
 /// GPU's. vLLM requires that fraction of each GPU's own total to be free when
 /// it starts, so the largest total keeps the request within the budget on
 /// every GPU. Without a recipe, vLLM sizes the KV cache from
-/// --kv-cache-memory-bytes, so GPUs of different sizes get the same budget; a
-/// recipe's KV cache takes the fraction of each GPU, so a smaller one gets less.
+/// --kv-cache-memory-bytes, so GPUs of different sizes get the same budget.
 pub fn serving_memory(service: &Service, capacity: &Capacity) -> Result<u64, Error> {
     if service.memory_architecture()? == MemoryArchitecture::Dedicated {
         let mut largest = 0;
-        for gpu in capacity.selected_gpus().iter() {
+        for gpu in capacity.selected_gpus()? {
             let gpu = gpu
                 .memory
                 .as_ref()
@@ -125,7 +130,7 @@ pub fn serving_memory(service: &Service, capacity: &Capacity) -> Result<u64, Err
 }
 
 fn check_compatibility(service: &Service, c: &Capacity) -> Result<(), Error> {
-    let gpus = c.selected_gpus();
+    let gpus = c.selected_gpus()?;
     if gpus
         .iter()
         .any(|gpu| !(10..=999).contains(&gpu.compute_capability))

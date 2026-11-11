@@ -21,7 +21,6 @@ data ollama_capacity (version 0)
   contracts: list(string), required
   engine: string, required
   gpu_devices: list(string), optional
-  gpus: list(object({ index = number, observed_bytes = number, required_bytes = number, uuid = string })), computed
   observed_bytes: number, computed
   required_bytes: number, computed
 

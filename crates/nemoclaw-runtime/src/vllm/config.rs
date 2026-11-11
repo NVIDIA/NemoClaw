@@ -162,6 +162,21 @@ fn is_zero(value: &i64) -> bool {
 }
 
 impl Service {
+    /// The tensor and pipeline parallel sizes vLLM gets: the recipe's, or the
+    /// service's without one, each defaulting to vLLM's 1.
+    pub fn parallel_sizes(&self) -> (u64, u64) {
+        let (tensor, pipeline) = match &self.recipe {
+            Some(recipe) => (
+                recipe.serving.tensor_parallel_size,
+                recipe.serving.pipeline_parallel_size,
+            ),
+            None => (
+                self.serving.tensor_parallel_size,
+                self.serving.pipeline_parallel_size,
+            ),
+        };
+        (tensor.unwrap_or(1), pipeline.unwrap_or(1))
+    }
     pub fn served_model(&self) -> &str {
         if let Some(recipe) = &self.recipe {
             return &recipe.serving.model_name;

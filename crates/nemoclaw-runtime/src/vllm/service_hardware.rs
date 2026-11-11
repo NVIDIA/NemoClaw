@@ -42,8 +42,8 @@ impl ServiceHardware {
                 capacity.total,
             )?;
         }
-        for gpu in capacity.selected_gpus().iter() {
-            self.check_gpu(gpu)?;
+        for gpu in capacity.selected_gpus()? {
+            crate::hardware::on_gpu(gpu, self.check_gpu(gpu))?;
         }
         Ok(())
     }

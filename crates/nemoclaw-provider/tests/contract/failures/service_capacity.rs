@@ -108,24 +108,6 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     // memory. The hosted runtime checks headroom when it starts.
     run(&["apply", "-auto-approve", "-input=false"], true);
     let prior = fs::read(root.join("terraform.tfstate")).unwrap();
-    // The read reports the selected GPU by UUID; on unified memory, its entry
-    // repeats the host figures.
-    let state: Value = serde_json::from_slice(&prior).unwrap();
-    let read = &state["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|resource| resource["type"] == "vllm_capacity")
-        .unwrap()["instances"][0]["attributes"];
-    assert_eq!(
-        read["gpus"],
-        json!([{
-            "uuid": "GPU-00000000-0000-0000-0000-000000000000",
-            "index": 0,
-            "required_bytes": read["required_bytes"],
-            "observed_bytes": read["observed_bytes"],
-        }])
-    );
     for failure in [
         json!({}),
         json!({"capacity_failure":true}),

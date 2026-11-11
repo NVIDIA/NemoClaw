@@ -5,7 +5,7 @@ use super::ManagedOllama;
 use crate::vllm::MemoryArchitecture;
 use crate::{
     Error,
-    hardware::{Capacity, GIB, at_least},
+    hardware::{Capacity, GIB, at_least, on_gpu},
 };
 
 pub fn check_memory(
@@ -19,14 +19,20 @@ pub fn check_memory(
     if service.memory_architecture()? == MemoryArchitecture::Dedicated {
         // The budget applies to each selected GPU.
         let budget = budget(service, capacity)?;
-        for gpu in capacity.selected_gpus().iter() {
-            let gpu = gpu
+        for gpu in capacity.selected_gpus()? {
+            let memory = gpu
                 .memory
                 .as_ref()
                 .ok_or(Error::State("dedicated GPU memory is unobservable"))?;
-            at_least("GPU total memory (bytes)", budget, gpu.total)?;
+            on_gpu(
+                gpu,
+                at_least("GPU total memory (bytes)", budget, memory.total),
+            )?;
             if starting {
-                at_least("GPU free memory (bytes)", budget, gpu.free)?;
+                on_gpu(
+                    gpu,
+                    at_least("GPU free memory (bytes)", budget, memory.free),
+                )?;
             }
         }
         at_least("host total memory (bytes)", reserve, capacity.total)?;
@@ -61,7 +67,7 @@ pub fn check_memory(
 pub fn serving_memory(service: &ManagedOllama, capacity: &Capacity) -> Result<u64, Error> {
     if service.memory_architecture()? == MemoryArchitecture::Dedicated {
         let mut smallest = u64::MAX;
-        for gpu in capacity.selected_gpus().iter() {
+        for gpu in capacity.selected_gpus()? {
             let gpu = gpu
                 .memory
                 .as_ref()
@@ -93,7 +99,7 @@ pub fn budget(service: &ManagedOllama, capacity: &Capacity) -> Result<u64, Error
 
 fn check_compatibility(service: &ManagedOllama, capacity: &Capacity) -> Result<(), Error> {
     if capacity
-        .selected_gpus()
+        .selected_gpus()?
         .iter()
         .any(|gpu| !(10..=999).contains(&gpu.compute_capability))
     {
