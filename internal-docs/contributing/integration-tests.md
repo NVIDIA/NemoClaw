@@ -81,6 +81,9 @@ Its modules run the `nemoclaw` types against fake Docker engines, SSH hosts, and
 | `failures/service_storage` | Checks an invalid owner, an unchanged plan of intact storage, missing, foreign, or substituted storage, and a lost creation reply |
 | `failures/discovery` | Fabric requirements and compiled discovery that read image metadata |
 | `replacement_cleanup` | On Unix, the plans and state the SDK reads after a container replacement whose cleanup is unfinished |
+| `gpu_requests` | On Unix, the device requests the bundled Docker provider sends a fake engine: one named GPU reaches Docker and reads back unchanged; a list of GPUs, which the SDK writes as a `device_requests` block, reaches it as one NVIDIA request; and changing the GPUs replaces the container |
+| `readiness_refs` | Container-mode readiness exports the `inference_server` reference that registrations take, with the generated key's location as observed from the container |
+| `references` | A typed reference carries one resource's identity to another, replacement follows it, and a reference of another type fails validation |
 
 `every_type_has_a_contract_test` requires a contract test for every type the provider serves, or an `ELSEWHERE` entry naming where it is tested instead.
 
@@ -199,9 +202,9 @@ The runner prepares each module a test file names, in the same path of a work co
 |---|---|---|
 | `./cases/<name>` | `cases/<name>.yaml`, shared with the live E2E scenarios that `hcl_live::case` runs from `tests/e2e/hcl/tests` | The document compiled by the SDK as `nemoclaw.tf.json`, beside a copy of `tests/integration/hcl/harness/main.tf` |
 | `./examples/<path>` | A NemoClaw document, `examples/<path>.yaml` | The same, so an example is tested unchanged |
-| `./examples/<path>` | An authored HCL directory, `examples/<path>` | A copy, with the bundle's version pinned on each NVIDIA provider, which a development bundle's pre-release providers need |
+| `./examples/<path>` | An authored HCL directory, `examples/<path>`, or one authored file, `examples/<path>.tf` | A copy, with the bundle's version pinned on each NVIDIA provider, which a development bundle's pre-release providers need; a single file becomes the module's `main.tf`, beside a copy of `versions.json` |
 
-Before compiling a document, the runner points its gateway, any engine it names, and its inference endpoints at the fixtures.
+Before compiling a document, the runner points its gateway, any engine it names, and its inference endpoints at the fixtures; a managed Kubernetes gateway keeps its endpoint, because its plan-only scenarios mock Helm and reach no cluster or gateway.
 An external gateway loses its credential and TLS, because the fixture gateway serves plaintext gRPC.
 A sandbox described by image metadata runs the fixture image, which the runner's metadata bundle describes.
 The runner supplies a fixture value for each credential a document names and for each `credential_env = "NAME"` line in the test file.
@@ -270,7 +273,8 @@ Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM
 | `kubernetes-external-three-agents` | `examples/kubernetes/external-gateway.yaml`, unchanged: three agents share one registration holding the credential from `INFERENCE_API_KEY`, and each starts with its own name; independent sandboxes are created at the same time, and no sandbox runs an inference or runtime probe. An unchanged apply changes nothing on the gateway and starts no agent. Replacing one sandbox stops and starts only its agent |
 | `kubernetes-slow-sandbox-delete` | The gateway takes 31 seconds to answer a sandbox deletion during a replacement: the provider deletes it once, without asking again, and then creates the replacement |
 | `gtc-dc-dgx-spark`, `gtc-dc-dgx-station`, `gtc-dc-windows-wsl2-rtx-spark` | The Hermes, OpenClaw, and Deep Agents examples in `examples/gtc-dc` for that target, unchanged and only planned. Each plan creates the managed Docker gateway, the Nemotron Super vLLM service, which the vLLM provider validates for the target's hardware profile, and one sandbox with the example's harness whose agent uses that service's address and model. GPU access, the model download, and inference need the target host |
-| `gtc-dc-kubernetes-amd64` | `examples/gtc-dc/kubernetes-amd64.yaml`, unchanged and only planned: the existing gateway supports the Kubernetes driver, and the OpenClaw and Hermes sandboxes' agents use the hosted NVIDIA model. Its HCL equivalent is not planned, because it names gateway TLS references and the fixture gateway serves plaintext gRPC |
+| `gtc-dc-kubernetes-amd64` | `examples/gtc-dc/kubernetes-amd64.yaml`, unchanged and only planned, with Kubernetes operations and Helm mocked: the plan installs a managed Kubernetes gateway with development authentication in the `nemoclaw-gtc-dc` namespace, whose chart values allow the example's PVC driver configuration, and the OpenClaw and Hermes sandboxes' agents use the hosted NVIDIA model |
+| `gtc-dc-kubernetes-amd64-hcl` | `examples/kubernetes/hosted-nvidia.tf`, the same deployment as authored HCL, unchanged and only planned, with Helm mocked: the real Fabric provider discovers both harnesses from the runner's image metadata, the plan installs the same managed gateway, each sandbox mounts its workspace and artifacts from its own PVC, and each agent uses the hosted NVIDIA model |
 | `external-multiple-providers` | Two deployments on one gateway. The researcher attaches its hosted and local registrations, and the writer only the local one. The second deployment has its own workspace, each registration carries its deployment's owner, and each sandbox attaches only its own workspace's registrations. Applying the first deployment again after the second changes nothing |
 | `travel` | `examples/hcl/travel` applied unchanged with the Docker provider mocked: Ollama readiness against the fixture upstream listing the model, the registration at the address sandboxes use, the sandbox's policy, and the Pi agent's name, model, and instructions. An unchanged apply changes nothing on the gateway and starts no agent |
 | `travel-team` | `examples/hcl/travel-team` applied the same way: four registrations, each role's attachments, grants, and toolsets, and a hosted-model change that replaces only the scheduler's and buyer's sandboxes |
