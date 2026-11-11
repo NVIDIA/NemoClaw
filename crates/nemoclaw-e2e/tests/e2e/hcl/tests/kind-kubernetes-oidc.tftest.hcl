@@ -3,9 +3,9 @@
 
 # Two agents on a managed gateway in kind, in a namespace annotated with
 # OpenShift's UID range, so OpenShell runs each sandbox as its first UID:
-# apply, which creates the NodePort Service that publishes the gateway; a
-# reply from each agent's recorded runtime; an unchanged plan; and destroy
-# that keeps only the gateway's storage. cargo ci live-kind runs it.
+# apply, with the chart's NodePort Service publishing the gateway; a reply
+# from each agent's recorded runtime; an unchanged plan; and destroy that
+# keeps only the gateway's storage. cargo ci live-kind runs it.
 # The stub's reply shows each request reached it; no model runs. The agent
 # image comes from the run's private registry with the operator's pull
 # Secret, and the CLI and the probe reach the gateway with a token from an
@@ -41,11 +41,6 @@ run "apply" {
     condition     = output.exit_code == 0 && output.result.outcome == "succeeded"
     error_message = "Apply failed: ${output.error}"
   }
-
-  assert {
-    condition     = contains(keys(output.changes), "kubernetes_service_v1.gateway_exposure")
-    error_message = "Apply did not create the exposure Service; it changed ${join(", ", keys(output.changes))}"
-  }
 }
 
 run "reply" {
@@ -70,8 +65,6 @@ run "reply" {
   }
 }
 
-# The Service as the cluster returns it, with the fields Kubernetes fills in,
-# must not plan a change.
 run "unchanged_plan" {
   module {
     source = "./cli"

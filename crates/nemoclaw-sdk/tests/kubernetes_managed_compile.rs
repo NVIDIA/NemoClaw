@@ -36,8 +36,8 @@ fn pod_document() -> Document {
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
 }
 
-/// The same target published through a NodePort Service at the address
-/// clients dial.
+/// The same target published through the chart's NodePort Service at the
+/// address clients dial.
 fn exposed_document() -> Document {
     let mut value = serde_json::to_value(document()).unwrap();
     value["spec"]["gateway"]["endpoint"] = json!("https://gateway.agents.example.com:30851");
@@ -396,16 +396,14 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
         for target in runtime_targets(&document, &generations)
             .unwrap()
             .into_iter()
-            .filter(|target| {
-                target.kind.starts_with("kubernetes_") && target.kind != "kubernetes_service_v1"
-            })
+            .filter(|target| target.kind.starts_with("kubernetes_"))
         {
             let spec = Spec::from_row(&target.kind, &target.values).unwrap();
             assert_eq!(spec.row().unwrap(), target.values);
             assert_eq!(spec.kind, target.kind);
             assert_eq!(spec.settings.endpoint, gateway.endpoint);
-            // The exposure Service is its own resource; these attributes
-            // carry only its endpoint.
+            // Exposure configures the Helm release; these attributes carry
+            // only its endpoint.
             let mut authored = gateway.kubernetes.clone().unwrap();
             authored.expose = None;
             assert_eq!(spec.settings.kubernetes.as_ref(), Some(&authored));
@@ -453,9 +451,7 @@ fn every_compiled_kubernetes_attribute_passes_the_providers_check() {
         for target in runtime_targets(&document, &generations)
             .unwrap()
             .into_iter()
-            .filter(|target| {
-                target.kind.starts_with("kubernetes_") && target.kind != "kubernetes_service_v1"
-            })
+            .filter(|target| target.kind.starts_with("kubernetes_"))
         {
             for (attribute, value) in &target.values {
                 assert_eq!(
@@ -613,12 +609,6 @@ fn chart_keys_nemoclaw_owns_are_rejected() {
         (
             json!({"openshell.drivers.kubernetes": {"image_pull_secrets": ["other"]}}),
             "openshell.drivers.kubernetes.image_pull_secrets",
-        ),
-        // The chart derives routing domains from the certificate's names; an
-        // authored list would move service hosts off the certificate.
-        (
-            json!({"openshell.gateway": {"server_sans": ["*.apps.example.com"]}}),
-            "openshell.gateway.server_sans",
         ),
     ] {
         let error = chart_values(Some(config)).unwrap_err();

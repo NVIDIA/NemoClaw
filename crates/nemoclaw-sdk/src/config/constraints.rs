@@ -46,8 +46,4 @@ pub(crate) const KUBERNETES_GATEWAY_ENDPOINT: &str = r"^https://127\.0\.0\.1:(?:
 /// `kubernetes.expose`: a lowercase DNS name or IPv4 address and an explicit
 /// nonzero port.
 pub(crate) const KUBERNETES_EXPOSED_GATEWAY_ENDPOINT: &str = r"^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$";
-/// A NodePort Service's endpoint port: Kubernetes' default node-port range,
-/// 30000 through 32767.
-pub(crate) const NODE_PORT_GATEWAY_ENDPOINT: &str =
-    r"^https://[^/]+:(?:3[01][0-9]{3}|32[0-6][0-9]{2}|327[0-5][0-9]|3276[0-7])$";
 pub(crate) const NETWORK_TIER: &str = "isolated";

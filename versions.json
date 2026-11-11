@@ -28,10 +28,6 @@
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_arm64.zip",
         "sha256": "77515e5576f4ea3d8d9e404237882de62518950ccd7b312371f5c03580f22fb0"
       },
-      "kubernetesProvider": {
-        "url": "https://releases.hashicorp.com/terraform-provider-kubernetes/3.4.0/terraform-provider-kubernetes_3.4.0_linux_arm64.zip",
-        "sha256": "c5506b63311f177f4b298abad48221509b372f7d8d18baee45d108d6903e6c1e"
-      },
       "openshell": {
         "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.7/openshell-aarch64-unknown-linux-musl.tar.gz",
         "sha256": "696b523c263895b69eaa7c7e6afbb19b8af6c65cd79c7ffac7b685b6e3aa23da"
@@ -62,10 +58,6 @@
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_amd64.zip",
         "sha256": "24a942352667cf49bed467c51a951f17a6c13e0cdf1c505b01b41f75a1a60d0f"
       },
-      "kubernetesProvider": {
-        "url": "https://releases.hashicorp.com/terraform-provider-kubernetes/3.4.0/terraform-provider-kubernetes_3.4.0_linux_amd64.zip",
-        "sha256": "f235c22e9b976a26531512303dfde4ee9023a8d386401147b46d88960d4a8fda"
-      },
       "openshell": {
         "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.7/openshell-x86_64-unknown-linux-musl.tar.gz",
         "sha256": "5c1adfcae797eac9b2e8b9280c66c1f75e4e84d9e31ce6938c5b994314ef6098"
@@ -91,10 +83,6 @@
       "helmProvider": {
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_darwin_arm64.zip",
         "sha256": "a4e601eddf9781b5f8678ee9c2b6fb0791fbe6ab85a53707efdf80f714a3011c"
-      },
-      "kubernetesProvider": {
-        "url": "https://releases.hashicorp.com/terraform-provider-kubernetes/3.4.0/terraform-provider-kubernetes_3.4.0_darwin_arm64.zip",
-        "sha256": "297956e186e6a7f4f4f8a97e6ec446f12dff9e774d6c7bd4b105d3c20b2617c6"
       }
     },
     "darwin_amd64": {
@@ -117,10 +105,6 @@
       "helmProvider": {
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_darwin_amd64.zip",
         "sha256": "2c057eafd1e4d8b50acdc676f9a3096e38fb7d30c3fab3d64af82fa04a2f767e"
-      },
-      "kubernetesProvider": {
-        "url": "https://releases.hashicorp.com/terraform-provider-kubernetes/3.4.0/terraform-provider-kubernetes_3.4.0_darwin_amd64.zip",
-        "sha256": "ed5aea3f086c92a759da4f21bea9ab435e06e07c08668983983ff868f1f0a8d4"
       }
     },
     "windows_amd64": {
@@ -143,10 +127,6 @@
       "helmProvider": {
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_windows_amd64.zip",
         "sha256": "eaa58edc8bb43aeb0fe6c0f99975cb24e2e9f5441e938a389fe848795a30b825"
-      },
-      "kubernetesProvider": {
-        "url": "https://releases.hashicorp.com/terraform-provider-kubernetes/3.4.0/terraform-provider-kubernetes_3.4.0_windows_amd64.zip",
-        "sha256": "49a729867f89b393f39290a0bada8f39f861094c5dd968efbae4b04f1e8fe1c8"
       }
     }
   },
@@ -190,6 +170,5 @@
     }
   },
   "dockerProvider": "4.6.0",
-  "helmProvider": "3.3.0",
-  "kubernetesProvider": "3.4.0"
+  "helmProvider": "3.3.0"
 }

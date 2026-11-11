@@ -37,7 +37,7 @@ pub struct ManagedKubernetes {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 32))]
     pub image_pull_secrets: Vec<String>,
-    /// How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host; without it, NemoClaw forwards a free local port to the gateway pod for each command. Fixed after the first successful plan, like the endpoint.
+    /// How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host; without it, NemoClaw forwards a free local port to the gateway pod for each command. Its Service type is fixed after the first successful plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "KubernetesExpose")]
     pub expose: Option<KubernetesExpose>,
@@ -47,7 +47,7 @@ pub struct ManagedKubernetes {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KubernetesExpose {
-    /// A Service that publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged.
+    /// The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged.
     pub service: ExposureService,
 }
 
@@ -55,17 +55,9 @@ pub struct KubernetesExpose {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExposureService {
-    /// `NodePort` listens on the endpoint's port, from 30000 through 32767, on every node. `LoadBalancer` asks the cluster's load-balancer implementation for an address, requires the `oidc` authentication profile, and also listens on a node port Kubernetes allocates.
+    /// `NodePort` listens on the endpoint's port on every node; the port must be in the cluster's node-port range, 30000 through 32767 by default.
     #[serde(rename = "type")]
     pub service_type: ExposureServiceType,
-    /// LoadBalancer only: client CIDRs the load balancer admits. It must admit the host that runs NemoClaw, which dials the endpoint for every plan, apply, and destroy. Load-balancer implementations differ in whether they enforce it, and it never covers node ports.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schemars(length(max = 32))]
-    pub load_balancer_source_ranges: Vec<String>,
-    /// LoadBalancer only: annotations set on the Service unchanged, such as the address annotation of MetalLB, GKE, AKS or the AWS Load Balancer Controller. They must not terminate TLS. Fixed after the first successful plan.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    #[schemars(length(max = 32))]
-    pub annotations: std::collections::BTreeMap<String, String>,
 }
 
 /// The Kubernetes Service type that publishes a managed gateway.
@@ -74,8 +66,6 @@ pub struct ExposureService {
 pub enum ExposureServiceType {
     /// A port on every node.
     NodePort,
-    /// An address from the cluster's load-balancer implementation.
-    LoadBalancer,
 }
 
 impl ExposureServiceType {
@@ -83,7 +73,6 @@ impl ExposureServiceType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::NodePort => "NodePort",
-            Self::LoadBalancer => "LoadBalancer",
         }
     }
 }

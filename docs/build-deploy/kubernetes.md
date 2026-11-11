@@ -17,10 +17,10 @@ No automated run covers OpenShift, and other clusters are untested; [current lim
 Confirm client access, cluster permissions, image availability, and inference reachability before applying the example. Managed model services are not supported on Kubernetes.
 
 - **A NemoClaw bundle:** [build one](build.md#build-a-native-bundle) from this revision.
-  The bundle includes the Helm provider that installs the gateway, and the Kubernetes provider that [publishes it](#publish-the-gateway-outside-the-cluster); no Helm CLI is needed.
+  The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
 - **Cluster access:** a kubeconfig file and an exact context, or, when NemoClaw [runs in a pod](#run-nemoclaw-in-a-pod), the pod's service account.
   Either must be able to read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets, Jobs and NetworkPolicies.
-  Without [`gateway.kubernetes.expose`](#publish-the-gateway-outside-the-cluster), it must also port-forward to the namespace's pods (`get` and `create` on `pods/portforward`); with it, it must patch Services.
+  Without [`gateway.kubernetes.expose`](#publish-the-gateway-outside-the-cluster), it must also port-forward to the namespace's pods (`get` and `create` on `pods/portforward`).
   The SDK reads nothing else outside the namespace.
   The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context or service account must be able to create a ClusterRole and a ClusterRoleBinding.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
@@ -157,10 +157,11 @@ With this profile, the namespace holds no development issuer, and the state dire
 
 ### Publish the Gateway Outside the Cluster
 
-Like a Docker gateway's published port, `gateway.kubernetes.expose` publishes the gateway at `gateway.endpoint` through a Kubernetes Service, so NemoClaw and the OpenShell CLI dial that address instead of port forwards.
-The Service, named after the release with `-exposure` appended, forwards the endpoint's port to the gateway's own TLS listener, so TLS and client certificates pass through unchanged.
+Like a Docker gateway's published port, `gateway.kubernetes.expose` publishes the gateway at `gateway.endpoint`, so NemoClaw and the OpenShell CLI dial that address instead of port forwards.
+NemoClaw sets the OpenShell chart's own gateway Service to `NodePort` at the endpoint's port, which forwards to the gateway's TLS listener, so TLS and client certificates pass through unchanged.
 The gateway certificate names the endpoint's host.
-CI publishes a gateway with the `oidc` profile through a `NodePort` Service on kind, where two agents reply through the node's address; no `LoadBalancer` has been tried.
+The Service doesn't publish the gateway's plaintext metrics port, and the gateway then serves no metrics.
+CI publishes a gateway with the `oidc` profile on kind, where two agents reply through the node's address.
 
 ```yaml
 spec:
@@ -173,48 +174,11 @@ spec:
           type: NodePort
 ```
 
-```yaml
-spec:
-  gateway:
-    endpoint: https://gateway.agents.example.com:443
-    kubernetes:
-      authentication: {profile: oidc, token: {env: NEMOCLAW_GATEWAY_TOKEN}}
-      expose:
-        service:
-          type: LoadBalancer
-          loadBalancerSourceRanges: [10.20.0.0/16]           # optional
-          annotations: {metallb.io/loadBalancerIPs: 10.20.0.40} # optional
-```
-
-- **Endpoint:** `https://`, a lowercase DNS name or IPv4 address, and a port. A `NodePort` endpoint's port must be in the node-port range, 30000 through 32767; ports 30000 through 30085 are the least likely to be taken.
-- **The address must exist before apply,** because plan binds the endpoint, the chart writes its host into the certificate, and apply dials it.
-  - `NodePort`: a node's address, or a DNS name for the nodes.
-  - `LoadBalancer`: a DNS name, or an IP fixed in advance. On single-node k3s, ServiceLB uses the node's IP. Elsewhere, an annotation sets the address, such as MetalLB's `metallb.io/loadBalancerIPs`, GKE's `networking.gke.io/load-balancer-ip-addresses` for an internal load balancer, AKS's `service.beta.kubernetes.io/azure-pip-name`, or the AWS Load Balancer Controller's `service.beta.kubernetes.io/aws-load-balancer-eip-allocations`.
-  - Where nothing fixes the address, such as EKS's default Classic load balancer, the first apply fails when it dials the endpoint. Point the endpoint's DNS name at the address `kubectl get service` shows, then apply again.
-- **`LoadBalancer` requires the `oidc` profile:** a load balancer may be reachable from outside the cluster, where the development profile's locally held signing key would guard the port.
-- **Fixed after the first plan:** `expose`, its Service type and its annotations select the address the endpoint names. Like the endpoint, changing them needs a new deployment. `loadBalancerSourceRanges` can change.
-- **Prerequisites:** a `LoadBalancer` needs the cluster's load-balancer implementation, which NemoClaw doesn't check. Without one, the Service stays pending and apply fails after 10 minutes. A node port another Service holds fails apply too; plan can't check it without reading the cluster's other Services.
-
-**Both types listen on every node.**
-A `LoadBalancer` Service also gets a node port that Kubernetes allocates, and `loadBalancerSourceRanges` never covers node ports; load-balancer implementations also differ in whether they enforce it.
-
-**`loadBalancerSourceRanges` must admit the host that runs NemoClaw.**
-Plan, apply, and destroy dial the endpoint, so the ranges must include that host's address as the load balancer sees it.
-Where the load balancer enforces the ranges, apply sets ranges that exclude the host on the Service, then fails with `observation transport failed`.
-Where the cluster drops the excluded connections instead of refusing them, as on k3s with MetalLB, apply first waits up to 5 minutes, the time it gives a load balancer's endpoint to answer.
-Every later plan, apply, or destroy fails the same way before it changes anything, even with corrected YAML.
-To recover, set ranges that admit the host on the Service, which is the namespace's Service ending in `-exposure`, then apply YAML with the same ranges:
-
-```sh
-deployment_context=my-cluster
-deployment_namespace=nemoclaw-development
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" get services
-exposure_service=REPLACE_WITH_EXPOSURE_SERVICE_NAME
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
-  patch service "$exposure_service" --type merge \
-  --patch '{"spec":{"loadBalancerSourceRanges":["10.20.0.0/16"]}}'
-nemoclaw apply --state-dir .local/kubernetes deployment.yaml
-```
+- **Endpoint:** `https://`, a lowercase DNS name or IPv4 address, and a port in the cluster's node-port range, 30000 through 32767 by default; ports 30000 through 30085 are the least likely to be taken. Apply fails if Kubernetes refuses the port or another Service holds it.
+- **The address must exist before apply,** because plan binds the endpoint, the chart writes its host into the certificate, and apply dials it: a node's address, or a DNS name for the nodes.
+- **Fixed after the first plan:** `expose` and its Service type select the address the endpoint names. Like the endpoint, changing them needs a new deployment.
+- **The port is open on every node.** Restrict who can reach it with your network's own controls; the gateway still requires its client certificate.
+- **No `LoadBalancer` yet:** the pinned chart's Service takes no annotations or source ranges, and listens on the gateway's own port ([#14421](https://github.com/NVIDIA/NemoClaw/issues/14421)).
 
 Sandbox [service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) skip the gateway's sign-in, so anyone who reaches the endpoint with a service's host name reaches that service, which must authenticate its own clients.
 The URLs that apply prints don't open remotely yet ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
@@ -222,7 +186,6 @@ The URLs that apply prints don't open remotely yet ([#14316](https://github.com/
 The chart writes the certificate once, when it creates the Secrets `<release>-server-tls`, `<release>-client-tls` and `<release>-jwt-keys`, and destroy keeps them.
 NemoClaw records the client certificate Secret the first time it dials a published gateway and refuses a replaced one, since it trusts that Secret's CA for whatever answers at the endpoint.
 A new deployment with the same `metadata.uid` in the same namespace reuses the retained Secrets, whose certificate may not name its host; delete the three Secrets before its first apply.
-Destroy removes the Service; a load balancer's controller must still run, since Kubernetes keeps the Service until the controller releases the load balancer, and destroy waits up to 20 minutes.
 
 ### Reach the Gateway from the OpenShell CLI
 
@@ -400,10 +363,6 @@ rules:
   - apiGroups: [""]
     resources: [pods/portforward]
     verbs: [get, create]
-  # With gateway.kubernetes.expose, the Kubernetes provider patches its Service.
-  - apiGroups: [""]
-    resources: [services]
-    verbs: [patch]
   # Granted by the chart's Roles.
   - apiGroups: [""]
     resources: [pods]

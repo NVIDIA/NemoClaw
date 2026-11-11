@@ -398,29 +398,6 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     defs["ManagedKubernetes"]["dependentRequired"] = json!({
         "kubeconfig": ["context"], "context": ["kubeconfig"], "environment": ["kubeconfig"]
     });
-    // A load balancer may be reachable from outside the cluster, where the
-    // development profile's locally held signing key would guard the port.
-    defs["ManagedKubernetes"]["allOf"] = json!([{
-        "if": at("expose/service/type", json!({"const": "LoadBalancer"}), true),
-        "then": at("authentication/profile", json!({"const": "oidc"}), true),
-        "x-nemoclaw-error": "a LoadBalancer exposure requires the oidc authentication profile"
-    }]);
-    // The bundled Kubernetes provider checks that source ranges are CIDRs and
-    // annotation keys are qualified names when it plans the Service.
-    let service = &mut defs["ExposureService"];
-    property(
-        service,
-        "annotations",
-        json!({
-            "propertyNames": {"not": {"pattern": r"^nemoclaw\.nvidia\.com/"}},
-            "x-nemoclaw-error": "annotation keys must be outside nemoclaw.nvidia.com/"
-        }),
-    );
-    service["allOf"] = json!([{
-        "if": at("type", json!({"const": "NodePort"}), true),
-        "then": forbid(&["loadBalancerSourceRanges", "annotations"]),
-        "x-nemoclaw-error": "loadBalancerSourceRanges and annotations apply only to a LoadBalancer Service"
-    }]);
 
     // An inline definition flattens the same connection fields beside its name.
     for name in ["InferenceProvider", "InlineInferenceProvider"] {
@@ -452,7 +429,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "else": at("spec/gateway/runtime/provider", json!({"enum":["docker", "podman"]}), false)
         }
     }));
-    // Without an exposure Service, providers forward a free local port to the
+    // Without kubernetes.expose, providers forward a free local port to the
     // gateway pod, and the certificate names 127.0.0.1.
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at("spec/gateway", json!({
@@ -461,12 +438,6 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         }), true),
         "then": at("spec/gateway/endpoint", json!({"pattern": c::KUBERNETES_GATEWAY_ENDPOINT}), true),
         "x-nemoclaw-error": "managed Kubernetes without kubernetes.expose requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port"
-    }));
-    // A node port lies in Kubernetes' default node-port range.
-    root["allOf"].as_array_mut().unwrap().push(json!({
-        "if": at("spec/gateway/kubernetes/expose/service/type", json!({"const": "NodePort"}), true),
-        "then": at("spec/gateway/endpoint", json!({"pattern": c::NODE_PORT_GATEWAY_ENDPOINT}), true),
-        "x-nemoclaw-error": "a NodePort exposure requires an endpoint port from 30000 through 32767"
     }));
     // Cluster sandboxes need an explicit image, since no local engine supplies
     // a default; image metadata stands in for engine inspection only there.
@@ -491,7 +462,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-        "Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without kubernetes.expose, its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path; with it, the endpoint names a lowercase DNS name or IPv4 address and an explicit port, from 30000 through 32767 for a NodePort Service. A LoadBalancer Service requires the oidc profile; the bundled Kubernetes provider checks its source ranges and annotation keys when it plans the Service. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
+        "Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without kubernetes.expose, its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path; with it, the endpoint names a lowercase DNS name or IPv4 address and an explicit port, which the chart's NodePort Service publishes; Kubernetes checks that the port is in the cluster's node-port range. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
         "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",

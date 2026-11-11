@@ -61,11 +61,23 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             "limits": {"cpu": "1", "memory": "1Gi"},
         },
     });
-    // An exposed gateway's certificate names the endpoint host clients dial.
-    // The chart's certificate always names 127.0.0.1 and in-cluster names.
-    if target.expose.is_some() {
+    // An exposed gateway's own Service publishes the endpoint's port on every
+    // node and forwards it to the gateway's TLS listener, so TLS and client
+    // certificates pass through unchanged. The plaintext metrics port stays
+    // unpublished: at 0, the chart serves no metrics. The certificate names
+    // the endpoint host clients dial; the chart's always names 127.0.0.1 and
+    // in-cluster names.
+    if let Some(expose) = &target.expose {
         let endpoint = url::Url::parse(&spec.settings.endpoint)
             .map_err(|_| Error::State("invalid managed Kubernetes endpoint"))?;
+        let port = endpoint
+            .port_or_known_default()
+            .ok_or(Error::State("managed Kubernetes endpoint has no port"))?;
+        values["service"] = json!({
+            "type": expose.service.service_type.as_str(),
+            "nodePort": port,
+            "metricsPort": 0,
+        });
         match endpoint.host() {
             Some(url::Host::Domain(name)) => {
                 values["pkiInitJob"]["serverDnsNames"] = json!([name]);

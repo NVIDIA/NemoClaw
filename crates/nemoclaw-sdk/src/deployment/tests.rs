@@ -1167,52 +1167,24 @@ fn guard_bundle() -> tempfile::TempDir {
     bundle_directory
 }
 
-/// A gateway's exposure Service type and annotations select the address its
-/// endpoint names, so, like the endpoint, they stay as first planned.
+/// A gateway's exposure selects the address its endpoint names, so, like the
+/// endpoint, it stays as first planned.
 #[tokio::test]
 async fn changing_a_gateway_exposure_preserves_saved_state() {
     let bundle_directory = guard_bundle();
     let (document, _) = kubernetes_context();
-    let exposed = |expose: Option<serde_json::Value>, oidc: bool| {
+    let exposed = |expose: bool| {
         let mut value = serde_json::to_value(&document).unwrap();
         value["spec"]["gateway"]["endpoint"] = json!("https://127.0.0.1:30851");
-        if oidc {
-            value["spec"]["gateway"]["kubernetes"]["authentication"] =
-                json!({"profile": "oidc", "token": {"env": "OPENSHELL_TOKEN"}});
-            value["spec"]["gateway"]["config"] = json!({"openshell.gateway.oidc": {
-                "issuer": "https://login.example.com/realms/openshell", "audience": "openshell",
-            }});
-        }
-        if let Some(expose) = expose {
-            value["spec"]["gateway"]["kubernetes"]["expose"] = expose;
+        if expose {
+            value["spec"]["gateway"]["kubernetes"]["expose"] =
+                json!({"service": {"type": "NodePort"}});
         }
         Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
     };
-    let load_balancer = |annotation: &str, range: &str| {
-        json!({"service": {
-            "type": "LoadBalancer",
-            "loadBalancerSourceRanges": [range],
-            "annotations": {"metallb.io/loadBalancerIPs": annotation}
-        }})
-    };
-    let node_port = json!({"service": {"type": "NodePort"}});
     for (original, changed) in [
-        (
-            exposed(Some(node_port.clone()), false),
-            exposed(None, false),
-        ),
-        (
-            exposed(None, false),
-            exposed(Some(node_port.clone()), false),
-        ),
-        (
-            exposed(Some(node_port), true),
-            exposed(Some(load_balancer("127.0.0.1", "10.0.0.0/8")), true),
-        ),
-        (
-            exposed(Some(load_balancer("127.0.0.1", "10.0.0.0/8")), true),
-            exposed(Some(load_balancer("10.20.0.40", "10.0.0.0/8")), true),
-        ),
+        (exposed(true), exposed(false)),
+        (exposed(false), exposed(true)),
     ] {
         let state_directory = tempfile::tempdir().unwrap();
         let store = Store::open(state_directory.path()).unwrap();
@@ -1231,24 +1203,6 @@ async fn changing_a_gateway_exposure_preserves_saved_state() {
         );
         assert_eq!(fs::read(&intent).unwrap(), before);
     }
-    // Source ranges admit clients; changing them keeps the address.
-    let state_directory = tempfile::tempdir().unwrap();
-    let store = Store::open(state_directory.path()).unwrap();
-    let original = exposed(Some(load_balancer("127.0.0.1", "10.0.0.0/8")), true);
-    store.save(&Record::new(original).unwrap()).unwrap();
-    drop(store);
-    let error = Deployment::new(state_directory.path(), bundle_directory.path())
-        .run(
-            &exposed(Some(load_balancer("127.0.0.1", "192.0.2.0/24")), true),
-            &CancellationToken::new(),
-            false,
-        )
-        .await
-        .unwrap_err();
-    assert!(
-        !matches!(error, Error::Conflict(message) if message.contains("exposure")),
-        "{error:?}"
-    );
 }
 
 #[tokio::test]

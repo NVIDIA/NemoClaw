@@ -47,59 +47,6 @@ fn bundle_rejects_a_missing_or_tampered_helm_provider() {
 }
 
 #[test]
-fn bundle_rejects_a_missing_or_tampered_kubernetes_provider_or_license() {
-    let kubernetes = format!(
-        "providers/registry.opentofu.org/hashicorp/kubernetes/3.4.0/{}/{}",
-        platform().unwrap(),
-        executable("terraform-provider-kubernetes_v3.4.0_x5")
-    );
-    for required in [kubernetes.as_str(), "licenses/kubernetes-provider-LICENSE"] {
-        let directory = tempfile::tempdir().unwrap();
-        let mut manifest = Manifest {
-            version: "0.1.0".into(),
-            rust: "1.98.1".into(),
-            opentofu: crate::compile::OPENTOFU_VERSION.into(),
-            files: Default::default(),
-        };
-        for name in required_files(&manifest.version).unwrap() {
-            if name == required {
-                continue;
-            }
-            let path = directory.path().join(&name);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, b"fixture binary").unwrap();
-            manifest.files.insert(name, hash_file(&path).unwrap());
-        }
-        let manifest_path = directory.path().join("manifest.json");
-        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-        assert!(
-            Bundle::open(directory.path()).is_err(),
-            "a bundle without {required} must be rejected"
-        );
-
-        let path = directory.path().join(required);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, b"provider file").unwrap();
-        manifest
-            .files
-            .insert(required.into(), hash_file(&path).unwrap());
-        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-        Bundle::open(directory.path()).unwrap();
-
-        fs::write(&path, b"tampered file").unwrap();
-        assert!(
-            Bundle::open(directory.path()).is_err(),
-            "a tampered {required} must be rejected"
-        );
-        fs::remove_file(&path).unwrap();
-        assert!(
-            Bundle::open(directory.path()).is_err(),
-            "a removed {required} must be rejected"
-        );
-    }
-}
-
-#[test]
 fn bundle_requires_all_native_binaries_and_checks_every_digest() {
     let dir = tempfile::tempdir().unwrap();
     let mut manifest = Manifest {

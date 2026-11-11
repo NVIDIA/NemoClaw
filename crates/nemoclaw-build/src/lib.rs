@@ -15,8 +15,6 @@ pub mod hcl_cases;
 #[cfg(feature = "sdk")]
 pub mod helm_provider;
 pub mod images;
-#[cfg(feature = "sdk")]
-pub mod kubernetes_provider;
 pub mod release_assessment;
 #[cfg(feature = "sdk")]
 pub mod schema;

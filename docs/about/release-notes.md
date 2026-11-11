@@ -56,7 +56,7 @@ Gateways and Kubernetes:
 - NemoClaw no longer reads cluster-wide objects: it doesn't check for a default StorageClass, the Agent Sandbox CRD, or `kube-system`.
   Without a default StorageClass, the gateway install times out in Helm's wait.
 - A managed OpenShift gateway lets OpenShift assign its UID and `fsGroup`.
-- `gateway.kubernetes.expose` publishes a managed Kubernetes or OpenShift gateway at `gateway.endpoint` through a `NodePort` or `LoadBalancer` Service, which NemoClaw and the OpenShell CLI dial instead of port forwards; bundles carry the `hashicorp/kubernetes` provider 3.4.0 for it.
+- `gateway.kubernetes.expose` publishes a managed Kubernetes or OpenShift gateway at `gateway.endpoint` through the OpenShell chart's own `NodePort` Service, which NemoClaw and the OpenShell CLI dial instead of port forwards.
   See [publishing the gateway](../build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster).
 - A managed Kubernetes or OpenShift gateway's Helm install is atomic; a release left by an unfinished install fails apply with the `helm uninstall` command to run.
   See [recovering an unfinished Helm install](../build-deploy/usage.md#recover-from-an-unfinished-helm-install).
@@ -114,7 +114,6 @@ Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents
   Endpoints and service addresses can't name a cloud metadata host, such as `metadata` or `fd00:ec2::254`, or an IPv6 address that embeds an IPv4 address.
   A `networkCIDR` must be in canonical form, without leading zeros.
 - In hand-written HCL, `openshell_kubernetes_auth` has no `gateway_values` attribute.
-- On Kubernetes and OpenShift, `spec.gateway.config` can't set `openshell.gateway.server_sans`: the chart would replace the names it copies from the gateway certificate, so the gateway would print service hosts the certificate doesn't cover.
 - In hand-written HCL on Kubernetes or OpenShift, the gateway ownership receipts that `v0.1.0-rc9` wrote no longer load, and the intent record refusal above doesn't cover them.
   Destroy such a deployment with the bundle that created it, then create it again with this release.
 
