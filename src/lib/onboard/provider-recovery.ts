@@ -23,6 +23,55 @@ import {
 
 export type { RemoteProviderConfigEntryLike } from "./inference-providers/provider-selection-keys";
 
+/** Return the active selection session without treating its menu choice as a configured route. */
+function activeProviderSelectionSession(
+  sessionId: string | null | undefined,
+): onboardSession.Session | null {
+  if (!sessionId) return null;
+  const session = onboardSession.loadSession();
+  return session?.sessionId === sessionId &&
+    session.steps.provider_selection?.status === "in_progress"
+    ? session
+    : null;
+}
+
+export function readPendingNvidiaModel(sessionId: string | null | undefined) {
+  return activeProviderSelectionSession(sessionId)?.pendingNvidiaModel;
+}
+
+export function checkpointPendingNvidiaModel(
+  sessionId: string | null | undefined,
+  model: onboardSession.PendingNvidiaModel | null | undefined,
+): boolean {
+  const session = activeProviderSelectionSession(sessionId);
+  if (!session || session.pendingNvidiaModel === model) return false;
+  if (model === null) {
+    // Returning to the key prompt keeps any model the operator already chose.
+    if (session.pendingNvidiaModel !== undefined) return false;
+    // The new choice supersedes the route saved for an earlier configuration review.
+    session.provider = null;
+    session.model = null;
+    session.endpointUrl = null;
+    session.credentialEnv = null;
+    session.preferredInferenceApi = null;
+    delete session.modelSelectionProvenance;
+  }
+  session.pendingNvidiaModel = model;
+  onboardSession.saveSession(session);
+  return true;
+}
+
+export function clearPendingNvidiaModelOnSwitch(
+  sessionId: string | null | undefined,
+  providerKey: string | null,
+): boolean {
+  return (
+    providerKey !== null &&
+    providerKey !== "build" &&
+    checkpointPendingNvidiaModel(sessionId, undefined)
+  );
+}
+
 interface VllmInstallResumeSession {
   readonly vllmInstallModel?: string | null;
   readonly steps?: {

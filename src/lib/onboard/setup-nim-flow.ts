@@ -61,6 +61,8 @@ import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./pro
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
 import {
   applyVllmInstallResumeDefaults,
+  checkpointPendingNvidiaModel,
+  clearPendingNvidiaModelOnSwitch,
   selectedProviderModelProvenance,
   type SelectedModelOrigin,
   resolveSelectedEndpointSource,
@@ -118,6 +120,7 @@ export interface SetupNimRemoteSelectionArgs {
   sandboxName: string | null;
   intendedInferenceApi: string | null;
   recoverySessionId: string | null | undefined;
+  checkpointNvidiaModel(model: string | null): void;
 }
 
 export type SetupNim = (
@@ -717,6 +720,8 @@ async function handleEndpointProviderSelection(input: {
   recoverySessionId: string | null | undefined;
   agent: AgentDefinition | null;
   recoveredRegistryRoute: RegistryInferenceRoute | null;
+  currentModelOrigin: () => SelectedModelOrigin | undefined;
+  resumedNvidiaModel: ReturnType<typeof prepareProviderDiscovery>["resumedNvidiaModel"];
 }): Promise<SetupNimSelectionResult> {
   const {
     deps,
@@ -740,15 +745,24 @@ async function handleEndpointProviderSelection(input: {
   }
   const remoteConfig = deps.remoteProviderConfig[selected.key];
   if (!remoteConfig) throw new Error(`Missing remote provider config for '${selected.key}'.`);
-  return deps.handleRemoteProviderSelection(
+  const resumed = selected.key === "build" ? input.resumedNvidiaModel : null;
+  if (resumed?.source) state.onModelSelected?.(resumed.model, resumed.source);
+  const result = await deps.handleRemoteProviderSelection(
     {
       selected,
-      requestedModel,
+      requestedModel: requestedModel ?? resumed?.model ?? null,
       recoveredFromSandbox,
       recoveredModel,
       sandboxName,
       gatewayName,
       recoverySessionId,
+      checkpointNvidiaModel(model) {
+        if (deps.isNonInteractive()) return;
+        const origin = input.currentModelOrigin();
+        const source =
+          origin?.model === model && origin.provider === state.provider ? origin.source : undefined;
+        checkpointPendingNvidiaModel(recoverySessionId, model === null ? null : { model, source });
+      },
       intendedInferenceApi: resolveValidationInferenceApi(
         selected.key,
         remoteConfig.providerName,
@@ -758,6 +772,10 @@ async function handleEndpointProviderSelection(input: {
     state,
     recoveredRegistryRoute,
   );
+  if (selected.key === "build" && result === "retry-selection") {
+    checkpointPendingNvidiaModel(recoverySessionId, undefined);
+  }
+  return result;
 }
 
 function vllmPortConflictMessage(
@@ -1101,6 +1119,7 @@ export function createSetupNim(
     const {
       requestedProvider,
       requestedModel,
+      resumedNvidiaModel,
       recoveredRegistryRoute,
       recordedProviderReaders,
       probeOllama,
@@ -1283,6 +1302,7 @@ export function createSetupNim(
             log: deps.log,
             selectFromNumberedMenu: deps.selectFromNumberedMenu,
           });
+          clearPendingNvidiaModelOnSwitch(recoverySessionId, selected.key);
         }
 
         selected = requireSelectedProvider(selected, deps);
@@ -1308,6 +1328,7 @@ export function createSetupNim(
             selected,
             state,
             requestedModel,
+            resumedNvidiaModel,
             recoveredFromSandbox,
             recoveredModel,
             sandboxName,
@@ -1315,6 +1336,7 @@ export function createSetupNim(
             recoverySessionId,
             agent,
             recoveredRegistryRoute,
+            currentModelOrigin: () => selectedModelOrigin,
           });
           ({
             model,

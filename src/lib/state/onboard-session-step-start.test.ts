@@ -27,6 +27,25 @@ afterEach(() => {
 });
 
 describe("onboard session step start", () => {
+  it("keeps the NVIDIA choice without storing a credential pasted as a model ID", () => {
+    const key = "nvapi-" + "a".repeat(64);
+    session.saveSession(session.createSession({ pendingNvidiaModel: { model: key } }));
+    expect(session.loadSession()?.pendingNvidiaModel).toBeNull();
+    expect(fs.readFileSync(session.SESSION_FILE, "utf8")).not.toContain(key);
+  });
+
+  it("retains a pending NVIDIA choice until a full selection is saved for review", () => {
+    session.saveSession(session.createSession({ pendingNvidiaModel: null }));
+
+    session.markStepStarted("provider_selection");
+    expect(session.loadSession()?.pendingNvidiaModel).toBeNull();
+
+    session.markStepStarted("provider_selection", { provider: "openai", model: "gpt-5" });
+    const saved = session.loadSession();
+    expect(saved).toMatchObject({ provider: "openai", model: "gpt-5" });
+    expect(saved?.pendingNvidiaModel).toBeUndefined();
+  });
+
   it("records a started step with its filtered context in the same write (#13654)", () => {
     session.saveSession(session.createSession());
 

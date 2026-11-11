@@ -11,6 +11,8 @@ import { providerNameToOptionKey, type RemoteProviderConfigEntryLike } from "./p
 
 export {
   applyVllmInstallResumeDefaults,
+  checkpointPendingNvidiaModel,
+  clearPendingNvidiaModelOnSwitch,
   readVllmInstallResumeModel,
   vllmInstallRecoveryOptions,
 } from "./provider-recovery";

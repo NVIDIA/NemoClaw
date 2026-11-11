@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 
@@ -31,6 +34,30 @@ const remoteProviderConfig = {
   build: { providerName: "nvidia-prod" },
   openai: { providerName: "openai-api" },
 };
+
+async function discoverPendingNvidiaModel(
+  pendingNvidiaModel: { model: string } | null,
+  deps: Parameters<typeof prepareProviderDiscovery>[0]["deps"],
+) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "pending-nvidia-"));
+  const { onTestFinished } = await import("vitest");
+  onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+  vi.stubEnv("HOME", home);
+  vi.resetModules();
+  const session = await import("../state/onboard-session");
+  const { prepareProviderDiscovery: discover } = await import("./setup-nim-provider-discovery");
+  const sandboxName = "fresh-sandbox";
+  session.saveSession(session.createSession({ sandboxName, pendingNvidiaModel }));
+  const { sessionId } = session.markStepStarted("provider_selection");
+  const result = discover({
+    deps,
+    sandboxName,
+    recoverProvider: false,
+    rebuildRegistryInferenceRoute: null,
+    recoverySessionId: sessionId,
+  });
+  return { result, session };
+}
 
 describe("prepareProviderDiscovery", () => {
   it("does not read recorded provider state when recovery is disabled (#8135)", () => {
@@ -65,6 +92,41 @@ describe("prepareProviderDiscovery", () => {
     expect(readRecordedNimContainer).not.toHaveBeenCalled();
     expect(readRecordedModel).not.toHaveBeenCalled();
   });
+
+  it("resumes a gateway-constrained NVIDIA model without an explicit model request", async () => {
+    const { result } = await discoverPendingNvidiaModel(
+      { model: "nvidia/constrained" },
+      {
+        ...interactiveDeps,
+        isNonInteractive: () => true,
+      },
+    );
+    expect(result.requestedModel).toBeNull();
+    expect(result.resumedNvidiaModel).toEqual({ model: "nvidia/constrained" });
+  });
+
+  it.each([
+    { nonInteractive: false, explicitModel: undefined },
+    { nonInteractive: true, explicitModel: undefined },
+    { nonInteractive: true, explicitModel: "openai/explicit" },
+  ])(
+    "drops the pending NVIDIA choice on a provider switch (non-interactive $nonInteractive, explicit model $explicitModel)",
+    async ({ nonInteractive, explicitModel }) => {
+      vi.stubEnv("NEMOCLAW_MODEL", explicitModel);
+      vi.stubEnv("NEMOCLAW_PROVIDER_MODEL", "nvidia/stale");
+      const { getNonInteractiveModel } = require("./providers");
+      const { result, session } = await discoverPendingNvidiaModel(null, {
+        ...interactiveDeps,
+        isNonInteractive: () => nonInteractive,
+        getNonInteractiveProvider: () => "openai",
+        getNonInteractiveModel,
+      });
+
+      expect(result.requestedProvider).toBe("openai");
+      expect(result.requestedModel).toBe(explicitModel ?? null);
+      expect(session.loadSession()?.pendingNvidiaModel).toBeUndefined();
+    },
+  );
 
   it("omits NEMOCLAW_PROVIDER_MODEL for a same-sandbox rebuild provider switch (#8135)", () => {
     const readRecordedProvider = vi.fn(() => "openai-api");
