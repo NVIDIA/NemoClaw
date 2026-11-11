@@ -33,7 +33,23 @@ jobs:
           "$RUNNER_TEMP/report-tests"
           rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report-workflow.rs -o "$RUNNER_TEMP/adapter-tests"
           "$RUNNER_TEMP/adapter-tests"
+  # GitHub returns the repository's merge-method settings only to a token with
+  # contents: write. Keep that grant in this job, which checks out nothing and
+  # runs no PR code, so the report job can stay read-only.
+  merge-settings:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Require squash-only merging
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY" --jq '.allow_squash_merge and (.allow_merge_commit | not) and (.allow_rebase_merge | not)' | grep -qx true
   report:
+    needs: merge-settings
     if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -43,15 +59,15 @@ jobs:
       checks: read
       pull-requests: write
     steps:
-      # Only squash merges are enabled. Resolve their parent without checking
-      # out PR code, including when a PR changes the reporter itself.
+      # Only squash merges are enabled (checked by merge-settings). Resolve
+      # their parent without checking out PR code, including when a PR changes
+      # the reporter itself.
       - name: Resolve the commit before the merge
         id: base
         env:
           GH_TOKEN: ${{ github.token }}
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY" --jq '.allow_squash_merge and (.allow_merge_commit | not) and (.allow_rebase_merge | not)' | grep -qx true
           parent="$(gh api "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA" --jq 'if (.parents | length) == 1 then .parents[0].sha else error("Expected a squash merge") end')"
           [[ "$parent" =~ ^[0-9a-f]{40}$ ]]
           printf 'sha=%s\n' "$parent" >> "$GITHUB_OUTPUT"

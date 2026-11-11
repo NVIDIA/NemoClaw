@@ -287,7 +287,12 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
       exit 0
     fi
     case "$endpoint" in
-      repos/example/repo) printf '{"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":false}' ;;
+      repos/example/repo)
+        case "$SCENARIO" in
+          settings_unreadable) printf '{"allow_squash_merge":null,"allow_merge_commit":null,"allow_rebase_merge":null}' ;;
+          rebase_enabled) printf '{"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":true}' ;;
+          *) printf '{"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":false}' ;;
+        esac ;;
       repos/example/repo/commits/dddddddddddddddddddddddddddddddddddddddd)
         case "$SCENARIO" in
           api_failure) exit 42 ;;
@@ -348,13 +353,20 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     'event' => {'pull_request' => {'merged' => merged, 'number' => 1, 'base' => {'ref' => base}, 'merge_commit_sha' => 'd' * 40,
       'head' => {'sha' => head, 'repo' => {'full_name' => 'example/fork'}}}}},
     'runner' => {'temp' => "#{root}/temp"}, 'steps' => {}}
+  settings_job = workflow.fetch('jobs').fetch('merge-settings')
   job = workflow.fetch('jobs').fetch('report')
+  raise 'Report job must wait for the merge-settings job' unless job.fetch('needs') == 'merge-settings'
   trigger = (workflow['on'] || workflow[true]).fetch('pull_request_target')
   eligible = trigger.fetch('types').include?(action) && trigger.fetch('branches').include?(base)
   failed = false
   artifact = nil
-  return {failed: false, root: root, original_comments: original_comments} unless eligible && selected(job['if'], context, failed)
-  job.fetch('steps').each_with_index do |step, index|
+  return {failed: false, root: root, original_comments: original_comments} unless eligible && selected(settings_job['if'], context, failed) && selected(job['if'], context, failed)
+  steps = settings_job.fetch('steps').map { |step| [:settings, step] } + job.fetch('steps').map { |step| [:report, step] }
+  settings_failed = nil
+  steps.each_with_index do |(owner, step), index|
+    # A failed prerequisite job skips the dependent job, including its always() steps.
+    settings_failed = failed if owner == :report && settings_failed.nil?
+    break if settings_failed
     next unless selected(step['if'], context, failed)
     env = {'PATH' => "#{root}/bin:/usr/bin:/bin", 'FIXTURE' => root, 'SCENARIO' => scenario, 'PR_BASE' => base,
       'RUNNER_TEMP' => "#{root}/temp", 'GITHUB_REPOSITORY' => 'example/repo', 'GITHUB_STEP_SUMMARY' => "#{root}/summary",
@@ -483,7 +495,10 @@ raise 'v1 artifact lost the report' unless File.read("#{v1[:artifact]}/merge-out
 raise 'v1 summary lost the report' unless File.read("#{v1[:root]}/summary").include?(v1_report)
 v1_receipt = JSON.parse(File.read("#{v1[:artifact]}/merge-outcomes-receipt.json"))
 raise 'v1 receipt lost trusted provenance' unless v1_receipt.values_at('reporter_revision', 'publication_readback', 'opening_preserved', 'report_unique') == [parent, true, true, true]
-%w[malformed multiple api_failure wrong_checkout modified_reporter].each do |scenario|
+raise 'Settings job must hold only contents: write' unless workflow.dig('jobs', 'merge-settings', 'permissions') == {'contents' => 'write'}
+raise 'Report job must stay read-only for contents' unless workflow.dig('jobs', 'report', 'permissions', 'contents') == 'read'
+raise 'Settings job must not check out code' if workflow.dig('jobs', 'merge-settings', 'steps').any? { |step| step['uses'] }
+%w[malformed multiple api_failure wrong_checkout modified_reporter settings_unreadable rebase_enabled].each do |scenario|
   result = exercise(workflow, "#{ARGV[0]}/#{scenario}", scenario, parent, head)
   raise "Invalid parent or checkout accepted: #{scenario}" unless result[:failed]
   assert_no_code_or_publication(result)

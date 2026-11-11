@@ -15,12 +15,16 @@ Revision counts are observed because complete push history is unavailable.
 The default-branch workflow and helper under `tools/ci/` serve merged PRs into
 `main` and `v1`, including forks, without session access or PR-code execution.
 
-Reporting starts with the next merge after installation. Each eligible PR gets
-one collapsed bot report. Runs serialize per PR, stop after 20 minutes, and
+Install the workflow on the default branch and the reporter on each target
+branch (`main` and `v1`). A merge whose parent lacks the reporter is skipped, so
+reporting starts with the next eligible merge into that branch. Each eligible PR
+gets one collapsed bot report. Runs serialize per PR, stop after 20 minutes, and
 retain artifacts for 90 days. Existing comments stay intact; retries avoid
-duplicates. Compile only the verified squash-parent reporter, disable persisted
-checkout credentials, and expose the short-lived token only to API steps with
-the declared job permissions.
+duplicates. A separate job with `contents: write` and no checkout confirms that
+only squash merging is enabled; GitHub withholds those settings from a
+read-only token. Compile only the verified squash-parent reporter, disable
+persisted checkout credentials, and expose the short-lived token only to API
+steps with the declared job permissions.
 
 Validation covers metadata, rejected parents and events, API refusal,
 publication readback, failure retention, and recovery. Hosted acceptance follows
@@ -74,8 +78,9 @@ The name is `merge-outcomes-` followed by the run attempt, such as
 recovery observation below before recording acceptance:
 
 - The run uses the installed workflow revision and the merged fork PR's closed
-  event. The job's token-permission log shows read access to contents, actions
-  and checks, and write access to pull requests.
+  event. The `merge-settings` job's token-permission log shows write access to
+  contents only, and it passes. The `report` job's log shows read access to
+  contents, actions and checks, and write access to pull requests.
 - `Record publication inputs` verifies the checkout against the squash parent
   and rejects changed reporter source before compilation. The receipt identifies
   that parent as `reporter_revision` and records its `reporter_blob`.
