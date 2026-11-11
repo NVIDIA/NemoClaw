@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+import { createHermesSwitchyardRoutingIntent } from "../hermes-switchyard-routing";
 
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -1046,6 +1048,26 @@ describe("Hermes native attachment registration", () => {
       "does not match the selected Hermes sandbox",
     );
   });
+});
+
+it("rejects Switchyard with a registered binding before sandbox recreation", () => {
+  const f = registeredInferenceFixture();
+  const routing = createHermesSwitchyardRoutingIntent({
+    efficient: { provider: "openai-api", model: "efficient-model" },
+    capable: { provider: "nvidia-prod", model: "capable-model" },
+  });
+  expect(() =>
+    nativeInferenceCreateIntentFields(routing.capable.provider, {
+      name: f.binding.sandboxName,
+      provider: routing.capable.provider,
+      model: routing.capable.model,
+      registeredInferenceProviderAttachment: {
+        ...f.binding,
+        providerName: routing.capable.provider,
+      },
+      hermesSwitchyard: { routing, bindings: switchyardBindingFixture(routing) },
+    }),
+  ).toThrow("cannot share a recorded native inference attachment");
 });
 
 it("retains the external binding and namespace through sandbox recreation", () => {

@@ -1,11 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
 import { recordedRegisteredInferenceProviderAttachment } from "../../../inference/native-provider/registered";
 import { normalizeNativeLocalProviderAttachment } from "../../../inference/native-local/contract";
 import {
+  SwitchyardProviderBindingError,
+  assertSwitchyardInferenceAuthority,
+  validateSwitchyardBindingState,
+} from "../../../hermes-switchyard-routing";
+import {
+  readSwitchyardManagedStartupProfile,
+  verifySwitchyardProviderBindings,
+} from "../../../onboard/switchyard/bindings";
+
+import {
   verifyNativeLocalStatusAttachment,
   verifyRegisteredStatusAttachment,
+  verifyNativeNvidiaStatusAttachment,
+  verifyNativeHostedStatusAttachment,
 } from "../inference-route-health";
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
@@ -28,13 +41,10 @@ import {
 import type { SandboxEntry } from "../../../state/registry";
 import {
   normalizeNativeNvidiaProviderAttachment,
-  verifyNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
 } from "../../../inference/native-nvidia";
 import type { NativeProviderAttachment } from "../../../inference/native-provider/contract";
 import { recordedNativeProviderAttachment } from "../../../inference/native-provider/recorded-selection";
-import { fixedNativeProviderForAttachment } from "../../../inference/native-provider/fixed";
-import { nativeProviderLifecycle } from "../../../inference/native-provider";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
 import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
 import {
@@ -75,6 +85,7 @@ export type LaunchReadinessObservationStage =
   | "inference-route";
 
 export interface LaunchReadinessHealthDeps {
+  switchyardProviderAdapter?: OpenShellProviderAdapter;
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
   capture?: LaunchReadinessBoundCapture;
@@ -133,6 +144,10 @@ export function createBoundLaunchReadinessDeps(
         timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
       }),
     inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
+    switchyardProviderAdapter: createCliOpenShellProviderAdapter({
+      run: (args, options) => capture(args, options),
+      defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    }),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
       isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, {
@@ -273,6 +288,23 @@ export async function requireNativeInferenceHealth(input: {
   deps: LaunchReadinessHealthDeps;
   allowTransientNvidiaInvocation?: boolean;
 }): Promise<boolean> {
+  let profileSwitchyard = null;
+  if (
+    (input.agentName ?? input.entry.agent) === "hermes" &&
+    input.entry.workload?.kind === "managed-image"
+  ) {
+    try {
+      profileSwitchyard = readSwitchyardManagedStartupProfile(input.entry.workload.encodedProfile);
+    } catch (error) {
+      if (error instanceof SwitchyardProviderBindingError)
+        throw new LaunchReadinessObservationError("config");
+      throw error;
+    }
+  }
+  assertSwitchyardInferenceAuthority({
+    ...input.entry,
+    hermesSwitchyard: input.entry.hermesSwitchyard ?? profileSwitchyard ?? undefined,
+  });
   const registered = recordedRegisteredInferenceProviderAttachment(input.entry);
   if (registered) {
     if (
@@ -298,6 +330,38 @@ export async function requireNativeInferenceHealth(input: {
       registeredInferenceProviderAttachment: registered,
     });
     if (!result.ok) throw new LaunchReadinessObservationError("health", "inference request");
+    return true;
+  }
+  if (input.entry.hermesSwitchyard || profileSwitchyard) {
+    let state: ReturnType<typeof validateSwitchyardBindingState>;
+    try {
+      state = validateSwitchyardBindingState(input.entry.hermesSwitchyard);
+    } catch (error) {
+      if (error instanceof SwitchyardProviderBindingError)
+        throw new LaunchReadinessObservationError("config");
+      throw error;
+    }
+    if (
+      (input.agentName ?? input.entry.agent) !== "hermes" ||
+      input.entry.gatewayName !== input.gatewayName ||
+      input.entry.provider !== state.routing.capable.provider ||
+      input.entry.model !== state.routing.capable.model ||
+      !profileSwitchyard ||
+      JSON.stringify(profileSwitchyard) !== JSON.stringify(state)
+    )
+      throw new LaunchReadinessEvidenceError();
+    await verifySwitchyardProviderBindings({
+      routing: state.routing,
+      expected: state.bindings,
+      sandboxName: input.sandboxName,
+      target: { kind: "named", gatewayName: input.gatewayName },
+      adapter:
+        input.deps.switchyardProviderAdapter ??
+        createCliOpenShellProviderAdapter({ defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS }),
+      providerNames: Object.fromEntries(
+        state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
+      ),
+    });
     return true;
   }
   if (input.entry.nativeLocalProviderAttachment !== undefined) {
@@ -336,35 +400,18 @@ export async function requireNativeInferenceHealth(input: {
   const model = normalizedString(input.entry.model);
   if (!provider || !model) throw new LaunchReadinessEvidenceError();
   const nvidia = normalizeNativeNvidiaProviderAttachment(expected);
-  if (nvidia && input.deps.verifyNativeNvidiaAttachment) {
-    await input.deps.verifyNativeNvidiaAttachment({
+  if (nvidia)
+    await (input.deps.verifyNativeNvidiaAttachment ?? verifyNativeNvidiaStatusAttachment)({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
       expected: nvidia,
     });
-  } else if (nvidia) {
-    await verifyNativeNvidiaProviderAttachment({
-      adapter: createCliOpenShellProviderAdapter(),
-      target: { kind: "named", gatewayName: input.gatewayName },
-      sandboxName: input.sandboxName,
-      expected: nvidia,
-    });
-  } else if (input.deps.verifyNativeHostedAttachment) {
-    await input.deps.verifyNativeHostedAttachment({
+  else
+    await (input.deps.verifyNativeHostedAttachment ?? verifyNativeHostedStatusAttachment)({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
       expected,
     });
-  } else {
-    await nativeProviderLifecycle(
-      fixedNativeProviderForAttachment(expected),
-    ).verifyNativeProviderAttachment({
-      adapter: createCliOpenShellProviderAdapter(),
-      target: { kind: "named", gatewayName: input.gatewayName },
-      sandboxName: input.sandboxName,
-      expected,
-    });
-  }
   const invocation = await (
     input.deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe
   )({
@@ -500,22 +547,27 @@ export async function requireLaunchSemanticHealth(
     if (
       getNativeProviderAttachment(entry) ||
       entry.nativeLocalProviderAttachment !== undefined ||
-      entry.registeredInferenceProviderAttachment !== undefined
+      entry.registeredInferenceProviderAttachment !== undefined ||
+      entry.hermesSwitchyard !== undefined ||
+      (agentName === "hermes" && entry.workload?.kind === "managed-image")
     ) {
+      let fallbackToGeneric = false;
       try {
-        await requireNativeInferenceHealth({
+        const native = await requireNativeInferenceHealth({
           sandboxName,
           gatewayName,
           agentName,
           entry,
           deps,
         });
-        return;
+        if (native) return;
+        fallbackToGeneric = true;
       } catch (error) {
         recordLaunchReadinessObservationFailure(deps, "inference-route");
         throw error;
       } finally {
-        recordObservationTiming(deps, "inference-route", inferenceStartedAt);
+        if (!fallbackToGeneric)
+          recordObservationTiming(deps, "inference-route", inferenceStartedAt);
       }
     }
     let inference: ReturnType<typeof parseSandboxInferenceRouteProbeResult>;

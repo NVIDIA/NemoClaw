@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { managedStartupE2eProfile } from "../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply";
+import {
+  encodeManagedStartupProfile,
+  decodeManagedStartupProfile,
+  type ManagedStartupAgent,
+} from "../../src/lib/onboard/managed-startup/profile";
+
 import fs from "node:fs";
 import { vi } from "vitest";
 
@@ -485,4 +493,55 @@ export function mockRootReplayFilesystem(
       fileModes.set(target, mode);
     },
   };
+}
+
+export function delegatedRequest(agent: ManagedStartupAgent = "openclaw") {
+  return createManagedStartupRootApplyRequest({
+    agent,
+    encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agent, false)),
+  });
+}
+
+export function preparedApplication(
+  request = delegatedRequest(),
+  status: "prepared" | "already-committed" = "prepared",
+) {
+  return {
+    status,
+    stateDirectory: "/var/lib/nemoclaw/startup-profile",
+    generationDirectory: "/var/lib/nemoclaw/startup-profile/generation-test",
+    profilePath: "/var/lib/nemoclaw/startup-profile/generation-test/profile.json",
+    corporateCaPath: null,
+    expectedAgent: request.agent,
+    profile: decodeManagedStartupProfile(request.encodedProfile),
+    fingerprint: request.profileFingerprint,
+  } as const;
+}
+
+export function mockRootOwnedPolicyInstallPaths(
+  source: string,
+  shareDirectory: string,
+  target: string,
+  beforeSourceCleanup?: () => void,
+): void {
+  const realLstatSync = fs.lstatSync.bind(fs);
+  const rootOwned = (stat: fs.Stats): fs.Stats =>
+    new Proxy(stat, {
+      get(inner, property) {
+        const value = property === "uid" || property === "gid" ? 0 : Reflect.get(inner, property);
+        return typeof value === "function" ? value.bind(inner) : value;
+      },
+    });
+  vi.spyOn(fs, "lstatSync").mockImplementation(((
+    file: fs.PathLike,
+    options?: { bigint?: boolean },
+  ) => {
+    const sourceCleanupHook =
+      file.toString() === source && options?.bigint === true ? beforeSourceCleanup : undefined;
+    sourceCleanupHook?.();
+    const stat = options?.bigint ? realLstatSync(file, { bigint: true }) : realLstatSync(file);
+    const rootPath = file.toString() === shareDirectory || file.toString() === target;
+    return rootPath && options?.bigint !== true ? rootOwned(stat as fs.Stats) : stat;
+  }) as typeof fs.lstatSync);
+  vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
 }

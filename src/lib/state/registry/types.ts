@@ -157,6 +157,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   nativeHostedProviderAttachment?: NativeProviderAttachment;
   /** Selected operator provider; this receipt grants no provider ownership. */
   registeredInferenceProviderAttachment?: RegisteredInferenceProviderAttachment;
+  hermesSwitchyard?: import("../../hermes-switchyard-routing").SwitchyardBindingState;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */

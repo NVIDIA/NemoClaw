@@ -34,9 +34,23 @@ The clean Hermes root-entrypoint scenario also owns the Switchyard package's rea
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
 native loading and cleanup on the image's architecture. The isolated process loads the
-production-generated adaptive deployment with local upstream fixtures. It sends one request
+production-generated adaptive deployment with local upstream fixtures. It sends a request
 through the `switchyard` route and requires the classifier to select the efficient target.
-The probe does not call external providers or change the supervised gateway.
+It then runs the shipped judge qualifier against native routing marks and separate
+judge/answer token accounting. The qualifier's deterministic tests own evidence rejection,
+cleanup, and both gateway launch gates. A separate routed-startup scenario installs the
+production-generated routing files at their root-owned production paths. It starts the real
+entrypoint with resolver placeholders and local provider fixtures on a network-disabled
+container. It covers both a reused capable judge and an explicitly configured dedicated
+judge. Each mode requires the selected judge and answer calls before the gateway listens,
+with no call to the unselected judge client. The scenario
+then requires gateway readiness with routing activation configured under the gateway user.
+The packaged qualifier validates classification and separate token accounting before startup
+continues. This proves the successful entrypoint handoff, not OpenShell credential rewriting
+or real provider access. Container cleanup removes the fixture processes, placeholders, and
+routing files. The clean package probe still leaves its supervised gateway unchanged.
+`support/hermes-switchyard-upstream.test.ts` owns deterministic fixture authentication,
+per-client endpoint localization, and preservation of production judge selection and credentials.
 `test/agents/hermes/hermes-switchyard-package.test.ts`
 owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.
 The Hermes jobs in `.github/workflows/managed-images.yaml` run this suite on native
@@ -801,13 +815,17 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Install the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Attempt the 0.1.x cutover with registered sandboxes and require refusal. Verify the dashboard forward, sandbox phases, workspace marker, credential custody, and authenticated agent turns remain intact. Verify the old gateway service when the fixture provides it. |
+| `openshell-gateway-upgrade` | Install the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Attempt the 0.1.x cutover with registered sandboxes and require refusal. Verify the dashboard forward, sandbox phases, workspace marker, credential custody, and authenticated agent turns remain intact. Verify the old gateway service when the fixture provides it. Create each fixture-declared stopped sandbox, preserve its workspace marker, and restore its stopped phase after the lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 The gateway-upgrade target observes the v0.0.89 forward through its legacy SSH registry.
 The v0.0.123 fixture uses a direct `ForwardTcp` service outside that registry.
 For that service, the target compares executable, complete arguments (gateway, workspace, sandbox, and ports),
 PID, start time, and listener before and after refusal to require the same process.
+
+The gateway fixture prepares private OpenShell and npm install locations before the historical install, preserving existing private executables.
+The fixture sets a canonical private `XDG_BIN_HOME` for both installer generations.
+Its current installer still receives duplicate-slash `HOME` and `XDG_CONFIG_HOME` values for the systemd service scenario.
 
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
@@ -822,7 +840,7 @@ NemoClaw restore behavior, and Dockerfile patch behavior. The live target does n
 assert OpenClaw database tables, migration checkpoints, or other third-party
 storage details.
 
-The retained live target owns the released-gateway upgrade and usable-survivor
+The retained live target owns legacy-gateway cutover refusal and the usable-survivor
 boundary. Deterministic rebuild-flow tests own post-backup recreate failure,
 preserved backup and registry state, recovery-journal retention, and successful
 retry; stale-recovery tests own fail-closed behavior when no authoritative live

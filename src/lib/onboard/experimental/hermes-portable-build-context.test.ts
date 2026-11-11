@@ -146,6 +146,9 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(fs.readFileSync(path.join(stateDir, ".hermes/config.yaml"), "utf8")).toContain(
       "https://api.openai.com/v1",
     );
+    expect(
+      fs.statSync(path.join(inferredContext, "agents/hermes/qualify-switchyard-judge.py")).isFile(),
+    ).toBe(true);
     expect(fs.existsSync(path.join(inferredContext, "agents/hermes/Dockerfile"))).toBe(false);
     expect(plan.authority.sourceRevision).toMatch(/^[a-f0-9]{40,64}$/u);
     expect(plan.authority.contextManifestSha256).toMatch(/^[a-f0-9]{64}$/u);

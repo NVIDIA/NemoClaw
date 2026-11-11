@@ -2,15 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { performance } from "node:perf_hooks";
+import { createSwitchyardReadinessFixture } from "../../../../test/helpers/native-launch-readiness-switchyard.ts";
+import { createHash } from "node:crypto";
+import { requireNativeInferenceHealth } from "./launch-readiness/health";
+import { readStoredManagedStartupProfileMetadata } from "../../onboard/managed-startup/profile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
-import { entry, servingProfile } from "../../../../test/helpers/native-launch-readiness.ts";
+import {
+  fence,
+  lease,
+  entry,
+  servingProfile,
+  launchReadinessPolicy as POLICY_A,
+} from "../../../../test/helpers/native-launch-readiness.ts";
 import { loadAgent } from "../../agent/defs";
 import type {
-  LaunchReadinessFence,
   LaunchReadinessIdentity,
-  LaunchReadinessLease,
   LaunchReadinessOpenClawSessionQualification,
 } from "../../state/launch-readiness-lease";
 import { LaunchReadinessFenceError } from "../../state/launch-readiness-lease";
@@ -38,64 +46,7 @@ const EPOCH = "a".repeat(64);
 const FINGERPRINT = "b".repeat(64);
 const DIGEST = "c".repeat(64);
 
-const POLICY_A = `version: 1
-network_policies:
-  public_api:
-    name: Public API
-    endpoints:
-      - host: example.com
-        port: 443
-    binaries:
-      - path: /usr/bin/curl
-`;
-
 const POLICY_B = POLICY_A.replace("example.com", "api.example.com");
-
-function fence(): LaunchReadinessFence {
-  return {
-    schemaVersion: 3,
-    kind: "fence",
-    epochId: EPOCH,
-    sandboxName: SANDBOX,
-    fencedWallMs: 1,
-    fencedUptimeMs: 1,
-    bootId: "boot-a",
-    uid: 1,
-    homeDevice: "1",
-    homeInode: "2",
-    storeDevice: "1",
-    storeInode: "3",
-    gatewayName: GATEWAY_NAME,
-    gatewayPort: GATEWAY_PORT,
-    publicationState: "ready",
-    preservedLeaseStartedWallMs: null,
-    preservedLeaseExpiresWallMs: null,
-    preservedLeaseElapsedMs: null,
-  };
-}
-
-function lease(identity: LaunchReadinessIdentity): LaunchReadinessLease {
-  return {
-    schemaVersion: 3,
-    kind: "lease",
-    epochId: EPOCH,
-    sandboxName: SANDBOX,
-    leaseStartedWallMs: 1,
-    leaseExpiresWallMs: 86_400_001,
-    elapsedAtPublicationMs: 0,
-    publishedWallMs: 1,
-    publishedUptimeMs: 1,
-    bootId: "boot-a",
-    uid: 1,
-    homeDevice: "1",
-    homeInode: "2",
-    storeDevice: "1",
-    storeInode: "3",
-    gatewayName: GATEWAY_NAME,
-    gatewayPort: GATEWAY_PORT,
-    identity,
-  };
-}
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -173,6 +124,75 @@ describe("launch readiness validation", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  async function switchyardReadinessFixture() {
+    const fixture = await createSwitchyardReadinessFixture(GATEWAY_NAME, SANDBOX);
+    sandbox = fixture.routedEntry;
+    const currentDeps = { ...deps(), switchyardProviderAdapter: fixture.f.input.adapter };
+    return { ...fixture, currentDeps };
+  }
+
+  it("rejects an unconfigured Switchyard selection before publishing a lease (#13863)", async () => {
+    const { currentDeps } = await switchyardReadinessFixture();
+    sandbox.model = null;
+    const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(
+      await publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+    ).toMatchObject({ kind: "validation-failed", category: "config" });
+    expect(publishedIdentity).toBeNull();
+  });
+
+  it.each([
+    ["current", (encoded: string) => encoded],
+    [
+      "legacy",
+      (encoded: string) => {
+        const profile = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+        delete profile.agentConfig.switchyardBindings;
+        const legacy = Buffer.from(JSON.stringify(profile)).toString("base64url");
+        expect(readStoredManagedStartupProfileMetadata(legacy).agent).toBe("hermes");
+        return legacy;
+      },
+    ],
+    ["malformed", () => "invalid-profile"],
+  ] as const)(
+    "rejects a %s profile without Switchyard bindings before publishing (#13863)",
+    async (_profileKind, encode) => {
+      const { currentDeps, routedEntry } = await switchyardReadinessFixture();
+      const workload = routedEntry.workload;
+      workload.encodedProfile = encode(workload.encodedProfile);
+      workload.startupProfileSha256 = createHash("sha256")
+        .update(workload.encodedProfile)
+        .digest("hex");
+      delete sandbox.hermesSwitchyard;
+      await expect(
+        requireNativeInferenceHealth({
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          entry: sandbox,
+          deps: currentDeps,
+        }),
+      ).rejects.toMatchObject({ category: "config" });
+      expect(externalEvents).not.toContain("inference-get");
+      const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      expect(
+        await publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+      ).toMatchObject({ kind: "validation-failed", category: "config" });
+      expect(publishedIdentity).toBeNull();
+      expect(externalEvents).not.toContain("inference-health");
+    },
+  );
+
+  it("rechecks Switchyard bindings without consulting the shared inference route (#13863)", async () => {
+    const { currentDeps, f } = await switchyardReadinessFixture();
+    await createAcceptedLease(currentDeps);
+    externalEvents = [];
+    expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({ kind: "accepted" });
+    expect(externalEvents).not.toContain("inference-get");
+    expect(externalEvents).not.toContain("inference-health");
+    f.names.splice(0, 1);
+    expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({ kind: "fallback" });
   });
 
   function deps(): LaunchReadinessDeps {

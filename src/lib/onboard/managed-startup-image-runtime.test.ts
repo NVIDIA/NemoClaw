@@ -5,6 +5,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  switchyardBindingFixture,
+  switchyardRoutingFixture,
+} from "../../../test/helpers/hermes-switchyard";
+import {
+  encodeSwitchyardProviderBindings,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+} from "../hermes-switchyard-routing";
 
 const childProcessMock = vi.hoisted(() => ({
   spawnSync: vi.fn(),
@@ -17,7 +25,12 @@ const coordinatorMock = vi.hoisted(() => ({
 vi.mock("./managed-startup/coordinator", () => coordinatorMock);
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import { mockRootReplayFilesystem } from "../../../test/helpers/managed-startup-root-replay-filesystem";
+import {
+  delegatedRequest,
+  preparedApplication,
+  mockRootOwnedPolicyInstallPaths,
+  mockRootReplayFilesystem,
+} from "../../../test/helpers/managed-startup-root-replay-filesystem";
 import {
   applyManagedStartupImageProfile,
   applyManagedStartupRootRequest,
@@ -47,7 +60,6 @@ import {
   encodeManagedStartupProfile,
   decodeManagedStartupProfile,
   fingerprintManagedStartupProfile,
-  type ManagedStartupAgent,
 } from "./managed-startup/profile";
 import {
   createManagedStartupRootApplyRequest,
@@ -92,29 +104,6 @@ describe("managed startup image runtime", () => {
       offset += count;
       return count;
     }) as typeof fs.readSync);
-  }
-
-  function delegatedRequest(agent: ManagedStartupAgent = "openclaw") {
-    return createManagedStartupRootApplyRequest({
-      agent,
-      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agent, false)),
-    });
-  }
-
-  function preparedApplication(
-    request = delegatedRequest(),
-    status: "prepared" | "already-committed" = "prepared",
-  ) {
-    return {
-      status,
-      stateDirectory: "/var/lib/nemoclaw/startup-profile",
-      generationDirectory: "/var/lib/nemoclaw/startup-profile/generation-test",
-      profilePath: "/var/lib/nemoclaw/startup-profile/generation-test/profile.json",
-      corporateCaPath: null,
-      expectedAgent: request.agent,
-      profile: decodeManagedStartupProfile(request.encodedProfile),
-      fingerprint: request.profileFingerprint,
-    } as const;
   }
 
   it.each(["openclaw", "langchain-deepagents-code", "pi"] as const)(
@@ -899,34 +888,6 @@ describe("managed startup image runtime", () => {
     expect(rollback).toHaveBeenCalledWith("openclaw", { bootstrapIdentity });
   });
 
-  function mockRootOwnedPolicyInstallPaths(
-    source: string,
-    shareDirectory: string,
-    target: string,
-    beforeSourceCleanup?: () => void,
-  ): void {
-    const realLstatSync = fs.lstatSync.bind(fs);
-    const rootOwned = (stat: fs.Stats): fs.Stats =>
-      new Proxy(stat, {
-        get(inner, property) {
-          const value = property === "uid" || property === "gid" ? 0 : Reflect.get(inner, property);
-          return typeof value === "function" ? value.bind(inner) : value;
-        },
-      });
-    vi.spyOn(fs, "lstatSync").mockImplementation(((
-      file: fs.PathLike,
-      options?: { bigint?: boolean },
-    ) => {
-      const sourceCleanupHook =
-        file.toString() === source && options?.bigint === true ? beforeSourceCleanup : undefined;
-      sourceCleanupHook?.();
-      const stat = options?.bigint ? realLstatSync(file, { bigint: true }) : realLstatSync(file);
-      const rootPath = file.toString() === shareDirectory || file.toString() === target;
-      return rootPath && options?.bigint !== true ? rootOwned(stat as fs.Stats) : stat;
-    }) as typeof fs.lstatSync);
-    vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
-  }
-
   it("promotes generated Hermes policy to one root-owned, read-only runtime artifact", () => {
     const directory = temporaryPolicyDirectory();
     const shareDirectory = path.join(directory, "share");
@@ -962,27 +923,6 @@ describe("managed startup image runtime", () => {
     expect(fs.readFileSync(source, "utf8")).toBe(`${policy}changed\n`);
     expect(fs.readFileSync(target, "utf8")).toBe(policy);
   });
-
-  function switchyardRoutingFixture() {
-    const routing = createHermesSwitchyardRoutingIntent({
-      efficient: { provider: "nvidia-prod", model: "nvidia/efficient-model" },
-      capable: { provider: "openai-api", model: "openai/capable-model" },
-    });
-    return {
-      environment: {
-        [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
-      },
-      paths: {
-        relayPluginStateSource: "/sandbox/hermes-relay-plugin-state.json",
-        relayPluginStateTarget: "/usr/local/share/.dynamic-plugins.json",
-        relayPluginsSource: "/sandbox/hermes-relay-plugins.toml",
-        relayPluginsTarget: "/usr/local/share/hermes-relay-plugins.toml",
-        switchyardDeploymentSource: "/sandbox/hermes-switchyard-v1.toml",
-        switchyardDeploymentTarget: "/usr/local/share/hermes-switchyard-v1.toml",
-      },
-      serialized: serializeHermesSwitchyardRouting(routing),
-    };
-  }
 
   it("atomically promotes exact Switchyard bytes before activating Relay (#13862)", () => {
     const { environment, paths, serialized } = switchyardRoutingFixture();
@@ -1130,9 +1070,10 @@ describe("managed startup image runtime", () => {
         ...original.agentConfig,
         agent: "hermes" as const,
         switchyardRouting: routing,
+        switchyardBindings: switchyardBindingFixture(routing),
       },
     };
-    const serialized = serializeHermesSwitchyardRouting(routing);
+    const serialized = serializeHermesSwitchyardRouting(routing, switchyardBindingFixture(routing));
     const sourceFiles = [
       ["/sandbox/.hermes/hermes-relay-plugins.toml", serialized.relayPluginsToml],
       ["/sandbox/.hermes/hermes-relay-plugin-state.json", serialized.relayPluginStateJson],
@@ -1188,6 +1129,10 @@ describe("managed startup image runtime", () => {
         expect(() =>
           verifyHermesSwitchyardRoutingFiles({
             [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+            [HERMES_SWITCHYARD_BINDINGS_ENV]: encodeSwitchyardProviderBindings(
+              switchyardBindingFixture(routing),
+              routing,
+            ),
           }),
         ).not.toThrow();
         expect(filesystem.hasFile("/sandbox/.hermes/hermes-relay-plugins.toml")).toBe(false);
@@ -1235,10 +1180,14 @@ describe("managed startup image runtime", () => {
           ...original.agentConfig,
           agent: "hermes" as const,
           switchyardRouting: state === "disabled-stale" ? null : routing,
+          switchyardBindings: state === "disabled-stale" ? null : switchyardBindingFixture(routing),
         },
       };
       const fingerprint = fingerprintManagedStartupProfile(profile);
-      const serialized = serializeHermesSwitchyardRouting(routing);
+      const serialized = serializeHermesSwitchyardRouting(
+        routing,
+        switchyardBindingFixture(routing),
+      );
       const filesystem = mockRootReplayFilesystem(
         [],
         new Map([
@@ -1315,6 +1264,10 @@ describe("managed startup image runtime", () => {
         verifyHermesSwitchyardRoutingFiles({
           [HERMES_SWITCHYARD_ROUTING_ENV]:
             state === "disabled-stale" ? undefined : encodeHermesSwitchyardRoutingIntent(routing),
+          [HERMES_SWITCHYARD_BINDINGS_ENV]:
+            state === "disabled-stale"
+              ? undefined
+              : encodeSwitchyardProviderBindings(switchyardBindingFixture(routing), routing),
         }),
       );
       await expect(
@@ -1487,5 +1440,47 @@ describe("managed startup image runtime", () => {
     expect(runtimeWrites[0]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
     expect(runtimeWrites[1]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='5'");
     expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
+  });
+
+  it("applies a routed root request without transporting workload credential references (#13863)", async () => {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
+      capable: { provider: "openai-api", model: "gpt-5" },
+    });
+    const base = managedStartupE2eProfile("hermes");
+    const profile = {
+      ...base,
+      agentConfig: {
+        agent: "hermes" as const,
+        webSearch: { enabled: false, provider: "tavily" as const },
+        switchyardRouting: routing,
+        switchyardBindings: switchyardBindingFixture(routing),
+      },
+    };
+    const request = createManagedStartupRootApplyRequest({
+      agent: "hermes",
+      encodedProfile: encodeManagedStartupProfile(profile),
+    });
+    mockRootReplayFilesystem([]);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
+      true,
+    );
+    const coordinatorFailure = new Error("coordinator boundary reached");
+    coordinatorMock.coordinateManagedStartupApplication.mockRejectedValue(coordinatorFailure);
+
+    await expect(
+      applyManagedStartupRootRequest(request, {
+        NVIDIA_INFERENCE_API_KEY: "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
+        OPENAI_API_KEY: `openshell:resolve:env:s${"a".repeat(64)}_OPENAI_API_KEY`,
+      }),
+    ).rejects.toBe(coordinatorFailure);
+    expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(1);
+    const applicationInput = coordinatorMock.coordinateManagedStartupApplication.mock.calls[0][0];
+    expect(applicationInput).toMatchObject({
+      encodedProfile: request.encodedProfile,
+      expectedAgent: "hermes",
+    });
+    expect(JSON.stringify(applicationInput)).not.toContain("openshell:resolve:env:");
   });
 });

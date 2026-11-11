@@ -9,6 +9,10 @@ import { parseEnv } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
+  HERMES_STRUCTURED_TOOL_SEARCH,
+  REMOTE_PLATFORM_TOOLSETS,
+} from "../fixtures/hermes-config-expectations";
+import {
   MIN_HERMES_CONTEXT_WINDOW,
   readHermesBuildSettings,
 } from "../../agents/hermes/config/build-env.ts";
@@ -30,13 +34,16 @@ import {
 import {
   createHermesSwitchyardRoutingIntent,
   encodeHermesSwitchyardRoutingIntent,
+  encodeSwitchyardProviderBindings,
   HERMES_RELAY_PLUGIN_STATE_STAGING_FILE,
   HERMES_RELAY_PLUGINS_ENV,
   HERMES_RELAY_PLUGINS_FILE,
   HERMES_RELAY_PLUGINS_STAGING_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
   HERMES_SWITCHYARD_ROUTING_ENV,
 } from "../../src/lib/hermes-switchyard-routing.ts";
+import { switchyardBindingFixture } from "../helpers/hermes-switchyard.ts";
 import { testTimeout } from "../helpers/timeouts";
 import {
   withLegacyMessagingPlanEnv,
@@ -59,12 +66,6 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({}),
 };
 
-const HERMES_STRUCTURED_TOOL_SEARCH = {
-  enabled: "on",
-  search_default_limit: 5,
-  max_search_limit: 20,
-};
-
 it("uses a resolvable credential in every native NVIDIA inference configuration", () => {
   const { config } = runConfigScript({
     NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
@@ -75,24 +76,6 @@ it("uses a resolvable credential in every native NVIDIA inference configuration"
   expect(config.providers["nvidia-prod"].api_key).toBe(placeholder);
   expect(config.custom_providers[0].api_key).toBe(placeholder);
 });
-
-const REMOTE_PLATFORM_TOOLSETS = [
-  "web",
-  "browser",
-  "terminal",
-  "file",
-  "code_execution",
-  "vision",
-  "image_gen",
-  "skills",
-  "todo",
-  "memory",
-  "session_search",
-  "delegation",
-  "cronjob",
-  "nemoclaw",
-  "audio",
-];
 
 let tmpDir: string;
 
@@ -445,6 +428,10 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     const { config, envFile } = generateBaseConfig({
       [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+      [HERMES_SWITCHYARD_BINDINGS_ENV]: encodeSwitchyardProviderBindings(
+        switchyardBindingFixture(routing),
+        routing,
+      ),
     });
     const relayPluginsPath = path.join(tmpDir, ".hermes", HERMES_RELAY_PLUGINS_STAGING_FILE);
     const relayPluginStatePath = path.join(

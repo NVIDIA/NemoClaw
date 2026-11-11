@@ -14,6 +14,7 @@ import {
   resolvePrimaryMessagingCredentialEnvKeys,
   resolveSandboxCreateIntent,
   resolveSandboxCreateMessagingProviderRequests,
+  validateSandboxCreateIntentBindings,
 } from "./sandbox-create-intent";
 import type { SandboxCreateIntent } from "./sandbox-create-intent-types";
 import { getActiveChannelsFromPlan } from "./messaging-plan-session";
@@ -21,7 +22,6 @@ import { resolveSandboxCreatePolicyTier } from "./sandbox-create-plan";
 import {
   selectHermesPortableExtraProviderPlan,
   selectHermesPortableMessagingCapabilities,
-  validateSandboxCreateIntentBindings,
 } from "./sandbox-create-plan-materialization";
 import { buildSandboxGpuCreateArgs, type SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 import {
@@ -36,6 +36,7 @@ export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   nativeHostedProviderAttachment?: NativeProviderAttachment;
+  hermesSwitchyard?: import("../hermes-switchyard-routing").SwitchyardBindingState;
   hostLocalInferenceRouteOnly?: boolean;
   enabledChannels: readonly string[] | null;
   webSearchConfig: WebSearchConfig | null;
@@ -158,6 +159,7 @@ export function createSandboxCreateIntentResolver<
       nativeLocalProviderAttachment: input.nativeLocalProviderAttachment,
       nativeNvidiaProviderAttachment: input.nativeNvidiaProviderAttachment,
       nativeHostedProviderAttachment: input.nativeHostedProviderAttachment,
+      hermesSwitchyard: input.hermesSwitchyard,
       hostLocalInferenceRouteOnly: input.hostLocalInferenceRouteOnly === true,
       channels: deps.channels,
       enabledChannels: resolveSelectedChannels(input),

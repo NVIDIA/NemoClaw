@@ -109,6 +109,19 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
     );
   }
 
+  exactNativeProvider(metadata: OpenShellProviderMetadata): boolean {
+    return lifecycle.exactNativeProvider(metadata, this.profile());
+  }
+
+  async removeNewNativeProvider(input: {
+    adapter: OpenShellProviderAdapter;
+    target: OpenShellGatewayTarget;
+    expected: NativeProviderAttachment<ProfileId, ProviderName>;
+  }): Promise<void> {
+    this.requireExpectedReceipt(input.expected);
+    await lifecycle.removeNewNativeProvider({ ...input, profile: this.profile() });
+  }
+
   nativeProviderAttachmentFromMetadata(
     metadata: OpenShellProviderMetadata,
   ): NativeProviderAttachment<ProfileId, ProviderName> {

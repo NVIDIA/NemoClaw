@@ -57,6 +57,7 @@ export type SandboxCreateIntent = {
   readonly nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   readonly nativeHostedProviderAttachment?: NativeProviderAttachment;
+  readonly hermesSwitchyard?: import("../hermes-switchyard-routing").SwitchyardBindingState;
   readonly activeMessagingChannels: readonly string[];
   readonly messagingProviderRequests: readonly SandboxCreateMessagingProviderRequest[];
   readonly reusableMessagingProviders: readonly string[];
@@ -82,6 +83,7 @@ export type ResolveSandboxCreateIntentInput = {
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   nativeHostedProviderAttachment?: NativeProviderAttachment;
+  hermesSwitchyard?: import("../hermes-switchyard-routing").SwitchyardBindingState;
   hostLocalInferenceRouteOnly?: boolean;
   channels: readonly MessagingChannel[];
   enabledChannels: string[] | null;

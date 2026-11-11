@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+import { switchyardBindingFixture } from "../../../../test/helpers/hermes-switchyard";
+import { createHermesSwitchyardRoutingIntent } from "../../hermes-switchyard-routing";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -36,7 +38,12 @@ function providerAdapter(
     Pick<CliOpenShellProviderAdapter, "warnIfVerifiedProfilesChangedAfterSandboxCreate">;
 }
 
-function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
+function nativeProviderBoundary(
+  adapter: OpenShellProviderAdapter,
+  hermesSwitchyard?: Parameters<
+    typeof createProviderEffectBoundary
+  >[0]["preparationInput"]["hermesSwitchyard"],
+) {
   return createProviderEffectBoundary({
     deferred: false,
     sandboxName: "alpha",
@@ -54,6 +61,7 @@ function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
       messagingProviderRequests: [],
       extraProviders: [],
       gatewayName: "nemoclaw",
+      hermesSwitchyard,
     },
     preparationDeps: {
       runOpenshell: vi.fn() as never,
@@ -79,6 +87,19 @@ function verifiedCreateContext(revalidateSandboxIdentity = vi.fn()) {
 }
 
 describe("native NVIDIA post-create provider verification", () => {
+  it("rejects a mixed Switchyard effect boundary before provider operations", () => {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "openai-api", model: "efficient-model" },
+      capable: { provider: "nvidia-prod", model: "capable-model" },
+    });
+    const adapter = providerAdapter(recordedProviderId);
+    expect(() =>
+      nativeProviderBoundary(adapter, { routing, bindings: switchyardBindingFixture(routing) }),
+    ).toThrow("cannot share a recorded native inference attachment");
+    expect(adapter.getProvider).not.toHaveBeenCalled();
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+  });
+
   it("verifies the owned profile before direct create and checks it after verified attachment", async () => {
     const adapter = providerAdapter(recordedProviderId);
     const boundary = nativeProviderBoundary(adapter);

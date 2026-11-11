@@ -2,6 +2,35 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  assertSwitchyardInferenceAuthority,
+  validateSwitchyardBindingState,
+} from "../../hermes-switchyard-routing";
+
+/** Bind provider-role observations to the same selection that the registry publishes. */
+export function requireSwitchyardBindingForSelection(
+  entry: Pick<
+    SandboxEntry,
+    | "provider"
+    | "model"
+    | "hermesSwitchyard"
+    | "registeredInferenceProviderAttachment"
+    | "nativeLocalProviderAttachment"
+    | "nativeNvidiaProviderAttachment"
+    | "nativeHostedProviderAttachment"
+  >,
+): SandboxEntry["hermesSwitchyard"] {
+  assertSwitchyardInferenceAuthority(entry);
+  if (entry.hermesSwitchyard === undefined) return undefined;
+  const state = validateSwitchyardBindingState(entry.hermesSwitchyard);
+  if (
+    entry.provider !== state.routing.capable.provider ||
+    entry.model !== state.routing.capable.model
+  )
+    throw new Error("Switchyard selection does not match its provider binding state.");
+  return state;
+}
+
+import {
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
@@ -36,6 +65,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "nativeNvidiaProviderAttachment",
   "nativeHostedProviderAttachment",
   "registeredInferenceProviderAttachment",
+  "hermesSwitchyard",
   "openshellDriver",
   "pendingRouteReservation",
   "pendingCreateIdentity",

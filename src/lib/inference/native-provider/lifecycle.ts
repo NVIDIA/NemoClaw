@@ -71,7 +71,7 @@ export function providerErrorDetail(error: OpenShellProviderError): string {
   return error.message.trim() || "OpenShell did not provide a diagnostic.";
 }
 
-function exactNativeProvider(
+export function exactNativeProvider(
   metadata: OpenShellProviderMetadata,
   profile: Pick<NativeProviderProfile, "profileId" | "providerName" | "credentialEnv">,
 ): boolean {
@@ -131,7 +131,7 @@ function mutationOutcomeMayBeAmbiguous(error: OpenShellProviderError): boolean {
   );
 }
 
-async function removeNewNativeProvider(input: {
+export async function removeNewNativeProvider(input: {
   profile: NativeProviderProfile;
   adapter: OpenShellProviderAdapter;
   target: OpenShellGatewayTarget;

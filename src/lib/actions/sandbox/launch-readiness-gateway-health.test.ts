@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+import { createSwitchyardReadinessFixture } from "../../../../test/helpers/native-launch-readiness-switchyard";
 
 import { execFileSync } from "node:child_process";
 
@@ -14,6 +15,7 @@ import type { SandboxEntry } from "../../state/registry";
 import {
   LaunchReadinessEvidenceError,
   LaunchReadinessObservationError,
+  createBoundLaunchReadinessDeps,
   hasRecordedNativeNvidiaAttachment,
   requireLaunchSemanticHealth,
   requireNativeInferenceHealth,
@@ -26,6 +28,7 @@ import {
   recordingProbeShell,
 } from "../../../../test/helpers/native-local-probe-shell";
 import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import {
   isSandboxGatewayRunningForStatus,
   waitForStartedHermesGatewayProcess,
@@ -33,6 +36,63 @@ import {
 } from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
+  it.each(["recorded", "profile-only"])(
+    "rejects a registered route that would bypass %s Switchyard role verification",
+    async (source) => {
+      const f = registeredInferenceFixture(true);
+      const { routedEntry } = await createSwitchyardReadinessFixture(
+        f.binding.gatewayName,
+        f.binding.sandboxName,
+      );
+      const binding = { ...f.binding, providerName: routedEntry.provider };
+      const verifyRegisteredAttachment = vi.fn(async () => {});
+      const inferenceInvocationProbe = vi.fn(async () => ({ ok: true as const }));
+      await expect(
+        requireNativeInferenceHealth({
+          sandboxName: binding.sandboxName,
+          gatewayName: binding.gatewayName,
+          agentName: "hermes",
+          entry: {
+            ...routedEntry,
+            name: binding.sandboxName,
+            gatewayName: binding.gatewayName,
+            agent: "hermes",
+            provider: binding.providerName,
+            endpointUrl: binding.endpointUrl,
+            preferredInferenceApi: binding.inferenceApi,
+            credentialEnv: binding.credentialEnv,
+            registeredInferenceProviderAttachment: binding,
+            hermesSwitchyard: source === "recorded" ? routedEntry.hermesSwitchyard : undefined,
+          },
+          deps: { verifyRegisteredAttachment, inferenceInvocationProbe },
+        }),
+      ).rejects.toThrow("cannot share a recorded native inference attachment");
+      expect(verifyRegisteredAttachment).not.toHaveBeenCalled();
+      expect(inferenceInvocationProbe).not.toHaveBeenCalled();
+    },
+  );
+
+  it("bounds bound Switchyard provider reads with the readiness probe timeout", async () => {
+    const capture = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "fixture observation unavailable",
+      output: "",
+    }));
+    const commandExecutor = {
+      runBuffered: vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(),
+    };
+    const deps = createBoundLaunchReadinessDeps(capture, commandExecutor);
+    await deps.switchyardProviderAdapter?.getProvider({
+      target: { kind: "named", gatewayName: "selected" },
+      providerName: "fixture-provider",
+    });
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      expect.arrayContaining(["provider", "get", "fixture-provider"]),
+      expect.objectContaining({ timeout: OPENSHELL_PROBE_TIMEOUT_MS }),
+    );
+  });
+
   it("requires a valid recorded native NVIDIA attachment for degraded start", () => {
     const entry = {} as SandboxEntry;
     expect(hasRecordedNativeNvidiaAttachment(entry)).toBe(false);
