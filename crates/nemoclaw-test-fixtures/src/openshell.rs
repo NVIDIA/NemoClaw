@@ -904,6 +904,10 @@ fn create_sandbox(
     if state.sandboxes.contains_key(&key) {
         return Err(Status::already_exists("collision"));
     }
+    // The gateway checks every exposure before it creates the sandbox.
+    for exposure in &q.service_exposures {
+        exposure_mode(exposure.target_port, exposure.authorization_mode)?;
+    }
     state.sandbox_exposures.push(q.service_exposures.clone());
     let sandbox = p::Sandbox {
         metadata: Some(p::ObjectMeta {
@@ -1056,10 +1060,25 @@ fn expose_service(
         .ok_or_else(|| Status::not_found("sandbox not found"))?;
     store_service(state, &sandbox, q.name, q.target_port, q.authorization_mode)
 }
+/// The gateway checks an exposure's port and resolves its authorization mode,
+/// an omitted one to STRIP, as OpenShell's `validate_service_exposure_request`
+/// does.
+fn exposure_mode(
+    target_port: u32,
+    authorization_mode: i32,
+) -> Result<p::ServiceAuthorizationMode, Status> {
+    if target_port == 0 || target_port > u32::from(u16::MAX) {
+        return Err(Status::invalid_argument("target_port must be in 1..=65535"));
+    }
+    match p::ServiceAuthorizationMode::try_from(authorization_mode) {
+        Ok(p::ServiceAuthorizationMode::Unspecified) => Ok(p::ServiceAuthorizationMode::Strip),
+        Ok(mode) => Ok(mode),
+        Err(_) => Err(Status::invalid_argument("authorization_mode is invalid")),
+    }
+}
 /// The gateway stores a sandbox's service endpoint, at its creation or
-/// through ExposeService, as OpenShell's `expose_service_endpoint` does: it
-/// resolves an omitted authorization mode to STRIP, and an update keeps the
-/// endpoint's ID.
+/// through ExposeService, as OpenShell's `expose_service_endpoint` does; an
+/// update keeps the endpoint's ID.
 fn store_service(
     state: &mut State,
     sandbox: &p::ObjectMeta,
@@ -1067,14 +1086,7 @@ fn store_service(
     target_port: u32,
     authorization_mode: i32,
 ) -> Result<p::ServiceEndpointResponse, Status> {
-    if target_port == 0 || target_port > u32::from(u16::MAX) {
-        return Err(Status::invalid_argument("target_port must be in 1..=65535"));
-    }
-    let mode = match p::ServiceAuthorizationMode::try_from(authorization_mode) {
-        Ok(p::ServiceAuthorizationMode::Unspecified) => p::ServiceAuthorizationMode::Strip,
-        Ok(mode) => mode,
-        Err(_) => return Err(Status::invalid_argument("authorization_mode is invalid")),
-    };
+    let mode = exposure_mode(target_port, authorization_mode)?;
     let key = (
         sandbox.workspace.clone(),
         sandbox.name.clone(),
