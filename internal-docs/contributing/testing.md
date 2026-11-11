@@ -171,7 +171,7 @@ It requests no inference from a model server and needs no GPU or credentials.
 `cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images).
 It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
 It starts a registry that requires a login on the kind network and pushes that image to it for the scenario.
-It then runs the `kind-kubernetes-development`, `kind-kubernetes-nodeport`, and `kind-kubernetes-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
+It then runs the `kind-kubernetes-development` and `kind-kubernetes-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
 It deletes the cluster and its image tag whether or not the tests pass; set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to keep the cluster for inspection.
 [Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
 

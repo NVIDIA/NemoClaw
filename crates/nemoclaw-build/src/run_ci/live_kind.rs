@@ -490,22 +490,6 @@ mod tests {
         assert!(!bound.contains("nc-hcl-kind") && !bound.contains("@sha256:0000"));
         assert!(!bound.contains(FORWARDED_ENDPOINT) && !bound.contains("172.18.0.9"));
 
-        // A published gateway's endpoint names the node, at the case's port.
-        let nodeport = include_str!("../../../nemoclaw-e2e/cases/kind-kubernetes-nodeport.yaml");
-        let bound = kind_case(
-            nodeport,
-            "u-1",
-            node,
-            "nc-n",
-            "kind-c",
-            "nc-registry-1:5000/agent@sha256:1",
-            "h",
-        )
-        .unwrap();
-        assert!(bound.contains("    endpoint: https://172.18.0.9:30080\n"));
-        assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
-        assert!(!bound.contains("nc-hcl-kind") && !bound.contains("@sha256:0000"));
-
         let template = include_str!("../../../nemoclaw-e2e/cases/kind-kubernetes-oidc.yaml");
         let bound = kind_case(
             template,
@@ -517,6 +501,8 @@ mod tests {
             "h",
         )
         .unwrap();
+        // A published gateway's endpoint names the node, at the case's port.
+        assert!(bound.contains("    endpoint: https://172.18.0.9:30080\n"));
         assert!(bound.contains("      namespace: nc-n\n"));
         assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
         assert!(bound.contains("https://issuer-oidc.nc-n-issuer.svc.cluster.local:8443"));

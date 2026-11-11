@@ -20,7 +20,7 @@ cargo ci live-kind
 ```
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
-It then runs three [HCL E2E scenarios](#hcl-e2e-scenarios), one after the other, each in new namespaces.
+It then runs two [HCL E2E scenarios](#hcl-e2e-scenarios), one after the other, each in new namespaces.
 
 The `kind-kubernetes-development` scenario deploys one agent with the defaults: the `kubernetes` runtime profile and the `development` authentication profile, whose tokens the SDK issues.
 Its CLI runs with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
@@ -34,11 +34,6 @@ That apply must fail with the refusal, and once the probe removes the policy, no
 Another apply must then reuse that storage, refreshing rather than creating it again, so the namespace, encryption key, and claims kept their identity, and the agent must answer again.
 The runner deletes the cluster with the redeployed deployment.
 That a gateway trusts only the deployment's own issuer is a [contract check](integration-tests.md#openshell-provider-contract) of the rendered chart.
-
-The `kind-kubernetes-nodeport` scenario deploys one agent with the same profiles behind a gateway that a NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster) at the kind node's address.
-Apply must create the Service.
-Apply's reads of the gateway and the probe dial the node's address, as the SDK's providers do, and check that the gateway's certificate names it; neither uses a port-forward.
-The agent must answer with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
 
 The `kind-kubernetes-oidc` scenario deploys two agents, `assistant` and `researcher`, in a namespace that carries OpenShift's UID range, each sandbox granting one endpoint named for it so that no two have the same policy.
 It deploys with `kubernetes`, because kind can't run a managed `openshift` gateway: that gateway leaves its `fsGroup` for OpenShift to assign, and without one it can't read its signing key.
@@ -55,10 +50,12 @@ Before its first apply, the `tests/e2e/hcl/kind` module releases a chart twice w
 `hcl_live::issuer` creates the issuer's key material and one token for the case's audience, which is the deployment UID; OpenTofu cannot sign a token.
 The token stays in a private credentials file in the run's `work` directory, which the `cli` and `verifier` modules export as the case's `token.env` variable.
 The gateway uses the `oidc` authentication profile, so the apply and the replies show that it accepts the issuer's tokens and that each sandbox pulled its image with the pull Secret.
+A NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster) the gateway at the kind node's address, and apply must create it.
+Apply's reads of the gateway and the probe dial the node's address, as the SDK's providers do, and check that the gateway's certificate names it; neither uses a port-forward.
 Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
 The test runner then uninstalls both releases, which deletes their namespaces; it does not wait for Kubernetes to finish deleting them.
 `cargo ci live-kind` binds each case in `cases/` to the cluster's context, a fresh UID, gateway port, and namespace, and the image in the registry.
-A case whose NodePort Service publishes the gateway gets the node's address in its endpoint instead of a fresh port.
+A case whose NodePort Service publishes the gateway, as `kind-kubernetes-oidc`'s does, gets the node's address in its endpoint instead of a fresh port.
 Its node port stays as the case sets it, in the range's lower band, which Kubernetes leaves for Services that name their port.
 It passes the kubeconfig as `TF_VAR_kubeconfig` and the registry's fixture login as `TF_VAR_pull_credentials`.
 The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell runs each sandbox as the range's first UID.
@@ -129,8 +126,7 @@ Run blocks call these modules:
 | `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, and OpenClaw's terminal UI through `openshell sandbox exec --tty`, on a stub model that requires the run's key; in each sandbox, a writable workspace and no model key in the environment; in Hermes's sandbox, a pseudo-terminal; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused ([Agent Interfaces](#agent-interfaces)). |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, and a workspace file on a named volume that survives the destroy and redeploy. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
-| `kind-kubernetes-nodeport` | `cargo ci live-kind` | One agent behind a gateway that a NodePort Service [publishes on kind](#kubernetes-gateway-without-the-helm-cli), dialed at the node's address with no port-forward; apply creates the Service, the agent answers with the stub's reply, and a plan reports no changes. |
-| `kind-kubernetes-oidc` | `cargo ci live-kind` | Two agents [on kind](#kubernetes-gateway-without-the-helm-cli) in a namespace with OpenShift's UID range, from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
+| `kind-kubernetes-oidc` | `cargo ci live-kind` | Two agents [on kind](#kubernetes-gateway-without-the-helm-cli) in a namespace with OpenShift's UID range, from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens and that a NodePort Service publishes at the node's address, dialed with no port-forward; apply creates the Service, and each agent answers with the stub's reply. |
 | `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` runtime profile [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`; each answers with the stub's reply. |
 
 Every scenario checks the same successful path:

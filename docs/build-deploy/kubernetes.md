@@ -160,7 +160,7 @@ With this profile, the namespace holds no development issuer, and the state dire
 Like a Docker gateway's published port, `gateway.kubernetes.expose` publishes the gateway at `gateway.endpoint` through a Kubernetes Service, so NemoClaw and the OpenShell CLI dial that address instead of port forwards.
 The Service, named after the release with `-exposure` appended, forwards the endpoint's port to the gateway's own TLS listener, so TLS and client certificates pass through unchanged.
 The gateway certificate names the endpoint's host.
-CI publishes a gateway through a `NodePort` Service on kind, where an agent replies through the node's address; no `LoadBalancer` has been tried.
+CI publishes a gateway with the `oidc` profile through a `NodePort` Service on kind, where two agents reply through the node's address; no `LoadBalancer` has been tried.
 
 ```yaml
 spec:
