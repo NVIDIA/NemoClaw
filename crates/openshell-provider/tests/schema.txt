@@ -125,6 +125,7 @@ resource openshell_sandbox (version 2)
   owner: string, optional, computed
   policy_authority: string, optional, computed
   policy_hash: string, computed
+  policy_provenance: string, computed
   providers: list(object({ registration = string, type = string })), optional
   ref: object({ generation = string, id = string, name = string, owner = string, type = string, workspace = string }), computed
   service_urls: map(string), computed

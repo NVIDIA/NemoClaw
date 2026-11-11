@@ -41,6 +41,13 @@ pub struct State {
     pub providers: HashMap<String, p::Provider>,
     pub sandboxes: HashMap<String, p::Sandbox>,
     pub active_policy: Option<p::SandboxPolicy>,
+    /// The loaded policy revision's version; omission reports 1.
+    pub active_version: Option<u32>,
+    /// Sandbox-scoped UpdateConfig requests, in order.
+    pub config_updates: Vec<p::UpdateConfigRequest>,
+    /// Rewrites a sandbox as an UpdateConfig without a policy reaches it, as
+    /// APF does by injecting its bundle's policy.
+    pub config_update: Option<SandboxAdmission>,
     pub sandbox_phase: Option<p::SandboxPhase>,
     pub sandbox_conditions: Vec<p::SandboxCondition>,
     pub configuration_admission: Option<p::SandboxConfigurationAdmission>,
@@ -572,6 +579,12 @@ impl tower::Service<http::Request<Body>> for Service {
                     })
                     .await
                 }
+                "/openshell.v1.OpenShell/UpdateConfig" => {
+                    unary(request, state, |state, request| {
+                        update_config(state, request)
+                    })
+                    .await
+                }
                 "/openshell.v1.OpenShell/GetWorkspace" => {
                     unary(request, state, |state, request| {
                         get_workspace(state, &request)
@@ -1041,6 +1054,32 @@ fn get_service(
         .clone();
     Ok(service_response(endpoint))
 }
+/// A sandbox-scoped configuration update. Only an update without a policy is
+/// modelled: the configured rewrite stands in for the interceptor that fills it.
+fn update_config(
+    state: &mut State,
+    q: p::UpdateConfigRequest,
+) -> Result<p::UpdateConfigResponse, Status> {
+    let key = format!("{}/{}", workspace(&q.workspace_scope)?, q.sandbox);
+    if q.global || q.policy.is_some() || !q.merge_operations.is_empty() {
+        return Err(Status::unimplemented("only a policy-less sandbox update"));
+    }
+    state.config_updates.push(q);
+    let rewrite = state.config_update.clone();
+    let sandbox = state
+        .sandboxes
+        .get_mut(&key)
+        .ok_or_else(|| Status::not_found("absent"))?;
+    let rewrite = rewrite.ok_or_else(|| Status::failed_precondition("no policy to apply"))?;
+    rewrite(sandbox);
+    let version = state.active_version.unwrap_or(1) + 1;
+    state.active_version = Some(version);
+    state.active_policy = None;
+    Ok(p::UpdateConfigResponse {
+        version,
+        ..Default::default()
+    })
+}
 fn policy_status(
     state: &mut State,
     q: &p::GetSandboxPolicyStatusRequest,
@@ -1074,10 +1113,11 @@ fn policy_status(
             format!("fixture:{:016x}", hasher.finish())
         })
         .unwrap_or_default();
+    let version = state.active_version.unwrap_or(1);
     Ok(p::GetSandboxPolicyStatusResponse {
-        active_version: 1,
+        active_version: version,
         revision: Some(p::SandboxPolicyRevision {
-            version: 1,
+            version,
             policy_hash,
             policy,
             status: p::PolicyStatus::Loaded as i32,

@@ -760,17 +760,228 @@ async fn an_apf_governed_sandbox_keeps_the_policy_apf_admitted() {
         .unwrap()
         .unwrap();
     assert!(!recorded["policy_hash"].is_empty());
+    assert_eq!(recorded[POLICY_PROVENANCE], "token");
     assert!(client.read("sandbox", &recorded, false).await.is_ok());
-    // A later change to the loaded policy is still drift.
-    let mut changed = fixture.state.lock().unwrap().sandboxes[&key]
+}
+
+/// An APF-governed sandbox, bound with its loaded policy recorded, and the key
+/// the fake gateway stores it under.
+async fn apf_sandbox(fixture: &Fixture, client: &OpenShell) -> (Row, String) {
+    let mut rows = fixture_rows("explicit-policy");
+    for (kind, row) in &mut rows {
+        if *kind == "sandbox" {
+            row.insert("policy_authority".into(), "apf".into());
+        }
+    }
+    fixture.state.lock().unwrap().sandbox_admission = Some(apf_admission(true));
+    let sandbox = create(client, &rows)
+        .await
+        .into_iter()
+        .zip(&rows)
+        .find(|(_, (kind, _))| *kind == "sandbox")
+        .unwrap()
+        .0;
+    let recorded = client
+        .read("sandbox", &sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!recorded[POLICY_HASH].is_empty());
+    let key = format!("{}/{}", recorded["workspace"], recorded["name"]);
+    (recorded, key)
+}
+
+/// What APF does when it issues its current bundle's policy to a sandbox: a
+/// new policy and new provenance.
+fn apf_reissue(token: &'static str) -> Arc<dyn Fn(&mut proto::Sandbox) + Send + Sync> {
+    Arc::new(move |sandbox: &mut proto::Sandbox| {
+        let policy = sandbox.spec.as_mut().unwrap().policy.as_mut().unwrap();
+        policy.network_policies.insert(
+            "apf-bundle-update".into(),
+            proto::NetworkPolicyRule {
+                name: "apf-bundle-update".into(),
+                endpoints: vec![proto::NetworkEndpoint {
+                    host: "update.example".into(),
+                    port: 443,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        );
+        let annotations = &mut sandbox.metadata.as_mut().unwrap().annotations;
+        annotations.insert("apf.nvidia.com/provenance-token".into(), token.into());
+        annotations.insert("apf.nvidia.com/policy-version".into(), "11".into());
+    })
+}
+
+/// Load a changed policy into the sandbox as a direct update would, leaving its
+/// provenance as it was.
+fn change_loaded_policy(fixture: &Fixture, key: &str) {
+    let mut changed = fixture.state.lock().unwrap().sandboxes[key]
         .spec
         .clone()
         .unwrap()
         .policy
         .unwrap();
     changed.network_policies.remove("apf-bundle");
-    fixture.state.lock().unwrap().active_policy = Some(changed);
-    assert!(client.read("sandbox", &recorded, false).await.is_err());
+    let mut state = fixture.state.lock().unwrap();
+    state.active_policy = Some(changed);
+    state.active_version = Some(2);
+}
+
+#[tokio::test]
+async fn a_policy_apf_issues_to_a_governed_sandbox_is_adopted() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    {
+        let mut state = fixture.state.lock().unwrap();
+        apf_reissue("token-2")(state.sandboxes.get_mut(&key).unwrap());
+        state.active_version = Some(2);
+    }
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(observed[POLICY_HASH], recorded[POLICY_HASH]);
+    assert_eq!(observed[POLICY_PROVENANCE], "token-2");
+}
+
+#[tokio::test]
+async fn a_policy_changed_outside_apf_is_reissued_in_place() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    change_loaded_policy(&fixture, &key);
+    // The change is not APF's: the observation asks for APF's policy again.
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed[POLICY_PROVENANCE], "");
+    // The update asks OpenShell for the sandbox's configuration without a
+    // policy, so APF issues its bundle's policy to the same sandbox.
+    fixture.state.lock().unwrap().config_update = Some(apf_reissue("token-2"));
+    let created = fixture.state.lock().unwrap().created_sandboxes.len();
+    let mut desired = recorded.clone();
+    desired.insert(POLICY_PROVENANCE.into(), String::new());
+    let result = client.ensure("sandbox", &desired).await;
+    assert!(result.error().is_none(), "{:?}", result.error());
+    let reissued = result.into_parts().0.unwrap();
+    assert_eq!(reissued["id"], recorded["id"]);
+    assert_eq!(reissued[POLICY_PROVENANCE], "token-2");
+    assert_ne!(reissued[POLICY_HASH], recorded[POLICY_HASH]);
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.created_sandboxes.len(), created);
+    assert_eq!(state.config_updates.len(), 1);
+    assert_eq!(state.config_updates[0].sandbox, recorded["name"]);
+}
+
+#[tokio::test]
+async fn a_policy_changed_before_its_first_observation_is_reissued() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (mut recorded, key) = apf_sandbox(&fixture, &client).await;
+    // Apply records no hash for a sandbox that is not ready yet; the loaded
+    // policy APF admitted is then OpenShell's first revision.
+    recorded.insert(POLICY_HASH.into(), String::new());
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed[POLICY_PROVENANCE], "token");
+    assert!(!observed[POLICY_HASH].is_empty());
+    change_loaded_policy(&fixture, &key);
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed[POLICY_PROVENANCE], "");
+}
+
+#[tokio::test]
+async fn a_nemoclaw_policy_openshell_updated_before_its_first_observation_is_recorded() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let mut sandbox = create_sandbox(&client, "explicit-policy").await;
+    // OpenShell's supervisor loads a later revision after start.
+    sandbox.insert(POLICY_HASH.into(), String::new());
+    fixture.state.lock().unwrap().active_version = Some(2);
+    let observed = client
+        .read("sandbox", &sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!observed[POLICY_HASH].is_empty());
+    assert_eq!(observed[POLICY_PROVENANCE], "");
+}
+
+#[tokio::test]
+async fn a_governed_sandbox_without_provenance_is_reissued() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key)
+        .unwrap()
+        .metadata
+        .as_mut()
+        .unwrap()
+        .annotations
+        .retain(|key, _| !key.starts_with("apf.nvidia.com/"));
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed[POLICY_AUTHORITY], "apf");
+    assert_eq!(observed[POLICY_PROVENANCE], "");
+}
+
+#[test]
+fn a_governed_sandbox_whose_policy_is_not_apfs_plans_an_update() {
+    use tf_provider::value::Value;
+    let definition = definitions()
+        .into_iter()
+        .find(|definition| definition.kind == "sandbox")
+        .unwrap();
+    let state = |authority: &str, provenance: &str| -> nemoclaw_tofu::State {
+        [
+            (
+                POLICY_AUTHORITY.to_owned(),
+                Value::Value(authority.to_owned()),
+            ),
+            (
+                POLICY_PROVENANCE.to_owned(),
+                Value::Value(provenance.to_owned()),
+            ),
+        ]
+        .into_iter()
+        .collect()
+    };
+    let (planned, replacements) =
+        nemoclaw_tofu::plan_update(&definition, &state("apf", ""), state("apf", ""));
+    assert_eq!(planned.get(POLICY_PROVENANCE), Some(&Value::Unknown));
+    assert!(replacements.is_empty());
+    for (authority, provenance) in [("apf", "token"), ("", "")] {
+        let (planned, _) = nemoclaw_tofu::plan_update(
+            &definition,
+            &state(authority, provenance),
+            state(authority, provenance),
+        );
+        assert_eq!(
+            planned.get(POLICY_PROVENANCE),
+            Some(&Value::Value(provenance.to_owned()))
+        );
+    }
 }
 
 /// The fixture's inference resource as OpenTofu sends it, under APF's policy

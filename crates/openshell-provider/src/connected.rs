@@ -356,6 +356,22 @@ impl ConnectedOpenShellGateway {
         Ok(())
     }
 
+    /// Update the bound sandbox's configuration without a policy. A gateway
+    /// whose admission interceptor governs the sandbox's policy, as APF does,
+    /// fills it with the policy it issues.
+    pub(crate) async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError> {
+        self.client
+            .raw_grpc()
+            .update_config(self.request(proto::UpdateConfigRequest {
+                sandbox: value(want, "name").into(),
+                workspace_scope: Some(proto::workspace_selector(value(want, "workspace"))),
+                ..Default::default()
+            }))
+            .await
+            .map_err(|error| remote_error(&error))?;
+        Ok(())
+    }
+
     pub(crate) async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");

@@ -295,7 +295,7 @@ fn sandbox_row(
     }
     let observed_policy = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
     let grants = network::recorded_grants(&input, observed_policy)?;
-    let authority = policy_authority(&meta.annotations)?;
+    let (authority, provenance) = policy_authority(&meta.annotations)?;
     // NemoClaw authored the policy unless APF governs it; APF's admission
     // replaces the submitted policy with its bundle's.
     if authority.is_empty()
@@ -323,6 +323,7 @@ fn sandbox_row(
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
     row.insert(POLICY_AUTHORITY.into(), authority.into());
+    row.insert(POLICY_PROVENANCE.into(), provenance);
     // Empty until the loaded policy is observed.
     row.insert(POLICY_HASH.into(), String::new());
     // Empty unless OpenShell reports that the sandbox exited.
@@ -341,32 +342,60 @@ const APF_PROVENANCE: [&str; 5] = [
     "apf.nvidia.com/signer-identity",
     "apf.nvidia.com/document-digest",
     "apf.nvidia.com/policy-version",
-    "apf.nvidia.com/provenance-token",
+    APF_PROVENANCE_TOKEN,
 ];
+/// APF's token for the policy it issued, new with each issue.
+const APF_PROVENANCE_TOKEN: &str = "apf.nvidia.com/provenance-token";
 
-/// Who authored an observed sandbox's policy. An APF-governed sandbox must
-/// carry APF's provenance. The token's signature is not verified here yet.
+/// Who authored an observed sandbox's policy, and for an APF-governed
+/// sandbox, APF's provenance token: empty when APF's provenance is incomplete.
+/// The token's signature is not verified here yet.
 fn policy_authority(
     annotations: &std::collections::HashMap<String, String>,
-) -> Result<&'static str, ObservationError> {
+) -> Result<(&'static str, String), ObservationError> {
     match annotations
         .get(POLICY_AUTHORITY_ANNOTATION)
         .map(String::as_str)
     {
-        None => Ok(""),
-        Some("apf")
-            if APF_PROVENANCE
+        None => Ok(("", String::new())),
+        Some("apf") => {
+            let complete = APF_PROVENANCE
                 .iter()
-                .all(|key| annotations.get(*key).is_some_and(|v| !v.is_empty())) =>
-        {
-            Ok("apf")
+                .all(|key| annotations.get(*key).is_some_and(|v| !v.is_empty()));
+            let token = annotations
+                .get(APF_PROVENANCE_TOKEN)
+                .filter(|_| complete)
+                .cloned()
+                .unwrap_or_default();
+            Ok(("apf", token))
         }
         Some(_) => Err(ObservationError::BindingMismatch),
     }
 }
 
+/// Plan APF to issue its policy again to a governed sandbox whose loaded policy
+/// was observed not to be the one APF issued; carry the token otherwise.
+fn reissue_when_unproven(
+    name: &str,
+    prior: &nemoclaw_tofu::State,
+) -> Option<tf_provider::value::Value<String>> {
+    use tf_provider::value::Value;
+    let governed = matches!(prior.get(POLICY_AUTHORITY), Some(Value::Value(a)) if a == "apf");
+    match prior.get(name) {
+        Some(Value::Value(token)) if governed && token.is_empty() => Some(Value::Unknown),
+        _ => nemoclaw_tofu::carry_prior(name, prior),
+    }
+}
+
 /// The state attribute recording the loaded policy revision's hash.
 pub(crate) const POLICY_HASH: &str = "policy_hash";
+/// The state attribute recording APF's provenance token for an APF-governed
+/// sandbox's loaded policy. Empty when that policy is not the one APF issued,
+/// which plans asking APF to issue it again.
+pub(crate) const POLICY_PROVENANCE: &str = "policy_provenance";
+/// The loaded policy revision's version, which an observation carries to the
+/// provider's checks and removes before it is recorded.
+pub(crate) const LOADED_VERSION: &str = "loaded_policy_version";
 /// The state attribute recording why OpenShell reports the sandbox exited:
 /// its terminal phase, reason, and exit code. A sandbox that exited plans a
 /// replacement.
@@ -656,6 +685,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "driver_config_json",
             services::FIELD,
             POLICY_HASH,
+            POLICY_PROVENANCE,
             EXITED,
         ])
         // Omission means NemoClaw authors the policy, not the previous value.
@@ -666,6 +696,9 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
         // The loaded policy's hash, OpenShell's additions included; later
         // observations must find the same one.
         .computed(POLICY_HASH, nemoclaw_tofu::carry_prior)
+        // APF's token for an APF-governed sandbox's loaded policy; a policy APF
+        // did not issue is planned to be issued again in place.
+        .computed(POLICY_PROVENANCE, reissue_when_unproven)
         // OpenShell doesn't restart an exited sandbox, so it is replaced.
         .computed(EXITED, nemoclaw_tofu::replace_when_observed)
         .replace_on_change(&[EXITED]),
