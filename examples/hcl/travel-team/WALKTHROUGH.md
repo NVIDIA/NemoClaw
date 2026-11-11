@@ -145,7 +145,7 @@ resource "openshell_api" "bookings" {
 
 This registers the booking service's key for the buyer's executables only.
 OpenShell puts the key into a request in place of its placeholder, so the agent never sees the key itself.
-Hermes doesn't send that placeholder to MCP servers yet, so for now the service receives no key; [#13313](https://github.com/NVIDIA/NemoClaw/issues/13313) tracks it.
+Hermes doesn't send that placeholder to MCP servers yet, so for now the service receives no key; [#14417](https://github.com/NVIDIA/NemoClaw/issues/14417) tracks it.
 
 ## `policies.tf`: Network Grants
 
