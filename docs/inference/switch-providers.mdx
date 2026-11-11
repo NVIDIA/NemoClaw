@@ -34,7 +34,15 @@ This local selection requires the NIM container and endpoint recorded for the sa
 When switching back from another provider, an onboarding session matching the sandbox, provider, and model can supply that metadata.
 The endpoint must match the NIM runtime, and that runtime must serve the requested model.
 Missing or inconsistent NIM state stops the switch before mutation; it does not select hosted NVIDIA Endpoints or standalone vLLM.
-Rerun onboarding for the affected sandbox with `NEMOCLAW_PROVIDER=nim-local` to repair its recorded selection, then retry the switch.
+Resume onboarding only when the saved session matches the affected sandbox and requested NIM model.
+Use that sandbox name and model in the recovery command:
+
+```bash
+NEMOCLAW_PROVIDER=nim-local NEMOCLAW_MODEL="<model>" $$nemoclaw onboard --resume --name <sandbox-name>
+```
+
+If no matching session exists, inspect the recorded onboarding state before attempting recovery.
+After onboarding succeeds, retry the switch with `--sandbox <sandbox-name>`.
 Endpoint, API-family, and credential overrides do not apply to this local selection.
 
 If a provider is outside the catalog, NemoClaw checks for its exact name on the selected sandbox's verified gateway.

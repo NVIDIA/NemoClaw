@@ -30,3 +30,21 @@ export function expectedWorkflowPlanCiOutput(
     "",
   ].join("\n");
 }
+
+export const expectedScopePatchExecutionIds = [
+  "agent-turn-latency-default-docker",
+  "agent-turn-latency-default-podman",
+  "full-e2e-default-docker",
+  "full-e2e-default-podman",
+  "llama-cpp-generic-gpu-default-docker",
+  "messaging-compatible-endpoint-default-docker",
+  "messaging-compatible-endpoint-default-podman",
+  "openclaw-compatible-anthropic-inference-switch-anthropic-docker",
+  "openclaw-compatible-anthropic-inference-switch-anthropic-podman",
+  "openclaw-inference-switch-default-docker",
+  "openclaw-inference-switch-default-podman",
+  "openclaw-registered-provider-inference-switch-registered-provider-docker",
+  "openclaw-registered-provider-inference-switch-registered-provider-podman",
+  "openclaw-skill-cli-default-docker",
+  "openclaw-skill-cli-default-podman",
+];
