@@ -505,7 +505,7 @@
           "x-nemoclaw-error": "annotation keys must be Kubernetes qualified names outside nemoclaw.nvidia.com/"
         },
         "loadBalancerSourceRanges": {
-          "description": "LoadBalancer only: client CIDRs the load balancer admits. Load-balancer implementations differ in whether they enforce it, and it never covers node ports.",
+          "description": "LoadBalancer only: client CIDRs the load balancer admits. It must admit the host that runs NemoClaw, which dials the endpoint for every plan, apply, and destroy. Load-balancer implementations differ in whether they enforce it, and it never covers node ports.",
           "items": {
             "pattern": "^(?:(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:3[0-2]|[12]?[0-9])|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*/(?:12[0-8]|1[01][0-9]|[1-9]?[0-9]))$",
             "type": "string",

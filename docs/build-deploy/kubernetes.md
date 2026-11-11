@@ -197,6 +197,24 @@ spec:
 
 **Both types listen on every node.**
 A `LoadBalancer` Service also gets a node port that Kubernetes allocates, and `loadBalancerSourceRanges` never covers node ports; load-balancer implementations also differ in whether they enforce it.
+
+**`loadBalancerSourceRanges` must admit the host that runs NemoClaw.**
+Plan, apply, and destroy dial the endpoint, so the ranges must include that host's address as the load balancer sees it.
+Where the load balancer enforces the ranges, apply sets ranges that exclude the host on the Service, then fails with `observation transport failed`.
+Every later plan, apply, or destroy fails the same way before it changes anything, even with corrected YAML.
+To recover, set ranges that admit the host on the Service, which is the namespace's Service ending in `-exposure`, then apply YAML with the same ranges:
+
+```sh
+deployment_context=my-cluster
+deployment_namespace=nemoclaw-development
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" get services
+exposure_service=REPLACE_WITH_EXPOSURE_SERVICE_NAME
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  patch service "$exposure_service" --type merge \
+  --patch '{"spec":{"loadBalancerSourceRanges":["10.20.0.0/16"]}}'
+nemoclaw apply --state-dir .local/kubernetes deployment.yaml
+```
+
 Sandbox [service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) skip the gateway's sign-in, so anyone who reaches the endpoint with a service's host name reaches that service, which must authenticate its own clients.
 The URLs that apply prints don't open remotely yet ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
 

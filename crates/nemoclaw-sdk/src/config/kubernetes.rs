@@ -58,7 +58,7 @@ pub struct ExposureService {
     /// `NodePort` listens on the endpoint's port, from 30000 through 32767, on every node. `LoadBalancer` asks the cluster's load-balancer implementation for an address, requires the `oidc` authentication profile, and also listens on a node port Kubernetes allocates.
     #[serde(rename = "type")]
     pub service_type: ExposureServiceType,
-    /// LoadBalancer only: client CIDRs the load balancer admits. Load-balancer implementations differ in whether they enforce it, and it never covers node ports.
+    /// LoadBalancer only: client CIDRs the load balancer admits. It must admit the host that runs NemoClaw, which dials the endpoint for every plan, apply, and destroy. Load-balancer implementations differ in whether they enforce it, and it never covers node ports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 32))]
     pub load_balancer_source_ranges: Vec<String>,
