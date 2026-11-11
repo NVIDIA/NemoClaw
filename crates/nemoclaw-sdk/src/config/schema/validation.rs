@@ -224,7 +224,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     property(
         &mut defs["Spec"],
         "sandboxes",
-        json!({"minProperties":1,"maxProperties":32,"propertyNames": {"pattern": c::SLUG}}),
+        json!({"minProperties":1,"propertyNames": {"pattern": c::SLUG}}),
     );
     defs["Sandbox"]["allOf"] = json!([]);
     optional_string(
@@ -459,6 +459,19 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
         }
     }));
+    // The gateway runtime sets the sandbox cap. It lives only here, so an
+    // error names the cap that applies, and editors apply it as the parser does.
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
+        "then": at("spec/sandboxes", json!({
+            "maxProperties": c::CLUSTER_SANDBOXES,
+            "x-nemoclaw-error": format!("a document holds at most {} sandboxes with a Kubernetes or OpenShift gateway, which bounds what one gateway and state affect; split a larger fleet across documents", c::CLUSTER_SANDBOXES)
+        }), false),
+        "else": at("spec/sandboxes", json!({
+            "maxProperties": c::HOST_SANDBOXES,
+            "x-nemoclaw-error": format!("a document holds at most {} sandboxes with a Docker or Podman gateway, which runs every sandbox on one host; Kubernetes and OpenShift allow {}", c::HOST_SANDBOXES, c::CLUSTER_SANDBOXES)
+        }), false)
+    }));
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
@@ -470,7 +483,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
         "Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.",
         "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
-        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
+        "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 providers attached to one sandbox (its inference providers, web search, and api integrations, OpenShell's limit per sandbox), incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
         "The parser checks memory threshold ordering and GPU/KV budget relationships; that a recipe's GPU belongs to a hardware profile's GPU family; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
     ]);

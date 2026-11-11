@@ -672,8 +672,6 @@ fn sandboxes_are_keyed_by_name() {
         ))
     };
     agrees(&validator, &count(0), false);
-    agrees(&validator, &count(32), true);
-    agrees(&validator, &count(33), false);
 
     // Schema errors name a valid sandbox key.
     let mut invalid = keyed.clone();
@@ -685,6 +683,53 @@ fn sandboxes_are_keyed_by_name() {
         error.contains("spec.sandboxes.reviewer.agent.name"),
         "{error}"
     );
+}
+
+/// Kubernetes and OpenShift schedule sandboxes across a cluster's nodes, so a
+/// document holds up to 256; Docker and Podman run every sandbox on one host
+/// and keep 32. Editors and the parser apply the same cap.
+#[test]
+fn the_gateway_runtime_sets_how_many_sandboxes_a_document_holds() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (example, cap, runtime) in [
+        ("kubernetes/managed-development.yaml", 256, "Kubernetes"),
+        ("kubernetes/external-gateway.yaml", 256, "Kubernetes"),
+        ("openshift/managed-development.yaml", 256, "OpenShift"),
+        ("local.yaml", 32, "Docker"),
+        // An omitted runtime selects Docker.
+        ("web-search.yaml", 32, "Docker"),
+        ("managed-podman.yaml", 32, "Podman"),
+    ] {
+        let value = input(example);
+        let sandbox = value["spec"]["sandboxes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        let count = |count: usize| {
+            let mut value = value.clone();
+            value["spec"]["sandboxes"] = Value::Object(
+                (0..count)
+                    .map(|index| (format!("sandbox-{index}"), sandbox.clone()))
+                    .collect(),
+            );
+            value
+        };
+        agrees(&validator, &count(cap), true);
+        let over = count(cap + 1);
+        agrees(&validator, &over, false);
+        let error = Document::parse(over.to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("spec.sandboxes")
+                && error.contains(&format!("at most {cap} sandboxes"))
+                && error.contains(runtime),
+            "{example}: {error}"
+        );
+    }
 }
 
 #[test]

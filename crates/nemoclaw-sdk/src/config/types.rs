@@ -39,7 +39,7 @@ pub struct Metadata {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.
+/// The configuration requires at least one named sandbox and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.
 pub struct Spec {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
@@ -69,7 +69,7 @@ pub struct Spec {
     /// Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements.
     pub inference_providers: std::collections::BTreeMap<String, InferenceProvider>,
     #[serde(rename = "sandboxes")]
-    /// One to 32 named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.
+    /// Named sandboxes: one to 256 with a kubernetes or openshift gateway runtime, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent.
     pub sandboxes: std::collections::BTreeMap<String, Sandbox>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(default, length(max = 32))]

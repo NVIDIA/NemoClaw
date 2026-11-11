@@ -4,7 +4,8 @@
 # Configure Inference APIs, Limits, and Authentication
 
 Choose who operates the inference service, then select the API and model used by the agent.
-A deployment can select up to 32 inference providers across its sandboxes.
+A sandbox can attach up to 32 providers, OpenShell's limit per sandbox: each inference provider its routes select counts one, as do its web search and each `api` integration.
+A deployment's sandboxes together can select more.
 Use a route-inline `provider` or select an enclosing `inferenceProviders` definition with `providerRef`; see [definitions and references](../build-deploy/configuration-references.md).
 
 Use current images and verify your chosen harness and model; passing tests for one combination do not qualify another.

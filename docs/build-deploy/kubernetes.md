@@ -74,6 +74,20 @@ For OpenShift's internal registry, reference the copy by the address nodes pull 
 Set the environment variable named in `image.metadata` to the bundle's path before each command.
 See [Build agent images](build.md#build-agent-images) for the harnesses each platform builds.
 
+### Sandbox Count and Cluster Size
+
+A document holds up to 256 sandboxes with a `kubernetes` or `openshift` gateway; Docker and Podman keep 32, because they run every sandbox on one host.
+A document has one gateway, one namespace and one OpenTofu state, so the cap also bounds what one gateway outage or one slow plan affects; split a larger fleet across documents.
+
+Size the cluster for the sandboxes you declare:
+
+- **Pods:** each sandbox runs in its own pod. At the kubelet's default of 110 pods per node, 256 sandboxes need at least three nodes, plus room for the gateway, the issuer and the cluster's own pods.
+- **Storage:** a managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless `workspace_storage_class` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) names another.
+- **Gateway:** the managed gateway is limited to 1 CPU and 1 GiB of memory, and the limit can't be changed yet ([#13835](https://github.com/NVIDIA/NemoClaw/issues/13835)).
+  No apply of 256 sandboxes has been recorded, so it is unverified whether the gateway serves that many at this limit ([#14403](https://github.com/NVIDIA/NemoClaw/issues/14403)).
+
+Each sandbox also attaches at most 32 providers, OpenShell's limit; see [inference](../agents-inference/inference.md).
+
 ## Deploy with a Managed Gateway
 
 The SDK binds the namespace, creating it if it doesn't exist, adds a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
