@@ -3,7 +3,7 @@
 
 # Documentation Index
 
-These guides describe NemoClaw v1. The operational updates beyond the first-deployment tutorial reflect inspected implementation `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`; use a matched checkout and bundle when following them. The published [v1 field reference](references/v1-configuration.md) is a snapshot generated at that implementation revision. This checkout's [generator-owned reference](reference/configuration.md) has the same named-map configuration shape but differs on three optional field types; use the snapshot and schema from the bundle's source revision when checking field types. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
+These guides describe NemoClaw v1. They reflect the implementation inspected at `origin/v1` revision `637bdb6276309ea71d1f1fcb68fff518fe2db926`; use a matched checkout and bundle when following them. The [field reference](reference/configuration.md) and its JSON Schema are generated from this checkout's SDK. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
 [Current limits](resources/limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
 
 ## About
@@ -65,12 +65,12 @@ Use operation output and runtime evidence to identify where a deployment or agen
 
 ## References
 
-Look up the pinned v1 interface contract before adapting a command, configuration, or SDK call.
+Look up the interface contract of your source revision before adapting a command, configuration, or SDK call.
 
 | Reader goal | Guide |
 |---|---|
 | Look up commands and options | [CLI](references/cli.md) |
-| Look up fields for the pinned v1 source | [V1 configuration reference](references/v1-configuration.md) |
+| Look up configuration fields | [YAML configuration reference](reference/configuration.md) |
 | Compare harness descriptors and examples | [Fabric harnesses](references/fabric-harnesses.md) |
 | Integrate with the Rust API or OpenTofu | [SDK](references/sdk.md), [provider](references/provider.md) |
 | Check release guarantees | [Compatibility](references/compatibility.md) |

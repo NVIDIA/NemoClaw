@@ -6,7 +6,7 @@
 Choose a harness before selecting an image, inference API, and management mode.
 The table lists maintained examples, not a closed set of supported identifiers or live qualification of every model and host.
 Available adapters and native settings constraints come from canonical Fabric descriptors packaged in the selected image.
-Onboarding offers choices from the bundled catalog; without target metadata, compatibility remains unknown.
+Onboarding offers OpenClaw and Hermes; a template that names another harness from the bundled catalog keeps it as the suggested answer. Without target metadata, compatibility remains unknown.
 Use [inference API selection](../agents-inference/inference.md#choose-the-request-api) for the protocol restrictions and [agent access](../agents-inference/agents.md#choose-native-access) for interaction and session behavior.
 
 | `harness.kind` | Agents per sandbox | Gateway and inference management | Maintained example |
@@ -41,4 +41,4 @@ Keep the image, schema, and bundle matched to the desired configuration.
 
 The [configuration validator](../../crates/nemoclaw-sdk/src/config/validation.rs) checks deployment structure and transport contracts.
 [Fabric compatibility assessment](../../crates/nemoclaw-fabric/src/capabilities.rs) checks the advertised native constraints for both onboarding and OpenTofu planning.
-The [first-request procedure](../agents-inference/agents.md#run-one-agent-request) has been rehearsed with Hermes, Deep Agents, Pi and OpenCode; a tested harness, model and platform matrix is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
+The [first-request procedure](../agents-inference/agents.md#run-one-agent-request) is the same for every harness; a tested harness, model and platform matrix is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).

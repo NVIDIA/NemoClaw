@@ -76,7 +76,7 @@ Access paths and diagnostic signals depend on the gateway and harness in use.
 | The OpenClaw request walkthrough, rehearsed once OpenClaw starts in a sandbox | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
 | A live rehearsal against an external gateway that requires an issuer or mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | An error shows `child output exceeds the supported limit` in place of a command's OpenTofu diagnostics once together they exceed 16 KiB, such as several managed services' [stop details](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime) | [#14399](https://github.com/NVIDIA/NemoClaw/issues/14399) |
-| A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli), and those steps have not been run on a cluster | By design: the development issuer serves only NemoClaw |
+| A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli), which no automated test covers | By design: the development issuer serves only NemoClaw |
 
 ## Data and Cleanup
 

@@ -99,7 +99,7 @@ Each provider that reaches such a gateway opens its own port forward on a free l
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
 Objects keep their gateway connection in state, so refresh and removal reach the same gateway without provider configuration.
 Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects, sandboxes included, and the retained workspace refuses it.
-These schemas are version 1; state from an earlier provider is rejected rather than upgraded.
+These schemas are version 2; state from an earlier provider is rejected rather than upgraded.
 When a registration names a managed vLLM or Ollama proxy credential, the provider reads the key from the owning container during apply, so the key never enters OpenTofu state.
 
 Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
@@ -111,7 +111,6 @@ Objects name each other by `ref`, never by separate name strings:
 A consumer checks the ref's `type` and rejects a ref of another type.
 It keeps only the ref attributes it uses, so a ref can be fully known during planning before the referenced object's ID exists.
 Changing a referenced object's name or replacing it replaces its consumers, subject to the replacement protections below.
-These schemas are version 1; state recorded by an earlier provider schema is rejected rather than upgraded.
 
 Other inputs are typed too:
 
@@ -124,7 +123,7 @@ Other inputs are typed too:
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
 - `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
-  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/runtimes.mdx).
+  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
   It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, replaces the sandbox, as for the image; see [change paths](../build-deploy/usage.md#choose-the-change-path).
 - `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
@@ -656,7 +655,7 @@ After correcting compatibility or access, reapply the same configuration with it
 Teardown omits the capability gates so a version or driver mismatch alone does not prevent cleanup.
 
 [OpenShell contract tests](../../crates/openshell-provider/tests/contract) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
-[Deployment fixtures](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-e2e/tests/integration/deployment.rs) and [Fabric lifecycle fixtures](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-e2e/tests/integration/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
+[Deployment fixtures](../../crates/nemoclaw-e2e/tests/integration/rust/deployment.rs) and [Fabric lifecycle fixtures](../../crates/nemoclaw-e2e/tests/integration/rust/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
 Starting and stopping agent runtimes is owned by `fabric_agent`; an unchanged apply leaves the running runtime alone.
 Its inputs compose the canonical public Fabric configuration, separate from immutable sandbox identity.
 
