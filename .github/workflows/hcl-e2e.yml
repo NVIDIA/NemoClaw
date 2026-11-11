@@ -92,7 +92,7 @@ jobs:
           case "$TARGET" in
             rtx-pro-6000) runner=linux-amd64-gpu-rtxpro6000-latest-1 platform=linux_amd64 ;;
             dgx-station)
-              [[ $GITHUB_REF == refs/heads/v1 && $GITHUB_EVENT_NAME == workflow_dispatch && -z $TESTS ]]
+              [[ $GITHUB_REF == refs/heads/v1 && $GITHUB_EVENT_NAME == workflow_dispatch && -z $TESTS ]] || exit 1
               runner=colossus-gb300-pilot platform=linux_arm64 ;;
             dgx-spark) echo 'DGX Spark is not qualified yet.' >&2; exit 1 ;;
             *) echo "Unknown target: $TARGET" >&2; exit 1 ;;
