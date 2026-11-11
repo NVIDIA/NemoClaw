@@ -287,16 +287,20 @@ fn container(target: &Target) -> Result<Value, Error> {
         crate::managed::Gpus::None => {}
         crate::managed::Gpus::All => attrs["gpus"] = json!("all"),
         // Docker provider v4.6.0 splits `gpus` on commas, so it would read
-        // `device=0,1` as GPU 0 and a count of 1, a request Docker refuses.
-        // The parser allows one device until multi-GPU serving exists.
-        crate::managed::Gpus::Devices(devices) => match devices.as_slice() {
-            [device] => attrs["gpus"] = json!(format!("device={device}")),
-            _ => {
-                return Err(Error::Conflict(
-                    "the pinned Docker provider can't request several GPU devices through gpus",
-                ));
+        // `device=0,1` as GPU 0 and a count of 1, a request Docker refuses
+        // (https://github.com/kreuzwerker/terraform-provider-docker/issues/1019);
+        // several GPUs use its `device_requests` block until a release fixes it.
+        crate::managed::Gpus::Devices(devices) => {
+            if let [device] = devices.as_slice() {
+                attrs["gpus"] = json!(format!("device={device}"));
+            } else {
+                attrs["device_requests"] = json!([{
+                    "driver": crate::managed::gpu_device_driver(devices),
+                    "device_ids": devices,
+                    "capabilities": ["gpu"],
+                }]);
             }
-        },
+        }
     }
     // Labels force replacement because Docker provider v4.6.0 updates limits in
     // place: its Update omits CFS quota, and lowering memory on a running
@@ -1092,12 +1096,12 @@ mod tests {
             );
         }
     }
-    // The parser allows one GPU device for now. A list reaches Docker's native
-    // request whole, but Docker provider v4.6.0 reads `device=0,1` as one
-    // device and a count, so the OpenTofu graph refuses it instead of
-    // requesting the wrong GPUs.
+    // Docker provider v4.6.0 reads `gpus = "device=0,1"` as one device and a
+    // count, so one GPU keeps `gpus` and a list uses a `device_requests`
+    // block. The native request names the same driver, IDs, and capability.
     #[test]
-    fn several_gpu_devices_reach_the_native_request_and_are_refused_for_the_docker_provider() {
+    fn several_gpu_devices_reach_docker_as_one_nvidia_device_request() {
+        const UUID: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
         let document =
             Document::parse(include_bytes!("../tests/fixtures/config/spark.yaml").as_slice())
                 .unwrap();
@@ -1109,21 +1113,40 @@ mod tests {
             .iter_mut()
             .find(|target| target.kind == "inference_service")
             .unwrap();
-        let devices = vec![
-            "0".to_owned(),
-            "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3".to_owned(),
-        ];
-        let mut spec = spec(service).unwrap();
-        spec.process.as_mut().unwrap().gpus = crate::managed::Gpus::Devices(devices.clone());
-        let host = spec.container("/data").unwrap().host_config.unwrap();
-        let requests = host.device_requests.unwrap();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].device_ids, Some(devices));
-        assert_eq!(requests[0].count, None);
-        service
-            .values
-            .insert("spec".into(), serde_json::to_string(&spec).unwrap());
-        let error = container(service).unwrap_err().to_string();
-        assert!(error.contains("several GPU devices"), "{error}");
+        for (devices, driver) in [
+            (vec!["1"], ""),
+            (vec![UUID, "0"], "nvidia"),
+            (vec!["2", "0", "1"], "nvidia"),
+        ] {
+            let devices: Vec<String> = devices.into_iter().map(str::to_owned).collect();
+            let mut spec = spec(service).unwrap();
+            spec.process.as_mut().unwrap().gpus = crate::managed::Gpus::Devices(devices.clone());
+            let host = spec.container("/data").unwrap().host_config.unwrap();
+            let requests = host.device_requests.unwrap();
+            assert_eq!(requests.len(), 1, "{devices:?}");
+            assert_eq!(requests[0].driver.as_deref(), Some(driver), "{devices:?}");
+            assert_eq!(requests[0].device_ids, Some(devices.clone()), "{devices:?}");
+            assert_eq!(requests[0].count, None, "{devices:?}");
+            assert_eq!(
+                requests[0].capabilities,
+                Some(vec![vec!["gpu".to_owned()]]),
+                "{devices:?}"
+            );
+            service
+                .values
+                .insert("spec".into(), serde_json::to_string(&spec).unwrap());
+            let attrs = container(service).unwrap();
+            if let [device] = devices.as_slice() {
+                assert_eq!(attrs["gpus"], format!("device={device}"));
+                assert!(attrs.get("device_requests").is_none(), "{attrs}");
+            } else {
+                assert!(attrs.get("gpus").is_none(), "{attrs}");
+                assert_eq!(
+                    attrs["device_requests"],
+                    json!([{"driver": "nvidia", "device_ids": devices, "capabilities": ["gpu"]}]),
+                    "{devices:?}"
+                );
+            }
+        }
     }
 }

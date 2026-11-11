@@ -52,6 +52,41 @@ impl Readiness {
     }
 }
 
+/// The most of a runtime's detail an error carries: the process output the
+/// runtime bounds, and room for the runtime's own message.
+const DETAIL_LIMIT: usize = nemoclaw_runtime::EXITED_OUTPUT_LIMIT + 1024;
+
+/// The error for a runtime that stopped, with the reason it recorded when the
+/// status is this container's.
+fn stopped(status: Option<super::status::RuntimeStatus>, unexplained: &'static str) -> Error {
+    match status {
+        Some(status)
+            if status.phase == "stopped"
+                && !status.detail.is_empty()
+                && status.detail.len() <= DETAIL_LIMIT =>
+        {
+            Error::ServiceStopped(printable(&status.detail))
+        }
+        _ => Error::State(unexplained),
+    }
+}
+
+/// The runtime's text with control characters escaped, except line breaks and
+/// tabs, so it can't instruct a terminal.
+fn printable(text: &str) -> String {
+    text.chars()
+        .flat_map(|character| {
+            if (character.is_control() && !matches!(character, '\n' | '\t'))
+                || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+            {
+                character.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![character]
+            }
+        })
+        .collect()
+}
+
 pub async fn wait_service_ready(
     connections: &Connections,
     readiness: &Readiness,
@@ -120,13 +155,23 @@ pub async fn wait_service_ready(
                 .await?
                 .ok_or(Error::State("service runtime is unobservable"))?;
             if !running {
-                return Err(Error::State(
+                // The runtime records why it stopped before it exits.
+                let status = match &started_at {
+                    Some(started_at) => {
+                        super::status::read(&engine, kind, container_id, started_at)
+                            .await
+                            .ok()
+                    }
+                    None => None,
+                };
+                return Err(stopped(
+                    status,
                     "service stopped during readiness; inspect logs and reapply",
                 ));
             }
             let started_at = started_at.ok_or(crate::ObservationError::Incomplete)?;
-            let phase = super::status::phase(&engine, kind, container_id, &started_at).await?;
-            match phase.as_str() {
+            let status = super::status::read(&engine, kind, container_id, &started_at).await?;
+            match status.phase.as_str() {
                 "ready" => {
                     if authenticated {
                         super::authentication::read_service_key(&engine, container_id).await?;
@@ -134,7 +179,8 @@ pub async fn wait_service_ready(
                     return Ok(());
                 }
                 "stopped" => {
-                    return Err(Error::State(
+                    return Err(stopped(
+                        Some(status),
                         "service protection stopped the runtime; reapply is required",
                     ));
                 }
