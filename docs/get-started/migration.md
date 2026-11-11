@@ -34,7 +34,7 @@ Choose the current owner of the task rather than translating earlier CLI command
 
 Use a fresh deployment UUID, separate state directory, and resource names/endpoints that do not collide with the earlier deployment.
 Copying YAML does not migrate native settings or conversations, and reusing names does not transfer ownership.
-Use the [field reference for the pinned v1 revision](../references/v1-configuration.md) with its matching schema and images built for the selected features.
+Use the [field reference](../reference/configuration.md) from the bundle's source revision with its matching schema and images built for the selected features.
 
 The [validator](../../crates/nemoclaw-sdk/src/config/validation.rs) rejects unsupported combinations, and [state validation](../../crates/nemoclaw-sdk/src/state/mod.rs) rejects incompatible retained intent.
 These checks are not a conversion mechanism.
