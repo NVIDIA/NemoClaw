@@ -48,7 +48,7 @@ function inspectionDiagnostics(
       );
     if (!match || !phases.has(match[1]!)) continue;
     const duration = Number(match[2]);
-    if (!Number.isFinite(duration) || duration > 60_000) continue;
+    if (!Number.isFinite(duration) || duration > 90_000) continue;
     lastCompletedPhase = match[1];
     phaseStatus = match[3];
     phaseMs = duration;
@@ -128,7 +128,7 @@ export function inspectOfficialOpenClawPluginInstall(
   const result = spawnSync("openclaw", ["plugins", "inspect", identity.pluginId, "--json"], {
     encoding: "utf8",
     env: { ...env, OPENCLAW_PLUGIN_LIFECYCLE_TRACE: "1" },
-    timeout: 60_000,
+    timeout: 90_000,
     killSignal: "SIGKILL",
     ...(ownsProcessGroup ? { detached: true } : {}),
     maxBuffer: 64 * 1024 * 1024,

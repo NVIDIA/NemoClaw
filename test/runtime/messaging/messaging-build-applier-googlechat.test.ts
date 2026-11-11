@@ -234,7 +234,7 @@ it.skipIf(process.platform === "win32")(
     try {
       const timedOut = spawnSync(process.execPath, CLI_ARGS, {
         encoding: "utf8",
-        timeout: 70_000,
+        timeout: 100_000,
         killSignal: "SIGKILL",
         env: {
           ...env,
@@ -257,7 +257,7 @@ it.skipIf(process.platform === "win32")(
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   },
-  75_000,
+  105_000,
 );
 
 it.runIf(process.platform === "win32")(
@@ -267,7 +267,7 @@ it.runIf(process.platform === "win32")(
     try {
       const timedOut = spawnSync(process.execPath, CLI_ARGS, {
         encoding: "utf8",
-        timeout: 70_000,
+        timeout: 100_000,
         killSignal: "SIGKILL",
         env: { ...env, OPENCLAW_INSPECTION_HANG: "1" },
       });
@@ -278,7 +278,7 @@ it.runIf(process.platform === "win32")(
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   },
-  75_000,
+  105_000,
 );
 
 it("patches the installed official Slack bundle only after registry provenance is verified", async () => {
