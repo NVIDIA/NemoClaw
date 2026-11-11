@@ -799,6 +799,7 @@ install_macos_homebrew_formula() {
   [ "$actual_sha" = "$expected_sha" ] \
     || fail "OpenShell Homebrew formula checksum does not match NemoClaw-pinned $RELEASE_TAG digest"
   formula_operation_pin="$expected_sha"
+  info "OpenShell Homebrew formula SHA-256 verified"
 
   formula_ref="${HOMEBREW_TAP}/${HOMEBREW_FORMULA_NAME}"
   tap_formula_file="$(homebrew_formula_path "$HOMEBREW_TAP" "$HOMEBREW_FORMULA_NAME")"
