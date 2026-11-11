@@ -111,6 +111,14 @@ pub struct Settings {
     #[schemars(default)]
     /// VLLM_* variables mapped to paths beneath verified prepared data; . selects its root. Names must not also appear in environment.
     pub prepared_environment: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    /// vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts.
+    pub tensor_parallel_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    /// vLLM's --pipeline-parallel-size: how many GPU stages each hold a range of layers.
+    pub pipeline_parallel_size: Option<u64>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

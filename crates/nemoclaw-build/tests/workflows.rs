@@ -112,12 +112,15 @@ fn colossus_runs_are_manual_and_v1_only() {
     assert_eq!(events.len(), 1, "the pilot runner takes manual runs only");
     let suite = &workflow["on"]["workflow_dispatch"]["inputs"]["suite"];
     assert_eq!(suite["type"], "choice");
-    assert_eq!(suite["options"], serde_json::json!(["smoke", "bundle"]));
+    assert_eq!(
+        suite["options"],
+        serde_json::json!(["smoke", "bundle", "station"])
+    );
     assert_eq!(suite["default"], "smoke");
     let jobs = workflow["jobs"].as_object().expect("workflow jobs");
     assert_eq!(
         jobs.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["bundle", "smoke"]
+        ["bundle", "smoke", "station"]
     );
     for (name, job) in jobs {
         assert_eq!(
@@ -139,9 +142,9 @@ fn colossus_runs_are_manual_and_v1_only() {
     );
 }
 
-/// The smoke observes the GPU without checkout, credentials, or deployment.
+/// The smoke test checks GPU access without a checkout or credentials.
 #[test]
-fn colossus_smoke_checks_the_gpu_without_credentials() {
+fn colossus_smoke_checks_gpu_access_without_credentials() {
     let workflow = colossus_workflow();
     let job = &workflow["jobs"]["smoke"];
     assert_eq!(job["runs-on"], "colossus-gb300-pilot");
@@ -158,45 +161,6 @@ fn colossus_smoke_checks_the_gpu_without_credentials() {
     assert!(steps[0]["env"].is_null(), "no step environment variables");
     assert_eq!(steps[0]["shell"], "bash");
     assert_eq!(steps[0]["run"], "nvidia-smi");
-}
-
-#[test]
-fn station_is_manual_v1_only_and_always_checks_cleanup() {
-    let workflow: Value = serde_saphyr::from_str(
-        &fs::read_to_string(repository().join(".github/workflows/station.yml")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        workflow["on"],
-        serde_json::json!({"workflow_dispatch": null})
-    );
-    assert_eq!(workflow["concurrency"], colossus_workflow()["concurrency"]);
-    assert_eq!(workflow["permissions"], serde_json::json!({}));
-    assert!(!workflow.to_string().contains("secrets"));
-    let job = &workflow["jobs"]["station"];
-    assert_eq!(
-        job["if"],
-        "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'"
-    );
-    assert_eq!(job["runs-on"], "colossus-gb300-pilot");
-    assert_eq!(job["env"]["TEST_PLATFORM"], "linux_arm64");
-    assert_eq!(workflow["concurrency"]["cancel-in-progress"], false);
-    let steps = job["steps"].as_array().unwrap();
-    assert!(
-        !steps
-            .iter()
-            .any(|step| step["uses"] == "./.github/actions/containerd-store"),
-        "the leased host's Docker configuration must not be mutated"
-    );
-    let cleanup = steps
-        .iter()
-        .find(|step| step["name"] == "Destroy and independently verify runtime cleanup")
-        .unwrap();
-    assert_eq!(cleanup["if"], "always()");
-    assert!(
-        cleanup["continue-on-error"].is_null(),
-        "cleanup failure fails the job"
-    );
 }
 
 /// The bundle suite runs the Linux ARM64 bundle, unit, contract, and
@@ -314,8 +278,11 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
         .collect();
     assert_eq!(
         callers,
-        [".github/workflows/e2e-platform.yml: gpu"],
-        "only the E2E platform workflow, which has the artifacts, calls Live / HCL"
+        [
+            ".github/workflows/colossus-connectivity.yml: station",
+            ".github/workflows/e2e-platform.yml: gpu"
+        ],
+        "the manual Colossus entry and the E2E platform workflow call Live / HCL"
     );
 
     let platform = read(".github/workflows/e2e-platform.yml");
@@ -577,4 +544,85 @@ runs:
         problems,
         [".github/allowed-actions.yml lists third-party/action@approved, which no workflow uses"]
     );
+}
+
+/// Station is an explicit manual target; the existing artifact callers keep RTX.
+#[test]
+#[cfg(unix)]
+fn hcl_target_selection_preserves_rtx_and_bounds_station_to_manual_v1() {
+    let caller = colossus_workflow()["jobs"]["station"].clone();
+    assert_eq!(caller["uses"], "./.github/workflows/hcl-e2e.yml");
+    assert_eq!(
+        caller["with"],
+        serde_json::json!({"target":"dgx-station", "hosted":false})
+    );
+    let workflow: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/hcl-e2e.yml")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        workflow["on"]["workflow_call"]["inputs"]["target"]["default"],
+        "rtx-pro-6000"
+    );
+    let script = workflow["jobs"]["cases"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"] == "target")
+        .unwrap()["run"]
+        .as_str()
+        .unwrap();
+    for (target, reference, event, tests, expected) in [
+        (
+            "rtx-pro-6000",
+            "refs/heads/v1",
+            "push",
+            "artifacts",
+            Some("runner=linux-amd64-gpu-rtxpro6000-latest-1\nplatform=linux_amd64\n"),
+        ),
+        (
+            "dgx-station",
+            "refs/heads/v1",
+            "workflow_dispatch",
+            "",
+            Some("runner=colossus-gb300-pilot\nplatform=linux_arm64\n"),
+        ),
+        (
+            "dgx-station",
+            "refs/heads/main",
+            "workflow_dispatch",
+            "",
+            None,
+        ),
+        ("dgx-station", "refs/heads/v1", "push", "", None),
+        (
+            "dgx-station",
+            "refs/heads/v1",
+            "workflow_dispatch",
+            "artifacts",
+            None,
+        ),
+        ("dgx-spark", "refs/heads/v1", "workflow_dispatch", "", None),
+        ("unknown", "refs/heads/v1", "workflow_dispatch", "", None),
+    ] {
+        let output = tempfile::NamedTempFile::new().unwrap();
+        let result = std::process::Command::new("bash")
+            .args(["-euo", "pipefail", "-c", script])
+            .env("TARGET", target)
+            .env("GITHUB_REF", reference)
+            .env("GITHUB_EVENT_NAME", event)
+            .env("TESTS", tests)
+            .env("GITHUB_OUTPUT", output.path())
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.success(),
+            expected.is_some(),
+            "{target} {reference} {event} {tests}"
+        );
+        assert_eq!(
+            fs::read_to_string(output.path()).unwrap(),
+            expected.unwrap_or_default()
+        );
+    }
 }

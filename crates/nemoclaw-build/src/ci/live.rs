@@ -22,9 +22,27 @@ pub fn uuid() -> Result<String, String> {
 
 /// The first `172.30.N.0/24` from 200 up that neither Docker nor this run uses.
 pub fn free_subnet(used: &[String], taken: &[String]) -> Result<String, String> {
+    let occupied: Vec<ipnet::IpNet> = used
+        .iter()
+        .chain(taken)
+        .map(|subnet| {
+            subnet
+                .parse()
+                .map_err(|_| format!("invalid Docker subnet: {subnet}"))
+        })
+        .collect::<Result<_, _>>()?;
     (200..=254)
-        .map(|third| format!("172.30.{third}.0/24"))
-        .find(|subnet| !used.contains(subnet) && !taken.contains(subnet))
+        .map(|third| {
+            format!("172.30.{third}.0/24")
+                .parse::<ipnet::IpNet>()
+                .unwrap()
+        })
+        .find(|subnet| {
+            !occupied
+                .iter()
+                .any(|network| network.contains(subnet) || subnet.contains(network))
+        })
+        .map(|subnet| subnet.to_string())
         .ok_or_else(|| "no free 172.30.200-254.0/24 subnet for a test gateway".into())
 }
 

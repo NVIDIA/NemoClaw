@@ -1079,6 +1079,40 @@ fn gpu_devices_stay_unique_without_the_one_entry_limit() {
 }
 
 #[test]
+fn vllm_parallel_sizes_are_bounded_positive_integers_or_omitted() {
+    const RECIPE: &str = "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml";
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (size, accepted) in [
+        (json!(0), false),
+        (json!(1), true),
+        (json!(16), true),
+        (json!(17), false),
+        (json!(-1), false),
+    ] {
+        for field in ["tensorParallelSize", "pipelineParallelSize"] {
+            let mut value = input("spark/vllm.yaml");
+            value["spec"]["services"]["qwen"]["serving"][field] = size.clone();
+            agrees(&validator, &value, accepted);
+            let mut value = input(RECIPE);
+            value["spec"]["services"]["qwen"]["recipe"]["serving"][field] = size.clone();
+            agrees(&validator, &value, accepted);
+        }
+    }
+    // A recipe's layout is part of what its budget was measured on, so the
+    // service doesn't override it.
+    for field in ["tensorParallelSize", "pipelineParallelSize"] {
+        let mut value = input(RECIPE);
+        value["spec"]["services"]["qwen"]["serving"][field] = json!(2);
+        agrees(&validator, &value, false);
+    }
+    // A recipe names its layout only as vLLM does, in serving; it has no GPU
+    // count.
+    let mut value = input(RECIPE);
+    value["spec"]["services"]["qwen"]["recipe"]["compatibility"]["gpuCount"] = json!(1);
+    agrees(&validator, &value, false);
+}
+
+#[test]
 fn service_exposures_take_a_port_and_an_authorization_mode_openshell_accepts() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let mut value = input("fabric-openclaw.yaml");

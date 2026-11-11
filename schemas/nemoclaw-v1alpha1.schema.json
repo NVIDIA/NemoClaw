@@ -3300,6 +3300,16 @@
                               "required": [
                                 "enforceEager"
                               ]
+                            },
+                            {
+                              "required": [
+                                "tensorParallelSize"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "pipelineParallelSize"
+                              ]
                             }
                           ]
                         }
@@ -3806,6 +3816,14 @@
           "description": "Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name.",
           "type": "string"
         },
+        "pipelineParallelSize": {
+          "description": "vLLM's --pipeline-parallel-size without a recipe: how many GPU stages each hold a range of layers. vLLM uses tensor × pipeline parallel size GPUs; selected GPUs the layout doesn't use stay reserved but idle.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission gives vLLM's default of 1. Must be omitted with a recipe, which sets its own."
+        },
         "port": {
           "anyOf": [
             {
@@ -3851,6 +3869,14 @@
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "tensorParallelSize": {
+          "description": "vLLM's --tensor-parallel-size without a recipe: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts, and fails startup if they don't support it.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission gives vLLM the number of container.gpuDevices entries, or 1 without them, when pipelineParallelSize is also omitted, and vLLM's default of 1 when it's set. Must be omitted with a recipe, which sets its own."
         },
         "toolParser": {
           "default": "",
@@ -3932,6 +3958,14 @@
           "pattern": "^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$",
           "type": "string"
         },
+        "pipelineParallelSize": {
+          "description": "vLLM's --pipeline-parallel-size: how many GPU stages each hold a range of layers.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission selects vLLM's default of 1."
+        },
         "preparedEnvironment": {
           "additionalProperties": {
             "type": "string"
@@ -3962,6 +3996,14 @@
           "description": "Native vLLM reasoning parser supplied by the runtime image. Empty omits the flag.",
           "maxLength": 256,
           "type": "string"
+        },
+        "tensorParallelSize": {
+          "description": "vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission selects vLLM's default of 1."
         },
         "toolParser": {
           "anyOf": [

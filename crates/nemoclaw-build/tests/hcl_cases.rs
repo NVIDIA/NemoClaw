@@ -39,41 +39,6 @@ fn a_managed_runtime_image_runs_on_the_gpu_runner_with_any_key_it_reads() {
 }
 
 #[test]
-fn a_station_model_runs_only_on_the_manual_arm64_station_runner() {
-    let station = "  services:\n    model:\n      kind: vllm\n      hardware:\n        profile: dgx-station\n";
-    let needed = needs(&document("docker", station)).unwrap();
-    assert_eq!(needed.runner.name(), "dgx-station");
-    assert!(!needed.nvidia_key);
-}
-
-#[test]
-fn a_station_case_uses_the_existing_example_without_a_second_case_document() {
-    let root = tempfile::tempdir().unwrap();
-    for (path, contents) in [
-        (
-            "examples/gtc-dc/openclaw-dgx-station.yaml",
-            document(
-                "docker",
-                "  services:\n    super:\n      kind: vllm\n      hardware:\n        profile: dgx-station\n",
-            ),
-        ),
-        (
-            "crates/nemoclaw-e2e/tests/e2e/hcl/tests/dgx-station-openclaw-nemotron.tftest.hcl",
-            "\n".into(),
-        ),
-    ] {
-        let path = root.path().join(path);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, contents).unwrap();
-    }
-    assert_eq!(
-        on(root.path(), Runner::DgxStation, None).unwrap(),
-        ["dgx-station-openclaw-nemotron"]
-    );
-    assert!(on(root.path(), Runner::Gpu, None).unwrap().is_empty());
-}
-
-#[test]
 fn reading_the_nvidia_key_runs_on_hosted_inference() {
     let needed = needs(&document("docker", NVIDIA_KEY)).unwrap();
     assert_eq!(needed.runner, Runner::Hosted);

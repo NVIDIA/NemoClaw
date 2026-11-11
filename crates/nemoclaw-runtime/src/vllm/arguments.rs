@@ -16,6 +16,8 @@ struct Settings<'a> {
     lazy_loading: bool,
     chunked_prefill: bool,
     compilation: Option<String>,
+    tensor_parallel_size: u64,
+    pipeline_parallel_size: u64,
 }
 impl<'a> Settings<'a> {
     fn resolve(service: &'a Service, mode: super::VllmLaunchMode<'a>) -> Self {
@@ -36,6 +38,10 @@ impl<'a> Settings<'a> {
                     Some(c) => serde_json::json!({"mode":c.mode,"cudagraph_mode":c.cudagraph_mode,"cudagraph_capture_sizes":c.capture_sizes}).to_string(),
                     None => "{\"mode\":0}".into(),
                 }),
+                // A recipe's layout is its own; omitted sizes get vLLM's
+                // default of 1.
+                tensor_parallel_size: s.tensor_parallel_size.unwrap_or(1),
+                pipeline_parallel_size: s.pipeline_parallel_size.unwrap_or(1),
             }
             }
             super::VllmLaunchMode::Native { .. } => Self {
@@ -53,6 +59,10 @@ impl<'a> Settings<'a> {
                 lazy_loading: false,
                 chunked_prefill: false,
                 compilation: None,
+                // The SDK resolves the tensor size from the selected GPUs; a
+                // runtime specification without one gets vLLM's default.
+                tensor_parallel_size: service.serving.tensor_parallel_size.unwrap_or(1),
+                pipeline_parallel_size: service.serving.pipeline_parallel_size.unwrap_or(1),
             },
         }
     }
@@ -90,6 +100,8 @@ pub fn arguments(
         .as_ref()
         .and_then(serde_json::Number::as_f64)
         .unwrap_or_else(|| (model.gpu_bytes as f64 / total as f64 * 1000.0).floor() / 1000.0);
+    let tensor_parallel_size = model.tensor_parallel_size.to_string();
+    let pipeline_parallel_size = model.pipeline_parallel_size.to_string();
     let mut args: Vec<String> = [
         "-m",
         "vllm.entrypoints.openai.api_server",
@@ -104,7 +116,9 @@ pub fn arguments(
             "0.0.0.0"
         },
         "--tensor-parallel-size",
-        "1",
+        &tensor_parallel_size,
+        "--pipeline-parallel-size",
+        &pipeline_parallel_size,
         "--load-format",
         "safetensors",
     ]

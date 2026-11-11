@@ -7,9 +7,9 @@ on:
     inputs:
       suite:
         description: >-
-          smoke checks nvidia-smi; bundle runs the Linux ARM64 build and tests.
+          smoke checks nvidia-smi; bundle runs ARM64 checks; station runs the reference E2E.
         type: choice
-        options: [smoke, bundle]
+        options: [smoke, bundle, station]
         default: smoke
 
 permissions: {}
@@ -45,3 +45,13 @@ jobs:
       lifecycle: true
       e2e: false
       save-cache: false
+
+  station:
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == 'station'
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/hcl-e2e.yml
+    with:
+      target: dgx-station
+      hosted: false

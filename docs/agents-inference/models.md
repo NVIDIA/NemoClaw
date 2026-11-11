@@ -74,6 +74,27 @@ Unsupported names are rejected.
 Inline recipes supply their own model name and execution settings and reject these ordinary-service overrides.
 There are no shell hooks, extra command arguments, or implicit model-specific settings.
 
+### Set the Parallel Layout
+
+`serving.tensorParallelSize` and `serving.pipelineParallelSize` set vLLM's `--tensor-parallel-size` and `--pipeline-parallel-size`. Each is a positive integer; the schema accepts up to 16 as an input bound, not a hardware limit:
+
+```yaml
+# Under spec.services.<name>:
+serving:
+  tensorParallelSize: 2
+  pipelineParallelSize: 1
+```
+
+- Without a recipe, when both are omitted, tensor parallelism defaults to the number of [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy) entries, or 1 without them.
+- When only `pipelineParallelSize` is set, tensor parallelism stays at vLLM's default of 1, so `pipelineParallelSize: 2` with two GPUs uses both GPUs as pipeline stages.
+- Pipeline parallelism defaults to 1.
+- vLLM uses tensor × pipeline parallel size GPUs. Selected GPUs that the layout doesn't use stay reserved but idle.
+- NemoClaw passes the layout as written. When vLLM starts, it rejects a layout that needs more GPUs than the container sees, or that the model doesn't support, such as a tensor size that doesn't divide the model's attention heads. The runtime then stops, and the [container log](#diagnose-and-recover-a-stopped-runtime) keeps vLLM's error.
+- [vLLM's parallelism guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/serving/parallelism_scaling.md) recommends pipeline parallelism when the GPU count doesn't divide the model evenly, and when the GPUs have no NVLink.
+- An inline recipe sets its own layout, whose omitted sizes get vLLM's default of 1, and rejects these settings; see [recipes](recipes.md#declaration).
+
+`container.gpuDevices` takes one entry until serving one model across several GPUs is implemented, so vLLM refuses a layout larger than one GPU.
+
 ### Retained Model Files
 
 Snapshot directories include both repository and revision in their identity.
@@ -113,7 +134,7 @@ Every profile currently requires Linux, driver major 580 or newer, and exactly o
 Without [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy), the model container sees every GPU, so the runtime stops on a host with two or more, such as a DGX Station with an additional RTX or display GPU.
 `CUDA_VISIBLE_DEVICES` doesn't select one, because `nvidia-smi` ignores it.
 `container.gpuDevices` asks Docker for the one GPU it lists, as `docker run --gpus device=` does, so the model container sees only that GPU.
-The backend uses tensor parallel size 1.
+With one GPU, the [parallel layout](#set-the-parallel-layout) defaults to tensor and pipeline parallel size 1.
 GB200/GB300 profiles describe one observed GPU in a Grace Blackwell system; they do not enable a full compute tray or NVL72 rack.
 
 | Profile | Hardware identity | Host architecture |
