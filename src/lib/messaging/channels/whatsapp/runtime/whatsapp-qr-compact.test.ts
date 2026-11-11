@@ -125,9 +125,14 @@ describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
     expect(isOpenClawQrTerminalRendererSource("const unrelated = true;")).toBe(false);
   });
 
-  it("recognizes the reviewed OpenClaw 2026.9.1 renderer integrity", () => {
+  it("recognizes the reviewed current and installed-sandbox renderer integrities", () => {
     expect(
       isReviewedOpenClawQrTerminalRendererIntegrity(REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256),
+    ).toBe(true);
+    expect(
+      isReviewedOpenClawQrTerminalRendererIntegrity(
+        "7e4170e51d7b2fed7bb974a2ae4a50b878e68c17365b90722b146c2bf5428ebe",
+      ),
     ).toBe(true);
     expect(isReviewedOpenClawQrTerminalRendererIntegrity("0".repeat(64))).toBe(false);
   });

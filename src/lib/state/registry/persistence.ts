@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { validateSwitchyardBindingState } from "../../hermes-switchyard-routing";
+
 import {
   normalizeNativeLocalProviderAttachment,
   normalizeNativeLocalProviderAuthorities,
@@ -34,6 +36,18 @@ import {
 } from "./host-local-inference";
 import type { SandboxEntry, SandboxRegistry } from "./types";
 import { cloneSandboxWorkloadReceipt } from "./workload";
+
+function requireValidSwitchyardState(entry: SandboxEntry, operation: "load" | "save"): void {
+  if (entry.hermesSwitchyard === undefined) return;
+  try {
+    validateSwitchyardBindingState(entry.hermesSwitchyard);
+  } catch (cause) {
+    throw new Error(
+      `Cannot ${operation} sandbox ${JSON.stringify(entry.name)}: invalid hermesSwitchyard state in sandboxes.json. Inspect and repair hermesSwitchyard before retrying.`,
+      { cause },
+    );
+  }
+}
 
 function cloneSandboxWorkloadReceiptOrThrow(
   value: SandboxEntry["workload"],
@@ -245,6 +259,7 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
 }
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
+  requireValidSwitchyardState(entry, "load");
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
   const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
@@ -305,6 +320,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
  * sandboxes.json.
  */
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
+  requireValidSwitchyardState(entry, "save");
   // Defensively drop non-durable recovery markers and legacy
   // providerCredentialHashes so they can never reach sandboxes.json even if a
   // caller force-passed them through updateSandbox().

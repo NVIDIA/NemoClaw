@@ -12,6 +12,31 @@ import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-wor
 import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow artifact boundary", () => {
+  it.each(
+    ["mcp-bridge", "mcp-bridge-dev"].flatMap((jobName) =>
+      [
+        { contents: "read" },
+        { contents: "write", "pull-requests": "read" },
+        { contents: "read", "pull-requests": "write" },
+        { contents: "read", "pull-requests": "read", packages: "write" },
+      ].map((permissions) => ({ jobName, permissions })),
+    ),
+  )("rejects permissions $permissions in $jobName", ({ jobName, permissions }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8"));
+      workflow.jobs[jobName].permissions = permissions;
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        `${jobName} must use only contents:read and pull-requests:read permissions`,
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects a stable MCP lane without the reviewed SDK producer and install boundary", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");

@@ -57,13 +57,36 @@ describe("Switchyard onboarding config", () => {
         },
       }),
     ],
-    ["a user-selected judge", validConfig({ judge: { provider: "nvidia-prod", model: "judge" } })],
+    [
+      "judge credentials",
+      validConfig({ judge: { provider: "nvidia-prod", model: "judge", apiKey: "sk-test-secret" } }),
+    ],
+    ["a null judge", validConfig({ judge: null })],
+    ["an unknown judge provider", validConfig({ judge: { provider: "custom", model: "judge" } })],
+    ["a missing judge model", validConfig({ judge: { provider: "openai-api" } })],
+    [
+      "a duplicate judge model",
+      validConfig({ judge: { provider: "openai-api", model: "gpt-5.2" } }),
+    ],
     [
       "duplicate JSON keys",
       '{"schemaVersion":1,"schemaVersion":1,"efficient":{"provider":"nvidia-prod","model":"model-a"},"capable":{"provider":"openai-api","model":"model-b"}}',
     ],
   ])("rejects %s (#13862)", (_name, config) => {
     expect(() => parseSwitchyardOnboardConfig(config)).toThrow("Invalid --switchyard-config");
+  });
+
+  it("accepts an explicit dedicated judge without selecting a hidden model (#13863)", () => {
+    expect(
+      parseSwitchyardOnboardConfig(
+        validConfig({ judge: { provider: "anthropic-prod", model: "claude-judge" } }),
+      ).judge,
+    ).toEqual({
+      mode: "dedicated",
+      target: "judge",
+      provider: "anthropic-prod",
+      model: "claude-judge",
+    });
   });
 
   it("reads one bounded regular UTF-8 file and rejects links (#13862)", () => {
