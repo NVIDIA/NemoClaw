@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# The HCL E2E cases that need a model, from a candidate this workflow builds on
-# Ubuntu 22.04, whose older glibc the GPU runner may need. CI / Bundle calls it
-# for the GPU cases on v1 pushes and manual runs; NVIDIA's GPU runners refuse
-# pull request jobs. Linux AMD64's E2E jobs run the hosted cases on every run.
+# The HCL E2E cases that need a model. CI / Bundle calls it from Linux AMD64's
+# E2E jobs for the GPU cases on v1 pushes and manual runs, with that platform's
+# test archive, bundle, and live images; NVIDIA's GPU runners refuse pull
+# request jobs. CI / Bundle builds those on Ubuntu 22.04, whose glibc the GPU
+# runner can run. A dispatch has no such artifacts, so it builds a candidate
+# of its own there. Linux AMD64's E2E jobs run the hosted cases on every run.
 name: Live / HCL
 
 on:
@@ -17,6 +19,24 @@ on:
         description: The validation plan's live HCL case selection, or empty to run every case.
         type: string
         default: ""
+      tests:
+        description: >-
+          Name prefix of CI / Bundle's Linux AMD64 test artifacts; the jobs download
+          PREFIX-inputs and PREFIX-live. Empty builds a candidate here instead.
+        type: string
+        default: ""
+      bundle:
+        description: CI / Bundle's Linux AMD64 bundle artifact; required with tests.
+        type: string
+        default: ""
+      live-images:
+        description: CI / Bundle's Linux AMD64 live images artifact, when it built them.
+        type: string
+        default: ""
+      live-images-commit:
+        description: A v1 commit whose pushed images to pull instead of the live images artifact.
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       hosted:
@@ -24,8 +44,10 @@ on:
         type: boolean
         default: true
 
+# The case jobs pull a v1 commit's pushed images when CI / Bundle names one.
 permissions:
   contents: read
+  packages: read
 
 defaults:
   run:
@@ -33,22 +55,82 @@ defaults:
 
 env:
   CARGO_INCREMENTAL: "0"
+  TEST_PLATFORM: linux_amd64
   CANDIDATE: hcl-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+  SOURCES: hcl-image-sources-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
-  build:
-    name: Build
+  # Each case's documents say where it runs, whether it reads the NVIDIA API
+  # key, and which model runtime images its job builds. This job lists them
+  # and fetches those images' pinned sources, which the case jobs' Bake reads.
+  cases:
+    name: Cases
     # The GPU runner and the inference secret exist only in this repository.
     if: github.repository == 'NVIDIA/NemoClaw'
-    # Like Live / Brev, build against the older glibc so every lane runner can run the executables.
-    runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     outputs:
       cases: ${{ steps.cases.outputs.cases }}
       matrix: ${{ steps.cases.outputs.matrix }}
       runtimes: ${{ steps.cases.outputs.runtimes }}
-    env:
-      TEST_PLATFORM: linux_amd64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # CI / Bundle's build tool, so that this job compiles nothing.
+      - if: inputs.tests != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.tests }}-inputs
+          path: .build/ci
+      # The image builds' pinned sources, as CI / Images saved them.
+      - name: Restore the verified image sources
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build/downloads
+          key: image-sources-v1-${{ hashFiles('versions.json') }}
+      - name: List the cases and fetch their runtime images' sources
+        id: cases
+        env:
+          CASES: ${{ inputs.cases }}
+          HOSTED: ${{ inputs.hosted }}
+          TESTS: ${{ inputs.tests }}
+        run: |
+          if [[ -n $TESTS ]]; then
+            tar -xf .build/ci/lifecycle-inputs.tar .build/ci/nemoclaw-build
+            tool=.build/ci/nemoclaw-build
+          else
+            cargo build --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner
+            tool=target/ci-runner/debug/nemoclaw-build
+          fi
+          if [[ -z $CASES ]]; then
+            CASES=$("$tool" changes cases --all | jq -c '{runners, nvidia_key}')
+          fi
+          {
+            echo "cases=$CASES"
+            echo "matrix=$(jq -c --argjson hosted "$HOSTED" '.runners.gpu + (if $hosted then .runners.hosted else [] end)' <<< "$CASES")"
+            echo "runtimes=$("$tool" images runtimes)"
+          } >> "$GITHUB_OUTPUT"
+          "$tool" images fetch
+          # Only the Ollama image has sources; vllm has none. Tar keeps the
+          # mode and time that images fetch gave them, which the image's layers
+          # retain and artifact transfer drops.
+          tar -cf "$RUNNER_TEMP/image-sources.tar" .build/image-sources/ollama
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.SOURCES }}
+          path: ${{ runner.temp }}/image-sources.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  # A run without CI / Bundle's artifacts, such as a dispatch, builds a
+  # candidate here, which unpacks where those artifacts would.
+  build:
+    name: Build
+    if: github.repository == 'NVIDIA/NemoClaw' && inputs.tests == ''
+    # Like CI / Bundle, build against Ubuntu 22.04's glibc, which every case's runner can run.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,36 +139,24 @@ jobs:
         with:
           platform: linux_amd64
           cache-prefix: hcl-deps-v1
+      # The image builds' pinned sources, as CI / Images saved them.
+      - name: Restore the verified image sources
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build/downloads
+          key: image-sources-v1-${{ hashFiles('versions.json') }}
       - uses: ./.github/actions/containerd-store
       - name: Build the bundle, test executable, and agent images
         run: |
           cargo ci bundle
           executable=$(cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json |
             jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test) | .executable' | tail -1)
-          mkdir candidate
-          cp "$executable" candidate/e2e
-          cp -a "dist/$TEST_PLATFORM" candidate/bundle
+          mkdir -p .build
+          cp "$executable" .build/e2e
           cargo images build --platform linux/amd64 openclaw hermes
-          docker save nc-fabric:openclaw nc-fabric:hermes -o candidate/agents.tar
+          docker save nc-fabric:openclaw nc-fabric:hermes -o .build/agents.tar
           # Tar keeps the executable bits that artifact transfer drops.
-          tar -cf "$RUNNER_TEMP/candidate.tar" candidate
-      # Each case's documents say where it runs, whether it reads the NVIDIA
-      # API key, and which model runtime images its job builds.
-      - name: List the cases and their runtime images
-        id: cases
-        env:
-          CASES: ${{ inputs.cases }}
-          HOSTED: ${{ inputs.hosted }}
-        run: |
-          if [[ -z $CASES ]]; then
-            CASES=$(cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
-              changes cases --all | jq -c '{runners, nvidia_key}')
-          fi
-          {
-            echo "cases=$CASES"
-            echo "matrix=$(jq -c --argjson hosted "$HOSTED" '.runners.gpu + (if $hosted then .runners.hosted else [] end)' <<< "$CASES")"
-            echo "runtimes=$(cargo images runtimes)"
-          } >> "$GITHUB_OUTPUT"
+          tar -cf "$RUNNER_TEMP/candidate.tar" "dist/$TEST_PLATFORM" .build/e2e .build/agents.tar
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.CANDIDATE }}
@@ -96,15 +166,18 @@ jobs:
 
   e2e:
     name: ${{ matrix.case }}
-    needs: build
-    # Runs only when the build ran and selected a case.
-    if: needs.build.result == 'success' && needs.build.outputs.matrix != '[]'
+    needs: [cases, build]
+    # Runs when the cases job selected a case, from CI / Bundle's artifacts or
+    # this run's build.
+    if: >-
+      ${{ !cancelled() && needs.cases.result == 'success' && needs.cases.outputs.matrix != '[]' &&
+      (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.tests != '')) }}
     strategy:
       fail-fast: false
       matrix:
-        case: ${{ fromJSON(needs.build.outputs.matrix) }}
+        case: ${{ fromJSON(needs.cases.outputs.matrix) }}
     # The cases with model runtime images need this NVIDIA GPU runner, which the main E2E workflow also uses.
-    runs-on: ${{ contains(fromJSON(needs.build.outputs.cases).runners.gpu, matrix.case) && 'linux-amd64-gpu-rtxpro6000-latest-1' || 'ubuntu-24.04' }}
+    runs-on: ${{ contains(fromJSON(needs.cases.outputs.cases).runners.gpu, matrix.case) && 'linux-amd64-gpu-rtxpro6000-latest-1' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     # These cases use fixed gateway ports; finish cleanup before another run starts.
     concurrency:
@@ -112,23 +185,69 @@ jobs:
       cancel-in-progress: false
     env:
       NEMOCLAW_HCL_CASE: ${{ matrix.case }}
-      NEMOCLAW_TEST_BUNDLE: ${{ github.workspace }}/candidate/bundle
+      NEMOCLAW_TEST_BUNDLE: ${{ github.workspace }}/dist/linux_amd64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/containerd-store
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - if: inputs.tests == ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.CANDIDATE }}
           path: ${{ runner.temp }}
+      - if: inputs.tests != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.tests }}-live
+          path: .build/ci
+      - if: inputs.tests != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.bundle }}
+          path: .build/ci
+      - if: inputs.tests != '' && inputs.live-images-commit == ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.live-images }}
+          path: .build/ci
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ env.SOURCES }}
+          path: ${{ runner.temp }}
       - name: Load the images and bind the case to them
         env:
-          RUNTIMES: ${{ join(fromJSON(needs.build.outputs.runtimes)[matrix.case], ' ') }}
+          TESTS: ${{ inputs.tests }}
+          COMMIT: ${{ inputs.live-images-commit }}
+          PULL_TOKEN: ${{ github.token }}
+          RUNTIMES: ${{ join(fromJSON(needs.cases.outputs.runtimes)[matrix.case], ' ') }}
         run: |
-          tar -xf "$RUNNER_TEMP/candidate.tar"
-          docker load -i candidate/agents.tar
-          # A case builds the model runtime images its services run.
+          if [[ -z $TESTS ]]; then
+            tar -xf "$RUNNER_TEMP/candidate.tar"
+            docker load -i .build/agents.tar
+          else
+            # As the E2E platform workflow's hosted HCL jobs load them.
+            tar -xf .build/ci/bundle.tar
+            mkdir -p .build/hcl
+            zstd -d -c -q .build/ci/live.tar.zst | tar -x -C .build/hcl
+            find .build/hcl -type f -perm -u+x -path '*/deps/e2e-*' -exec ln -s "$PWD/{}" .build/e2e ';'
+            # A case names its images nc-fabric@DIGEST, which Docker resolves
+            # only in the repository that holds the image.
+            if [[ -n $COMMIT ]]; then
+              printf '%s\n' "$PULL_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+              for name in openclaw hermes; do
+                docker pull --quiet "ghcr.io/nvidia/nemoclaw/v1-ci:$name-$COMMIT-${TEST_PLATFORM#linux_}"
+                docker tag "ghcr.io/nvidia/nemoclaw/v1-ci:$name-$COMMIT-${TEST_PLATFORM#linux_}" "nc-fabric:$name"
+              done
+              docker logout ghcr.io
+            else
+              zstd -d -c -q .build/ci/live-images.tar.zst | docker load
+              for name in openclaw hermes; do docker tag "nc-live-images:$name" "nc-fabric:$name"; done
+            fi
+          fi
+          # A case builds the model runtime images its services run, from the
+          # sources the cases job fetched.
+          tar -xf "$RUNNER_TEMP/image-sources.tar"
           read -ra runtimes <<< "$RUNTIMES"
           if (( ${#runtimes[@]} )); then docker buildx bake "${runtimes[@]}"; fi
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
@@ -144,15 +263,15 @@ jobs:
         env:
           NEMOCLAW_HCL_RUN: ${{ runner.temp }}/hcl
           # Only the cases that read the key receive it.
-          NVIDIA_INFERENCE_API_KEY: ${{ contains(fromJSON(needs.build.outputs.cases).nvidia_key, matrix.case) && secrets.NVIDIA_API_KEY || '' }}
-        run: '"$GITHUB_WORKSPACE/candidate/e2e" hcl_live::case --exact --ignored --nocapture'
+          NVIDIA_INFERENCE_API_KEY: ${{ contains(fromJSON(needs.cases.outputs.cases).nvidia_key, matrix.case) && secrets.NVIDIA_API_KEY || '' }}
+        run: '"$GITHUB_WORKSPACE/.build/e2e" hcl_live::case --exact --ignored --nocapture'
       # A cancelled or timed-out job still runs this step; the test's process does not survive.
       - name: Destroy
         if: always()
         run: |
           state="$RUNNER_TEMP/hcl/deployment"
           [[ -d $state ]] || exit 0
-          candidate/bundle/bin/nemoclaw destroy --output json --progress off --state-dir "$state" \
+          "$NEMOCLAW_TEST_BUNDLE/bin/nemoclaw" destroy --output json --progress off --state-dir "$state" \
             > "$RUNNER_TEMP/hcl/reports/destroy.json"
       # Reports hold outcomes only; requests, replies, state, and credentials stay on the runner.
       - name: Upload observations and cleanup receipt

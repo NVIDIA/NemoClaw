@@ -104,7 +104,7 @@ Its authored modules each have a Rust test:
 |---|---|---|
 | `standalone` | `standalone_resources` | An inference registration and its sandbox: planning without a gateway, recreating a missing registration, profile, or sandbox without replacing what else exists, image and endpoint changes, authentication and secret rotation, and removal without destroy mode |
 | `credentials` | `tool_credentials` | Web search and API credentials: profiles, registrations, and keys a sandbox sees, rotation, recovery, a custom header, and removal |
-| `sandbox` | `sandbox_settings` | Driver configuration, service exposures and their URLs, and sandboxes without providers |
+| `sandbox` | `sandbox_settings` | Driver configuration, service exposures and their URLs, a policy's middleware binding through apply and refresh, and sandboxes without providers |
 | `gateway` | `gateway_installation::gateway_settings_plan_without_contacting_a_host` | The Docker gateway launch, engine prerequisites, the Docker gateway's storage, and the managed Kubernetes resources, planned from typed settings; the engine fixture refuses any request but a read |
 | `chart` | `chart::*` | The pinned gateway chart rendered by the bundled Helm provider with the SDK's values, which `chart.rs` writes to `inputs/`: the release owns the gateway StatefulSet and no namespace or object NemoClaw prepares; the gateway keeps the chart's UID, or with the OpenShift profile leaves its UID and `fsGroup` for OpenShift to assign; pull Secret names reach the pod templates and the sandbox driver; and the gateway refuses unauthenticated users and trusts only the deployment's own issuer and audience. Rendering pulls the chart by digest and needs no cluster. |
 
@@ -374,7 +374,7 @@ The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibi
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/tests), alongside the implementation.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/f33fa19a1aff584625e02af9007d8113e7b95dd8/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 

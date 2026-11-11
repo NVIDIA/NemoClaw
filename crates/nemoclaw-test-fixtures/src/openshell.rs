@@ -315,9 +315,19 @@ impl State {
                 .collect();
             let driver_config = spec.template.as_ref().and_then(|template| template.driver_config.as_ref())
                 .map(openshell_core::proto_struct::struct_to_json_value);
+            let middlewares: BTreeMap<_, _> = spec.policy.iter()
+                .flat_map(|policy| &policy.network_middlewares)
+                .map(|(key, entry)| {
+                    let selector = entry.endpoints.clone().unwrap_or_default();
+                    (key.clone(), json!({"name": entry.name, "middleware": entry.middleware,
+                        "order": entry.order, "on_error": entry.on_error,
+                        "config": entry.config.as_ref().map(openshell_core::proto_struct::struct_to_json_value),
+                        "include": selector.include, "exclude": selector.exclude}))
+                })
+                .collect();
             json!({"id": meta.id, "name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
                 "providers": spec.providers, "command": spec.command, "policy_endpoints": endpoints,
-                "driver_config": driver_config})
+                "policy_middlewares": middlewares, "driver_config": driver_config})
         }).collect();
         let profiles: BTreeMap<_, _> = self
             .profiles

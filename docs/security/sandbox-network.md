@@ -49,7 +49,8 @@ A binary grant for curl does not grant the same access to Python or Node.js.
 
 The input supports TCP destinations and REST, WebSocket, JSON-RPC, and MCP inspection settings.
 Unknown fields and unsupported combinations are rejected.
-Middleware, inline credentials, credential-provider bindings, GraphQL, and SQL policy settings are outside this configuration contract.
+Inline credentials, credential-provider bindings, GraphQL, and SQL policy settings are outside this configuration contract.
+To attach supervisor middleware, see [Attach Network Middleware](#attach-network-middleware).
 The pinned OpenShell parser and validator check protocol-specific rules, destination restrictions, paths, and process identities.
 See the [generated field reference](../references/v1-configuration.md#explicitpolicy) for the complete input surface.
 
@@ -104,6 +105,78 @@ The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb
 The [SDK policy validator](../../crates/nemoclaw-openshell/src/policy.rs) accepts only supported field combinations; a field's presence in the schema does not bypass protocol validation.
 Live enforcement and application trust on your host remain qualification requirements.
 Follow [policy change constraints](#verify-and-change-the-configuration) before changing a deployed policy.
+
+## Attach Network Middleware
+
+OpenShell supervisor middleware inspects a sandbox's admitted HTTP requests, responses, and WebSocket messages, and can allow, change, or block them.
+Using a middleware service takes two steps, with different owners:
+
+1. **Run and register the service.** Running the service is the operator's or platform's job; NemoClaw doesn't start, package, or monitor it.
+   Start it before the gateway, where both the gateway and the sandbox supervisors can reach it, and keep it available: the gateway doesn't start while a registered service is unavailable.
+   For a managed gateway, register it in `spec.gateway.config`; an external gateway's operator registers it in that gateway's configuration.
+   Built-in middleware, such as `openshell/regex`, needs no registration.
+2. **Bind it in the sandbox policy.** Add an entry to `network_middlewares` in `policy.explicit`, naming the middleware and the destination hosts it runs for.
+
+```yaml
+spec:
+  gateway:
+    management: managed
+    config:
+      openshell.supervisor.middleware:
+        - name: decision-guard
+          grpc_endpoint: http://guard.example.internal:50051
+          allow_insecure_transport: true
+          max_payload_bytes: 262144
+          timeout: 500ms
+  sandboxes:
+    assistant:
+      network:
+        policy:
+          explicit:
+            version: 1
+            network_policies:
+              documentation:
+                name: documentation
+                endpoints:
+                  - host: docs.example.com
+                    port: 443
+                    protocol: rest
+                    enforcement: enforce
+                    access: read-only
+                binaries:
+                  - path: /usr/bin/curl
+            network_middlewares:
+              guard:
+                middleware: decision-guard
+                order: 10
+                on_error: fail_closed
+                config:
+                  mode: block
+                endpoints:
+                  include: [docs.example.com]
+```
+
+The registration's `name` is what a binding's `middleware` field refers to.
+`allow_insecure_transport` permits a plaintext endpoint without authentication; use it only for local development or on a network that already authenticates callers.
+The service validates its `config`, and the gateway asks it to before accepting the policy, so keep the service running when you apply.
+
+In each binding:
+
+- The map key names the binding in OpenShell's logs; `name` is an optional display name.
+- `endpoints.include` selects admitted destination hosts, in endpoint-host syntax; `endpoints.exclude` removes hosts from that selection.
+- `order` sets which binding runs first when several select the same host, lowest first; orders must be unique within the policy.
+- `on_error` sets what happens when the middleware can't complete its check, for example when its service is down: `fail_closed`, the default, blocks the traffic, and `fail_open` lets it continue.
+  A middleware's denial blocks traffic either way, even on an `enforcement: audit` endpoint.
+- A fail-closed binding can't select an endpoint with `tls: skip`, whose traffic OpenShell can't inspect.
+
+NemoClaw checks the fields' shape and keeps each binding as written through planning, apply, refresh, and export.
+The pinned OpenShell validator checks the rest, and OpenShell intercepts and enforces the traffic; NemoClaw adds no enforcement of its own.
+Changing a binding is a policy change; see [Verify and Change the Configuration](#verify-and-change-the-configuration).
+Changing a managed gateway's registration restarts the gateway, as other [gateway configuration](../build-deploy/usage.md#configure-a-managed-gateway) changes do.
+
+OpenShell describes supervisor middleware as a research preview whose policy and service contracts can change.
+Its [middleware guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/extensibility/supervisor-middleware/configure.mdx) for the pinned release describes registration fields, failure behavior, and the decisions it logs.
+
 
 ## Use an Upstream Proxy
 

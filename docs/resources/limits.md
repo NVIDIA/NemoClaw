@@ -47,7 +47,6 @@ A configured connection or ready container does not establish successful model r
 
 | Limit | Issue |
 |---|---|
-| Fabric reports a harness process that exited as unknown rather than stopped, so plan doesn't [start it again](../build-deploy/usage.md#agent-runtimes-during-apply); the runtime is found at its next invocation | [NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298) |
 | Hermes doesn't reject a managed Ollama window below its 64,000-token minimum, because Ollama reports the model's native window; see [sizing the context for Hermes](../agents-inference/inference.md#size-the-context-for-hermes) | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) |
 | Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |

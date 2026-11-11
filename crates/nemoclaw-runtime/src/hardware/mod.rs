@@ -10,6 +10,8 @@ mod diagnostic;
 pub use diagnostic::HardwareDiagnostic;
 pub use diagnostic::{architecture, at_least};
 pub const GIB: u64 = 1 << 30;
+/// Host measurements. The single-GPU fields describe the observed GPU only
+/// when `gpus` holds exactly one; otherwise they keep their defaults.
 #[derive(Clone, Debug, Default)]
 pub struct Capacity {
     pub architecture: String,
@@ -24,6 +26,33 @@ pub struct Capacity {
     pub free: u64,
     pub disk_free: u64,
     pub foreign_gpu_processes: usize,
+    /// Every GPU the observation read, in `nvidia-smi` order.
+    pub gpus: Vec<Gpu>,
+}
+impl Capacity {
+    /// Managed inference serves a model on one GPU, so it refuses a host or
+    /// container that shows any other number.
+    pub fn require_one_gpu(&self) -> Result<(), Error> {
+        if self.gpus.len() != 1 {
+            return Err(Error::State(
+                "managed inference requires exactly one observable GPU",
+            ));
+        }
+        Ok(())
+    }
+}
+/// One GPU as `nvidia-smi` reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Gpu {
+    /// `nvidia-smi`'s index, which can change when the host restarts.
+    pub index: u32,
+    pub uuid: String,
+    pub name: String,
+    pub driver_major: u32,
+    /// Major times ten plus minor.
+    pub compute_capability: u32,
+    /// Framebuffer counters; None means the device reports them as unsupported.
+    pub memory: Option<GpuMemory>,
 }
 /// GPU framebuffer memory counters in bytes, independent of compute capability.
 #[derive(Clone, Debug, PartialEq, Eq)]
