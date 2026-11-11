@@ -173,14 +173,6 @@
           "minLength": 1,
           "type": "string"
         },
-        "gpuCount": {
-          "default": 1,
-          "description": "Number of GPUs the recipe's budget was measured on. It sets the default tensor parallel size; vLLM checks the layout against the GPUs it sees.",
-          "format": "uint64",
-          "maximum": 16,
-          "minimum": 1,
-          "type": "integer"
-        },
         "imageLabels": {
           "additionalProperties": {
             "maxLength": 256,
@@ -4011,7 +4003,7 @@
           "maximum": 16,
           "minimum": 1,
           "type": "integer",
-          "x-nemoclaw-default-rule": "Omission selects compatibility.gpuCount when pipelineParallelSize is also omitted, and vLLM's default of 1 when it's set."
+          "x-nemoclaw-default-rule": "Omission selects vLLM's default of 1."
         },
         "toolParser": {
           "anyOf": [

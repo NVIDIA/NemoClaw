@@ -139,21 +139,14 @@ fn preparation_keys_track_model_and_tool_identity() {
 }
 
 // The key names the prepared data a recipe reuses, so a recipe written before
-// the parallel layout existed must keep its key: settings at their defaults
-// stay out of the key.
+// the parallel layout existed must keep its key: omitted layout settings stay
+// out of the key.
 #[test]
-fn a_recipe_at_the_default_parallel_layout_keeps_its_preparation_key() {
+fn a_recipe_without_a_parallel_layout_keeps_its_preparation_key() {
     const KEY: &str = "22ace1146bac0743b90c016e5cb6c6af05ccef9fbed2a0ac50a85311eb70d2b2";
-    let key = |value: &serde_json::Value| {
-        let document = Document::parse(serde_json::to_vec(value).unwrap().as_slice()).unwrap();
-        let service = service(&document);
-        service.recipe.as_ref().unwrap().key(service)
-    };
-    let mut value = example();
-    assert_eq!(key(&value), KEY);
-    let recipe = &mut value["spec"]["services"]["qwen"]["recipe"];
-    recipe["compatibility"]["gpuCount"] = 1.into();
-    assert_eq!(key(&value), KEY);
+    let document = Document::parse(serde_json::to_vec(&example()).unwrap().as_slice()).unwrap();
+    let service = service(&document);
+    assert_eq!(service.recipe.as_ref().unwrap().key(service), KEY);
 }
 
 #[tokio::test]
