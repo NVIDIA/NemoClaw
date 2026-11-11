@@ -85,7 +85,6 @@ The team needs a few things NemoClaw and its components don't provide yet:
 - Agents don't call one another directly: a person or script passes results between them ([#13311](https://github.com/NVIDIA/NemoClaw/issues/13311), [#13312](https://github.com/NVIDIA/NemoClaw/issues/13312)).
 - The approval step happens outside the agents ([#13314](https://github.com/NVIDIA/NemoClaw/issues/13314)).
 - The booking service receives no key yet ([#13313](https://github.com/NVIDIA/NemoClaw/issues/13313)).
-- The scheduler runs Hermes rather than Deep Agents, whose adapter can't turn a model's reasoning off ([NVIDIA/NeMo-Fabric#433](https://github.com/NVIDIA/NeMo-Fabric/issues/433)).
 - Each invocation must finish within `fabric-agent-ctl`'s 320-second deadline, which bounds how much one agent can do per call.
 
 ## Tried Live
