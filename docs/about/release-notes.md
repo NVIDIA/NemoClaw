@@ -21,6 +21,7 @@ Agents and interfaces:
 - `harness.settings.interfaces` turns on OpenClaw's dashboard and Hermes's API server and dashboard; plan checks each against the image's adapter, and apply prints how to reach it, including OpenClaw's terminal UI command.
   See [agent interfaces](../agents-inference/interfaces.md#reach-an-agent-interface).
 - A sandbox's `serviceExposures` publishes one of its ports at a URL the gateway serves; apply prints each URL and returns it as `serviceUrls` in JSON.
+  Changing the exposures updates the running sandbox's endpoints in place.
   See [service exposure](../agents-inference/interfaces.md#expose-a-service-through-the-gateway).
 - Plan and apply list each agent's runtime ID and `fabric-agent-ctl invoke` command under **Agents**, and as `agents` in JSON results.
   See [invoking an agent](../agents-inference/interfaces.md#invoke-an-agent).

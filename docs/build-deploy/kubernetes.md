@@ -398,6 +398,51 @@ Give its endpoint, credential and TLS material as environment references, as in 
 NemoClaw then manages only the sandboxes; it neither installs nor removes the gateway.
 Sandboxes still need `image.metadata`.
 
+### Reach an External Gateway Through an Ingress
+
+NemoClaw doesn't put a managed gateway behind an ingress or an OpenShift Route; it passes none of the chart's `grpcRoute` or `openshiftRoute` values ([current limits](../resources/limits.md#platforms-models-and-placement)).
+Instead, the platform operator installs the OpenShell chart behind a Gateway API ingress with OpenShell's [Kubernetes ingress guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/ingress.mdx), and the deployment connects to it with `management: external`.
+Nobody has followed these steps behind an ingress; [#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) tracks a run.
+
+The operator follows the guide with these choices:
+
+- **Version:** replace `<version>` in its `helm` commands with the `openshell` version in [`versions.json`](../../versions.json); NemoClaw rejects a gateway that reports another OpenShell version.
+- **TLS:** use its [end-to-end TLS](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/ingress.mdx#end-to-end-tls-backendtlspolicy) setup.
+  Its `server.disableTls=true` setup sends bearer tokens unencrypted from the ingress to the gateway pod.
+  Its plaintext setup can't serve NemoClaw, which accepts an `http://` gateway endpoint only on a literal loopback address.
+- **Authentication:** configure an OIDC issuer, as the guide's HTTPS setups do; the ingress terminates TLS and forwards no client certificate, so clients authenticate with bearer tokens.
+
+Then give the deployment the ingress's host name, a token, and the CA that signed the listener certificate:
+
+```yaml
+spec:
+  gateway:
+    management: external
+    runtime:
+      provider: kubernetes
+    endpoint: https://gateway.example.com
+    credential: {env: GATEWAY_TOKEN}
+    tls:
+      ca: {env: GATEWAY_CA}
+```
+
+- **`endpoint`:** the listener certificate must name the endpoint's host; otherwise NemoClaw reports `the gateway's TLS server certificate does not name the endpoint's host`.
+  When the operator sets the chart's `grpcRoute.hostnames`, the host must be one of them.
+- **`tls.ca`:** a variable holding the path of a CA certificate file, as for [any external gateway](usage.md#supply-credential-references).
+  Give the CA that signed the certificate in the Secret the listener's `certificateRefs` names, `openshell-ingress-tls` in the guide; that is the chart's own CA only when the listener reuses the chart's server certificate Secret.
+  Omit `tls` when a publicly trusted CA signed the listener certificate.
+  With the wrong CA, NemoClaw reports `the gateway's TLS server certificate is not signed by the configured certificate authority`.
+  Leave out `tls.certificate` and `tls.key`: the ingress doesn't forward a client certificate.
+- **`credential`:** a variable holding an access token for the gateway's OIDC audience.
+  NemoClaw [reads it on every run](../security/credential-rotation.md#gateway-connections) and never refreshes it; when it expires, get a new one and rerun.
+- **Roles:** NemoClaw reads the gateway's version and drivers on every plan, apply and destroy, and creates and deletes its workspace; OpenShell allows all three only to a Platform Admin ([role model](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/workspaces.mdx#understand-the-role-model)).
+  The token therefore needs the gateway's `admin_role`, by default `openshell-admin` in the `realm_access.roles` claim, unless the gateway leaves both `admin_role` and `user_role` empty ([OIDC settings](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx#oidc)).
+  Without it, plan fails with `observation permission denied`.
+  If the gateway sets `scopes_claim`, the token also needs `config:read`, `workspace:read`, `workspace:write`, `sandbox:read`, `sandbox:write`, `provider:read` and `provider:write`, or `openshell:all`.
+- **Service URLs:** [service exposure](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) URLs skip the gateway's authentication, so prefer [`openshell forward service`](../agents-inference/interfaces.md#forward-a-native-service).
+  The chart routes only gRPC, so the URLs need the operator's own route, as the guide's [Route Sandbox Service Traffic](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/ingress.mdx#route-sandbox-service-traffic) section describes.
+  OpenShell builds them with the gateway pod's port, 8080, so behind an ingress on port 443 the URLs that apply prints name a port the ingress doesn't serve.
+
 ## Use a Model Server in the Cluster
 
 Sandboxes can use a model server that you run in the gateway's cluster.
