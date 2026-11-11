@@ -83,7 +83,7 @@ Apply starts each new agent through Fabric's `fabric-agent-ctl` in its sandbox, 
 It does not invoke agents, send generation requests, or replay work.
 Plan and apply ask Fabric whether each agent's runtime still runs, with `fabric-agent-ctl check`, which sends no prompt and makes no model request.
 When Fabric reports the runtime stopped, the plan updates the agent and says `agent runtime is not running`; apply stops that runtime in Fabric and starts another in the same sandbox, which keeps its files and conversation history.
-Fabric reports a harness process that exited as unknown rather than stopped, and an unknown result counts as running, so such a runtime is found at its next invocation ([NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298)).
+Fabric reports a confirmed process exit as `failed/agent_exited`, which lets plan replace the runtime. If the health connection fails without confirming an exit, the result remains `unknown` and counts as running.
 
 Use an [agent image built from this revision](build.md#build-agent-images).
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.

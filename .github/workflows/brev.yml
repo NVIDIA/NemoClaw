@@ -80,10 +80,18 @@ jobs:
       - id: identity
         name: Identify candidate image
         run: echo "artifact=brev-image-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      # The image builds' pinned sources, as CI / Images saved them.
+      - name: Restore the verified image sources
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build/downloads
+          key: image-sources-v1-${{ hashFiles('versions.json') }}
       - name: Build candidate OCI archive
         env:
           AGENT_PLATFORM: linux/amd64
         run: |
+          # Bake reads the pinned image sources from .build/image-sources.
+          cargo images fetch
           mkdir candidate-image
           docker buildx create --name brev --driver docker-container \
             --driver-opt image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8

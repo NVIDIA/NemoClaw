@@ -29,6 +29,7 @@ Accepted platform and model declarations are not a tested matrix; verify the exa
 | AMD64 Nemotron image and GPU inference | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Local GPU deployment on Windows/WSL or macOS | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A model service on a separate physical SSH host | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| Serving one model across several GPUs on one host: `container.gpuDevices` takes one entry, so vLLM refuses a [parallel layout](../agents-inference/models.md#set-the-parallel-layout) larger than one GPU | [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) |
 | Distributed inference across several Sparks or Stations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Podman beyond a local rootless Linux gateway: managed inference, rootful operation and remote engines | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | OpenShift beyond [OpenShift Local runs by hand](../build-deploy/kubernetes.md); no automated run covers OpenShift, and kind can't run a managed `openshift` gateway, which needs OpenShift to assign its `fsGroup` | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
@@ -47,7 +48,6 @@ A configured connection or ready container does not establish successful model r
 
 | Limit | Issue |
 |---|---|
-| Fabric reports a harness process that exited as unknown rather than stopped, so plan doesn't [start it again](../build-deploy/usage.md#agent-runtimes-during-apply); the runtime is found at its next invocation | [NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298) |
 | Hermes doesn't reject a managed Ollama window below its 64,000-token minimum, because Ollama reports the model's native window; see [sizing the context for Hermes](../agents-inference/inference.md#size-the-context-for-hermes) | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) |
 | Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |

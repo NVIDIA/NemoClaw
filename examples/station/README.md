@@ -27,9 +27,8 @@ Run these commands from the repository root on the Station:
 
 ```sh
 docker buildx bake vllm
-IMAGE_PREFIX=nc-fabric AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load
 # The shared-model example also requires the Pi image.
-IMAGE_PREFIX=nc-fabric AGENT_PLATFORM=linux/arm64 docker buildx bake pi --load
+cargo images build --platform linux/arm64 openclaw pi
 cargo run -p nemoclaw-build -- bundle
 ```
 

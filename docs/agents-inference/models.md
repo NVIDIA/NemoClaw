@@ -74,6 +74,27 @@ Unsupported names are rejected.
 Inline recipes supply their own model name and execution settings and reject these ordinary-service overrides.
 There are no shell hooks, extra command arguments, or implicit model-specific settings.
 
+### Set the Parallel Layout
+
+`serving.tensorParallelSize` and `serving.pipelineParallelSize` set vLLM's `--tensor-parallel-size` and `--pipeline-parallel-size`. Each is a positive integer; the schema accepts up to 16 as an input bound, not a hardware limit:
+
+```yaml
+# Under spec.services.<name>:
+serving:
+  tensorParallelSize: 2
+  pipelineParallelSize: 1
+```
+
+- Without a recipe, when both are omitted, tensor parallelism defaults to the number of [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy) entries, or 1 without them.
+- When only `pipelineParallelSize` is set, tensor parallelism stays at vLLM's default of 1, so `pipelineParallelSize: 2` with two GPUs uses both GPUs as pipeline stages.
+- Pipeline parallelism defaults to 1.
+- vLLM uses tensor × pipeline parallel size GPUs. Selected GPUs that the layout doesn't use stay reserved but idle.
+- NemoClaw passes the layout as written. When vLLM starts, it rejects a layout that needs more GPUs than the container sees, or that the model doesn't support, such as a tensor size that doesn't divide the model's attention heads. The runtime then stops, and the [container log](#diagnose-and-recover-a-stopped-runtime) keeps vLLM's error.
+- [vLLM's parallelism guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/serving/parallelism_scaling.md) recommends pipeline parallelism when the GPU count doesn't divide the model evenly, and when the GPUs have no NVLink.
+- An inline recipe sets its own layout, whose omitted sizes get vLLM's default of 1, and rejects these settings; see [recipes](recipes.md#declaration).
+
+`container.gpuDevices` takes one entry until serving one model across several GPUs is implemented, so vLLM refuses a layout larger than one GPU.
+
 ### Retained Model Files
 
 Snapshot directories include both repository and revision in their identity.
@@ -109,9 +130,11 @@ There are no built-in model-specific backends.
 The hosted runtime checks named profiles against its GPU family, CPU architecture, driver, and memory.
 Configuration parsing validates the profile declaration without collecting host measurements.
 They do not choose a model, runtime image, or GPU count.
-Every profile currently requires Linux, driver major 580 or newer, and exactly one GPU reported by the execution host's `nvidia-smi`; multi-GPU and multi-host serving are not implemented.
-The collectors do not filter devices, so a DGX Station with an additional RTX/display GPU is rejected even when `CUDA_VISIBLE_DEVICES` selects only GB300.
-The backend uses tensor parallel size 1.
+Every profile currently requires Linux, driver major 580 or newer, and exactly one GPU visible to `nvidia-smi` in the model container; multi-GPU and multi-host serving are not implemented.
+Without [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy), the model container sees every GPU, so the runtime stops on a host with two or more, such as a DGX Station with an additional RTX or display GPU.
+`CUDA_VISIBLE_DEVICES` doesn't select one, because `nvidia-smi` ignores it.
+`container.gpuDevices` asks Docker for the one GPU it lists, as `docker run --gpus device=` does, so the model container sees only that GPU.
+With one GPU, the [parallel layout](#set-the-parallel-layout) defaults to tensor and pipeline parallel size 1.
 GB200/GB300 profiles describe one observed GPU in a Grace Blackwell system; they do not enable a full compute tray or NVL72 rack.
 
 | Profile | Hardware identity | Host architecture |
@@ -193,6 +216,8 @@ The managed vLLM supervisor continues checking host memory after the CLI exits.
 It stops its inference process on sustained pressure, failed memory observations, startup timeout, or an operator stop, and does not automatically restart inference.
 The container also stays stopped after a host reboot; see [host reboot recovery](../build-deploy/usage.md#recover-after-a-host-reboot).
 A native process exit also ends supervision of that process.
+When vLLM exits, the stop detail and the apply error include the end of vLLM's output, up to 4 KiB, with the inference key replaced by `[redacted]`.
+If the cause isn't in the excerpt, read it in the container log.
 The model volume retains `/data/status.json` with `phase`, `detail`, `updated` (UTC timestamp), and `pid`.
 Phases are `initializing`, `downloading`, `preparing`, `loading`, `ready`, and `stopped`.
 Read `detail` with the timestamp: a `ready` file from an earlier container start does not prove current readiness.
@@ -219,7 +244,7 @@ printf 'Diagnostics: %s\n' "$diagnostic_dir"
 ```
 
 These commands read the selected container, including a stopped container, and write local diagnostic files.
-The container log includes supervisor diagnostics and inherited native process output; inspect it privately before sharing.
+The container log includes supervisor diagnostics and native process output; vLLM's standard output and error both appear on the container's standard error. Inspect the log privately before sharing.
 If status is missing or the engine is unreachable, retain the original apply error and deployment state; failed observation does not prove resource absence.
 
 | Stop detail | Recovery decision |
@@ -227,7 +252,7 @@ If status is missing or the engine is unreachable, retain the original apply err
 | Host memory pressure | Restore host headroom; reduce only workloads you own or ask the host operator; do not disable protection |
 | Memory observation failed or sample stream closed | Restore the host observation prerequisites; increasing a timeout does not fix an unreadable memory source |
 | Loading exceeded startup budget | Inspect backend output for loading/capacity errors before considering a supported startup-budget change |
-| Inference process exited | Diagnose the native error using runtime logs, the selected model and image, and the recipe configuration |
+| Inference process exited | Diagnose the native error in the detail's final vLLM output or the runtime log, using the selected model and image and the recipe configuration |
 | Operator stop or protection trip | Establish why the stop was requested before explicitly resuming inference |
 
 After correcting the conditions, follow [interrupted-operation recovery](../build-deploy/usage.md#recover-an-interrupted-operation) from the client with the original YAML, bundle, and state directory.

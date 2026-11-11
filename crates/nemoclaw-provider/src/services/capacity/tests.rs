@@ -6,7 +6,7 @@ use crate::{
     ObservationError, compile,
     config::Document,
     docker::{Engine, fixture::Fixture},
-    hardware::{GIB, GpuMemory, HostObservation, HostObserver},
+    hardware::{GIB, Gpu, GpuMemory, HostObservation, HostObserver},
     managed::Spec,
 };
 use serde_json::json;
@@ -15,7 +15,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-fn specs() -> Vec<String> {
+pub(crate) fn specs() -> Vec<String> {
     let document =
         Document::parse(include_bytes!("../../../../../examples/spark/two-models.yaml").as_slice())
             .unwrap();
@@ -40,7 +40,7 @@ fn specs_for(document: &Document) -> Vec<String> {
         })
         .collect()
 }
-fn capacity() -> Capacity {
+pub(crate) fn capacity() -> Capacity {
     Capacity {
         architecture: "arm64".into(),
         gpu: "NVIDIA GB10".into(),
@@ -48,6 +48,14 @@ fn capacity() -> Capacity {
         driver_major: 580,
         total: 128 * GIB,
         available: 120 * GIB,
+        gpus: vec![Gpu {
+            index: 0,
+            uuid: "GPU-00000000-0000-0000-0000-000000000000".into(),
+            name: "NVIDIA GB10".into(),
+            driver_major: 580,
+            compute_capability: 121,
+            memory: None,
+        }],
         ..Default::default()
     }
 }
@@ -143,7 +151,7 @@ struct Host {
 }
 #[async_trait::async_trait]
 impl HostObserver for Host {
-    async fn observe(&self, _: &Engine) -> Result<HostObservation, Error> {
+    async fn observe(&self, _: &Engine, _: Option<&str>) -> Result<HostObservation, Error> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         if self.mode == "unavailable" {
             return Err(ObservationError::Transport.into());
@@ -151,6 +159,12 @@ impl HostObserver for Host {
         let mut host = self.capacity.clone();
         if self.mode == "incomplete" {
             host.compute_capability = 0;
+        }
+        if self.mode == "two-gpus" {
+            let mut second = host.gpus[0].clone();
+            second.index = 1;
+            second.uuid = "GPU-11111111-1111-1111-1111-111111111111".into();
+            host.gpus.push(second);
         }
         Ok(HostObservation {
             engine_id: if self.mode == "foreign" {
@@ -172,7 +186,7 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
     })
     .await;
     let specs = specs();
-    for mode in ["normal", "unavailable", "foreign", "incomplete"] {
+    for mode in ["normal", "unavailable", "foreign", "incomplete", "two-gpus"] {
         let reads = Arc::new(AtomicUsize::new(0));
         let connections = Connections::fixed([fixture
             .engine_for("ssh://operator@gpu-box")
@@ -186,15 +200,21 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
             }))])
         .unwrap();
         let observed =
-            observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs).await;
+            observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs, None).await;
         if mode == "normal" {
             assert!(observed.unwrap().compatible());
         } else {
-            assert!(observed.is_err(), "{mode}");
+            let Err(error) = observed else {
+                panic!("{mode}")
+            };
+            let error = error.to_string();
+            if mode == "two-gpus" {
+                assert!(error.contains("exactly one observable GPU"), "{error}");
+            }
         }
         assert_eq!(reads.load(Ordering::SeqCst), 1);
         assert!(
-            observe_service_capacity(&connections, "ssh://other", &specs)
+            observe_service_capacity(&connections, "ssh://other", &specs, None)
                 .await
                 .is_err()
         );
@@ -202,11 +222,25 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
             observe_service_capacity(
                 &connections,
                 "ssh://operator@gpu-box",
-                &[specs[0].clone(), specs[0].clone()]
+                &[specs[0].clone(), specs[0].clone()],
+                None,
             )
             .await
             .is_err()
         );
+        for gpu_devices in [vec![], vec!["all"], vec!["0", "1"], vec!["0", "0"]] {
+            let gpu_devices: Vec<String> = gpu_devices.into_iter().map(Into::into).collect();
+            assert!(
+                observe_service_capacity(
+                    &connections,
+                    "ssh://operator@gpu-box",
+                    &specs,
+                    Some(&gpu_devices)
+                )
+                .await
+                .is_err()
+            );
+        }
         assert_eq!(
             reads.load(Ordering::SeqCst),
             1,
@@ -249,9 +283,10 @@ async fn capacity_observation_counts_combined_budgets_and_largest_reserve_once()
                 },
             }))])
         .unwrap();
-        let observed = observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs)
-            .await
-            .unwrap();
+        let observed =
+            observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs, None)
+                .await
+                .unwrap();
         assert_eq!(observed.required_bytes, required);
         assert_eq!(observed.observed_bytes, total);
         assert_eq!(observed.compatible(), total == required);

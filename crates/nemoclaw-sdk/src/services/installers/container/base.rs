@@ -29,7 +29,7 @@ pub(crate) fn managed_process(
         host_ipc: resources.host_ipc,
         cpu_limit_millis: resources.cpu_limit_millis,
         memory_bytes: resources.memory_bytes,
-        gpu: true,
+        gpus: resources.gpus,
         ..process
     })
 }
