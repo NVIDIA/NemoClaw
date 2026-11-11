@@ -721,7 +721,7 @@ Generated graphs place managed vLLM with Docker and declare:
 - The model cache volume at `/data` and, with bearer authentication, the `vllm_credential_storage` credential volume at `/credentials`.
 - The serving port, published on the service's bind address.
 - `gpus = "all"`, which gives the container every GPU, or `gpus = "device=GPU"` when the service lists one GPU in `container.gpuDevices`, whose length the runtime contract data source also receives as `gpu_count`.
-  A list of several GPUs compiles to `device_requests { driver = "nvidia", device_ids = [...], capabilities = ["gpu"] }` with the IDs sorted, because Docker provider v4.6.0 reads a list in `gpus` as one device and a count.
+  A list of several GPUs compiles to `device_requests { driver = "nvidia", device_ids = [...], capabilities = ["gpu"] }`, because Docker provider v4.6.0 reads a list in `gpus` as one device and a count ([kreuzwerker/terraform-provider-docker#1019](https://github.com/kreuzwerker/terraform-provider-docker/issues/1019)).
   `container.gpuDevices` accepts one entry until serving one model across several GPUs is implemented.
 - `memory` and `memory_swap` follow `container.memoryLimitGiB`, defaulting to 106496 MiB (104 GiB); `shm_size` defaults to 8192 MiB unless the service sets another size.
 - No CPU cap unless `container.cpuLimitMillis` is supplied; Docker then enforces `cpu_quota = cpuLimitMillis × 100` microseconds per `cpu_period = 100000` (100 ms, as on Kubernetes), with a minimum quota of 1000 microseconds.

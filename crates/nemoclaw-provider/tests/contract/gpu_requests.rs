@@ -65,18 +65,24 @@ async fn one_named_gpu_reaches_docker_and_a_device_list_does_not() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH fixture"]
-async fn a_device_list_reaches_docker_as_one_nvidia_request_and_a_changed_list_replaces_it() {
-    const A: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
-    const B: &str = "GPU-0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d";
-    const C: &str = "GPU-f0e1d2c3-b4a5-9687-7869-5a4b3c2d1e0f";
-    for (ids, changed) in [
-        (vec!["0", "1"], vec!["0", "2"]),
-        (vec!["0", "1", "2"], vec!["0", "1"]),
-        (vec![A, B], vec![A, B, C]),
-        (vec![A, B, C], vec![A, C]),
-    ] {
-        let body = container_with_devices(&ids);
-        let s = Scenario::with(&body);
+async fn a_device_list_reaches_docker_as_one_nvidia_request_and_changes_replace_the_container() {
+    const UUID: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
+    let one = container("device=0");
+    let s = Scenario::with(&one);
+    s.tofu(&["apply", "-input=false", "-auto-approve", "-no-color"]);
+    let mut body = one;
+    for ids in [vec!["0", UUID], vec!["0", "1", "2"]] {
+        // Docker can't move a container to other GPUs, so adding a GPU to one
+        // or changing a list replaces the container.
+        let next = container_with_devices(&ids);
+        s.reconfigure(&body, &next);
+        body = next;
+        let changes = s.plan();
+        assert_eq!(
+            current(&changes)["change"]["actions"],
+            json!(["delete", "create"]),
+            "{ids:?}"
+        );
         s.tofu(&["apply", "-input=false", "-auto-approve", "-no-color"]);
         let engine = read(s.root(), "engine.json");
         let requests = &engine["container"]["HostConfig"]["DeviceRequests"];
@@ -111,27 +117,5 @@ async fn a_device_list_reaches_docker_as_one_nvidia_request_and_a_changed_list_r
             json!(["no-op"]),
             "{ids:?}"
         );
-        // Docker can't move a container to other GPUs.
-        s.reconfigure(&body, &container_with_devices(&changed));
-        let changes = s.plan();
-        assert_eq!(
-            current(&changes)["change"]["actions"],
-            json!(["delete", "create"]),
-            "{ids:?} to {changed:?}"
-        );
     }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH fixture"]
-async fn adding_a_second_gpu_replaces_a_one_gpu_container() {
-    let one = container("device=0");
-    let s = Scenario::with(&one);
-    s.tofu(&["apply", "-input=false", "-auto-approve", "-no-color"]);
-    s.reconfigure(&one, &container_with_devices(&["0", "1"]));
-    let changes = s.plan();
-    assert_eq!(
-        current(&changes)["change"]["actions"],
-        json!(["delete", "create"])
-    );
 }

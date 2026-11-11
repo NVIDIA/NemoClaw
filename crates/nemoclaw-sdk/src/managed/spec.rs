@@ -80,17 +80,18 @@ pub enum Gpus {
     Devices(Vec<String>),
 }
 
-/// The driver and IDs of the Docker device request for these GPUs.
+/// The driver of the Docker device request for these GPUs.
 ///
 /// One GPU uses the Docker provider's `gpus = "device=ID"`, which leaves the
 /// driver empty, as `docker run --gpus` does. Docker provider v4.6.0 reads a
-/// list in `gpus` as one device and a count, so several GPUs use its
-/// `device_requests` block instead, whose driver defaults to `cdi` and must
-/// name `nvidia`. The block's IDs are a set, so they're sorted here.
-pub(crate) fn gpu_device_request(devices: &[String]) -> (&'static str, Vec<&str>) {
-    let mut ids: Vec<&str> = devices.iter().map(String::as_str).collect();
-    ids.sort_unstable();
-    (if ids.len() == 1 { "" } else { "nvidia" }, ids)
+/// list in `gpus` as one device and a count
+/// (https://github.com/kreuzwerker/terraform-provider-docker/issues/1019), so several GPUs
+/// use its `device_requests` block instead, whose driver defaults to `cdi`
+/// and must name `nvidia`. The block's `device_ids` is a set, so Docker
+/// receives the IDs in the provider's order: a check of a running service's
+/// `DeviceIDs` must compare them as a set.
+pub(crate) fn gpu_device_driver(devices: &[String]) -> &'static str {
+    if devices.len() == 1 { "" } else { "nvidia" }
 }
 
 /// Launch settings when the image owns its entrypoint, command, and health check.
@@ -714,9 +715,11 @@ impl Spec {
                         json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
                 }
                 Gpus::Devices(devices) => {
-                    let (driver, ids) = gpu_device_request(devices);
-                    host["DeviceRequests"] =
-                        json!([{"Driver":driver,"DeviceIDs":ids,"Capabilities":[["gpu"]]}]);
+                    host["DeviceRequests"] = json!([{
+                        "Driver": gpu_device_driver(devices),
+                        "DeviceIDs": devices,
+                        "Capabilities": [["gpu"]],
+                    }]);
                 }
             }
             if process.image_owned.is_none() {
