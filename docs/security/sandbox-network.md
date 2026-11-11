@@ -240,11 +240,11 @@ Export compares the observed policy and launch settings with retained intent and
 OpenShell can add filesystem grants of its own to the loaded policy revision without recording their source.
 When a policy first loads, NemoClaw accepts those additions as long as every declared rule is intact, and records the loaded revision's hash; it keeps no list of OpenShell's additions.
 Afterwards the loaded policy must keep that hash: any change, including new additions, or an incomplete observation stops export and preserves state.
-OpenShell v0.1.6 applies GPU filesystem additions inside the workload without writing them back to the gateway policy.
+OpenShell v0.1.7 applies GPU filesystem additions inside the workload without writing them back to the gateway policy.
 This removes the upstream cause of suspected GPU false drift; live GPU export and reapply remain unverified.
 Missing policy observations or drift do not produce a partial configuration.
 
-A policy change replaces the sandbox, deleting its files and conversation history; back them up first, or keep them on a [mounted volume](../build-deploy/state.md#keep-agent-files-on-mounted-volumes).
+A policy change replaces the sandbox, deleting its files and conversations (except on [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes)); back them up first.
 External OpenShell policy edits conflict with the declared policy and stop export; change the policy in the YAML instead.
 Retained workspace and model storage follow the existing lifecycle rules.
 If an operation fails, preserve the state directory, resolve the reported observation or configuration problem, and retry with the retained configuration.
@@ -260,7 +260,7 @@ A sandbox that has not reported rejection still follows the startup wait.
 Preserve the state directory: failed apply retains created resource bindings.
 If the problem is an attached-provider or credential configuration that can be repaired without replacing the sandbox, correct it and reapply using the retained state.
 Apply can deliver that repair; completion still requires OpenShell to accept the configuration.
-If the authored sandbox policy must change, change it and apply; a policy that needs a new sandbox replaces it, deleting its files.
+If the authored sandbox policy must change, change it and apply; that replaces the sandbox, deleting its files and conversations (except on mounted volumes).
 Destroy remains available after the failed first apply and does not require successful admission or readiness.
 
 Local fixture tests exercise creation, rejection, drift detection, and export/reapply behavior.

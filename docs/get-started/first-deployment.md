@@ -27,7 +27,7 @@ cd ../nemoclaw-v1
 
 Choose another unused directory if `../nemoclaw-v1` already exists; do not replace an existing worktree.
 Run the remaining commands from this v1 worktree root on the client host unless noted otherwise.
-Do not mix bundles, examples, and generated schemas from different revisions: their field validation can differ even when their map shape agrees.
+Do not mix bundles, examples, and generated schemas from different revisions: their field validation can differ.
 
 [Build a native bundle](../build-deploy/build.md#build-a-native-bundle) from this v1 worktree and add its CLI to `PATH`:
 
@@ -132,8 +132,8 @@ export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
 Replace the endpoint and workspace with the values reported for your deployment.
 For an authenticated gateway, follow the [profile selection procedure](../agents-inference/interfaces.md#select-the-gateway-and-workspace) instead.
 
-The apply result reports the agent's runtime ID as `agents.assistant.runtimeId`; text output prints the whole command under **Agents**.
-Read the runtime ID for the `assistant` sandbox from a plan, which changes no runtime resources, then invoke its agent named `main`:
+The apply result reports the agent's runtime ID as `agents.assistant.runtimeId`.
+Read it again from a plan, which changes no runtime resources and needs the same credential environment as apply, then invoke the agent named `main`:
 
 ```sh
 RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml | jq -er '.agents.assistant.runtimeId') || exit 1

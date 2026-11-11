@@ -10,7 +10,7 @@ Parser acceptance and protocol fixtures do not establish security qualification 
 
 OpenShell enforces the declared sandbox policy; Fabric runs the native agent within that sandbox.
 Use [sandbox policy](sandbox-network.md) for filesystem, process, egress, and proxy configuration.
-An explicit policy replaces the preset, and a policy change replaces the sandbox, deleting its files.
+An explicit policy replaces the preset, and a policy change replaces the sandbox, deleting its files and conversations (except on mounted volumes).
 
 The isolated preset uses Landlock `best_effort`; unavailable restrictions are not enforced.
 Each declared agent has its own OpenShell sandbox; tool grants do not further isolate processes or files within that sandbox.

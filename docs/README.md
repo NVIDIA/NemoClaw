@@ -65,7 +65,7 @@ Use operation output and runtime evidence to identify where a deployment or agen
 
 ## References
 
-Look up the pinned v1 interface contract before adapting a command, configuration, or SDK call.
+Look up the interface contract of your source revision before adapting a command, configuration, or SDK call.
 
 | Reader goal | Guide |
 |---|---|
