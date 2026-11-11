@@ -9,6 +9,7 @@ import { loadServingCatalog } from "../../../inference/serving/catalog-loader";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { resolveSandboxToolDisclosure, type ToolDisclosure } from "../../../tool-disclosure";
 import { handleSandboxState } from "./sandbox";
+import { isMuseGlimmerVllmRecipe } from "./sandbox-resume";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 vi.mock("../../messaging-channel-setup", () => ({
@@ -237,18 +238,15 @@ describe("handleSandboxState tool disclosure", () => {
     },
   );
 
-  it("covers every shipped Muse Glimmer vLLM recipe, all on a 32K context (#14065)", () => {
-    const recipes = loadServingCatalog().recipes.filter(
-      ({ spec }) => spec.backend === "vllm" && /muse-glimmer/iu.test(spec.model.id),
-    );
-    const contextLengths = recipes.map(({ metadata, spec }) => {
-      const args = spec.serve && "arguments" in spec.serve ? (spec.serve.arguments ?? []) : [];
-      return [metadata.id, args.find(({ name }) => name === "--max-model-len")?.value];
-    });
-    expect(contextLengths.sort()).toEqual([
-      ["vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1", 32768],
-      ["vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1", 32768],
-    ]);
+  it("serves every catalog recipe the Muse default applies to on a 32K window (#14065)", () => {
+    const windows = loadServingCatalog()
+      .recipes.filter(isMuseGlimmerVllmRecipe)
+      .map(({ spec }) => {
+        const args = spec.serve && "arguments" in spec.serve ? (spec.serve.arguments ?? []) : [];
+        return args.find(({ name }) => name === "--max-model-len")?.value;
+      });
+    expect(windows).not.toHaveLength(0);
+    expect(new Set(windows)).toEqual(new Set([32768]));
   });
 
   it.each(["progressive", "direct"] as const)(
