@@ -114,6 +114,7 @@ pub async fn observe_service_capacity(
     let engine = crate::managed::service_engine(connections, endpoint)?;
     let work = async {
         let host = engine.host_observer.observe(&engine, gpu).await?;
+        host.capacity.require_one_gpu()?;
         let info = engine.info().await?;
         let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
         Ok(account(&services, &capacity)?.total)

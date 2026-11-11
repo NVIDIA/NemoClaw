@@ -120,9 +120,11 @@ fn capacity(root: &Path, control: &Value) -> ExitCode {
         ("info", format!("{info}\n")),
         ("disk", format!("{} 1\n", 1u64 << 40)),
         ("memory", memory),
-        ("gpu", "NVIDIA GB10, 580.0\n".into()),
-        ("compute_capability", "12.1\n".into()),
-        ("gpu_memory", "[N/A], [N/A]\n".into()),
+        (
+            "gpu",
+            "0, GPU-00000000-0000-0000-0000-000000000000, NVIDIA GB10, 12.1, [N/A], [N/A], 580.0\n"
+                .into(),
+        ),
         ("processes", String::new()),
     ] {
         output.push_str(&format!("\n==nemoclaw:{name}==\n{content}"));

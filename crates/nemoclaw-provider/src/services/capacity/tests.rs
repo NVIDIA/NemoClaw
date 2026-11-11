@@ -6,7 +6,7 @@ use crate::{
     ObservationError, compile,
     config::Document,
     docker::{Engine, fixture::Fixture},
-    hardware::{GIB, GpuMemory, HostObservation, HostObserver},
+    hardware::{GIB, Gpu, GpuMemory, HostObservation, HostObserver},
     managed::Spec,
 };
 use serde_json::json;
@@ -48,6 +48,14 @@ pub(crate) fn capacity() -> Capacity {
         driver_major: 580,
         total: 128 * GIB,
         available: 120 * GIB,
+        gpus: vec![Gpu {
+            index: 0,
+            uuid: "GPU-00000000-0000-0000-0000-000000000000".into(),
+            name: "NVIDIA GB10".into(),
+            driver_major: 580,
+            compute_capability: 121,
+            memory: None,
+        }],
         ..Default::default()
     }
 }
@@ -152,6 +160,12 @@ impl HostObserver for Host {
         if self.mode == "incomplete" {
             host.compute_capability = 0;
         }
+        if self.mode == "two-gpus" {
+            let mut second = host.gpus[0].clone();
+            second.index = 1;
+            second.uuid = "GPU-11111111-1111-1111-1111-111111111111".into();
+            host.gpus.push(second);
+        }
         Ok(HostObservation {
             engine_id: if self.mode == "foreign" {
                 "other"
@@ -172,7 +186,7 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
     })
     .await;
     let specs = specs();
-    for mode in ["normal", "unavailable", "foreign", "incomplete"] {
+    for mode in ["normal", "unavailable", "foreign", "incomplete", "two-gpus"] {
         let reads = Arc::new(AtomicUsize::new(0));
         let connections = Connections::fixed([fixture
             .engine_for("ssh://operator@gpu-box")
@@ -190,7 +204,13 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
         if mode == "normal" {
             assert!(observed.unwrap().compatible());
         } else {
-            assert!(observed.is_err(), "{mode}");
+            let Err(error) = observed else {
+                panic!("{mode}")
+            };
+            let error = error.to_string();
+            if mode == "two-gpus" {
+                assert!(error.contains("exactly one observable GPU"), "{error}");
+            }
         }
         assert_eq!(reads.load(Ordering::SeqCst), 1);
         assert!(
