@@ -158,7 +158,7 @@ pub struct ManagedGateway {
     pub runtime: Runtime,
     #[serde(rename = "endpoint")]
     #[schemars(default)]
-    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Without `kubernetes.expose`, the host is `127.0.0.1`: providers forward free local ports of their own to the owned gateway, so this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port clients dial, and the gateway certificate names its host.
+    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Providers forward free local ports of their own to the owned gateway. Without `kubernetes.expose`, the host is `127.0.0.1` and this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port other clients dial, and the gateway certificate names its host.
     pub endpoint: String,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]

@@ -57,7 +57,7 @@ Gateways and Kubernetes:
 - NemoClaw no longer reads cluster-wide objects: it doesn't check for a default StorageClass, the Agent Sandbox CRD, or `kube-system`.
   Without a default StorageClass, the gateway install times out in Helm's wait.
 - A managed OpenShift gateway lets OpenShift assign its UID and `fsGroup`.
-- `gateway.kubernetes.expose` publishes a managed Kubernetes or OpenShift gateway at `gateway.endpoint` through the OpenShell chart's own `NodePort` Service, which NemoClaw and the OpenShell CLI dial instead of port forwards.
+- `gateway.kubernetes.expose` publishes a managed Kubernetes or OpenShift gateway at `gateway.endpoint` through the OpenShell chart's own `NodePort` Service, for clients such as the OpenShell CLI; NemoClaw's own commands keep their port forward.
   See [publishing the gateway](../build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster).
 - A managed Kubernetes or OpenShift gateway's Helm install is atomic; a release left by an unfinished install fails apply with the `helm uninstall` command to run.
   See [recovering an unfinished Helm install](../build-deploy/usage.md#recover-from-an-unfinished-helm-install).

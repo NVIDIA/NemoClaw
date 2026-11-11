@@ -37,7 +37,7 @@ pub struct ManagedKubernetes {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 32))]
     pub image_pull_secrets: Vec<String>,
-    /// How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host; without it, NemoClaw forwards a free local port to the gateway pod for each command. Its Service type is fixed after the first successful plan.
+    /// How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host. NemoClaw's own commands still forward a free local port to the gateway pod. Its Service type is fixed after the first successful plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "KubernetesExpose")]
     pub expose: Option<KubernetesExpose>,

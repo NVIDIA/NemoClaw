@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A command-scoped connection to a managed Kubernetes gateway.
 //!
-//! A gateway published through `kubernetes.expose` is dialed at its endpoint.
-//! Otherwise it is not exposed outside the cluster: for each command the SDK
-//! listens on a free loopback port and forwards every connection to the
-//! gateway pod through the Kubernetes API, so no `kubectl` process is
+//! The gateway is not exposed outside the cluster. For each command the SDK
+//! listens on the authored loopback port and forwards every connection to
+//! the gateway pod through the Kubernetes API, so no `kubectl` process is
 //! involved. Dropping the connection stops the forward.
 
 use super::{CA_ENV, CERT_ENV, KEY_ENV, TOKEN_ENV};
@@ -20,14 +19,14 @@ use tokio_util::task::AbortOnDropHandle;
 pub struct Connection {
     endpoint: String,
     environment: BTreeMap<String, String>,
-    _forward: Option<AbortOnDropHandle<()>>,
+    _forward: AbortOnDropHandle<()>,
 }
 
 impl Connection {
     pub(super) fn new(
         endpoint: String,
         environment: BTreeMap<String, String>,
-        forward: Option<AbortOnDropHandle<()>>,
+        forward: AbortOnDropHandle<()>,
     ) -> Self {
         Self {
             endpoint,
@@ -35,8 +34,7 @@ impl Connection {
             _forward: forward,
         }
     }
-    /// The HTTPS endpoint the gateway answers on: the exposed endpoint, or a
-    /// forwarded loopback port.
+    /// The loopback HTTPS endpoint the gateway answers on.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }

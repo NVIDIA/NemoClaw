@@ -19,8 +19,7 @@ Confirm client access, cluster permissions, image availability, and inference re
 - **A NemoClaw bundle:** [build one](build.md#build-a-native-bundle) from this revision.
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
 - **Cluster access:** a kubeconfig file and an exact context, or, when NemoClaw [runs in a pod](#run-nemoclaw-in-a-pod), the pod's service account.
-  Either must be able to read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets, Jobs and NetworkPolicies.
-  Without [`gateway.kubernetes.expose`](#publish-the-gateway-outside-the-cluster), it must also port-forward to the namespace's pods (`get` and `create` on `pods/portforward`).
+  Either must be able to read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets, Jobs and NetworkPolicies, and port-forward to its pods (`get` and `create` on `pods/portforward`).
   The SDK reads nothing else outside the namespace.
   The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context or service account must be able to create a ClusterRole and a ClusterRoleBinding.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
@@ -91,7 +90,7 @@ Each sandbox also attaches at most 32 providers, OpenShell's limit; see [inferen
 ## Deploy with a Managed Gateway
 
 The SDK binds the namespace, creating it if it doesn't exist, adds a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
-The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs, unless you [publish the gateway](#publish-the-gateway-outside-the-cluster).
+The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs, also when you [publish the gateway](#publish-the-gateway-outside-the-cluster).
 Start from [the Kubernetes example](../../examples/kubernetes/managed-development.yaml). Replace these deployment-specific inputs before running the commands:
 
 - `metadata.uid` to a new UUID.
@@ -171,11 +170,12 @@ With this profile, the namespace holds no development issuer, and the state dire
 
 ### Publish the Gateway Outside the Cluster
 
-Like a Docker gateway's published port, `gateway.kubernetes.expose` publishes the gateway at `gateway.endpoint`, so NemoClaw and the OpenShell CLI dial that address instead of port forwards.
+Like a Docker gateway's published port, `gateway.kubernetes.expose` publishes the gateway at `gateway.endpoint`, where other clients, such as the OpenShell CLI, dial it without a port forward.
+NemoClaw's own plan, apply and destroy still reach the gateway through port forwards, so they still need `pods/portforward`; [#14422](https://github.com/NVIDIA/NemoClaw/issues/14422) tracks letting them dial the endpoint instead.
 NemoClaw sets the OpenShell chart's own gateway Service to `NodePort` at the endpoint's port, which forwards to the gateway's TLS listener, so TLS and client certificates pass through unchanged.
 The gateway certificate names the endpoint's host.
 The Service doesn't publish the gateway's plaintext metrics port, and the gateway then serves no metrics.
-CI publishes a gateway with the `oidc` profile on kind, where two agents reply through the node's address.
+CI publishes a gateway with the `oidc` profile on kind, where two agents reply to a client that dials the node's address with the gateway's client certificate.
 
 ```yaml
 spec:
@@ -189,7 +189,7 @@ spec:
 ```
 
 - **Endpoint:** `https://`, a lowercase DNS name or IPv4 address, and a port in the cluster's node-port range, 30000 through 32767 by default; ports 30000 through 30085 are the least likely to be taken. Apply fails if Kubernetes refuses the port or another Service holds it.
-- **The address must exist before apply,** because plan binds the endpoint, the chart writes its host into the certificate, and apply dials it: a node's address, or a DNS name for the nodes.
+- **The address must be known before apply,** because plan binds the endpoint and the chart writes its host into the certificate: a node's address, or a DNS name for the nodes.
 - **Fixed after the first plan:** `expose` and its Service type select the address the endpoint names. Like the endpoint, changing them needs a new deployment.
 - **The port is open on every node.** Restrict who can reach it with your network's own controls; the gateway still requires its client certificate.
 - **No `LoadBalancer` yet:** the pinned chart's Service takes no annotations or source ranges, and listens on the gateway's own port ([#14421](https://github.com/NVIDIA/NemoClaw/issues/14421)).
@@ -198,7 +198,6 @@ Sandbox [service URLs](../agents-inference/interfaces.md#expose-a-service-throug
 The URLs that apply prints don't open remotely yet ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
 
 The chart writes the certificate once, when it creates the Secrets `<release>-server-tls`, `<release>-client-tls` and `<release>-jwt-keys`, and destroy keeps them.
-NemoClaw records the client certificate Secret the first time it dials a published gateway and refuses a replaced one, since it trusts that Secret's CA for whatever answers at the endpoint.
 A new deployment with the same `metadata.uid` in the same namespace reuses the retained Secrets, whose certificate may not name its host; delete the three Secrets before its first apply.
 
 ### Reach the Gateway from the OpenShell CLI
@@ -372,8 +371,7 @@ rules:
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [roles, rolebindings]
     verbs: [get, create, delete]
-  # Without gateway.kubernetes.expose, the providers' port forwards; the
-  # WebSocket upgrade also needs create.
+  # The providers' port forwards; the WebSocket upgrade also needs create.
   - apiGroups: [""]
     resources: [pods/portforward]
     verbs: [get, create]

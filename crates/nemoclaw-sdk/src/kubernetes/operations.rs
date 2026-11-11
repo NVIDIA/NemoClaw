@@ -473,10 +473,9 @@ impl Operations {
         self.read(spec, prior).await
     }
 
-    /// Open a connection to the running gateway for one command and supply
-    /// its client certificate and a token. An exposed gateway is dialed at its
-    /// endpoint; otherwise a free loopback port is forwarded to the gateway
-    /// pod.
+    /// Open a connection to the running gateway for one command: forward
+    /// the authored loopback port to the gateway pod, and supply its client
+    /// certificate and a development token.
     pub async fn connect(&self, spec: &Spec) -> Result<Connection, Error> {
         let (authentication, material) = self.read_auth(spec, false).await?;
         if authentication.running != Some(true) {
@@ -490,26 +489,25 @@ impl Operations {
             .into());
         }
         let target = self.target(spec)?;
-        let exposed = target.expose.is_some();
         let mut endpoint =
             url::Url::parse(&spec.settings.endpoint).map_err(|_| ObservationError::Query)?;
-        // Each provider process connects on its own, so each forward takes a
-        // free port. The gateway certificate names the address, not the port.
-        let listener = if exposed {
-            None
-        } else {
-            let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-                .await
-                .map_err(|_| ObservationError::Transport)?;
-            let port = listener
-                .local_addr()
-                .map_err(|_| ObservationError::Transport)?
-                .port();
-            endpoint
-                .set_port(Some(port))
-                .map_err(|()| ObservationError::Query)?;
-            Some(listener)
-        };
+        // Each provider process connects on its own, so each takes a free
+        // loopback port, also when kubernetes.expose publishes the gateway
+        // elsewhere for other clients. The gateway certificate always names
+        // 127.0.0.1, not the port.
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .map_err(|_| ObservationError::Transport)?;
+        let port = listener
+            .local_addr()
+            .map_err(|_| ObservationError::Transport)?
+            .port();
+        endpoint
+            .set_ip_host(std::net::Ipv4Addr::LOCALHOST.into())
+            .map_err(|()| ObservationError::Query)?;
+        endpoint
+            .set_port(Some(port))
+            .map_err(|()| ObservationError::Query)?;
         let directory = self.state.join("client");
         super::receipt::private_directory(&directory)?;
         let secret = self
@@ -523,26 +521,6 @@ impl Operations {
             })
             .await?
             .ok_or(ObservationError::Incomplete)?;
-        if exposed {
-            // A forward reaches only the named pod; a direct dial trusts this
-            // Secret's CA for whatever answers at the endpoint.
-            let uid = secret
-                .metadata
-                .uid
-                .clone()
-                .ok_or(ObservationError::Incomplete)?;
-            let mut receipt = self.receipt(spec)?.ok_or(ObservationError::Incomplete)?;
-            match &receipt.client_tls {
-                Some(recorded) if *recorded != uid => {
-                    return Err(ObservationError::BindingMismatch.into());
-                }
-                Some(_) => {}
-                None => {
-                    receipt.client_tls = Some(uid);
-                    receipt.save(&self.state)?;
-                }
-            }
-        }
         let mut environment = std::collections::BTreeMap::new();
         for (key, name) in [
             ("ca.crt", super::CA_ENV),
@@ -582,20 +560,18 @@ impl Operations {
             kube::Api::namespaced(self.client.clone(), &target.namespace);
         // The chart runs one gateway replica, named after the release.
         let pod = format!("{}-0", spec.name);
-        let forward = listener.map(|listener| {
-            connection::forward(listener, move || {
-                let pods = pods.clone();
-                let pod = pod.clone();
-                async move {
-                    let mut forwarder = pods
-                        .portforward(&pod, &[GATEWAY_PORT])
-                        .await
-                        .map_err(std::io::Error::other)?;
-                    forwarder
-                        .take_stream(GATEWAY_PORT)
-                        .ok_or_else(|| std::io::Error::other("no forwarded stream"))
-                }
-            })
+        let forward = connection::forward(listener, move || {
+            let pods = pods.clone();
+            let pod = pod.clone();
+            async move {
+                let mut forwarder = pods
+                    .portforward(&pod, &[GATEWAY_PORT])
+                    .await
+                    .map_err(std::io::Error::other)?;
+                forwarder
+                    .take_stream(GATEWAY_PORT)
+                    .ok_or_else(|| std::io::Error::other("no forwarded stream"))
+            }
         });
         Ok(Connection::new(
             endpoint.as_str().trim_end_matches('/').to_owned(),

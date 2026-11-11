@@ -673,7 +673,7 @@
             },
             "endpoint": {
               "default": "http://127.0.0.1:17681",
-              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Without `kubernetes.expose`, the host is `127.0.0.1`: providers forward free local ports of their own to the owned gateway, so this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port clients dial, and the gateway certificate names its host.",
+              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Providers forward free local ports of their own to the owned gateway. Without `kubernetes.expose`, the host is `127.0.0.1` and this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port other clients dial, and the gateway certificate names its host.",
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS endpoint and port: 127.0.0.1 without kubernetes.expose, or the address clients dial with it."
             },
@@ -1563,7 +1563,7 @@
         },
         "expose": {
           "$ref": "#/$defs/KubernetesExpose",
-          "description": "How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host; without it, NemoClaw forwards a free local port to the gateway pod for each command. Its Service type is fixed after the first successful plan."
+          "description": "How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host. NemoClaw's own commands still forward a free local port to the gateway pod. Its Service type is fixed after the first successful plan."
         },
         "imagePullSecrets": {
           "description": "Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them in the namespace before the first apply, or after the SDK creates it, before its pods need to pull images.",

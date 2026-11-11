@@ -10,9 +10,9 @@
 # the openshift profile on OpenShift. The gateway accepts tokens from an
 # existing OIDC issuer in another namespace, and the agent image comes from a
 # private registry through the pull Secret the operator created. The chart's
-# NodePort Service publishes the gateway at its endpoint, so NemoClaw and the probe
-# dial the node's address instead of forwarding a port, and the gateway's
-# certificate must name it. cargo ci live-kind gives each run a fresh
+# NodePort Service publishes the gateway at its endpoint: NemoClaw still
+# forwards a port to the gateway pod, and the probe dials the node's address
+# as another client would, so the gateway's certificate must name it. cargo ci live-kind gives each run a fresh
 # identity, which is also the token audience, namespace, kubeconfig context,
 # registry, and agent image, and replaces the endpoint's host with the node's
 # address. The node port stays: it is in the range's lower band, which

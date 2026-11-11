@@ -10,9 +10,10 @@
 # image comes from the run's private registry with the operator's pull
 # Secret, and the CLI and the probe reach the gateway with a token from an
 # existing OIDC issuer, so apply and the replies show that the gateway
-# accepts that issuer's tokens. Apply's reads of the gateway and the probe
-# dial the node's address and verify the gateway's certificate there, as the
-# SDK's providers do, through no port-forward.
+# accepts that issuer's tokens. The CLI reaches the gateway through the SDK's
+# port-forward; the probe dials the node's address that the chart's NodePort
+# Service publishes, as another client would, with the gateway's client
+# certificate, and verifies the gateway's certificate there.
 
 run "cluster" {
   module {
