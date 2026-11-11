@@ -50,10 +50,4 @@ pub(crate) const KUBERNETES_EXPOSED_GATEWAY_ENDPOINT: &str = r"^https://[a-z0-9]
 /// 30000 through 32767.
 pub(crate) const NODE_PORT_GATEWAY_ENDPOINT: &str =
     r"^https://[^/]+:(?:3[01][0-9]{3}|32[0-6][0-9]{2}|327[0-5][0-9]|3276[0-7])$";
-/// An IPv4 or IPv6 CIDR, as a Service's `loadBalancerSourceRanges` takes it.
-/// IPv4 is exact here; Rust validation also parses IPv6 exactly.
-pub(crate) const SOURCE_RANGE: &str = r"^(?:(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:3[0-2]|[12]?[0-9])|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*/(?:12[0-8]|1[01][0-9]|[1-9]?[0-9]))$";
-/// A Kubernetes annotation key: an optional DNS subdomain prefix and a name
-/// of at most 63 characters.
-pub(crate) const ANNOTATION_KEY: &str = r"^(?:[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*/)?[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$";
 pub(crate) const NETWORK_TIER: &str = "isolated";

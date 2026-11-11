@@ -175,42 +175,6 @@ fn a_load_balancer_requires_an_existing_oidc_issuer() {
     assert!(error.contains("oidc"), "{error}");
 }
 
-#[test]
-fn load_balancer_settings_have_kubernetes_shapes() {
-    for (field, value) in [
-        ("loadBalancerSourceRanges", json!(["10.20.0.0"])),
-        ("loadBalancerSourceRanges", json!(["10.20.0.0/33"])),
-        ("loadBalancerSourceRanges", json!(["300.20.0.0/16"])),
-        (
-            "loadBalancerSourceRanges",
-            json!(["gateway.example.com/16"]),
-        ),
-        ("annotations", json!({"": "value"})),
-        ("annotations", json!({"has space": "value"})),
-        ("annotations", json!({"nemoclaw.nvidia.com/uid": "spoofed"})),
-        ("annotations", json!({"example.com/": "value"})),
-    ] {
-        let mut exposed = oidc(input(
-            "https://gateway.agents.example.com:443",
-            Some(json!({"service": {"type": "LoadBalancer"}})),
-        ));
-        exposed["spec"]["gateway"]["kubernetes"]["expose"]["service"][field] = value.clone();
-        refused(&exposed);
-    }
-    let mut exposed = oidc(input(
-        "https://gateway.agents.example.com:443",
-        Some(load_balancer()),
-    ));
-    exposed["spec"]["gateway"]["kubernetes"]["expose"]["service"]["loadBalancerSourceRanges"] =
-        json!(["2001:db8::/32", "0.0.0.0/0"]);
-    exposed["spec"]["gateway"]["kubernetes"]["expose"]["service"]["annotations"] = json!({
-        "service.beta.kubernetes.io/aws-load-balancer-scheme": "internal",
-        "networking.gke.io/load-balancer-type": "Internal",
-        "plain-key": ""
-    });
-    parse(&exposed).unwrap();
-}
-
 /// Each platform resource rebuilds its specification from the attributes it
 /// stores, which carry the endpoint but not the exposure Service.
 #[test]
