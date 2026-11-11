@@ -57,6 +57,8 @@ Gateways and Kubernetes:
 - NemoClaw no longer reads cluster-wide objects: it doesn't check for a default StorageClass, the Agent Sandbox CRD, or `kube-system`.
   Without a default StorageClass, the gateway install times out in Helm's wait.
 - A managed OpenShift gateway lets OpenShift assign its UID and `fsGroup`.
+- `gateway.kubernetes.expose` publishes a managed Kubernetes or OpenShift gateway at `gateway.endpoint` through the OpenShell chart's own `NodePort` Service, for clients such as the OpenShell CLI; NemoClaw's own commands keep their port forward.
+  See [publishing the gateway](../build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster).
 - A managed Kubernetes or OpenShift gateway's Helm install is atomic; a release left by an unfinished install fails apply with the `helm uninstall` command to run.
   See [recovering an unfinished Helm install](../build-deploy/usage.md#recover-from-an-unfinished-helm-install).
 - Plan fails when a managed Docker or Podman gateway's subnet or port is already in use.
@@ -96,8 +98,8 @@ Earlier CLI commands, schemas, and state formats have no compatibility guarantee
 See [migration](../get-started/migration.md) for where each earlier task lives now, and [state](../build-deploy/state.md) for data preservation.
 Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents:
 
-- The intent record is now version 21.
-  `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, and 21 as later changes altered it.
+- The intent record is now version 22.
+  `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, 21, and 22 as later changes altered it.
   This release refuses any deployment whose intent record is an earlier version, including every one that `v0.1.0-rc9` created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - `spec.sandboxes`, `spec.inferenceProviders`, and a sandbox's `inferenceProviders` are maps keyed by name; the parser rejects the earlier lists.

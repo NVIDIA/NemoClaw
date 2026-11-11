@@ -50,9 +50,13 @@ Before its first apply, the `tests/e2e/hcl/kind` module releases a chart twice w
 `hcl_live::issuer` creates the issuer's key material and one token for the case's audience, which is the deployment UID; OpenTofu cannot sign a token.
 The token stays in a private credentials file in the run's `work` directory, which the `cli` and `verifier` modules export as the case's `token.env` variable.
 The gateway uses the `oidc` authentication profile, so the apply and the replies show that it accepts the issuer's tokens and that each sandbox pulled its image with the pull Secret.
+The chart's NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster) the gateway at the kind node's address.
+NemoClaw's operations still reach the gateway through the SDK's port-forward; the probe instead dials the node's address with the gateway's client certificate and the token, as another client would, and checks that the gateway's certificate names it.
 Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
 The test runner then uninstalls both releases, which deletes their namespaces; it does not wait for Kubernetes to finish deleting them.
 `cargo ci live-kind` binds each case in `cases/` to the cluster's context, a fresh UID, gateway port, and namespace, and the image in the registry.
+A case whose NodePort Service publishes the gateway, as `kind-kubernetes-oidc`'s does, gets the node's address in its endpoint instead of a fresh port.
+Its node port stays as the case sets it, in the range's lower band, which Kubernetes leaves for Services that name their port.
 It passes the kubeconfig as `TF_VAR_kubeconfig` and the registry's fixture login as `TF_VAR_pull_credentials`.
 The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell runs each sandbox as the range's first UID.
 The scenario annotates the namespace itself; don't run it on a cluster that serves the `security.openshift.io` API group, where that would replace the range the cluster assigns.
@@ -122,7 +126,7 @@ Run blocks call these modules:
 | `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, and OpenClaw's terminal UI through `openshell sandbox exec --tty`, on a stub model that requires the run's key; in each sandbox, a writable workspace and no model key in the environment; in Hermes's sandbox, a pseudo-terminal; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused ([Agent Interfaces](#agent-interfaces)). |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, and a workspace file on a named volume that survives the destroy and redeploy. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
-| `kind-kubernetes-oidc` | `cargo ci live-kind` | Two agents [on kind](#kubernetes-gateway-without-the-helm-cli) in a namespace with OpenShift's UID range, from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
+| `kind-kubernetes-oidc` | `cargo ci live-kind` | Two agents [on kind](#kubernetes-gateway-without-the-helm-cli) in a namespace with OpenShift's UID range, from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens and that the chart's NodePort Service publishes at the node's address; apply goes through the port-forward, and each agent answers the stub's reply through the published address. |
 | `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` runtime profile [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`; each answers with the stub's reply. |
 
 Every scenario checks the same successful path:

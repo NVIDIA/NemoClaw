@@ -36,6 +36,15 @@ fn pod_document() -> Document {
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
 }
 
+/// The same target published through the chart's NodePort Service at the
+/// address clients dial.
+fn exposed_document() -> Document {
+    let mut value = serde_json::to_value(document()).unwrap();
+    value["spec"]["gateway"]["endpoint"] = json!("https://gateway.agents.example.com:30851");
+    value["spec"]["gateway"]["kubernetes"]["expose"] = json!({"service": {"type": "NodePort"}});
+    Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+}
+
 /// Without a kubeconfig, the Helm provider's client falls back to the pod's
 /// service account, so its configuration names no file and no context.
 #[test]
@@ -381,7 +390,9 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
         Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap(),
         oidc_document(),
         pod_document(),
+        exposed_document(),
     ] {
+        let gateway = document.spec.gateway.as_managed().unwrap();
         for target in runtime_targets(&document, &generations)
             .unwrap()
             .into_iter()
@@ -390,17 +401,12 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
             let spec = Spec::from_row(&target.kind, &target.values).unwrap();
             assert_eq!(spec.row().unwrap(), target.values);
             assert_eq!(spec.kind, target.kind);
-            let kubernetes = spec.settings.kubernetes.as_ref().unwrap();
-            assert_eq!(
-                document
-                    .spec
-                    .gateway
-                    .as_managed()
-                    .unwrap()
-                    .kubernetes
-                    .as_ref(),
-                Some(kubernetes)
-            );
+            assert_eq!(spec.settings.endpoint, gateway.endpoint);
+            // Exposure configures the Helm release; these attributes carry
+            // only its endpoint.
+            let mut authored = gateway.kubernetes.clone().unwrap();
+            authored.expose = None;
+            assert_eq!(spec.settings.kubernetes.as_ref(), Some(&authored));
             assert!(matches!(
                 target.kind.as_str(),
                 STORAGE_KIND | AUTH_KIND | GATEWAY_KIND
@@ -441,7 +447,7 @@ fn every_compiled_kubernetes_attribute_passes_the_providers_check() {
     let generations = ["kubernetes_gateway", "kubernetes_storage"]
         .map(|kind| (kind.into(), "a".repeat(32)))
         .into();
-    for document in [document(), pod_document()] {
+    for document in [document(), pod_document(), exposed_document()] {
         for target in runtime_targets(&document, &generations)
             .unwrap()
             .into_iter()

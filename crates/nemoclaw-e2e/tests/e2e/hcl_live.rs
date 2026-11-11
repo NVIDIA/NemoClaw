@@ -106,10 +106,17 @@ async fn probe() {
     let runtime = runtime_id(&state, sandbox.name);
     let request: Value = serde_json::from_str(&input("REQUEST")).unwrap();
     // A managed Kubernetes gateway is reached through a port-forward that the
-    // connection holds, as the SDK's providers reach it.
+    // connection holds, as the SDK's providers reach it. A gateway published
+    // through kubernetes.expose is dialed at its endpoint instead, as another
+    // client would dial it, with the same client certificate and token.
+    let published = document.spec.gateway.as_managed().and_then(|gateway| {
+        gateway.kubernetes.as_ref()?.expose.as_ref()?;
+        Some(gateway.endpoint.clone())
+    });
     let (_forward, client) = match kubernetes_operations(&document, &state).await {
         Some(operations) => {
-            let (forward, client) = kubernetes_gateway(&operations, &recorded).await;
+            let (forward, client) =
+                kubernetes_gateway(&operations, &recorded, published.as_deref()).await;
             (Some(forward), client)
         }
         None => {
@@ -261,7 +268,7 @@ async fn command() {
     let (exit_code, text) = match kubernetes_operations(&document, &state).await {
         Some(operations) => {
             let binding = sandbox_binding(&state, &sandbox);
-            let (_forward, client) = kubernetes_gateway(&operations, &binding).await;
+            let (_forward, client) = kubernetes_gateway(&operations, &binding, None).await;
             let (code, output) = client
                 .exec_bound(&binding, command, Default::default(), 60)
                 .await
@@ -458,10 +465,12 @@ fn visible(output: &[u8]) -> String {
 
 /// The managed Kubernetes gateway that `binding` records, reached as the
 /// SDK's providers reach it: through the port-forward the returned connection
-/// holds, with the token and TLS files in its environment.
+/// holds, with the token and TLS files in its environment. With `published`,
+/// the client dials that endpoint instead of the forward.
 async fn kubernetes_gateway(
     operations: &nemoclaw_sdk::kubernetes::operations::Operations,
     binding: &nemoclaw_sdk::backend::Row,
+    published: Option<&str>,
 ) -> (nemoclaw_sdk::kubernetes::Connection, OpenShell) {
     use nemoclaw_sdk::{
         ObservationError,
@@ -484,7 +493,7 @@ async fn kubernetes_gateway(
     let connection = operations.connect(&spec).await.unwrap();
     let file = |env: &str| FileRef { env: env.into() };
     let gateway = Gateway::External(ExternalGateway {
-        endpoint: connection.endpoint().to_owned(),
+        endpoint: published.unwrap_or(connection.endpoint()).to_owned(),
         credential: Some(SecretRef {
             env: TOKEN_ENV.into(),
         }),
