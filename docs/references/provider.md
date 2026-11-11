@@ -630,9 +630,9 @@ A positive timeout retries only transport failures, not authentication failures,
 For a managed gateway, the generated graph sets this timeout to 90 seconds and reads capabilities after gateway reconciliation.
 The capability postcondition must succeed before OpenShell resource refresh proceeds.
 
-For managed Docker gateways, the runtime graph first reads `data.openshell_docker_gateway_readiness.current` and orders the capability read after it.
+For managed Docker gateways, the generated graph first reads `data.openshell_docker_gateway_readiness.current` and orders the capability read after it.
 `openshell_docker_gateway_readiness` takes the container's `engine`, `container_id`, `name`, and `owner`, the gateway `endpoint`, and optional `wait_timeout_seconds` and `read_trigger`.
-The runtime graph waits 90 seconds and takes `container_id` from the Docker provider's process resource, so the read waits until apply.
+The generated graph waits 90 seconds and takes `container_id` from the Docker provider's process resource, so the read waits until apply.
 The data source checks the exact container ID, name, and owner through read-only engine inspection while waiting for the gateway to answer its OpenShell health call without credentials, then returns `ready`.
 Two matching stopped or absent observations, separated by 200 milliseconds, stop a positive readiness wait; a restarting process can recover within the existing timeout.
 A zero timeout reports a stopped process on its first observation and continues inspecting a running process while the single API request is pending.
@@ -893,7 +893,7 @@ The deployment lock excludes other NemoClaw operations using the same state dire
 
 ## Managed Kubernetes Gateway
 
-The runtime graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
+The generated graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
 
 1. `openshell_kubernetes_storage.runtime` binds the namespace by UID, creating it if it doesn't exist, and creates the encryption key; it retains both, with `prevent_destroy`.
 2. `openshell_kubernetes_auth.runtime` prepares the development token issuer.
