@@ -947,38 +947,20 @@ fn create_sandbox(
         }
     }
     state.created("sandbox");
-    // The gateway stores each exposure as an endpoint, resolving an omitted
-    // authorization mode to STRIP, and reports each endpoint's URL.
+    // The gateway stores each exposure as ExposeService does and reports each
+    // endpoint's URL.
+    let meta = sandbox.metadata.clone().unwrap();
     let mut service_urls = HashMap::new();
     for exposure in q.service_exposures {
-        let meta = sandbox.metadata.as_ref().unwrap();
-        let mode = match p::ServiceAuthorizationMode::try_from(exposure.authorization_mode) {
-            Ok(p::ServiceAuthorizationMode::Unspecified) => p::ServiceAuthorizationMode::Strip,
-            Ok(mode) => mode,
-            Err(_) => return Err(Status::invalid_argument("authorization_mode is invalid")),
-        };
-        let endpoint = p::ServiceEndpoint {
-            metadata: Some(state.metadata(
-                format!("{}--{}", meta.name, exposure.service),
-                meta.workspace.clone(),
-                HashMap::from([("sandbox".into(), meta.name.clone())]),
-            )),
-            sandbox_id: meta.id.clone(),
-            sandbox: meta.name.clone(),
-            name: exposure.service.clone(),
-            target_port: exposure.target_port,
-            domain: true,
-            authorization_mode: mode as i32,
-        };
-        service_urls.insert(exposure.service, service_response(endpoint.clone()).url);
-        state.services.insert(
-            (
-                meta.workspace.clone(),
-                meta.name.clone(),
-                endpoint.name.clone(),
-            ),
-            endpoint,
-        );
+        let url = store_service(
+            state,
+            &meta,
+            exposure.service.clone(),
+            exposure.target_port,
+            exposure.authorization_mode,
+        )?
+        .url;
+        service_urls.insert(exposure.service, url);
     }
     Ok(p::SandboxResponse {
         sandbox: Some(sandbox),
@@ -1061,27 +1043,43 @@ fn get_service(
     Ok(service_response(endpoint))
 }
 /// The gateway exposes a live sandbox's service, or updates an exposed one in
-/// place and keeps its ID, resolving an omitted authorization mode to STRIP.
+/// place.
 fn expose_service(
     state: &mut State,
     q: p::ExposeServiceRequest,
 ) -> Result<p::ServiceEndpointResponse, Status> {
     let workspace = workspace(&q.workspace_scope)?;
-    let sandbox_id = state
+    let sandbox = state
         .sandboxes
         .get(&format!("{workspace}/{}", q.sandbox))
-        .and_then(|sandbox| sandbox.metadata.as_ref())
-        .map(|meta| meta.id.clone())
+        .and_then(|sandbox| sandbox.metadata.clone())
         .ok_or_else(|| Status::not_found("sandbox not found"))?;
-    if q.target_port == 0 || q.target_port > u32::from(u16::MAX) {
+    store_service(state, &sandbox, q.name, q.target_port, q.authorization_mode)
+}
+/// The gateway stores a sandbox's service endpoint, at its creation or
+/// through ExposeService, as OpenShell's `expose_service_endpoint` does: it
+/// resolves an omitted authorization mode to STRIP, and an update keeps the
+/// endpoint's ID.
+fn store_service(
+    state: &mut State,
+    sandbox: &p::ObjectMeta,
+    name: String,
+    target_port: u32,
+    authorization_mode: i32,
+) -> Result<p::ServiceEndpointResponse, Status> {
+    if target_port == 0 || target_port > u32::from(u16::MAX) {
         return Err(Status::invalid_argument("target_port must be in 1..=65535"));
     }
-    let mode = match p::ServiceAuthorizationMode::try_from(q.authorization_mode) {
+    let mode = match p::ServiceAuthorizationMode::try_from(authorization_mode) {
         Ok(p::ServiceAuthorizationMode::Unspecified) => p::ServiceAuthorizationMode::Strip,
         Ok(mode) => mode,
         Err(_) => return Err(Status::invalid_argument("authorization_mode is invalid")),
     };
-    let key = (workspace.clone(), q.sandbox.clone(), q.name.clone());
+    let key = (
+        sandbox.workspace.clone(),
+        sandbox.name.clone(),
+        name.clone(),
+    );
     let metadata = match state.services.get(&key).and_then(|e| e.metadata.clone()) {
         Some(mut metadata) => {
             state.effects += 1;
@@ -1089,18 +1087,18 @@ fn expose_service(
             metadata
         }
         None => state.metadata(
-            format!("{}--{}", q.sandbox, q.name),
-            workspace,
-            HashMap::from([("sandbox".into(), q.sandbox.clone())]),
+            format!("{}--{name}", sandbox.name),
+            sandbox.workspace.clone(),
+            HashMap::from([("sandbox".into(), sandbox.name.clone())]),
         ),
     };
     let endpoint = p::ServiceEndpoint {
         metadata: Some(metadata),
-        sandbox_id,
-        sandbox: q.sandbox,
-        name: q.name,
-        target_port: q.target_port,
-        domain: q.domain,
+        sandbox_id: sandbox.id.clone(),
+        sandbox: sandbox.name.clone(),
+        name,
+        target_port,
+        domain: true,
         authorization_mode: mode as i32,
     };
     state.services.insert(key, endpoint.clone());
