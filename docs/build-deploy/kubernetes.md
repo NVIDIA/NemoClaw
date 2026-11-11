@@ -201,6 +201,7 @@ A `LoadBalancer` Service also gets a node port that Kubernetes allocates, and `l
 **`loadBalancerSourceRanges` must admit the host that runs NemoClaw.**
 Plan, apply, and destroy dial the endpoint, so the ranges must include that host's address as the load balancer sees it.
 Where the load balancer enforces the ranges, apply sets ranges that exclude the host on the Service, then fails with `observation transport failed`.
+Where the cluster drops the excluded connections instead of refusing them, as on k3s with MetalLB, apply first waits up to 5 minutes, the time it gives a load balancer's endpoint to answer.
 Every later plan, apply, or destroy fails the same way before it changes anything, even with corrected YAML.
 To recover, set ranges that admit the host on the Service, which is the namespace's Service ending in `-exposure`, then apply YAML with the same ranges:
 
