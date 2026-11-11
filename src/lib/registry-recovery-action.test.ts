@@ -376,6 +376,7 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
     expect(recovered?.model).toBeNull();
     expect(recovered?.provider).toBeNull();
     expect(recovered?.agent).toBeUndefined();
+    expect(recovered?.gatewayName).toMatch(/^nemoclaw(?:-\d+)?$/);
     // Marked recovered-from-gateway so the inventory renderer shows unknown
     // agent/GPU instead of OpenClaw/CPU defaults (consumed by buildSandboxInventoryRow).
     expect(recovered?.recoveredFromGateway).toBe(true);

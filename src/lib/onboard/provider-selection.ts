@@ -2,6 +2,35 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  readHermesSwitchyardRoutingEnvironment,
+  switchyardClientProfile,
+} from "../hermes-switchyard-routing";
+import type { ProviderSelectionResult } from "./machine/handlers/provider-inference";
+
+/** A routing file supplies the model selection; do not run the ordinary provider picker. */
+export function resolveSwitchyardProviderSelection(
+  environment: NodeJS.ProcessEnv,
+  agent: string | null | undefined,
+): ProviderSelectionResult | null {
+  const routing = readHermesSwitchyardRoutingEnvironment(environment);
+  if (!routing) return null;
+  if (agent !== "hermes") throw new Error("Switchyard provider selection requires Hermes.");
+  const profile = switchyardClientProfile(routing.capable.provider);
+  return {
+    model: routing.capable.model,
+    provider: routing.capable.provider,
+    endpointUrl: profile.baseUrl,
+    credentialEnv: profile.apiKeyEnv,
+    hermesAuthMethod: null,
+    hermesToolGateways: [],
+    preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
+    nimContainer: null,
+  };
+}
+
+import {
   selectedModelProvenance,
   type ModelSelectionProvenance,
 } from "../domain/telemetry/provenance";

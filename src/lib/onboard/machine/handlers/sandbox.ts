@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouter } from "./sandbox-resume";
 import { isDeepStrictEqual } from "node:util";
 
 import {
@@ -120,11 +121,13 @@ import {
   sameRegistryMessagingAuthority,
 } from "./sandbox-messaging";
 import {
+  assertHermesSwitchyardRoutingReusable,
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
+  hermesSwitchyardRoutingCreateIntentFields,
   initialOpenClawToolDisclosure,
   isValidSavedResourceProfile,
   replacesSameNameSandbox,
@@ -227,7 +230,7 @@ export interface SandboxStateOptions<
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
   stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
-  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+  deferredInferenceRoute?: import("../../inference-providers/types").DeferredInferenceRoute;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   compatibleEndpointReasoningEffort: string | null;
@@ -358,6 +361,10 @@ export interface SandboxStateOptions<
     listRegistrySandboxes(): { sandboxes: unknown[] };
     planRegisteredExtraProviders(
       gatewayName: string,
+      options?: Pick<
+        import("../../extra-provider-reconciliation").ReconcileExtraProvidersDeps,
+        "webSearchProvider"
+      >,
     ):
       | import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan
       | Promise<import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan>;
@@ -367,6 +374,7 @@ export interface SandboxStateOptions<
       nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
       nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
+      hermesSwitchyard?: SandboxEntry["hermesSwitchyard"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
@@ -825,6 +833,14 @@ class SandboxStateFlow<
       : { source: "none" as const, plan: null };
     const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
     const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
+    assertHermesSwitchyardRoutingReusable({
+      agentName: (this.options.agent as { name?: string } | null)?.name,
+      entry: registryEntry,
+      env: this.options.env,
+      recreate: this.options.recreateSandbox(false),
+      sandboxState: sandboxReuseState,
+      reservationSessionId: state.session?.sessionId,
+    });
     const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,
       state,
@@ -995,6 +1011,12 @@ class SandboxStateFlow<
       this.sandboxCreateFingerprintPrefix(sandboxName, recordedReasoning),
       JSON.stringify(sandboxGpuCreateInputs(this.options.sandboxGpuConfig)),
       [...this.options.hermesToolGateways].sort().join(","),
+      ...Object.values(
+        hermesSwitchyardRoutingCreateIntentFields(
+          (this.options.agent as { name?: string } | null)?.name,
+          this.options.env,
+        ),
+      ).map((routing) => JSON.stringify(routing)),
     ].join("|");
     if (!createIntent) return lightFingerprint;
     // Extra providers are live gateway attachments, not durable build intent.
@@ -1348,7 +1370,10 @@ class SandboxStateFlow<
     return { ...staged.source, nativeLocalProviderAttachment: staged.attachment };
   }
 
-  private reserveCreateRouteForSession(sandboxName: string): void {
+  private reserveCreateRouteForSession(
+    sandboxName: string,
+    preparedRoute?: import("../../inference-providers/types").DeferredInferenceRouteReservation,
+  ): void {
     reserveSandboxResumeRoute(
       sandboxName,
       this.deps.getSandboxRegistryEntry(sandboxName),
@@ -1360,10 +1385,11 @@ class SandboxStateFlow<
         credentialEnv: this.options.credentialEnv,
         preferredInferenceApi: this.options.preferredInferenceApi,
         gatewayName: this.options.gatewayName,
-        reservationSessionId: this.options.session?.sessionId,
         ...(this.options.stagedNativeLocalRecreation
           ? { nativeLocalProviderAttachment: this.options.stagedNativeLocalRecreation.attachment }
           : {}),
+        ...preparedRoute,
+        reservationSessionId: this.options.session?.sessionId,
       },
       this.deps.reserveSandboxInferenceRoute,
       this.deps.cliName(),
@@ -1396,8 +1422,8 @@ class SandboxStateFlow<
           this.deps.getSandboxRegistryEntry(sandboxName),
         );
         if (this.options.deferredInferenceRoute) {
-          await this.options.deferredInferenceRoute(() =>
-            this.reserveCreateRouteForSession(sandboxName),
+          await this.options.deferredInferenceRoute((preparedRoute) =>
+            this.reserveCreateRouteForSession(sandboxName, preparedRoute),
           );
         } else {
           this.reserveCreateRouteForSession(sandboxName);
@@ -1447,6 +1473,14 @@ class SandboxStateFlow<
     return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
       await this.assertCheckpointBindingsStillLive(state);
       this.assertGatewayRouteCompatible(state.sandboxName);
+      const entry = this.deps.getSandboxRegistryEntry(state.sandboxName);
+      assertHermesSwitchyardRoutingReusable({
+        agentName: (this.options.agent as { name?: string } | null)?.name,
+        entry,
+        env: this.options.env,
+        recreate: false,
+        sandboxState: "ready",
+      });
       if (state.webSearchConfig) {
         const provider = webSearchProviderForConfig(
           state.webSearchConfig as unknown as SharedWebSearchConfig,
@@ -2474,6 +2508,11 @@ class SandboxStateFlow<
       );
       const extraProviderPlan = await this.deps.planRegisteredExtraProviders(
         this.options.gatewayName,
+        {
+          webSearchProvider: state.webSearchConfig
+            ? webSearchProviderForConfig(state.webSearchConfig as unknown as SharedWebSearchConfig)
+            : null,
+        },
       );
       if (
         this.options.apfInterceptorRequested === true &&
@@ -2941,6 +2980,7 @@ export async function handleSandboxState<
     ResourceProfile
   >,
 ): Promise<SandboxStateResult<WebSearchConfig>> {
+  rejectRetiredModelRouter(options.provider);
   const run = () => new SandboxStateFlow(options).run();
   return options.sandboxName && options.deps.withSandboxMutationLock
     ? options.deps.withSandboxMutationLock(options.sandboxName, run)

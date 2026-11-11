@@ -13,6 +13,11 @@ import { digestBaselineEntry } from "./baseline-exclusion";
 
 const mocks = vi.hoisted(() => ({
   getSandbox: vi.fn(),
+  updateSandbox: vi.fn(),
+  listProviderAttachments: vi.fn(),
+  getProvider: vi.fn(),
+  detachProvider: vi.fn(),
+  inspectIdentity: vi.fn(),
   inspectSandboxPolicy: vi.fn(),
   readSandboxPolicy: vi.fn(),
   readSandboxPolicyRevision: vi.fn(),
@@ -32,6 +37,18 @@ vi.mock("../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
     setSandboxPolicy: mocks.setSandboxPolicy,
   },
 }));
+vi.mock("../adapters/openshell/provider-adapter-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/provider-adapter-cli")>()),
+  createCliOpenShellProviderAdapter: () => ({
+    listProviderAttachments: mocks.listProviderAttachments,
+    getProvider: mocks.getProvider,
+    detachProvider: mocks.detachProvider,
+  }),
+}));
+vi.mock("../adapters/openshell/sandbox-identity-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/sandbox-identity-cli")>()),
+  inspectOpenShellSandboxIdentityFingerprint: mocks.inspectIdentity,
+}));
 vi.mock("../adapters/openshell/resolve", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../adapters/openshell/resolve")>()),
   resolveOpenshell: mocks.resolveOpenshell,
@@ -39,6 +56,7 @@ vi.mock("../adapters/openshell/resolve", async (importOriginal) => ({
 vi.mock("../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/registry")>()),
   getSandbox: mocks.getSandbox,
+  updateSandbox: mocks.updateSandbox,
 }));
 
 import {
@@ -101,6 +119,273 @@ describe("live OpenShell policy mutations", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  describe("Tavily provider revocation (#13082)", () => {
+    const tavily = { endpoints: [{ host: "api.tavily.com", port: 443 }] };
+    let attached: string[];
+    let entry: {
+      name: string;
+      gatewayName: string;
+      webSearchEnabled: boolean;
+      webSearchProvider: string | null;
+    };
+
+    beforeEach(() => {
+      attached = ["shared-search", "inference"];
+      entry = {
+        name: sandboxName,
+        gatewayName: "nemoclaw",
+        webSearchEnabled: true,
+        webSearchProvider: "tavily",
+      };
+      mocks.getSandbox.mockImplementation(() => entry);
+      mocks.updateSandbox.mockImplementation((_name, patch) => {
+        Object.assign(entry, patch);
+        return true;
+      });
+      mocks.inspectIdentity.mockReturnValue("sandbox-identity");
+      mocks.listProviderAttachments.mockImplementation(() => ({
+        ok: true,
+        value: { names: attached },
+      }));
+      mocks.getProvider.mockImplementation(({ providerName }) => ({
+        ok: true,
+        value: { name: providerName, type: providerName === "shared-search" ? "tavily" : "nvidia" },
+      }));
+      mocks.detachProvider.mockImplementation(({ providerName }) => {
+        attached = attached.filter((name) => name !== providerName);
+        return { ok: true, value: { changed: true } };
+      });
+      livePolicy = YAML.stringify({
+        version: 1,
+        network_policies: { host_approval: hostEntry, tavily },
+      });
+      mocks.inspectSandboxPolicy.mockImplementation(() =>
+        policyInspection({
+          policySource: "sandbox",
+          effectivePolicy: {
+            ...YAML.parse(livePolicy),
+            network_policies: {
+              ...YAML.parse(livePolicy).network_policies,
+              ...(attached.includes("shared-search") ? { _provider_shared: tavily } : {}),
+            },
+          },
+          policyIdentity: { hash: "sha256:live", activeVersion: 1 },
+        }),
+      );
+    });
+
+    it.each(["tavily", "tavily-hermes-v1"])(
+      "detaches only this sandbox's %s grant and disables its saved selection",
+      async (type) => {
+        mocks.getProvider.mockImplementation(({ providerName }) => ({
+          ok: true,
+          value: { name: providerName, type: providerName === "shared-search" ? type : "nvidia" },
+        }));
+        await expect(removePreset(sandboxName, "tavily")).resolves.toBe(true);
+        expect(attached).toEqual(["inference"]);
+        expect(mocks.detachProvider).toHaveBeenCalledExactlyOnceWith({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          sandboxName,
+          providerName: "shared-search",
+        });
+        expect(entry.webSearchEnabled).toBe(false);
+        expect(entry.webSearchProvider).toBeNull();
+        expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
+      },
+    );
+
+    it("rejects a replaced sandbox before any write", async () => {
+      mocks.inspectIdentity.mockReturnValueOnce("old-identity");
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(false);
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+      expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
+    });
+
+    it("rejects a sandbox whose live identity differs from its recorded identity", async () => {
+      mocks.getSandbox.mockReturnValue({
+        ...entry,
+        lifecycleLiveIdentityFingerprint: "other-sandbox",
+      });
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(false);
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+      expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    });
+
+    it("preserves an unrelated saved search provider while revoking Tavily", async () => {
+      entry.webSearchProvider = "brave";
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(true);
+      expect(entry.webSearchEnabled).toBe(true);
+      expect(entry.webSearchProvider).toBe("brave");
+      expect(mocks.updateSandbox).not.toHaveBeenCalled();
+      expect(attached).toEqual(["inference"]);
+    });
+
+    it("reconciles a lost detach response without retrying the write", async () => {
+      mocks.detachProvider.mockImplementation(() => {
+        attached = ["inference"];
+        return { ok: false, error: { kind: "timeout", message: "response lost" } };
+      });
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(false);
+      expect(mocks.detachProvider).toHaveBeenCalledTimes(1);
+      expect(mocks.listProviderAttachments).toHaveBeenCalledTimes(2);
+      expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(true);
+      expect(mocks.detachProvider).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops when attachment discovery is unreadable", async () => {
+      mocks.listProviderAttachments.mockReturnValue({
+        ok: false,
+        error: { kind: "timeout", message: "unavailable" },
+      });
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(false);
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+      expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["other port", { host: "api.tavily.com", port: 8443 }],
+      ["other port list", { host: "api.tavily.com", ports: [80, 8443] }],
+      [
+        "other route",
+        {
+          host: "api.tavily.com",
+          port: 443,
+          protocol: "rest",
+          rules: [{ allow: { method: "POST", path: "/status" } }],
+        },
+      ],
+      [
+        "other method",
+        {
+          host: "api.tavily.com",
+          port: 443,
+          protocol: "rest",
+          rules: [{ allow: { method: "GET", path: "/search" } }],
+        },
+      ],
+      [
+        "endpoint path",
+        {
+          host: "api.tavily.com",
+          port: 443,
+          protocol: "rest",
+          path: "/status",
+          rules: [{ allow: { method: "*", path: "/**" } }],
+        },
+      ],
+    ])("preserves an unrelated same-host %s rule after removal", async (_label, endpoint) => {
+      const approved = { endpoints: [endpoint], binaries: [{ path: "/opt/venv/bin/python3*" }] };
+      livePolicy = YAML.stringify({ version: 1, network_policies: { tavily, approved } });
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(true);
+      expect(YAML.parse(livePolicy).network_policies).toEqual({ approved });
+    });
+
+    it.each([
+      [
+        "REST search",
+        { protocol: "rest", rules: [{ allow: { method: "POST", path: "/search" } }] },
+      ],
+      [
+        "REST extract",
+        { protocol: "rest", rules: [{ allow: { method: "post", path: "/extract" } }] },
+      ],
+      ["REST wildcard", { protocol: "rest", rules: [{ allow: { method: "*", path: "/**" } }] }],
+      [
+        "audit mode",
+        {
+          protocol: "rest",
+          enforcement: "audit",
+          rules: [{ allow: { method: "GET", path: "/status" } }],
+        },
+      ],
+      [
+        "TLS passthrough",
+        {
+          protocol: "rest",
+          tls: "passthrough",
+          rules: [{ allow: { method: "GET", path: "/status" } }],
+        },
+      ],
+      ["ancestor binary", {}],
+      [
+        "uninspected protocol",
+        { protocol: "tcp", rules: [{ allow: { method: "GET", path: "/status" } }] },
+      ],
+      [
+        "unknown glob",
+        { protocol: "rest", rules: [{ allow: { method: "POST", path: "/{search,status}" } }] },
+      ],
+      ["malformed port", { port: "443" }],
+    ])("refuses unrevoked %s access after removal", async (_label, fields) => {
+      const approved = {
+        endpoints: [{ host: "api.tavily.com", ports: [443], ...fields }],
+        binaries: [{ path: "/bin/bash" }],
+      };
+      livePolicy = YAML.stringify({ version: 1, network_policies: { tavily, approved } });
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(false);
+      expect(YAML.parse(livePolicy).network_policies).toEqual({ approved });
+    });
+
+    it.each(["api.tavily.com", "*.tavily.com", "*"])(
+      "preserves an overlapping operator rule for %s and reports incomplete revocation",
+      async (host) => {
+        livePolicy = YAML.stringify({
+          version: 1,
+          network_policies: { tavily, approved_tavily: { endpoints: [{ host, port: 443 }] } },
+        });
+        await expect(removePreset(sandboxName, "tavily")).resolves.toBe(false);
+        expect(YAML.parse(livePolicy).network_policies).toEqual({
+          approved_tavily: { endpoints: [{ host, port: 443 }] },
+        });
+        expect(console.log).not.toHaveBeenCalledWith("  Removed preset: tavily");
+      },
+    );
+
+    it("rejects a successful detach acknowledgement when the grant remains attached", async () => {
+      mocks.detachProvider.mockReturnValue({ ok: true, value: { changed: true } });
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(false);
+      expect(attached).toEqual(["shared-search", "inference"]);
+      expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
+    });
+
+    it("allows repeated removal without another detach", async () => {
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(true);
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(true);
+      expect(mocks.detachProvider).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports a partial removal when policy readback fails after detach", async () => {
+      mocks.detachProvider.mockImplementation(() => {
+        attached = ["inference"];
+        mocks.inspectSandboxPolicy.mockReturnValue({
+          ok: false,
+          error: { kind: "timeout", message: "unavailable" },
+        });
+        return { ok: true, value: { changed: true } };
+      });
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(false);
+      expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
+      expect(entry.webSearchEnabled).toBe(false);
+    });
+
+    it("stops before detachment when disabled selection cannot be saved", async () => {
+      mocks.updateSandbox.mockReturnValue(false);
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(false);
+      expect(mocks.detachProvider).not.toHaveBeenCalled();
+      expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
+    });
+
+    it("restores the direct rule only when the preset is explicitly added", async () => {
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(true);
+      await expect(applyPresets(sandboxName, ["tavily"])).resolves.toBe(true);
+      expect(YAML.parse(livePolicy).network_policies.tavily.endpoints).toEqual(
+        expect.arrayContaining([expect.objectContaining({ host: "api.tavily.com", port: 443 })]),
+      );
+      expect(attached).toEqual(["inference"]);
+    });
   });
 
   it("uses live policy state without a registry owner or receipt", async () => {

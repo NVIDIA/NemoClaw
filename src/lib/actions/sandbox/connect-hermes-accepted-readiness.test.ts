@@ -8,7 +8,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import { createHermesPortableUninstallFixture } from "../../../../test/helpers/hermes-portable-uninstall-fixture";
-import { createConnectHarness } from "../../../../test/support/connect-flow-test-harness";
+import {
+  createConnectHarness,
+  requireDist,
+} from "../../../../test/support/connect-flow-test-harness";
 import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
 import { hermesPortableReceiptDirectory } from "../../onboard/experimental/hermes-portable-receipt";
 import type { SandboxEntry } from "../../state/registry";
@@ -880,6 +883,32 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(output).toContain("Do not run another probe or launch");
     expect(output).toContain("Initial recovery failure:");
     expect(output).toContain("did not become healthy before the recovery deadline");
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports the migrated API port and initiating startup failure when restoration is unproved", async () => {
+    const harness = missingHermesHarness();
+    const { HermesPortableForwardRecoveryError: ForwardRecoveryError } = requireDist(
+      "../../src/lib/actions/sandbox/process-recovery.js",
+    );
+    harness.verifyHermesPortableLaunchForwardsSpy.mockReturnValue({ kind: "unhealthy" });
+    harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation(async () => {
+      throw new ForwardRecoveryError("restoration-unproved", {
+        cause: "forward-mutation-failed",
+        operation: "start",
+        port: 18_789,
+        restorationPort: 8_642,
+        startupFailure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+      });
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("migrated API forward on host port 8642");
+    expect(output).toContain("start completed for recorded host port 18789");
+    expect(output).toContain("Startup failure: forward-start startup/child_exited status=17.");
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 

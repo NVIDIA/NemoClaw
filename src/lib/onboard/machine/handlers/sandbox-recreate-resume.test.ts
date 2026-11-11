@@ -2,9 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { switchyardBindingFixture } from "../../../../../test/helpers/hermes-switchyard";
 
+import { planRegisteredExtraProviders } from "../../extra-provider-reconciliation";
 import { createSession } from "../../../state/onboard-session";
 import { recordCheckpointEffectGroup } from "../../checkpoint-record";
+import {
+  createHermesSwitchyardRoutingIntent,
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+} from "../../../hermes-switchyard-routing";
 import { handleSandboxState } from "./sandbox";
 import {
   baseOptions,
@@ -16,6 +23,11 @@ import {
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
   detectUnconfiguredMessagingChannels: vi.fn(() => []),
+}));
+
+vi.mock("../../sandbox-registration", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox-registration")>()),
+  withSandboxImageRegistrationFence: async (operation: () => Promise<unknown>) => operation(),
 }));
 
 const GPU_PROOF = {
@@ -81,6 +93,95 @@ async function prepareResumedGpuSandboxRecreate(
 }
 
 describe("handleSandboxState resume recreation", () => {
+  it.each([
+    ["enabled", null, "efficient-model"],
+    ["changed", "efficient-model", "changed-efficient-model"],
+    ["disabled", "efficient-model", null],
+  ])(
+    "rejects resumed recreation when Hermes routing is %s (#13863)",
+    async (_label, before, after) => {
+      const routing = (efficientModel: string | null) =>
+        efficientModel
+          ? createHermesSwitchyardRoutingIntent({
+              efficient: { provider: "nvidia-prod", model: efficientModel },
+              capable: { provider: "openai-api", model: "capable-model" },
+            })
+          : null;
+      const recorded = routing(before);
+      const desired = routing(after);
+      const saved = {
+        name: "saved",
+        agent: "hermes",
+        ...(recorded
+          ? {
+              hermesSwitchyard: { routing: recorded, bindings: switchyardBindingFixture(recorded) },
+            }
+          : {}),
+      };
+      const session = createSession({ sandboxName: "saved", agent: "hermes" });
+      const journal = bindJournaledRecreate(session, "saved", "hermes");
+      const observe = vi.fn(journal.observe);
+      const { deps, calls } = createDeps(
+        {
+          getSandboxReuseState: () => "ready",
+          getSandboxRegistryEntry: () => saved,
+          getSandboxRecreateObservation: observe,
+        },
+        session,
+      );
+      const original = structuredClone(saved);
+      await expect(
+        handleSandboxState({
+          ...baseOptions(deps, session),
+          agent: { name: "hermes" },
+          resume: true,
+          sandboxName: "saved",
+          recreateSandbox: () => true,
+          env: desired
+            ? { [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(desired) }
+            : {},
+        }),
+      ).rejects.toThrow("new sandbox name");
+      expect(calls.createSandbox).not.toHaveBeenCalled();
+      expect(calls.recordSkip).not.toHaveBeenCalled();
+      expect(observe).not.toHaveBeenCalled();
+      expect(saved).toEqual(original);
+    },
+  );
+
+  it.each([false, true])(
+    "rejects changed Hermes routing before sandbox reuse when resume=%s (#13862)",
+    async (resume) => {
+      const session = createSession({ sandboxName: "saved" });
+      session.steps.sandbox.status = "complete";
+      const { deps, calls } = createDeps(
+        {
+          getSandboxReuseState: () => "ready",
+          getSandboxRegistryEntry: () => ({ name: "saved", agent: "hermes" }),
+        },
+        session,
+      );
+      await expect(
+        handleSandboxState({
+          ...baseOptions(deps, session),
+          agent: { name: "hermes" },
+          resume,
+          sandboxName: "saved",
+          env: {
+            [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(
+              createHermesSwitchyardRoutingIntent({
+                efficient: { provider: "nvidia-prod", model: "efficient-model" },
+                capable: { provider: "openai-api", model: "capable-model" },
+              }),
+            ),
+          },
+        }),
+      ).rejects.toThrow("Preserve this sandbox and onboard with a new sandbox name.");
+      expect(calls.createSandbox).not.toHaveBeenCalled();
+      expect(calls.recordSkip).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(RECORDED_RECEIPTS)(
     "recreates a not-ready GPU sandbox on resume when the recorded create receipt %s",
     async (_receipt, recordedGpuSettings) => {
@@ -216,7 +317,9 @@ describe("handleSandboxState resume recreation", () => {
     expect(calls.note).toHaveBeenCalledWith(
       "  [resume] Recreate sandbox requested; recreating sandbox.",
     );
-    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
+    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw", {
+      webSearchProvider: null,
+    });
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(journal.completeCreate).toHaveBeenCalledTimes(1);
     const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];
@@ -241,6 +344,103 @@ describe("handleSandboxState resume recreation", () => {
     });
     expect(result.sandboxName).toBe("saved");
   });
+
+  it.each(["tavily", "tavily-hermes-v1"])(
+    "omits shared %s credentials when fresh creation has no web-search selection (#13082)",
+    async (profileType) => {
+      const session = createSession();
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: () => ({
+            name: "my-assistant",
+            provider: "provider",
+            model: "model",
+            endpointUrl: null,
+            preferredInferenceApi: "openai-completions",
+            toolDisclosure: "progressive",
+            fromDockerfile: null,
+            hermesAuthMethod: null,
+          }),
+          planRegisteredExtraProviders: (gatewayName, options = {}) =>
+            planRegisteredExtraProviders(gatewayName, {
+              ...options,
+              listExtraProviders: () => ["shared-search", "other"],
+              providerAdapter: {
+                getProvider: async ({ providerName }: { providerName: string }) => ({
+                  ok: true,
+                  value: {
+                    name: providerName,
+                    type: providerName === "shared-search" ? profileType : "nvidia",
+                  },
+                }),
+              } as never,
+            }),
+        },
+        session,
+      );
+      await handleSandboxState(baseOptions(deps, session));
+      expect((calls.createSandbox.mock.calls[0] as unknown[])[15]).toMatchObject({
+        extraProviders: ["other"],
+      });
+    },
+  );
+
+  it.each(["tavily", "tavily-hermes-v1"])(
+    "keeps saved opt-out on rebuild despite a retained %s registration used for live reattachment (#13082)",
+    async (profileType) => {
+      const session = createSession({ sandboxName: "saved" });
+      session.steps.sandbox.status = "complete";
+      const journal = bindJournaledRecreate(session);
+      const planner = vi.fn((gatewayName: string, options = {}) =>
+        planRegisteredExtraProviders(gatewayName, {
+          ...options,
+          listExtraProviders: () => ["shared-search", "other"],
+          providerAdapter: {
+            getProvider: async ({ providerName }: { providerName: string }) => ({
+              ok: true,
+              value: {
+                name: providerName,
+                type: providerName === "shared-search" ? profileType : "nvidia",
+              },
+            }),
+          } as never,
+        }),
+      );
+      const { deps } = createDeps(
+        {
+          getSandboxReuseState: () => "ready",
+          getSandboxRecreateObservation: journal.observe,
+          getSandboxRegistryEntry: () => ({
+            name: "saved",
+            provider: "provider",
+            model: "model",
+            endpointUrl: null,
+            preferredInferenceApi: "openai-completions",
+            toolDisclosure: "progressive",
+            fromDockerfile: null,
+            hermesAuthMethod: null,
+            webSearchEnabled: false,
+            webSearchProvider: null,
+          }),
+          planRegisteredExtraProviders: planner,
+          createSandbox: journal.completeCreate,
+        },
+        session,
+      );
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+        recreateSandbox: () => true,
+      });
+      expect(planner).toHaveBeenCalledExactlyOnceWith("nemoclaw", { webSearchProvider: null });
+      expect((journal.completeCreate.mock.calls[0] as unknown[])[15]).toMatchObject({
+        extraProviders: ["other"],
+        resolved: expect.objectContaining({ extraProviders: ["other"] }),
+        recreate: true,
+      });
+    },
+  );
 
   it("passes an authoritative empty extra-provider list after reconciliation prunes stale names", async () => {
     const session = createSession({
@@ -268,7 +468,9 @@ describe("handleSandboxState resume recreation", () => {
       sandboxName: "saved",
     });
 
-    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
+    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw", {
+      webSearchProvider: null,
+    });
     expect(journal.completeCreate).toHaveBeenCalledTimes(1);
     const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];
     expect(createSandboxCall[14]).toEqual({

@@ -18,14 +18,51 @@ import {
   registryEntryGatewayPort,
   resolveHome,
 } from "../../../state/gateway-registry";
-import { isCurrentPortableHostFenceHeld } from "../../../state/portable-uninstall-retirement";
+import {
+  isCurrentPortableHostFenceHeld,
+  withPortableHostFence,
+} from "../../../state/portable-uninstall-retirement";
+import { ProcessBoundLockContentionError } from "../../../state/registry/lock";
+import { printRebuildPreflightFailure } from "../rebuild-preflight-error";
 import { buildSubprocessEnv } from "../../../subprocess-env";
 import { findSandboxAcrossGatewayRoots } from "../../../state/registry/cross-port";
 import { getMessagingPlanFromEntry } from "../../../state/registry-messaging";
 import type { SandboxEntry } from "../../../state/registry/types";
-import { confirmDelegatedRebuildIntent } from "../rebuild-preflight-confirmation";
+import {
+  confirmDelegatedRebuildIntent,
+  createRebuildCommandContext,
+} from "../rebuild-preflight-confirmation";
 import type { RebuildSandboxExecutionOptions } from "../rebuild-prepared-recovery";
 import { readRebuildRecoveryRoute } from "../rebuild-recreate-journal";
+
+export async function withRebuildHostFence(
+  homeDir: string,
+  operation: () => Promise<void>,
+  opts: Pick<RebuildSandboxExecutionOptions, "throwOnError"> = {},
+): Promise<void> {
+  let operationStarted = false;
+  try {
+    await withPortableHostFence(
+      homeDir,
+      () => {
+        operationStarted = true;
+        return operation();
+      },
+      // A second attempt can acquire the fence after verified stale-lock removal.
+      { maxRetries: 2, wait: () => undefined },
+    );
+  } catch (error) {
+    // Later failures can follow mutations and must not promise an untouched sandbox.
+    if (operationStarted || !(error instanceof ProcessBoundLockContentionError)) throw error;
+    printRebuildPreflightFailure(
+      "the host lifecycle lock could not be acquired.",
+      `Another onboarding or rebuild run may be in progress. ${error.message} Do not delete the lock manually.`,
+      "Could not acquire the host lifecycle lock before rebuild.",
+      createRebuildCommandContext({}, opts).bail,
+      1,
+    );
+  }
+}
 
 export interface RebuildOwningRegistryInput {
   readonly sandboxName: string;
@@ -495,9 +532,11 @@ export async function delegateRebuildToOwningRegistry(
   }
   let workerInput = input;
   if (!input.options.yes && !input.options.force) {
+    const targetGatewayName = resolveGatewayName(hit.gatewayPort ?? hit.registryGatewayPort);
     const confirmed = await rebuildOwningRegistryDependencies.confirmInteractiveRebuild(
       input.sandboxName,
       input.options.dcodeAutoApprovalMode,
+      targetGatewayName,
     );
     if (!confirmed) return true;
     workerInput = { ...input, options: { ...input.options, yes: true } };

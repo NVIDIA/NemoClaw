@@ -7,6 +7,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import { packageReviewedOpenShellSdk } from "../../scripts/checks/package-openshell-sdk-for-pr.mts";
 import type { ReviewedNpmArchiveRequest } from "../../scripts/lib/reviewed-npm-archive.mts";
@@ -39,6 +40,78 @@ function fixture() {
 }
 
 describe("reviewed OpenShell SDK transition packaging", () => {
+  it("emits the admitted archive from the manual PR workflow producer", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-dispatch-"));
+    roots.push(root);
+    const output = path.join(root, "workflow-output");
+    const calls = path.join(root, "calls.jsonl");
+    const archive = path.join(root, "sdk archives", "admitted-sdk.tgz");
+    fs.mkdirSync(path.dirname(archive), { recursive: true });
+    fs.writeFileSync(archive, "admitted archive fixture");
+    fs.mkdirSync(path.join(root, "scripts/checks"), { recursive: true });
+    fs.mkdirSync(path.join(root, "tools/e2e"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "scripts/checks/package-openshell-sdk-for-pr.mts"),
+      `import { appendFileSync } from 'node:fs';
+export async function packageCandidateOpenShellSdkIfRequired(output, identity, request) {
+  appendFileSync(process.env.CALLS, JSON.stringify({ output, identity }) + '\\n');
+  const admitted = await request('/repos/NVIDIA/NemoClaw/pulls/' + identity.prNumber);
+  return { required: true, artifact: admitted.archive };
+}
+export function packageReviewedOpenShellSdk() {
+  throw new Error('reviewed fallback must not replace the admitted archive');
+}
+`,
+    );
+    fs.writeFileSync(
+      path.join(root, "tools/e2e/base-image-publication.mts"),
+      `import { appendFileSync } from 'node:fs';
+export async function githubRequest(route, token) {
+  appendFileSync(process.env.CALLS, JSON.stringify({ route, token }) + '\\n');
+  return { archive: process.env.ADMITTED_ARCHIVE };
+}
+`,
+    );
+    const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8"));
+    const producer = workflow.jobs["package-openshell-sdk"].steps.find(
+      (step: { id?: string }) => step.id === "package",
+    );
+    const result = spawnSync("bash", ["-c", producer.run], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        PATH: process.env.PATH,
+        GITHUB_EVENT_NAME: "workflow_dispatch",
+        UPGRADE_PR_NUMBER: "123",
+        CANDIDATE_SHA: "a".repeat(40),
+        UPGRADE_BASE_SHA: "b".repeat(40),
+        GITHUB_TOKEN: "fixture-api-token",
+        GITHUB_OUTPUT: output,
+        NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: path.dirname(archive),
+        CALLS: calls,
+        ADMITTED_ARCHIVE: archive,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(
+      fs
+        .readFileSync(calls, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line)),
+    ).toEqual([
+      {
+        output: path.dirname(archive),
+        identity: { prNumber: 123, candidateSha: "a".repeat(40), baseSha: "b".repeat(40) },
+      },
+      { route: "/repos/NVIDIA/NemoClaw/pulls/123", token: "fixture-api-token" },
+    ]);
+    expect(fs.readFileSync(output, "utf8")).toBe(`artifact_path=${archive}\n`);
+    expect(result.stdout + result.stderr).not.toContain("fixture-api-token");
+  });
+
   it.each([
     ["pull_request", 0, /candidate-openshell-sdk/],
     ["workflow_dispatch", 1, /checkout differs/],
@@ -52,7 +125,8 @@ describe("reviewed OpenShell SDK transition packaging", () => {
       const prefix = "/repos/NVIDIA/NemoClaw";
       const routes = [
         `${prefix}/pulls/123`,
-        `${prefix}/issues/123/comments?per_page=100&page=1`,
+        `${prefix}/compare/${f.identity.baseSha}...${f.identity.candidateSha}?per_page=1`,
+        `${prefix}/pulls/123/reviews?per_page=100&page=1`,
         `${prefix}/collaborators/reviewer/permission`,
         `${prefix}/git/commits/${f.identity.mergeSha}`,
         ...Object.keys(f.sources).flatMap((file) => [
@@ -103,16 +177,19 @@ describe("reviewed OpenShell SDK transition packaging", () => {
     },
   );
 
-  it("loads the ordinary producer from the main workflow sparse checkout", () => {
+  it.each([
+    [".github/workflows/main.yaml", "package-openshell-sdk-for-pr", "packageReviewedOpenShellSdk"],
+    [".github/workflows/e2e.yaml", "candidate-openshell-sdk", "readApprovedOpenShellSdkConfig"],
+  ])("loads %s SDK preparation from its sparse checkout", (workflow, module, member) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-main-sdk-sparse-"));
     roots.push(root);
-    sparseSdkWorkflowCheckout(root, ".github/workflows/main.yaml", "package-openshell-sdk");
+    sparseSdkWorkflowCheckout(root, workflow, "package-openshell-sdk");
     const result = spawnSync(
       process.execPath,
       [
         "--input-type=module",
         "-e",
-        "const producer = await import('./scripts/checks/package-openshell-sdk-for-pr.mts'); console.log(typeof producer.packageReviewedOpenShellSdk)",
+        `const producer = await import('./scripts/checks/${module}.mts'); console.log(typeof producer[${JSON.stringify(member)}])`,
       ],
       {
         cwd: root,
@@ -124,10 +201,13 @@ describe("reviewed OpenShell SDK transition packaging", () => {
     expect(result.stdout.trim()).toBe("function");
   });
 
-  it("loads the ordinary consumer from the PR workflow sparse checkouts", () => {
+  it.each([
+    [".github/workflows/pr.yaml", "openshell-sdk-package"],
+    [".github/workflows/e2e.yaml", "generate-matrix"],
+  ])("loads SDK preparation from %s job %s", (workflow, job) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-sdk-sparse-"));
     roots.push(root);
-    sparseSdkWorkflowCheckout(root, ".github/workflows/pr.yaml", "openshell-sdk-package");
+    sparseSdkWorkflowCheckout(root, workflow, job);
     const result = spawnSync(
       process.execPath,
       [

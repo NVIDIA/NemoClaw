@@ -370,6 +370,10 @@ type ObservedChildProgressPolicy = { kind: "path"; path: string };
 // retain the unforgeable TestProgress capability enforced by TypeScript.
 const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPolicy>([
   [
+    "test/e2e/fixtures/forward-restart-observation.ts#observeForwardRestart",
+    { kind: "path", path: "options.progress" },
+  ],
+  [
     "test/e2e/fixtures/fake-openai-compatible.ts#startFakeOpenAiCompatibleServer",
     { kind: "path", path: "options.progress" },
   ],

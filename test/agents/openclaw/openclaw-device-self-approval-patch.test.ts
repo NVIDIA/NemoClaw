@@ -862,17 +862,20 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
 
   it.each([
     ["legacy token", { token: "token-before" }],
+    ["2026.9.5 explicit token", { deviceToken: "token-before" }],
     ["explicit device token", { deviceToken: "token-before" }],
     ["explicit token priority", { token: "other-token", deviceToken: "token-before" }],
     ["empty explicit token", { token: "token-before", deviceToken: " " }],
-  ])("passes authenticated identity using %s to the canonical approver", async (_label, auth) => {
+  ])("passes authenticated identity using %s to the canonical approver", async (label, auth) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-handler-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
-    writeFixtureDist(dist);
+    writeFixtureDist(dist, label.startsWith("2026.9.5") ? "2026.9.5" : "legacy");
     try {
+      const isCurrent = label.startsWith("2026.9.5");
+      const file = path.join(dist, isCurrent ? "devices-fixture.mjs" : "devices-fixture.js");
       expect(runPatch(dist).status).toBe(0);
-      const source = fs.readFileSync(path.join(dist, "devices-fixture.js"), "utf8");
+      const source = fs.readFileSync(file, "utf8");
       const runtime = runFixture<{
         pendingById: Map<string, Record<string, unknown>>;
         deviceHandlers: Record<string, (input: Record<string, unknown>) => Promise<void>>;
@@ -882,7 +885,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       const responses: unknown[] = [];
       const broadcasts: unknown[] = [];
       await runtime.deviceHandlers["device.pair.approve"]({
-        params: { requestId: "request-1" },
+        params: { requestId: isCurrent ? " request-1 " : "request-1" },
         client: validClient({ connect: { ...validClient().connect, auth } }),
         respond: (...args: unknown[]) => responses.push(args),
         context: {

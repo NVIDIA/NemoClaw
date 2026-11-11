@@ -27,6 +27,8 @@ import {
   gatewayUpgradeAgentResponseIsSuccessful,
   gatewayUpgradeInstallerCommand,
   prepareGatewayUpgradeUserManager,
+  prepareGatewayUpgradeInstallPaths,
+  gatewayUpgradeInstallEnv,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeBaseImageOverrideEnabled,
@@ -38,6 +40,40 @@ import {
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade boundary", () => {
+  it.each(["", "//"])("prepares private install paths with HOME suffix %j", (suffix) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-upgrade-install-paths-"));
+    const home = `${root}/home${suffix}`;
+    try {
+      prepareGatewayUpgradeInstallPaths(home);
+      expect(fs.statSync(path.join(home, ".local", "bin")).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(path.join(home, ".npm-global")).mode & 0o777).toBe(0o700);
+      expect(gatewayUpgradeInstallEnv(home, "/toolchain/bin")).toEqual({
+        XDG_BIN_HOME: `${root}/home/.local/bin`,
+        NPM_CONFIG_PREFIX: `${root}/home/.npm-global`,
+        npm_config_prefix: `${root}/home/.npm-global`,
+        PATH: `${root}/home/.local/bin:${root}/home/.npm-global/bin:/toolchain/bin`,
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves existing private executable bytes and directory permissions", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-upgrade-existing-cli-"));
+    const bin = path.join(root, ".local", "bin");
+    const target = path.join(bin, "openshell");
+    fs.mkdirSync(bin, { recursive: true, mode: 0o750 });
+    fs.writeFileSync(target, "previous private installation", { mode: 0o750 });
+    try {
+      prepareGatewayUpgradeInstallPaths(root);
+      expect(fs.readFileSync(target, "utf8")).toBe("previous private installation");
+      expect(fs.statSync(target).mode & 0o777).toBe(0o750);
+      expect(fs.statSync(bin).mode & 0o777).toBe(0o750);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { statuses: ["ok"], expected: true },
     { statuses: ["error"], expected: false },

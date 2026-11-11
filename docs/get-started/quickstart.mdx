@@ -36,8 +36,7 @@ Review the [Prerequisites](prerequisites) before you begin.
 <Steps>
   <Step title="Install NemoClaw">
     NemoClaw collects operation telemetry to help improve the project.
-    Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
-    Production delivery is not enabled.
+    Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed Production receiver by default.
     To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
     Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 
@@ -84,7 +83,16 @@ Review the [Prerequisites](prerequisites) before you begin.
     Onboarding reports whether settlement failed because of an unavailable or incompatible pairing, failed warm-up, missing request, persistent pending request, stopped watcher, policy rejection, approval timeout, or approval failure.
     The failure message omits device identifiers, request identifiers, public keys, tokens, and child command output.
     If this bounded readiness check does not settle, NemoClaw keeps onboarding resumable.
-    Run `nemoclaw onboard --resume` after you correct the reported condition.
+    If the native gateway times out during startup or exits before pairing, read its persistent startup log from the host:
+
+    ```bash
+    nemoclaw my-assistant exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log
+    ```
+
+    This command uses the running OpenShell sandbox and does not require a healthy OpenClaw gateway or completed onboarding.
+    Correct the reported startup error, then run `nemoclaw my-assistant gateway restart` from the host.
+    After the restart succeeds, run `nemoclaw onboard --resume`.
+    For other readiness failures, resume onboarding after you correct the reported condition.
 
     ```bash
     nemoclaw my-assistant status
@@ -169,7 +177,7 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Choose inference and integrations">
-    The wizard supports NVIDIA Endpoints, OpenRouter, OpenAI, OpenAI-compatible endpoints, Anthropic, Anthropic-compatible endpoints, Google Gemini, local Ollama, and configured model-router profiles.
+    The wizard supports NVIDIA Endpoints, OpenRouter, OpenAI, OpenAI-compatible endpoints, Anthropic, Anthropic-compatible endpoints, Google Gemini, and local Ollama.
     Export the relevant API key before starting the installer when you do not want the wizard to prompt for it.
     Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider requirements, model choices, and local-server setup.
 
@@ -318,12 +326,10 @@ Use these details when your first-run path needs more control.
       6) Other Anthropic-compatible endpoint
       7) Google Gemini
       8) Local Ollama (localhost:11434)
-      9) Model Router (experimental)
       Choose [1]:
     ```
 
     Local Ollama appears when NemoClaw detects a usable local Ollama path or can offer an install or start action for your platform.
-    A configured blueprint router profile makes the Model Router option appear.
 
     <Tip>
     Export the API key before you launch the installer when you do not want the wizard to ask for it.
@@ -341,7 +347,6 @@ Use these details when your first-run path needs more control.
     | Other Anthropic-compatible endpoint | You have a Claude proxy, Bedrock-compatible gateway, or a self-hosted `/v1/messages` endpoint. | `COMPATIBLE_ANTHROPIC_API_KEY` |
     | Google Gemini | You want Google's OpenAI-compatible Gemini endpoint. | `GEMINI_API_KEY` |
     | Local Ollama | You want a host-local Ollama model. | None |
-    | Model Router | You want NemoClaw to start the host-side model router. | `NVIDIA_INFERENCE_API_KEY` |
 
     The NVIDIA Endpoints model picker includes hosted `nvidia/nemotron-3.5-super-vl-120b-a12b`.
     Selecting it enables text and image input unless you provide an explicit valid override.
@@ -468,7 +473,7 @@ Use these details when your first-run path needs more control.
     ──────────────────────────────────────────────────
     ```
 
-    A different provider displays its selected model and label, such as `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-3.6-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
+    A different provider displays its selected model and label, such as `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-3.6-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
   </Accordion>
 
   <Accordion title="Dashboard and Terminal Details">
