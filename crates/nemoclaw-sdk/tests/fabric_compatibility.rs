@@ -582,7 +582,10 @@ fn agents_keep_their_state_where_the_adapter_accepts_it() {
     let hermes = project(include_bytes!("../../../examples/fabric-hermes.yaml"));
     assert_eq!(hermes["runtime"]["keep_state"], true, "{hermes}");
     let openclaw = project(include_bytes!("../../../examples/openclaw.yaml"));
-    assert_eq!(openclaw["runtime"]["keep_state"], true, "{openclaw}");
+    assert!(
+        openclaw["runtime"].get("keep_state").is_none(),
+        "{openclaw}"
+    );
     let remote = project(include_bytes!("../../../examples/fabric-remote-agent.yaml"));
     assert!(remote["runtime"].get("keep_state").is_none(), "{remote}");
 }
