@@ -88,4 +88,37 @@ describe.skipIf(process.platform === "win32")("manual PR dispatch recovery", () 
     expect(duplicate.stderr).toContain("Reconcile pending");
     expect(JSON.parse(readFileSync(service, "utf8"))).toHaveLength(1);
   }, 30000);
+
+  it.each([
+    { phase: "candidate", runId: "100", count: 1 },
+    { phase: "base", runId: "101", count: 2 },
+  ])(
+    "bounds a stalled $phase watch and retains the observed run",
+    ({ phase, runId, count }) => {
+      const { file, service, env, run } = manualPrDispatchFixture();
+      env.FAKE_STALL_WATCH_RUN = runId;
+      env.E2E_WATCH_TIMEOUT_SECONDS = "0.5";
+      const result = run(`${candidate}\n${headResult}\n${base}\n${baseResult}`);
+      expect(result.status, result.stdout + result.stderr).toBe(124);
+      expect(result.signal).toBeNull();
+      expect(readFileSync(env.FAKE_WATCH_STARTED, "utf8")).toBe(runId);
+      expect(result.stderr).toContain(`Observation timed out after 0.5s for ${runId}`);
+      expect(result.stderr).toContain("do not dispatch again");
+      expect(result.stderr).toContain("fixture-owner");
+      expect(result.stderr).toContain("Remove fixture-owned resources");
+      const checkpoint = readCheckpoint(file);
+      expect(checkpoint.operations).toHaveLength(count);
+      expect(checkpoint.operations.every((operation) => operation.state === "observed")).toBe(true);
+      expect(checkpoint.identities[`manualE2E.${phase}.runId`]).toBe(runId);
+      expect(JSON.parse(checkpoint.operations.at(-1)!.observation).runId).toBe(runId);
+      expect(JSON.parse(checkpoint.operations.at(-1)!.action).cleanupObligation).toBe(
+        "Remove fixture-owned resources",
+      );
+      expect(JSON.parse(readFileSync(service, "utf8"))).toHaveLength(count);
+      expect(run(candidate).status).not.toBe(0);
+      expect(readCheckpoint(file)).toEqual(checkpoint);
+      expect(JSON.parse(readFileSync(service, "utf8"))).toHaveLength(count);
+    },
+    30000,
+  );
 });

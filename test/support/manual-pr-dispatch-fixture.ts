@@ -90,6 +90,11 @@ if (args[0] === 'workflow' && args[1] === 'run') {
 } else if (args[0] === 'run' && args[1] === 'list') {
   console.log(JSON.stringify(runs));
 } else if (args[0] === 'run' && args[1] === 'watch') {
+  if (args[2] === env.FAKE_STALL_WATCH_RUN) {
+    fs.writeFileSync(env.FAKE_WATCH_STARTED, args[2]);
+    setInterval(() => {}, 1000);
+    await new Promise(() => {});
+  }
   process.exitCode = runs.find(run => String(run.databaseId) === args[2]).conclusion === 'failure' ? 1 : 0;
 } else if (args[0] === 'api' && args[1].includes('/pulls/')) {
   console.log(JSON.stringify({ state: 'open', number: 123,
@@ -110,6 +115,9 @@ if (args[0] === 'workflow' && args[1] === 'run') {
     FAKE_GH_SCRIPT: fake,
     FAKE_RUNS: service,
     FAKE_DISPATCHES: join(root, "dispatch-attempts"),
+    FAKE_WATCH_STARTED: join(root, "watch-started"),
+    FAKE_STALL_WATCH_RUN: "",
+    E2E_WATCH_TIMEOUT_SECONDS: "5",
     TASK_RECORD: file,
     TASK_OWNER: state.owner,
     PR_NUMBER: "123",

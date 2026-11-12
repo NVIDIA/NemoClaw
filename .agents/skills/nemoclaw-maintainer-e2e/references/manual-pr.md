@@ -94,6 +94,33 @@ The intent consumes the recorded budget before the GitHub write. The result reco
 
 ```bash
 set -euo pipefail
+observe_dispatch() {
+  local seconds="$1" reference="$2"
+  shift 2
+  python3 - "$seconds" "$reference" "$E2E_CLEANUP_OWNER" "$E2E_CLEANUP_OBLIGATION" "$@" <<'PY'
+import math
+import subprocess
+import sys
+
+seconds = float(sys.argv[1])
+if not math.isfinite(seconds) or seconds <= 0:
+    sys.exit("Observation deadline must be a positive finite number of seconds")
+reference, owner, cleanup = sys.argv[2:5]
+command = ["gh", *sys.argv[5:]]
+try:
+    result = subprocess.run(command, timeout=seconds, check=False)
+except subprocess.TimeoutExpired:
+    print(f"Observation timed out after {seconds:g}s for {reference}. "
+          f"Inspect the existing run and task record; do not dispatch again. "
+          f"Cleanup owner: {owner}; obligation: {cleanup}", file=sys.stderr)
+    sys.exit(124)
+# A completed failed workflow makes gh run watch return 1. Verify its terminal receipt next.
+if command[1:3] == ["run", "watch"] and result.returncode == 1:
+    sys.exit(0)
+sys.exit(result.returncode if result.returncode >= 0 else 1)
+PY
+}
+
 save_dispatch_intent() {
   local phase="$1" correlation="$2" budget="$3" checkout="$4" repository="$5" jetson="$6"
   local view revision action next
@@ -151,7 +178,7 @@ save_dispatch_result() {
 find_dispatch_run() {
   local title="E2E PR #${PR_NUMBER} ($1)" matches='[]' runs poll
   for poll in $(seq 1 30); do
-    runs="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
+    runs="$(observe_dispatch 30 "$title" run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
       --event workflow_dispatch --branch main --limit 50 \
       --json databaseId,displayTitle)"
     matches="$(jq -c --arg title "$title" \
@@ -228,8 +255,9 @@ validation after checkout rejects changed PR identity or ownership.
 set -euo pipefail
 find_dispatch_run "$HEAD_CORRELATION_ID"
 save_dispatch_result candidate "$HEAD_CORRELATION_ID" "$RUN_ID" "$RUN_URL"
-gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status || true
-RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
+observe_dispatch "${E2E_WATCH_TIMEOUT_SECONDS:-3600}" "$RUN_ID" \
+  run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status
+RUN_JSON="$(observe_dispatch 30 "$RUN_ID" api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
 jq -e --arg sha "$WORKFLOW_SHA" '
   .run_attempt >= 1 and .head_sha == $sha and
   .status == "completed" and (.conclusion | type == "string")
@@ -237,7 +265,7 @@ jq -e --arg sha "$WORKFLOW_SHA" '
 HEAD_RUN_ID="$RUN_ID"
 HEAD_RUN_URL="$(jq -r .html_url <<<"$RUN_JSON")"
 HEAD_CONCLUSION="$(jq -r .conclusion <<<"$RUN_JSON")"
-CURRENT_PR="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
+CURRENT_PR="$(observe_dispatch 30 "$RUN_ID" api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
 test "$(jq -r .state <<<"$CURRENT_PR")" = open
 test "$(jq -r .head.sha <<<"$CURRENT_PR")" = "$HEAD_SHA"
 test "$(jq -r .base.sha <<<"$CURRENT_PR")" = "$BASE_SHA"
@@ -248,6 +276,12 @@ test "$(jq -r .head.repo.owner.type <<<"$CURRENT_PR")" = "$HEAD_OWNER_TYPE"
 
 If the run is not visible after bounded polling, do not dispatch again. Inspect GitHub Actions for
 the correlation ID. Clean up resources from any matching run.
+
+Observation requests have a 30-second deadline. Each watch has a one-hour deadline; set
+`E2E_WATCH_TIMEOUT_SECONDS` to a positive number of seconds for a different observation window.
+A timeout stops local observation with status 124 and retains the checkpoint's run ID and cleanup
+obligation. It does not cancel the remote run. Inspect that run and its resources before resuming;
+do not dispatch a replacement or base replay merely because observation timed out.
 
 If the head run succeeds, report it and stop. If it fails, inspect the failed job with the read-only
 `nemoclaw-maintainer-classify-ci-failure` skill when that skill is available. Pass the workflow and
@@ -303,8 +337,9 @@ Find and record the base run before waiting. Then verify its workflow and PR ide
 set -euo pipefail
 find_dispatch_run "$BASE_CORRELATION_ID"
 save_dispatch_result base "$BASE_CORRELATION_ID" "$RUN_ID" "$RUN_URL"
-gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status || true
-RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
+observe_dispatch "${E2E_WATCH_TIMEOUT_SECONDS:-3600}" "$RUN_ID" \
+  run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status
+RUN_JSON="$(observe_dispatch 30 "$RUN_ID" api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
 jq -e --arg sha "$WORKFLOW_SHA" '
   .run_attempt >= 1 and .head_sha == $sha and
   .status == "completed" and (.conclusion | type == "string")
@@ -312,7 +347,7 @@ jq -e --arg sha "$WORKFLOW_SHA" '
 BASE_RUN_ID="$RUN_ID"
 BASE_RUN_URL="$(jq -r .html_url <<<"$RUN_JSON")"
 BASE_CONCLUSION="$(jq -r .conclusion <<<"$RUN_JSON")"
-CURRENT_PR="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
+CURRENT_PR="$(observe_dispatch 30 "$RUN_ID" api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
 test "$(jq -r .state <<<"$CURRENT_PR")" = open
 test "$(jq -r .head.sha <<<"$CURRENT_PR")" = "$HEAD_SHA"
 test "$(jq -r .base.sha <<<"$CURRENT_PR")" = "$BASE_SHA"
