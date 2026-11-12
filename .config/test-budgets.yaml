@@ -61,6 +61,8 @@ live-docker:
 # the development case, which destroys and redeploys, took 137.9 s on
 # linux_amd64 and 136.9 s on linux_arm64; with the OIDC case (105.1 s and
 # 95.7 s) the step took 243.0 s and 232.6 s.
+# The OIDC case also publishes its gateway through the chart's NodePort
+# Service (#14313), instead of a third case that took 90-99 s on its own.
 live-kind:
   wall_seconds: 300
   test_seconds: 180

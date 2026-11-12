@@ -12,6 +12,7 @@
 | Skills | unavailable | - | Authoring instruction evidence unavailable. |
 | Instruction files | unavailable | - | Authoring instruction-file evidence unavailable. |
 | Tool calls | unavailable | - | Authoring tool invocation evidence unavailable. |
+| Tokens | unavailable | - | Authoring token usage counters unavailable. |
 | Session window | unavailable | - | Authoring session timestamps unavailable. |
 | Compactions | unavailable | - | Authoring compaction evidence unavailable. |
 | Models | unavailable | - | Authoring model history unavailable. |

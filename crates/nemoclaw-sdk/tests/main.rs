@@ -112,6 +112,8 @@ mod kubernetes_connection;
 mod kubernetes_corrupt_receipt;
 #[path = "kubernetes_expired_authentication.rs"]
 mod kubernetes_expired_authentication;
+#[path = "kubernetes_exposure.rs"]
+mod kubernetes_exposure;
 #[path = "kubernetes_gateway.rs"]
 mod kubernetes_gateway;
 #[path = "kubernetes_inference.rs"]

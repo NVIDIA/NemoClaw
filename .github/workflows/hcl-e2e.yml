@@ -5,7 +5,8 @@
 # test archive, bundle, and live images; NVIDIA's GPU runners refuse pull
 # request jobs. CI / Bundle builds those on Ubuntu 22.04, whose glibc the GPU
 # runner can run. A dispatch has no such artifacts, so it builds a candidate
-# of its own there. Linux AMD64's E2E jobs run the hosted cases on every run.
+# of its own there. Linux AMD64's E2E jobs run the selected hosted cases
+# themselves, except on a fork's pull request.
 name: Live / HCL
 
 on:

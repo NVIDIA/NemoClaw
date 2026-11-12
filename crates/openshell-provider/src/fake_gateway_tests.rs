@@ -450,6 +450,45 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     );
 }
 
+/// An update whose exposure the gateway rejects leaves in place the endpoint
+/// it would have removed, so a failed apply takes nothing away.
+#[tokio::test]
+async fn a_rejected_exposure_keeps_the_endpoints_the_update_would_remove() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let created = create_sandbox(&client, "local").await;
+    let with = |services: &str| {
+        let mut row = created.clone();
+        row.insert(services::FIELD.into(), services.into());
+        row
+    };
+    let writer = with(r#"[{"name":"writer","target_port":7000}]"#);
+    let result = client.update("sandbox", &writer, &created).await;
+    assert!(result.error().is_none(), "{:?}", result.error());
+    let bound = result.into_parts().0.unwrap();
+    fixture.state.lock().unwrap().reject_rpc = Some((
+        "ExposeService",
+        tonic::Code::InvalidArgument,
+        "invalid service name".into(),
+    ));
+    let research = with(r#"[{"name":"Research","target_port":8080}]"#);
+    let result = client.update("sandbox", &research, &bound).await;
+    assert!(
+        matches!(result.error(), Some(ObservationError::Rejected { .. })),
+        "{:?}",
+        result.error()
+    );
+    let held: Vec<_> = fixture
+        .state
+        .lock()
+        .unwrap()
+        .services
+        .keys()
+        .map(|(_, _, name)| name.clone())
+        .collect();
+    assert_eq!(held, ["writer"], "the rejected update removed writer");
+}
+
 /// A sandbox in a terminal phase is observed, with the reason it exited, so
 /// the plan can replace it; a running sandbox reports no exit.
 #[tokio::test]

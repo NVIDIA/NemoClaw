@@ -3,8 +3,8 @@
 # The Docker and Kubernetes live suites for one Linux platform, from the test
 # inputs and bundle that its Bundle platform run uploaded, which calls it as
 # that platform's E2E jobs whenever the plan selects the live suites, including
-# on pull requests, and on Linux AMD64 the HCL E2E cases. CI / Bundle reports
-# it in the required E2E check.
+# on pull requests, and on Linux AMD64 the HCL E2E cases. A failure here fails
+# that platform's required Test / PLATFORM check.
 name: E2E platform
 on:
   workflow_call:
@@ -107,7 +107,7 @@ jobs:
 
   # Like the contract and integration shards, the live suites run this
   # platform's archived test executables and bundle, load its live images, and
-  # compile nothing. No required check depends on them.
+  # compile nothing. A selected suite that fails fails Test / PLATFORM.
   live-docker:
     name: E2E Docker tests
     needs: [live-images]

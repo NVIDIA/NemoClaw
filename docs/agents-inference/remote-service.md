@@ -16,7 +16,7 @@ It uses private HTTP; enable [managed bearer authentication](inference.md#authen
 Omission preserves unauthenticated serving.
 
 The remote host must satisfy its service's hardware contract and provide Docker with NVIDIA container GPU access.
-The runtime image performs hardware and memory observation inside the container; normal deployment does not require the provider's optional Python SSH capacity collector.
+The runtime image performs hardware and memory observation inside the container; normal deployment does not require the provider's optional SSH capacity collector.
 The existing example uses Linux ARM64 DGX Spark; [the Nemotron example](models.md#configure-nemotron-on-an-amd64-gpu-host) declares an AMD64 GPU with dedicated memory.
 Configure SSH authentication and host trust beforehand.
 Docker resolves named cache and credential mounts in the selected daemon's storage namespace; it never substitutes the client host's storage path.
@@ -40,9 +40,9 @@ Cache and compute use native Docker-provider reconciliation; a cross-host transf
 
 Failed observations stop the operation; confirmed missing service compute can be recreated during explicit apply.
 Destroy retains model data and credentials and removes the service-owned network.
-Removing that retained data from an SSH engine is not verified ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+To remove that retained data, follow [Remove Retained Resources](../build-deploy/usage.md#remove-retained-resources) on the SSH engine.
 
-The current Docker-provider path is unqualified on GPU hardware; a separate-host deployment and other hardware remain qualification gates.
+No live test places a model service through SSH on GPU hardware; a separate-host deployment and other hardware remain qualification gates ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 A successful apply establishes configuration and readiness.
 Verify an agent response through OpenShell separately using [inference verification](inference.md#verify-the-result).

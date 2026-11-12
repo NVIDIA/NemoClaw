@@ -492,7 +492,9 @@ impl Operations {
         let mut endpoint =
             url::Url::parse(&spec.settings.endpoint).map_err(|_| ObservationError::Query)?;
         // Each provider process connects on its own, so each takes a free
-        // port. The gateway certificate names the address, not the port.
+        // loopback port, also when kubernetes.expose publishes the gateway
+        // elsewhere for other clients. The gateway certificate always names
+        // 127.0.0.1, not the port.
         let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .await
             .map_err(|_| ObservationError::Transport)?;
@@ -500,6 +502,9 @@ impl Operations {
             .local_addr()
             .map_err(|_| ObservationError::Transport)?
             .port();
+        endpoint
+            .set_ip_host(std::net::Ipv4Addr::LOCALHOST.into())
+            .map_err(|()| ObservationError::Query)?;
         endpoint
             .set_port(Some(port))
             .map_err(|()| ObservationError::Query)?;
