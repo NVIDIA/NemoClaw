@@ -79,6 +79,10 @@ processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => 
   ok: true,
   window: { sandboxName, kind: "backup" },
 });
+processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor = async ({ sandboxName, runtimeSelection }) => ({
+  ok: true,
+  window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+});
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({

@@ -168,11 +168,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         observabilityRequestedExplicitly: recreateOptions.observabilityRequestedExplicitly,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
         wechatConfig: sessionMatchesSandbox ? sessionBefore?.wechatConfig : null,
-        routerPid: resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
-        routerPort:
-          resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPort : undefined,
-        routerCredentialHash:
-          resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerCredentialHash : null,
         // The inner resume compares its requested host mounts against this
         // recorded metadata, so the reset must carry the same mounts the
         // recreate options hand to onboard. Omitting them recorded an empty

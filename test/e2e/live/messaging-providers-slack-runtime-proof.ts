@@ -135,15 +135,18 @@ function resolveOpenClawSlackApiLocation() {
 }
 
 function findPipelineRuntimePath(slackDir) {
-  try {
-    return fs
-      .readdirSync(slackDir)
-      .filter((entry) => /^pipeline\.runtime-.*\.js$/.test(entry))
-      .map((entry) => path.join(slackDir, entry))
-      .sort()[0];
-  } catch {
-    return undefined;
-  }
+  return [slackDir, path.join(slackDir, ".setup")].flatMap((directory) => {
+    try {
+      return fs
+        .readdirSync(directory)
+        .filter((entry) => /^pipeline\.runtime-.*\.m?js$/.test(entry))
+        .sort()
+        .slice(0, 1)
+        .map((entry) => path.join(directory, entry));
+    } catch {
+      return [];
+    }
+  })[0];
 }
 
 async function importProofModules(slackDir) {
@@ -156,6 +159,7 @@ async function importProofModules(slackDir) {
   return {
     prepareSlackMessage: pipelineModule.prepareSlackMessage,
     sendMessageSlack: runtimeModule.sendMessageSlack,
+    setSlackRuntime: runtimeModule.setSlackRuntime,
   };
 }
 `;
@@ -281,6 +285,7 @@ function createPipelineSlackProofContext(appClient) {
   const assistantThreads = new Map();
   return {
     cfg,
+    accountId: "default",
     runtime: {},
     app: { client: appClient },
     botToken: token,
@@ -386,6 +391,15 @@ const slackDir = path.join(
   location.kind === "external" ? "dist" : "dist/extensions/slack",
 );
 const slackApi = await importProofModules(slackDir);
+// The standalone proof must bind the native ingress policy runtime that the
+// gateway normally supplies when it registers the Slack plugin.
+const slackRequire = createRequire(path.join(slackDir, "runtime-api.js"));
+const { createChannelIngressResolver } = await import(
+  pathToFileURL(slackRequire.resolve("openclaw/plugin-sdk/channel-ingress-runtime")).href
+);
+slackApi.setSlackRuntime({
+  channel: { inbound: { ingress: { createResolver: createChannelIngressResolver } } },
+});
 const { prepareSlackMessage, sendMessageSlack } = slackApi;
 invariant(
   typeof prepareSlackMessage === "function" && typeof sendMessageSlack === "function",

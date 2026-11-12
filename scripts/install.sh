@@ -1134,7 +1134,7 @@ usage() {
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --defer-onboarding   Install NemoClaw without onboarding for a supported agent when NVIDIA inference credentials are absent\n"
   printf "                          Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
-  printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
+  printf "                          and the build or cloud NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall (Apple silicon macOS only)\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
@@ -1147,7 +1147,7 @@ usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_DEFER_ONBOARDING=1   Same as --defer-onboarding\n"
   printf "                                  Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
-  printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
+  printf "                                  and the build or cloud NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_FORCE_FRESH_INSTALL=1 Same as --force-fresh-install (Apple silicon macOS only)\n"
@@ -1174,7 +1174,7 @@ usage() {
   printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s bash\n" "$INSTALL_TAG_EXAMPLE"
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openrouter | openai | anthropic | anthropicCompatible\n"
-  printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
+  printf "                                  | gemini | ollama | custom | nim-local | vllm\n"
   printf "                                  | hermes-provider | llama-cpp | install-llama-cpp\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
@@ -2568,7 +2568,8 @@ maybe_install_openshell_during_install() {
   if [[ "$platform" == "Darwin" ]]; then
     macos_install_method="$(observed_macos_openshell_install_method)" || return 1
   fi
-  if ! _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
+  if ! _NEMOCLAW_OPENSHELL_INSTALL_DIR="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR:-}" \
+    _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
     spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
     if [[ "$platform" == "Darwin" && "$macos_install_method" == "homebrew" ]] \
       && truthy_env "${FORCE_FRESH_INSTALL:-}" \
@@ -2600,6 +2601,9 @@ maybe_install_openshell_during_install() {
         error "The macOS OpenShell installation method could not be verified. The installer stopped before selecting OpenShell binaries or recovering the gateway."
         ;;
     esac
+  elif [[ -n "${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR:-}" ]]; then
+    export NEMOCLAW_OPENSHELL_BIN="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR}/openshell"
+    export PATH="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR}:$PATH"
   else
     prefer_user_local_openshell
   fi
@@ -5109,6 +5113,17 @@ preinstall_backup_and_retire_legacy_gateway() {
     || error "Could not determine the installed OpenShell version. The installer stopped after backup without retiring the gateway."
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
     || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
+    local replacement_installer="${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
+    # Older helpers ignore unknown arguments and would install during preparation.
+    # shellcheck disable=SC2016 # Match the helper's literal positional-argument expression.
+    if ! grep -qF 'if [[ "${1:-}" == --prepare-install-directory ]]; then' "$replacement_installer"; then
+      error "The prepared source cannot verify an OpenShell replacement destination before installation. The gateway was not retired, and sandbox backups were preserved. Use a current installer source, then rerun."
+    fi
+    if ! _NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR="$(
+      bash "$replacement_installer" --prepare-install-directory
+    )"; then
+      error "Could not prepare a safe OpenShell replacement destination. The gateway was not retired, and sandbox backups were preserved."
+    fi
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
@@ -5622,6 +5637,16 @@ agent_supports_deferred_onboarding() {
   grep -Eq '^deferred_onboarding:[[:space:]]*true[[:space:]]*$' "$manifest_path"
 }
 
+validate_retired_inference_provider() {
+  local provider
+  provider="$(printf '%s' "${NEMOCLAW_PROVIDER:-}" | tr '[:upper:]_' '[:lower:]-' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "$provider" in
+    routed | nvidia-router)
+      error "Model Router has been removed; choose a supported inference provider."
+      ;;
+  esac
+}
+
 validate_deferred_onboarding_request() {
   [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 0
 
@@ -5632,9 +5657,9 @@ validate_deferred_onboarding_request() {
     error "--defer-onboarding does not support a local model profile."
   fi
   case "${NEMOCLAW_PROVIDER:-build}" in
-    build | cloud | routed) ;;
+    build | cloud) ;;
     *)
-      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build, cloud, or routed."
+      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build or cloud."
       ;;
   esac
 }
@@ -5671,7 +5696,7 @@ should_defer_onboarding() {
       error "--defer-onboarding does not support a local model profile."
       ;;
     unsupported-provider)
-      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build, cloud, or routed."
+      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build or cloud."
       ;;
     *) error "Unexpected deferred-onboarding installer decision: ${decision:-empty}." ;;
   esac
@@ -8118,6 +8143,7 @@ main() {
   # Validate service-port overrides before dependency installation or any
   # other host mutation. The installed CLI applies the same canonical-decimal
   # contract when it consumes these forwarded values.
+  validate_retired_inference_provider
   validate_forwarded_service_port_overrides
 
   load_station_vllm_conflict_helpers

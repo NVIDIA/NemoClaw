@@ -84,9 +84,7 @@ function primaryCloneFixture(privateFileModes = false): string {
   for (const entry of HERMES_PORTABLE_BUILD_CONTEXT_FILES) {
     const target = path.join(root, entry.path);
     fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
-    entry.mode === "160000"
-      ? fs.mkdirSync(target, { mode: 0o755 })
-      : copyFixtureFile(root, entry.path, entry.mode, privateFileModes);
+    copyFixtureFile(root, entry.path, entry.mode, privateFileModes);
   }
   const git = path.join(root, ".git");
   const ref = path.join(git, "refs/heads");
@@ -125,6 +123,9 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     ).toBe(true);
     expect(
       fs.statSync(path.join(inferredContext, "agents/hermes/check-native-credentials.ts")).isFile(),
+    ).toBe(true);
+    expect(
+      fs.statSync(path.join(inferredContext, "agents/hermes/qualify-switchyard-judge.py")).isFile(),
     ).toBe(true);
     expect(fs.existsSync(path.join(inferredContext, "agents/hermes/Dockerfile"))).toBe(false);
     expect(plan.authority.sourceRevision).toMatch(/^[a-f0-9]{40,64}$/u);

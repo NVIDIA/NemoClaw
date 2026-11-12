@@ -453,6 +453,24 @@ export function managedOpenClawSubagentCommand(sessionId: string): string[] {
   );
 }
 
+export function managedOpenClawSubagentSucceeded(stdout: string): boolean {
+  try {
+    const response = JSON.parse(stdout);
+    const meta = response?.result?.meta;
+    return (
+      response?.status === "ok" &&
+      meta?.aborted === false &&
+      meta?.toolSummary?.failures === 0 &&
+      Array.isArray(meta?.agentMeta?.terminalReceipt?.successfulToolNames) &&
+      meta.agentMeta.terminalReceipt.successfulToolNames.includes("sessions_spawn") &&
+      Array.isArray(response?.result?.payloads) &&
+      response.result.payloads.some((payload: { text?: string }) => payload?.text === "PONG")
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function runOpenClawSubagentTurn(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -468,12 +486,13 @@ async function runOpenClawSubagentTurn(
       timeoutMs: AGENT_TIMEOUT_MS,
     },
   );
-  expect(result.exitCode === 0 && /\bPONG\b/iu.test(resultText(result)), resultText(result)).toBe(
-    true,
-  );
+  expect(
+    result.exitCode === 0 && managedOpenClawSubagentSucceeded(result.stdout),
+    resultText(result),
+  ).toBe(true);
 }
 
-export function managedActivationOpenClawPluginScript(): string {
+export function managedActivationOpenClawPluginScript(home = "/sandbox"): string {
   const packageJson = JSON.stringify({
     name: "@nemoclaw/managed-activation-native-plugin",
     version: "1.0.0",
@@ -492,14 +511,19 @@ export function managedActivationOpenClawPluginScript(): string {
   });
   const entrypoint =
     'export default { id: "managed-activation-native", name: "Managed Activation Native Plugin", version: "1.0.0", register() {} };\n';
+  const dotenv = shellQuote(path.posix.join(home, ".openclaw", ".env"));
   return [
-    "source_dir=/sandbox/managed-activation-native-plugin",
+    `source_dir=${shellQuote(path.posix.join(home, "managed-activation-native-plugin"))}`,
     'rm -rf -- "$source_dir"',
     'mkdir -p -- "$source_dir"',
     `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
     `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
     `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
-    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
+    // This fixture uses synthetic credentials. Retain native bootstrap errors
+    // across restart without replacing an existing native dotenv file.
+    `(umask 077; printf 'OPENCLAW_DEBUG=1\\n' > "$source_dir/bootstrap.env")`,
+    `mv --update=none -T -- "$source_dir/bootstrap.env" ${dotenv}`,
+    `HOME=${shellQuote(home)} openclaw plugins install --force --accept-capabilities "$source_dir"`,
   ].join("\n");
 }
 
@@ -858,12 +882,20 @@ export async function collectOnboardFailureRuntimeDiagnostics(
             },
           );
           if (copy.exitCode !== 0) return;
-          const stat = fs.lstatSync(copiedLog);
-          if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) return;
-          await artifacts.writeText(
-            `managed-activation-onboard-failure-${agent}-container-${index + 1}-nemoclaw-start.log`,
-            fs.readFileSync(copiedLog, "utf8"),
+          const descriptor = fs.openSync(
+            copiedLog,
+            fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
           );
+          try {
+            const stat = fs.fstatSync(descriptor);
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) return;
+            await artifacts.writeText(
+              `managed-activation-onboard-failure-${agent}-container-${index + 1}-nemoclaw-start.log`,
+              fs.readFileSync(descriptor, "utf8"),
+            );
+          } finally {
+            fs.closeSync(descriptor);
+          }
         } finally {
           fs.rmSync(copyRoot, { recursive: true, force: true });
         }
@@ -1122,6 +1154,8 @@ async function qualifyExternalImage(
     }
     await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "after", env, observeRequests);
     rebuilt = true;
+  } else {
+    await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   registryEntry = registryDocument().sandboxes?.[sandboxName];
   receipt = registryEntry?.workload;
@@ -1200,11 +1234,14 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     requireAuthModels: true,
     requestCanaryMarker: "NEMOCLAW_MANAGED_SUBAGENT",
     toolCallOnCanary: {
-      name: "sessions_spawn",
+      name: "tool_call",
       arguments: JSON.stringify({
-        task: "Reply with exactly one word: PONG",
-        mode: "run",
-        cleanup: "delete",
+        id: "sessions_spawn",
+        args: {
+          task: "Reply with exactly one word: PONG",
+          mode: "run",
+          cleanup: "delete",
+        },
       }),
     },
   });

@@ -29,7 +29,7 @@ graph LR
     USER(["👤 User"]):::user
 
     subgraph EXTERNAL["External Services"]
-        SHARED_INFERENCE["Shared-route inference providers<br/><small>Other custom and local routes<br/>Local NVIDIA NIM · Model Router</small>"]:::external
+        SHARED_INFERENCE["Shared-route inference providers<br/><small>Other custom and local routes<br/>Local NVIDIA NIM</small>"]:::external
         NVIDIA_INFERENCE["Native inference providers<br/><small>NVIDIA · fixed hosted providers<br/>Deep Agents and Hermes local endpoints</small>"]:::external
         INTEGRATIONS["Integration APIs<br/><small>MCP · GitHub · package indexes</small>"]:::external
         INTERNET["Internet<br/><small>PyPI · npm · GitHub · APIs</small>"]:::external
@@ -175,7 +175,7 @@ graph TB
         end
     end
 
-    SHARED_INFER["Shared-route inference provider<br/><small>Other custom and local routes<br/>Local NVIDIA NIM · Model Router</small>"]:::external
+    SHARED_INFER["Shared-route inference provider<br/><small>Other custom and local routes<br/>Local NVIDIA NIM</small>"]:::external
     NVIDIA_INFER["Native inference providers<br/><small>NVIDIA · fixed hosted providers<br/>Deep Agents and Hermes local endpoints</small>"]:::external
 
     CLI -->|"openshell CLI<br/>(orchestrates)"| GW
@@ -282,7 +282,6 @@ The blueprint defines the sandbox shape, default policies, and inference profile
 nemoclaw-blueprint/
 ├── blueprint.yaml                  Manifest: version, profiles, compatibility
 ├── model-specific-setup/           Agent-scoped model/provider compatibility manifests
-├── router/                         Model Router config and routing engine
 ├── policies/
 │   └── presets/                    Shared policy presets
 ```
@@ -399,9 +398,6 @@ Supported agent runtime (sandbox)  ──▶  integrate.api.nvidia.com  ──�
 Hermes live qualification for the new local lifecycle remains pending.
 The NVIDIA request does not use the shared `inference.local` route.
 The attached OpenShell profile allows only the configured endpoint, methods, paths, and binaries, and it replaces the placeholder credential at egress.
-
-When you select the Model Router provider, the OpenShell gateway routes to a host-side router process instead of a single upstream model.
-The router selects from the configured pool, then calls the upstream NVIDIA endpoint with the credential held outside the sandbox.
 
 Some model and provider combinations need agent-specific compatibility setup.
 NemoClaw keeps those declarations under `nemoclaw-blueprint/model-specific-setup/<agent>/` so fixes for each supported agent can be tested and reviewed independently.
