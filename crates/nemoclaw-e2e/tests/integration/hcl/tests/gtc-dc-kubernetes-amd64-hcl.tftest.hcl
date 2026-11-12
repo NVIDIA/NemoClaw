@@ -57,3 +57,21 @@ run "plan" {
     error_message = "An HCL agent does not use the hosted NVIDIA model."
   }
 }
+
+# OpenShell refuses a workspace name over 19 characters only when apply
+# creates it, after the gateway is installed; plan refuses it first.
+run "workspace_name_over_openshell_limit" {
+  command = plan
+
+  module {
+    source = "./examples/kubernetes/hosted-nvidia.tf"
+  }
+
+  variables {
+    CLUSTER_KUBECONFIG = "/unused/mocked-kubeconfig"
+    images             = { openclaw = var.fixture_image, hermes = var.fixture_image }
+    workspace          = "gtc-dc-kubernetes-cloud"
+  }
+
+  expect_failures = [var.workspace]
+}
