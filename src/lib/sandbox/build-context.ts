@@ -421,6 +421,7 @@ function stageOptimizedSandboxBuildContext(
   );
   for (const name of [
     "openclaw-broker-session-probe.mts",
+    "openclaw-command-session-cleanup.mts",
     "patch-openclaw-node-compile-cache.mts",
     "patch-openclaw-plugin-source-root.mts",
     "patch-openclaw-worker-archive.py",

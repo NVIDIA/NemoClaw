@@ -11,6 +11,10 @@ import {
   OPENCLAW_BROKER_CLEANUP_MODULES,
   patchBrokerPrivateSessionCleanup,
 } from "../../../../scripts/lib/patch-openclaw-container-restart.mts";
+import {
+  OPENCLAW_COMMAND_SESSION_MODULES,
+  OPENCLAW_COMMAND_TERMINATION_MODULES,
+} from "../../../../scripts/lib/openclaw-command-session-cleanup.mts";
 
 export const nativeCleanup = fs.readFileSync(
   new URL("../fixtures/gateway-broker-private-session-10.5.js.txt", import.meta.url),
@@ -188,6 +192,28 @@ export function seedBrokerCleanupModules(dist: string, version = "2026.10.5"): v
   copy(OPENCLAW_BROKER_CLEANUP_MODULES[3]);
   copy(OPENCLAW_BROKER_CLEANUP_MODULES[4]);
   copy(OPENCLAW_BROKER_CLEANUP_MODULES[5]);
+  const commands = fs.readFileSync(
+    new URL("../fixtures/scoped-command-cleanup-10.5.js.txt", import.meta.url),
+    "utf8",
+  );
+  for (const name of OPENCLAW_COMMAND_SESSION_MODULES) {
+    const target = path.join(dist, name);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.appendFileSync(target, commands);
+  }
+  const termination = fs.readFileSync(
+    new URL("../fixtures/command-termination-10.5.js.txt", import.meta.url),
+    "utf8",
+  );
+  for (const name of OPENCLAW_COMMAND_TERMINATION_MODULES) {
+    const target = path.join(dist, name);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.appendFileSync(target, termination);
+  }
+  fs.copyFileSync(
+    new URL("../fixtures/settings-command-10.5.js.txt", import.meta.url),
+    path.join(dist, "settings-manager-CKysicKB.mjs"),
+  );
 }
 
 export function denyProcfsRead(expected: string): (file: string) => void {

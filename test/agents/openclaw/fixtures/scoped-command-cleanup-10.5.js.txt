@@ -1,0 +1,164 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+// SPDX-License-Identifier: Apache-2.0
+
+// Pinned functions from OpenClaw 2026.10.5 dist/exec-spawn-DQCCtyab.mjs.
+async function waitForCommandProcessGroupExit(pid, isOriginalProcess) {
+	const deadline = Date.now() + COMMAND_PROCESS_GROUP_EXIT_CONFIRMATION_MS;
+	while (isChildProcessTreeAlive({ pid })) {
+		if (!isOriginalProcess()) return "replaced";
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) return isChildProcessTreeAlive({ pid }) ? "alive" : "exited";
+		await sleep(Math.min(25, remaining));
+	}
+	return "exited";
+}
+function retainCommandProcess(scope, child, reservation) {
+	let pid;
+	let startedAt = null;
+	let stopped = false;
+	let groupExtinct = false;
+	let settlementFailed = false;
+	let custodySettled = false;
+	const settleCustody = () => {
+		if (!reservation || settlementFailed || custodySettled) return;
+		try {
+			reservation.settled();
+			custodySettled = true;
+		} catch (error) {
+			settlementFailed = true;
+			throw error;
+		}
+	};
+	const nativeChild = child.nodeChildProcess;
+	let observedExit = nativeChild.exitCode != null || nativeChild.signalCode != null;
+	const onExit = () => {
+		observedExit = true;
+	};
+	nativeChild.once("exit", onExit);
+	const closed = nativeChild instanceof BrokerChild ? nativeChild.waitForClose() : void 0;
+	const stop = () => {
+		if (stopped || pid === void 0 || process.platform === "win32") return;
+		stopped = true;
+		if (nativeChild.exitCode !== null || nativeChild.signalCode !== null) {
+			if (!isChildProcessTreeAlive({ pid })) {
+				groupExtinct = true;
+				return;
+			}
+			const currentStart = getFileLockProcessStartTime(pid);
+			if (currentStart !== null && currentStart !== startedAt) throw new CommandProcessCleanupError();
+		}
+		killProcessTree(pid, {
+			detached: true,
+			force: true
+		});
+		scheduleAdoptedChildZombieReapAfterExit(nativeChild, true);
+	};
+	const initialize = () => {
+		pid = child.pid;
+		if (pid !== void 0) try {
+			if (process.platform !== "win32") startedAt = getFileLockProcessStartTime(pid);
+			reservation?.spawned({
+				pid,
+				startedAt: getProcessInstanceStartTime(pid)
+			});
+			if (scope.signal.aborted) stop();
+		} catch (error) {
+			scope.failure ??= { error };
+			stop();
+			throw error;
+		}
+	};
+	let bindingError;
+	let readiness;
+	if (nativeChild instanceof BrokerChild && child.pid === void 0) readiness = nativeChild.ready().then(initialize);
+	else try {
+		initialize();
+		readiness = Promise.resolve();
+	} catch (error) {
+		bindingError = { error };
+		readiness = Promise.reject(toErrorObject(error, "Command process custody admission failed"));
+	}
+	commandAdmissions.set(nativeChild, readiness);
+	const completed = Promise.resolve(child).then(() => void 0, () => void 0).then(async () => {
+		await closed;
+		nativeChild.removeListener("exit", onExit);
+	});
+	const initialized = readiness.catch((error) => {
+		if (!(nativeChild instanceof BrokerChild && nativeChild.notStarted)) scope.failure ??= { error };
+	});
+	const owned = {
+		stop,
+		async settle() {
+			await initialized;
+			await completed;
+			if (groupExtinct) {
+				settleCustody();
+				return;
+			}
+			if (pid === void 0) {
+				if (nativeChild instanceof BrokerChild && !nativeChild.notStarted) throw new CommandProcessCleanupError();
+				settleCustody();
+				return;
+			}
+			if (process.platform === "win32") {
+				if (!observedExit) throw new CommandProcessCleanupError();
+				settleCustody();
+				return;
+			}
+			const groupPid = pid;
+			if (await waitForCommandProcessGroupExit(groupPid, () => {
+				const current = getFileLockProcessStartTime(groupPid);
+				return current === null || current === startedAt;
+			}) !== "exited") throw new CommandProcessCleanupError();
+			settleCustody();
+		}
+	};
+	scope.children.add(owned);
+	completed.then(() => {
+		if (pid === void 0 && (!(nativeChild instanceof BrokerChild) || nativeChild.notStarted) || pid !== void 0 && process.platform !== "win32" && !isChildProcessTreeAlive({ pid })) try {
+			settleCustody();
+			scope.children.delete(owned);
+		} catch (error) {
+			scope.failure ??= { error };
+		}
+	});
+	if (bindingError) throw bindingError.error;
+}
+function spawnCommandWithInvocation(argv, options = {}) {
+	const scope = commandProcessScope.getStore();
+	if (scope?.signal.aborted) throw new Error("Command process scope is closed");
+	const { baseEnv, env, windowsVerbatimArguments, cancelSignal, executionTimeoutMs, inheritScopeCancellation = true, ...execaOptions } = options;
+	const commandEnv = resolveCommandEnv({
+		argv,
+		baseEnv,
+		env
+	});
+	const invocation = resolveSafeChildProcessInvocation({
+		argv,
+		cwd: execaOptions.cwd,
+		env: commandEnv,
+		windowsVerbatimArguments
+	});
+	const commandOptions = {
+		...execaOptions,
+		cancelSignal: inheritScopeCancellation ? resolveCommandProcessSignal(cancelSignal) : cancelSignal,
+		...scope ? { killDescendants: true } : {},
+		env: commandEnv,
+		extendEnv: false,
+		shell: false,
+		windowsHide: invocation.windowsHide,
+		windowsVerbatimArguments: invocation.windowsVerbatimArguments
+	};
+	const broker = getSpawnBroker();
+	const remoteOptions = broker ? brokerExecaOptions(commandOptions) : void 0;
+	if (remoteOptions && executionTimeoutMs !== void 0) remoteOptions.executionDeadlineMs = executionTimeoutMs + 1e3;
+	const reservation = scope?.custody?.reserve([invocation.command, ...invocation.args]);
+	const child = broker && remoteOptions ? spawnBrokerCommand(broker, [invocation.command, ...invocation.args], commandOptions, remoteOptions) : execa(invocation.command, invocation.args, commandOptions);
+	const diagnosticCommand = argv[0] === "nice" && argv[1] === "-n" && argv[2] === "10" && argv[3] === "git" ? "git" : invocation.command;
+	recordChildProcessSpawn(diagnosticCommand, child.nodeChildProcess);
+	if (scope) retainCommandProcess(scope, child, reservation);
+	return {
+		child,
+		invocation
+	};
+}

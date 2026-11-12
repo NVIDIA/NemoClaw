@@ -11,6 +11,13 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { BROKER_SESSION_PROBE_SOURCE } from "./openclaw-broker-session-probe.mts";
+import {
+  OPENCLAW_COMMAND_SESSION_MODULES,
+  OPENCLAW_COMMAND_TERMINATION_MODULES,
+  patchCommandSessionCaller,
+  patchCommandTerminationSessionCleanup,
+  patchScopedCommandSessionCleanup,
+} from "./openclaw-command-session-cleanup.mts";
 
 const VERSIONS = ["2026.9.2", "2026.9.5", "2026.10.5"];
 const BROKER_SESSION_MARKER =
@@ -300,11 +307,34 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
       : [];
   if (metadata.version === "2026.10.5" && snapshotFiles.length !== 1)
     throw new Error("Expected one native state snapshot admission module");
+  const waitModule =
+    metadata.version === "2026.10.5"
+      ? fs.readFileSync(path.join(distDir, "exec-spawn-DQCCtyab.mjs"), "utf8")
+      : "";
+  const cleanupModules = [
+    ...new Set<string>([
+      ...OPENCLAW_BROKER_CLEANUP_MODULES,
+      ...OPENCLAW_COMMAND_SESSION_MODULES,
+      ...OPENCLAW_COMMAND_TERMINATION_MODULES,
+      "settings-manager-CKysicKB.mjs",
+    ]),
+  ];
   const patches = [
     ...(metadata.version === "2026.10.5"
-      ? OPENCLAW_BROKER_CLEANUP_MODULES.map((name) => ({
+      ? cleanupModules.map((name) => ({
           target: path.join(distDir, name),
-          patch: patchBrokerPrivateSessionCleanup,
+          patch: (source: string) => {
+            let patched = source;
+            if (OPENCLAW_BROKER_CLEANUP_MODULES.some((module) => module === name))
+              patched = patchBrokerPrivateSessionCleanup(patched);
+            if (OPENCLAW_COMMAND_SESSION_MODULES.some((module) => module === name))
+              patched = patchScopedCommandSessionCleanup(patched);
+            if (OPENCLAW_COMMAND_TERMINATION_MODULES.some((module) => module === name))
+              patched = patchCommandTerminationSessionCleanup(patched, waitModule);
+            if (name === "settings-manager-CKysicKB.mjs")
+              patched = patchCommandSessionCaller(patched, true);
+            return patched;
+          },
         }))
       : []),
     {

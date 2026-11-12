@@ -701,7 +701,7 @@ FROM scratch AS openclaw-patch-payload
 
 COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
 COPY scripts/lib/patch-openclaw-native-network.mts /usr/local/lib/nemoclaw/patch-openclaw-native-network.mts
-COPY scripts/lib/patch-openclaw-container-restart.mts scripts/lib/openclaw-broker-session-probe.mts scripts/lib/patch-openclaw-agent-message-input.mts /usr/local/lib/nemoclaw/
+COPY scripts/lib/patch-openclaw-container-restart.mts scripts/lib/openclaw-broker-session-probe.mts scripts/lib/openclaw-command-session-cleanup.mts scripts/lib/patch-openclaw-agent-message-input.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /usr/local/lib/nemoclaw/npm12.mts
 COPY scripts/lib/patch-openclaw-worker-proxy.mts scripts/lib/patch-openclaw-node-compile-cache.mts scripts/lib/patch-openclaw-plugin-source-root.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/patch-openclaw-worker-device-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-worker-device-approval.mts
