@@ -165,6 +165,7 @@ export function isManagedNativeProfileResponse<Id extends string>(
     /^[1-9][0-9]*$/u.test(String(revision)) &&
     profile.inferenceCapable === true &&
     profile.discovery === undefined &&
+    (profile.files === undefined || emptyArray(profile.files)) &&
     Array.isArray(credentials) &&
     credentials.length === 1 &&
     nativeCredential(credentials[0], expected) &&

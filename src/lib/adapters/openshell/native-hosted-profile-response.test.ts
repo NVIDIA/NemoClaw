@@ -77,8 +77,8 @@ function response(definition: HostedProviderDefinition) {
 }
 
 describe.each(HOSTED_NATIVE_PROVIDERS)("native $label profile read boundary", (definition) => {
-  it("accepts the checked-in credential, endpoint, executable and request restrictions", () => {
-    const value = response(definition);
+  it.each([undefined, []])("accepts the checked-in restrictions with files=%j", (files) => {
+    const value = { profile: { ...response(definition).profile, files } };
     expect(isManagedNativeHostedProfileResponse(value, definition.profileId)).toBe(value);
   });
   it.each([
@@ -108,6 +108,20 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label profile read boundary", (d
       expect(isManagedNativeHostedProfileResponse(value, definition.profileId)).toBeUndefined();
     },
   );
+  it("rejects provider file materialization outside the managed profile contract", () => {
+    const value = response(definition);
+    expect(
+      isManagedNativeHostedProfileResponse(
+        {
+          profile: {
+            ...value.profile,
+            files: [{ path: "client.json", content: "{}", envVar: "CLIENT_CONFIG" }],
+          },
+        },
+        definition.profileId,
+      ),
+    ).toBeUndefined();
+  });
   it("rejects extra egress or executable access", () => {
     const value = response(definition);
     expect(

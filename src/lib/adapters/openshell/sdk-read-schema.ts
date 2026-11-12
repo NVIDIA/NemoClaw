@@ -62,6 +62,7 @@ const ManagedProfileIdentity = {
   scope: Type.Union([Type.Literal(""), Type.Literal("platform"), Type.Literal("workspace")]),
   resourceVersion: VersionSchema,
   discovery: Type.Optional(Type.Undefined()),
+  files: Type.Optional(Type.Tuple([])),
 };
 const ManagedRestEndpointFields = {
   ...NoUnknownProfileFields,

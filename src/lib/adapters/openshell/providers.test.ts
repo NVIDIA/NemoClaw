@@ -122,6 +122,7 @@ describe("OpenShell provider evidence", () => {
       raw.getProviderProfile.mockResolvedValue({
         profile: {
           ...profile,
+          files: [],
           endpoints: profile.endpoints.map((endpoint) => ({
             ...endpoint,
             ...(allowUninspectedCredentials === undefined ? {} : { allowUninspectedCredentials }),
@@ -169,6 +170,10 @@ describe("OpenShell provider evidence", () => {
       ["discovery metadata", { discovery: {} }],
       ["unknown profile fields", { $unknown: [{}] }],
       ["inference capability", { inferenceCapable: true }],
+      [
+        "workload file materialization",
+        { files: [{ path: "client.json", content: "{}", envVar: "CLIENT_CONFIG" }] },
+      ],
       [
         "a different credential variable",
         { credentials: [{ ...credential, envVars: ["OTHER_KEY"] }] },
@@ -306,7 +311,7 @@ describe("OpenShell provider evidence", () => {
         },
       });
       raw.getProviderProfile.mockResolvedValue({
-        profile: { ...managedBraveProfile(), ...identity },
+        profile: { ...managedBraveProfile(), ...identity, files: [] },
       });
       const input = { ...request(), configKeys: [], profileContract: "brave" as const };
       const result = await createProviders(connect).get(input);
@@ -347,6 +352,10 @@ describe("OpenShell provider evidence", () => {
     { label: "missing revision", change: { resourceVersion: undefined } },
     { label: "zero custom revision", change: { resourceVersion: 0n } },
     { label: "inference enabled", change: { inferenceCapable: true } },
+    {
+      label: "workload file materialization",
+      change: { files: [{ path: "client.json", content: "{}", envVar: "CLIENT_CONFIG" }] },
+    },
     { label: "missing credentials", change: { credentials: [] } },
     { label: "missing binaries", change: { binaries: [] } },
     { label: "discovery override", change: { discovery: {} } },
