@@ -23,6 +23,10 @@ export function gatewayUpgradeAgentResponseIsSuccessful(raw: string): boolean {
   );
 }
 
+export function gatewayUpgradeMarkerWriteCommand(markerPath: string, marker: string): string {
+  return `mkdir -p ${shellQuote(path.dirname(markerPath))} && printf '%s\\n' ${shellQuote(marker)} >${shellQuote(markerPath)}`;
+}
+
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
 const MANAGED_IMAGE_QUALIFICATION_ENV_KEYS = [

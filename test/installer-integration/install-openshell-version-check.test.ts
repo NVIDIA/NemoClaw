@@ -8,6 +8,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createLinuxArm64DownloadFixture } from "../support/openshell-arm64-download";
+import {
+  createInstalledOpenShellFixture,
+  type InstalledOpenShellOptions,
+  writeExecutable,
+  writeFixtureMktemp,
+} from "../support/openshell-installed-version";
 
 import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json";
 import {
@@ -16,7 +22,6 @@ import {
   CANDIDATE_RUNTIME_ENABLED,
   OPENSHELL_FEATURE_MARKERS,
   OPENSHELL_MCP_FEATURE_MARKER,
-  OPENSHELL_REWRITE_FEATURE_MARKERS,
   PINNED_OPEN_SHELL_SHA256,
   trustedFormulaBoundaryEvents,
   ZERO_SHA256,
@@ -25,237 +30,17 @@ import {
 const SCRIPT = path.join(import.meta.dirname, "../..", "scripts", "install-openshell.sh");
 const REQUIRED_OPENSHELL_VERSION = credentialBoundaryManifest.openshellVersion;
 const LEGACY_OPENSHELL_VERSION = "0.0.44";
-type OpenShellFeaturePlacement = "openshell" | "gateway" | "split-mcp-gateway" | "none";
 
-function writeExecutable(target: string, contents: string) {
-  fs.writeFileSync(target, contents, { mode: 0o755 });
-}
 function runWithInstalledVersion(
   version: string,
   extraEnv: NodeJS.ProcessEnv = {},
-  options: {
-    capability?: boolean;
-    curlExitCode?: number;
-    featurePlacement?: OpenShellFeaturePlacement;
-    driverBins?: boolean | "gateway" | "gateway-vm";
-    driverLocation?: "path" | "explicit" | "symlink";
-    driverVersion?: string;
-    sandboxVersion?: string;
-    sandboxVersionExit?: number;
-    sandboxBinaryDigest?: string;
-    driverVersionExit?: number;
-    driverReadable?: boolean;
-    homebrewAvailable?: boolean;
-    homebrewFormulaDownload?: boolean;
-    homebrewFormulaDigest?: string;
-    homebrewOperationLog?: string;
-    os?: string;
-    arch?: string;
-  } = {},
+  options: InstalledOpenShellOptions = {},
 ) {
-  const capability = options.capability ?? true;
-  const featurePlacement: OpenShellFeaturePlacement = capability
-    ? (options.featurePlacement ?? "openshell")
-    : "none";
-  const openshellMarkers =
-    featurePlacement === "openshell"
-      ? OPENSHELL_FEATURE_MARKERS
-      : featurePlacement === "split-mcp-gateway"
-        ? OPENSHELL_REWRITE_FEATURE_MARKERS
-        : "";
-  const gatewayMarkers =
-    featurePlacement === "gateway"
-      ? OPENSHELL_FEATURE_MARKERS
-      : featurePlacement === "split-mcp-gateway"
-        ? OPENSHELL_MCP_FEATURE_MARKER
-        : "";
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-ver-"));
+  const fixture = createInstalledOpenShellFixture(version, extraEnv, options);
   try {
-    const fakeBin = path.join(tmp, "bin");
-    const driverBin = options.driverLocation ? path.join(tmp, "driver-bin") : fakeBin;
-    fs.mkdirSync(fakeBin);
-    fs.mkdirSync(driverBin, { recursive: true });
-
-    writeExecutable(
-      path.join(fakeBin, "uname"),
-      `#!/usr/bin/env bash
-if [ "\${1:-}" = "-m" ]; then echo "${options.arch ?? "x86_64"}"; else echo "${options.os ?? "Linux"}"; fi`,
-    );
-
-    // Fake openshell that reports the given version
-    writeExecutable(
-      path.join(fakeBin, "openshell"),
-      `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then echo "openshell ${version}"; exit 0; fi
-${openshellMarkers ? `# ${openshellMarkers}` : ""}
-exit 99`,
-    );
-
-    const driverFixtures: Array<{ name: string; markers: string }> =
-      options.driverBins === false
-        ? []
-        : [
-            { name: "openshell-gateway", markers: gatewayMarkers },
-            ...(options.driverBins === "gateway"
-              ? []
-              : [
-                  {
-                    name: "openshell-sandbox",
-                    markers: OPENSHELL_MCP_FEATURE_MARKER,
-                  },
-                ]),
-            ...(options.driverBins === "gateway-vm"
-              ? [
-                  {
-                    name: "openshell-driver-vm",
-                    markers: OPENSHELL_MCP_FEATURE_MARKER,
-                  },
-                ]
-              : []),
-          ];
-    for (const fixture of driverFixtures) {
-      writeExecutable(
-        path.join(driverBin, fixture.name),
-        `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then echo "${fixture.name} ${fixture.name === "openshell-sandbox" ? (options.sandboxVersion ?? options.driverVersion ?? version) : (options.driverVersion ?? version)}"; exit ${fixture.name === "openshell-sandbox" ? (options.sandboxVersionExit ?? options.driverVersionExit ?? 0) : (options.driverVersionExit ?? 0)}; fi
-# ${fixture.markers}
-exit 0`,
-      );
-      if (options.driverReadable === false) fs.chmodSync(path.join(driverBin, fixture.name), 0o111);
-      if (options.driverLocation === "symlink") {
-        fs.symlinkSync(path.join(driverBin, fixture.name), path.join(fakeBin, fixture.name));
-      }
-    }
-
-    switch (options.sandboxBinaryDigest) {
-      case undefined:
-        break;
-      default:
-        writeExecutable(
-          path.join(fakeBin, "sha256sum"),
-          `#!/usr/bin/env bash
-case "\${1:-}" in
-  */openshell-sandbox)
-    printf '%s  %s\\n' '${options.sandboxBinaryDigest}' "$1"
-    exit 0
-    ;;
-esac
-exit 1`,
-        );
-    }
-
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      options.homebrewFormulaDownload
-        ? `#!/usr/bin/env bash
-printf '%s\n' "$*" >&2; out=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then shift; out="$1"; fi
-  shift || true
-done
-[ -n "$out" ] || exit 1
-printf '%s\n' '# downloaded OpenShell formula' 'class Openshell < Formula' > "$out"
-exit 0`
-        : `#!/usr/bin/env bash
-echo "curl stub: $*" >&2
-exit ${options.curlExitCode ?? 1}`,
-    );
-
-    writeExecutable(
-      path.join(fakeBin, "gh"),
-      `#!/usr/bin/env bash
-exit 1`,
-    );
-
-    if ((options.os ?? "Linux") === "Darwin") {
-      const tap = path.join(tmp, "tap");
-      const formula = path.join(tap, "Formula", "openshell.rb");
-      fs.mkdirSync(path.dirname(formula), { recursive: true });
-      fs.writeFileSync(formula, "class Openshell < Formula\nend\n");
-      writeExecutable(
-        path.join(fakeBin, "sha256sum"),
-        `#!/usr/bin/env bash
-case "\${1:-}" in
-  ${JSON.stringify(formula)})
-    if grep -q '^# downloaded OpenShell formula$' "$1"; then
-      printf '%s  %s\\n' '${PINNED_OPEN_SHELL_SHA256.formula}' "$1"
-    else
-      printf '%s  %s\\n' '${options.homebrewFormulaDigest ?? PINNED_OPEN_SHELL_SHA256.formula}' "$1"
-    fi
-    ;;
-  */openshell.rb) printf '%s  %s\\n' '${PINNED_OPEN_SHELL_SHA256.formula}' "$1" ;;
-  *) /usr/bin/sha256sum "$@" ;;
-esac`,
-      );
-      writeExecutable(
-        path.join(fakeBin, "codesign"),
-        `#!/usr/bin/env bash
-state="\${NEMOCLAW_FAKE_CODESIGN_STATE:-}"
-if [ "\${1:-}" = "-d" ]; then
-  if [ "\${NEMOCLAW_FAKE_CODESIGN_HAS_ENTITLEMENT:-1}" = "1" ] || { [ -n "$state" ] && [ -f "$state" ]; }; then
-    printf '%s\\n' '<plist version="1.0"><dict><key>com.apple.security.hypervisor</key><true/></dict></plist>'
-  fi
-  exit 0
-fi
-if [ -n "\${NEMOCLAW_FAKE_CODESIGN_LOG:-}" ]; then
-  printf '%s\\n' "$*" >> "$NEMOCLAW_FAKE_CODESIGN_LOG"
-fi
-if [ -n "$state" ]; then
-  : > "$state"
-fi
-exit 0`,
-      );
-      switch (options.homebrewAvailable ?? true) {
-        case true:
-          writeExecutable(
-            path.join(fakeBin, "brew"),
-            `#!/usr/bin/env bash
-${options.homebrewOperationLog ? `printf '%s\\n' "$*" >> ${JSON.stringify(options.homebrewOperationLog)}` : ""}
-case "$*" in
-  "--repository nvidia/openshell") printf '%s\\n' ${JSON.stringify(tap)}; exit 0 ;;
-  "list --formula openshell")
-    exit 0
-    ;;
-  "info --json=v2 openshell")
-    printf '%s\n' '{"formulae":[{"name":"openshell","tap":"nvidia/openshell"}]}'
-    exit 0
-    ;;
-  "services restart openshell")
-    exit 0
-    ;;
-  "install --formula nvidia/openshell/openshell"|"reinstall --formula nvidia/openshell/openshell")
-    exit "\${NEMOCLAW_TEST_BREW_INSTALL_STATUS:-0}"
-    ;;
-  "--prefix")
-    printf '%s\\n' ${JSON.stringify(tmp)}
-    exit 0
-    ;;
-esac
-exit 0`,
-          );
-          break;
-      }
-    }
-
-    const explicitDriverEnv =
-      options.driverLocation === "explicit"
-        ? {
-            NEMOCLAW_OPENSHELL_GATEWAY_BIN: path.join(driverBin, "openshell-gateway"),
-            NEMOCLAW_OPENSHELL_SANDBOX_BIN: path.join(driverBin, "openshell-sandbox"),
-          }
-        : {};
-    return spawnSync("bash", [SCRIPT], {
-      env: {
-        ...process.env,
-        NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-        ...explicitDriverEnv,
-        ...extraEnv,
-        PATH: `${fakeBin}:${driverBin}:/usr/bin:/bin`,
-      },
-      encoding: "utf8",
-    });
+    return spawnSync("bash", [SCRIPT], { env: fixture.env, encoding: "utf8" });
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(fixture.tmp, { recursive: true, force: true });
   }
 }
 
@@ -537,6 +322,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       const downloadLog = path.join(tmp, "downloads.log");
       const brewLog = path.join(tmp, "brew.log");
       fs.mkdirSync(fakeBin);
+      writeFixtureMktemp(fakeBin, tmp);
 
       writeExecutable(
         path.join(fakeBin, "uname"),
@@ -949,6 +735,196 @@ function stat {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+  it.each(["", "1"])(
+    "replaces an unsafe existing destination through the private directory with noninteractive=%s (#14268)",
+    (nonInteractive) => {
+      const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+      try {
+        const oldBinary = fs.readFileSync(path.join(fakeBin, "openshell"));
+        fs.chmodSync(fakeBin, 0o775);
+        const privateBin = path.join(tmp, ".local", "bin");
+        const result = spawnSync("bash", [SCRIPT], {
+          env: {
+            ...process.env,
+            HOME: tmp,
+            XDG_BIN_HOME: "",
+            NEMOCLAW_NON_INTERACTIVE: nonInteractive,
+            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+          },
+          encoding: "utf8",
+        });
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        expect(fs.readFileSync(path.join(fakeBin, "openshell"))).toEqual(oldBinary);
+        expect(fs.statSync(fakeBin).mode & 0o777).toBe(0o775);
+        const installedVersion = spawnSync(path.join(privateBin, "openshell"), ["--version"], {
+          encoding: "utf8",
+        });
+        expect(installedVersion.status).toBe(0);
+        expect(installedVersion.stdout).toContain(`openshell ${REQUIRED_OPENSHELL_VERSION}`);
+        expect(fs.existsSync(path.join(privateBin, "openshell-gateway"))).toBe(true);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("replaces the safe nonwritable active system binary in interactive mode (#14268)", () => {
+    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+    const systemBin = path.join(tmp, "system-bin");
+    fs.mkdirSync(systemBin);
+    try {
+      fs.renameSync(path.join(fakeBin, "openshell"), path.join(systemBin, "openshell"));
+      const sudoLog = path.join(tmp, "sudo.log");
+      writeExecutable(
+        path.join(fakeBin, "sudo"),
+        `#!/usr/bin/env bash
+[[ "$1" = install && "\${@: -1}" == "$HOME/system-bin/"* ]] || exit 97
+printf '%s\\n' "$*" >> "$HOME/sudo.log"
+chmod u+w "$HOME/system-bin"
+"$@"
+status=$?
+chmod 555 "$HOME/system-bin"
+exit "$status"
+`,
+      );
+      const bashEnv = path.join(tmp, "interactive-safe-system.sh");
+      fs.writeFileSync(
+        bashEnv,
+        `function [ {
+  if [[ "$#" = 3 && "$1" = -t && "$2" = 0 ]]; then return 0; fi
+  if [[ "$#" = 4 && "$1" = '!' && "$2" = -t && "$3" = 0 ]]; then return 1; fi
+  builtin [ "$@"
+}
+function stat {
+  if [[ " $* " == *" $HOME/system-bin "* ]]; then printf '0 755\\n'; return 0; fi
+  command stat "$@"
+}
+`,
+      );
+      fs.chmodSync(systemBin, 0o555);
+      // Confine the system destination to the fixture before executing the real installer.
+      const installer = path.join(tmp, "install-openshell.sh");
+      fs.writeFileSync(
+        installer,
+        fs.readFileSync(SCRIPT, "utf8").replaceAll("/usr/local/bin", systemBin),
+      );
+      const result = spawnSync("bash", [installer], {
+        env: {
+          ...process.env,
+          BASH_ENV: bashEnv,
+          HOME: tmp,
+          XDG_BIN_HOME: "",
+          NEMOCLAW_NON_INTERACTIVE: "",
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${systemBin}:${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const active = spawnSync(path.join(systemBin, "openshell"), ["--version"], {
+        encoding: "utf8",
+      });
+      expect(active.status).toBe(0);
+      expect(active.stdout.trim()).toBe(`openshell ${REQUIRED_OPENSHELL_VERSION}`);
+      expect(fs.readFileSync(sudoLog, "utf8")).toContain(` ${path.join(systemBin, "openshell")}`);
+      expect(fs.existsSync(path.join(tmp, ".local", "bin", "openshell"))).toBe(false);
+    } finally {
+      fs.chmodSync(systemBin, 0o755);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("selects the prepared replacement when its directory already occurs later on PATH (#14268)", () => {
+    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+    try {
+      const privateBin = path.join(tmp, ".local", "bin");
+      fs.mkdirSync(privateBin, { recursive: true });
+      fs.chmodSync(fakeBin, 0o775);
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `
+source "$1/scripts/install.sh" >/dev/null 2>&1
+NEMOCLAW_SOURCE_ROOT="$1"
+_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR="$2"
+spin() { shift; "$@"; }
+install_nemoclaw_openshell_gateway_user_service() { :; }
+maybe_install_openshell_during_install force
+[ "$(command -v openshell)" = "$2/openshell" ]
+[ "$NEMOCLAW_OPENSHELL_BIN" = "$2/openshell" ]
+[ "$(resolve_openshell_gateway_bin_for_service)" = "$2/openshell-gateway" ]
+`,
+          "test",
+          path.resolve(import.meta.dirname, "../.."),
+          privateBin,
+        ],
+        {
+          env: {
+            ...process.env,
+            HOME: tmp,
+            XDG_BIN_HOME: "",
+            NEMOCLAW_NON_INTERACTIVE: "1",
+            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+            PATH: `${fakeBin}:${privateBin}:/usr/bin:/bin`,
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rechecks the prepared directory through the installer caller before replacement (#14268)", () => {
+    const { tmp, fakeBin, downloadLog } = createLinuxArm64DownloadFixture();
+    try {
+      const env = {
+        ...process.env,
+        HOME: tmp,
+        XDG_BIN_HOME: "",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+        PATH: `${fakeBin}:/usr/bin:/bin`,
+      };
+      const preparation = spawnSync("bash", [SCRIPT, "--prepare-install-directory"], {
+        env,
+        encoding: "utf8",
+      });
+      expect(preparation.status, preparation.stdout + preparation.stderr).toBe(0);
+      expect(preparation.stdout.trim()).toBe(fakeBin);
+      expect(fs.existsSync(downloadLog)).toBe(false);
+      const oldBinary = fs.readFileSync(path.join(fakeBin, "openshell"));
+      fs.chmodSync(fakeBin, 0o775);
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `
+source "$1/scripts/install.sh" >/dev/null 2>&1
+NEMOCLAW_SOURCE_ROOT="$1"
+_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR="$2"
+spin() { shift; "$@"; }
+install_nemoclaw_openshell_gateway_user_service() { :; }
+maybe_install_openshell_during_install force
+`,
+          "test",
+          path.resolve(import.meta.dirname, "../.."),
+          preparation.stdout.trim(),
+        ],
+        { env, encoding: "utf8" },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Unsafe prepared executable directory");
+      expect(fs.readFileSync(path.join(fakeBin, "openshell"))).toEqual(oldBinary);
+      expect(fs.existsSync(path.join(tmp, ".local", "bin"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an unsafe system directory before invoking sudo (#12496)", () => {
     const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
     try {
@@ -964,6 +940,7 @@ function stat {
         `function [ {
   if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then return 1; fi
   if [[ "$#" -eq 4 && "$1" = "!" && "$2" = "-t" && "$3" = "0" && "$4" = "]" ]]; then return 1; fi
+  if [[ "$#" -eq 3 && "$1" = "-t" && "$2" = "0" && "$3" = "]" ]]; then return 0; fi
   builtin [ "$@"
 }
 function stat {
@@ -1064,6 +1041,7 @@ function stat {
       const installLog = path.join(tmp, "install.log");
       fs.mkdirSync(activeBin);
       fs.mkdirSync(fakeBin);
+      writeFixtureMktemp(fakeBin, tmp);
 
       writeExecutable(
         path.join(activeBin, "openshell"),
@@ -1199,6 +1177,7 @@ exit 0`,
       const tarLog = path.join(tmp, "tar.log");
       const installLog = path.join(tmp, "install.log");
       fs.mkdirSync(fakeBin);
+      writeFixtureMktemp(fakeBin, tmp);
 
       writeExecutable(
         path.join(fakeBin, "uname"),
