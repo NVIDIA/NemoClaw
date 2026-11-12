@@ -43,6 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import socket
+import select
 from threading import Event, Thread
 import time
 
@@ -57,6 +58,7 @@ class LocalUpstream:
         self.prefix_delay = prefix_delay
         self.faults = []
         self.stopping = Event()
+        self.released = Event()
 
     def __enter__(self):
         upstream = self
@@ -105,8 +107,18 @@ class LocalUpstream:
                         self.wfile.write(b' ')
                     self.wfile.flush()
                     observation['prefixSent'] = True
-                    # Release only during cleanup or after the native deadline should have failed.
-                    upstream.stopping.wait(135)
+                    # Observe peer release separately from test-owned server cleanup.
+                    until = time.monotonic() + 135
+                    while not upstream.stopping.wait(0.05) and time.monotonic() < until:
+                        readable, _, _ = select.select([self.connection], [], [], 0)
+                        if readable:
+                            try:
+                                closed = self.connection.recv(1, socket.MSG_PEEK) == b''
+                            except ConnectionResetError:
+                                closed = True
+                            if closed:
+                                upstream.released.set()
+                                break
                     return
                 if upstream.role in ('capable', 'judge'):
                     content = json.dumps({

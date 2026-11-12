@@ -757,7 +757,8 @@ test.for(["reuse-capable", "dedicated"] as const)(
           "the gateway reaches readiness as its gateway user with routing activation configured",
           "fixture providers use resolver placeholders and cannot contact external services",
           "efficient, capable, and judge clients stop stalled response bodies at the production deadline without retrying",
-          "retryable provider failures make one attempt without fallback or a successful stream terminator",
+          "retryable provider failures exhaust configured answer candidates with one attempt per physical call",
+          "caller cancellation after a partial event settles without fallback, replay, or a successful terminator and releases the upstream connection",
         ],
       },
       async ({ containers, image, probe, runId }) => {

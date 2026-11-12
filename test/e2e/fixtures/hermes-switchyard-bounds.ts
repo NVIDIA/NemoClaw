@@ -16,7 +16,7 @@ import {
 
 // Every child owns one native runtime and its loopback providers. Parallel cases
 // keep qualification bounded without shortening the production client deadline.
-const worker = String.raw`
+export const HERMES_SWITCHYARD_BOUNDS_WORKER = String.raw`
 import asyncio
 import base64
 from contextlib import ExitStack
@@ -37,6 +37,8 @@ judge_mode, target, fault, encoded_deployment, encoded_plugins, encoded_state = 
 judge = 'judge' if judge_mode == 'dedicated' else 'capable'
 failed_role = judge if target == 'judge' else target
 phase = 'judge' if target == 'judge' else 'answer'
+failed_roles = ({'efficient', 'capable'} if fault == 'retryable' and target != 'judge'
+                else {failed_role})
 # A watchdog exit is a failed test, never evidence of a native timeout.
 signal.alarm(150)
 with TemporaryDirectory() as directory, ExitStack() as resources:
@@ -44,7 +46,7 @@ with TemporaryDirectory() as directory, ExitStack() as resources:
     providers = {
         role: resources.enter_context(LocalUpstream(
             role, directory / (role + '.jsonl'),
-            fault=fault if role == failed_role else None, phase=phase,
+            fault=('stall' if fault == 'cancel' else fault) if role in failed_roles else None, phase=phase,
             prefix_delay=20 if fault == 'stall' else 0,
             p_solve=0.1 if target == 'capable' else 0.9))
         for role in ('efficient', 'capable', 'judge')
@@ -68,6 +70,7 @@ with TemporaryDirectory() as directory, ExitStack() as resources:
         assert runtime.managed_execution_enabled()
         chunks = []
         bypassed = []
+        cancellation = {'observed': False, 'started': None}
 
         async def reject_passthrough(_request):
             bypassed.append(True)
@@ -89,11 +92,33 @@ with TemporaryDirectory() as directory, ExitStack() as resources:
                 stream = await nemo_relay.llm.stream_execute(
                     'openai.chat_completions', request, reject_stream_passthrough,
                     chunks.append, lambda: {'choices': []})
-                try:
-                    async for _chunk in stream:
-                        pass
-                finally:
-                    await stream.aclose()
+                first = asyncio.Event()
+                async def consume():
+                    try:
+                        async for chunk in stream:
+                            if any(choice.get('delta', {}).get('content') == 'partial'
+                                   for choice in chunk.get('choices', [])):
+                                first.set()
+                    finally:
+                        await stream.aclose()
+                if fault != 'cancel':
+                    await consume()
+                else:
+                    caller = asyncio.create_task(consume())
+                    try:
+                        await asyncio.wait_for(first.wait(), timeout=10)
+                        cancellation['started'] = time.monotonic()
+                        caller.cancel()
+                        try:
+                            await asyncio.wait_for(caller, timeout=5)
+                        except asyncio.CancelledError:
+                            cancellation['observed'] = True
+                    finally:
+                        caller.cancel()
+                        try:
+                            await caller
+                        except asyncio.CancelledError:
+                            pass
 
         failed = False
         try:
@@ -102,32 +127,45 @@ with TemporaryDirectory() as directory, ExitStack() as resources:
             failed = True
         finished = time.monotonic()
         assert not bypassed, 'native routing was bypassed'
-        assert failed, 'native call unexpectedly succeeded'
+        if fault == 'cancel':
+            assert cancellation['observed'], 'caller did not settle as cancelled'
+            assert finished - cancellation['started'] <= 5
+        else:
+            assert failed, 'native call unexpectedly succeeded'
         provider = providers[failed_role]
-        assert len(provider.faults) == 1, 'failed physical client retried or was never reached'
+        # Only authenticated calls reach the fault branch and its evidence file.
+        for role in failed_roles:
+            assert len(providers[role].faults) == 1, 'physical client retried or was never reached'
+            assert (directory / (role + '.jsonl')).is_file()
         expected_calls = {role: 0 for role in providers}
         expected_calls[judge] += 1
         if target != 'judge':
-            expected_calls[target] += 1
-        assert {role: len(p.calls) for role, p in providers.items()} == expected_calls
-        # Only authenticated calls reach the fault branch and its evidence file.
-        assert (directory / (failed_role + '.jsonl')).is_file()
+            for role in failed_roles:
+                expected_calls[role] += 1
         elapsed = finished - provider.faults[0]['started']
         assert elapsed <= 125, ('native call exceeded its deadline scheduling tolerance', elapsed)
-        if fault == 'stall':
+        if fault in ('stall', 'cancel'):
             observation = provider.faults[0]
             assert observation.get('prefixSent') is True
-            assert elapsed >= 119, ('native call failed before its deadline', elapsed)
+            if fault == 'stall':
+                assert elapsed >= 119, ('native call failed before its deadline', elapsed)
             if target != 'judge':
                 assert observation['stream'] is True
                 choices = [choice for chunk in chunks for choice in chunk.get('choices', [])]
                 assert any(choice.get('delta', {}).get('content') == 'partial' for choice in choices)
                 assert not any(choice.get('finish_reason') == 'stop' for choice in choices)
-        print(json.dumps({'judgeMode': judge_mode, 'target': target, 'fault': fault,
-                          'attempts': len(provider.faults), 'nativeFailure': failed}), flush=True)
     finally:
+        shutdown_started = time.monotonic()
         runtime.shutdown()
+    if fault == 'cancel':
+        assert time.monotonic() - shutdown_started <= 5, 'shutdown exceeded cancellation cleanup bound'
+        assert providers[failed_role].released.wait(5), 'upstream connection survived shutdown'
     assert nemo_relay.plugin.report() is None
+    # Include late replay or fallback during cancellation and native shutdown.
+    assert {role: len(p.calls) for role, p in providers.items()} == expected_calls
+    print(json.dumps({'judgeMode': judge_mode, 'target': target, 'fault': fault,
+                      'attempts': {role: len(providers[role].faults) for role in failed_roles},
+                      'nativeFailure': failed, 'cancelled': cancellation['observed']}), flush=True)
 signal.alarm(0)
 `;
 
@@ -150,23 +188,30 @@ import json
 import subprocess
 import sys
 
-worker = base64.b64decode('${Buffer.from(worker).toString("base64")}').decode()
+worker = base64.b64decode('${Buffer.from(HERMES_SWITCHYARD_BOUNDS_WORKER).toString("base64")}').decode()
 cases = [(target, fault) for target in ('efficient', 'capable', 'judge')
          for fault in ('retryable', 'stall')]
+cases.append(('efficient', 'cancel'))
 def check(case):
     target, fault = case
-    result = subprocess.run([sys.executable, '-I', '-c', worker, '${judgeMode}', target, fault,
+    try:
+        result = subprocess.run([sys.executable, '-I', '-c', worker, '${judgeMode}', target, fault,
                              '${Buffer.from(routing.switchyardDeploymentToml).toString("base64")}',
                              '${Buffer.from(routing.relayPluginsToml).toString("base64")}',
                              '${Buffer.from(routing.relayPluginStateJson).toString("base64")}'],
                             capture_output=True, text=True, timeout=155)
-    if result.returncode != 0:
-        # Child input contains only synthetic credentials and loopback addresses.
-        raise AssertionError((case, result.returncode, result.stderr[-4096:]))
-    return json.loads(result.stdout)
+        if result.returncode != 0:
+            # Child input contains only synthetic credentials and loopback addresses.
+            return {'case': case, 'ok': False, 'exitCode': result.returncode,
+                    'error': result.stderr[-4096:]}
+        return {'case': case, 'ok': True, 'evidence': json.loads(result.stdout)}
+    except (subprocess.TimeoutExpired, ValueError) as error:
+        return {'case': case, 'ok': False, 'error': str(error)[-4096:]}
 with ThreadPoolExecutor(max_workers=6) as pool:
-    for result in pool.map(check, cases):
+    results = list(pool.map(check, cases))
+    for result in results:
         print(json.dumps(result), flush=True)
+assert all(result['ok'] for result in results), 'native bounds cases failed; see per-case evidence'
 PY
 `;
 }
