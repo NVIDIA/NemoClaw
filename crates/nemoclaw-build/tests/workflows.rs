@@ -139,9 +139,9 @@ fn colossus_runs_are_manual_and_v1_only() {
     );
 }
 
-/// The smoke test checks GPU access without a checkout or credentials.
+/// The smoke test performs no checkout, secret handling, or hardware commands.
 #[test]
-fn colossus_smoke_checks_gpu_access_without_credentials() {
+fn colossus_smoke_executes_only_true_without_credentials() {
     let workflow = colossus_workflow();
     let job = &workflow["jobs"]["smoke"];
     assert_eq!(job["runs-on"], "colossus-gb300-pilot");
@@ -157,7 +157,7 @@ fn colossus_smoke_checks_gpu_access_without_credentials() {
     assert!(steps[0]["uses"].is_null(), "no checkout or other actions");
     assert!(steps[0]["env"].is_null(), "no step environment variables");
     assert_eq!(steps[0]["shell"], "bash");
-    assert_eq!(steps[0]["run"], "nvidia-smi");
+    assert_eq!(steps[0]["run"], "true");
 }
 
 /// The bundle suite runs the Linux ARM64 bundle, unit, contract, and

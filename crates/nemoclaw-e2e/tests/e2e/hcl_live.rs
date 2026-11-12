@@ -48,13 +48,10 @@ fn case() {
         );
         for label in ["nemoclaw.nvidia.com/uid", "openshell.ai/sandbox-namespace"] {
             assert!(
-                docker(&[
-                    "container",
-                    "ls",
-                    "--quiet",
-                    "--filter",
+                docker_list(
+                    &["container", "ls", "--quiet", "--filter"],
                     &format!("label={label}")
-                ])
+                )
                 .is_empty(),
                 "another deployment is still running"
             );
@@ -149,13 +146,18 @@ fn case() {
 }
 
 fn docker(args: &[&str]) -> String {
-    let output = Command::new("docker")
-        .args(["--host", "unix:///var/run/docker.sock"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "Docker observation failed");
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    nemoclaw_build::ci::live::docker_lines(
+        Command::new("docker")
+            .args(["--host", "unix:///var/run/docker.sock"])
+            .args(args),
+    )
+    .expect("Docker observation failed")
+    .join("\n")
+}
+
+fn docker_list(args: &[&str], filter: &str) -> Vec<String> {
+    let args: Vec<_> = args.iter().copied().chain([filter]).collect();
+    docker(&args).lines().map(str::to_owned).collect()
 }
 
 #[test]
@@ -167,11 +169,11 @@ fn docker_cleanup() {
     let workspace = document.workspace();
     let owner = format!("label=nemoclaw.nvidia.com/uid={}", document.metadata.uid);
     let sandbox = format!("label=openshell.ai/sandbox-namespace={workspace}-gateway");
-    let mut clean =
-        docker(&["container", "ls", "--all", "--quiet", "--filter", &sandbox]).is_empty();
-    for id in docker(&["container", "ls", "--all", "--quiet", "--filter", &owner]).lines() {
+    let containers = &["container", "ls", "--all", "--quiet", "--filter"];
+    let mut clean = docker_list(containers, &sandbox).is_empty();
+    for id in docker_list(containers, &owner) {
         let rows: Vec<Value> =
-            serde_json::from_str(&docker(&["container", "inspect", id])).unwrap();
+            serde_json::from_str(&docker(&["container", "inspect", &id])).unwrap();
         clean &= rows.len() == 1
             && rows[0]["Name"] == format!("/{workspace}-gateway-initialize")
             && rows[0]["State"]["Status"] == "exited"
@@ -182,9 +184,9 @@ fn docker_cleanup() {
         ("volume", volumes),
         ("network", vec![format!("{workspace}-network")]),
     ] {
-        clean &= docker(&[kind, "ls", "--format", "{{.Name}}", "--filter", &owner])
-            .lines()
-            .all(|name| expected.iter().any(|expected| expected == name));
+        clean &= docker_list(&[kind, "ls", "--format", "{{.Name}}", "--filter"], &owner)
+            .iter()
+            .all(|name| expected.contains(name));
     }
     fs::write(
         run.join("reports/cleanup.json"),

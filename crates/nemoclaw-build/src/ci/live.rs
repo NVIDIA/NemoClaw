@@ -3,6 +3,21 @@
 //! Fresh inputs for the Docker live tests: deployment UUIDs, unused
 //! loopback ports and private subnets, and owned gateway documents.
 
+/// Read Docker observations without deleting objects. Failed reads stay unknown.
+pub fn docker_lines(command: &mut std::process::Command) -> Option<Vec<String>> {
+    let output = command
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .ok()?;
+    output.status.success().then(|| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
 /// A random version 4 UUID, as deployment metadata requires.
 pub fn uuid() -> Result<String, String> {
     let mut bytes = [0u8; 16];

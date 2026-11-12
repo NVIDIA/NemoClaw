@@ -17,25 +17,23 @@ fn resources(directory: &Path) -> Vec<Value> {
 
 /// Docker volumes retained in state, without reproducing each runtime's naming rules.
 pub fn docker_volumes(directory: &Path) -> Vec<String> {
-    resources(directory)
+    let mut names = Vec::new();
+    for resource in resources(directory)
         .iter()
         .filter(|r| r["mode"] == "managed")
-        .flat_map(|r| {
-            r["instances"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter_map(|instance| {
-                    let name = instance["attributes"]["name"].as_str()?;
-                    match r["type"].as_str()? {
-                        "docker_volume" | "vllm_credential_storage" => Some(name.to_owned()),
-                        "openshell_gateway_storage" => Some(format!("{name}-data")),
-                        _ => None,
-                    }
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
+    {
+        for instance in resource["instances"].as_array().unwrap() {
+            let Some(name) = instance["attributes"]["name"].as_str() else {
+                continue;
+            };
+            match resource["type"].as_str() {
+                Some("docker_volume" | "vllm_credential_storage") => names.push(name.to_owned()),
+                Some("openshell_gateway_storage") => names.push(format!("{name}-data")),
+                _ => {}
+            }
+        }
+    }
+    names
 }
 
 /// The managed resource of `kind` named `name`, from the deployment's

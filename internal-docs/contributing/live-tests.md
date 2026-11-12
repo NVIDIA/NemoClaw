@@ -158,38 +158,21 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 
 ### DGX Station on Colossus
 
-**CI / Bundle** shows the Colossus smoke and Station jobs as skipped on pull requests by default.
-To enable them for a same-repository PR, add the `run-colossus` label. Adding or removing the label starts a new Bundle run; while present, it also enables the lane on subsequent PR commits. Fork PRs cannot enable the lane.
-Every `v1` push, including a merged PR, enables the Station lane automatically.
-The same Bundle run first checks `nvidia-smi`; only success starts **Live / HCL** with `target=dgx-station`, mapping to `colossus-gb300-pilot` and Linux ARM64.
-The default target remains the RTX PRO 6000 runner; DGX Spark is not qualified yet.
-Adding Spark requires a runner/platform mapping and qualified case inputs in this shared HCL path, without another Rust module or workflow copy.
-The separate **E2E / Colossus runner connectivity** workflow retains manual `suite=smoke` and `suite=bundle` diagnostics; it no longer starts Station E2E.
-A failed smoke is non-blocking and skips Station build and E2E. Once smoke passes, build, inference, and cleanup failures fail the lane.
-The required `Test / PLATFORM` checks do not depend on Colossus jobs.
-An offline runner leaves smoke queued until GitHub assigns a runner or expires the queued job; this dependency does not detect lease expiry or provide an immediate offline skip.
-Colorunner owns leasing and host preparation; the workflow requires Ubuntu 24.04, GB300, working Docker GPU access, and the containerd image store, without changing host services.
+**CI / Bundle** skips Colossus on PRs by default. Add `run-colossus` to a same-repository PR to enable it; label changes start a new run, and the label enables subsequent commits until removed. Fork PRs cannot opt in. Every `v1` push enables it automatically.
+GPU smoke failure skips Station without failing Bundle. After smoke passes, build, inference, and cleanup failures fail the lane; required `Test / PLATFORM` checks remain independent. An offline runner leaves smoke queued rather than immediately skipped.
 
-The Station run builds the candidate bundle and images, then runs `hcl/manual/dgx-station-openclaw-nemotron.tftest.hcl` through the shared HCL harness.
-The native OpenTofu `manual/` test directory keeps this case out of automatic case discovery.
-It copies `examples/gtc-dc/openclaw-dgx-station.yaml`, binds candidate image IDs and a fresh UID, and selects a subnet that does not overlap existing Docker networks.
-The bound copy selects Nemotron 3.5 Super VL NVFP4 at revision `da5b2650a835292c678994a1fa3fb653250fb508` and vLLM base digest `0d69205f3227e47b750b05789f117abbd929b67eccc46060e0d22ce4021c0318`; the example and RTX vLLM default stay unchanged.
-The three HCL blocks apply, require an OpenClaw reply of `READY`, and destroy while retaining the model, authentication, and gateway storage.
-The workflow always attempts destroy after state exists, then independently checks owned Docker objects against the retained state; an SDK failure, failed initializer, or leftover workload fails the job.
+Colorunner must prepare Ubuntu 24.04 ARM64, GB300, Docker GPU access, and the containerd image store. CI does not provision the host or manage its lease.
+The shared HCL workflow binds the existing GTC Station example to its pinned Nemotron 3.5 model/runtime and candidate images, fresh UID, state, and nonoverlapping subnet. The scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup.
 
-Each attempt keeps a private `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>/` directory with its bound `case.yaml`, bundle, `e2e` executable, state, and command output.
-Reports publish only outcomes and candidate/UID/case identity; they exclude state, credentials, and reply text.
-A new attempt creates fresh deployment storage; retained volumes are not imported into later deployments, while Docker build and image caches can be reused.
-Keep failed run directories and their bundle together for recovery, since a later SDK may use a different state format.
-For recovery, set `run` to that exact directory and use:
+Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>/`. Published reports contain outcomes and candidate/UID/case identity only.
+Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
+To recover a failed run, set `run` to its retained directory and use the original executables:
 
 ```bash
 "$run/bundle/bin/nemoclaw" destroy --output json --progress off --state-dir "$run/deployment"
 NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
   "$run/e2e" hcl_live::docker_cleanup --exact --ignored --nocapture
 ```
-
-Recovery does not remove retained volumes or networks; reclaim them separately only after confirming ownership and that no recovery needs them.
 
 ## Spark and Fabric
 

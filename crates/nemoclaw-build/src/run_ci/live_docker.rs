@@ -131,21 +131,7 @@ const RETAINED: [(&str, &[&str], &[&str]); 3] = [
 /// Remove each UID's labelled objects and its gateway's sandbox objects, then
 /// fail naming any sandbox object OpenShell left and anything that remains.
 fn remove_retained(docker: impl Fn() -> Command, uids: &[String]) -> Result<()> {
-    let list = |args: &[&str], filter: &str| -> Option<Vec<String>> {
-        let output = docker()
-            .args(args)
-            .arg(filter)
-            .stderr(Stdio::inherit())
-            .output()
-            .ok()?;
-        output.status.success().then(|| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|id| !id.is_empty())
-                .map(str::to_owned)
-                .collect()
-        })
-    };
+    let list = |args: &[&str], filter: &str| live::docker_lines(docker().args(args).arg(filter));
     let mut problems = Vec::new();
     for uid in uids {
         let sandbox = sandbox_filter(uid);

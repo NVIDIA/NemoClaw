@@ -60,6 +60,7 @@ defaults:
 
 env:
   CARGO_INCREMENTAL: "0"
+  TARGET: ${{ inputs.target || 'rtx-pro-6000' }}
   TEST_PLATFORM: linux_amd64
   CANDIDATE: hcl-candidate-${{ github.run_id }}-${{ github.run_attempt }}
   SOURCES: hcl-image-sources-${{ github.run_id }}-${{ github.run_attempt }}
@@ -87,7 +88,6 @@ jobs:
       - name: Select target
         id: target
         env:
-          TARGET: ${{ inputs.target || 'rtx-pro-6000' }}
           TESTS: ${{ inputs.tests }}
           PR_COLOSSUS: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'run-colossus') }}
         run: |
@@ -115,7 +115,6 @@ jobs:
       - name: List the cases and fetch their runtime images' sources
         id: cases
         env:
-          TARGET: ${{ inputs.target }}
           CASES: ${{ inputs.cases }}
           HOSTED: ${{ inputs.hosted }}
           TESTS: ${{ inputs.tests }}
@@ -183,7 +182,7 @@ jobs:
         uses: ./.github/actions/containerd-store
       - name: Build the bundle, test executable, and agent images
         run: |
-          if [[ $TEST_PLATFORM == linux_arm64 ]]; then
+          if [[ $TARGET == dgx-station ]]; then
             test "$(uname -m)" = aarch64
             . /etc/os-release
             test "$ID:$VERSION_ID" = ubuntu:24.04
@@ -295,17 +294,21 @@ jobs:
           read -ra runtimes <<< "$RUNTIMES"
           NEMOCLAW_HCL_RUN="$RUNNER_TEMP/hcl"
           bake_args=()
+          bindings=()
           document="crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
-          if [[ $TEST_PLATFORM == linux_arm64 ]]; then
+          if [[ $TARGET == dgx-station ]]; then
             umask 077
             NEMOCLAW_HCL_RUN="$HOME/.local/state/nemoclaw-ci/hcl/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
             test ! -e "$NEMOCLAW_HCL_RUN"
             mkdir -p "$NEMOCLAW_HCL_RUN"
             document="$NEMOCLAW_HCL_RUN/case.yaml"
             cp examples/gtc-dc/openclaw-dgx-station.yaml "$document"
-            sed -i -e 's#nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4#nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4#' \
-              -e 's#ff433f5493e25d631c9f12b5d55c674229923d02#da5b2650a835292c678994a1fa3fb653250fb508#' \
-              -e 's#nemotron-3-super#nemotron-3.5-super-vl#g' "$document"
+            # Case-specific inputs; the shared binding below also pins images and UID.
+            bindings+=(
+              -e 's#nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4#nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4#'
+              -e 's#ff433f5493e25d631c9f12b5d55c674229923d02#da5b2650a835292c678994a1fa3fb653250fb508#'
+              -e 's#nemotron-3-super#nemotron-3.5-super-vl#g'
+            )
             bake_args+=(--set vllm.args.VLLM_IMAGE=vllm/vllm-openai@sha256:0d69205f3227e47b750b05789f117abbd929b67eccc46060e0d22ce4021c0318)
             cp -a "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_HCL_RUN/bundle"
             cp -L .build/e2e "$NEMOCLAW_HCL_RUN/e2e"
@@ -320,7 +323,7 @@ jobs:
           for runtime in "${runtimes[@]}"; do docker image inspect "nc-prototype-$runtime:rust-v1" > /dev/null; done
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
           # Pin this run's images and give it a fresh deployment identity; plan rejects an unbound image.
-          sed -i -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id nc-fabric:openclaw)#" \
+          sed -i "${bindings[@]}" -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id nc-fabric:openclaw)#" \
             -e "s#nc-fabric-hermes@sha256:0\{64\}#nc-fabric@$(id nc-fabric:hermes)#" \
             -e "s#nc-prototype-vllm@sha256:0\{64\}#nc-prototype-vllm@$(id nc-prototype-vllm:rust-v1)#" \
             -e "s#nc-prototype-ollama@sha256:a\{64\}#nc-prototype-ollama@$(id nc-prototype-ollama:rust-v1)#" \
