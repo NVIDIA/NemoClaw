@@ -5,7 +5,7 @@
 // channel without changing channel behavior. The important distinction for
 // NemoClaw#2766 is that "[telegram] [default] starting provider" means the
 // channel is initializing; an agent-turn failure later can be an inference
-// provider failure through inference.local, not a Telegram Bot API failure.
+// provider failure, not a Telegram Bot API failure.
 
 type TelegramDiagnosticsProcess = NodeJS.Process & {
   __nemoclawTelegramDiagnosticsInstalled?: boolean;
@@ -134,9 +134,7 @@ type TelegramHttpRequestLike = (
     if (status >= 200 && status < 300) {
       if (readyLogged) return;
       readyLogged = true;
-      emit(
-        "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
-      );
+      emit("[telegram] [default] provider ready (Bot API reachable)");
       return;
     }
     if (startupProbeLogged) return;
