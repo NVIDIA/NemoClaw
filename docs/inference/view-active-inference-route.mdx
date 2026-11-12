@@ -13,6 +13,7 @@ content:
 
 Use the NemoClaw CLI to read the selected inference provider and model.
 When the selected sandbox has a valid native provider attachment, the command reports the sandbox's recorded provider, model, and native endpoint without reading the shared gateway route.
+A native local endpoint appears only when its URL path is a credential-free root or `/v1` API base; otherwise, the command reports the `withheld` state described in [Shared Custom Endpoint Metadata](#shared-custom-endpoint-metadata).
 For providers that still use the shared route, the command reads the live OpenShell inference route.
 For a compatible custom provider on a shared route, the command also reports its persisted endpoint URL when the registry provider and model match the live route.
 Fixed native hosted providers include OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider.
