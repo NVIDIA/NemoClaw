@@ -29,6 +29,7 @@ function scheduling(overrides: Record<string, string | boolean | number> = {}) {
          import { runInNewContext } from 'node:vm';
          const { concurrency, inputs } = JSON.parse(readFileSync(0, 'utf8'));
          const context = { inputs, github: { ref: 'refs/heads/main', run_id: 456 },
+           toJSON: JSON.stringify,
            format: (pattern, ...args) => pattern.replace(/\\{(\\d+)\\}/g, (_, n) => String(args[Number(n)])),
            contains: (value, part) => value.includes(part) };
          const evaluate = expression => runInNewContext(expression, context, { timeout: 1000 });
@@ -47,6 +48,33 @@ function scheduling(overrides: Record<string, string | boolean | number> = {}) {
 }
 
 describe("manual PR comparison scheduling", () => {
+  it.each<Record<string, string>>([
+    { jobs: "gateway-upgrade" },
+    { targets: "sandbox-operations" },
+    { jobs: "x-targets-y", targets: "z" },
+  ])("keeps distinct baseline selectors in distinct groups: %j", (selectors) => {
+    const baseline = { checkout_sha: "b".repeat(40) };
+    const selected = scheduling({ ...baseline, ...selectors });
+    expect(selected.group).not.toBe(scheduling(baseline).group);
+    expect(selected.cancel).toBe(false);
+  });
+
+  it("keeps selector field boundaries distinct in baseline group keys", () => {
+    const baseline = { checkout_sha: "b".repeat(40) };
+    expect(scheduling({ ...baseline, jobs: "x-targets-y", targets: "z" }).group).not.toBe(
+      scheduling({ ...baseline, jobs: "x", targets: "y-targets-z" }).group,
+    );
+    const workflow = readWorkflow();
+    const concurrency = workflow.concurrency as Record<string, unknown>;
+    concurrency.group = String(concurrency.group).replace(
+      "format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets))",
+      "format('pr-{0}-base-{1}', inputs.pr_number, inputs.base_sha)",
+    );
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "workflow concurrency must isolate baseline comparisons and each Launchable dispatch",
+    );
+  });
+
   it("keeps a candidate retry out of the active baseline group", () => {
     const candidate = scheduling();
     const baseline = scheduling({ checkout_sha: "b".repeat(40) });

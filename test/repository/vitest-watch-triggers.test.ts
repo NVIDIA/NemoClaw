@@ -117,6 +117,21 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it("selects the root network-policy schema consumer", () => {
+    expect(triggeredBy("schemas/network-policy.schema.json")).toEqual([
+      "test/onboarding/validate-config-schemas.test.ts",
+    ]);
+  });
+
+  it.each([
+    "agents/langchain-deepagents-code/validate-nemotron-ultra-profile.py",
+    "agents/langchain-deepagents-code/patch-managed-deepagents-code.py",
+  ])("selects the profile-plugin contract for %s", (input) => {
+    expect(triggeredBy(input)).toContain(
+      "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
+    );
+  });
+
   it.each(["test/helpers/onboard-fixture-contract.json", "test/helpers/onboard-script-mocks.cjs"])(
     "maps %s to every sandbox identity consumer (#10463)",
     (fixturePath) => {

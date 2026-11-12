@@ -114,7 +114,7 @@ Assign the new key its structured identity. A renamed key with the same identity
 when authorization text is appended. The lifecycle owner must verify those identities against the
 actual task; the helper cannot authenticate a claimed candidate, workflow, or failure class.
 The helper requires this explicit record transition; it does not authenticate the evidence or authorize the action.
-Persist the intent before executing it. A pending intent already consumes its budget, including after interruption.
+Persist one new intent per save before executing it. A pending intent already consumes its budget, including after interruption.
 After reading external state, change the entry to `observed` and record the evidence location in `observation`.
 An observed failure is not a successful result; the owning publication or execution contract decides what follows.
 The helper rejects lost history, budget resets, stale revisions, and new writes while an earlier write remains unresolved.
@@ -131,6 +131,7 @@ The old owner then fails subsequent saves. These names prevent accidental stale 
 Use `resume` output directly for continuation and monitor instructions.
 Reconcile pending operations first, refresh changed or missing evidence, then check mutable external state.
 File hashes establish byte equality only; recheck runtime assumptions and identities before reusing a result.
+Resume marks non-regular evidence paths stale without reading their contents.
 A leftover `.lock` means a writer might still own the record.
 Confirm that it stopped and inspect the saved revision before removing that lock; never remove it on a timer.
 A successful save uses a private temporary file, file and directory synchronization, and atomic replacement on a local POSIX filesystem.

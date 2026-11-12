@@ -211,6 +211,7 @@ function checkTransition(previous: Checkpoint, next: Checkpoint, owner: string):
   const added = next.operations.filter(
     ({ id }) => !previous.operations.some((entry) => entry.id === id),
   );
+  if (added.length > 1) throw new Error("Persist only one new operation intent per save");
   if (added.some(({ state }) => state !== "pending"))
     throw new Error("Persist intent before recording an external result");
   if (added.length && previous.operations.some(({ state }) => state === "pending"))
@@ -262,7 +263,13 @@ export function resumeCheckpoint(file: string) {
   const staleEvidence = state.evidence
     .filter((entry) => {
       try {
-        return createHash("sha256").update(readFileSync(entry.path)).digest("hex") !== entry.sha256;
+        const fd = openSync(entry.path, constants.O_RDONLY | constants.O_NONBLOCK);
+        try {
+          if (!fstatSync(fd).isFile()) return true;
+          return createHash("sha256").update(readFileSync(fd)).digest("hex") !== entry.sha256;
+        } finally {
+          closeSync(fd);
+        }
       } catch {
         return true;
       }

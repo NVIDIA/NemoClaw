@@ -76,6 +76,7 @@ Before dispatch, inspect the trusted controller's required image-publication and
 Verify those gates against the candidate; unrelated advisory reviews may continue in parallel.
 Record active candidate and baseline runs in the task record. Reuse an existing matching run instead of dispatching a duplicate.
 Candidate and baseline runs use separate concurrency groups. A candidate retry cannot cancel the baseline.
+Baseline groups also include jobs and targets, so different selections cannot replace each other's pending runs.
 Baseline replay also disables active-run cancellation; retain its run ID through completion or explicit cancellation.
 For timing comparisons, avoid overlapping work on shared resources when it would confound the measurement.
 
@@ -153,6 +154,15 @@ save_dispatch_intent() {
     echo "Dispatch context differs from recorded authorization; stop before dispatch" >&2
     return 1
   }
+  if [[ "$phase" = base ]]; then
+    jq -e --argjson action "$action" '
+      (.identities["manualE2E.candidate.authorization"] | fromjson) as $candidate |
+      $candidate.jobs == $action.jobs and $candidate.targets == $action.targets
+    ' <<<"$view" >/dev/null || {
+      echo "Base selectors differ from recorded candidate authorization; stop before replay" >&2
+      return 1
+    }
+  fi
   next="$(jq --arg phase "$phase" --arg id "$correlation" \
     --arg budget "$budget" --arg action "$action" '
     del(.checkpoint,.usage,.staleEvidence,.resumeAction,.pendingOperationIds) |

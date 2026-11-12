@@ -7,6 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { execTimeout } from "../helpers/timeouts.ts";
 import {
   readCheckpoint,
   resumeCheckpoint,
@@ -59,6 +60,54 @@ afterEach(() => {
 });
 
 describe("task checkpoint recovery", () => {
+  it("rejects multiple new pending intents in a single revision", () => {
+    const { file, state } = fixture();
+    const next = structuredClone(state);
+    next.revision++;
+    next.operations.push(
+      { id: "push", action: "Push", budget: "publication", state: "pending", observation: "" },
+      { id: "pr", action: "Create PR", budget: "publication", state: "pending", observation: "" },
+    );
+    expect(() => saveCheckpoint(file, next, 0, state.owner)).toThrow(
+      /only one new operation intent/,
+    );
+    expect(readCheckpoint(file)).toEqual(state);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "reports pending intent when evidence becomes a FIFO",
+    () => {
+      const { file, state, artifact } = fixture();
+      state.revision++;
+      state.operations.push({
+        id: "push",
+        action: "Push",
+        budget: "publication",
+        state: "pending",
+        observation: "",
+      });
+      saveCheckpoint(file, state, 0, state.owner);
+      rmSync(artifact);
+      const fifo = spawnSync("mkfifo", [artifact], { encoding: "utf8", timeout: execTimeout() });
+      expect(fifo.status, fifo.stderr).toBe(0);
+      const resumed = spawnSync(
+        process.execPath,
+        [resolve("tools/task-continuation/checkpoint.mts"), "resume", file],
+        {
+          encoding: "utf8",
+          env: {},
+          timeout: execTimeout(),
+          killSignal: "SIGKILL",
+        },
+      );
+      expect(resumed.status, resumed.stderr).toBe(0);
+      const report = JSON.parse(resumed.stdout);
+      expect(report.staleEvidence).toEqual([artifact]);
+      expect(report.pendingOperationIds).toEqual(["push"]);
+      expect(report.resumeAction).toBe("reconcile-external-state");
+    },
+  );
+
   it("saves and resumes through a symlinked checkout path", () => {
     const { root, state } = fixture();
     const alias = join(root, "checkout");

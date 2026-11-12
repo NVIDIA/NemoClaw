@@ -47,6 +47,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)schemas\/network-policy\.schema\.json$/,
+    testsToRun: runTests("test/onboarding/validate-config-schemas.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-e2e\/references\/manual-pr\.md$/,
     testsToRun: runTests("test/repository/manual-pr-dispatch-checkpoint.test.ts"),
   },
@@ -99,7 +103,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern:
-      /(?:^|\/)agents\/langchain-deepagents-code\/(?:requirements\.(?:in|lock)|dependency-overrides\.in|Dockerfile(?:\.base)?|patch-dependency-compatibility\.py|validate-runtime-contract\.py|profile-plugin\/.*)$/,
+      /(?:^|\/)agents\/langchain-deepagents-code\/(?:requirements\.(?:in|lock)|dependency-overrides\.in|Dockerfile(?:\.base)?|patch-dependency-compatibility\.py|validate-runtime-contract\.py|validate-nemotron-ultra-profile\.py|profile-plugin\/.*)$/,
     testsToRun: runTests(
       "test/agents/deepagents/langchain-deepagents-code-image.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
@@ -112,6 +116,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "test/agents/deepagents/langchain-deepagents-code-managed-entrypoints.test.ts",
       "test/agents/deepagents/langchain-deepagents-code-headless-runtime.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
       "test/agents/deepagents/dcode-non-interactive-json.test.ts",
       "test/agents/deepagents/langchain-deepagents-code-image.test.ts",
     ),
