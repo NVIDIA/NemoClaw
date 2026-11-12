@@ -275,6 +275,33 @@ async def _run_startup_command(command, console, *, quiet):
     return command
 `;
 
+// Keep the pinned ownership consumer; tests supply its reservation boundary.
+export const threadOwnershipPackageSource = `
+from threading import RLock
+import os
+
+class ThreadOwnershipError(RuntimeError):
+    pass
+
+_registry = {}
+_registry_lock = RLock()
+
+def _paths(thread_id, db_path):
+    return db_path / thread_id
+
+def try_acquire(thread_id, *, db_path):
+    return None
+
+def ensure_owned(thread_id, *, db_path):
+    key = (os.getpid(), str(_paths(thread_id, db_path)))
+    with _registry_lock:
+        lease = _registry.get(key) or try_acquire(thread_id, db_path=db_path)
+        if lease is None:
+            msg = f"Thread {thread_id} is open elsewhere. Close it there to resume."
+            raise ThreadOwnershipError(msg)
+        return lease
+`;
+
 export function createPackageFixture(version = "0.1.87"): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
   packageFixtureDirs.add(tempDir);
@@ -653,6 +680,7 @@ class DeepAgentsApp:
 `,
     );
   writeFixtureFile(packageDir, "app.py", appFixture);
+  writeFixtureFile(packageDir, "thread_ownership.py", threadOwnershipPackageSource);
   writeFixtureFile(
     packageDir,
     "auth_store.py",

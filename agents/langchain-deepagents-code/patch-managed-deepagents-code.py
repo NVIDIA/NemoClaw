@@ -35,6 +35,12 @@ OBSERVABILITY_MODULE = "nemoclaw_observability.py"
 MANAGED_RUNTIME_SOURCE_PATH = Path(__file__).with_name("managed-dcode-runtime.py")
 
 MAIN_MARKER = "    args = parser.parse_args()\n"
+THREAD_OWNERSHIP_MESSAGE = 'f"Thread {thread_id} is open elsewhere. Close it there to resume."'
+THREAD_OWNERSHIP_MESSAGE_PATCH = '''(
+                f"Thread {thread_id} is still open in another Deep Code session. "
+                "Close that session and try again. "
+                "If this started after refreshing your browser, restart the sandbox to release it."
+            )'''
 NON_INTERACTIVE_CALL_MARKER = '''                            message=args.non_interactive_message,
 '''
 NON_INTERACTIVE_CALL_PATCH = '''                            message=args.non_interactive_message,
@@ -1814,6 +1820,7 @@ def main() -> None:
         "entrypoint": root / "__main__.py",
         "main": root / "main.py",
         "app": root / "app.py",
+        "thread_ownership": root / "thread_ownership.py",
         "auth_store": root / "auth_store.py",
         "config": root / "config.py",
         "tools": root / "tools.py",
@@ -1896,6 +1903,7 @@ def main() -> None:
             ("main", MAIN_PATCH),
             ("tools", TOOLS_PATCH),
             ("app", APP_PATCH),
+            ("thread_ownership", THREAD_OWNERSHIP_MESSAGE_PATCH),
             ("approval", APPROVAL_PATCH),
             ("approval", APPROVAL_WIDGET_PATCH),
             ("agent", AGENT_PATCH),
@@ -2126,7 +2134,16 @@ def main() -> None:
         raise RuntimeError(
             f"Expected one Deep Agents Code non-interactive timeout marker in {paths['main']}"
         )
+    if texts["thread_ownership"].count(THREAD_OWNERSHIP_MESSAGE) != 1:
+        raise RuntimeError("Expected one Deep Agents Code thread ownership resume message")
     transformed = dict(texts)
+    transformed["thread_ownership"] = _append_patch(
+        paths["thread_ownership"],
+        texts["thread_ownership"].replace(
+            THREAD_OWNERSHIP_MESSAGE, THREAD_OWNERSHIP_MESSAGE_PATCH, 1
+        ),
+        f"# {PATCH_MARKER}\n",
+    )
     transformed["entrypoint"] = texts["entrypoint"].replace(
         ENTRYPOINT_MARKER, ENTRYPOINT_PATCH, 1
     )
