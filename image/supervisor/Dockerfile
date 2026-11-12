@@ -31,8 +31,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
 # Compile exactly the retained archive, offline, from its vendored sources.
 FROM ${RUST_IMAGE} AS build
 COPY --from=source /out/supervisor-source.tar.gz /out/supervisor-source.tar.gz
-RUN --mount=type=cache,target=/target \
-    set -eu; \
+RUN set -eu; \
     mkdir /workspace; \
     tar -xzf /out/supervisor-source.tar.gz -C /workspace; \
     cd /workspace; \
