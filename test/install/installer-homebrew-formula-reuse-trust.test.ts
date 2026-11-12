@@ -14,7 +14,7 @@ const INSTALLER_SOURCE = fs.readFileSync(
   "utf8",
 );
 const TRUSTED_V017_TEMPLATE_DIGEST =
-  "5e385b057669b0a94840e6668be4791a0b726ce409b7f3b0e89a3c51ddcd102b";
+  "73dd64e76ab9aad0384b602afedd206177e614d6c904658c0f377b556d0753b8";
 const originalCurl =
   'curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \\';
 const boundedCurl = [
