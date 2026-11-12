@@ -627,6 +627,29 @@ fn isolated_sandboxes_take_extra_network_grants() {
     assert_eq!(rules[0]["endpoints"][0]["host"], "docs.example.com");
     assert_eq!(rules[0]["binaries"], serde_json::json!([]));
 
+    value["spec"]["sandboxes"]["assistant"]["network"]["grants"]["docs"]["binaries"] =
+        serde_json::json!([{"path":"/usr/bin/pip"}]);
+    let authored = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("authored grant binaries must parse");
+    let rows = nemoclaw_sdk::compile::targets(&authored, &generations).unwrap();
+    let sandbox = rows.iter().find(|r| r.kind == "sandbox").unwrap();
+    let input: nemoclaw_openshell::runtime::PolicyInput =
+        serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
+    let launch = nemoclaw_openshell::runtime::Launch::from_json(&serde_json::json!({
+        "command":["/srv/agent"],"environment":{},"metadata":{},"binaries":["/srv/python"],
+        "policy":{"version":1,"filesystem_policy":{"read_only":["/srv"],"read_write":["/work"]},"process":{"run_as_user":"1000","run_as_group":"1000"},"network_policies":{}}
+    }).to_string()).unwrap();
+    let policy = launch.policy(&input).unwrap();
+    assert_eq!(
+        policy.network_policies["docs"]
+            .binaries
+            .iter()
+            .map(|binary| binary.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/usr/bin/pip"],
+        "the document's authored restriction must reach the assembled sandbox policy"
+    );
+
     // An explicit policy already holds every grant.
     value["spec"]["sandboxes"]["assistant"]["network"] = serde_json::json!({
         "policy": {"explicit": {"version": 1}},
