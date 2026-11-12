@@ -95,9 +95,8 @@ default-filter = '''
 filter = 'test(/^hcl_integration::/)'
 test-group = "hcl-integration"
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
-# images and owned inputs these tests read. The Docker tests share one engine,
-# so they run one at a time; the offline runtime rebuild uses no engine and
-# compiles alongside them.
+# images and owned inputs these tests read. All tests share one Docker engine
+# and run one at a time in the `docker-engine` group.
 [profile.live-docker]
 inherits = "ci"
 test-threads = 2
