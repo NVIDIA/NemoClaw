@@ -101,10 +101,10 @@ fn colossus_workflow() -> Value {
     .unwrap()
 }
 
-/// Only manual v1 dispatches can execute jobs on the leased machine's runner,
-/// and a dispatch selects one of them.
+/// Manual v1 runs remain available; only smoke and Station also admit the
+/// temporary qualification branch. A dispatch selects one suite.
 #[test]
-fn colossus_runs_are_manual_and_v1_only() {
+fn colossus_runs_are_manual_and_limit_temporary_branch_access() {
     let workflow = colossus_workflow();
     let events = workflow["on"]
         .as_object()
@@ -123,12 +123,17 @@ fn colossus_runs_are_manual_and_v1_only() {
         ["bundle", "smoke", "station"]
     );
     for (name, job) in jobs {
+        let reference = if name == "bundle" {
+            "github.ref == 'refs/heads/v1'"
+        } else {
+            "(github.ref == 'refs/heads/v1' || github.ref == 'refs/heads/hple/dgx-station-reference-e2e')"
+        };
         assert_eq!(
             job["if"],
             format!(
-                "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == '{name}'"
+                "github.repository == 'NVIDIA/NemoClaw' && {reference} && github.event_name == 'workflow_dispatch' && inputs.suite == '{name}'"
             ),
-            "only a manual dispatch on the canonical v1 branch may execute {name}"
+            "only the intended manual branch and suite may execute {name}"
         );
     }
     assert!(
@@ -549,7 +554,7 @@ runs:
 /// Station is an explicit manual target; the existing artifact callers keep RTX.
 #[test]
 #[cfg(unix)]
-fn hcl_target_selection_preserves_rtx_and_bounds_station_to_manual_v1() {
+fn hcl_target_selection_preserves_rtx_and_bounds_station_qualification() {
     let caller = colossus_workflow()["jobs"]["station"].clone();
     assert_eq!(caller["uses"], "./.github/workflows/hcl-e2e.yml");
     assert_eq!(
@@ -604,6 +609,41 @@ fn hcl_target_selection_preserves_rtx_and_bounds_station_to_manual_v1() {
         ),
         ("dgx-spark", "refs/heads/v1", "workflow_dispatch", "", None),
         ("unknown", "refs/heads/v1", "workflow_dispatch", "", None),
+        (
+            "dgx-station",
+            "refs/heads/hple/dgx-station-reference-e2e",
+            "workflow_dispatch",
+            "",
+            Some("runner=colossus-gb300-pilot\nplatform=linux_arm64\n"),
+        ),
+        (
+            "dgx-station",
+            "refs/heads/hple/dgx-station-reference-e2e-other",
+            "workflow_dispatch",
+            "",
+            None,
+        ),
+        (
+            "dgx-station",
+            "refs/heads/hple/dgx-station-reference-e2e",
+            "push",
+            "",
+            None,
+        ),
+        (
+            "dgx-station",
+            "refs/heads/hple/dgx-station-reference-e2e",
+            "pull_request",
+            "",
+            None,
+        ),
+        (
+            "dgx-station",
+            "refs/heads/hple/dgx-station-reference-e2e",
+            "workflow_dispatch",
+            "artifacts",
+            None,
+        ),
     ] {
         let output = tempfile::NamedTempFile::new().unwrap();
         let result = std::process::Command::new("bash")
