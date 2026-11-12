@@ -11,6 +11,7 @@ import {
 } from "../../inference/selection";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
+import { resolveOpenClawMcpToolsListTimeout } from "../../onboard/docker-startup-command-env";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
 import {
@@ -197,6 +198,20 @@ export async function runRebuildPreflightPhase(
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
 
   const rebuildAgent = sandboxEntry.agent || null;
+  if (rebuildAgent === null || rebuildAgent === "openclaw") {
+    try {
+      resolveOpenClawMcpToolsListTimeout(process.env);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      printRebuildPreflightFailure(
+        "the OpenClaw tools/list timeout is invalid.",
+        detail,
+        detail,
+        bail,
+      );
+      return null;
+    }
+  }
   const dcodeAutoApprovalIssue = managedSandboxFeatureIssue(DCODE_AUTO_APPROVAL_FEATURE, {
     agent: rebuildAgent,
     requested: requestedDcodeAutoApprovalMode,
