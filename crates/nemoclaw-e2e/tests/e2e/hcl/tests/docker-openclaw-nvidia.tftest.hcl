@@ -2,8 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # OpenClaw on NVIDIA hosted inference behind a managed Docker gateway:
-# apply, a hosted reply, an unchanged plan, and destroy that keeps only the
-# gateway's storage. Live / HCL runs it.
+# apply, fresh hosted replies and native tools across recreate, configuration
+# change and restore on retained volumes, an unchanged plan, and destroy that
+# keeps only the gateway's storage. Live / HCL runs it. Skill retention stays
+# separate from native startup and readiness.
+
+run "volume" {
+  module {
+    source = "./volume"
+  }
+
+  variables {
+    owner = "10001:10001"
+  }
+}
 
 run "apply" {
   module {
@@ -20,25 +32,12 @@ run "apply" {
   }
 }
 
-# The agent runs after the apply process exited.
-run "reply" {
+# The probe verifies the initial runtime after the apply process exits, then
+# destroys and recreates it, changes the tool configuration, and restores it.
+# Each replacement must answer a fresh request and use its native tools.
+run "recreate_and_restore" {
   module {
-    source = "./verifier"
-  }
-
-  variables {
-    targets = {
-      assistant = {
-        agent            = "assistant"
-        request          = "Reply with one short sentence confirming that you can respond."
-        response_pointer = "/output/response"
-      }
-    }
-  }
-
-  assert {
-    condition     = length(output.failed) == 0
-    error_message = "failed: ${join(", ", output.failed)}"
+    source = "./lifecycle"
   }
 }
 

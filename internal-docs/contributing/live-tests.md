@@ -108,12 +108,13 @@ Run blocks call these modules:
 |---|---|
 | `tests/e2e/hcl/cli` | Runs one bundled `nemoclaw` command, `plan`, `apply`, or `destroy`, and reports its exit status, error, and JSON result. |
 | `tests/e2e/hcl/verifier` | Invokes agents through `hcl_live::probe` and reports targets without a reply, without an expected one-word answer, or from an unexpected runtime. |
+| `tests/e2e/hcl/lifecycle` | Runs the hosted OpenClaw case's Rust probe through initial inference, destroy/recreate, a tool configuration change, and restore, checking fresh replies, native tool effects, retained conversation records and Gateway ownership. |
 | `tests/e2e/hcl/volume` | Before a Docker case's first apply, creates each named volume that its sandboxes mount, with the bundled Docker provider, as a platform provides one: with OpenShell's default approval labels for the deployment's workspace and its root owned by the given sandbox identity. NemoClaw's destroy leaves the volumes, and the test removes them when the case ends. |
 | `tests/e2e/hcl/command` | Runs one fixed command per target in a named sandbox through `hcl_live::command`, with the pinned OpenShell CLI's `openshell sandbox exec`, or on a managed Kubernetes gateway with the gateway's exec through the SDK's port-forward, and reports targets whose command exits nonzero, or whose output lacks the expected text or contains the forbidden text. Reports hold only the exit status and whether the output matched; the output stays in the run's private `work` directory. |
 
 | Case | Runner | Checks |
 |---|---|---|
-| `docker-openclaw-nvidia` | Live / HCL | OpenClaw on NVIDIA hosted inference; any reply. |
+| `docker-openclaw-nvidia` | Live / HCL | OpenClaw on NVIDIA hosted inference with caller-retained workspace and artifacts volumes: fresh replies, native tool calls and file effects, retained conversation records, and new Gateway ownership after destroy/recreate, a tool configuration change, and restore. Generated-skill retention is separate. |
 | `docker-openclaw-v0-parity` | Live / HCL and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
 | `docker-hermes-v0-parity` | Live / HCL | The hosted parity Hermes document; `FOUR`. |
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
@@ -133,6 +134,7 @@ Every scenario checks the same successful path:
 4. Destroy succeeds and retains only the case's persistent storage.
 
 Failure, recovery, drift, export, and reapply behavior belong to the [HCL integration tests](integration-tests.md), which run against fixtures.
+The hosted OpenClaw case also checks native readiness across replacement, which fixtures cannot establish: after initial inference, destroy/recreate, a tool configuration change, and restore must each leave a usable native runtime on the same retained volumes.
 The hosted cases make real hosted inference requests, which may incur charges.
 
 The workflows destroy each deployment in a separate step after success, failure, or cancellation and upload outcome reports with the destroy receipt.
