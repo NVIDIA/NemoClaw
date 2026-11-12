@@ -55,6 +55,7 @@ Gateways and Kubernetes:
 
 - A document holds up to 256 sandboxes with a `kubernetes` or `openshift` gateway; Docker and Podman keep 32.
   See [sandbox count and cluster size](../build-deploy/kubernetes.md#sandbox-count-and-cluster-size).
+- A managed `kubernetes` or `openshift` gateway's memory limit is 2Gi, up from 1Gi, which ran out of memory before a document reached 256 sandboxes.
 - An external gateway's `gateway.tls` can name a CA alone; a client certificate and key must appear together.
 - `gateway.kubernetes.kubeconfig` and `context` can be omitted together; without them, NemoClaw uses the service account of the pod it runs in.
   See [running NemoClaw in a pod](../build-deploy/kubernetes.md#run-nemoclaw-in-a-pod).

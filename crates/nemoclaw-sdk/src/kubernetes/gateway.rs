@@ -56,9 +56,12 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             },
         },
         "pkiInitJob": {"enabled": true},
+        // The gateway's memory grows about 4 MiB per sandbox; at 1Gi it ran
+        // out of memory before a document reached 256 sandboxes, and at 2Gi
+        // 256 peaked near 1.2 GiB (#14403).
         "resources": {
             "requests": {"cpu": "250m", "memory": "256Mi"},
-            "limits": {"cpu": "1", "memory": "1Gi"},
+            "limits": {"cpu": "1", "memory": "2Gi"},
         },
     });
     // An exposed gateway's own Service publishes the endpoint's port on every
