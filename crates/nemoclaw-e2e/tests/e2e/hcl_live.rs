@@ -27,9 +27,9 @@ use std::{
     env::var, fs, io::Write as _, path::PathBuf, process::Command, sync::Arc, time::Duration,
 };
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "live: needs NEMOCLAW_TEST_BUNDLE, NEMOCLAW_HCL_CASE, NEMOCLAW_HCL_RUN, Docker, and the case's images and credentials"]
-fn case() {
+async fn case() {
     let bundle = Bundle::from_env();
     let case = var("NEMOCLAW_HCL_CASE").unwrap();
     let run = PathBuf::from(var("NEMOCLAW_HCL_RUN").unwrap());
@@ -39,6 +39,23 @@ fn case() {
         fs::create_dir_all(directory).unwrap();
     }
     let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap_or_else(|_| format!("cases/{case}.yaml"));
+    // These listeners live exactly as long as this case, including failed HCL runs.
+    let _middleware = if case == "docker-dummy" {
+        let document: Value =
+            serde_saphyr::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+        let endpoint = document["spec"]["gateway"]["config"]["openshell.supervisor.middleware"][0]
+            ["grpc_endpoint"]
+            .as_str()
+            .unwrap();
+        let grpc = url::Url::parse(endpoint).unwrap().port().unwrap();
+        let http = document["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"]["fixture"]["endpoints"][0]["port"].as_u64().unwrap();
+        Some(
+            nemoclaw_test_fixtures::middleware::Fixture::start(grpc, u16::try_from(http).unwrap())
+                .await,
+        )
+    } else {
+        None
+    };
     let context = json!({
         "config": fs::canonicalize(config).unwrap(),
         "state_dir": run.join("deployment"),
@@ -139,6 +156,36 @@ async fn probe() {
     });
     fs::write(input("REPLY"), reply).unwrap();
     fs::write(input("REPORT"), report.to_string()).unwrap();
+}
+
+/// Read independent middleware/destination effects and the sandbox identity
+/// after commands have completed. HCL compares these facts across reapply.
+#[tokio::test]
+#[ignore = "run by tests/e2e/hcl/middleware"]
+async fn middleware_observation() {
+    let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
+    let port = input("HTTP_PORT");
+    let effects = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{port}/effects"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let effects: Value = serde_json::from_slice(&effects).unwrap();
+    let binding = sandbox_binding(&PathBuf::from(input("STATE")), "assistant");
+    fs::write(
+        input("REPORT"),
+        json!({
+            "effects": effects,
+            "sandbox": binding["id"],
+        })
+        .to_string(),
+    )
+    .unwrap();
 }
 
 /// Request one service a sandbox exposes, as a person would with what apply
