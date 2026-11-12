@@ -93,12 +93,14 @@ Run these functions in the same Bash session as both dispatch procedures.
 They update the existing checkpoint; they do not create a second record or grant authorization.
 The intent consumes the recorded budget before the GitHub write. The result records a discovered run before waiting for completion.
 
-The lifecycle owner must first store the accepted dispatch values as JSON in
-`identities["manualE2E.candidate.authorization"]` and, when authorized,
-`identities["manualE2E.base.authorization"]`. Each value uses the fields in `action` below,
+The lifecycle owner must first store each accepted dispatch grant as JSON in
+`identities["manualE2E.authorization." + budgetKey]`. Each value uses the fields in `action` below,
 except `correlationId`, which is generated for each dispatch. Obtain those values from the accepted
 task authorization, including its budget key, source, selectors, credential flags, cost and cleanup
 bounds. Do not derive this authorization record from the environment being checked.
+Existing grants are immutable. For a newly authorized candidate or comparison, append authorization
+evidence and add its grant under its distinct budget key. Preserve previous grants and spent budgets.
+Older phase-keyed grants remain readable but must be copied into budget-keyed entries before dispatch.
 The recipe compares the entire context with that record before saving intent or calling GitHub.
 
 ```bash
@@ -148,15 +150,16 @@ save_dispatch_intent() {
       correlationId:$correlation,budgetKey:$budget,cleanupOwner:$owner,
       cleanupObligation:$cleanup,costBounds:$cost,inferenceMode:"mock",
       allowJetsonDispatch:$jetson,includeStagingBrevLaunchable:$launchable}')"
-  jq -e --arg key "manualE2E.${phase}.authorization" --argjson action "$action" '
+  jq -e --arg key "manualE2E.authorization.${budget}" --argjson action "$action" '
     (.identities[$key] | fromjson) == ($action | del(.correlationId))
   ' <<<"$view" >/dev/null || {
     echo "Dispatch context differs from recorded authorization; stop before dispatch" >&2
     return 1
   }
   if [[ "$phase" = base ]]; then
-    jq -e --argjson action "$action" '
-      (.identities["manualE2E.candidate.authorization"] | fromjson) as $candidate |
+    jq -e --arg key "manualE2E.authorization.${E2E_CANDIDATE_BUDGET:?Use the authorized candidate budget key}" \
+      --argjson action "$action" '
+      (.identities[$key] | fromjson) as $candidate |
       $candidate.jobs == $action.jobs and $candidate.targets == $action.targets
     ' <<<"$view" >/dev/null || {
       echo "Base selectors differ from recorded candidate authorization; stop before replay" >&2

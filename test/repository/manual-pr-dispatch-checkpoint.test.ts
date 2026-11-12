@@ -3,11 +3,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  readCheckpoint,
-  resumeCheckpoint,
-  saveCheckpoint,
-} from "../../tools/task-continuation/checkpoint.mts";
+import { readCheckpoint, resumeCheckpoint } from "../../tools/task-continuation/checkpoint.mts";
 import {
   manualPrDispatchFixture,
   manualPrProcedures,
@@ -19,16 +15,11 @@ afterEach(cleanupManualPrDispatchFixtures);
 
 describe.skipIf(process.platform === "win32")("manual PR dispatch recovery", () => {
   it("rejects an authorized base selector that differs from the candidate before consuming its budget", () => {
-    const { file, service, env, run } = manualPrDispatchFixture();
+    const { file, service, env, run } = manualPrDispatchFixture("different-authorized-target");
     const prepared = run(`${candidate}\n${headResult}`);
     expect(prepared.status, prepared.stdout + prepared.stderr).toBe(0);
     const state = readCheckpoint(file);
-    const grant = JSON.parse(state.identities["manualE2E.base.authorization"]!);
-    grant.targets = "different-authorized-target";
-    state.identities["manualE2E.base.authorization"] = JSON.stringify(grant);
-    const revision = state.revision++;
-    saveCheckpoint(file, state, revision, state.owner);
-    env.E2E_TARGETS = grant.targets;
+    env.E2E_TARGETS = "different-authorized-target";
     const result = run(base);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Base selectors differ");

@@ -168,6 +168,13 @@ export function readCheckpoint(file: string): Checkpoint {
   }
 }
 
+function isManualAuthorization(key: string): boolean {
+  return (
+    key.startsWith("manualE2E.authorization.") ||
+    /^manualE2E\.(candidate|base)\.authorization$/.test(key)
+  );
+}
+
 function checkTransition(previous: Checkpoint, next: Checkpoint, owner: string): void {
   if (previous.owner !== owner)
     throw new Error("Checkpoint owner differs; reconcile ownership before writing");
@@ -187,6 +194,15 @@ function checkTransition(previous: Checkpoint, next: Checkpoint, owner: string):
         "Record additional authorization evidence before allocating or binding budgets",
       );
   }
+  for (const [key, grant] of Object.entries(previous.identities)) {
+    if (isManualAuthorization(key) && next.identities[key] !== grant)
+      throw new Error("Recorded manual dispatch authorization cannot be removed or rewritten");
+  }
+  const addedGrants = Object.keys(next.identities).some(
+    (key) => isManualAuthorization(key) && !Object.hasOwn(previous.identities, key),
+  );
+  if (addedGrants && !appendedAuthorization)
+    throw new Error("Append authorization evidence before recording a new manual dispatch grant");
   for (const [key, limit] of Object.entries(previous.limits)) {
     if (next.limits[key] !== limit)
       throw new Error("Existing budgets cannot be reset or increased");
@@ -263,7 +279,10 @@ export function resumeCheckpoint(file: string) {
   const staleEvidence = state.evidence
     .filter((entry) => {
       try {
-        const fd = openSync(entry.path, constants.O_RDONLY | constants.O_NONBLOCK);
+        const fd = openSync(
+          entry.path,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
         try {
           if (!fstatSync(fd).isFile()) return true;
           return createHash("sha256").update(readFileSync(fd)).digest("hex") !== entry.sha256;

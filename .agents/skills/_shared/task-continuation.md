@@ -107,7 +107,14 @@ Use candidate/workflow/failure-class keys for retries and different keys for bas
 Keep those keys and spent counts across compaction and handoff. Repair deterministic defects before rerunning;
 do not spend a transient retry on unchanged broken code or reset its allowance by renaming the key.
 A new budget key requires additional authorization evidence appended to `authorization` on a new line.
-Preserve the prior authorization text on every save. Cite the existing task authority or a later user decision that covers the distinct allowance.
+Preserve the prior authorization text on every save.
+Cite the existing task authority or a later user decision that covers the distinct allowance.
+
+Manual dispatch grants in
+`identities["manualE2E.authorization." + budgetKey]` are append-only. Adding a grant requires appended
+authorization evidence; changing or deleting a saved grant is rejected. Legacy phase-keyed grants
+receive the same protection. New candidate grants use distinct budget keys in the same task record.
+
 A new key must not rename a spent allowance. A new candidate, workflow, or failure class may need a distinct authorized key;
 record why its allowance is separate. This does not require renewed user approval when existing task authority covers that work.
 Assign the new key its structured identity. A renamed key with the same identity is rejected even
@@ -131,7 +138,7 @@ The old owner then fails subsequent saves. These names prevent accidental stale 
 Use `resume` output directly for continuation and monitor instructions.
 Reconcile pending operations first, refresh changed or missing evidence, then check mutable external state.
 File hashes establish byte equality only; recheck runtime assumptions and identities before reusing a result.
-Resume marks non-regular evidence paths stale without reading their contents.
+Resume marks non-regular evidence paths, including final symlinks, stale without reading their contents.
 A leftover `.lock` means a writer might still own the record.
 Confirm that it stopped and inspect the saved revision before removing that lock; never remove it on a timer.
 A successful save uses a private temporary file, file and directory synchronization, and atomic replacement on a local POSIX filesystem.

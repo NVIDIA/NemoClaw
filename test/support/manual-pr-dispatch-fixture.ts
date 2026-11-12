@@ -24,7 +24,7 @@ const headResult = blockContaining('HEAD_RUN_ID="$RUN_ID"');
 const base = blockContaining('BASE_CORRELATION_ID="$(python3');
 const baseResult = blockContaining('BASE_RUN_ID="$RUN_ID"');
 
-export function manualPrDispatchFixture() {
+export function manualPrDispatchFixture(baseTargets = "sandbox-operations") {
   const root = mkdtempSync(join(tmpdir(), "manual-pr-checkpoint-"));
   roots.push(root);
   const file = join(root, "state.json");
@@ -70,15 +70,16 @@ export function manualPrDispatchFixture() {
     allowJetsonDispatch: false,
     includeStagingBrevLaunchable: false,
   };
-  state.identities["manualE2E.candidate.authorization"] = JSON.stringify({
+  state.identities["manualE2E.authorization.candidate-dispatch"] = JSON.stringify({
     ...authorized,
     phase: "candidate",
     checkoutSha: "a".repeat(40),
     budgetKey: "candidate-dispatch",
   });
-  state.identities["manualE2E.base.authorization"] = JSON.stringify({
+  state.identities["manualE2E.authorization.base-comparison"] = JSON.stringify({
     ...authorized,
     phase: "base",
+    targets: baseTargets,
     checkoutSha: "b".repeat(40),
     budgetKey: "base-comparison",
   });

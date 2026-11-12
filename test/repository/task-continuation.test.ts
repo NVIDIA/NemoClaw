@@ -60,6 +60,70 @@ afterEach(() => {
 });
 
 describe("task checkpoint recovery", () => {
+  it.each([
+    "manualE2E.authorization.candidate-dispatch",
+    "manualE2E.authorization.base-comparison",
+    "manualE2E.candidate.authorization",
+    "manualE2E.base.authorization",
+  ])("preserves the saved dispatch grant at %s", (key) => {
+    const { file, state } = fixture();
+    const grant = JSON.stringify({ targets: "sandbox-operations", budgetKey: "publication" });
+    const granted = structuredClone(state);
+    granted.revision++;
+    granted.identities[key] = grant;
+    expect(() => saveCheckpoint(file, granted, 0, state.owner)).toThrow(/authorization evidence/);
+    granted.authorization += "\nAccepted sandbox-operations dispatch in the fixture.";
+    saveCheckpoint(file, granted, 0, state.owner);
+
+    const changed = structuredClone(granted);
+    changed.revision++;
+    changed.authorization += "\nA later grant does not replace the earlier grant.";
+    changed.identities[key] = JSON.stringify({ targets: "other-target", budgetKey: "publication" });
+    expect(() => saveCheckpoint(file, changed, 1, state.owner)).toThrow(/authorization cannot/);
+    delete changed.identities[key];
+    expect(() => saveCheckpoint(file, changed, 1, state.owner)).toThrow(/authorization cannot/);
+    expect(readCheckpoint(file)).toEqual(granted);
+
+    const extended = structuredClone(granted);
+    extended.revision++;
+    extended.authorization += "\nAccepted a distinct candidate-b dispatch allowance.";
+    extended.limits["candidate-b-dispatch"] = 1;
+    extended.budgetIdentities!["candidate-b-dispatch"] = {
+      candidate: "candidate-b",
+      workflow: "e2e",
+      failureClass: "initial",
+    };
+    extended.identities["manualE2E.authorization.candidate-b-dispatch"] = JSON.stringify({
+      targets: "sandbox-operations",
+      budgetKey: "candidate-b-dispatch",
+    });
+    saveCheckpoint(file, extended, 1, state.owner);
+    expect(readCheckpoint(file)).toEqual(extended);
+    expect(readCheckpoint(file).identities[key]).toBe(grant);
+  });
+
+  it("marks a symlink to matching evidence stale and preserves pending intent", () => {
+    const { file, state, artifact, root } = fixture();
+    const target = join(root, "matching-target.txt");
+    writeFileSync(target, "passed");
+    rmSync(artifact);
+    symlinkSync(target, artifact);
+    state.revision++;
+    state.operations.push({
+      id: "push",
+      action: "Push",
+      budget: "publication",
+      state: "pending",
+      observation: "",
+    });
+    saveCheckpoint(file, state, 0, state.owner);
+    const report = resumeCheckpoint(file);
+    expect(report.staleEvidence).toEqual([artifact]);
+    expect(report.pendingOperationIds).toEqual(["push"]);
+    expect(report.resumeAction).toBe("reconcile-external-state");
+    expect(readFileSync(target, "utf8")).toBe("passed");
+  });
+
   it("rejects multiple new pending intents in a single revision", () => {
     const { file, state } = fixture();
     const next = structuredClone(state);
