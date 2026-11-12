@@ -247,6 +247,59 @@ describe("rebuildSandbox flow: credential preflight", () => {
     },
   );
 
+  it.each([
+    { agent: "openclaw", recovery: false },
+    { agent: null, recovery: false },
+    { agent: "openclaw", recovery: true },
+  ])(
+    "refuses an invalid tools/list timeout for agent=$agent recovery=$recovery before mutation (#14435)",
+    async ({ agent, recovery }) => {
+      vi.stubEnv("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", "500");
+      const harness = createRebuildFlowHarness({ sandboxEntry: { agent } });
+      const before = structuredClone(harness.getSandboxEntry());
+      const recoveryManifest = recovery ? makePreparedRecoveryManifest() : undefined;
+      const recoveryBefore = structuredClone(recoveryManifest);
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true, recoveryManifest }),
+      ).rejects.toThrow("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS");
+
+      expect(diagnostics(harness)).toContain("1500 to 10000");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.getSandboxEntry()).toEqual(before);
+      expect(recoveryManifest).toEqual(recoveryBefore);
+    },
+  );
+
+  it.each([undefined, " 3000 "])(
+    "continues rebuild with tools/list timeout %s (#14435)",
+    async (value) => {
+      vi.stubEnv("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", value);
+      const harness = createRebuildFlowHarness();
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.onboardSpy).toHaveBeenCalled();
+    },
+  );
+
+  it("ignores an invalid OpenClaw tools/list timeout when rebuilding Hermes (#14435)", async () => {
+    vi.stubEnv("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", "500");
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: { agent: "hermes" },
+      beforeBackup: () => {
+        throw new Error("reached backup");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("reached backup");
+  });
+
   it("rechecks native Hermes authority after asynchronous policy recapture", async () => {
     const { harness, verify, refresh } = createNativeLocalRebuildHarness("hermes");
     const capture = rebuildBackupPhase.captureRebuildPolicyDocument;
