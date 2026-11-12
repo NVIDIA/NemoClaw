@@ -420,6 +420,7 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "patch-openclaw-worker-proxy.mts"),
   );
   for (const name of [
+    "openclaw-broker-session-probe.mts",
     "patch-openclaw-node-compile-cache.mts",
     "patch-openclaw-plugin-source-root.mts",
     "patch-openclaw-worker-archive.py",

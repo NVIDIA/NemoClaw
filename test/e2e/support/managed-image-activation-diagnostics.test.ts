@@ -95,7 +95,7 @@ function prepareManagedAdminState(root: string, requestId: string): NodeJS.Proce
   fs.writeFileSync(devicesPath, JSON.stringify(state));
   fs.writeFileSync(
     helperPath,
-    `import json\nfrom pathlib import Path\ndef read_openclaw_pairing_state(state_dir, timeout=1):\n    records=json.loads((Path(state_dir) / "pairing-state.json").read_text(encoding="utf-8"))\n    return records, {"timeout": timeout}\n`,
+    `import json, os\nfrom pathlib import Path\ndef read_openclaw_pairing_state(state_dir, timeout=1, local_device_only=False):\n    records=json.loads((Path(state_dir) / "pairing-state.json").read_text(encoding="utf-8"))\n    devices=json.loads(Path(os.environ["FAKE_DEVICES_STATE"]).read_text(encoding="utf-8"))\n    records["pending"]={request["requestId"]:request for request in devices["pending"]}\n    return records, {"timeout": timeout}\n`,
   );
   fs.writeFileSync(
     join(root, "bin", "mktemp"),
@@ -793,11 +793,13 @@ exit 91
       "openclaw",
       `#!/bin/sh
 if [ "$1:$2" = "devices:list" ]; then
+  printf '%s\n' devices-list >> "$APPROVAL_ATTEMPTED.devices-list"
   if [ -f "$APPROVAL_ATTEMPTED" ]; then exit 89; fi
   cat "$FAKE_DEVICES_STATE"
   exit 0
 fi
 : > "$APPROVAL_ATTEMPTED"
+rm -f "$OPENCLAW_STATE_DIR/pairing-state.json"
 printf '%s\n' 'approval failed for a private device' >&2
 exit 91
 `,
@@ -827,6 +829,7 @@ ${exactRequestAdminApprovalConnectScript(cliPath, "fixture-sandbox", "managed-cr
       expect(result.status).toBe(27);
       expect(result.stderr).toContain("ADMIN_APPROVE_COMMAND_STATUS=91");
       expect(result.stderr).toContain("ADMIN_APPROVAL_REQUEST_STATE=unavailable");
+      expect(readFileSync(`${approvalAttempted}.devices-list`, "utf8").trim()).toBe("devices-list");
       expect(result.stderr).not.toContain("fixture-token");
     } finally {
       fixture.remove();

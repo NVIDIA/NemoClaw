@@ -165,42 +165,48 @@ PY_ADMIN_DIAGNOSTIC
 }
 emit_post_approval_request_state() {
   python3 - "$1" <<'PY_ADMIN_POST_STATE'
-import json, os, signal, subprocess, sys
+import importlib.util, os, signal, sys
+from pathlib import Path
 
 def emit(state):
     print(f'ADMIN_APPROVAL_REQUEST_STATE={state}', file=sys.stderr)
 
+def read_deadline(_signal, _frame):
+    raise TimeoutError
+
 try:
-    process = subprocess.Popen(
-        ['/bin/bash', '--noprofile', '--norc', '-c', 'openclaw devices list --json'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+    signal.signal(signal.SIGALRM, read_deadline)
+    signal.alarm(8)
+    # Reuse the canonical snapshot reader. A diagnostic must not launch a CLI
+    # child whose process group OpenShell deliberately refuses to signal.
+    helper = Path(os.environ.get('NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER')
+                  or '/usr/local/lib/nemoclaw/openclaw_pairing_state.py')
+    spec = importlib.util.spec_from_file_location('nemoclaw_post_approval_state', helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    records, _metadata = module.read_openclaw_pairing_state(
+        os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
+        timeout=8,
+        local_device_only=True,
     )
-    try:
-        output, _ = process.communicate(timeout=8)
-    except subprocess.TimeoutExpired:
-        try: os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError: pass
-        process.communicate()
-        emit('unavailable')
-        raise SystemExit(0)
-    if process.returncode != 0 or len(output) > 65536:
-        emit('unavailable')
-        raise SystemExit(0)
-    data = json.loads(output)
-    if not isinstance(data, dict):
+    if not isinstance(records, dict):
         emit('invalid')
         raise SystemExit(0)
-    pending = data.get('pending')
-    pending = [] if pending is None else pending
-    if not isinstance(pending, list) or any(not isinstance(item, dict) for item in pending):
+    pending = records.get('pending')
+    if not isinstance(pending, dict) or any(
+        not isinstance(item, dict) or item.get('requestId') != key
+        for key, item in pending.items()
+    ):
         emit('invalid')
         raise SystemExit(0)
-    matching = [item for item in pending if item.get('requestId') == sys.argv[1]]
-    emit('pending' if len(matching) == 1 else 'absent' if not matching else 'invalid')
-except (OSError, ValueError, TypeError, UnicodeDecodeError):
+    emit('pending' if sys.argv[1] in pending else 'absent')
+except Exception:
+    # Emit no paths, identities, tokens or exception text. This local snapshot
+    # is diagnostic only; absence never changes the failed approval status.
     emit('unavailable')
+finally:
+    try: signal.alarm(0)
+    except Exception: pass
 PY_ADMIN_POST_STATE
 }
 run_with_bounded_output() {

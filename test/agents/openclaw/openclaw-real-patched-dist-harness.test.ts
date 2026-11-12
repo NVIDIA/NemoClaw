@@ -9,6 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { seedBrokerCleanupModules } from "./support/private-broker-harness.ts";
 import { interruptMetadataWrite } from "../../support/metadata-write-faults";
 import { reviewedArchiveGraphManifest } from "../../../scripts/audit-reviewed-npm-graph.mts";
 
@@ -466,6 +467,7 @@ describe("OpenClaw real patched-dist materialization guard", () => {
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(path.join(dist, "cli"), { recursive: true });
     fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ version: "2026.10.5" }));
+    seedBrokerCleanupModules(dist);
     fs.copyFileSync(
       path.join(import.meta.dirname, "fixtures/agent-message-input-10.5.js.txt"),
       path.join(dist, "agent-via-gateway-fixture.mjs"),
