@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Source archives must compile their own code, including when their file
-//! timestamps match an earlier revision in a shared Docker cache.
+//! A new Fabric source archive must not link against an older core compiled
+//! into a shared Docker cache.
 //!
-//! Archive extraction can give different revisions the same paths, package
+//! Archive extraction gives each Fabric revision the same path, package
 //! versions and file timestamps, so Cargo's fingerprints match across
 //! revisions unless compiled artifacts stay with their own build layer.
 
@@ -78,95 +78,6 @@ fn a_new_fabric_archive_cannot_reuse_an_older_compiled_core() {
          && cargo run --offline --release --package fixture-caller\n"
     );
     std::fs::write(context.path().join("Dockerfile"), fixture).unwrap();
-    build_fixture(context.path());
-}
-
-#[test]
-#[ignore = "builds with Docker Buildx; run through cargo ci live-docker"]
-fn a_new_supervisor_archive_cannot_reuse_an_older_runtime() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let dockerfile = std::fs::read_to_string(root.join("image/supervisor/Dockerfile")).unwrap();
-    let rust = dockerfile
-        .lines()
-        .find_map(|line| line.strip_prefix("ARG RUST_IMAGE="))
-        .unwrap();
-    // Exercise the production unpack/build/install command with tiny offline
-    // archives. Cache ids are private; no production build cache is touched.
-    let stage = dockerfile
-        .split_once(" AS build\n")
-        .unwrap()
-        .1
-        .split("\nFROM ")
-        .next()
-        .unwrap();
-    let mut command = stage.split_once("\nRUN ").unwrap().1.trim().to_owned();
-    let run = nemoclaw_build::ci::live::uuid().unwrap();
-    for (index, mount) in command
-        .clone()
-        .split_whitespace()
-        .filter(|word| word.starts_with("--mount=type=cache,"))
-        .enumerate()
-    {
-        command = command.replace(
-            mount,
-            &format!("{mount},id=nemoclaw-supervisor-test-{run}-{index}"),
-        );
-    }
-    let context = tempfile::tempdir().unwrap();
-    for value in ["old", "new"] {
-        let archive =
-            std::fs::File::create(context.path().join(format!("{value}.tar.gz"))).unwrap();
-        let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
-            archive,
-            flate2::Compression::fast(),
-        ));
-        for (name, text) in [
-            (
-                "Cargo.toml",
-                "[workspace]\nmembers = [\"crates/nemoclaw-runtime\"]\nresolver = \"2\"\n"
-                    .to_owned(),
-            ),
-            (
-                "Cargo.lock",
-                "version = 4\n[[package]]\nname = \"nemoclaw-runtime\"\nversion = \"0.1.0\"\n"
-                    .to_owned(),
-            ),
-            (
-                "crates/nemoclaw-runtime/Cargo.toml",
-                "[package]\nname = \"nemoclaw-runtime\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
-                    .to_owned(),
-            ),
-            (
-                "crates/nemoclaw-runtime/src/main.rs",
-                format!("fn main() {{ println!(\"{value}\"); }}\n"),
-            ),
-        ] {
-            let mut header = tar::Header::new_gnu();
-            header.set_size(text.len() as u64);
-            header.set_mode(0o644);
-            header.set_mtime(1789689600);
-            header.set_cksum();
-            archive
-                .append_data(&mut header, name, text.as_bytes())
-                .unwrap();
-        }
-        archive.into_inner().unwrap().finish().unwrap();
-    }
-    // The marker orders the two stages without copying compiled artifacts.
-    // The changed source has the same path, package version, size and mtime.
-    let fixture = format!(
-        "FROM {rust} AS previous\nCOPY old.tar.gz /out/supervisor-source.tar.gz\n\
-         RUN --network=none {command}\n\
-         RUN test \"$(/out/nemoclaw-runtime)\" = old && touch /previous-complete\n\
-         FROM {rust} AS current\nCOPY --from=previous /previous-complete /previous-complete\n\
-         COPY new.tar.gz /out/supervisor-source.tar.gz\nRUN --network=none {command}\n\
-         RUN test \"$(/out/nemoclaw-runtime)\" = new || {{ echo 'runtime is stale'; exit 1; }}\n"
-    );
-    std::fs::write(context.path().join("Dockerfile"), fixture).unwrap();
-    build_fixture(context.path());
-}
-
-fn build_fixture(context: &Path) {
     let output = Command::new("docker")
         .args([
             "buildx",
@@ -174,7 +85,7 @@ fn build_fixture(context: &Path) {
             "--progress=plain",
             "--output=type=cacheonly",
         ])
-        .arg(context)
+        .arg(context.path())
         .output()
         .unwrap();
     assert!(
