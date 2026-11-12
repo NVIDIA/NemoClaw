@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -323,7 +323,16 @@ function runVersionPinTarget(options: {
   expectedDecision: RegExp;
   ghDownloadMode: GhDownloadMode;
   installedVersion: string;
-  unsafeActiveDirectory?: { mode: number; location: "bin" | "parent"; pretendRootOwned?: boolean };
+  unsafeActiveDirectory?: {
+    mode: number;
+    location: "bin" | "parent";
+    pretendRootOwned?: boolean;
+    assertDestination: (evidence: {
+      result: SpawnSyncReturns<string>;
+      privateBin: string;
+      unsafeDirectory: string;
+    }) => void;
+  };
 }): void {
   const tmp = fs.mkdtempSync(
     path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-openshell-version-pin-"),
@@ -368,9 +377,10 @@ exec /usr/bin/mktemp "$@"`,
     const result = spawnSync("bash", [INSTALL_SCRIPT], {
       env: {
         ...process.env,
+        HOME: tmp,
+        XDG_BIN_HOME: path.join(tmp, "private-bin"),
         NEMOCLAW_OPENSHELL_CHANNEL: "stable",
         PATH: `${fakeBin}:/usr/bin:/bin`,
-        HOME: tmp,
         XDG_CONFIG_HOME: path.join(tmp, "config"),
         OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmp, "system-openshell"),
         ...(unsafeActiveDirectory?.pretendRootOwned
@@ -383,8 +393,11 @@ exec /usr/bin/mktemp "$@"`,
     });
 
     const assertUnsafe = (): void => {
-      expect(result.status, `${result.stdout}\n${result.stderr}`).not.toBe(0);
-      expect(result.stderr).toContain(`Unsafe executable directory ${unsafeDirectory}`);
+      unsafeActiveDirectory?.assertDestination({
+        result,
+        privateBin: path.join(tmp, "private-bin"),
+        unsafeDirectory,
+      });
       expect(fs.statSync(unsafeDirectory).mode & 0o1777).toBe(unsafeActiveDirectory?.mode);
       expect(
         ["openshell", "openshell-gateway", "openshell-sandbox"].map((name) =>
@@ -480,7 +493,6 @@ test(
 test.each([
   { mode: 0o775, location: "bin" as const },
   { mode: 0o777, location: "bin" as const },
-  { mode: 0o775, location: "parent" as const },
   { mode: 0o1777, location: "bin" as const, pretendRootOwned: true },
 ])(
   "keeps active OpenShell binaries when the $location directory is mode $mode (#12496)",
@@ -490,7 +502,42 @@ test.each([
       expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.116/u,
       ghDownloadMode: "success",
       installedVersion: "0.0.117",
-      unsafeActiveDirectory,
+      unsafeActiveDirectory: {
+        ...unsafeActiveDirectory,
+        assertDestination: ({ result, privateBin }) => {
+          expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+          const replacement = spawnSync(path.join(privateBin, "openshell"), ["--version"], {
+            encoding: "utf8",
+            timeout: 30_000,
+          });
+          expect(replacement.status).toBe(0);
+          expect(replacement.stdout).toContain("0.1.7");
+        },
+      },
+    });
+  },
+);
+
+test(
+  "rejects replacement when the private fallback shares an unsafe parent (#12496)",
+  {
+    timeout: TEST_TIMEOUT_MS,
+  },
+  () => {
+    runVersionPinTarget({
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.116/u,
+      ghDownloadMode: "success",
+      installedVersion: "0.0.117",
+      unsafeActiveDirectory: {
+        mode: 0o775,
+        location: "parent",
+        assertDestination: ({ result, unsafeDirectory }) => {
+          expect(result.status, `${result.stdout}\n${result.stderr}`).not.toBe(0);
+          expect(result.stderr).toContain(
+            `Unsafe user-local executable directory ${unsafeDirectory}`,
+          );
+        },
+      },
     });
   },
 );

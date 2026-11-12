@@ -22,10 +22,13 @@ export function writeExecutable(target: string, contents: string) {
 export function prepareInstallerBin(dir: string) {
   fs.mkdirSync(dir);
   fs.symlinkSync(process.execPath, path.join(dir, "node"));
+  writeFixtureMktemp(dir, path.dirname(dir));
+}
+export function writeFixtureMktemp(dir: string, fixtureRoot: string) {
   writeExecutable(
     path.join(dir, "mktemp"),
     `#!/usr/bin/env bash
-if [ "$*" = "-d" ]; then exec /usr/bin/mktemp -d ${shellQuote(path.join(path.dirname(dir), "install.XXXXXX"))}; fi
+if [ "$*" = "-d" ]; then exec /usr/bin/mktemp -d ${shellQuote(path.join(fixtureRoot, "install.XXXXXX"))}; fi
 exec /usr/bin/mktemp "$@"`,
   );
 }
