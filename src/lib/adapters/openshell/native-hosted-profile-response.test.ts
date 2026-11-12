@@ -77,10 +77,13 @@ function response(definition: HostedProviderDefinition) {
 }
 
 describe.each(HOSTED_NATIVE_PROVIDERS)("native $label profile read boundary", (definition) => {
-  it.each([undefined, []])("accepts the checked-in restrictions with files=%j", (files) => {
-    const value = { profile: { ...response(definition).profile, files } };
-    expect(isManagedNativeHostedProfileResponse(value, definition.profileId)).toBe(value);
-  });
+  it.each([{ files: undefined }, { files: [] }])(
+    "accepts the checked-in restrictions with files=$files",
+    ({ files }) => {
+      const value = { profile: { ...response(definition).profile, files } };
+      expect(isManagedNativeHostedProfileResponse(value, definition.profileId)).toBe(value);
+    },
+  );
   it.each([
     ["disabled TLS inspection", { tls: 1 }],
     ["removed explicit TLS termination", { tls: 2 }],
