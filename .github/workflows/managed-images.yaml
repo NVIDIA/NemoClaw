@@ -1010,7 +1010,10 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v gdb >/dev/null; then
-            if ! sudo apt-get update || ! sudo apt-get install -y --no-install-recommends gdb; then
+            # Leave time for the no-capture fallback before this optional step expires.
+            # Run timeout as root so it can terminate privileged apt descendants.
+            if ! sudo timeout --signal=TERM --kill-after=10s 120s apt-get update \
+              || ! sudo timeout --signal=TERM --kill-after=10s 120s apt-get install -y --no-install-recommends gdb; then
               echo '::warning::Debugger installation failed; Hermes qualification will run without crash capture.'
               exit 0
             fi
