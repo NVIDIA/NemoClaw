@@ -1,0 +1,15 @@
+	const installProxySignalHandlers = () => {
+		if (!proxyHandle || onSigterm || onSigint || onExit) return;
+		unregisterProxySignalExitBarrier = registerSignalExitBarrier(stopStartedProxy);
+		const shutdown = (exitCode) => {
+			waitForSignalExitBarriers().finally(() => {
+				process$1.exit(exitCode);
+			});
+		};
+		onSigterm = () => shutdown(143);
+		onSigint = () => shutdown(130);
+		onExit = () => killStartedProxy();
+		process$1.once("SIGTERM", onSigterm);
+		process$1.once("SIGINT", onSigint);
+		process$1.once("exit", onExit);
+	};

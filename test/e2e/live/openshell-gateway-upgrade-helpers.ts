@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -31,6 +33,23 @@ const MANAGED_IMAGE_QUALIFICATION_ENV_KEYS = [
   "NEMOCLAW_E2E_MANAGED_IMAGE_REVISION",
 ] as const;
 export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
+
+/** Keep both installer generations off writable runner system/toolchain directories. */
+export function gatewayUpgradeInstallEnv(home: string, inheritedPath: string): NodeJS.ProcessEnv {
+  const prefix = path.join(home, ".npm-global");
+  return {
+    XDG_BIN_HOME: path.join(home, ".local", "bin"),
+    NPM_CONFIG_PREFIX: prefix,
+    npm_config_prefix: prefix,
+    PATH: `${path.join(home, ".local", "bin")}:${path.join(prefix, "bin")}:${inheritedPath}`,
+  };
+}
+
+/** Prepare only the private directories owned by this disposable runner. */
+export function prepareGatewayUpgradeInstallPaths(home: string): void {
+  fs.mkdirSync(path.join(home, ".local", "bin"), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(path.join(home, ".npm-global"), { recursive: true, mode: 0o700 });
+}
 
 /** Apply path spelling at the installer boundary, after login-shell startup. */
 export function gatewayUpgradeInstallerCommand(args: readonly string[], home?: string): string {

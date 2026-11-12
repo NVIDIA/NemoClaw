@@ -1,12 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+import {
+  encodeSwitchyardProviderBindings,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+} from "../hermes-switchyard-routing";
+
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { isolateAmbientRecreateEnv } from "../actions/sandbox/rebuild-env-isolation";
 
 import { describe, expect, it } from "vitest";
 
 import { buildConfig as buildOpenClawConfig } from "../../../scripts/generate-openclaw-config.mts";
+import {
+  createHermesSwitchyardRoutingIntent,
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+} from "../hermes-switchyard-routing";
 import { PEM } from "./__test-helpers__/corporate-ca-fixtures";
 import { maybePromptForInferenceInputCapability } from "./inference-input-capability";
 import { mapManagedStartupProfileToAgentEnvironment } from "./managed-startup/agent-environment";
@@ -581,6 +593,7 @@ describe("buildManagedStartupProfile", () => {
 
     expect(built.profile.agentConfig).toEqual({
       agent: "hermes",
+      switchyardRouting: null,
       webSearch: { enabled: true, provider: "tavily" },
     });
     expect(built.profile.inference).toMatchObject({
@@ -749,7 +762,54 @@ describe("buildManagedStartupProfile", () => {
     const built = buildManagedStartupProfile(hermesInput());
     expect(built.profile.agentConfig).toEqual({
       agent: "hermes",
+      switchyardRouting: null,
       webSearch: { enabled: false, provider: "tavily" },
+    });
+    expect(decodeManagedStartupProfile(built.encodedProfile).agentConfig).not.toHaveProperty(
+      "switchyardBindings",
+    );
+  });
+
+  it("keeps ambient Switchyard bindings out of a rebuilt Hermes profile (#13863)", () => {
+    const environment = { [HERMES_SWITCHYARD_BINDINGS_ENV]: "unrelated-bindings" };
+    expect(() => buildManagedStartupProfile(hermesInput({ environment }))).toThrow(
+      "Switchyard provider bindings require routing intent",
+    );
+
+    const restore = isolateAmbientRecreateEnv(environment);
+    try {
+      const { profile } = buildManagedStartupProfile(hermesInput({ environment }));
+      expect(profile.agent).toBe("hermes");
+      expect(profile.agentConfig).not.toHaveProperty("switchyardBindings");
+    } finally {
+      restore();
+    }
+    expect(environment[HERMES_SWITCHYARD_BINDINGS_ENV]).toBe("unrelated-bindings");
+  });
+
+  it("persists validated Switchyard routing in the Hermes startup profile (#13862)", () => {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "nvidia/nemotron-nano" },
+      capable: { provider: "openai-api", model: "gpt-5.2" },
+    });
+    const built = buildManagedStartupProfile(
+      hermesInput({
+        environment: {
+          [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+          [HERMES_SWITCHYARD_BINDINGS_ENV]: encodeSwitchyardProviderBindings(
+            switchyardBindingFixture(routing),
+            routing,
+          ),
+        },
+      }),
+    );
+
+    expect(built.profile.agentConfig).toMatchObject({
+      agent: "hermes",
+      switchyardRouting: routing,
+    });
+    expect(decodeManagedStartupProfile(built.encodedProfile).agentConfig).toMatchObject({
+      switchyardRouting: routing,
     });
   });
 

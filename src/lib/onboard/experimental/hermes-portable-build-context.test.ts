@@ -84,9 +84,7 @@ function primaryCloneFixture(privateFileModes = false): string {
   for (const entry of HERMES_PORTABLE_BUILD_CONTEXT_FILES) {
     const target = path.join(root, entry.path);
     fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
-    entry.mode === "160000"
-      ? fs.mkdirSync(target, { mode: 0o755 })
-      : copyFixtureFile(root, entry.path, entry.mode, privateFileModes);
+    copyFixtureFile(root, entry.path, entry.mode, privateFileModes);
   }
   const git = path.join(root, ".git");
   const ref = path.join(git, "refs/heads");
@@ -125,6 +123,9 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     ).toBe(true);
     expect(
       fs.statSync(path.join(inferredContext, "agents/hermes/check-native-credentials.ts")).isFile(),
+    ).toBe(true);
+    expect(
+      fs.statSync(path.join(inferredContext, "agents/hermes/qualify-switchyard-judge.py")).isFile(),
     ).toBe(true);
     expect(fs.existsSync(path.join(inferredContext, "agents/hermes/Dockerfile"))).toBe(false);
     expect(plan.authority.sourceRevision).toMatch(/^[a-f0-9]{40,64}$/u);
@@ -417,6 +418,35 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     );
     expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
   });
+
+  it.each([
+    ["unreviewed release", "switchyard-plugin-0.3.0", "switchyard-plugin-0.3.1"],
+    ["foreign repository", "NVIDIA/NeMo-Relay-Plugins", "foreign/plugins"],
+    [
+      "wrong amd64 digest",
+      "d0306ee11bf44e1845f24f4fb56e4e11986ef6ac751f3abf303aef9fe1e798d2",
+      "0".repeat(64),
+    ],
+    [
+      "wrong arm64 digest",
+      "267c4fa1b0ea07a9fdff019f4791e5042f4f68093ae27a7afb7541d323b2f720",
+      "0".repeat(64),
+    ],
+  ])(
+    "rejects a Switchyard %s before context publication (#13861)",
+    (_name, original, replacement) => {
+      const source = primaryCloneFixture();
+      const dockerfile = path.join(source, "agents/hermes/Dockerfile");
+      fs.writeFileSync(
+        dockerfile,
+        fs.readFileSync(dockerfile, "utf8").replaceAll(original, replacement),
+      );
+      expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+        "unsupported local or unpinned ADD instruction",
+      );
+      expect(fs.existsSync(path.join(stateDir, "hermes-portable-build-context"))).toBe(false);
+    },
+  );
 
   it("rejects a remote npm archive that disagrees with the reviewed identity", () => {
     const source = primaryCloneFixture();

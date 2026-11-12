@@ -5,6 +5,7 @@ import {
   normalizeNativeNvidiaProviderAttachment,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  type NativeNvidiaProviderAttachment,
 } from "../../inference/native-nvidia/contract";
 import {
   recordedCustomCredentialEnv,
@@ -12,8 +13,6 @@ import {
 } from "../../inference/native-provider/custom-setup";
 import { D, R } from "../../cli/terminal-style";
 import { isBedrockRuntimeEndpoint } from "../../inference/bedrock-runtime";
-import { DEFAULT_ROUTE_CREDENTIAL_ENV } from "../../inference/config";
-import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { validateNvidiaApiKeyValue } from "../../validation";
 import { hydrateCredentialEnv } from "../credential-env";
 import { resolveSandboxGatewayName } from "../gateway-binding/identity";
@@ -34,17 +33,15 @@ const onboardProviders = require("../providers") as {
 };
 
 export type ResumeProviderShimDeps = {
-  getSandbox?: (
-    name: string,
-  ) =>
-    | (NonNullable<Parameters<typeof usesCustomNativeOnboarding>[3]> &
-        Parameters<typeof recordedNativeProviderAttachment>[0] &
-        NonNullable<Parameters<typeof resolveSandboxGatewayName>[0]>)
+  getSandbox?: (name: string) =>
+    | (NonNullable<Parameters<typeof usesCustomNativeOnboarding>[3]> & {
+        provider?: string | null;
+        nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+      } & NonNullable<Parameters<typeof resolveSandboxGatewayName>[0]>)
     | null
     | undefined;
   isNonInteractive: ResumeProviderRecoveryDeps["isNonInteractive"];
   providerExistsInGateway(name: string, gatewayName: string): boolean | Promise<boolean>;
-  isRoutedInferenceProvider: ResumeProviderRecoveryDeps["isRoutedInferenceProvider"];
   replaceNamedCredential: ResumeProviderRecoveryDeps["replaceNamedCredential"];
   /** Recover an exact gateway-scoped managed runtime; false means no managed owner state exists. */
   resumeManagedLlamaCppRuntime?: (
@@ -81,8 +78,6 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
       const recoverRegisteredProvider = () =>
         ensureResumeProviderReadyImpl(provider, credentialEnv, {
           remoteProviderConfig: onboardProviders.REMOTE_PROVIDER_CONFIG,
-          defaultRouteCredentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
-          isRoutedInferenceProvider: deps.isRoutedInferenceProvider,
           providerExistsInGateway: (name) => deps.providerExistsInGateway(name, gatewayName),
           hydrateCredentialEnv,
           getProviderLabel: onboardProviders.getProviderLabel,
@@ -100,7 +95,15 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
         recorded?.nativeNvidiaProviderAttachment !== undefined
       ) {
         if (selection?.recoverRecordedProvider) {
-          recordedNativeProviderAttachment(recorded);
+          if (
+            !normalizeNativeNvidiaProviderAttachment(recorded.nativeNvidiaProviderAttachment) ||
+            recorded.provider?.trim() !== NVIDIA_HOSTED_LOGICAL_PROVIDER ||
+            recorded.nativeHostedProviderAttachment !== undefined
+          ) {
+            throw new Error(
+              "Invalid native provider attachment for the recorded inference selection",
+            );
+          }
           if (resolveSandboxGatewayName(recorded) !== gatewayName) {
             throw new Error("Recorded native NVIDIA provider does not match the resume target.");
           }

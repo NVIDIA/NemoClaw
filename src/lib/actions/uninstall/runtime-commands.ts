@@ -15,7 +15,13 @@ import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ss
 import {
   sandboxDeleteAbsentMessage,
   sandboxDeleteFailureMessage,
+  sandboxCleanupReasonMessage,
 } from "../../domain/uninstall/messaging";
+import { buildLocalManagedVllmDockerEnv } from "../../inference/vllm-docker-env";
+import {
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  HOST_LOCAL_VLLM_MANAGED_LABEL,
+} from "../../inference/serving/vllm-host-local-lifecycle";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { MANAGED_STARTUP_RECEIPT_VOLUME_PREFIX } from "../../onboard/managed-startup/docker-receipt-transfer";
@@ -164,6 +170,7 @@ export async function deleteSelectedGatewaySandbox(
   }
   if (result.kind === "failed" && !result.ambiguous) {
     runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+    runtime.warn(sandboxCleanupReasonMessage(result));
     return false;
   }
   const observer = createUninstallSandboxObserver(runtime.run, runtime.env);
@@ -178,6 +185,7 @@ export async function deleteSelectedGatewaySandbox(
     if (attempt < 4) runtime.sleep?.(200);
   }
   runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+  if (result.kind === "failed") runtime.warn(sandboxCleanupReasonMessage(result));
   return false;
 }
 
@@ -195,11 +203,14 @@ export async function deleteAllSelectedGatewaySandboxes(
     { target: { kind: "selected" }, runtimeSelection },
   );
   if (result.kind !== "accepted") {
+    const invalidRequest =
+      result.error.kind === "command" && result.error.reason === "invalid_request";
     runtime.warn(
-      result.error.kind === "command" && result.error.reason === "invalid_request"
+      invalidRequest
         ? "OpenShell rejected the selected-gateway sandbox cleanup request."
         : "OpenShell sandbox cleanup was not accepted; preserving its state for retry.",
     );
+    if (!invalidRequest) runtime.warn(sandboxCleanupReasonMessage(result));
     return false;
   }
 
@@ -247,4 +258,81 @@ export function isModelRouterPid(
   if (result.status !== 0) return false;
   const args = result.stdout.trim().split(/\s+/).filter(Boolean);
   return isModelRouterCommandLineForPort(args, port);
+}
+
+export const MANAGED_INFERENCE_CONTAINER_NAME_PATTERN =
+  /^(?:nemoclaw-vllm|nemoclaw-vllm-worker|nemoclaw-llama-cpp|nemoclaw-vllm-cluster-rank-[0-9]+)$/;
+
+export function removeOrphanedManagedHostLocalVllm(
+  runtime: ForceFreshDockerCleanupRuntime & { commandExists(command: string): boolean },
+): boolean {
+  if (!runtime.commandExists("docker")) return true;
+  const env = buildLocalManagedVllmDockerEnv({}, runtime.env);
+  const inspection = runtime.runDocker(
+    [
+      "container",
+      "inspect",
+      "--format",
+      `{{.Id}} {{index .Config.Labels ${JSON.stringify(HOST_LOCAL_VLLM_MANAGED_LABEL)}}}`,
+      HOST_LOCAL_VLLM_CONTAINER_NAME,
+    ],
+    { env, timeout: 10_000 },
+  );
+  if (inspection.status !== 0 || !inspection.stdout.trim()) return true;
+  const [containerId, managedLabel, ...extra] = inspection.stdout.trim().split(/\s+/);
+  if (!/^[0-9a-f]{64}$/u.test(containerId ?? "") || managedLabel !== "true" || extra.length > 0) {
+    return true;
+  }
+  const removal = runtime.runDocker(["rm", "-f", containerId], {
+    env,
+    timeout: 10_000,
+  });
+  if (removal.status === 0) return true;
+  runtime.error(
+    `Could not remove orphaned managed inference container '${HOST_LOCAL_VLLM_CONTAINER_NAME}'. NemoClaw did not start the remaining uninstall steps.`,
+  );
+  return false;
+}
+
+export function verifyManagedInferenceCleanup(runtime: ForceFreshDockerCleanupRuntime): boolean {
+  // Host-local vLLM belongs to the default daemon even when the gateway and
+  // other inference runtimes use another Docker authority.
+  const localVllmAbsent = verifyManagedInferenceAbsence(
+    runtime,
+    buildLocalManagedVllmDockerEnv({}, runtime.env),
+    (name) => name === HOST_LOCAL_VLLM_CONTAINER_NAME,
+  );
+  const otherRuntimesAbsent =
+    localVllmAbsent &&
+    verifyManagedInferenceAbsence(
+      runtime,
+      runtime.env,
+      (name) =>
+        name !== HOST_LOCAL_VLLM_CONTAINER_NAME &&
+        MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name),
+    );
+  return otherRuntimesAbsent;
+}
+
+function verifyManagedInferenceAbsence(
+  runtime: ForceFreshDockerCleanupRuntime,
+  env: NodeJS.ProcessEnv,
+  matches: (name: string) => boolean,
+): boolean {
+  const inventory = runtime.runDocker(["ps", "-a", "--format", "{{.Names}}"], {
+    env,
+    timeout: 10_000,
+  });
+  if (inventory.status !== 0) {
+    runtime.error(
+      "Docker could not inventory reserved managed inference container names. NemoClaw refused the remaining uninstall steps so it cannot report incomplete cleanup as success.",
+    );
+    return false;
+  }
+  const residual = nonEmptyLines(inventory.stdout).find(matches);
+  if (!residual) return true;
+  runtime.error(
+    `Managed inference container '${residual}' remains after ownership-aware cleanup. NemoClaw refused the remaining uninstall steps; restore its ownership state or remove it after manual review, then retry.`,
+  );
+  return false;
 }

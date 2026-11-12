@@ -1,0 +1,66 @@
+{
+  "SPDX-FileCopyrightText": "Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "kind": "nemoclaw-reviewed-openshell-runtime-evidence-v1",
+  "releaseTag": "v0.1.7",
+  "source": {
+    "repository": "NVIDIA/OpenShell",
+    "commit": "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c",
+    "url": "https://github.com/NVIDIA/OpenShell/tree/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c"
+  },
+  "producer": {
+    "runId": 41695496344,
+    "attempt": 1,
+    "workflowCommit": "32dcc4a67f4939b71d72b0efb392c2c0998e48ac",
+    "url": "https://github.com/NVIDIA/OpenShell/actions/runs/41695496344",
+    "conclusion": "failure",
+    "unrelatedFailure": "Schema publication command could not find buf; exit 127"
+  },
+  "supervisor": {
+    "image": "ghcr.io/nvidia/openshell/supervisor@sha256:a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06",
+    "producerJobId": 126145853842,
+    "producerJobConclusion": "success"
+  },
+  "artifacts": {
+    "cli": {
+      "asset": "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "assetId": 706805521,
+      "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.7/openshell-x86_64-unknown-linux-musl.tar.gz",
+      "archiveBytes": 10518809,
+      "archiveSha256": "5c1adfcae797eac9b2e8b9280c66c1f75e4e84d9e31ce6938c5b994314ef6098",
+      "member": "openshell",
+      "binaryBytes": 26640648,
+      "binarySha256": "718f40674738206a84bc3a967966225ff47dfed9ba5738099d56777faa4af793"
+    },
+    "gateway": {
+      "asset": "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+      "assetId": 706805518,
+      "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.7/openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+      "archiveBytes": 45974543,
+      "archiveSha256": "e1714dcfd85c949e2f53260bcfbf04b203f6f5cbd3a61e61c11c38cbc91cb102",
+      "member": "openshell-gateway",
+      "binaryBytes": 113026408,
+      "binarySha256": "0b7cb54fd8558bfad4c57f556f7fc1a20ef8cd94ebb11f4f40a9a90b74b4ad17"
+    },
+    "standaloneSandbox": {
+      "asset": "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+      "assetId": 706805547,
+      "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.7/openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+      "archiveBytes": 4698288,
+      "archiveSha256": "c1b3166d1c232948293ff84b0fac2d0419a24e4b694d354ba6aeb100efa2f039",
+      "member": "openshell-sandbox",
+      "binaryBytes": 11673328,
+      "binarySha256": "d13966b032b07d75c917d3fbb7471e608edfdf1f25e9d922e5aa7c779cf6ad21"
+    }
+  },
+  "verification": {
+    "reviewedAt": "2026-11-04T17:56:58.711567+00:00",
+    "archiveChecksumsMatchedReleaseManifests": true,
+    "archiveBytesAndExtractedMemberHashesVerified": true,
+    "supervisorDigestMatchedProducerJob": true,
+    "ociSignaturesIndependentlyVerified": false,
+    "reproducibleBinaryRebuild": false,
+    "runtimeQualification": false
+  },
+  "scope": "Inert review evidence for the MCP runtime mapping test. This fixture does not authorize an installer release or alter upgrade admission."
+}

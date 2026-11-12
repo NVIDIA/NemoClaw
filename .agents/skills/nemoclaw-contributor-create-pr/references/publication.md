@@ -163,6 +163,8 @@ retry. Only when the response was inconclusive and no PR exists, repeat the remo
 checks immediately before one creation retry. Stop when either state changed or cannot be read. Do not
 make a second retry.
 
+Complete the [opening-report publication and readback](../SKILL.md) after creating the PR. Preserve the original evidence and cutoff when updating its format; later activity belongs in optional separate reports.
+
 ### Assignment
 
 Check permission before adding `--assignee "@me"`:

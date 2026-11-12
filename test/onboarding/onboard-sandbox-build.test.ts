@@ -261,7 +261,7 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it("resolves the sandbox base for an explicit custom Dockerfile", async () => {
+  it("resolves the sandbox base for a custom Dockerfile that consumes it", async () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-base-skip-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -340,7 +340,7 @@ agentOnboard.createAgentSandbox = () => {
   fs.writeFileSync(
     stagedDockerfile,
     [
-      "ARG BASE_IMAGE=nemoclaw-hermes-sandbox-base-local:test",
+      "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
       "FROM \${BASE_IMAGE}",
       "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
       "ARG NEMOCLAW_PROVIDER_KEY=custom",

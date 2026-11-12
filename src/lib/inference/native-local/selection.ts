@@ -35,8 +35,10 @@ export async function prepareNativeLocalSelection(input: {
     input.ownedProxy === true &&
     port === OLLAMA_PROXY_PORT &&
     new URL(binding.endpointUrl).hostname === "host.openshell.internal";
-  if (isProtectedLocalInferencePort(port, { ownedProxy })) {
-    throw new Error("The selected local inference endpoint uses a protected host port.");
+  if (binding.provider === "nvidia-router" || isProtectedLocalInferencePort(port, { ownedProxy })) {
+    throw new Error(
+      "The selected local inference endpoint is unavailable or uses a protected host port.",
+    );
   }
   const readAuthority = input.readAuthority ?? getNativeLocalProviderAuthority;
   const writeAuthority = input.writeAuthority ?? setNativeLocalProviderAuthority;

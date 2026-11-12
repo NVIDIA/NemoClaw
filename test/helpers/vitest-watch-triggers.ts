@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..").replaceAll("\\", "/");
+
 export type VitestWatchTriggerPattern = {
   pattern: RegExp;
   testsToRun: (file: string, match: RegExpMatchArray) => string[];
@@ -41,6 +45,57 @@ function runTests(...tests: string[]): () => string[] {
 }
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
+  {
+    pattern: /(?:^|\/)tools\/e2e\/protected-openshell-filesystem\.py$/,
+    testsToRun: runTests(
+      "test/e2e/support/protected-openshell-filesystem.test.ts",
+      "test/e2e/support/protected-openshell-workspace.test.ts",
+    ),
+  },
+  {
+    pattern:
+      /(?:^|\/)test\/e2e\/(?:lib\/openclaw-owner-diagnostic|support\/openclaw-owner-diagnostic-cases)\.py$/,
+    testsToRun: runTests("test/e2e/support/openclaw-owner-diagnostic.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)test\/e2e\/lib\/issue-4462-admin-request-selector\.py$/,
+    testsToRun: runTests(
+      "test/security/admin-approval-helper.test.ts",
+      "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
+      "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/lib\/openclaw-gateway-owner\.mts$/,
+    testsToRun: runTests("src/lib/onboard/managed-startup/provider-root-apply.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/lib\/openclaw_pairing_state\.py$/,
+    testsToRun: runTests(
+      "src/lib/actions/sandbox/auto-pair-approval-sqlite.test.ts",
+      "src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification.test.ts",
+      "src/lib/onboard/managed-startup/provider-root-apply.test.ts",
+      "test/agents/openclaw/runtime/nemoclaw-start-auto-pair-sqlite.test.ts",
+      "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
+      "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+      "test/runtime/sandbox/sandbox-build-context.test.ts",
+      "test/runtime/sandbox/sandbox-provisioning-helper-permissions.test.ts",
+      "test/security/admin-approval-helper.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)Dockerfile(?:\.base)?$/,
+    testsToRun: (file) => {
+      const relative = file.startsWith(`${REPO_ROOT}/`) ? file.slice(REPO_ROOT.length + 1) : file;
+      return /^Dockerfile(?:\.base)?$/.test(relative)
+        ? ["test/runtime/messaging/messaging-build-applier-integrity.test.ts"]
+        : [];
+    },
+  },
+  {
+    pattern: /(?:^|\/)test\/e2e\/fixtures\/discord-enrollment-preload\.mts$/,
+    testsToRun: runTests("test/e2e/support/discord-enrollment-child.test.ts"),
+  },
   {
     pattern:
       /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py))$/,
@@ -147,6 +202,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/install-switchyard\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-switchyard-package.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/(?:qualify-switchyard-judge\.py|start\.sh)$/,
+    testsToRun: runTests("test/agents/hermes/hermes-switchyard-judge-preflight.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/image-build-probes\.py$/,
     testsToRun: runTests("test/agents/hermes/hermes-image-build-probes.test.ts"),
   },
@@ -194,6 +257,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
           ]
         : [
             "test/generation/providerless-agent-config.test.ts",
+            "test/networking/dashboard-remote-bind-lifecycle.test.ts",
             "src/lib/onboard/managed-startup-profile.test.ts",
             "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
             "test/mcp/mcp-tool-discovery-image-contract.test.ts",
@@ -289,6 +353,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
     testsToRun: runTests(
+      "test/inference/managed/managed-image-discord-workflow-boundary.test.ts",
       "test/e2e/support/managed-podman-docker-guard.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",

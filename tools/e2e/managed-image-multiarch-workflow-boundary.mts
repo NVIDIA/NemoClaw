@@ -50,10 +50,11 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Checkout trusted Hermes resolver",
   "Bind protected managed-image Buildx configuration",
   "Set up protected managed-image Buildx",
+  "Reuse only an input-equivalent published OpenClaw base",
   "Download reviewed OpenShell SDK archive",
   "Prepare E2E workspace",
   "Install reviewed OpenShell SDK archive without package credentials",
-  "Build shared policy boundary",
+  "Build candidate CLI and shared policy boundary",
   "Authenticate to Docker Hub",
   "Validate candidate activation contract",
   "Resolve reviewed Hermes platform base image",
@@ -64,17 +65,18 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Run every exact managed-image contract directly",
 ] as const;
 const REVIEWED_EXECUTION_SURFACE_SHA256 =
-  "75e088845fc2948988d198d5a42e518837665b419c101cc1a63ed8e174de8a38";
-const SHARED_POLICY_BOUNDARY_RUN = [
+  "8d6d5085acee5d21ce2ed2332fb2b848fe479b23a7b9689a89c2cd5160e37349";
+const CANDIDATE_CLI_BUILD_RUN = [
   "set -euo pipefail",
-  "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
-  '  echo "::error::Shared policy boundary output exists before the candidate build" >&2',
+  "[[ ! -e dist && ! -L dist && ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
+  '  echo "::error::CLI or shared policy boundary output exists before the candidate build" >&2',
   "  exit 1",
   "}",
-  "npm run build:policy-boundary",
+  "npm run build:cli",
   "for artifact in \\",
   "  nemoclaw/dist/shared/openshell-policy-boundary.cjs \\",
-  "  nemoclaw/dist/shared/sandbox-name.cjs; do",
+  "  nemoclaw/dist/shared/sandbox-name.cjs \\",
+  "  dist/lib/actions/sandbox/channel-status.js; do",
   '  [[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]] || {',
   '    echo "::error::Shared policy boundary artifact is missing or invalid: $artifact" >&2',
   "    exit 1",
@@ -314,12 +316,36 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
       repository: "${{ github.repository }}",
       ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
       path: TRUSTED_HERMES_RESOLVER_ROOT,
-      "sparse-checkout": ".github/actions/resolve-reviewed-hermes-platform",
+      "sparse-checkout":
+        ".github/actions/resolve-reviewed-hermes-platform\nscripts/checks/resolve-managed-pr-base.sh\nscripts/lib/dockerfile-copy-sources.mts\n",
       "fetch-depth": 1,
       "persist-credentials": false,
     },
   );
-
+  const openclawBase = requireStep(
+    errors,
+    steps,
+    "Reuse only an input-equivalent published OpenClaw base",
+  );
+  if (
+    openclawBase?.id !== "openclaw-base" ||
+    openclawBase?.if !== "${{ inputs.checkout_sha != '' }}"
+  ) {
+    errors.push(`${JOB_ID} OpenClaw base resolution must bind a PR-only output`);
+  }
+  requireValues(errors, `${JOB_ID} OpenClaw base resolver env`, record(openclawBase?.env), {
+    AGENT: "openclaw",
+    BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+    BASE_DOCKERFILE: "Dockerfile.base",
+    BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+    BASE_SHA: "${{ inputs.base_sha }}",
+    CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
+    PLATFORM: "${{ matrix.platform }}",
+    RESOLUTION_MODE: "reference-or-candidate",
+  });
+  if (openclawBase?.run !== ".trusted-hermes-resolver/scripts/checks/resolve-managed-pr-base.sh") {
+    errors.push(`${JOB_ID} must execute the trusted OpenClaw base resolver`);
+  }
   const buildxConfig = requireStep(
     errors,
     steps,
@@ -348,11 +374,15 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "buildkitd-config-inline": '[registry."localhost:5000"]\n  http = true\n',
   });
 
-  const policyBoundary = requireStep(errors, steps, "Build shared policy boundary");
+  const policyBoundary = requireStep(
+    errors,
+    steps,
+    "Build candidate CLI and shared policy boundary",
+  );
   if (policyBoundary?.if !== undefined || policyBoundary?.["continue-on-error"] !== undefined) {
     errors.push(`${JOB_ID} shared policy boundary step must not set if or continue-on-error`);
   }
-  if (policyBoundary?.run !== SHARED_POLICY_BOUNDARY_RUN) {
+  if (policyBoundary?.run !== CANDIDATE_CLI_BUILD_RUN) {
     errors.push(`${JOB_ID} shared policy boundary step must match the reviewed narrow script`);
   }
   const dockerAuth = requireStep(errors, steps, "Authenticate to Docker Hub");
@@ -413,11 +443,13 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     DCODE_BASE_CONTRACT: "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
     HERMES_BASE_REF:
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}",
+    OPENCLAW_BASE_REF: "${{ steps.openclaw-base.outputs.ref }}",
     PLATFORM: "${{ matrix.platform }}",
   });
   requireFragments(errors, bases, [
     'case "$CANDIDATE_BASES" in',
-    "printf 'openclaw=candidate\\nhermes=candidate\\ndcode=candidate\\n'",
+    '[[ "$OPENCLAW_BASE_REF" == candidate ||',
+    `printf 'openclaw=%s\\nhermes=candidate\\ndcode=candidate\\n' "$OPENCLAW_BASE_REF"`,
     'arch="${PLATFORM#linux/}"',
     'docker buildx imagetools inspect "$alias" --raw',
     '.platform.os == "linux" and .platform.architecture == $arch',
@@ -545,7 +577,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     path: "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/",
     "if-no-files-found": "error",
     "retention-days": 1,
-    "compression-level": 0,
+    "compression-level": 1,
     overwrite: true,
   });
   const security = requireStep(errors, steps, "Validate OpenClaw managed-image security boundary");
@@ -583,7 +615,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Download reviewed OpenShell SDK archive",
     "Prepare E2E workspace",
     "Install reviewed OpenShell SDK archive without package credentials",
-    "Build shared policy boundary",
+    "Build candidate CLI and shared policy boundary",
     "Authenticate to Docker Hub",
     "Validate candidate activation contract",
     "Resolve reviewed Hermes platform base image",

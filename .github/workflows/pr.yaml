@@ -140,11 +140,13 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
@@ -243,11 +245,13 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
             scripts/lib/npm-diagnostics.sh
             scripts/lib/openclaw-npm-remediation.mts
@@ -302,7 +306,7 @@ jobs:
               and .status == "completed" and .conclusion == "success"
               and ((.event == "pull_request_target" and .head_sha == $sha
                 and any(.pull_requests[]?; .number == $pr and .head.sha == $sha and .base.sha == $base))
-                or (.event == "issue_comment" and .head_branch == "main"))
+                or (.event == "workflow_run" and .head_branch == "main"))
             else
               (.path | split("@")[0]) == ".github/workflows/main.yaml" and .head_branch == "main"
               and (.event == "push" or .event == "workflow_dispatch")
@@ -389,12 +393,14 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/check-dist-sourcemaps.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
@@ -469,11 +475,13 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
@@ -545,11 +553,13 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
@@ -682,11 +692,13 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
@@ -823,11 +835,13 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
@@ -884,11 +898,13 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
             tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/candidate-review-scope.mts
             tools/e2e/base-image-publication.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts

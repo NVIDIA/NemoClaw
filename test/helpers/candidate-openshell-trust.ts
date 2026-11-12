@@ -22,7 +22,7 @@ import { copyTrustedInstallerVerifier } from "./openshell-installer-template";
 export const identity = { prNumber: 123, candidateSha: "a".repeat(40), baseSha: "b".repeat(40) };
 export const version = "9.8.7";
 
-export function fixture() {
+export function fixture(selectedVersion = version) {
   const sources = Object.fromEntries(
     Object.entries(CANDIDATE_OPENSHELL_SOURCES).map(([key, path]) => [
       key,
@@ -32,31 +32,34 @@ export function fixture() {
   const current = validateInstallerSources(sources);
   const release = structuredClone(current.installerReleases[0]!);
   const prior = release.version;
-  release.version = version;
-  release.formula.url = `https://github.com/NVIDIA/OpenShell/releases/download/v${version}/openshell.rb`;
+  release.version = selectedVersion;
+  release.formula.url = `https://github.com/NVIDIA/OpenShell/releases/download/v${selectedVersion}/openshell.rb`;
   release.sandboxBuilds = [{ required: false, sha256: "f".repeat(64) }];
-  sources.blueprintSource = sources.blueprintSource.replaceAll(`"${prior}"`, `"${version}"`);
+  sources.blueprintSource = sources.blueprintSource.replaceAll(
+    `"${prior}"`,
+    `"${selectedVersion}"`,
+  );
   sources.installerSource = sources.installerSource
-    .replaceAll(`v${prior}:`, `v${version}:`)
-    .replaceAll(`MIN_VERSION="${prior}"`, `MIN_VERSION="${version}"`)
-    .replaceAll(`MAX_VERSION="${prior}"`, `MAX_VERSION="${version}"`)
+    .replaceAll(`v${prior}:`, `v${selectedVersion}:`)
+    .replaceAll(`MIN_VERSION="${prior}"`, `MIN_VERSION="${selectedVersion}"`)
+    .replaceAll(`MAX_VERSION="${prior}"`, `MAX_VERSION="${selectedVersion}"`)
     .replace(
       '  case "$digest" in',
-      `  case "$digest" in\n    ${"f".repeat(64)})\n      printf '%s\\n' "${version}"\n      ;;`,
+      `  case "$digest" in\n    ${"f".repeat(64)})\n      printf '%s\\n' "${selectedVersion}"\n      ;;`,
     );
   sources.brevInstallerSource = sources.brevInstallerSource
-    .replaceAll(`v${prior}:`, `v${version}:`)
-    .replaceAll(`OPENSHELL_VERSION="v${prior}"`, `OPENSHELL_VERSION="v${version}"`);
+    .replaceAll(`v${prior}:`, `v${selectedVersion}:`)
+    .replaceAll(`OPENSHELL_VERSION="v${prior}"`, `OPENSHELL_VERSION="v${selectedVersion}"`);
   const supervisorHeader =
     "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {\n";
   sources.supervisorRuntimeSource = sources.supervisorRuntimeSource
     .replace(
       supervisorHeader,
-      `${supervisorHeader}  "${version}": "${release.supervisor!.manifestDigest}",\n`,
+      `${supervisorHeader}  "${selectedVersion}": "${release.supervisor!.manifestDigest}",\n`,
     )
     .replace(
       `QUALIFIED_STABLE_OPENSHELL_VERSION = "${prior}"`,
-      `QUALIFIED_STABLE_OPENSHELL_VERSION = "${version}"`,
+      `QUALIFIED_STABLE_OPENSHELL_VERSION = "${selectedVersion}"`,
     );
   const normalizedSupervisor = sources.supervisorRuntimeSource.replace(
     /(?<=const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{\n)[\s\S]*?(?=\n\};)/u,
@@ -81,9 +84,9 @@ export function fixture() {
     {
       id: 50,
       user: { type: "User", login: "reviewer" },
-      created_at: "2026-10-14T00:00:00Z",
-      updated_at: "2026-10-14T00:00:00Z",
-      body: `NemoClaw-Upgrade-E2E: approve ${identity.candidateSha} ${identity.baseSha}`,
+      submitted_at: "2026-10-14T00:00:00Z",
+      state: "APPROVED",
+      commit_id: identity.candidateSha,
     },
   ];
   const routes: Record<string, unknown> = {
@@ -94,10 +97,20 @@ export function fixture() {
       head: { sha: identity.candidateSha, repo: repository },
       base: { sha: identity.baseSha, ref: "main", repo: repository },
     },
-    "/repos/NVIDIA/NemoClaw/issues/123/comments?per_page=100&page=1": approvals,
+    "/repos/NVIDIA/NemoClaw/pulls/123/reviews?per_page=100&page=1": approvals,
     "/repos/NVIDIA/NemoClaw/collaborators/reviewer/permission": { role_name: "maintain" },
   };
   const request = vi.fn(async (path: string): Promise<unknown> => {
+    if (
+      path ===
+      `/repos/NVIDIA/NemoClaw/compare/${identity.baseSha}...${identity.candidateSha}?per_page=1`
+    )
+      return {
+        status: "ahead",
+        base_commit: { sha: identity.baseSha },
+        merge_base_commit: { sha: identity.baseSha },
+        files: [],
+      };
     const sourcePath = new URL(path, "https://api.github.com").pathname.replace(
       "/repos/NVIDIA/NemoClaw/contents/",
       "",

@@ -32,7 +32,7 @@ def shared_wasmtime_engine():
     return _SHARED_ENGINE
 `;
 
-function makeQuickjsFixture(version = "0.2.5", source = upstreamSource) {
+function makeQuickjsFixture(version = "0.2.6", source = upstreamSource) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-quickjs-memfd-"));
   const packageRoot = path.join(root, "quickjs_rs");
   const metadataRoot = path.join(root, `quickjs_rs-${version}.dist-info`);
@@ -56,7 +56,7 @@ function runPatcher(root: string) {
 }
 
 describe("managed QuickJS Wasmtime compatibility patch", () => {
-  it("disables copy-on-write memory initialization for quickjs-rs 0.2.5 (#11847)", () => {
+  it("disables copy-on-write memory initialization for quickjs-rs 0.2.6 (#11847)", () => {
     const fixture = makeQuickjsFixture();
     try {
       const result = runPatcher(fixture.root);
@@ -87,12 +87,12 @@ describe("managed QuickJS Wasmtime compatibility patch", () => {
   });
 
   it("rejects an unreviewed quickjs-rs version", () => {
-    const fixture = makeQuickjsFixture("0.2.6");
+    const fixture = makeQuickjsFixture("0.2.7");
     try {
       const result = runPatcher(fixture.root);
 
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("Expected quickjs-rs==0.2.5, found 0.2.6");
+      expect(result.stderr).toContain("Expected quickjs-rs==0.2.6, found 0.2.7");
       expect(fs.readFileSync(fixture.enginePath, "utf8")).toBe(upstreamSource);
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
@@ -101,7 +101,7 @@ describe("managed QuickJS Wasmtime compatibility patch", () => {
 
   it("rejects source drift at the Wasmtime engine boundary", () => {
     const fixture = makeQuickjsFixture(
-      "0.2.5",
+      "0.2.6",
       upstreamSource.replace("wasmtime.Engine()", "wasmtime.Engine(wasmtime.Config())"),
     );
     try {
@@ -109,7 +109,7 @@ describe("managed QuickJS Wasmtime compatibility patch", () => {
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain(
-        "Expected one quickjs-rs 0.2.5 default Wasmtime engine constructor",
+        "Expected one quickjs-rs 0.2.6 default Wasmtime engine constructor",
       );
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });

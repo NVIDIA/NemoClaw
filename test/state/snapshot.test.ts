@@ -10,6 +10,9 @@ import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import {
+  tarHeader,
+  paddedTarPayload,
+  paxRecord,
   writeExecutable,
   writeFakeOpenshell,
   writeFakeSsh,
@@ -58,53 +61,43 @@ function restoreEnv(name: string, value: string | undefined): void {
     : Reflect.set(process.env, name, value);
 }
 
-function tarHeader(
-  entryPath: string,
-  content: Buffer,
-  options: { type?: string; linkTarget?: string } = {},
-): Buffer {
-  const header = Buffer.alloc(512, 0);
-  const type = options.type ?? "0";
-  header.write(entryPath, 0, Math.min(entryPath.length, 100), "utf8");
-  header.write("0000644\0", 100, 8, "utf8");
-  header.write("0001000\0", 108, 8, "utf8");
-  header.write("0001000\0", 116, 8, "utf8");
-  const size = ["0", "S", "x", "g"].includes(type) ? content.length : 0;
-  header.write(`${size.toString(8).padStart(11, "0")}\0`, 124, 12, "utf8");
-  header.write(
-    `${Math.floor(Date.now() / 1000)
-      .toString(8)
-      .padStart(11, "0")}\0`,
-    136,
-    12,
-    "utf8",
+function writeCraftedCaptureTar(
+  binDir: string,
+  systemTar: string,
+  forceGlobalPaxListing = false,
+): void {
+  writeExecutable(
+    path.join(binDir, "tar"),
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (process.env.NEMOCLAW_TEST_TAR_LOG) {
+  fs.appendFileSync(process.env.NEMOCLAW_TEST_TAR_LOG, JSON.stringify(args) + "\\n");
+}
+if (args.includes("-C")) {
+  fs.writeFileSync(1, fs.readFileSync(process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE));
+  process.exit(0);
+}
+if (${forceGlobalPaxListing} && args.includes("-tf")) {
+  const result = spawnSync(${JSON.stringify(systemTar)}, args, {
+    input: fs.readFileSync(0), encoding: "utf8",
+  });
+  process.stdout.write(result.stdout.replaceAll("workspace/benign.txt", "workspace/.env"));
+  process.stderr.write(result.stderr);
+  process.exit(result.status ?? 90);
+}
+const result = spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
+process.exit(result.status ?? 90);
+`,
   );
-  header.write(type, 156, 1, "utf8");
-  if (options.linkTarget) {
-    header.write(options.linkTarget, 157, Math.min(options.linkTarget.length, 100), "utf8");
-  }
-  header.write("ustar\0", 257, 6, "utf8");
-  header.write("00", 263, 2, "utf8");
-  header.fill(0x20, 148, 156);
-  let checksum = 0;
-  for (const byte of header) checksum += byte;
-  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "utf8");
-  return header;
 }
 
-function paddedTarPayload(content: Buffer): Buffer {
-  const padded = Buffer.alloc(Math.ceil(content.length / 512) * 512, 0);
-  content.copy(padded);
-  return padded;
-}
-
-function paxRecord(key: string, value: string): Buffer {
-  const body = ` ${key}=${value}\n`;
-  let length = Buffer.byteLength(body) + 1;
-  while (Buffer.byteLength(`${length}${body}`) !== length) {
-    length = Buffer.byteLength(`${length}${body}`);
-  }
-  return Buffer.from(`${length}${body}`, "utf8");
+function buildManyMembersTar(count: number): Buffer {
+  return Buffer.concat([
+    ...Array.from({ length: count }, (_, index) => tarHeader(`w/${index}.txt`, Buffer.alloc(0))),
+    Buffer.alloc(1024, 0),
+  ]);
 }
 
 function buildSparseTar(kind: "old-gnu" | "pax" | "global-pax"): Buffer {
@@ -122,6 +115,18 @@ function buildSparseTar(kind: "old-gnu" | "pax" | "global-pax"): Buffer {
     }),
     paddedTarPayload(metadata),
     tarHeader("sparse.bin", file),
+    paddedTarPayload(file),
+    Buffer.alloc(1024, 0),
+  ]);
+}
+
+function buildGlobalPaxCredentialTar(): Buffer {
+  const metadata = paxRecord("path", "workspace/.env");
+  const file = Buffer.from("CUSTOM_API_TOKEN=opaqueCredentialPayloadZ1234567890\n", "utf8");
+  return Buffer.concat([
+    tarHeader("PaxHeaders/global", metadata, { type: "g" }),
+    paddedTarPayload(metadata),
+    tarHeader("workspace/benign.txt", file),
     paddedTarPayload(file),
     Buffer.alloc(1024, 0),
   ]);
@@ -155,6 +160,16 @@ function buildSymlinkCredentialTraversalTar(): Buffer {
     paddedPayload,
     Buffer.alloc(1024, 0),
   ]);
+}
+
+function replacePublishedNativeArchive(backupPath: string, archive: Buffer): void {
+  fs.writeFileSync(path.join(backupPath, "native-home.tar"), archive);
+  const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+    nativeState: { sha256: string };
+  };
+  manifest.nativeState.sha256 = createHash("sha256").update(archive).digest("hex");
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
 function writeSandboxRegistry(sandboxName: string, agent: "hermes" | null = null): void {
@@ -237,6 +252,17 @@ describe("complete native home persistence", () => {
         "managed-warmup",
       );
       writeNative(".openclaw/state/openclaw.sqlite-wal", "transient-wal");
+      const privateDoctorCapture = ".openclaw.update-captures/doctor-test/payload/0";
+      const privateLegacyCapture = ".openclaw-data.update-captures/update-test/payload/0";
+      fs.mkdirSync(path.dirname(path.join(nativeRoot, privateDoctorCapture)), { recursive: true });
+      fs.mkdirSync(path.dirname(path.join(nativeRoot, privateLegacyCapture)), { recursive: true });
+      const privateCredential = `ghp_${"abcdef0123456789"}`;
+      writeNative(privateDoctorCapture, privateCredential);
+      writeNative(privateLegacyCapture, privateCredential);
+      fs.mkdirSync(path.join(nativeRoot, "workspace", ".openclaw.update-captures"), {
+        recursive: true,
+      });
+      writeNative("workspace/.openclaw.update-captures/notes.txt", "user-owned notes");
       const hermesManagedConfig = "model:\n  api_key: sk-OPENSHELL-PROXY-REWRITE\n";
       writeNative(".hermes/config.yaml", hermesManagedConfig);
       writeNative(".hermes/gateway.pid", "legacy-pid");
@@ -353,6 +379,15 @@ describe("complete native home persistence", () => {
       expect(archivedPaths).not.toContain(".openclaw/.nemoclaw-post-upgrade-doctor");
       expect(archivedPaths).not.toContain("nemoclaw-onboard-warmup-1.trajectory.jsonl");
       expect(archivedPaths).not.toContain(".openclaw/state/openclaw.sqlite-wal");
+      expect(archivedPaths).not.toContain(privateDoctorCapture);
+      expect(archivedPaths).not.toContain(privateLegacyCapture);
+      expect(archivedPaths).toContain("workspace/.openclaw.update-captures/notes.txt");
+      expect(fs.readFileSync(path.join(nativeRoot, privateDoctorCapture), "utf8")).toBe(
+        privateCredential,
+      );
+      expect(fs.readFileSync(path.join(nativeRoot, privateLegacyCapture), "utf8")).toBe(
+        privateCredential,
+      );
       expect(archivedPaths).not.toContain(".hermes/gateway.pid");
       expect(archivedPaths).not.toContain(".hermes/runtime/gateway.pid");
       expect(archivedPaths).not.toContain(".hermes/runtime/gateway.lock");
@@ -694,6 +729,10 @@ describe("complete native home persistence", () => {
         [".openclaw/agents/child/history.jsonl", "child-agent"],
         [".nemoclaw/agent-owned-sibling.txt", "preserved-sibling"],
         [
+          "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/notes.md",
+          "backslash-workspace-notes",
+        ],
+        [
           "node_modules/combined-stream/yarn.lock",
           '# yarn lockfile v1\n\ndelayed-stream@~1.0.0:\n  version "1.0.0"\n  resolved "https://registry.yarnpkg.com/delayed-stream/-/delayed-stream-1.0.0.tgz#df3ae199acadfb7d440aaae0b29e2272b24ec619"\n\nfar@~0.0.7:\n  version "0.0.7"\n  dependencies:\n    oop "0.0.3"\n',
         ],
@@ -972,6 +1011,11 @@ describe("complete native home persistence", () => {
       JSON.stringify({ apiKey: `ghp_${"2468ace013579bdf"}` }),
     ],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
+    [
+      "a similarly named user-owned capture",
+      "workspace/.openclaw.update-captures/payload/0",
+      `ghp_${"fedcba9876543210"}`,
+    ],
     ["dependency source code", "node_modules/example/token.js", `ghp_${"fedcba9876543210"}`],
     [
       "a concrete token in bundled NemoClaw runtime code",
@@ -991,6 +1035,11 @@ describe("complete native home persistence", () => {
     [
       "a dependency lockfile",
       "node_modules/example/yarn.lock",
+      `# yarn lockfile v1\n\nexample@1.0.0:\n  version "1.0.0"\n  resolved "https://build-user:ghp_${"abcdef0123456789"}@registry.example.test/example.tgz"\n`,
+    ],
+    [
+      "a dependency lockfile in a directory whose name contains a backslash",
+      "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/yarn.lock",
       `# yarn lockfile v1\n\nexample@1.0.0:\n  version "1.0.0"\n  resolved "https://build-user:ghp_${"abcdef0123456789"}@registry.example.test/example.tgz"\n`,
     ],
     [
@@ -1243,8 +1292,8 @@ process.stdout.write(String(uid) + "\\n");
     },
   );
 
-  it.each(["old-gnu", "pax", "global-pax"] as const)(
-    "rejects a %s sparse archive before inspection or publication",
+  it.each(["old-gnu", "pax", "global-pax", "global-pax-credential"] as const)(
+    "rejects a %s archive before inspection or publication",
     (kind) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-sparse-"));
       const oldPath = process.env.PATH;
@@ -1261,22 +1310,11 @@ process.stdout.write(String(uid) + "\\n");
         expect(systemTar).not.toBe("");
         fs.mkdirSync(binDir, { recursive: true });
         fs.mkdirSync(nativeRoot, { recursive: true });
-        fs.writeFileSync(craftedArchive, buildSparseTar(kind));
-        writeExecutable(
-          path.join(binDir, "tar"),
-          `#!/usr/bin/env node
-const fs = require("node:fs");
-const { spawnSync } = require("node:child_process");
-const args = process.argv.slice(2);
-fs.appendFileSync(process.env.NEMOCLAW_TEST_TAR_LOG, JSON.stringify(args) + "\\n");
-if (args.includes("-C")) {
-  process.stdout.write(fs.readFileSync(process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE));
-  process.exit(0);
-}
-const result = spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
-process.exit(result.status ?? 90);
-`,
+        fs.writeFileSync(
+          craftedArchive,
+          kind === "global-pax-credential" ? buildGlobalPaxCredentialTar() : buildSparseTar(kind),
         );
+        writeCraftedCaptureTar(binDir, systemTar, kind === "global-pax-credential");
         process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
         process.env.NEMOCLAW_TEST_TAR_LOG = tarLog;
         process.env.PATH = `${binDir}:${oldPath ?? ""}`;
@@ -1291,7 +1329,11 @@ process.exit(result.status ?? 90);
         });
 
         expect(backup.success).toBe(false);
-        expect(backup.error).toContain("native state sparse archive entry");
+        expect(backup.error).toContain(
+          kind === "global-pax-credential"
+            ? "credential-bearing or uninspectable content at 'workspace/.env'"
+            : "native state sparse archive entry",
+        );
         const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
         expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);
       } finally {
@@ -1321,21 +1363,7 @@ process.exit(result.status ?? 90);
       fs.mkdirSync(nativeRoot, { recursive: true });
       fs.writeFileSync(path.join(nativeRoot, "original.txt"), "payload");
       fs.writeFileSync(craftedArchive, buildSymlinkCredentialTraversalTar());
-      writeExecutable(
-        path.join(binDir, "tar"),
-        `#!/usr/bin/env node
-const fs = require("node:fs");
-const { spawnSync } = require("node:child_process");
-const args = process.argv.slice(2);
-fs.appendFileSync(process.env.NEMOCLAW_TEST_TAR_LOG, JSON.stringify(args) + "\\n");
-if (args.includes("-C")) {
-  process.stdout.write(fs.readFileSync(process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE));
-  process.exit(0);
-}
-const result = spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
-process.exit(result.status ?? 90);
-`,
-      );
+      writeCraftedCaptureTar(binDir, systemTar);
       process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
       process.env.NEMOCLAW_TEST_TAR_LOG = tarLog;
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
@@ -1391,15 +1419,7 @@ process.exit(result.status ?? 90);
         },
       });
       expect(backup.success, backup.error).toBe(true);
-      const archivePath = path.join(backup.manifest!.backupPath, "native-home.tar");
-      const archive = buildSymlinkTraversalTar();
-      fs.writeFileSync(archivePath, archive);
-      const manifestPath = path.join(backup.manifest!.backupPath, "rebuild-manifest.json");
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
-        nativeState: { sha256: string };
-      };
-      manifest.nativeState.sha256 = createHash("sha256").update(archive).digest("hex");
-      fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      replacePublishedNativeArchive(backup.manifest!.backupPath, buildSymlinkTraversalTar());
 
       const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
 
@@ -1413,6 +1433,43 @@ process.exit(result.status ?? 90);
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
       restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
       restoreEnv("NEMOCLAW_TEST_SSH_COMMAND_LOG", oldCommandLog);
+      restoreEnv("PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a native archive with more than 65,536 valid members", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-many-members-"));
+    const oldPath = process.env.PATH;
+    const oldCraftedArchive = process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const nativeRoot = path.join(fixture, "native-home");
+      const craftedArchive = path.join(fixture, "many-members.tar");
+      const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(systemTar).not.toBe("");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(nativeRoot, { recursive: true });
+      fs.writeFileSync(craftedArchive, buildManyMembersTar(65_537));
+      writeCraftedCaptureTar(binDir, systemTar);
+      process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+      writeSandboxRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: () => undefined,
+        },
+      });
+
+      expect(backup.success, backup.error).toBe(true);
+      expect(backup.nativeArchiveCounts).toEqual({ directories: 0, files: 65_537 });
+    } finally {
+      restoreEnv("NEMOCLAW_TEST_CRAFTED_ARCHIVE", oldCraftedArchive);
       restoreEnv("PATH", oldPath);
       fs.rmSync(fixture, { recursive: true, force: true });
     }

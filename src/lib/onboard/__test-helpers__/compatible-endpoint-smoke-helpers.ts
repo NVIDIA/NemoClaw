@@ -169,6 +169,13 @@ export function runProviderNeutralScript(options: {
   denialBytes?: readonly number[];
   denialOversized?: boolean;
   directError?: "connection-refused" | "dns" | "timeout";
+  directAddresses?: readonly string[];
+  directOutcomes?: Readonly<
+    Record<
+      string,
+      "connection-refused" | "network-unreachable" | "host-unreachable" | "timeout" | "http-200"
+    >
+  >;
   managedProxyResponses?: unknown[];
   inferenceUrl?: string;
   expectedAuthorization?: string;
@@ -191,7 +198,7 @@ export function runProviderNeutralScript(options: {
   const prelude = `
 import atexit
 import errno
-import io
+import http.client
 import json
 import socket
 import time
@@ -204,9 +211,15 @@ managed_proxy_responses = json.loads(${JSON.stringify(
   )})
 managed_proxy_enabled = ${options.managedProxyResponses === undefined ? "False" : "True"}
 denial_bytes = ${denialBody}
+direct_addresses = json.loads(${JSON.stringify(
+    JSON.stringify(options.directAddresses ?? ["192.168.65.254"]),
+  )})
+direct_outcomes = json.loads(${JSON.stringify(JSON.stringify(options.directOutcomes ?? {}))})
 inference_request_tokens = []
 direct_request_count = []
 direct_request_urls = []
+direct_request_addresses = []
+direct_request_hosts = []
 managed_proxy_request_count = []
 managed_proxy_request_urls = []
 sleep_delays = []
@@ -216,6 +229,8 @@ def emit_request_evidence():
     print("INFERENCE_REQUEST_TOKENS=" + ",".join(str(value) for value in inference_request_tokens))
     print("DIRECT_REQUEST_COUNT=" + str(len(direct_request_count)))
     print("DIRECT_REQUEST_URLS=" + ",".join(direct_request_urls))
+    print("DIRECT_REQUEST_ADDRESSES=" + ",".join(direct_request_addresses))
+    print("DIRECT_REQUEST_HOSTS=" + ",".join(direct_request_hosts))
     print("MANAGED_PROXY_REQUEST_COUNT=" + str(len(managed_proxy_request_count)))
     print("MANAGED_PROXY_REQUEST_URLS=" + ",".join(managed_proxy_request_urls))
     print("SLEEP_DELAYS=" + ",".join(str(value) for value in sleep_delays))
@@ -236,6 +251,12 @@ class FakeResponse:
             return b"x" * (size if size >= 0 else 1048577)
         return self.payload if size < 0 else self.payload[:size]
 
+class FakeDirectResponse:
+    def __init__(self, status):
+        self.status = status
+    def read(self, size=-1):
+        return denial_bytes if size < 0 else denial_bytes[:size]
+
 class FakeOpener:
     def open(self, request, timeout):
         if request.full_url == ${JSON.stringify(options.inferenceUrl ?? "https://inference.local/v1/chat/completions")}:
@@ -246,22 +267,65 @@ class FakeOpener:
             inference_request_tokens.append(
                 request_data.get("max_tokens", request_data.get("max_completion_tokens"))
             )
+            if responses[0] == "__timeout__":
+                raise TimeoutError("timed out after %s seconds" % timeout)
+            if responses[0] == "__wrapped_timeout__":
+                raise urllib.error.URLError(TimeoutError("timed out after %s seconds" % timeout))
             return FakeResponse(200, responses.pop(0))
-        direct_request_count.append(1)
-        direct_request_urls.append(request.full_url)
-        if direct_error == "connection-refused":
-            raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
-        if direct_error == "dns":
-            raise urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "not known"))
-        if direct_error == "timeout":
-            raise urllib.error.URLError(TimeoutError("timed out"))
-        raise urllib.error.HTTPError(
-            request.full_url,
-            403,
-            "Forbidden",
-            {},
-            io.BytesIO(denial_bytes),
+        raise RuntimeError("unexpected direct request through inference opener")
+
+def fake_getaddrinfo(host, port, type=0):
+    if direct_error == "dns":
+        raise socket.gaierror(socket.EAI_NONAME, "not known")
+    return [
+        (
+            socket.AF_INET6 if ":" in address else socket.AF_INET,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            (address, port, 0, 0) if ":" in address else (address, port),
         )
+        for address in direct_addresses
+    ]
+
+class FakeSocket:
+    def __init__(self, family, type):
+        self.address = None
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+    def settimeout(self, timeout):
+        pass
+    def connect(self, sockaddr):
+        self.address = sockaddr[0]
+        direct_request_count.append(1)
+        direct_request_urls.append(direct_url)
+        direct_request_addresses.append(self.address)
+        outcome = direct_outcomes.get(self.address, direct_error)
+        if outcome == "connection-refused":
+            raise ConnectionRefusedError(errno.ECONNREFUSED, "refused")
+        if outcome == "network-unreachable":
+            raise OSError(errno.ENETUNREACH, "network unreachable")
+        if outcome == "host-unreachable":
+            raise OSError(errno.EHOSTUNREACH, "host unreachable")
+        if outcome == "timeout":
+            raise TimeoutError("timed out")
+
+class FakeHTTPConnection:
+    def __init__(self, host, port, timeout):
+        self.sock = None
+    def request(self, method, path, body, headers):
+        direct_request_hosts.append(headers.get("Host"))
+    def getresponse(self):
+        outcome = direct_outcomes.get(self.sock.address, direct_error)
+        return FakeDirectResponse(200 if outcome == "http-200" else 403)
+    def close(self):
+        pass
+
+socket.getaddrinfo = fake_getaddrinfo
+socket.socket = FakeSocket
+http.client.HTTPConnection = FakeHTTPConnection
 
 class ManagedProxyOpener:
     def open(self, request, timeout):
@@ -276,11 +340,7 @@ class ManagedProxyOpener:
         return FakeResponse(200, managed_proxy_responses.pop(0))
 
 def build_test_opener(*handlers):
-    proxy_disabled = any(
-        isinstance(handler, urllib.request.ProxyHandler) and handler.proxies == {}
-        for handler in handlers
-    )
-    if managed_proxy_enabled and not proxy_disabled:
+    if managed_proxy_enabled:
         return ManagedProxyOpener()
     return FakeOpener()
 

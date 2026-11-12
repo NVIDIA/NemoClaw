@@ -29,13 +29,22 @@ export interface StagedNativeLocalRecreation {
   attachment: import("../../inference/native-local/contract").NativeLocalProviderAttachment;
 }
 
+/** Prepared registry route carried across a published sandbox's pre-delete backup. */
+export type DeferredInferenceRouteReservation = Parameters<
+  typeof import("../../state/registry").reserveSandboxInferenceRoute
+>[1];
+
+export type DeferredInferenceRoute = (
+  reserve: (route?: DeferredInferenceRouteReservation) => void,
+) => Promise<void>;
+
 export type SetupInferenceResult =
   | {
       ok: true;
       retry?: undefined;
       nativeInference?: { endpointUrl: string; credentialEnv: string };
       stagedNativeLocalRecreation?: StagedNativeLocalRecreation;
-      deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+      deferredInferenceRoute?: DeferredInferenceRoute;
     }
   | { retry: "selection" };
 
@@ -313,27 +322,6 @@ export type OllamaDeps = CommonDeps & {
   };
   OLLAMA_PROXY_CREDENTIAL_ENV: string;
 };
-
-export type RoutedDeps = CommonDeps &
-  InferenceRouteMutationDeps & {
-    reconcileModelRouter: () => Promise<void>;
-    routedInference: {
-      upsertRoutedProvider(
-        provider: string,
-        endpointUrl: string | null,
-        credentialEnv: string | null,
-        helpers: {
-          upsertProvider: UpsertProvider;
-          hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
-        },
-      ):
-        | { ok: boolean; result: { message?: string; status?: number } }
-        | Promise<{ ok: boolean; result: { message?: string; status?: number } }>;
-    };
-    hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
-    redact: (input: string) => string;
-    compactText: (input: string) => string;
-  };
 
 export const REMOTE_PROVIDER_NAMES = [
   "nvidia-prod",

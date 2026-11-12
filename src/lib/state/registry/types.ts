@@ -154,6 +154,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   /** Exact selected fixed hosted provider identity; separate from gateway ownership. */
   nativeHostedProviderAttachment?: NativeProviderAttachment;
+  hermesSwitchyard?: import("../../hermes-switchyard-routing").SwitchyardBindingState;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */

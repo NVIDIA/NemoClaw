@@ -126,7 +126,6 @@ function createHarness(
     getSandbox: () => mocks.entry,
     isNonInteractive: () => true,
     providerExistsInGateway,
-    isRoutedInferenceProvider: () => false,
     replaceNamedCredential: vi.fn(),
   });
   const recoveryAuthority = vi.fn<() => "authorized" | "unauthorized">(() => "authorized");

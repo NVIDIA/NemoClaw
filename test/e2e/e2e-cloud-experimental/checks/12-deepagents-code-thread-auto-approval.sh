@@ -88,6 +88,120 @@ sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
+save_preferences_source() {
+  cat <<'PY'
+import hashlib
+from pathlib import Path
+import tomllib
+
+from deepagents_code.model_config import _save_toml_field
+
+path = Path("/sandbox/.deepagents/config.toml")
+original = path.read_text(encoding="utf-8")
+config = tomllib.loads(original)
+scrollbar = not config.get("ui", {}).get("show_scrollbar", False)
+# The earlier runtime checks may have already saved preferences. Add a comment
+# so this call must demonstrate the pinned writer's comment removal itself.
+path.write_text(original + "\n# NemoClaw preference rewrite probe\n", encoding="utf-8")
+assert _save_toml_field("ui", "show_scrollbar", scrollbar, path), "preference save failed"
+saved = path.read_text(encoding="utf-8")
+assert not any(line.lstrip().startswith("#") for line in saved.splitlines()), "comments survived"
+config.setdefault("ui", {})["show_scrollbar"] = scrollbar
+assert tomllib.loads(saved) == config, "preference save changed other native state"
+print(hashlib.sha256(path.read_bytes()).hexdigest())
+PY
+}
+
+saved_identity_source() {
+  cat <<'PY'
+import hashlib
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+import tomllib
+
+path = Path("/sandbox/.deepagents/config.toml")
+assert hashlib.sha256(path.read_bytes()).hexdigest() == sys.argv[1], "saved config changed"
+config = tomllib.loads(path.read_text(encoding="utf-8"))
+# This supported target uses NVIDIA hosted inference via compatible-endpoint.
+# Model and endpoint come from the saved native preferences, not metadata files.
+expected = {
+    "Route": "inference",
+    "Provider": "compatible-endpoint",
+    "Model": config["models"]["default"],
+    "Endpoint": config["models"]["providers"]["openai"]["base_url"],
+}
+assert os.getuid() != 0, "identity probe must run as the sandbox user"
+for name in ("dcode-provider-route", "dcode-upstream-provider"):
+    metadata = Path("/usr/local/share/nemoclaw") / name
+    posture = metadata.lstat()
+    assert stat.S_ISREG(posture.st_mode), f"{name} is not a regular file"
+    assert (posture.st_uid, posture.st_gid, stat.S_IMODE(posture.st_mode)) == (0, 0, 0o444), name
+    try:
+        descriptor = os.open(metadata, os.O_WRONLY)
+    except PermissionError:
+        pass
+    else:
+        os.close(descriptor)
+        raise AssertionError(f"sandbox user can write {name}")
+for alias in ("status", "whoami", "identity"):
+    result = subprocess.run(
+        ["/usr/local/bin/dcode", alias], check=True, capture_output=True, text=True, timeout=30,
+    )
+    fields = dict(line.split(":", 1) for line in result.stdout.splitlines() if ":" in line)
+    for field, value in expected.items():
+        assert fields.get(field, "").strip() == value, f"{alias} lost {field}"
+print("saved preferences and protected identity verified")
+PY
+}
+
+assert_saved_identity() {
+  local config_digest="$1"
+  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    /usr/bin/env HOME=/sandbox /opt/venv/bin/python3 -I -c "$(saved_identity_source)" "$config_digest" \
+    || fail "saved preferences or installed DCode identity failed verification"
+}
+
+native_state_digest_source() {
+  cat <<'PY'
+import hashlib
+from pathlib import Path
+import sqlite3
+import sys
+
+try:
+    root = Path(sys.argv[1]).resolve()
+    database = root / ".deepagents/.state/sessions.db"
+    digest = hashlib.sha256()
+    with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute("PRAGMA trusted_schema = OFF")
+        connection.execute("BEGIN")
+        has_rows = False
+        # Logical state includes committed WAL data without checkpointing the native database.
+        for line in connection.iterdump():
+            has_rows = has_rows or line.startswith("INSERT INTO")
+            digest.update((line + "\n").encode())
+        if not has_rows:
+            raise ValueError("conversation state is empty")
+    for name in (".nemoclaw-e2e-autorun-shell-1", ".nemoclaw-e2e-autorun-write",
+                 ".nemoclaw-e2e-autorun-shell-3"):
+        content = (root / name).read_bytes()
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    print(digest.hexdigest())
+except Exception:
+    raise SystemExit("could not inspect native conversation and workspace state") from None
+PY
+}
+
+native_state_digest() {
+  timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    /opt/venv/bin/python3 -I -c "$(native_state_digest_source)" /sandbox
+}
+
 export_baseline_registry_state() {
   SANDBOX_NAME="$SANDBOX_NAME" node - <<'NODE'
 const fs = require("node:fs");
@@ -371,6 +485,14 @@ main() {
   assert_default_denial_ignores_ambient_override
   pass "fresh sandbox denies auto-approval by trusted default and ignores ambient overrides"
 
+  local saved_config_digest
+  saved_config_digest="$(
+    openshell sandbox exec --name "$SANDBOX_NAME" -- \
+      /usr/bin/env HOME=/sandbox /opt/venv/bin/python3 -I -c "$(save_preferences_source)"
+  )" || fail "installed DCode could not save native preferences"
+  assert_saved_identity "$saved_config_digest"
+  pass "native preference save removes comments and preserves protected identity for every alias"
+
   local rebuild_output
   info "Enabling thread-opt-in through the named sandbox rebuild interface"
   rebuild_output="$(rebuild_named_sandbox thread-opt-in)" \
@@ -380,6 +502,9 @@ main() {
   assert_capability_projection thread-opt-in
   assert_status_mode thread-opt-in
   pass "named sandbox rebuild projects and reports thread-opt-in"
+
+  assert_saved_identity "$saved_config_digest"
+  pass "named rebuild restores saved preferences and preserves protected identity for every alias"
 
   local capture_dir marker_file
   capture_dir="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}.XXXXXX")"
@@ -399,19 +524,24 @@ main() {
   run_boundary_check "OpenShell network policy boundary" "$NETWORK_BOUNDARY_CHECK"
   run_boundary_check "managed credential boundary" "$CREDENTIAL_BOUNDARY_CHECK"
 
+  local state_before state_after
+  state_before="$(native_state_digest)" || fail "could not capture native state before revocation"
+  [[ "$state_before" =~ ^[a-f0-9]{64}$ ]] || fail "native state digest is missing or malformed"
   info "Disabling thread-opt-in through the named sandbox rebuild interface"
   rebuild_output="$(rebuild_named_sandbox disabled --no-observability)" \
     || fail "named sandbox rebuild could not restore the export baseline: $rebuild_output"
 
+  state_after="$(native_state_digest)" || fail "could not inspect native state after revocation"
+  [ "$state_after" = "$state_before" ] || fail "revocation changed conversation or workspace state"
   assert_capability_projection disabled
   assert_status_mode disabled
   assert_default_denial_ignores_ambient_override
   [ "$(export_baseline_registry_state)" = "disabled:disabled" ] \
     || fail "named sandbox rebuild did not restore retained approval and observability state"
   EXPORT_BASELINE_RECOVERY_ARMED=0
-  pass "named sandbox rebuild restores the disabled export baseline"
+  pass "named sandbox rebuild preserves native state and restores the disabled export baseline"
 
-  printf '%s: 6 passed, 0 failed\n' "$PREFIX"
+  printf '%s: 8 passed, 0 failed\n' "$PREFIX"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

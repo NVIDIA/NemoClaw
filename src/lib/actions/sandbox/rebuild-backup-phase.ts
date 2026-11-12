@@ -21,7 +21,12 @@ import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-valid
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
-import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
+import {
+  clearRebuildRecoveryBackup,
+  RebuildRecoveryMarkerSyncError,
+  recordRebuildRecoveryBackup,
+} from "./rebuild-recreate-journal";
+import { redactBoundedRebuildTerminalDiagnostic } from "./rebuild-preflight-confirmation";
 import {
   abortOpenClawPostRestoreDoctor,
   beginOpenClawBackupQuiesce,
@@ -83,9 +88,27 @@ export interface RebuildBackupPhaseResult {
 }
 
 export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRestoreDoctorWindow) {
-  const finished = await finishOpenClawBackupQuiesce(window);
+  let finished: Awaited<ReturnType<typeof finishOpenClawBackupQuiesce>>;
+  try {
+    finished = await finishOpenClawBackupQuiesce(window);
+  } catch (error) {
+    finished = {
+      ok: false,
+      stage: "release",
+      detail: redactBoundedRebuildTerminalDiagnostic(error),
+    };
+  }
   if (!finished.ok) {
-    const aborted = await abortOpenClawPostRestoreDoctor(window);
+    let aborted: Awaited<ReturnType<typeof abortOpenClawPostRestoreDoctor>>;
+    try {
+      aborted = await abortOpenClawPostRestoreDoctor(window);
+    } catch (error) {
+      aborted = {
+        ok: false,
+        stage: "abort",
+        detail: redactBoundedRebuildTerminalDiagnostic(error),
+      };
+    }
     const state = aborted.ok
       ? "The retained sandbox was stopped."
       : `Stopping or maintenance reconciliation was not fully verified (${aborted.detail}).`;
@@ -97,6 +120,61 @@ export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRes
     );
   }
   return finished;
+}
+
+/** A retained source may write again only after its old backup stops being recovery authority. */
+export async function releaseRebuildSourceAfterRecoveryMarker(
+  window: OpenClawPostRestoreDoctorWindow,
+  marker: Parameters<typeof clearRebuildRecoveryBackup>[0] | null,
+  release: typeof releaseRebuildSourceOpenClawWindow,
+): Promise<{ ok: boolean; markerInvalidated: boolean; detail?: string; error?: unknown }> {
+  if (marker) {
+    try {
+      clearRebuildRecoveryBackup(marker);
+    } catch (error) {
+      const markerRemoved = error instanceof RebuildRecoveryMarkerSyncError;
+      console.error(
+        markerRemoved
+          ? `  Warning: source maintenance cleanup failed after the marker was removed; its directory could not be synchronized: ${redactBoundedRebuildTerminalDiagnostic(error)}`
+          : `  Warning: the retained backup recovery marker could not be invalidated before source release: ${redactBoundedRebuildTerminalDiagnostic(error)}`,
+      );
+      try {
+        const stopped = await abortOpenClawPostRestoreDoctor(window);
+        console.error(
+          stopped.ok
+            ? "  The retained source remains stopped; preserve its backup and recovery files."
+            : `  The retained source stop could not be verified (${stopped.stage}: ${stopped.detail}). Preserve its backup and recovery files.`,
+        );
+      } catch (abortError) {
+        console.error(
+          `  The retained source stop could not be verified (${redactBoundedRebuildTerminalDiagnostic(abortError)}). Preserve its backup and recovery files.`,
+        );
+      }
+      return {
+        ok: false,
+        markerInvalidated: markerRemoved,
+        detail: markerRemoved
+          ? "Rebuild recovery marker was removed without confirmed directory synchronization; the source was not reopened."
+          : "Rebuild recovery marker remained active; the source was not reopened.",
+      };
+    }
+  }
+  try {
+    const released = await release(window);
+    return released.ok
+      ? { ok: true, markerInvalidated: true }
+      : {
+          ok: false,
+          markerInvalidated: true,
+          detail: "OpenClaw source maintenance cleanup did not complete.",
+        };
+  } catch (error) {
+    return {
+      ok: false,
+      markerInvalidated: true,
+      error,
+    };
+  }
 }
 
 export function retireRebuildSourceOpenClawWindowForDelete(
