@@ -99,6 +99,11 @@ after the initial attempt; record the initial attempt under its own budget key.
 Use candidate/workflow/failure-class keys for retries and different keys for baseline comparisons.
 Keep those keys and spent counts across compaction and handoff. Repair deterministic defects before rerunning;
 do not spend a transient retry on unchanged broken code or reset its allowance by renaming the key.
+A new budget key requires additional authorization evidence appended to `authorization` on a new line.
+Preserve the prior authorization text. Cite the existing task authority or a later user decision that covers the distinct allowance.
+A new key must not rename a spent allowance. A new candidate, workflow, or failure class may need a distinct authorized key;
+record why its allowance is separate. This does not require renewed user approval when existing task authority covers that work.
+The helper requires this explicit record transition; it does not authenticate the evidence or authorize the action.
 Persist the intent before executing it. A pending intent already consumes its budget, including after interruption.
 After reading external state, change the entry to `observed` and record the evidence location in `observation`.
 An observed failure is not a successful result; the owning publication or execution contract decides what follows.

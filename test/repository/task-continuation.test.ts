@@ -260,6 +260,70 @@ describe("task checkpoint recovery", () => {
     expect(() => saveCheckpoint(file, retry, 1, state.owner)).toThrow(/budget exhausted/);
   });
 
+  it("rejects renamed retry budgets without additional authorization evidence", () => {
+    const { file, state } = fixture();
+    state.revision = 1;
+    state.operations.push({
+      id: "retry-1",
+      action: "Retry CI for candidate-a",
+      budget: "candidate-a/ci/transient",
+      state: "pending",
+      observation: "",
+    });
+    saveCheckpoint(file, state, 0, state.owner);
+    state.revision = 2;
+    state.operations[0]!.state = "observed";
+    state.operations[0]!.observation = "Retry completed";
+    saveCheckpoint(file, state, 1, state.owner);
+
+    const renamed = structuredClone(state);
+    renamed.revision++;
+    renamed.limits["candidate-a/ci/transient-renamed"] = 1;
+    renamed.operations.push({
+      ...state.operations[0]!,
+      id: "retry-2",
+      budget: "candidate-a/ci/transient-renamed",
+      state: "pending",
+      observation: "",
+    });
+    expect(() => saveCheckpoint(file, renamed, 2, state.owner)).toThrow(/authorization evidence/);
+    renamed.authorization += "\n   ";
+    expect(() => saveCheckpoint(file, renamed, 2, state.owner)).toThrow(/authorization evidence/);
+    expect(readCheckpoint(file)).toEqual(state);
+    expect(resumeCheckpoint(file).usage["candidate-a/ci/transient"]).toBe(1);
+  });
+
+  it("retains spent budgets when recorded authorization covers a new candidate allowance", () => {
+    const { file, state } = fixture();
+    state.revision = 1;
+    state.operations.push({
+      id: "retry-1",
+      action: "Retry CI for candidate-a",
+      budget: "candidate-a/ci/transient",
+      state: "pending",
+      observation: "",
+    });
+    saveCheckpoint(file, state, 0, state.owner);
+    state.revision = 2;
+    state.operations[0]!.state = "observed";
+    state.operations[0]!.observation = "Retry completed";
+    saveCheckpoint(file, state, 1, state.owner);
+    const next = structuredClone(state);
+    next.revision++;
+    next.identities.candidate = "candidate-b";
+    next.limits["candidate-b/ci/transient"] = 1;
+    next.authorization +=
+      "\nThe existing task authorizes one transient CI retry for the repaired candidate-b; see the recorded task request.";
+    saveCheckpoint(file, next, 2, state.owner);
+    expect(readCheckpoint(file).limits).toEqual({
+      ...state.limits,
+      "candidate-b/ci/transient": 1,
+    });
+    expect(readCheckpoint(file).authorization).toBe(next.authorization);
+    expect(resumeCheckpoint(file).usage["candidate-a/ci/transient"]).toBe(1);
+    expect(resumeCheckpoint(file).usage["candidate-b/ci/transient"]).toBe(0);
+  });
+
   it("rejects stale writers and leaves the last valid checkpoint intact", () => {
     const { file, state } = fixture();
     const previous = readFileSync(file, "utf8");

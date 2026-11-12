@@ -132,6 +132,17 @@ function checkTransition(previous: Checkpoint, next: Checkpoint, owner: string):
     throw new Error("Checkpoint owner differs; reconcile ownership before writing");
   if (next.owner !== owner && (!next.handoff || next.handoff === previous.handoff))
     throw new Error("Record a fresh receiving-owner acknowledgement for handoff");
+  const addedBudgets = Object.keys(next.limits).filter(
+    (key) => !Object.hasOwn(previous.limits, key),
+  );
+  if (addedBudgets.length) {
+    const authorizationPrefix = `${previous.authorization}\n`;
+    if (
+      !next.authorization.startsWith(authorizationPrefix) ||
+      !next.authorization.slice(authorizationPrefix.length).trim()
+    )
+      throw new Error("Record additional authorization evidence before adding budget keys");
+  }
   for (const [key, limit] of Object.entries(previous.limits)) {
     if (next.limits[key] !== limit)
       throw new Error("Existing budgets cannot be reset or increased");
