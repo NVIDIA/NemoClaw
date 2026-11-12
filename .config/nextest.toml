@@ -96,14 +96,14 @@ filter = 'test(/^hcl_integration::/)'
 test-group = "hcl-integration"
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
 # images and owned inputs these tests read. The Docker tests share one engine,
-# so they run one at a time.
+# so they run one at a time; the offline runtime rebuild uses no engine and
+# compiles alongside them.
 [profile.live-docker]
 inherits = "ci"
 test-threads = 2
 slow-timeout = { period = "180s", terminate-after = 2 }
 default-filter = '''
-(package(nemoclaw-build) & (test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core)
-    | test(a_new_supervisor_archive_cannot_reuse_an_older_runtime)))
+(package(nemoclaw-build) & test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core))
 | (package(nemoclaw-e2e) & binary(=e2e) & (
     test(=hcl_live::case)
 ))
