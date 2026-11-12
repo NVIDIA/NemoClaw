@@ -140,8 +140,11 @@ export function canonicaliseHost(value: string): string | null {
     }
     return null;
   }
-  if (!HOSTNAME_PATTERN.test(remapped)) return null;
-  return remapped;
+  // A scoped subdomain wildcard (`*.example.com`) is a valid policy host.
+  // Reduce it to the domain it covers so the internal-host checks still apply.
+  const stem = remapped.startsWith("*.") ? remapped.slice(2) : remapped;
+  if (!HOSTNAME_PATTERN.test(stem)) return null;
+  return stem;
 }
 
 function looksLikeInternalIPv4(host: string): boolean {
