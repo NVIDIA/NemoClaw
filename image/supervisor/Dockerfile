@@ -29,8 +29,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
       | gzip -n > /out/supervisor-source.tar.gz
 
 # Compile exactly the retained archive, offline, from its vendored sources.
-# Fixed archive mtimes can make Cargo reuse an older binary in a shared target
-# cache. Keep compiled artifacts in the layer, cached by the archive's content.
 FROM ${RUST_IMAGE} AS build
 COPY --from=source /out/supervisor-source.tar.gz /out/supervisor-source.tar.gz
 RUN set -eu; \
