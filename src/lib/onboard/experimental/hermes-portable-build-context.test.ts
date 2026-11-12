@@ -12,6 +12,10 @@ import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import { ROOT } from "../../runner";
 import { createHermesPortableBuildContextPlan } from "./hermes-portable-build-context";
 import { HERMES_PORTABLE_BUILD_CONTEXT_FILES } from "./hermes-portable-build-context-files";
+import {
+  cleanupEmulatePrivateSourceAncestor,
+  emulatePrivateSourceAncestor,
+} from "./__test-helpers__/emulate-private-source";
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 const CREATE_INTENT = "a".repeat(64);
@@ -23,22 +27,6 @@ const BUILD_SETTINGS = {
 } as const;
 
 let stateDir: string;
-
-function emulatePrivateSourceAncestor(): void {
-  const original = fs.lstatSync;
-  const sharedTemporaryRoots = new Set([path.resolve("/tmp"), fs.realpathSync("/tmp")]);
-  vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
-    const stat = original(target, options as never);
-    return sharedTemporaryRoots.has(path.resolve(String(target)))
-      ? new Proxy(stat, {
-          get(value, property) {
-            const mode = BigInt(Reflect.get(value, "mode", value));
-            return property === "mode" ? mode & ~0o22n : Reflect.get(value, property, value);
-          },
-        })
-      : stat;
-  }) as typeof fs.lstatSync);
-}
 
 function contextInput() {
   return {
@@ -102,7 +90,7 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    cleanupEmulatePrivateSourceAncestor();
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
 

@@ -1,0 +1,85 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+
+import { vi } from "vitest";
+
+import { ROOT } from "../../../runner";
+
+/**
+ * Emulate owner-only modes for the repository working tree and its ancestors,
+ * plus shared temp roots. This allows build-context tests to run on checkouts
+ * created under a permissive umask (e.g., 0002) without triggering group-
+ * writable authority failures.
+ *
+ * This helper installs `vi.spyOn` mocks on `fs.lstatSync`, `fs.openSync`,
+ * `fs.fstatSync`, and `fs.closeSync`, and tracks file descriptors opened under
+ * emulated ownership. Callers MUST invoke `cleanupEmulatePrivateSourceAncestor`
+ * in an `afterEach` hook so the spies and tracked descriptors do not leak into
+ * later tests; the tracked-descriptor set is cleared by the cleanup as well.
+ */
+const sharedTemporaryRoots = new Set<string>([path.resolve("/tmp")]);
+try {
+  sharedTemporaryRoots.add(fs.realpathSync("/tmp"));
+} catch {
+  // A sandboxed runner may not expose /tmp; the resolved path still matches.
+}
+const sourceRoot = path.resolve(ROOT);
+for (let directory = sourceRoot; ; directory = path.dirname(directory)) {
+  sharedTemporaryRoots.add(directory);
+  if (path.dirname(directory) === directory) break;
+}
+const maskedFds = new Set<number>();
+
+const emulateOwnerOnlyMode = (target: unknown): boolean => {
+  const resolved = path.resolve(String(target));
+  return (
+    sharedTemporaryRoots.has(resolved) || resolved.startsWith(`${sourceRoot}${path.sep}`)
+  );
+};
+const wrapStat = (stat: fs.Stats): fs.Stats =>
+  new Proxy(stat, {
+    get(value, property) {
+      if (property !== "mode") return Reflect.get(value, property, value);
+      const mode = Reflect.get(value, property, value);
+      // Preserve the original Stats.mode type. Consumers mix numeric masks
+      // (`mode & 0o022`) with bigint masks (`mode & 0o22n`), and coercing to
+      // bigint makes the numeric callers throw a TypeError.
+      return typeof mode === "bigint" ? mode & ~0o22n : (mode as number) & ~0o022;
+    },
+  });
+
+export function emulatePrivateSourceAncestor(): void {
+  const originalLstat = fs.lstatSync;
+  const originalFstat = fs.fstatSync;
+  const originalOpen = fs.openSync;
+  vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
+    const stat = originalLstat(target, options as never);
+    if (stat === undefined) return undefined;
+    return emulateOwnerOnlyMode(target) ? wrapStat(stat) : stat;
+  }) as typeof fs.lstatSync);
+  vi.spyOn(fs, "openSync").mockImplementation(((path_, flags, mode) => {
+    const fd = originalOpen(path_, flags, mode);
+    if (emulateOwnerOnlyMode(path_)) maskedFds.add(fd);
+    return fd;
+  }) as typeof fs.openSync);
+  vi.spyOn(fs, "fstatSync").mockImplementation(((fd, options) => {
+    const stat = originalFstat(fd, options as never);
+    return maskedFds.has(fd) ? wrapStat(stat) : stat;
+  }) as typeof fs.fstatSync);
+  const originalClose = fs.closeSync;
+  vi.spyOn(fs, "closeSync").mockImplementation(((fd) => {
+    maskedFds.delete(fd);
+    return originalClose(fd);
+  }) as typeof fs.closeSync);
+}
+
+/** Restore every mock via `vi.restoreAllMocks()`, which includes the fs spies
+ * installed here and any spies a caller installed in the same test, then clear
+ * the tracked file-descriptor set. Safe in an `afterEach` or `afterAll` hook. */
+export function cleanupEmulatePrivateSourceAncestor(): void {
+  vi.restoreAllMocks();
+  maskedFds.clear();
+}

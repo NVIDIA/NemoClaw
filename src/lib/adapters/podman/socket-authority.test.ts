@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -115,7 +116,7 @@ describe("Podman socket authority", () => {
   it.runIf(process.platform !== "win32")(
     "hardens the current-user socket directory without following unsafe parents (#8584)",
     async () => {
-      const root = fs.mkdtempSync(path.join(fs.realpathSync(process.cwd()), ".nc-p-"));
+      const root = fs.mkdtempSync(path.join(fs.realpathSync(os.homedir()), ".nc-p-"));
       const server = net.createServer();
       try {
         const socketDirectory = path.join(root, "p");

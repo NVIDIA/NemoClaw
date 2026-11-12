@@ -21,7 +21,7 @@ import type { StdioOptions } from "node:child_process";
 
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { isCredentialField } from "./credential-filter";
-import { redactUrlTokenFull, redactUrlTokenPartial } from "./redact-url";
+import { redactUrlTokenEndpointOnly, redactUrlTokenFull, redactUrlTokenPartial } from "./redact-url";
 import {
   CONTEXT_PATTERNS,
   SECRET_BLOCK_PATTERNS,
@@ -199,6 +199,19 @@ export function redactFull(text: string): string {
 /** Fully redact secret patterns and credentials embedded in URL tokens. */
 export function redactFullWithUrls(text: string): string {
   const redactedUrls = replaceUrlTokens(text, (url) => redactUrl(url) ?? "<REDACTED>");
+  return redactFull(redactedUrls);
+}
+
+/**
+ * Like `redactFullWithUrls`, but fail closed to the scheme/host/port endpoint
+ * when a URL's path or query cannot be classified as credential-free. Used for
+ * migration previews, where an opaque credential-shaped segment must never be
+ * shown verbatim.
+ */
+export function redactFullWithUrlsEndpointOnly(text: string): string {
+  const redactedUrls = replaceUrlTokens(text, (url) =>
+    redactUrlTokenEndpointOnly(url, isSensitiveKey, redactStandaloneSecrets),
+  );
   return redactFull(redactedUrls);
 }
 
