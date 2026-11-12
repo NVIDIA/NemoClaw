@@ -11,6 +11,75 @@ import { collectInferenceChecks, collectManagedLlamaCppDoctorChecks } from "./do
 import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import { verifyRegisteredInferenceProviderAttachment } from "../../inference/config";
 
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import { resolveSandboxInferenceInvocationEndpoint } from "./inference-invocation-probe";
+
+describe("native local provider doctor", () => {
+  it.each([
+    { api: undefined, suffix: "chat/completions" },
+    { api: "openai-responses" as const, suffix: "responses" },
+  ])("probes the verified $api attachment through $suffix", async ({ api, suffix }) => {
+    const binding = {
+      provider: "compatible-endpoint",
+      agent: "hermes" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      api,
+      gatewayName: "selected-gateway",
+      sandboxName: "alpha",
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "provider-id",
+    };
+    const verify = vi.fn(async () => {});
+    const probe = vi.fn(
+      async (input: Parameters<typeof resolveSandboxInferenceInvocationEndpoint>[0]) => {
+        expect(verify).toHaveBeenCalledWith({
+          sandboxName: "alpha",
+          gatewayName: binding.gatewayName,
+          expected: attachment,
+        });
+        expect(resolveSandboxInferenceInvocationEndpoint(input)).toBe(
+          `${binding.endpointUrl}/${suffix}`,
+        );
+        return { ok: true as const };
+      },
+    );
+    const route = {
+      provider: binding.provider,
+      model: "selected-model",
+      agentName: binding.agent,
+      preferredInferenceApi: api === "openai-responses" ? "openai-completions" : "openai-responses",
+      nativeLocalProviderAttachment: attachment,
+    };
+    const deps = {
+      gatewayName: binding.gatewayName,
+      verifyNativeLocalStatusAttachmentImpl: verify,
+      nativeLocalInvocationProbe: probe,
+      probeProviderHealthImpl: () => null,
+      includeServingProcessCheck: false,
+    };
+    expect(await collectInferenceChecks("alpha", route, true, deps)).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native local)", status: "ok" }),
+    );
+    expect(probe).toHaveBeenCalledOnce();
+    probe.mockClear();
+    verify.mockRejectedValueOnce(new Error("Attachment changed"));
+    expect(await collectInferenceChecks("alpha", route, true, deps)).toContainEqual(
+      expect.objectContaining({
+        label: "Inference route (native local)",
+        status: "fail",
+        detail: "Attachment changed",
+      }),
+    );
+    expect(probe).not.toHaveBeenCalled();
+  });
+});
+
 const endpoint = "https://inference.local/v1/models";
 
 describe("registered provider doctor", () => {

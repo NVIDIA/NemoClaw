@@ -19,6 +19,41 @@ import {
 } from "./inference-route-health";
 
 describe("sandbox inference route health", () => {
+  it.each([
+    { api: undefined, suffix: "chat/completions" },
+    { api: "openai-completions", suffix: "chat/completions" },
+    { api: "openai-responses", suffix: "responses" },
+  ])("reports the local $api request endpoint as $suffix", ({ api, suffix }) => {
+    const endpoint = "http://host.openshell.internal:8000/v1";
+    const context = {
+      provider: "compatible-endpoint",
+      nativeLocalEndpoint: endpoint,
+      preferredInferenceApi: api,
+    };
+    expect(buildSandboxInferenceRouteHealth(null, null, { ok: true }, context)).toMatchObject({
+      ok: true,
+      endpoint: `${endpoint}/${suffix}`,
+    });
+    expect(buildSandboxInferenceRouteHealth(null, null, null, context)).toMatchObject({
+      ok: false,
+      probed: false,
+      endpoint: `${endpoint}/${suffix}`,
+    });
+    expect(
+      buildSandboxInferenceRouteHealth(
+        null,
+        null,
+        {
+          ok: false,
+          detail: "request failed",
+          httpStatus: null,
+          endpoint: "http://observed.invalid/failure",
+        },
+        context,
+      ),
+    ).toMatchObject({ ok: false, endpoint: "http://observed.invalid/failure" });
+  });
+
   const makeExecutor = (
     stdout: string,
     status = 0,

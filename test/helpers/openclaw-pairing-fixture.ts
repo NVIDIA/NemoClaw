@@ -137,7 +137,7 @@ operator = {
 connection.execute(
   'INSERT INTO device_pairing_paired VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   (
-    value['deviceId'], value['publicKey'], None, None, None, None, 'cli', 'cli', None,
+    value['deviceId'], value['publicKey'], None, None, None, None, value.get('clientId', 'cli'), value.get('clientMode', 'cli'), None,
     'operator', json.dumps(['operator']), json.dumps(value['pairedScopes']),
     json.dumps(value['pairedScopes']), None, json.dumps(operator), None, None, None,
     1, 1, None, None,

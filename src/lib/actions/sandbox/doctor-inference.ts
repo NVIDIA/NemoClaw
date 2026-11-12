@@ -187,7 +187,10 @@ async function collectNativeLocalRouteProbe(
   deps: DoctorInferenceDeps,
 ): Promise<ProviderHealthStatus> {
   const expected = normalizeNativeLocalProviderAttachment(route.nativeLocalProviderAttachment);
-  const endpoint = expected ? `${expected.endpointUrl}/chat/completions` : "";
+  const api = expected?.api ?? "openai-completions";
+  const endpoint = expected
+    ? `${expected.endpointUrl}/${api === "openai-responses" ? "responses" : "chat/completions"}`
+    : "";
   if (!sandboxReachable) {
     return {
       ok: false,
@@ -210,7 +213,7 @@ async function collectNativeLocalRouteProbe(
       gatewayName: deps.gatewayName,
       provider: route.provider!,
       model: route.model!,
-      preferredInferenceApi: "openai-completions",
+      preferredInferenceApi: api,
       nativeLocalProviderAttachment: expected,
       agentName: route.agentName,
     });
