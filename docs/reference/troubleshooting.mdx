@@ -2228,6 +2228,12 @@ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
 $$nemoclaw onboard
 ```
 
+For shared inference routes that send this setting to OpenShell, the rounded value must be from `1` through `3600` seconds.
+Unset, empty, nonnumeric, nonfinite, and negative values use the 180-second default.
+For these shared-route providers, rebuild rejects an out-of-range value before backup or source-sandbox deletion, even when the existing route could be reused.
+Choose a value within that range or unset the variable before retrying rebuild.
+Native-provider paths and providers that never send this route timeout retain their behavior.
+
 For local Ollama and vLLM, onboarding retries the container reachability check and can fall back to the host-side health check when the local backend is healthy. If Ollama times out during a cold model load, NemoClaw retries once with a 300-second probe budget before failing. If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
 
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` covers the inference-server validation probe and each request of the native local or provider-neutral inference check that onboarding and rebuild run inside the sandbox, with a 60-second minimum for that check. The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); refer to [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.

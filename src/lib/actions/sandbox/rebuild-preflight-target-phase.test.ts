@@ -4,9 +4,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { nativeProviderRebuildScenario } from "./rebuild-flow-test-fixtures";
 import { blockRebuildOnLegacySharedLocalRoute } from "./rebuild-preflight-phase";
 
 import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
+import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
+import {
+  createRebuildFlowHarness,
+  installRebuildFlowTestHooks,
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import type {
   ProviderRecoveryReceipt,
   RegistryInferenceRoute,
@@ -26,6 +33,71 @@ const originalOpenShellEnv = {
   OPENSHELL_TOKEN: process.env.OPENSHELL_TOKEN,
   OPENSHELL_WORKSPACE: process.env.OPENSHELL_WORKSPACE,
 };
+
+describe("rebuild inference route timeout", () => {
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
+  afterEach(() => vi.unstubAllEnvs());
+
+  function createCompatibleRebuild(messaging: boolean) {
+    const plan = makeMessagingPlan({
+      sandboxName: "alpha",
+      channels: messaging ? ["telegram"] : [],
+    });
+    return createRebuildFlowHarness({
+      sandboxEntry: {
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "test/model",
+        endpointUrl: "http://localhost:11434/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      buildMessagingRebuildPlan: () => plan,
+    });
+  }
+
+  it.each([
+    { timeout: "0", messaging: true },
+    { timeout: "3601", messaging: true },
+    { timeout: "7200", messaging: false },
+  ])(
+    "rejects $timeout before deletion (messaging=$messaging) (#13931)",
+    async ({ timeout, messaging }) => {
+      vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", timeout);
+      const harness = createCompatibleRebuild(messaging);
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT must be from 1 to 3600 seconds");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["messaging refresh at 3600", "3600", () => createCompatibleRebuild(true)],
+    [
+      "unused provider timeout",
+      "7200",
+      () => createRebuildFlowHarness({ sandboxEntry: { provider: "build" } }),
+    ],
+    [
+      "native hosted timeout",
+      "7200",
+      () =>
+        createRebuildFlowHarness(nativeProviderRebuildScenario(false, "openrouter-api").overrides),
+    ],
+  ] as const)("allows %s (#13931)", async (_scenario, timeout, createHarness) => {
+    vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", timeout);
+    const harness = createHarness();
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+  });
+});
 
 afterEach(() => {
   restoreEnvBulk(originalOpenShellEnv);

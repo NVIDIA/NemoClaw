@@ -1,6 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isBedrockRuntimeEndpoint } from "../../inference/bedrock-runtime";
+import {
+  isPersistedPiSharedLocalInferenceRoute,
+  usesNativeLocalInferenceForAgent,
+} from "../../inference/native-local/eligibility";
+import { fixedNativeProvider } from "../../inference/native-provider/fixed";
+import { usesCustomNativeOnboarding } from "../../inference/native-provider/custom-setup";
+import { localInferenceRouteTimeoutError } from "../../onboard/local-inference-route";
+import type { RebuildTargetConfig } from "./rebuild-target-config";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import {
   isN1xManagedVllmProviderModel,
@@ -172,4 +181,45 @@ export function hydrateMessagingConfigForRebuild(
   if (hydratedMessagingConfig) {
     log(`Stashed messaging config for rebuild: ${Object.keys(hydratedMessagingConfig).join(",")}`);
   }
+}
+
+/** Reject invalid shared-route timeouts before backup or source deletion. */
+export function rebuildInferenceRouteTimeoutError(
+  target: RebuildTargetConfig,
+  sandboxEntry: RebuildSandboxEntry,
+): string | null {
+  const selection = target.resumeConfig;
+  const needsBedrockRuntimeAdapter =
+    selection.provider === "compatible-anthropic-endpoint" &&
+    isBedrockRuntimeEndpoint(selection.endpointUrl);
+  const rangeError = localInferenceRouteTimeoutError(
+    selection.provider,
+    needsBedrockRuntimeAdapter,
+  );
+  if (!rangeError) return null;
+
+  const agentName = selection.agent || "openclaw";
+  const nativeCustomSetup = usesCustomNativeOnboarding(
+    selection.provider,
+    selection.endpointUrl,
+    sandboxEntry.name,
+    sandboxEntry,
+  );
+  const selectsNativeLocal =
+    usesNativeLocalInferenceForAgent(
+      agentName,
+      selection.provider,
+      selection.endpointUrl,
+      Boolean(selection.nimContainer),
+    ) && !isPersistedPiSharedLocalInferenceRoute(sandboxEntry, selection);
+  if (
+    selection.nativeHostedProviderAttachment ||
+    selection.nativeLocalProviderAttachment ||
+    fixedNativeProvider(selection.provider) ||
+    nativeCustomSetup ||
+    selectsNativeLocal
+  )
+    return null;
+
+  return rangeError;
 }

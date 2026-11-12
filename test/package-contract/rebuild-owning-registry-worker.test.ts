@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import net, { type AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -142,8 +143,9 @@ function writeMissingSandboxOpenShell(home: string): string {
 function writeSiblingRegistry(
   home: string,
   entryOverrides: Readonly<Record<string, unknown>> = {},
+  gatewayPort = 9000,
 ): void {
-  const stateRoot = path.join(home, ".nemoclaw", "gateways", "9000");
+  const stateRoot = path.join(home, ".nemoclaw", "gateways", String(gatewayPort));
   fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   fs.writeFileSync(
     path.join(stateRoot, "sandboxes.json"),
@@ -156,8 +158,8 @@ function writeSiblingRegistry(
           model: "nvidia/nemotron",
           agent: "openclaw",
           dashboardPort: 18_789,
-          gatewayName: "nemoclaw-9000",
-          gatewayPort: 9000,
+          gatewayName: `nemoclaw-${String(gatewayPort)}`,
+          gatewayPort,
           ...entryOverrides,
         },
       },
@@ -166,7 +168,175 @@ function writeSiblingRegistry(
   );
 }
 
+function writeTimeoutPreflightRuntime(
+  home: string,
+  callsFile: string,
+  owningGatewayPort: number,
+  dashboardPort: number,
+) {
+  const imageId = `sha256:${"a".repeat(64)}`;
+  const image = `example.test/openclaw@${imageId}`;
+  const platform = `linux/${process.arch === "arm64" ? "arm64" : "amd64"}`;
+  const inspect = {
+    Id: imageId,
+    Os: "linux",
+    Architecture: platform.split("/")[1],
+    Config: {
+      User: "sandbox",
+      WorkingDir: "/sandbox",
+      Entrypoint: ["openclaw"],
+      Cmd: [],
+      Env: ["NEMOCLAW_AGENT=openclaw", "NEMOCLAW_TOOL_DISCLOSURE=progressive"],
+    },
+  };
+  const executable = path.join(home, "openshell");
+  fs.writeFileSync(
+    executable,
+    [
+      "#!/usr/bin/env node",
+      "// request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      "const args = process.argv.slice(2);",
+      `const gatewayPort = ${String(owningGatewayPort)};`,
+      "const tool = path.basename(process.argv[1]);",
+      `fs.appendFileSync(${JSON.stringify(callsFile)}, JSON.stringify({ tool, args, gateway: process.env.OPENSHELL_GATEWAY }) + "\\n");`,
+      'if (["brew", "curl"].includes(tool)) { console.error("Unexpected host tool: " + tool); process.exit(1); }',
+      'const command = args.filter((arg, i) => !["--gateway", "-g"].includes(arg) && !["--gateway", "-g"].includes(args[i - 1]));',
+      'const key = command.slice(0, 2).join(" ");',
+      `const image = ${JSON.stringify(inspect)};`,
+      'if (tool === "docker") {',
+      '  if (command[0] === "run" && command.at(-1) === "true") process.exit(0);',
+      `  if (command[0] === "run" && command.includes("nslookup")) { console.error("Server: 192.0.2.53\\n** server can't find " + command.at(-1) + ": NXDOMAIN"); process.exit(1); }`,
+      "  const responses = {",
+      '    "info --format": { ServerVersion: "29.2.1", Driver: "overlay2", OSType: "linux", OperatingSystem: process.platform === "darwin" ? "Docker Desktop" : "Ubuntu 24.04", Architecture: image.Architecture, NCPU: 4, MemTotal: 34359738368, Runtimes: { runc: {} } },',
+      '    "version --format": { Client: { Version: "29.2.1" }, Server: { Version: "29.2.1", Os: "linux", Arch: image.Architecture } },',
+      '    "image inspect": [image],',
+      '    "ps --format": "",',
+      '    "ps -a": "",',
+      '    "context show": "default",',
+      "  };",
+      '  if (command[0] === "inspect" && command.includes("--format")) {',
+      '    const format = command[command.indexOf("--format") + 1];',
+      '    console.log(format === "{{.State.Running}}" ? "true" : format.includes("Ports") ? JSON.stringify({ "8080/tcp": [{ HostPort: String(gatewayPort) }] }) : format.includes("Image") ? "openshell/cluster:0.0.116" : "{}");',
+      "  } else if (key in responses) {",
+      '    console.log(typeof responses[key] === "string" ? responses[key] : JSON.stringify(responses[key]));',
+      '  } else { console.error("Unexpected Docker fixture request: " + JSON.stringify(command)); process.exitCode = 1; }',
+      '} else if (command[0] === "--version" || command[0] === "-V") {',
+      '  console.log("openshell 0.0.116");',
+      '} else if (command[0] === "status") {',
+      "  console.log(`Gateway: nemoclaw-${gatewayPort}\\nStatus: Connected\\nServer: https://127.0.0.1:${gatewayPort}/`);",
+      '} else if (key === "gateway list") {',
+      "  console.log(JSON.stringify([{ name: `nemoclaw-${gatewayPort}`, endpoint: `https://127.0.0.1:${gatewayPort}`, active: true }]));",
+      '} else if (key === "gateway info") {',
+      "  console.log(`Gateway: nemoclaw-${gatewayPort}\\nGateway endpoint: https://127.0.0.1:${gatewayPort}`);",
+      '} else if (key === "forward list") {',
+      '  console.error("No active forwards.");',
+      '} else if (key === "provider get") {',
+      '  console.log("Name: compatible-endpoint\\nType: openai\\nCredential keys: COMPATIBLE_API_KEY\\nConfig keys: OPENAI_BASE_URL");',
+      '} else if (key === "provider list") {',
+      '  console.log(JSON.stringify([{ name: "compatible-endpoint", credential_keys: ["COMPATIBLE_API_KEY"] }]));',
+      '} else if (key === "sandbox get") {',
+      '  console.log(JSON.stringify({ name: "alpha", id: "sandbox-alpha", phase: "Ready" }));',
+      '} else if (key === "sandbox list") {',
+      '  console.log(JSON.stringify({ sandboxes: [{ name: "alpha", id: "sandbox-alpha", phase: "Ready" }] }));',
+      '} else if (key === "inference get") {',
+      '  console.log("Provider: compatible-endpoint\\nModel: test/model");',
+      '} else { console.error("Unexpected OpenShell fixture request: " + JSON.stringify(command)); process.exitCode = 1; }',
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.symlinkSync(executable, path.join(home, "docker"));
+  fs.symlinkSync(executable, path.join(home, "brew"));
+  fs.symlinkSync(executable, path.join(home, "curl"));
+  writeSiblingRegistry(
+    home,
+    {
+      provider: "compatible-endpoint",
+      model: "test/model",
+      endpointUrl: "http://localhost:11434/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      dashboardPort,
+      sandboxGpuMode: "0",
+      toolDisclosure: "progressive",
+      openshellDriver: "docker",
+      workload: {
+        schemaVersion: 1,
+        kind: "external-image",
+        reference: image,
+        platform,
+        runtimeImageContentId: imageId,
+        shared: true,
+      },
+    },
+    owningGatewayPort,
+  );
+  return executable;
+}
+
 describe("compiled rebuild owning-registry worker", () => {
+  it("rejects a delegated shared-route timeout before backup or source deletion", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-timeout-"));
+    const callsFile = path.join(home, "calls.jsonl");
+    const gateway = net.createServer((socket) => socket.end());
+    try {
+      await new Promise<void>((resolve, reject) => {
+        gateway.once("error", reject);
+        gateway.listen(0, "127.0.0.1", resolve);
+      });
+      const gatewayPort = (gateway.address() as AddressInfo).port;
+      const dashboard = net.createServer();
+      await new Promise<void>((resolve) => dashboard.listen(0, "127.0.0.1", resolve));
+      const dashboardPort = (dashboard.address() as AddressInfo).port;
+      await new Promise<void>((resolve) => dashboard.close(() => resolve()));
+      const executable = writeTimeoutPreflightRuntime(home, callsFile, gatewayPort, dashboardPort);
+      const stateDir = path.join(home, ".nemoclaw", "gateways", String(gatewayPort));
+      const registryFile = path.join(stateDir, "sandboxes.json");
+      const beforeRegistry = fs.readFileSync(registryFile, "utf8");
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("PATH", `${home}${path.delimiter}${process.env.PATH}`);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", executable);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_BIN", executable);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_SANDBOX_BIN", executable);
+      vi.stubEnv("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE", "1");
+      vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "3601");
+      vi.stubEnv("COMPATIBLE_API_KEY", "");
+      vi.stubEnv("HTTPS_PROXY", `http://127.0.0.1:${String(gatewayPort)}`);
+      const message = "NEMOCLAW_LOCAL_INFERENCE_TIMEOUT must be from 1 to 3600 seconds";
+
+      const failure = await rebuildOwningRegistryDependencies
+        .runWorker(
+          {
+            operation: "rebuild",
+            sandboxName: "alpha",
+            options: { yes: true },
+            executionOptions: {},
+          },
+          gatewayPort,
+          { timeoutMs: WORKER_FIXTURE_TIMEOUT_MS },
+        )
+        .catch((error: unknown) => error);
+      const calls = fs.readFileSync(callsFile, "utf8");
+      expect(failure, calls).toMatchObject({
+        message: expect.stringContaining(message),
+        cause: expect.objectContaining({
+          ok: false,
+          operation: "rebuild",
+          sandboxName: "alpha",
+          gatewayPort,
+          message: expect.stringContaining(message),
+        }),
+      });
+      expect(calls).not.toMatch(/"delete"|native-home\.tar|rebuild-backups/);
+      expect(fs.existsSync(path.join(stateDir, "rebuild-backups"))).toBe(false);
+      expect(fs.readFileSync(registryFile, "utf8")).toBe(beforeRegistry);
+    } finally {
+      await new Promise<void>((resolve) => gateway.close(() => resolve()));
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("executes the real pipeline and preserves its bounded failure", async () => {
     const expectedMessage = "toolDisclosure must be one of: progressive, direct.";
     let failure: unknown;
@@ -217,7 +387,7 @@ describe("compiled rebuild owning-registry worker", () => {
   });
 
   it.runIf(process.platform === "linux")(
-    "forwards only allowlisted credentials into the delegated rebuild consumer",
+    "forwards the route timeout and only allowlisted credentials into the delegated rebuild consumer",
     async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-credential-"));
       const marker = path.join(home, "credential-probe.json");
@@ -231,6 +401,8 @@ describe("compiled rebuild owning-registry worker", () => {
         vi.stubEnv("HOME", home);
         vi.stubEnv("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE", "1");
         vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", writeCredentialProbeOpenShell(home, marker));
+        vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "3601");
+        vi.stubEnv("NEMOCLAW_UNRELATED_SECRET", "must-not-cross-worker-boundary");
         vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "nvapi-worker-test-value");
         vi.stubEnv("OPENAI_API_KEY", "openai-unrelated-test-value");
         vi.stubEnv("UNRELATED_REBUILD_SECRET", "must-not-cross-worker-boundary");
@@ -263,6 +435,10 @@ describe("compiled rebuild owning-registry worker", () => {
           .split("\0");
 
         expect(workerEnvironment).toContain("NVIDIA_INFERENCE_API_KEY=nvapi-worker-test-value");
+        expect(workerEnvironment).toContain("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=3601");
+        expect(workerEnvironment).not.toContain(
+          "NEMOCLAW_UNRELATED_SECRET=must-not-cross-worker-boundary",
+        );
         expect(workerEnvironment).not.toContain("OPENAI_API_KEY=openai-unrelated-test-value");
         expect(workerEnvironment).not.toContain(
           "UNRELATED_REBUILD_SECRET=must-not-cross-worker-boundary",
