@@ -2456,6 +2456,12 @@ a custom, copied, or no-op adapter.
 
 ## Push and Manual PR E2E
 
+Manual PR candidate runs and exact-base comparison runs use separate workflow concurrency groups.
+New candidate runs can supersede older candidate runs for the same PR. They cannot cancel a baseline comparison.
+Baseline groups include the PR number and base commit and disable active-run cancellation.
+Check for an existing matching run before dispatch; concurrency groups do not provide an ordered queue for duplicate pending runs.
+Preserve both run IDs across handoffs and avoid overlapping shared-resource work when measuring runtime differences.
+
 The `token-rotation` target uses real OpenShell sandbox recreation with test messaging tokens
 and a local inference fixture. It leaves the default pre-recreation backup enabled and checks
 that `/sandbox/work/credential-preserve.txt` retains its contents after changing the Telegram
