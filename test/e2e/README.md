@@ -49,6 +49,14 @@ The packaged qualifier validates classification and separate token accounting be
 continues. This proves the successful entrypoint handoff, not OpenShell credential rewriting
 or real provider access. Container cleanup removes the fixture processes, placeholders, and
 routing files. The clean package probe still leaves its supervised gateway unchanged.
+Each routed-startup mode also checks the native client deadline and retry policy in isolated
+gateway-user processes with authenticated loopback providers. Efficient and capable answer streams
+emit one partial event after 20 seconds and then stall; the selected judge sends a delayed body
+prefix after response headers. Each call must fail at the unchanged 120-second client deadline, with scheduling tolerance,
+and make one attempt. Separate HTTP 503 cases require one failed attempt for each client role.
+The tests reject fallback calls, successful stream terminators after a partial failure, and native
+routing bypass. A separate process watchdog fails a hung probe; it cannot establish deadline success.
+The cases run concurrently in separate native processes and are removed with their owned container.
 `support/hermes-switchyard-upstream.test.ts` owns deterministic fixture authentication,
 per-client endpoint localization, and preservation of production judge selection and credentials.
 `test/agents/hermes/hermes-switchyard-package.test.ts`

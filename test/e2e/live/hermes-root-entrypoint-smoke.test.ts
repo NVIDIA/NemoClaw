@@ -10,6 +10,7 @@ import {
   hermesSwitchyardRoutedFixture,
 } from "../fixtures/hermes-switchyard-package.ts";
 import { captureHermesCrash, hermesCrashCaptureArgs } from "../fixtures/hermes-crash-capture.ts";
+import { hermesSwitchyardBoundsProbe } from "../fixtures/hermes-switchyard-bounds.ts";
 
 // real Docker/root-entrypoint smoke: it builds the Hermes image when no prebuilt
 // NEMOCLAW_HERMES_TEST_IMAGE is supplied, starts /usr/local/bin/nemoclaw-start
@@ -755,6 +756,8 @@ test.for(["reuse-capable", "dedicated"] as const)(
           "the packaged router classifies and answers through authenticated local fixtures",
           "the gateway reaches readiness as its gateway user with routing activation configured",
           "fixture providers use resolver placeholders and cannot contact external services",
+          "efficient, capable, and judge clients stop stalled response bodies at the production deadline without retrying",
+          "retryable provider failures make one attempt without fallback or a successful stream terminator",
         ],
       },
       async ({ containers, image, probe, runId }) => {
@@ -782,6 +785,19 @@ test.for(["reuse-capable", "dedicated"] as const)(
         await waitForHealth(probe, container);
         await assertGatewayProcess(probe, container);
         await expectContainerSh(probe, container, "switchyard-routed-startup", fixture.evidence);
+        const bounded = await probe.run(
+          [
+            "exec",
+            container,
+            "bash",
+            "-Eeuo",
+            "pipefail",
+            "-c",
+            hermesSwitchyardBoundsProbe(judgeMode),
+          ],
+          { artifactName: `switchyard-client-bounds-${judgeMode}`, timeoutMs: 165_000 },
+        );
+        expect(bounded.exitCode, resultText(bounded)).toBe(0);
       },
     );
   },

@@ -14,6 +14,80 @@ import {
   HERMES_SWITCHYARD_LOCAL_UPSTREAM,
   HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES,
 } from "../fixtures/hermes-switchyard-package.ts";
+import { hermesSwitchyardBoundsProbe } from "../fixtures/hermes-switchyard-bounds.ts";
+
+test.each(["reuse-capable", "dedicated"] as const)(
+  "%s bounds probe constructs valid isolated Python programs",
+  (judgeMode) => {
+    const program = hermesSwitchyardBoundsProbe(judgeMode).split("<<'PY'\n")[1].split("\nPY")[0];
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        String.raw`
+import ast
+import base64
+import sys
+tree = ast.parse(sys.stdin.read())
+assignment = next(node for node in tree.body if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Name) and target.id == 'worker' for target in node.targets))
+encoded = assignment.value.func.value.args[0].value
+compile(base64.b64decode(encoded), '<native-bounds-worker>', 'exec')
+`,
+      ],
+      { input: program, encoding: "utf8", timeout: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+  },
+);
+
+test.each(["retryable", "buffered-stall", "stream-stall"])(
+  "%s provider fault retains authenticated evidence and releases its server",
+  (fault) => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        HERMES_SWITCHYARD_LOCAL_UPSTREAM +
+          String.raw`
+import sys
+from tempfile import TemporaryDirectory
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+fault = sys.argv[1]
+streaming = fault == 'stream-stall'
+with TemporaryDirectory() as directory:
+    with LocalUpstream('efficient', Path(directory) / 'calls.jsonl',
+                       fault='retryable' if fault == 'retryable' else 'stall') as upstream:
+        request = Request(upstream.base_url + '/chat/completions',
+            data=json.dumps({'model': 'fixture-efficient', 'stream': streaming}).encode(),
+            headers={'authorization': 'Bearer xapp-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY'})
+        if fault == 'retryable':
+            try:
+                urlopen(request, timeout=2)
+                raise AssertionError('retryable fixture succeeded')
+            except HTTPError as error:
+                assert error.code == 503 and error.headers['retry-after'] == '0'
+        else:
+            with urlopen(request, timeout=2) as response:
+                if streaming:
+                    assert json.loads(response.readline().decode().removeprefix('data: '))['choices'][0]['delta']['content'] == 'partial'
+                else:
+                    assert response.read(1) == b' '
+                upstream.stopping.set()
+        assert len(upstream.calls) == 1 and len(upstream.faults) == 1
+        assert (Path(directory) / 'calls.jsonl').is_file()
+    assert not upstream.thread.is_alive()
+`,
+        fault,
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+  },
+);
 
 test.each(["reuse-capable", "dedicated"] as const)(
   "%s fixture localizes each production client without changing judge selection or credentials",
