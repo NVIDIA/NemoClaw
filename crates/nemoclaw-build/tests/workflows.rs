@@ -101,15 +101,16 @@ fn colossus_workflow() -> Value {
     .unwrap()
 }
 
-/// Manual v1 runs remain available; only smoke and Station also admit the
-/// temporary qualification branch. Station includes smoke in the same run.
+/// v1 pushes run Station; manual runs retain the temporary qualification branch.
 #[test]
-fn colossus_runs_are_manual_and_limit_temporary_branch_access() {
+fn colossus_runs_on_v1_pushes_and_limits_temporary_branch_access() {
     let workflow = colossus_workflow();
     let events = workflow["on"]
         .as_object()
         .expect("explicit workflow events");
-    assert_eq!(events.len(), 1, "the pilot runner takes manual runs only");
+    assert_eq!(events.len(), 2);
+    assert_eq!(events["push"]["branches"], serde_json::json!(["v1"]));
+    assert!(!events.contains_key("pull_request"));
     let suite = &workflow["on"]["workflow_dispatch"]["inputs"]["suite"];
     assert_eq!(suite["type"], "choice");
     assert_eq!(
@@ -129,28 +130,38 @@ fn colossus_runs_are_manual_and_limit_temporary_branch_access() {
             "(github.ref == 'refs/heads/v1' || github.ref == 'refs/heads/hple/dgx-station-reference-e2e')"
         };
         let selection = match name.as_str() {
-            "smoke" => "(inputs.suite == 'smoke' || inputs.suite == 'station')",
-            "station" => "inputs.suite == 'station' && needs.smoke.result == 'success'",
-            _ => "inputs.suite == 'bundle'",
+            "smoke" => {
+                "(github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'smoke' || inputs.suite == 'station')))"
+            }
+            "station" => {
+                "(github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.suite == 'station')) && needs.smoke.outputs.ready == 'true'"
+            }
+            _ => "github.event_name == 'workflow_dispatch' && inputs.suite == 'bundle'",
+        };
+        let prefix = if name == "station" {
+            "!cancelled() && "
+        } else {
+            ""
         };
         assert_eq!(
             job["if"],
-            format!(
-                "github.repository == 'NVIDIA/NemoClaw' && {reference} && github.event_name == 'workflow_dispatch' && {selection}"
-            ),
-            "only the intended manual branch and suite may execute {name}"
+            format!("{prefix}github.repository == 'NVIDIA/NemoClaw' && {reference} && {selection}"),
+            "only intended events and suites may execute {name}"
         );
     }
     assert_eq!(needs(&jobs["station"]), ["smoke"]);
     for name in ["smoke", "bundle"] {
         assert!(needs(&jobs[name]).is_empty(), "{name} runs independently");
     }
-    for name in ["smoke", "station"] {
-        assert!(
-            jobs[name]["continue-on-error"].is_null(),
-            "{name} failure must remain visible"
-        );
-    }
+    assert_eq!(jobs["smoke"]["continue-on-error"], true);
+    assert_eq!(
+        jobs["smoke"]["outputs"]["ready"],
+        "${{ steps.gpu.outcome == 'success' }}"
+    );
+    assert!(
+        jobs["station"]["continue-on-error"].is_null(),
+        "E2E failures must fail the lane"
+    );
     assert!(
         !workflow.to_string().contains("secrets"),
         "no secret references or inherited secrets"
@@ -180,6 +191,7 @@ fn colossus_smoke_checks_gpu_access_without_credentials() {
     assert!(steps[0]["uses"].is_null(), "no checkout or other actions");
     assert!(steps[0]["env"].is_null(), "no step environment variables");
     assert_eq!(steps[0]["shell"], "bash");
+    assert_eq!(steps[0]["id"], "gpu");
     assert_eq!(steps[0]["run"], "nvidia-smi");
 }
 
@@ -614,7 +626,13 @@ fn hcl_target_selection_preserves_rtx_and_bounds_station_qualification() {
             "",
             None,
         ),
-        ("dgx-station", "refs/heads/v1", "push", "", None),
+        (
+            "dgx-station",
+            "refs/heads/v1",
+            "push",
+            "",
+            Some("runner=colossus-gb300-pilot\nplatform=linux_arm64\n"),
+        ),
         (
             "dgx-station",
             "refs/heads/v1",

@@ -94,7 +94,7 @@ jobs:
             rtx-pro-6000) runner=linux-amd64-gpu-rtxpro6000-latest-1 platform=linux_amd64 ;;
             dgx-station)
               # Temporary PR #14356 qualification; revert this branch exception after the run.
-              [[ ( $GITHUB_REF == refs/heads/v1 || $GITHUB_REF == refs/heads/hple/dgx-station-reference-e2e ) && $GITHUB_EVENT_NAME == workflow_dispatch && -z $TESTS ]] || exit 1
+              [[ -z $TESTS && ( ( $GITHUB_REF == refs/heads/v1 && ( $GITHUB_EVENT_NAME == push || $GITHUB_EVENT_NAME == workflow_dispatch ) ) || ( $GITHUB_REF == refs/heads/hple/dgx-station-reference-e2e && $GITHUB_EVENT_NAME == workflow_dispatch ) ) ]] || exit 1
               runner=colossus-gb300-pilot platform=linux_arm64 ;;
             dgx-spark) echo 'DGX Spark is not qualified yet.' >&2; exit 1 ;;
             *) echo "Unknown target: $TARGET" >&2; exit 1 ;;
