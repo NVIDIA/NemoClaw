@@ -49,7 +49,7 @@ spec:
     assistant:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: fixture/agent@sha256:1d19a142c96ae1c19b60b7636e5af877f54a3138c11d6d6e23ef8b3ac849143e
+        ref: fixture/agent@sha256:98fd22f2ed8012e50d3dafc3d90b9717c75a8493ff1ba6045d88efb23ab189ba
       network:
         tier: isolated
       harness:
@@ -60,7 +60,7 @@ spec:
     researcher:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: fixture/agent@sha256:1d19a142c96ae1c19b60b7636e5af877f54a3138c11d6d6e23ef8b3ac849143e
+        ref: fixture/agent@sha256:98fd22f2ed8012e50d3dafc3d90b9717c75a8493ff1ba6045d88efb23ab189ba
       network:
         tier: isolated
       harness:

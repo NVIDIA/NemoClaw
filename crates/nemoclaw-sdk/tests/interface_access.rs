@@ -70,7 +70,7 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
                 interface: "dashboard".into(),
                 port: Some(18789),
                 token_path: Some(
-                    "/sandbox/artifacts/.fabric/openclaw/runtimes/rt-openclaw-1/interfaces/dashboard.token"
+                    "/sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/main/interfaces/dashboard.token"
                         .into()
                 ),
                     sign_in: SignIn::TokenInUrlFragment,
@@ -122,7 +122,12 @@ async fn an_agent_that_keeps_its_state_reports_its_token_without_a_runtime_id() 
         .iter()
         .find(|access| access.sandbox == "assistant")
         .unwrap();
-    assert_eq!(openclaw.token_path, None);
+    assert_eq!(
+        openclaw.token_path.as_deref(),
+        Some(
+            "/sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/main/interfaces/dashboard.token"
+        )
+    );
     // The terminal command names no token file, so it needs no runtime ID.
     assert_eq!(
         openclaw.terminal.as_deref(),

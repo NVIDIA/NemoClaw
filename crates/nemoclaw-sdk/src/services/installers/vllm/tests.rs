@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::{Service, arguments};
 use crate::config::{Document, ServiceDefinition};
-use nemoclaw_runtime::hardware::{Capacity, GIB};
+use nemoclaw_runtime::hardware::{Capacity, GIB, Gpu};
 
 fn service() -> Service {
     let mut document =
@@ -17,18 +17,23 @@ fn service() -> Service {
 #[test]
 fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
     let service = service();
-    let good = Capacity {
+    let mut good = Capacity {
         architecture: "arm64".into(),
-        gpu: "NVIDIA GB10".into(),
-        driver_major: 580,
-        compute_capability: 121,
-        gpu_memory: None,
         total: 121 * GIB,
         available: 116 * GIB,
         free: 110 * GIB,
         disk_free: 200 * GIB,
         foreign_gpu_processes: 0,
+        ..Default::default()
     };
+    good.set_gpus(vec![Gpu {
+        index: 0,
+        uuid: "GPU-00000000-0000-0000-0000-000000000000".into(),
+        name: "NVIDIA GB10".into(),
+        driver_major: 580,
+        compute_capability: 121,
+        memory: None,
+    }]);
     let download = service
         .recipe
         .as_ref()
@@ -53,9 +58,9 @@ fn capacity_rejects_unsafe_startup_without_allocating_host_memory() {
         match dimension {
             "memory" => bad.available = 60 * GIB,
             "disk" => bad.disk_free = 40 * GIB,
-            "gpu" => bad.gpu = "unknown".into(),
+            "gpu" => bad.gpus[0].name = "unknown".into(),
             "architecture" => bad.architecture = "amd64".into(),
-            "driver" => bad.driver_major = 570,
+            "driver" => bad.gpus[0].driver_major = 570,
             "reserve" => spec.memory.host_reserve_gib = 64,
             _ => unreachable!(),
         }
@@ -218,4 +223,92 @@ fn bearer_docker_install_requires_an_image_that_restricts_routes() {
             .image_labels
             .contains_key("org.nemoclaw.inference.routes")
     );
+}
+
+/// The value vLLM receives for `flag`.
+fn flag<'a>(arguments: &'a [String], flag: &str) -> &'a str {
+    let index = arguments
+        .iter()
+        .position(|argument| argument == flag)
+        .unwrap_or_else(|| panic!("{flag} is missing from {arguments:?}"));
+    &arguments[index + 1]
+}
+
+#[test]
+fn vllm_gets_the_parallel_layout_of_the_service_or_its_recipe() {
+    let layout = |service: &Service| {
+        let arguments = arguments::arguments(service, "/data/model", 121 * GIB).unwrap();
+        (
+            flag(&arguments, "--tensor-parallel-size").to_owned(),
+            flag(&arguments, "--pipeline-parallel-size").to_owned(),
+        )
+    };
+    let mut service = service();
+    assert_eq!(layout(&service), ("1".into(), "1".into()));
+    // A recipe's layout is its own: an omitted size gets vLLM's default of 1,
+    // whatever GPUs the service selects.
+    service.container =
+        Some(serde_json::from_value(serde_json::json!({ "gpuDevices": ["0", "1"] })).unwrap());
+    assert_eq!(layout(&service), ("1".into(), "1".into()));
+    let recipe = service.recipe.as_mut().unwrap();
+    recipe.serving.pipeline_parallel_size = Some(2);
+    assert_eq!(layout(&service), ("1".into(), "2".into()));
+    let recipe = service.recipe.as_mut().unwrap();
+    recipe.serving.tensor_parallel_size = Some(4);
+    assert_eq!(layout(&service), ("4".into(), "2".into()));
+    service.container = None;
+
+    service.recipe = None;
+    service.hardware = Some(super::ServiceHardware::Profile {
+        profile: super::HardwareProfile::DgxSpark,
+        architecture: None,
+        min_gpu_memory_bytes: None,
+    });
+    assert_eq!(layout(&service), ("1".into(), "1".into()));
+    // NemoClaw passes the layout as written; vLLM checks it against the GPUs
+    // it sees and the model.
+    service.serving.tensor_parallel_size = Some(4);
+    service.serving.pipeline_parallel_size = Some(3);
+    assert_eq!(layout(&service), ("4".into(), "3".into()));
+}
+
+#[test]
+fn tensor_parallelism_defaults_to_the_selected_gpus_without_a_pipeline_size() {
+    let document =
+        Document::parse(include_str!("../../../../tests/fixtures/config/spark.yaml").as_bytes())
+            .unwrap();
+    let generations = [(super::SERVICE_KIND.into(), "a".repeat(32))].into();
+    let layout = |service: &Service| {
+        let spec = super::specification(&document, "qwen", service, &generations).unwrap();
+        let serving = super::configured_service(&spec).unwrap().serving;
+        (serving.tensor_parallel_size, serving.pipeline_parallel_size)
+    };
+    let devices = |devices: serde_json::Value| {
+        Some(serde_json::from_value(serde_json::json!({ "gpuDevices": devices })).unwrap())
+    };
+    let mut service = service();
+    service.recipe = None;
+    service.hardware = Some(super::ServiceHardware::Profile {
+        profile: super::HardwareProfile::DgxSpark,
+        architecture: None,
+        min_gpu_memory_bytes: None,
+    });
+    for (container, expected) in [
+        (None, 1),
+        (devices(serde_json::json!(["0"])), 1),
+        (devices(serde_json::json!(["0", "1"])), 2),
+        (devices(serde_json::json!(["0", "1", "2", "3"])), 4),
+    ] {
+        service.container = container;
+        assert_eq!(layout(&service), (Some(expected), None));
+    }
+    // With only a pipeline size, the tensor size stays at vLLM's default of 1,
+    // so two GPUs get pipeline parallelism 2 rather than a layout of 4.
+    service.container = devices(serde_json::json!(["0", "1"]));
+    service.serving.pipeline_parallel_size = Some(2);
+    assert_eq!(layout(&service), (Some(1), Some(2)));
+    // An explicit size stays as written.
+    service.serving.tensor_parallel_size = Some(1);
+    service.serving.pipeline_parallel_size = None;
+    assert_eq!(layout(&service), (Some(1), None));
 }

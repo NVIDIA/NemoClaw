@@ -1,8 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_runtime::{
-    hardware::Capacity, hardware::GIB, hardware::GpuMemory, vllm::hardware_capacity,
+    hardware::Capacity, hardware::GIB, hardware::Gpu, hardware::GpuMemory, vllm::hardware_capacity,
 };
+/// `capacity` with one observed GPU, as the observation records it.
+fn with_gpu(
+    mut capacity: Capacity,
+    name: &str,
+    compute_capability: u32,
+    memory: Option<GpuMemory>,
+) -> Capacity {
+    capacity.set_gpus(vec![Gpu {
+        index: 0,
+        uuid: "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3".into(),
+        name: name.into(),
+        driver_major: 580,
+        compute_capability,
+        memory,
+    }]);
+    capacity
+}
 use nemoclaw_sdk::{
     config::Document, config::ServiceDefinition, services::installers::vllm::Service,
 };
@@ -18,16 +35,18 @@ fn service() -> Service {
 fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
     let mut service = service();
     let recipe = service.recipe.as_ref().unwrap();
-    let capacity = Capacity {
-        architecture: "arm64".into(),
-        gpu: "NVIDIA GB10".into(),
-        driver_major: 580,
-        compute_capability: 121,
-        total: 121 * GIB,
-        available: 116 * GIB,
-        disk_free: 200 * GIB,
-        ..Default::default()
-    };
+    let capacity = with_gpu(
+        Capacity {
+            architecture: "arm64".into(),
+            total: 121 * GIB,
+            available: 116 * GIB,
+            disk_free: 200 * GIB,
+            ..Default::default()
+        },
+        "NVIDIA GB10",
+        121,
+        None,
+    );
     hardware_capacity::check_capacity(
         &service,
         &capacity,
@@ -46,7 +65,7 @@ fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
             .any(|p| p == ["--served-model-name", "fixture-model"])
     );
     let mut wrong_hardware = capacity;
-    wrong_hardware.gpu = "other GPU".into();
+    wrong_hardware.gpus[0].name = "other GPU".into();
     assert!(hardware_capacity::check_capacity(&service, &wrong_hardware, true, 0, 0).is_err());
     service.model.revision = "0".repeat(40);
     assert!(service.validate().is_err());
@@ -70,20 +89,21 @@ fn a_recipe_for_a_dedicated_memory_gpu_is_budgeted_against_gpu_memory() {
     recipe.resources.startup_headroom_gi_b = 10;
     // Host total and available memory are below the 60 GiB budget but cover the 32 GiB reserve
     // and 10 GiB headroom.
-    let capacity = Capacity {
-        architecture: "amd64".into(),
-        gpu: "NVIDIA H100 80GB HBM3".into(),
-        driver_major: 580,
-        compute_capability: 90,
-        total: 48 * GIB,
-        available: 45 * GIB,
-        disk_free: 200 * GIB,
-        gpu_memory: Some(GpuMemory {
+    let capacity = with_gpu(
+        Capacity {
+            architecture: "amd64".into(),
+            total: 48 * GIB,
+            available: 45 * GIB,
+            disk_free: 200 * GIB,
+            ..Default::default()
+        },
+        "NVIDIA H100 80GB HBM3",
+        90,
+        Some(GpuMemory {
             total: 80 * GIB,
             free: 79 * GIB,
         }),
-        ..Default::default()
-    };
+    );
     hardware_capacity::check_capacity(&service, &capacity, true, 0, 0).unwrap();
     let total = hardware_capacity::serving_memory(&service, &capacity).unwrap();
     assert_eq!(total, 80 * GIB);
@@ -96,7 +116,7 @@ fn a_recipe_for_a_dedicated_memory_gpu_is_budgeted_against_gpu_memory() {
 
     let gpu = |total, free| {
         let mut capacity = capacity.clone();
-        capacity.gpu_memory = Some(GpuMemory { total, free });
+        capacity.gpus[0].memory = Some(GpuMemory { total, free });
         capacity
     };
     for (observed, starting) in [
@@ -108,7 +128,7 @@ fn a_recipe_for_a_dedicated_memory_gpu_is_budgeted_against_gpu_memory() {
     }
     hardware_capacity::check_memory(&service, &gpu(80 * GIB, 59 * GIB), false).unwrap();
     let mut no_gpu_counters = capacity.clone();
-    no_gpu_counters.gpu_memory = None;
+    no_gpu_counters.gpus[0].memory = None;
     assert!(hardware_capacity::check_memory(&service, &no_gpu_counters, false).is_err());
     let mut short_headroom = capacity;
     short_headroom.available = 41 * GIB;
@@ -135,20 +155,21 @@ fn declared_compatibility_does_not_bypass_capacity_or_memory_policy() {
     let recipe = service.recipe.as_mut().unwrap();
     recipe.compatibility.architecture = "amd64".into();
     recipe.compatibility.gpu = "NVIDIA H200".into();
-    let mut capacity = Capacity {
-        architecture: "amd64".into(),
-        gpu: "NVIDIA H200".into(),
-        driver_major: 580,
-        compute_capability: 90,
-        total: 121 * GIB,
-        available: 116 * GIB,
-        disk_free: 200 * GIB,
-        gpu_memory: Some(GpuMemory {
+    let mut capacity = with_gpu(
+        Capacity {
+            architecture: "amd64".into(),
+            total: 121 * GIB,
+            available: 116 * GIB,
+            disk_free: 200 * GIB,
+            ..Default::default()
+        },
+        "NVIDIA H200",
+        90,
+        Some(GpuMemory {
             total: 141 * GIB,
             free: 140 * GIB,
         }),
-        ..Default::default()
-    };
+    );
     hardware_capacity::check_capacity(&service, &capacity, true, 0, 0).unwrap();
     capacity.available = 0;
     assert!(hardware_capacity::check_capacity(&service, &capacity, true, 0, 0).is_err());

@@ -93,24 +93,217 @@ fn jobs_say_what_happens_when_a_job_they_need_is_skipped() {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
-/// The SSH probe uses Linux shell and filesystem semantics on a shared runner group.
+fn colossus_workflow() -> Value {
+    serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/colossus-connectivity.yml"))
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+/// Only manual v1 dispatches can execute jobs on the leased machine's runner,
+/// and a dispatch selects one of them.
 #[test]
-fn ssh_probe_selects_linux_from_the_shared_runner_group() {
-    let workflows = definitions(&repository());
-    let (_, workflow) = workflows
-        .iter()
-        .find(|(path, _)| path == ".github/workflows/colossus-connectivity.yml")
-        .expect("SSH connectivity workflow");
-    let labels = workflow["jobs"]["probe"]["runs-on"]["labels"]
-        .as_array()
-        .expect("explicit runner labels");
-    assert!(
-        labels.iter().any(|label| label == "linux"),
-        "shared runner selection must require Linux"
+fn colossus_runs_are_manual_and_v1_only() {
+    let workflow = colossus_workflow();
+    let events = workflow["on"]
+        .as_object()
+        .expect("explicit workflow events");
+    assert_eq!(events.len(), 1, "the pilot runner takes manual runs only");
+    let suite = &workflow["on"]["workflow_dispatch"]["inputs"]["suite"];
+    assert_eq!(suite["type"], "choice");
+    assert_eq!(suite["options"], serde_json::json!(["smoke", "bundle"]));
+    assert_eq!(suite["default"], "smoke");
+    let jobs = workflow["jobs"].as_object().expect("workflow jobs");
+    assert_eq!(
+        jobs.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["bundle", "smoke"]
     );
+    for (name, job) in jobs {
+        assert_eq!(
+            job["if"],
+            format!(
+                "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == '{name}'"
+            ),
+            "only a manual dispatch on the canonical v1 branch may execute {name}"
+        );
+    }
     assert!(
-        labels.iter().any(|label| label == "x64"),
-        "shared runner selection must require x64"
+        !workflow.to_string().contains("secrets"),
+        "no secret references or inherited secrets"
+    );
+    assert_eq!(workflow["permissions"], serde_json::json!({}));
+    assert!(
+        workflow["env"].is_null(),
+        "no workflow environment variables"
+    );
+}
+
+/// The smoke test performs no checkout, secret handling, or hardware commands.
+#[test]
+fn colossus_smoke_executes_only_true_without_credentials() {
+    let workflow = colossus_workflow();
+    let job = &workflow["jobs"]["smoke"];
+    assert_eq!(job["runs-on"], "colossus-gb300-pilot");
+    assert_eq!(job["timeout-minutes"], 2);
+    assert!(job["permissions"].is_null(), "inherit empty permissions");
+    assert!(
+        job["environment"].is_null(),
+        "no protected-environment secrets"
+    );
+    assert!(job["env"].is_null(), "no job environment variables");
+    let steps = job["steps"].as_array().expect("smoke steps");
+    assert_eq!(steps.len(), 1);
+    assert!(steps[0]["uses"].is_null(), "no checkout or other actions");
+    assert!(steps[0]["env"].is_null(), "no step environment variables");
+    assert_eq!(steps[0]["shell"], "bash");
+    assert_eq!(steps[0]["run"], "true");
+}
+
+/// The bundle suite runs the Linux ARM64 bundle, unit, contract, and
+/// integration jobs on the pilot runner, to compare its timings with the
+/// hosted runners'. It reads the shared Rust caches but never writes them, so
+/// hosted v1 runs never restore artifacts built on the leased machine.
+#[test]
+fn colossus_bundle_runs_linux_arm64_ci_without_writing_shared_caches() {
+    let workflow = colossus_workflow();
+    let job = &workflow["jobs"]["bundle"];
+    assert_eq!(job["uses"], "./.github/workflows/bundle-platform.yml");
+    assert_eq!(
+        job["permissions"],
+        serde_json::json!({"contents": "read", "packages": "read"}),
+        "only what bundle-platform.yml declares"
+    );
+    assert_eq!(
+        job["with"],
+        serde_json::json!({
+            "runner": "colossus-gb300-pilot",
+            "platform": "linux_arm64",
+            "bundle": true,
+            "lifecycle": true,
+            "e2e": false,
+            "save-cache": false,
+        })
+    );
+
+    let platform: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/bundle-platform.yml")).unwrap(),
+    )
+    .unwrap();
+    let input = &platform["on"]["workflow_call"]["inputs"]["save-cache"];
+    assert_eq!(input["type"], "boolean");
+    assert_eq!(input["default"], true, "CI / Bundle keeps saving on v1");
+    let mut setups = 0;
+    for (name, job) in platform["jobs"].as_object().unwrap() {
+        for step in job["steps"].as_array().into_iter().flatten() {
+            if step["uses"] == "./.github/actions/setup-rust" {
+                setups += 1;
+                assert_eq!(
+                    step["with"]["save-cache"], "${{ inputs.save-cache }}",
+                    "{name} must honor save-cache"
+                );
+            }
+        }
+    }
+    assert!(setups > 0, "bundle-platform.yml sets up Rust");
+}
+
+/// Linux bundles must run on Ubuntu 22.04, the oldest supported Linux, so
+/// `CI / Bundle` builds them there and checks that none of their executables
+/// needs a newer glibc. Tests run where the default runners are: executables
+/// built against an older glibc run on newer ones.
+#[test]
+fn linux_bundles_build_on_ubuntu_22_04_and_check_its_glibc() {
+    let workflow: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/rust.yml")).unwrap(),
+    )
+    .unwrap();
+    for (platform, builder) in [
+        ("linux_arm64", "ubuntu-22.04-arm"),
+        ("linux_amd64", "ubuntu-22.04"),
+    ] {
+        let with = &workflow["jobs"][platform]["with"];
+        assert_eq!(with["build-runner"], builder, "{platform}");
+        assert_eq!(with["glibc"], "2.35", "{platform}");
+    }
+    for platform in ["darwin_arm64", "windows_amd64"] {
+        let with = &workflow["jobs"][platform]["with"];
+        assert!(with["glibc"].is_null(), "{platform} has no glibc");
+    }
+
+    let platform: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/bundle-platform.yml")).unwrap(),
+    )
+    .unwrap();
+    for job in ["build", "bundle"] {
+        assert_eq!(
+            platform["jobs"][job]["runs-on"], "${{ inputs.build-runner || inputs.runner }}",
+            "{job}"
+        );
+    }
+    let check = platform["jobs"]["bundle"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| {
+            step["run"]
+                .as_str()
+                .is_some_and(|run| run.contains("check-glibc"))
+        })
+        .expect("the bundle job checks the glibc floor");
+    assert_eq!(check["if"], "inputs.glibc != ''");
+}
+
+/// On `v1` pushes and manual runs, `CI / Bundle` runs the GPU HCL cases
+/// through Live / HCL from Linux AMD64's test archive, bundle, and live
+/// images, so Live / HCL builds no candidate of its own. Only a run without
+/// those artifacts, such as a dispatch, builds one.
+#[test]
+fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
+    let read = |path: &str| -> Value {
+        serde_saphyr::from_str(&fs::read_to_string(repository().join(path)).unwrap()).unwrap()
+    };
+    let callers: Vec<String> = definitions(&repository())
+        .into_iter()
+        .flat_map(|(path, workflow)| {
+            let jobs = workflow["jobs"].as_object().cloned().unwrap_or_default();
+            jobs.into_iter()
+                .filter(|(_, job)| job["uses"] == "./.github/workflows/hcl-e2e.yml")
+                .map(move |(name, _)| format!("{path}: {name}"))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(
+        callers,
+        [".github/workflows/e2e-platform.yml: gpu"],
+        "only the E2E platform workflow, which has the artifacts, calls Live / HCL"
+    );
+
+    let platform = read(".github/workflows/e2e-platform.yml");
+    let gpu = &platform["jobs"]["gpu"];
+    assert!(needs(gpu).contains(&"live-images".to_owned()));
+    assert_eq!(
+        gpu["with"],
+        serde_json::json!({
+            "hosted": false,
+            "cases": "${{ inputs.hcl-cases }}",
+            "tests": "${{ inputs.tests }}",
+            "bundle": "${{ inputs.bundle }}",
+            "live-images": "${{ needs.live-images.outputs.artifact }}",
+            "live-images-commit": "${{ inputs.live-images-commit }}",
+        })
+    );
+    let bundle_platform = read(".github/workflows/bundle-platform.yml");
+    assert_eq!(
+        bundle_platform["jobs"]["e2e"]["with"]["hcl-gpu"],
+        "${{ inputs.hcl-gpu }}"
+    );
+
+    let live = read(".github/workflows/hcl-e2e.yml");
+    let build = live["jobs"]["build"]["if"].as_str().unwrap_or_default();
+    assert!(
+        build.contains("inputs.tests == ''"),
+        "Live / HCL builds a candidate only without CI / Bundle's artifacts: {build}"
     );
 }
 

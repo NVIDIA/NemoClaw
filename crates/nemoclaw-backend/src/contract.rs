@@ -74,6 +74,12 @@ pub trait Backend: Send + Sync {
         removing: bool,
     ) -> Result<Option<Row>, ObservationError>;
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation;
+    /// Change a bound object in place to `desired`. `prior` is its binding as
+    /// last applied or refreshed, for a backend that must undo what `prior`
+    /// declared and `desired` no longer does; others converge as `ensure`.
+    async fn update(&self, kind: &str, desired: &Row, _prior: &Row) -> Mutation {
+        self.ensure(kind, desired).await
+    }
     async fn remove(
         &self,
         kind: &str,

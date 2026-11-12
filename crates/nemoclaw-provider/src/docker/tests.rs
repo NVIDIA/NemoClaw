@@ -18,7 +18,12 @@ fn managed_engine_requires_explicit_local_socket() {
 async fn ssh_connection_is_lazy_and_requires_explicit_remote_capacity() {
     let engine = Engine::connect("ssh://operator@gpu-box:2222").unwrap();
     assert_eq!(engine.endpoint(), "ssh://operator@gpu-box:2222");
-    let error = engine.host_observer.observe(&engine).await.err().unwrap();
+    let error = engine
+        .host_observer
+        .observe(&engine, None)
+        .await
+        .err()
+        .unwrap();
     assert!(error.to_string().contains("remote host capacity"));
 }
 

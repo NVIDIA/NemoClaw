@@ -1,18 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Two agents with the OpenShift profile on a managed gateway in a kind
-# cluster, each with its own sandbox and policy, sharing one inference route
-# to a stub model in its own namespace. The gateway accepts tokens from an
-# existing OIDC issuer in another namespace, and the agent image comes from a
-# private registry through the pull Secret the operator created. cargo ci
-# live-kind gives each run a fresh identity, which is also the token
-# audience, port, namespace, kubeconfig context, registry, and agent image.
+# Two agents with the openshift profile on a managed gateway in OpenShift,
+# each with its own sandbox and policy, sharing one inference route to a stub
+# model in its own namespace. OpenShift's restricted-v2 constraint gives the
+# gateway the namespace's first UID and group, and OpenShell runs each
+# sandbox as that UID. The gateway accepts tokens from an existing OIDC
+# issuer in another namespace, and the agent image comes from a private
+# registry through the pull Secret the operator created. No CI job has
+# OpenShift, so the case runs by hand, for example on OpenShift Local;
+# kind-kubernetes-oidc deploys the same agents on kind. Bind its UID, which
+# is also the token audience, its endpoint port, namespace, kubeconfig
+# context, and agent image to the run.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
-  name: hcl-kind-agents
-  uid: 3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36
+  name: hcl-openshift-agents
+  uid: e046a54d-77a5-4814-9a02-1734d847ba39
 spec:
   gateway:
     management: managed
@@ -22,8 +26,8 @@ spec:
     kubernetes:
       kubeconfig:
         env: NEMOCLAW_TEST_KUBECONFIG
-      context: kind-nemoclaw
-      namespace: nc-hcl-kind
+      context: openshift
+      namespace: nc-hcl-openshift
       imagePullSecrets:
         - agent-registry
       authentication:
@@ -33,8 +37,8 @@ spec:
           env: NEMOCLAW_TEST_OIDC_TOKEN
     config:
       openshell.gateway.oidc:
-        issuer: https://issuer-oidc.nc-hcl-kind-issuer.svc.cluster.local:8443
-        audience: 3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36
+        issuer: https://issuer-oidc.nc-hcl-openshift-issuer.svc.cluster.local:8443
+        audience: e046a54d-77a5-4814-9a02-1734d847ba39
         roles_claim: roles
         admin_role: nemoclaw-development-admin
         user_role: nemoclaw-development-user
@@ -42,7 +46,7 @@ spec:
   inferenceProviders:
     stub:
       provider: openai
-      endpoint: http://model.nc-hcl-kind-model.svc.cluster.local:8000/v1
+      endpoint: http://model.nc-hcl-openshift-model.svc.cluster.local:8000/v1
   inferences:
     chat:
       routes:

@@ -98,7 +98,6 @@ async fn running(
     let operations = Operations {
         client: client(&fixture),
         state: directory.join("state"),
-        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     };
     operations
         .ensure(&spec(STORAGE_KIND, 1), None)
@@ -190,6 +189,33 @@ async fn connections_do_not_need_the_authored_loopback_port() {
         .unwrap();
     assert_ne!(first.endpoint(), format!("https://127.0.0.1:{authored}"));
     assert_ne!(first.endpoint(), second.endpoint());
+}
+
+/// A gateway published through `kubernetes.expose` serves other clients at
+/// its endpoint; NemoClaw's own connections still forward a loopback port to
+/// the gateway pod, whose certificate always names 127.0.0.1.
+#[tokio::test]
+async fn an_exposed_gateway_is_still_reached_through_a_loopback_forward() {
+    let exposed = |kind: &str, port: u16| {
+        let mut spec = spec(kind, port);
+        spec.settings.endpoint = "https://gateway.agents.example.com:30851".into();
+        spec.settings.kubernetes.as_mut().unwrap().expose =
+            Some(serde_json::from_value(json!({"service": {"type": "NodePort"}})).unwrap());
+        spec
+    };
+    let objects = Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = running(&objects, directory.path(), exposed).await;
+    let connection = operations
+        .connect(&exposed(GATEWAY_KIND, 30851))
+        .await
+        .unwrap();
+    let port = connection
+        .endpoint()
+        .strip_prefix("https://127.0.0.1:")
+        .and_then(|port| port.parse::<u16>().ok())
+        .expect("a loopback endpoint");
+    std::net::TcpStream::connect(("127.0.0.1", port)).expect("the connection listens");
 }
 
 #[tokio::test]

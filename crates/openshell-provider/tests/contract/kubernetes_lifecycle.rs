@@ -369,7 +369,6 @@ async fn kubernetes_resources_apply_observe_the_release_and_tear_down_keeping_st
     assert_eq!(auth["id"], platform.uid(api_version, kind, name).unwrap());
     assert_eq!(auth["running"], "true");
     assert_eq!(auth["release_present"], "false");
-    assert_eq!(auth["gateway_values"], "{}");
 
     // Helm installs the chart. The gateway records its StatefulSet before the
     // pod is ready, plans another observation, and reports it ready later.

@@ -48,6 +48,7 @@ fn case() {
         "openshell": var("NEMOCLAW_TEST_OPENSHELL").unwrap_or_default(),
         "work_dir": work,
         "evidence_dir": reports,
+        "versions": fs::canonicalize("../../versions.json").unwrap(),
     });
     let providers = run.join("providers.tfrc");
     fs::write(
@@ -58,15 +59,24 @@ fn case() {
         ),
     )
     .unwrap();
+    // `tofu init` writes its dependency lock file beside the root module, so
+    // the run initializes a copy of the modules in its own directory.
+    let root = run.join("hcl");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
     let tofu = || {
         let mut tofu = Command::new(bundle.tofu());
-        tofu.current_dir("tests/e2e/hcl")
+        tofu.current_dir(&root)
             .env("TF_DATA_DIR", run.join("tofu"))
             .env("TF_CLI_CONFIG_FILE", &providers)
             .env("TF_VAR_context", context.to_string());
         tofu
     };
-    let initialized = tofu().args(["init", "-input=false", "-no-color"]).status();
+    let modules = fs::canonicalize("tests/e2e/hcl").unwrap();
+    let initialized = tofu()
+        .args(["init", "-input=false", "-no-color"])
+        .arg(format!("-from-module={}", modules.display()))
+        .status();
     assert!(initialized.unwrap().success(), "tofu init failed");
     // The test's core log times its runs.
     let log = CoreLog::create(work.join("tofu-test.log"));
@@ -96,10 +106,17 @@ async fn probe() {
     let runtime = runtime_id(&state, sandbox.name);
     let request: Value = serde_json::from_str(&input("REQUEST")).unwrap();
     // A managed Kubernetes gateway is reached through a port-forward that the
-    // connection holds, as the SDK's providers reach it.
+    // connection holds, as the SDK's providers reach it. A gateway published
+    // through kubernetes.expose is dialed at its endpoint instead, as another
+    // client would dial it, with the same client certificate and token.
+    let published = document.spec.gateway.as_managed().and_then(|gateway| {
+        gateway.kubernetes.as_ref()?.expose.as_ref()?;
+        Some(gateway.endpoint.clone())
+    });
     let (_forward, client) = match kubernetes_operations(&document, &state).await {
         Some(operations) => {
-            let (forward, client) = kubernetes_gateway(&operations, &recorded).await;
+            let (forward, client) =
+                kubernetes_gateway(&operations, &recorded, published.as_deref()).await;
             (Some(forward), client)
         }
         None => {
@@ -127,9 +144,10 @@ async fn probe() {
 /// Request one service a sandbox exposes, as a person would with what apply
 /// reports: read the interface's token in the sandbox and forward its port
 /// with the pinned OpenShell CLI, then send one request, with the token as a
-/// Bearer credential when there is one. The published report holds the
-/// status; the token stays in memory and the body in the private work
-/// directory for `hcl/interface`.
+/// Bearer credential when there is one. A service without a token file can
+/// name the page global that holds its session token, which a browser reads
+/// from the page. The published report holds the status; the token stays in
+/// memory and the body in the private work directory for `hcl/interface`.
 #[tokio::test]
 #[ignore = "run by tests/e2e/hcl/interface for one target"]
 async fn interface() {
@@ -177,31 +195,34 @@ async fn interface() {
         .timeout(Duration::from_secs(120))
         .build()
         .unwrap();
-    let url = format!("http://127.0.0.1:{local}{}", input("PATH"));
-    let body = input("BODY");
-    let (status, text) = loop {
-        let mut request = if body.is_empty() {
-            client.get(&url)
-        } else {
-            client
-                .post(&url)
-                .header("Content-Type", "application/json")
-                .body(body.clone())
-        };
-        if let Some(token) = &token {
-            request = request.bearer_auth(token);
-        }
-        match request.send().await {
-            Ok(response) => {
-                let status = response.status().as_u16();
-                break (status, response.text().await.unwrap_or_default());
-            }
-            Err(_) if Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            Err(error) => panic!("the request through the forward failed: {error}"),
+    let base = format!("http://127.0.0.1:{local}");
+    let token = match input("PAGE_TOKEN").as_str() {
+        "" => token,
+        name => {
+            let (_, page) = through_forward(|| client.get(&base), deadline).await;
+            page_global(&page, name)
         }
     };
+    let url = format!("{base}{}", input("PATH"));
+    let body = input("BODY");
+    let (status, text) = through_forward(
+        || {
+            let request = if body.is_empty() {
+                client.get(&url)
+            } else {
+                client
+                    .post(&url)
+                    .header("Content-Type", "application/json")
+                    .body(body.clone())
+            };
+            match &token {
+                Some(token) => request.bearer_auth(token),
+                None => request,
+            }
+        },
+        deadline,
+    )
+    .await;
     let _ = forward.kill();
     let _ = forward.wait();
     fs::write(input("RESPONSE"), text).unwrap();
@@ -210,6 +231,38 @@ async fn interface() {
         json!({"sandbox": sandbox, "port": input("PORT"), "status": status}).to_string(),
     )
     .unwrap();
+}
+
+/// The status and body of a request through a forward, retried until
+/// `deadline` while the forward's tunnel opens.
+async fn through_forward(
+    request: impl Fn() -> reqwest::RequestBuilder,
+    deadline: std::time::Instant,
+) -> (u16, String) {
+    loop {
+        match request().send().await {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                return (status, response.text().await.unwrap_or_default());
+            }
+            Err(_) if std::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(error) => panic!("the request through the forward failed: {error}"),
+        }
+    }
+}
+
+/// The string that a page's script assigns to `window.NAME`.
+fn page_global(page: &str, name: &str) -> Option<String> {
+    let global = format!("window.{name}");
+    let value = page[page.find(&global)? + global.len()..]
+        .trim_start()
+        .strip_prefix('=')?;
+    serde_json::Deserializer::from_str(value)
+        .into_iter()
+        .next()?
+        .ok()
 }
 
 /// The pinned OpenShell CLI, on the gateway and workspace that apply reports.
@@ -251,7 +304,7 @@ async fn command() {
     let (exit_code, text) = match kubernetes_operations(&document, &state).await {
         Some(operations) => {
             let binding = sandbox_binding(&state, &sandbox);
-            let (_forward, client) = kubernetes_gateway(&operations, &binding).await;
+            let (_forward, client) = kubernetes_gateway(&operations, &binding, None).await;
             let (code, output) = client
                 .exec_bound(&binding, command, Default::default(), 60)
                 .await
@@ -294,7 +347,6 @@ async fn kubernetes_operations(
     Some(nemoclaw_sdk::kubernetes::operations::Operations {
         client: nemoclaw_sdk::kubernetes::connect(&target).await.unwrap(),
         state: state.join("kubernetes"),
-        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     })
 }
 
@@ -449,10 +501,12 @@ fn visible(output: &[u8]) -> String {
 
 /// The managed Kubernetes gateway that `binding` records, reached as the
 /// SDK's providers reach it: through the port-forward the returned connection
-/// holds, with the token and TLS files in its environment.
+/// holds, with the token and TLS files in its environment. With `published`,
+/// the client dials that endpoint instead of the forward.
 async fn kubernetes_gateway(
     operations: &nemoclaw_sdk::kubernetes::operations::Operations,
     binding: &nemoclaw_sdk::backend::Row,
+    published: Option<&str>,
 ) -> (nemoclaw_sdk::kubernetes::Connection, OpenShell) {
     use nemoclaw_sdk::{
         ObservationError,
@@ -475,7 +529,7 @@ async fn kubernetes_gateway(
     let connection = operations.connect(&spec).await.unwrap();
     let file = |env: &str| FileRef { env: env.into() };
     let gateway = Gateway::External(ExternalGateway {
-        endpoint: connection.endpoint().to_owned(),
+        endpoint: published.unwrap_or(connection.endpoint()).to_owned(),
         credential: Some(SecretRef {
             env: TOKEN_ENV.into(),
         }),
@@ -866,8 +920,8 @@ fn timing_tables_list_each_run_in_order_with_their_total() {
         ("destroy".to_owned(), Duration::from_millis(33_800)),
     ];
     assert_eq!(
-        timing_table("kind-openshift-oidc", &runs),
-        "#### Runs of the kind-openshift-oidc case: 74.0 s\n\n\
+        timing_table("kind-kubernetes-oidc", &runs),
+        "#### Runs of the kind-kubernetes-oidc case: 74.0 s\n\n\
          | Run | Time |\n|---|---|\n\
          | apply | 40.2 s |\n\
          | destroy | 33.8 s |\n"
@@ -881,4 +935,16 @@ fn timing_tables_list_each_run_in_order_with_their_total() {
 fn visible_text_drops_control_sequences() {
     let output = b"\x1b]0;openclaw tui\x07\x1b(B\x1b[?25l\x1b[1;32mconnected\x1b[0m | idle\r\n\x1b[2Knemoclaw-stub-reply";
     assert_eq!(visible(output), "connected | idle\nnemoclaw-stub-reply");
+}
+
+/// Hermes's dashboard serves its page with the session token in a script.
+#[test]
+fn page_globals_read_the_string_a_script_assigns() {
+    let page = r#"<script>window.__HERMES_SESSION_TOKEN__ = "a-b_c";window.__HERMES_AUTH_REQUIRED__=false;</script>"#;
+    assert_eq!(
+        page_global(page, "__HERMES_SESSION_TOKEN__").as_deref(),
+        Some("a-b_c")
+    );
+    assert_eq!(page_global(page, "__HERMES_AUTH_REQUIRED__"), None);
+    assert_eq!(page_global(page, "__HERMES_BASE_PATH__"), None);
 }

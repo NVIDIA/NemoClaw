@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use super::{Capacity, Gpu, GpuMemory};
 use crate::Error;
+
+/// Reads every GPU's inventory in one call, one CSV line per GPU.
+pub const GPU_QUERY: &str =
+    "--query-gpu=index,uuid,name,compute_cap,memory.total,memory.free,driver_version";
+/// Lists the processes that hold GPU memory.
+pub const PROCESS_QUERY: &str = "--query-compute-apps=pid";
+
 #[cfg(target_os = "linux")]
 pub async fn query(query: &str) -> Result<String, Error> {
     let output = tokio::process::Command::new("nvidia-smi")
@@ -14,8 +22,11 @@ pub async fn query(query: &str) -> Result<String, Error> {
     }
     String::from_utf8(output.stdout).map_err(|_| Error::State("GPU inventory is incomplete"))
 }
-pub fn inventory(gpu: &str, processes: &str) -> Result<(String, u32, usize), Error> {
-    let (name, major) = single_gpu(gpu.trim().lines())?;
+
+/// Decode the output of [`GPU_QUERY`] and [`PROCESS_QUERY`]: every GPU, and
+/// the number of processes that hold GPU memory.
+pub fn inventory(gpus: &str, processes: &str) -> Result<(Vec<Gpu>, usize), Error> {
+    let gpus = self::gpus(gpus)?;
     let mut seen = std::collections::BTreeSet::new();
     for line in processes.trim().lines() {
         let pid = line
@@ -26,34 +37,49 @@ pub fn inventory(gpu: &str, processes: &str) -> Result<(String, u32, usize), Err
             return Err(Error::State("GPU process inventory is ambiguous"));
         }
     }
-    Ok((name, major, seen.len()))
+    Ok((gpus, seen.len()))
 }
-fn single_gpu<'a>(mut lines: impl Iterator<Item = &'a str>) -> Result<(String, u32), Error> {
-    let Some(line) = lines.next() else {
-        return Err(Error::State(
-            "managed inference requires exactly one observable GPU",
-        ));
-    };
-    if lines.next().is_some() {
-        return Err(Error::State(
-            "managed inference requires exactly one observable GPU",
-        ));
+
+/// Decode the output of [`GPU_QUERY`], one GPU per line.
+pub fn gpus(text: &str) -> Result<Vec<Gpu>, Error> {
+    let incomplete = || Error::State("GPU inventory is incomplete");
+    let mut gpus: Vec<Gpu> = Vec::new();
+    for line in text.trim().lines() {
+        let fields: Vec<_> = line.split(',').map(str::trim).collect();
+        let [index, uuid, name, compute, total, free, driver] = fields[..] else {
+            return Err(incomplete());
+        };
+        if uuid.is_empty() || name.is_empty() {
+            return Err(incomplete());
+        }
+        let index = index.parse::<u32>().map_err(|_| incomplete())?;
+        if gpus
+            .iter()
+            .any(|gpu| gpu.index == index || gpu.uuid == uuid)
+        {
+            return Err(Error::State("GPU inventory is ambiguous"));
+        }
+        gpus.push(Gpu {
+            index,
+            uuid: uuid.into(),
+            name: name.into(),
+            driver_major: driver_major(driver)?,
+            compute_capability: compute_capability(compute)?,
+            memory: framebuffer_memory(total, free)?,
+        });
     }
-    let mut fields = line.split(',').map(str::trim);
-    let (Some(name), Some(version), None) = (fields.next(), fields.next(), fields.next()) else {
-        return Err(Error::State("GPU inventory is incomplete"));
-    };
-    if name.is_empty() {
-        return Err(Error::State("GPU inventory is incomplete"));
-    }
-    let major = version
+    Ok(gpus)
+}
+
+fn driver_major(version: &str) -> Result<u32, Error> {
+    version
         .split('.')
         .next()
         .unwrap_or("")
         .parse::<u32>()
-        .map_err(|_| Error::State("driver version is unobservable"))?;
-    Ok((name.into(), major))
+        .map_err(|_| Error::State("driver version is unobservable"))
 }
+
 /// Decode one GPU's compute capability independently of its memory counters.
 pub fn compute_capability(text: &str) -> Result<u32, Error> {
     let error = || Error::State("GPU compute capability is unobservable");
@@ -68,18 +94,12 @@ pub fn compute_capability(text: &str) -> Result<u32, Error> {
 
 /// Preserve unsupported framebuffer counters without inferring a memory architecture.
 /// NVIDIA documents N/A for unsupported fields: https://docs.nvidia.com/deploy/nvidia-smi/
-pub fn framebuffer_memory(text: &str) -> Result<Option<super::GpuMemory>, Error> {
+fn framebuffer_memory(total: &str, free: &str) -> Result<Option<GpuMemory>, Error> {
     let error = || Error::State("GPU framebuffer memory observation is incomplete");
-    let mut lines = text.trim().lines();
-    let line = lines.next().ok_or_else(error)?;
-    if lines.next().is_some() {
-        return Err(error());
-    }
-    let fields: Vec<_> = line.split(',').map(str::trim).collect();
-    if fields.len() != 2 {
-        return Err(error());
-    }
-    if fields.iter().all(|field| matches!(*field, "N/A" | "[N/A]")) {
+    if [total, free]
+        .iter()
+        .all(|field| matches!(*field, "N/A" | "[N/A]"))
+    {
         return Ok(None);
     }
     let bytes = |s: &str| {
@@ -89,74 +109,97 @@ pub fn framebuffer_memory(text: &str) -> Result<Option<super::GpuMemory>, Error>
             .and_then(|n| n.checked_mul(1 << 20))
             .ok_or_else(error)
     };
-    let total = bytes(fields[0])?;
-    let free = bytes(fields[1])?;
+    let total = bytes(total)?;
+    let free = bytes(free)?;
     if total == 0 || free > total {
         return Err(error());
     }
-    Ok(Some(super::GpuMemory { total, free }))
+    Ok(Some(GpuMemory { total, free }))
 }
 
+/// Record every observed GPU, and fill the single-GPU fields when there's
+/// exactly one. Callers that need one GPU check with
+/// [`Capacity::require_one_gpu`].
 pub fn apply_observations(
-    capacity: &mut super::Capacity,
-    gpu: &str,
+    capacity: &mut Capacity,
+    gpus: &str,
     processes: &str,
-    compute: &str,
-    memory: &str,
 ) -> Result<(), Error> {
-    (
-        capacity.gpu,
-        capacity.driver_major,
-        capacity.foreign_gpu_processes,
-    ) = inventory(gpu, processes)?;
-    capacity.compute_capability = compute_capability(compute)?;
-    capacity.gpu_memory = framebuffer_memory(memory)?;
+    let (gpus, processes) = inventory(gpus, processes)?;
+    capacity.foreign_gpu_processes = processes;
+    capacity.set_gpus(gpus);
     Ok(())
 }
 
+/// Observe the one GPU this container sees.
 #[cfg(target_os = "linux")]
-pub async fn populate(capacity: &mut super::Capacity) -> Result<(), Error> {
+pub async fn populate(capacity: &mut Capacity) -> Result<(), Error> {
+    populate_with(capacity, query).await?;
+    capacity.require_one_gpu()
+}
+
+/// Observe this host's GPUs through `query`, which runs one `nvidia-smi` query
+/// and returns its CSV output.
+#[cfg(target_os = "linux")]
+pub async fn populate_with<F, Fut>(capacity: &mut Capacity, mut query: F) -> Result<(), Error>
+where
+    F: FnMut(&'static str) -> Fut,
+    Fut: std::future::Future<Output = Result<String, Error>>,
+{
     capacity.architecture = match std::env::consts::ARCH {
         "aarch64" => "arm64",
         "x86_64" => "amd64",
         other => other,
     }
     .into();
-    populate_with(capacity, query).await
-}
-
-#[cfg(target_os = "linux")]
-async fn populate_with<F, Fut>(capacity: &mut super::Capacity, mut query: F) -> Result<(), Error>
-where
-    F: FnMut(&'static str) -> Fut,
-    Fut: std::future::Future<Output = Result<String, Error>>,
-{
-    let gpu = query("--query-gpu=name,driver_version").await?;
-    let processes = query("--query-compute-apps=pid").await?;
-    let compute = query("--query-gpu=compute_cap").await?;
-    let memory = query("--query-gpu=memory.total,memory.free").await?;
-    apply_observations(capacity, &gpu, &processes, &compute, &memory)
+    let gpus = query(GPU_QUERY).await?;
+    let processes = query(PROCESS_QUERY).await?;
+    apply_observations(capacity, &gpus, &processes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hardware::GIB;
+
+    const GB10: &str =
+        "0, GPU-a0a0a0a0-0000-0000-0000-000000000000, NVIDIA GB10, 12.1, [N/A], [N/A], 580.95.05";
+    #[cfg(target_os = "linux")]
+    const H100: &str = "0, GPU-b1b1b1b1-0000-0000-0000-000000000000, NVIDIA H100 80GB HBM3, 9.0, 81920, 71680, 580.65.06";
+
+    /// Eight H200 NVL GPUs at indexes 0 to 7, with the display GPU of a
+    /// workstation at index 3.
+    fn eight_gpus() -> String {
+        (0..8)
+            .map(|index| {
+                let (name, compute, memory) = if index == 3 {
+                    ("NVIDIA RTX A400", "8.6", "4094, 3900")
+                } else {
+                    ("NVIDIA H200 NVL", "9.0", "143771, 143000")
+                };
+                format!("{index}, GPU-{index}{index}{index}{index}{index}{index}{index}{index}-0000-0000-0000-000000000000, {name}, {compute}, {memory}, 580.65.06\n")
+            })
+            .collect()
+    }
+
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn native_collector_observes_compute_with_both_memory_modes_and_propagates_query_errors()
     {
         for (gpu, compute, memory) in [
-            ("NVIDIA GB10, 580.0", "12.1", "[N/A], [N/A]"),
-            ("NVIDIA H100, 580.0", "9.0", "81920, 71680"),
+            (GB10, 121, None),
+            (
+                H100,
+                90,
+                Some(GpuMemory {
+                    total: 80 * GIB,
+                    free: 70 * GIB,
+                }),
+            ),
         ] {
-            let observations = [
-                ("--query-gpu=name,driver_version", gpu),
-                ("--query-compute-apps=pid", ""),
-                ("--query-gpu=compute_cap", compute),
-                ("--query-gpu=memory.total,memory.free", memory),
-            ];
+            let observations = [(GPU_QUERY, gpu), (PROCESS_QUERY, "")];
             let mut seen = Vec::new();
-            let mut capacity = super::super::Capacity::default();
+            let mut capacity = Capacity::default();
             populate_with(&mut capacity, |query| {
                 seen.push(query);
                 std::future::ready(Ok(observations
@@ -168,16 +211,13 @@ mod tests {
             })
             .await
             .unwrap();
-            assert_eq!(seen.len(), 4);
-            assert_eq!(
-                capacity.compute_capability,
-                compute_capability(compute).unwrap()
-            );
-            assert_eq!(capacity.gpu_memory, framebuffer_memory(memory).unwrap());
-            for failure in [
-                "--query-gpu=compute_cap",
-                "--query-gpu=memory.total,memory.free",
-            ] {
+            assert_eq!(seen, [GPU_QUERY, PROCESS_QUERY]);
+            assert_eq!(capacity.compute_capability, compute);
+            assert_eq!(capacity.driver_major, 580);
+            assert_eq!(capacity.gpu_memory, memory);
+            assert_eq!(capacity.gpus.len(), 1);
+            capacity.require_one_gpu().unwrap();
+            for failure in [GPU_QUERY, PROCESS_QUERY] {
                 let result = populate_with(&mut capacity, |query| {
                     std::future::ready(if query == failure {
                         Err(Error::State("fixture query failure"))
@@ -195,58 +235,115 @@ mod tests {
             }
         }
     }
-    #[test]
-    fn framebuffer_parser_preserves_unsupported_counters_and_rejects_incomplete_observations() {
-        let gpu = framebuffer_memory("98304, 90112\n").unwrap().unwrap();
-        assert_eq!(gpu.total, 96 * super::super::GIB);
-        for unsupported in ["N/A, N/A\n", "[N/A], [N/A]\n"] {
-            assert_eq!(framebuffer_memory(unsupported).unwrap(), None);
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn native_collector_lists_every_gpu_and_managed_inference_refuses_more_than_one() {
+        let two = format!(
+            "{H100}\n1, GPU-c2c2c2c2-0000-0000-0000-000000000000, NVIDIA L4, 8.9, 23034, 22000, 580.65.06\n"
+        );
+        for (text, count) in [(two, 2), (eight_gpus(), 8)] {
+            let mut capacity = Capacity::default();
+            populate_with(&mut capacity, |query| {
+                std::future::ready(Ok(if query == GPU_QUERY {
+                    text.clone()
+                } else {
+                    String::new()
+                }))
+            })
+            .await
+            .unwrap();
+            assert_eq!(capacity.gpus.len(), count);
+            assert_eq!(capacity.gpus, gpus(&text).unwrap());
+            assert!(capacity.gpu.is_empty() && capacity.gpu_memory.is_none());
+            assert_eq!((capacity.driver_major, capacity.compute_capability), (0, 0));
+            let error = capacity.require_one_gpu().unwrap_err().to_string();
+            assert!(
+                error.contains("managed inference requires exactly one observable GPU"),
+                "{error}"
+            );
         }
-        for text in [
-            "",
+        let mut capacity = Capacity::default();
+        populate_with(&mut capacity, |_| std::future::ready(Ok(String::new())))
+            .await
+            .unwrap();
+        assert!(capacity.require_one_gpu().is_err());
+    }
+
+    #[test]
+    fn gpu_parser_reads_each_gpu_with_its_own_name_and_memory() {
+        let gpus = gpus(&eight_gpus()).unwrap();
+        assert_eq!(
+            gpus.iter().map(|gpu| gpu.index).collect::<Vec<_>>(),
+            (0..8).collect::<Vec<_>>()
+        );
+        assert_eq!(gpus[3].name, "NVIDIA RTX A400");
+        assert_eq!(gpus[3].compute_capability, 86);
+        assert_eq!(gpus[3].memory.as_ref().unwrap().total, 4094 << 20);
+        assert_eq!(gpus[7].name, "NVIDIA H200 NVL");
+        assert_eq!(gpus[7].uuid, "GPU-77777777-0000-0000-0000-000000000000");
+        assert_eq!(
+            gpus[7].memory,
+            Some(GpuMemory {
+                total: 143771 << 20,
+                free: 143000 << 20,
+            })
+        );
+        assert!(gpus.iter().all(|gpu| gpu.driver_major == 580));
+        assert_eq!(super::gpus("").unwrap(), []);
+    }
+
+    #[test]
+    fn gpu_parser_preserves_unsupported_counters_and_rejects_incomplete_observations() {
+        let gpu = &gpus(" 0 , GPU-x , NVIDIA GB10 , 12.1 , 98304, 90112 , 580.142 \n").unwrap()[0];
+        assert_eq!(gpu.memory.as_ref().unwrap().total, 96 * GIB);
+        assert_eq!(
+            (gpu.uuid.as_str(), gpu.name.as_str()),
+            ("GPU-x", "NVIDIA GB10")
+        );
+        assert_eq!(gpu.driver_major, 580);
+        for unsupported in ["N/A, N/A", "[N/A], [N/A]", "N/A, [N/A]"] {
+            let line = format!("0, GPU-x, NVIDIA GB10, 12.1, {unsupported}, 580");
+            assert_eq!(gpus(&line).unwrap()[0].memory, None, "{line}");
+        }
+        for memory in [
             "[N/A], 100",
             "100, [N/A]",
             "Unknown, Unknown",
             "1, 2",
             "0, 0",
-            "98304",
-            "98304, 90112, extra",
-            "98304, 90112\n98304, 90112",
             "999999999999, 0",
         ] {
-            assert!(framebuffer_memory(text).is_err(), "{text}");
+            let line = format!("0, GPU-x, NVIDIA GB10, 12.1, {memory}, 580");
+            assert!(gpus(&line).is_err(), "{line}");
         }
-    }
-    #[test]
-    fn gpu_parser_rejects_extra_lines_without_consuming_the_rest() {
-        let lines = ["NVIDIA GB10, 580", "NVIDIA GB10, 580"]
-            .into_iter()
-            .chain(std::iter::from_fn(|| panic!("read past the second GPU")));
-        assert!(single_gpu(lines).is_err());
-        assert_eq!(
-            single_gpu(std::iter::once(" NVIDIA GB10 , 580.142 ")).unwrap(),
-            ("NVIDIA GB10".into(), 580)
-        );
-        for line in ["", "NVIDIA GB10", ", 580", "NVIDIA GB10, 580, extra"] {
-            assert!(single_gpu(std::iter::once(line)).is_err());
+        for line in [
+            "0, GPU-x, NVIDIA GB10, 12.1, 98304, 580",
+            "0, GPU-x, NVIDIA GB10, 12.1, 98304, 90112, 580, extra",
+            "0, , NVIDIA GB10, 12.1, 98304, 90112, 580",
+            "0, GPU-x, , 12.1, 98304, 90112, 580",
+            "x, GPU-x, NVIDIA GB10, 12.1, 98304, 90112, 580",
+            "0, GPU-x, NVIDIA GB10, 12.1, 98304, 90112, unknown",
+            "0, GPU-x, NVIDIA GB10, [N/A], 98304, 90112, 580",
+            "0, GPU-x, NVIDIA GB10, 12.10, 98304, 90112, 580",
+            "0, GPU-x, NVIDIA GB10, 12.1, 98304, 90112, 580\n0, GPU-y, NVIDIA GB10, 12.1, 98304, 90112, 580",
+            "0, GPU-x, NVIDIA GB10, 12.1, 98304, 90112, 580\n1, GPU-x, NVIDIA GB10, 12.1, 98304, 90112, 580",
+        ] {
+            assert!(gpus(line).is_err(), "{line}");
         }
-        assert!(single_gpu(std::iter::empty()).is_err());
     }
 
     #[test]
-    fn gpu_inventory_requires_one_gpu_and_complete_process_metadata() {
-        assert_eq!(
-            inventory("NVIDIA GB10, 580.142\n", "12\n34\n").unwrap(),
-            ("NVIDIA GB10".into(), 580, 2)
-        );
-        assert_eq!(inventory("NVIDIA GB10, 580.142\n", "").unwrap().2, 0);
+    fn gpu_inventory_requires_complete_process_metadata() {
+        let (gpus, processes) = inventory(GB10, "12\n34\n").unwrap();
+        assert_eq!(gpus.len(), 1);
+        assert_eq!(processes, 2);
+        assert_eq!(inventory(GB10, "").unwrap().1, 0);
         for (gpu, processes) in [
-            ("", ""),
-            ("NVIDIA GB10, unknown", ""),
-            ("NVIDIA GB10, 580\nNVIDIA GB10, 580", ""),
-            ("NVIDIA GB10, 580", "unknown"),
-            ("NVIDIA GB10, 580", "12\n12"),
-            ("NVIDIA GB10, 580", "0"),
+            ("0, GPU-x, NVIDIA GB10, 12.1, [N/A], [N/A], unknown", ""),
+            (GB10, "unknown"),
+            (GB10, "12\n12"),
+            (GB10, "0"),
         ] {
             assert!(inventory(gpu, processes).is_err());
         }

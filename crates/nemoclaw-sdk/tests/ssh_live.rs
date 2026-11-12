@@ -81,7 +81,7 @@ async fn ssh_upload_and_streamed_download_preserve_container_identity() {
 async fn ssh_capacity_belongs_to_the_selected_docker_host() {
     use nemoclaw_provider::hardware::{HostObserver, SshHost};
     let engine = Engine::connect(&std::env::var("NEMOCLAW_TEST_SSH_ENGINE").unwrap()).unwrap();
-    let observation = SshHost.observe(&engine).await.unwrap();
+    let observation = SshHost.observe(&engine, None).await.unwrap();
     let info = engine.info().await.unwrap();
     let capacity = observation.for_engine(info.id.as_deref().unwrap()).unwrap();
     let expected = match info.architecture.as_deref().unwrap() {

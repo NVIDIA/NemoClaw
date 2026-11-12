@@ -35,24 +35,30 @@ Another apply must then reuse that storage, refreshing rather than creating it a
 The runner deletes the cluster with the redeployed deployment.
 That a gateway trusts only the deployment's own issuer is a [contract check](integration-tests.md#openshell-provider-contract) of the rendered chart.
 
-The `kind-openshift-oidc` scenario deploys two agents with the OpenShift profile, `assistant` and `researcher`, each sandbox granting one endpoint named for it so that no two have the same policy.
+The `kind-kubernetes-oidc` scenario deploys two agents, `assistant` and `researcher`, in a namespace that carries OpenShift's UID range, each sandbox granting one endpoint named for it so that no two have the same policy.
+It deploys with `kubernetes`, because kind can't run a managed `openshift` gateway: that gateway leaves its `fsGroup` for OpenShift to assign, and without one it can't read its signing key.
+The `openshift-oidc` scenario deploys the same agents with `openshift` on [OpenShift](#openshift-gateway).
 Before the scenario, `cargo ci live-kind` starts a pinned registry that requires a login on the run's kind network and pushes the agent image there under a new image-index digest.
 The node may pull from that registry over HTTP, and its configuration for it holds no credentials, so a pod can pull the image only with a pull Secret.
 The new digest makes the node fetch the index from the registry, although the node already has the image's layers.
 Before its first apply, the `tests/e2e/hcl/kind` module releases a chart twice with the bundled Helm provider, as a platform and an operator would prepare the cluster: once for the namespaces, the pull Secret, and the CA, and once for the stub model and the issuer, whose release waits until both are ready:
 
-- The deployment's namespace, which holds the registry's image pull Secret. For `kind-openshift-oidc`, it also has OpenShift UID-range annotations, as OpenShift prepares a project, and holds the CA of the existing issuer.
+- The deployment's namespace, which holds the registry's image pull Secret. For `kind-kubernetes-oidc`, it also has the UID-range annotations its test file supplies, as OpenShift prepares a project, and holds the CA of the existing issuer.
 - A stub model server in its own namespace: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000. It answers every `POST /v1/chat/completions` with the same streamed chat completion. The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../../docs/build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) describes.
-- For `kind-openshift-oidc`, an existing OIDC issuer in its own namespace: the SDK's development issuer objects, without the NetworkPolicy that admits only a gateway in the issuer's namespace.
+- For `kind-kubernetes-oidc`, an existing OIDC issuer in its own namespace: the SDK's development issuer objects, without the NetworkPolicy that admits only a gateway in the issuer's namespace.
 
 `hcl_live::issuer` creates the issuer's key material and one token for the case's audience, which is the deployment UID; OpenTofu cannot sign a token.
 The token stays in a private credentials file in the run's `work` directory, which the `cli` and `verifier` modules export as the case's `token.env` variable.
 The gateway uses the `oidc` authentication profile, so the apply and the replies show that it accepts the issuer's tokens and that each sandbox pulled its image with the pull Secret.
+The chart's NodePort Service [publishes](../../docs/build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster) the gateway at the kind node's address.
+NemoClaw's operations still reach the gateway through the SDK's port-forward; the probe instead dials the node's address with the gateway's client certificate and the token, as another client would, and checks that the gateway's certificate names it.
 Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
 The test runner then uninstalls both releases, which deletes their namespaces; it does not wait for Kubernetes to finish deleting them.
 `cargo ci live-kind` binds each case in `cases/` to the cluster's context, a fresh UID, gateway port, and namespace, and the image in the registry.
+A case whose NodePort Service publishes the gateway, as `kind-kubernetes-oidc`'s does, gets the node's address in its endpoint instead of a fresh port.
+Its node port stays as the case sets it, in the range's lower band, which Kubernetes leaves for Services that name their port.
 It passes the kubeconfig as `TF_VAR_kubeconfig` and the registry's fixture login as `TF_VAR_pull_credentials`.
-The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell applies the range.
+The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell runs each sandbox as the range's first UID.
 The scenario annotates the namespace itself; don't run it on a cluster that serves the `security.openshift.io` API group, where that would replace the range the cluster assigns.
 These live tests run no model and need no GPU or user registry credentials; the stub's fixed reply does not establish inference or model compatibility.
 
@@ -60,6 +66,39 @@ The runner deletes its cluster and registry and removes its built image tag afte
 Set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to retain the cluster and registry on either outcome, then delete the cluster with the printed kind command and the registry container with `docker rm --force --volumes` after inspection.
 
 The `chart` [contract module](integration-tests.md#openshell-provider-contract) renders the pinned gateway chart with the SDK's values; it needs no cluster.
+
+## OpenShift Gateway
+
+No CI job has an OpenShift cluster, and kind can't stand in for one: a managed `openshift` gateway gets its `fsGroup` only from OpenShift.
+The `openshift-oidc` scenario deploys the agents of `kind-kubernetes-oidc` with the `openshift` runtime profile, and runs by hand, for example on OpenShift Local.
+OpenShift writes the namespace's UID range, so its test file supplies none, and `restricted-v2` admits the gateway as the range's first UID and group.
+The gateway can read its signing key only with that group, so the apply and the replies show that OpenShift assigned it.
+
+Prepare the cluster as its operator would:
+
+- Agent Sandbox 1.0.3, from the manifest that `cargo ci live-kind` installs, and a default StorageClass.
+- The agent image in a registry the nodes pull from, by digest, and its metadata bundle from `cargo images export-metadata`.
+  For OpenShift's internal registry, copy the image through the registry's route into a namespace of its own, for example with `oc image mirror`, which keeps its digest, and bind `image-registry.openshift-image-registry.svc:5000/<namespace>/agent@<digest>`.
+- A login that can pull the image, for `TF_VAR_pull_credentials`: for the internal registry, a cluster administrator's name and a token from `oc whoami -t`.
+
+Bind a copy of `cases/openshift-oidc.yaml` to the run: a fresh `uid`, which is also the token audience; a free endpoint port; a new namespace, which also names the stub model's and the issuer's; the cluster's context; and the image.
+Then run from `crates/nemoclaw-e2e`:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+NEMOCLAW_HCL_CASE=openshift-oidc \
+NEMOCLAW_HCL_DOCUMENT=/absolute/path/to/bound.yaml \
+NEMOCLAW_HCL_RUN=/absolute/path/to/new-run \
+NEMOCLAW_TEST_KUBECONFIG=/absolute/path/to/kubeconfig \
+NEMOCLAW_TEST_KUBE_CONTEXT=the-bound-context \
+NEMOCLAW_TEST_AGENT_METADATA=/absolute/path/to/agent.metadata.json \
+TF_VAR_kubeconfig=/absolute/path/to/kubeconfig \
+TF_VAR_pull_credentials='{ username = "...", password = "..." }' \
+  cargo test -p nemoclaw-e2e --test e2e hcl_live::case -- --exact --ignored --nocapture
+```
+
+Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deployment` with the same bundle, whether or not the scenario passed.
+Destroy keeps the gateway's volume; with a `Retain` StorageClass, such as OpenShift Local's, delete its `Released` PersistentVolumes afterward.
 
 ## HCL E2E Scenarios
 
@@ -78,18 +117,17 @@ Run blocks call these modules:
 
 | Case | Runner | Checks |
 |---|---|---|
-| Case | Runner | Agent and reply |
-|---|---|---|
-| `docker-openclaw-nvidia` | Live / HCL | OpenClaw on NVIDIA hosted inference; any reply. |
-| `docker-openclaw-v0-parity` | Live / HCL and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
-| `docker-hermes-v0-parity` | Live / HCL | The hosted parity Hermes document; `FOUR`. |
+| `docker-openclaw-nvidia` | CI / Bundle's `E2E HCL CASE` | OpenClaw on NVIDIA hosted inference; any reply. |
+| `docker-openclaw-v0-parity` | CI / Bundle's `E2E HCL CASE`, and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
+| `docker-hermes-v0-parity` | CI / Bundle's `E2E HCL CASE` | The hosted parity Hermes document; `FOUR`. |
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
 | `docker-openclaw-vllm-shared` | Live / HCL, NVIDIA GPU runner | Two OpenClaw agents sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
-| `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, and OpenClaw's terminal UI through `openshell sandbox exec --tty`, on a stub model that requires the run's key; in each sandbox, a writable workspace and no model key in the environment; in Hermes's sandbox, a pseudo-terminal; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused ([Agent Interfaces](#agent-interfaces)). |
+| `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, and OpenClaw's terminal UI through `openshell sandbox exec --tty`, on a stub model that requires the run's key, with replies that name the skills each harness offers from its mounted volumes, and Hermes's dashboard opening a skill as its volume holds it; in each sandbox, a writable workspace, skill volumes that are writable or read-only as mounted, and no model key in the environment; in Hermes's sandbox, a pseudo-terminal; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused ([Agent Interfaces](#agent-interfaces)). |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, and a workspace file on a named volume that survives the destroy and redeploy. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
-| `kind-openshift-oidc` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
+| `kind-kubernetes-oidc` | `cargo ci live-kind` | Two agents [on kind](#kubernetes-gateway-without-the-helm-cli) in a namespace with OpenShift's UID range, from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens and that the chart's NodePort Service publishes at the node's address; apply goes through the port-forward, and each agent answers the stub's reply through the published address. |
+| `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` runtime profile [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`; each answers with the stub's reply. |
 
 Every scenario checks the same successful path:
 
@@ -103,7 +141,7 @@ The hosted cases make real hosted inference requests, which may incur charges.
 
 The workflows destroy each deployment in a separate step after success, failure, or cancellation and upload outcome reports with the destroy receipt.
 Requests, replies, command output, and credentials stay in the run's private `work` directory.
-CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, or run a case by hand as below.
+CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL, from the same artifacts, on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, which builds its own candidate from the dispatched branch, or run a case by hand as below.
 
 To run a case by hand on Linux with Docker, load the candidate images, bind the case's image templates and `uid` as the `Live / HCL` workflow does, and run from `crates/nemoclaw-e2e`:
 
@@ -139,8 +177,8 @@ Image compilation happens on the CI runner.
 A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
 The check list shows bundle build, image build, preparation, image loading, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
 The workflow requires repository secrets named `BREV_API_KEY` and `NVIDIA_API_KEY`.
-While `v1` is not the repository's default branch, run it by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`.
-After the workflow file reaches the default branch, select `v1` with `workflow_dispatch` instead.
+Run it on `v1` with `gh workflow run brev.yml --ref v1`, or by pushing the candidate to an intentionally named `run-brev-v1-e2e/*` branch in `NVIDIA/NemoClaw`; a dispatch from any other branch skips every job.
+GitHub's documentation requires a dispatched workflow on the default branch, but GitHub has accepted dispatches of this one on `v1`.
 
 The reviewed Brev startup script installs the required host packages, enables Docker, and waits on a readiness sentinel before candidate transfer.
 The VM must be AMD64, expose a working Docker daemon with Buildx and a Landlock kernel ABI, and have at least 80 GiB free during the initial fresh-host check.
@@ -225,14 +263,20 @@ The `docker-openclaw-hermes-interfaces` [HCL E2E scenario](#hcl-e2e-scenarios) d
 `cargo ci live-docker` runs it: it installs the pinned OpenShell CLI by checksum, binds the case to a fresh UID, gateway port and subnet, stub address, and the run's OpenClaw and Hermes images, and passes a fresh model key as `NEMOCLAW_TEST_INTERFACES_MODEL_KEY` and `TF_VAR_model_key`.
 Before apply, the `tests/e2e/hcl/model` module runs a stub model with the bundled Docker provider: the pinned `nginx-unprivileged` image that the development issuer runs, on the host network at the port the case's `model` provider names.
 It lists one model and answers every chat completion with the same reply, streamed when the request asks, and refuses any request without that key.
-Apply must report each interface's port, sign-in, and token file.
+Each skill's description is a marker, and the reply ends with the name of each skill whose marker the request holds.
+The `tests/e2e/hcl/volume` module also creates each sandbox's two skills volumes, named for the run's UID, and writes their skills, owned by the agent image's user.
+Each agent's `skills.paths` lists a writable folder of skills on one volume and a folder that is one skill on another, as [Skills on a Mounted Volume](../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes; OpenClaw's skill volume is read-only and Hermes's writable, OpenClaw's folder holds two skills and a file that isn't one, and Hermes's folder is empty.
+Apply must start both agents with them, and report each interface's port, sign-in, and token file.
+A harness offers the model the skills it finds, so each reply below must name the skills on that agent's volumes: `notes` for Hermes, and `digest`, `review`, and `translate` for OpenClaw.
+Whether the agent loads and follows a skill is not checked live; Fabric's tests check what each harness loads.
 The `tests/e2e/hcl/interface` module then runs `hcl_live::interface` once per request: it reads the reported token with `openshell sandbox exec`, forwards the port with `openshell forward service`, and sends one request with the token as a Bearer credential.
-OpenClaw's Control UI page must load and its configuration endpoint must accept the token; Hermes's API server must list its models and answer a chat completion with the stub's reply, which also shows that NemoClaw sent the configured key; Hermes's dashboard page must load with its session token.
+Hermes's dashboard has no token file, so for a request that needs its session token, the probe first loads the page and reads the token from it, as a browser does.
+OpenClaw's Control UI page must load and its configuration endpoint must accept the token; Hermes's API server must list its models and answer a chat completion with the stub's reply and its skill, which also shows that NemoClaw sent the configured key; Hermes's dashboard page must load with its session token, and with that token the dashboard's skill editor must open `notes` exactly as its volume holds it, at the volume's path.
 Reports hold status codes; tokens and response bodies stay in the run's private `work` directory.
 The `tests/e2e/hcl/terminal` module then runs `hcl_live::terminal`, which opens OpenClaw's terminal UI as [OpenClaw's Terminal UI](../../docs/agents-inference/interfaces.md#openclaws-terminal-ui) describes: it reads the dashboard's token with `openshell sandbox exec`, runs `openshell sandbox exec --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN` in a pseudo-terminal, waits for the `connected | idle` status, and types a prompt, then Enter on its own, because a terminal UI reads a prompt and Enter that arrive together as a paste.
-The stub's reply must appear, and the command must exit 0 after Ctrl-D.
+The stub's reply, naming OpenClaw's skills, must appear, and the command must exit 0 after Ctrl-D.
 The report holds those results and the exit status; the screen output and the token stay in `work`.
-Then the `tests/e2e/hcl/command` module runs two commands in each sandbox: one writes a marker file in `/sandbox/workspace`, the workspace that the SDK's Fabric configuration sets, and reads it back as the agent image's user, UID 10001; the other lists the environment, which must include the variable that the sandbox reads the model registration's key from, `NEMOCLAW_INFERENCE_MODEL_..._KEY`, but not the run's model key.
+Then the `tests/e2e/hcl/command` module runs three commands in each sandbox: one writes a marker file in `/sandbox/workspace`, the workspace that the SDK's Fabric configuration sets, and reads it back as the agent image's user, UID 10001; one lists the environment, which must include the variable that the sandbox reads the model registration's key from, `NEMOCLAW_INFERENCE_MODEL_..._KEY`, but not the run's model key; and one creates a file in each of the sandbox's skill volumes, which every volume must accept except OpenClaw's read-only review skill, which must refuse it with `EROFS`.
 Two more commands in OpenClaw's sandbox check its network policy with `python3`, which the images have instead of curl.
 Each sandbox's managed inference grant already gives the image's executables, `python3` among them, the model's `/v1/**` paths, so only OpenClaw's document also grants `python3` the stub's `/health`.
 A request there must get the stub's 401, which shows that it reached the stub; without the grant, OpenShell's proxy answers 403.

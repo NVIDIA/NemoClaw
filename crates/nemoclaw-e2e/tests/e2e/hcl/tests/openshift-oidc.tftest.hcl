@@ -1,13 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Two agents with the OpenShift profile on a managed gateway in kind:
+# Two agents with the openshift profile on a managed gateway in OpenShift,
+# whose restricted-v2 constraint assigns the gateway its UID and fsGroup:
 # apply, a reply from each agent's recorded runtime, an unchanged plan, and
-# destroy that keeps only the gateway's storage. cargo ci live-kind runs it.
-# The stub's reply shows each request reached it; no model runs. The agent
-# image comes from the run's private registry with the operator's pull
-# Secret, and the CLI and the probe reach the gateway with a token from an
-# existing OIDC issuer, so apply and the replies show that the gateway
+# destroy that keeps only the gateway's storage. No CI job has OpenShift, so
+# it runs by hand, for example on OpenShift Local. The kind module prepares
+# the cluster as it does on kind, except the namespace's UID range, which
+# OpenShift writes. The stub's reply shows each request reached it; no model
+# runs. The agent image comes from a private registry with the operator's
+# pull Secret, and the CLI and the probe reach the gateway with a token from
+# an existing OIDC issuer, so apply and the replies show that the gateway
 # accepts that issuer's tokens.
 
 run "cluster" {

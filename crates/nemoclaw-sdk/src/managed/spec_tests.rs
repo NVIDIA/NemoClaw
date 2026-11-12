@@ -279,7 +279,7 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
                     })
                 })
             });
-            assert_eq!(requests_gpu, process.gpu);
+            assert_eq!(requests_gpu, process.gpus != crate::managed::Gpus::None);
             assert_eq!(host.ipc_mode.as_deref() == Some("host"), process.host_ipc);
             assert_eq!(host.memory, Some(process.memory_bytes as i64));
             assert_eq!(host.memory_swap, host.memory);

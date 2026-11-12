@@ -15,7 +15,7 @@ These examples cover their exact combinations and do not qualify other DGX Stati
 ## Check the Host
 
 The host must provide Ubuntu 24.04, ARM64, one NVIDIA GB300 with compute capability 10.3, driver major 580 or newer, and Docker with the containerd image store enabled.
-The `dgx-station` profile requires observable dedicated GPU-memory counters and rejects additional visible GPUs.
+The `dgx-station` profile requires observable dedicated GPU-memory counters and exactly one GPU visible in the model container; on a Station with another GPU, set the service's [`container.gpuDevices`](../../docs/agents-inference/inference.md#set-container-limits-and-update-policy) to the GB300.
 Confirm that the selected example's gateway and inference ports are unused and that its gateway CIDR does not overlap a host route or Docker network.
 Stop or resize only workloads you own before reserving GPU capacity.
 
@@ -27,9 +27,8 @@ Run these commands from the repository root on the Station:
 
 ```sh
 docker buildx bake vllm
-IMAGE_PREFIX=nc-fabric AGENT_PLATFORM=linux/arm64 docker buildx bake openclaw --load
 # The shared-model example also requires the Pi image.
-IMAGE_PREFIX=nc-fabric AGENT_PLATFORM=linux/arm64 docker buildx bake pi --load
+cargo images build --platform linux/arm64 openclaw pi
 cargo run -p nemoclaw-build -- bundle
 ```
 
@@ -69,7 +68,7 @@ dist/linux_arm64/bin/nemoclaw apply --state-dir .local/station-demo/state .local
 Planning performs the hardware, image, network, and capacity checks without creating runtime resources.
 Applying downloads the pinned model snapshot, starts managed vLLM and the declared agent runtimes, and may take several minutes.
 Apply verifies readiness but does not request an agent response.
-Use the [headless OpenClaw request](../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) and [Pi request](../../docs/agents-inference/agents.md#run-one-deep-agents-or-pi-request) procedures for the agents in your selected example.
+Use the [headless OpenClaw request](../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) and [agent request](../../docs/agents-inference/agents.md#run-one-agent-request) procedures for the agents in your selected example.
 
 Check convergence and the export round trip:
 

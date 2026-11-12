@@ -97,6 +97,22 @@ pub struct Serving {
     #[schemars(default)]
     /// Seconds allowed for backend readiness before startup fails.
     pub startup_timeout_seconds: i64,
+    #[serde(
+        rename = "tensorParallelSize",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "u64")]
+    /// vLLM's --tensor-parallel-size without a recipe: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts, and fails startup if they don't support it.
+    pub tensor_parallel_size: Option<u64>,
+    #[serde(
+        rename = "pipelineParallelSize",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "u64")]
+    /// vLLM's --pipeline-parallel-size without a recipe: how many GPU stages each hold a range of layers. vLLM uses tensor × pipeline parallel size GPUs; selected GPUs the layout doesn't use stay reserved but idle.
+    pub pipeline_parallel_size: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -104,7 +120,7 @@ pub struct Serving {
 #[serde(default, deny_unknown_fields)]
 /// Resident watchdog thresholds are validated before runtime creation. The parser also checks relationships between thresholds.
 pub struct Memory {
-    /// Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
+    /// Optional fraction of each selected GPU's observed dedicated memory, from 0.05 through 0.95, which vLLM's --gpu-memory-utilization applies to each GPU's own total. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
     #[serde(
         rename = "gpuMemoryUtilization",
         skip_serializing_if = "Option::is_none"
@@ -113,7 +129,7 @@ pub struct Memory {
     pub gpu_memory_utilization: Option<serde_json::Number>,
     #[serde(rename = "gpuMemoryGiB", skip_serializing_if = "is_zero")]
     #[schemars(default)]
-    /// Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.
+    /// GPU budget in GiB for each selected GPU without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.
     pub gpu_memory_gib: i64,
     #[serde(rename = "hostReserveGiB")]
     #[schemars(default)]
@@ -121,7 +137,7 @@ pub struct Memory {
     pub host_reserve_gib: i64,
     #[serde(rename = "kvCacheGiB")]
     #[schemars(default)]
-    /// KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.
+    /// KV cache allocation in GiB on each selected GPU for ordinary vLLM, passed as --kv-cache-memory-bytes. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.
     pub kv_cache_gib: i64,
     #[serde(rename = "minAvailableGiB")]
     #[schemars(default)]
@@ -146,6 +162,21 @@ fn is_zero(value: &i64) -> bool {
 }
 
 impl Service {
+    /// The tensor and pipeline parallel sizes vLLM gets: the recipe's, or the
+    /// service's without one, each defaulting to vLLM's 1.
+    pub fn parallel_sizes(&self) -> (u64, u64) {
+        let (tensor, pipeline) = match &self.recipe {
+            Some(recipe) => (
+                recipe.serving.tensor_parallel_size,
+                recipe.serving.pipeline_parallel_size,
+            ),
+            None => (
+                self.serving.tensor_parallel_size,
+                self.serving.pipeline_parallel_size,
+            ),
+        };
+        (tensor.unwrap_or(1), pipeline.unwrap_or(1))
+    }
     pub fn served_model(&self) -> &str {
         if let Some(recipe) = &self.recipe {
             return &recipe.serving.model_name;

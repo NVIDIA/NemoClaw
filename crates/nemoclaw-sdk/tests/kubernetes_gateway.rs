@@ -3,7 +3,7 @@
 //! Non-secret gateway chart values. nemoclaw-e2e's kubernetes_chart renders
 //! them with the pinned chart.
 
-use nemoclaw_sdk::kubernetes::{GATEWAY_KIND, Spec, gateway, gateway::Identity};
+use nemoclaw_sdk::kubernetes::{GATEWAY_KIND, Spec, gateway};
 use serde_json::json;
 
 fn spec() -> Spec {
@@ -130,58 +130,4 @@ fn invalid_managed_identity_cannot_produce_chart_values() {
     let mut missing_target = valid;
     missing_target.settings.kubernetes = None;
     assert!(gateway::values(&missing_target).is_err());
-}
-
-#[test]
-fn the_namespace_identity_is_the_first_uid_and_group_of_its_ranges() {
-    let annotations = |uid: &str, groups: Option<&str>| {
-        let mut map = std::collections::BTreeMap::from([(
-            "openshift.io/sa.scc.uid-range".to_owned(),
-            uid.to_owned(),
-        )]);
-        if let Some(groups) = groups {
-            map.insert(
-                "openshift.io/sa.scc.supplemental-groups".into(),
-                groups.into(),
-            );
-        }
-        map
-    };
-    assert_eq!(
-        Identity::from_annotations(&annotations("1000680000/10000", Some("1000690000/10000"))),
-        Some(Identity {
-            user: 1_000_680_000,
-            group: 1_000_690_000,
-        })
-    );
-    assert_eq!(
-        Identity::from_annotations(&annotations("1000680000/10000", None)),
-        Some(Identity {
-            user: 1_000_680_000,
-            group: 1_000_680_000,
-        }),
-        "without supplemental groups, the group is the user's"
-    );
-    for bad in [
-        "",
-        "0/10000",
-        "1000680000",
-        "x/1",
-        "-1/10000",
-        "1000680000/0",
-        "4294967295/2",
-        "1000680000/10000/1",
-    ] {
-        assert_eq!(
-            Identity::from_annotations(&annotations(bad, None)),
-            None,
-            "invalid UID range {bad:?}"
-        );
-        assert_eq!(
-            Identity::from_annotations(&annotations("1000680000/10000", Some(bad))),
-            None,
-            "invalid supplemental group range {bad:?} must not fall back to the UID"
-        );
-    }
-    assert_eq!(Identity::from_annotations(&Default::default()), None);
 }

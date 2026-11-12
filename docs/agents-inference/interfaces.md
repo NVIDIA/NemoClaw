@@ -8,7 +8,7 @@ Agents run inside their sandboxes; you reach them through OpenShell commands, no
 
 ## Select the Gateway and Workspace
 
-Use an OpenShell CLI matching the deployment implementation revision on the client host. For the [source-pinned tutorial](../get-started/first-deployment.md), use OpenShell 0.1.6 from its inspected `versions.json`; this documentation checkout’s `versions.json` may specify a different version.
+Use an OpenShell CLI matching the deployment implementation revision on the client host. For the [source-pinned tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
 These selectors choose an existing OpenShell gateway and deployment; they do not create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.
 
@@ -76,7 +76,7 @@ Agents:
 JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`. If an apply result also lists interfaces, the CLI prints the gateway and workspace selection once under **Agents**, not again under **Agent interfaces**.
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
 An agent without a recorded runtime, such as before the first apply, is listed with `no runtime recorded` and has no `runtimeId`.
-[Run one request](agents.md#run-one-deep-agents-or-pi-request) shows the command and its input.
+[Run one request](agents.md#run-one-agent-request) shows the command and its input.
 The selected Fabric adapter owns how the harness handles the request.
 
 ## Forward a Native Service
@@ -97,7 +97,7 @@ Apply prints this command for each interface that an agent's configuration enabl
 
 OpenClaw's Control UI and Hermes's API server and dashboard are served by the agent's Fabric runtime inside its sandbox, on loopback ports that you choose.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime; NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
-The [Fabric OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/934ab7eca1ec9ac86a22fd24913f2e9d68637c4a/adapters/python/openclaw/README.md#serve-the-control-ui) and [Fabric Hermes adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/934ab7eca1ec9ac86a22fd24913f2e9d68637c4a/adapters/python/hermes/README.md#serve-the-api-server-and-dashboard) document each interface's behavior.
+The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/f33fa19a1aff584625e02af9007d8113e7b95dd8/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/f33fa19a1aff584625e02af9007d8113e7b95dd8/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
 
 ### Enable an Interface
 
@@ -150,7 +150,7 @@ Agent interfaces:
     export OPENSHELL_WORKSPACE=nc-1234567890abcdef
   claw/dashboard on port 18789
     Forward:  openshell forward service claw --target-port 18789 --local 127.0.0.1:18789
-    Token:    openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token
+    Token:    openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/main/interfaces/dashboard.token
     Sign in:  open http://127.0.0.1:18789/#token=TOKEN, replacing TOKEN with the token
     Terminal: openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token
 ```
@@ -161,7 +161,7 @@ The gateway selection follows [Select the Gateway and Workspace](#select-the-gat
 1. Run the forward in its own terminal and keep it running.
 2. Read the token with the `Token` command, in another terminal with the same selection.
    The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
-   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
+   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as OpenClaw and Hermes, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user; stopping the runtime removes it.
    After the runtime restarts, apply prints the new path; read the token again.
 3. Sign in:
@@ -191,7 +191,7 @@ Run it from a terminal on the client host with the gateway and workspace selecte
 To keep the token out of your shell history, read it into a variable with the `Token` command:
 
 ```sh
-TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
+TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/main/interfaces/dashboard.token)
 openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
 unset TOKEN
 ```
@@ -236,9 +236,10 @@ sandboxes:
 
 Each entry maps to an OpenShell service exposure: its key is the service name, and it takes `targetPort` and an optional `authorizationMode` (`STRIP` or `BEARER_PASSTHROUGH`).
 OpenShell applies `STRIP` when the mode is omitted, and the empty key `""` is the unnamed endpoint.
-OpenShell checks the names when it creates the sandbox; see its [service exposure rules](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/overview.mdx#expose-long-running-services).
+OpenShell checks the names when it creates the sandbox or exposes a service; see its [service exposure rules](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/overview.mdx#expose-long-running-services).
 A sandbox takes at most 32 exposures.
-Exposures belong to the sandbox's creation, so adding, changing, or removing one replaces the sandbox, deleting its files and conversations.
+Adding, changing, or removing an exposure updates the running sandbox's endpoints in place, as `openshell service expose` and `openshell service delete` do, so the sandbox keeps its files and conversations.
+Apply also restores a declared endpoint that was changed or deleted on the gateway, and leaves endpoints under other names alone.
 In HCL, use `openshell_sandbox`'s [`service` blocks](../references/provider.md#openshell-resources-and-data-sources).
 
 Requests to the URL skip OpenShell's gateway authentication: they use no OIDC or CLI login, and only the gateway listener's TLS, including any required client certificate, applies.

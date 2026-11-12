@@ -227,11 +227,11 @@ impl Scenario {
 //
 // vLLM recovery runs in the bearer scenario below. The runtime-independent
 // checks run once each: the readiness gate, pull policy reapply, and probes
-// against vLLM; capacity-free planning, incompatible images, and replacement
-// protection against Ollama. The SDK's runtime tests own the Preserve and
-// Recreate decision for every model kind; this scenario keeps a real plan
-// reaching it. The provider's readiness and storage tests cover their own
-// observations.
+// against vLLM; capacity-free planning, incompatible images, replacement
+// protection, and GPU selection against Ollama. The SDK's runtime tests own the
+// Preserve and Recreate decision for every model kind; this scenario keeps a
+// real plan reaching it. The provider's readiness and storage tests cover their
+// own observations.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn remote_model_reapply_and_drift_keep_bindings_and_stop_on_observation_failure() {
@@ -260,12 +260,13 @@ async fn remote_ollama_recovers_reapplies_and_stops_on_observation_failure_keepi
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
-async fn remote_ollama_preserve_refuses_image_and_memory_changes_and_recreate_plans_replacement() {
+async fn remote_ollama_preserve_refuses_image_memory_and_gpu_changes_and_recreate_replaces_gpu() {
     let s = Scenario::new("nvidia.fabric.openclaw", false, "ollama").await;
     let stable = s.apply().await;
     let state = s.runtime_state();
     image_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
     memory_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
+    gpu_change_replaces_the_container_with_one_device(&s, &stable, &state).await;
 }
 
 // Bearer scenarios leave image compatibility, readiness, and transport checks,
@@ -636,6 +637,29 @@ async fn memory_change_plans_compute_replacement_without_effects(
     let mut changed = read(&s.root, "config.yaml");
     changed["spec"]["services"]["qwen"]["container"]["memoryLimitGiB"] = json!(32);
     change_plans_compute_replacement_without_effects(s, stable, state, changed).await;
+}
+
+// Docker can't move a container to another GPU, so naming one replaces the model
+// container, and Preserve refuses it. After Recreate, the container's device
+// request names only that GPU, and an unchanged apply leaves it as it is.
+async fn gpu_change_replaces_the_container_with_one_device(
+    s: &Scenario,
+    stable: &Value,
+    state: &[u8],
+) {
+    const GPU: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
+    let mut changed = read(&s.root, "config.yaml");
+    changed["spec"]["services"]["qwen"]["container"]["gpuDevices"] = json!([GPU]);
+    change_plans_compute_replacement_without_effects(s, stable, state, changed.clone()).await;
+    changed["spec"]["services"]["qwen"]["updatePolicy"] = json!("Recreate");
+    save(&s.root, "gpu.yaml", &changed);
+    s.run("apply", "gpu.yaml", true).await;
+    let replaced = read(&s.root, "engine.json");
+    let requests = &replaced["container"]["HostConfig"]["DeviceRequests"];
+    assert_eq!(requests.as_array().map(Vec::len), Some(1), "{requests}");
+    assert_eq!(requests[0]["DeviceIDs"], json!([GPU]), "{requests}");
+    s.run("apply", "gpu.yaml", true).await;
+    assert_eq!(read(&s.root, "engine.json"), replaced);
 }
 
 async fn change_plans_compute_replacement_without_effects(

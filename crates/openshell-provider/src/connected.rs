@@ -266,6 +266,62 @@ impl ConnectedOpenShellGateway {
         .transpose()
     }
 
+    /// Expose a service of the bound sandbox, or update its endpoint in place,
+    /// as `openshell service expose` does.
+    pub(crate) async fn expose_service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        exposure: &crate::services::Exposure,
+    ) -> Result<(), ObservationError> {
+        let response = self
+            .client
+            .raw_grpc()
+            .expose_service(self.request(proto::ExposeServiceRequest {
+                workspace_scope: Some(proto::workspace_selector(workspace)),
+                sandbox: value(sandbox, "name").into(),
+                name: exposure.name.clone(),
+                target_port: exposure.target_port,
+                domain: true,
+                authorization_mode: exposure.requested_mode() as i32,
+                ..Default::default()
+            }))
+            .await
+            .map_err(|error| remote_rejection(RejectableOperation::ExposeService, &error))?
+            .into_inner();
+        // The endpoint must belong to the bound sandbox.
+        crate::services::endpoint(response, workspace, sandbox).map(drop)
+    }
+
+    /// Delete one of the bound sandbox's service endpoints, as `openshell
+    /// service delete` does; one already gone is not an error.
+    pub(crate) async fn delete_service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+    ) -> Result<(), ObservationError> {
+        let outcome = self
+            .client
+            .raw_grpc()
+            .delete_service(self.request(proto::DeleteServiceRequest {
+                workspace_scope: Some(proto::workspace_selector(workspace)),
+                sandbox: value(sandbox, "name").into(),
+                name: name.into(),
+                allow_missing: true,
+                ..Default::default()
+            }))
+            .await
+            .map_err(|error| remote_error(&error))?
+            .into_inner()
+            .outcome;
+        // An unspecified outcome doesn't establish that the endpoint is gone.
+        match proto::DeletionOutcome::try_from(outcome) {
+            Ok(proto::DeletionOutcome::Completed | proto::DeletionOutcome::AlreadyAbsent) => Ok(()),
+            _ => Err(ObservationError::Incomplete),
+        }
+    }
+
     pub(crate) async fn update_provider(
         &self,
         want: &Row,

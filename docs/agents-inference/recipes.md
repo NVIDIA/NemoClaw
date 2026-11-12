@@ -28,18 +28,21 @@ It contains:
   These are executable files, not shell command strings.
 - `resources`: maximum prepared bytes, preparation memory in GiB, serving GPU budget in bytes, and startup headroom in GiB.
   The serving GPU budget includes the model, caches, and other GPU allocations.
-- `serving`: model name, parser names, cache dtypes, lazy loading, chunked prefill, optional typed compilation settings, and `VLLM_` environment values.
+- `serving`: model name, parser names, cache dtypes, lazy loading, chunked prefill, optional typed compilation settings, the parallel layout, and `VLLM_` environment values.
   `preparedEnvironment` maps environment names to paths relative to the verified preparation directory; `.` selects that directory.
 - `licenses` and `sourceNotices`: paths to retained files inside the pinned image.
 
 Recipe memory requirements are checked against measurements from the execution host.
 `compatibility.gpu` must belong to the GPU family of a [hardware profile](models.md#choose-a-hardware-profile); other names are rejected.
-That profile's memory architecture decides how the serving GPU budget, `resources.gpuMemoryBytes`, is checked:
+A recipe's `serving.tensorParallelSize` and `serving.pipelineParallelSize` name the layout its budget was measured on, as vLLM names it.
+An omitted size gets vLLM's default of 1, whatever GPUs the service selects; vLLM checks the layout when it starts, as for an [ordinary service](models.md#set-the-parallel-layout).
+With a recipe, the service's `serving.speculativeTokens`, from 0 to 3, sets vLLM's MTP speculative decoding through `--speculative-config`; zero leaves it off, and services without a recipe must leave it zero.
+That profile's memory architecture decides how the serving GPU budget, `resources.gpuMemoryBytes`, is checked; on dedicated memory, the budget applies to each selected GPU:
 
 | Memory architecture | GPU budget must fit | `--gpu-memory-utilization` | Host available memory at startup |
 |---|---|---|---|
 | Unified (GB10, RTX Spark N1X) | Host total memory, with `hostReserveGiB` | Budget over host total memory | Budget plus `startupHeadroomGiB` |
-| Dedicated (every other profile GPU) | GPU total memory, and GPU free memory at startup; host total memory must cover `hostReserveGiB` | Budget over GPU total memory | `hostReserveGiB` plus `startupHeadroomGiB` |
+| Dedicated (every other profile GPU) | Each selected GPU's total memory, and its free memory at startup; host total memory must cover `hostReserveGiB` | Budget over the largest selected GPU's total memory | `hostReserveGiB` plus `startupHeadroomGiB` |
 
 The runtime rechecks preparation and startup headroom.
 The shared resident watchdog continues enforcing the service's memory protection policy after the CLI exits.

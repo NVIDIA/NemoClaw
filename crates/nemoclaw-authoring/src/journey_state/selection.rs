@@ -63,6 +63,19 @@ impl SelectionView<'_> {
             })
     }
 
+    /// The current preset when it names a vendor's fixed endpoint and the
+    /// provider still uses that endpoint.
+    fn vendor_preset(&self) -> Option<ProviderPreset> {
+        let preset = self.current_preset()?;
+        let profile = preset.profile();
+        let (_, name) = self.route_provider()?;
+        let provider = self.provider(&name)?;
+        (!profile.custom_endpoint
+            && provider.get("endpoint")?.as_str()? == profile.endpoint
+            && provider.get("provider")?.as_str()? == profile.kind.as_str())
+        .then_some(preset)
+    }
+
     fn catalog_preset(&self) -> Option<ProviderPreset> {
         let preset = self.current_preset()?;
         let profile = preset.profile();
@@ -120,5 +133,9 @@ impl super::resolver::QuestionResolver<'_> {
 
     pub(super) fn catalog_preset(&self) -> Option<ProviderPreset> {
         self.selection().catalog_preset()
+    }
+
+    pub(super) fn vendor_preset(&self) -> Option<ProviderPreset> {
+        self.selection().vendor_preset()
     }
 }

@@ -72,39 +72,44 @@ fn nemotron_native_serving_settings_preserve_model_identity_and_gpu_fraction() {
 #[test]
 fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
     use nemoclaw_runtime::{
-        hardware::Capacity, hardware::GpuMemory, vllm::hardware_capacity::check_capacity,
+        hardware::Capacity, hardware::Gpu, hardware::GpuMemory,
+        vllm::hardware_capacity::check_capacity,
     };
     let doc = Document::parse(input().to_string().as_bytes()).unwrap();
     let service = service(&doc);
-    let capacity = Capacity {
+    let mut capacity = Capacity {
         architecture: "amd64".into(),
-        gpu: "NVIDIA fixture GPU".into(),
-        driver_major: 580,
         total: 256 * GIB,
         available: 200 * GIB,
         free: 100 * GIB,
         disk_free: 500 * GIB,
+        ..Default::default()
+    };
+    capacity.set_gpus(vec![Gpu {
+        index: 0,
+        uuid: "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3".into(),
+        name: "NVIDIA fixture GPU".into(),
+        driver_major: 580,
         compute_capability: 90,
-        gpu_memory: Some(GpuMemory {
+        memory: Some(GpuMemory {
             total: 96 * GIB,
             free: 90 * GIB,
         }),
-        ..Default::default()
-    };
+    }]);
     check_capacity(service, &capacity, true, 0, 0).expect("qualified dedicated GPU must pass");
     for invalid in ["vram", "free", "compute", "driver", "host", "missing"] {
         let mut c = capacity.clone();
         match invalid {
             "vram" => {
-                let gpu = c.gpu_memory.as_mut().unwrap();
+                let gpu = c.gpus[0].memory.as_mut().unwrap();
                 gpu.total = 80 * GIB;
                 gpu.free = 80 * GIB;
             }
-            "free" => c.gpu_memory.as_mut().unwrap().free = 60 * GIB,
-            "compute" => c.compute_capability = 89,
-            "driver" => c.driver_major = 579,
+            "free" => c.gpus[0].memory.as_mut().unwrap().free = 60 * GIB,
+            "compute" => c.gpus[0].compute_capability = 89,
+            "driver" => c.gpus[0].driver_major = 579,
             "host" => c.available = 20 * GIB,
-            "missing" => c.gpu_memory = None,
+            "missing" => c.gpus[0].memory = None,
             _ => unreachable!(),
         }
         assert!(
@@ -118,7 +123,7 @@ fn dedicated_gpu_checks_use_vram_and_preserve_host_memory_protection() {
     // A running service legitimately uses its GPU allocation. Refresh still
     // checks total capacity, without requiring the startup allocation to be free.
     let mut running = capacity;
-    running.gpu_memory.as_mut().unwrap().free = GIB;
+    running.gpus[0].memory.as_mut().unwrap().free = GIB;
     running.foreign_gpu_processes = 1;
     check_capacity(service, &running, false, 0, 0).unwrap();
 }

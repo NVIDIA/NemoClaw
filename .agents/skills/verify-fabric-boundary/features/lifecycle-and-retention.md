@@ -4,13 +4,13 @@
 # Lifecycle and Retention
 
 A user restarts the agent's runtime, stops and starts its sandbox, destroys and recreates the deployment, changes its configuration, restores it, and finally tears it down, all through the NemoClaw and OpenShell CLIs.
-After each transition, the same YAML brings back an agent that answers, and the files the user keeps on the two caller volumes are still there, unchanged.
+After each transition, the same YAML brings back an agent that answers, and the files the user keeps on the two caller volumes are still there. Retention markers stay unchanged; writable skills may evolve under [the skill content rules](skills.md#evolving-skill-contents).
 A restart or stop/start keeps the same sandbox; a recreation replaces it; removing and restoring the shell tool changes which native calls the agent can make.
 Teardown removes the deployment's compute and leaves the caller volumes, model data, and evidence for the user.
 
 ## Sub-features
 
-- `retention`: the seeded workspace and artifacts markers and the supplied `capability-probe` skill keep their seeded hashes on the same caller volumes, without reseeding. Phases: Initial, After stop/start, After recreate, After config change, After restore.
+- `retention`: the seeded workspace and artifacts markers keep their seeded hashes, and the supplied `capability-probe` skill remains readable at its seeded path on the same caller volume, without reseeding. Phases: Initial, After stop/start, After recreate, After config change, After restore.
 - `extension-runtime-restart`: stopping only the managed Fabric runtime through `fabric-agent-ctl stop`, then an unchanged plan/apply, gives the same sandbox and container a new runtime that answers. Phases: Runtime restart.
 - `stop-start`: stopping the sandbox through OpenShell's supported control stops it and access to it, starting it brings back the same sandbox and container, and after an unchanged plan/apply its runtime answers. Phases: Stop/start.
 - `recreate`: destroying the deployment through NemoClaw keeps the state and caller volumes, and plan/apply of the baseline YAML creates a new sandbox. Phases: Recreate.
@@ -46,13 +46,15 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 
    ```sh
    CASE=retention; CHECK_DIR=$EVIDENCE/$PHASE/$CASE; mkdir -p "$CHECK_DIR"
-   openshell sandbox exec -n assistant --no-tty -- sha256sum /sandbox/workspace/retained/marker.txt /sandbox/artifacts/retained/marker.txt /sandbox/workspace/skills/capability-probe/SKILL.md | tee "$CHECK_DIR/hashes.txt"
+   openshell sandbox exec -n assistant --no-tty -- sha256sum /sandbox/workspace/retained/marker.txt /sandbox/artifacts/retained/marker.txt | tee "$CHECK_DIR/hashes.txt"
    cut -d' ' -f1 "$CHECK_DIR/hashes.txt" | while read -r h; do grep -qF "$h" "$EVIDENCE/seeded.sha256" && echo match || echo MISSING; done
+   openshell sandbox exec -n assistant --no-tty -- cat /sandbox/workspace/skills/capability-probe/SKILL.md > "$CHECK_DIR/skill.md"; echo "skill read exit $?"
+   sha256sum "$CHECK_DIR/skill.md" > "$CHECK_DIR/skill.sha256"
    docker inspect "$SANDBOX_CONTAINER" --format '{{range .Mounts}}{{.Name}} {{.Destination}}{{"\n"}}{{end}}' | grep -E '/sandbox/(workspace|artifacts)' | tee "$CHECK_DIR/mounts.txt"
    ```
 
-   Result: three `match` lines, and the mounts name `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`.
-   A missing or changed file is Failed. This check doesn't need the runtime, so run it even when the runtime is unusable.
+   Result: two `match` lines, `skill read exit 0`, and the mounts name `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`.
+   A missing or changed marker, or a missing skill, is Failed. Changed skill bytes alone do not fail retention; keep the snapshot for diagnosis. This check doesn't need the runtime, so run it even when the runtime is unusable. Native discovery, loading, and fresh skill output remain separate checks.
 3. **Before a transition:** set `PHASE` to the transition's directory and `CASE` to its check, then record what it should keep or replace:
 
    ```sh
@@ -185,7 +187,7 @@ Each transition uses steps 3, 4, and 5 around its own commands.
     Then let [this skill's cleanup](../SKILL.md#cleanup) remove the retained resources and caller volumes.
 ## Gotchas
 
-- Never reseed a marker, the supplied skill, or anything else after a transition. A missing or changed file is evidence.
+- Never reseed a marker, the supplied skill, or anything else after a transition. A missing or changed file is evidence; evaluate skill changes under [the skill content rules](skills.md#evolving-skill-contents).
 - Retained files prove neither discovery, registration, fresh execution, nor conversation resume. [skills](skills.md) tracks rediscovery of a generated skill separately; don't infer conversation resume from `retention`.
 - After runtime replacement, the old `RUNTIME_ID` fails with `runtime_unavailable`; old entry points or tokens must not grant access to that runtime. A leftover launcher file alone proves neither access nor cleanup. Step 4 reads the current runtime and entry points again.
 - Stop only what the check names. `extension-runtime-restart` stops the Fabric runtime, not the sandbox; `stop-start` stops the sandbox, not the gateway, model service, or Docker daemon.

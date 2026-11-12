@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! A sandbox's service exposures, passed to OpenShell at creation in its
-//! terms, and the URLs the gateway reports for them.
+//! A sandbox's service exposures, in OpenShell's terms, and the URLs the
+//! gateway reports for them.
 //!
 //! `services_json` lists each exposure's `name`, `target_port`, and optional
-//! `authorization_mode`. Like `driver_config`, it is part of the creation
-//! request; OpenShell resolves an omitted mode to STRIP.
+//! `authorization_mode`; OpenShell resolves an omitted mode to STRIP. A new
+//! sandbox's creation request carries its exposures, and a change to them
+//! updates the live sandbox's endpoints, as `openshell service expose` and
+//! `openshell service delete` do.
 
 use nemoclaw_backend::{ObservationError, Row};
 use openshell_sdk::raw::proto;
@@ -15,10 +17,26 @@ pub(crate) const FIELD: &str = "services_json";
 pub(crate) const URLS: &str = "service_urls_json";
 
 /// One exposure as written.
-struct Exposure {
-    name: String,
-    target_port: u32,
-    mode: Option<proto::ServiceAuthorizationMode>,
+pub(crate) struct Exposure {
+    pub name: String,
+    pub target_port: u32,
+    pub mode: Option<proto::ServiceAuthorizationMode>,
+}
+
+impl Exposure {
+    /// The mode to send: an omitted one stays unspecified for OpenShell to
+    /// resolve, to STRIP.
+    pub(crate) fn requested_mode(&self) -> proto::ServiceAuthorizationMode {
+        self.mode
+            .unwrap_or(proto::ServiceAuthorizationMode::Unspecified)
+    }
+
+    /// Whether the gateway's endpoint serves this exposure as written, an
+    /// omitted mode matching OpenShell's STRIP.
+    pub(crate) fn served_by(&self, endpoint: &Endpoint) -> bool {
+        endpoint.target_port == self.target_port
+            && endpoint.mode == self.mode.unwrap_or(proto::ServiceAuthorizationMode::Strip)
+    }
 }
 
 /// One endpoint the gateway reports for the sandbox.
@@ -30,7 +48,7 @@ pub(crate) struct Endpoint {
     pub url: String,
 }
 
-fn exposures(json: &str) -> Result<Vec<Exposure>, ObservationError> {
+pub(crate) fn exposures(json: &str) -> Result<Vec<Exposure>, ObservationError> {
     if json.is_empty() {
         return Ok(Vec::new());
     }
@@ -79,12 +97,9 @@ pub(crate) fn request(json: &str) -> Result<Vec<proto::SandboxServiceExposure>, 
     Ok(exposures(json)?
         .into_iter()
         .map(|exposure| proto::SandboxServiceExposure {
+            authorization_mode: exposure.requested_mode() as i32,
             service: exposure.name,
             target_port: exposure.target_port,
-            authorization_mode: exposure
-                .mode
-                .unwrap_or(proto::ServiceAuthorizationMode::Unspecified)
-                as i32,
         })
         .collect())
 }

@@ -90,6 +90,11 @@ pub fn arguments(
         .as_ref()
         .and_then(serde_json::Number::as_f64)
         .unwrap_or_else(|| (model.gpu_bytes as f64 / total as f64 * 1000.0).floor() / 1000.0);
+    // The SDK resolves a service's tensor size from the selected GPUs; a
+    // runtime specification or recipe without one gets vLLM's default.
+    let (tensor_parallel_size, pipeline_parallel_size) = service.parallel_sizes();
+    let tensor_parallel_size = tensor_parallel_size.to_string();
+    let pipeline_parallel_size = pipeline_parallel_size.to_string();
     let mut args: Vec<String> = [
         "-m",
         "vllm.entrypoints.openai.api_server",
@@ -104,7 +109,9 @@ pub fn arguments(
             "0.0.0.0"
         },
         "--tensor-parallel-size",
-        "1",
+        &tensor_parallel_size,
+        "--pipeline-parallel-size",
+        &pipeline_parallel_size,
         "--load-format",
         "safetensors",
     ]
