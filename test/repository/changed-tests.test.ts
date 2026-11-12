@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { terminateFixtureChild } from "../support/process-liveness.ts";
 import { changedInputs, relatedArguments, sourceProjects } from "../../scripts/tests/changed.mts";
 
 const roots: string[] = [];
@@ -36,6 +38,12 @@ describe("changed-test selection", () => {
     expect(sourceProjects).toContain("integration");
     expect(sourceProjects).not.toContain("e2e-live");
     expect(sourceProjects).not.toContain("package-contract");
+  });
+
+  it("selects recovery coverage when the executable dispatch procedure changes", () => {
+    expect(
+      relatedArguments([".agents/skills/nemoclaw-maintainer-e2e/references/manual-pr.md"]),
+    ).toContain("test/repository/manual-pr-dispatch-checkpoint.test.ts");
   });
 
   it("includes staged, unstaged, deleted and untracked inputs relative to the chosen base", () => {
@@ -87,6 +95,45 @@ describe("changed-test selection", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("missing-base");
   });
+
+  it("terminates a blocked test child and reports its timeout", () => {
+    const root = directory();
+    const pid = join(root, "child.pid");
+    mkdirSync(join(root, "node_modules/vitest"), { recursive: true });
+    writeFileSync(
+      join(root, "node_modules/vitest/vitest.mjs"),
+      `import { writeFileSync } from 'node:fs';
+       writeFileSync(${JSON.stringify(pid)}, String(process.pid));
+       process.on('SIGTERM', () => {});
+       setInterval(() => {}, 1000);`,
+    );
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `import { runRelatedTests } from ${JSON.stringify(pathToFileURL(resolve("scripts/tests/changed.mts")).href)};
+           process.chdir(${JSON.stringify(root)});
+           process.exitCode = runRelatedTests([], 2000);`,
+        ],
+        { encoding: "utf8", timeout: 8000, killSignal: "SIGKILL", env: {} },
+      );
+      expect(existsSync(pid)).toBe(true);
+      expect(result.status, result.stdout + result.stderr).toBe(1);
+      const report = JSON.parse(result.stdout);
+      expect(report).toMatchObject({
+        timeoutMs: 2000,
+        timedOut: true,
+        signal: "SIGKILL",
+        exitCode: null,
+      });
+      expect(report.elapsedMs).toBeGreaterThanOrEqual(2000);
+      expect(result.stderr).toContain("ETIMEDOUT");
+    } finally {
+      terminateFixtureChild(pid);
+    }
+  }, 15000);
 
   it("reports success when an unrelated document selects no tests", () => {
     const root = directory();

@@ -46,8 +46,9 @@ jobs define narrower trusted-host boundaries in the workflow.
 ```bash
 set -euo pipefail
 PR_NUMBER=123
-git fetch --prune origin main
-WORKFLOW_SHA="$(git rev-parse origin/main)"
+WORKFLOW_SHA="$(gh api repos/NVIDIA/NemoClaw/git/ref/heads/main --jq '.object.sha')"
+git fetch --no-tags git@github.com:NVIDIA/NemoClaw.git +refs/heads/main:refs/remotes/origin/main
+test "$(git rev-parse --verify origin/main)" = "$WORKFLOW_SHA"
 PR_JSON="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
 test "$(jq -r .state <<<"$PR_JSON")" = open
 test "$(jq -r .base.repo.full_name <<<"$PR_JSON")" = NVIDIA/NemoClaw
@@ -87,14 +88,98 @@ Before either candidate dispatch or base replay:
 5. Reuse a matching active run. Reconcile pending operations before another dispatch.
 6. Persist dispatch intent and its budget consumption through the shared task-continuation procedure before the external write.
 
+Run these functions in the same Bash session as both dispatch procedures.
+They update the existing checkpoint; they do not create a second record or grant authorization.
+The intent consumes the recorded budget before the GitHub write. The result records a discovered run before waiting for completion.
+
+```bash
+set -euo pipefail
+save_dispatch_intent() {
+  local phase="$1" correlation="$2" budget="$3" checkout="$4" repository="$5" jetson="$6"
+  local view revision action next
+  view="$(node tools/task-continuation/checkpoint.mts resume "$TASK_RECORD")"
+  revision="$(jq -er .revision <<<"$view")"
+  action="$(jq -cn --arg phase "$phase" --arg pr "$PR_NUMBER" \
+    --arg checkout "$checkout" --arg repository "$repository" \
+    --arg base "$BASE_SHA" --arg workflow "$WORKFLOW_SHA" \
+    --arg jobs "$E2E_JOBS" --arg targets "$E2E_TARGETS" \
+    --arg correlation "$correlation" --arg budget "$budget" \
+    --arg owner "$E2E_CLEANUP_OWNER" --arg cleanup "$E2E_CLEANUP_OBLIGATION" \
+    --arg cost "$E2E_COST_BOUNDS" --argjson jetson "$jetson" \
+    --argjson launchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
+    '{phase:$phase,prNumber:$pr,checkoutSha:$checkout,repository:$repository,
+      baseSha:$base,workflowSha:$workflow,jobs:$jobs,targets:$targets,
+      correlationId:$correlation,budgetKey:$budget,cleanupOwner:$owner,
+      cleanupObligation:$cleanup,costBounds:$cost,inferenceMode:"mock",
+      allowJetsonDispatch:$jetson,includeStagingBrevLaunchable:$launchable}')"
+  next="$(jq --arg phase "$phase" --arg id "$correlation" \
+    --arg budget "$budget" --arg action "$action" '
+    del(.checkpoint,.usage,.staleEvidence,.resumeAction,.pendingOperationIds) |
+    .revision += 1 |
+    .operations += [{id:$id,action:$action,budget:$budget,state:"pending",observation:""}] |
+    .identities["manualE2E."+$phase+".operationId"] = $id |
+    .nextAction = ("Reconcile E2E dispatch correlation "+$id+" before another dispatch")
+  ' <<<"$view")"
+  printf '%s\n' "$next" | node tools/task-continuation/checkpoint.mts \
+    save "$TASK_RECORD" "$revision" "$TASK_OWNER"
+}
+
+save_dispatch_result() {
+  local phase="$1" correlation="$2" run="$3" url="$4"
+  local view revision observation next
+  view="$(node tools/task-continuation/checkpoint.mts resume "$TASK_RECORD")"
+  revision="$(jq -er .revision <<<"$view")"
+  jq -e --arg id "$correlation" --arg phase "$phase" '
+    any(.operations[]; .id == $id and .state == "pending" and
+      ((.action | fromjson).phase == $phase))
+  ' <<<"$view" >/dev/null
+  observation="$(jq -cn --arg run "$run" --arg url "$url" \
+    --arg correlation "$correlation" '{runId:$run,url:$url,correlationId:$correlation}')"
+  next="$(jq --arg phase "$phase" --arg id "$correlation" \
+    --arg run "$run" --arg observation "$observation" '
+    del(.checkpoint,.usage,.staleEvidence,.resumeAction,.pendingOperationIds) |
+    .revision += 1 |
+    .operations |= map(if .id == $id then
+      .state = "observed" | .observation = $observation else . end) |
+    .identities["manualE2E."+$phase+".runId"] = $run |
+    .nextAction = ("Watch E2E run "+$run+"; verify its receipt and cleanup obligation")
+  ' <<<"$view")"
+  printf '%s\n' "$next" | node tools/task-continuation/checkpoint.mts \
+    save "$TASK_RECORD" "$revision" "$TASK_OWNER"
+}
+
+find_dispatch_run() {
+  local title="E2E PR #${PR_NUMBER} ($1)" matches='[]' runs poll
+  for poll in $(seq 1 30); do
+    runs="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
+      --event workflow_dispatch --branch main --limit 50 \
+      --json databaseId,displayTitle)"
+    matches="$(jq -c --arg title "$title" \
+      '[.[] | select(.displayTitle == $title)]' <<<"$runs")"
+    test "$(jq 'length' <<<"$matches")" -le 1
+    test "$(jq 'length' <<<"$matches")" -eq 0 || break
+    sleep 10
+  done
+  test "$(jq 'length' <<<"$matches")" -eq 1
+  RUN_ID="$(jq -er '.[0].databaseId | numbers' <<<"$matches")"
+  [[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]]
+  RUN_URL="https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}"
+}
+```
+
 Use the values verified against that record. Set an unused selector explicitly to an empty string;
 at least one selector must be nonempty. Enumerate authorized jobs for a full run instead of using controller defaults.
 Do not populate missing authorization from environment values or from this recipe.
 Retain these values for base replay; recheck its separate authorization and remaining comparison budget before dispatch:
 
 ```bash
+set -euo pipefail
 TASK_RECORD="${TASK_RECORD:?Read the existing task record before dispatch}"
 node tools/task-continuation/checkpoint.mts resume "$TASK_RECORD"
+TASK_OWNER="${TASK_OWNER:?Use the recorded writer identity}"
+E2E_CLEANUP_OWNER="${E2E_CLEANUP_OWNER:?Use the recorded cleanup owner}"
+E2E_CLEANUP_OBLIGATION="${E2E_CLEANUP_OBLIGATION:?Use the recorded cleanup obligation}"
+E2E_COST_BOUNDS="${E2E_COST_BOUNDS:?Use the recorded cost bounds}"
 E2E_JOBS="${E2E_JOBS?Set the jobs verified against recorded authorization}"
 E2E_TARGETS="${E2E_TARGETS?Set the targets verified against recorded authorization}"
 test -n "${E2E_JOBS//[[:space:]]/}${E2E_TARGETS//[[:space:]]/}"
@@ -103,6 +188,9 @@ INCLUDE_STAGING_BREV_LAUNCHABLE="${INCLUDE_STAGING_BREV_LAUNCHABLE:?Set the reco
 [[ "$ALLOW_JETSON_DISPATCH" = true || "$ALLOW_JETSON_DISPATCH" = false ]]
 [[ "$INCLUDE_STAGING_BREV_LAUNCHABLE" = true || "$INCLUDE_STAGING_BREV_LAUNCHABLE" = false ]]
 HEAD_CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+save_dispatch_intent candidate "$HEAD_CORRELATION_ID" \
+  "${E2E_CANDIDATE_BUDGET:?Use the authorized candidate budget key}" \
+  "$HEAD_SHA" "$HEAD_REPOSITORY" "$ALLOW_JETSON_DISPATCH"
 gh workflow run .github/workflows/e2e.yaml \
   --repo NVIDIA/NemoClaw \
   --ref main \
@@ -138,20 +226,8 @@ validation after checkout rejects changed PR identity or ownership.
 
 ```bash
 set -euo pipefail
-RUN_TITLE="E2E PR #${PR_NUMBER} (${HEAD_CORRELATION_ID})"
-MATCHES='[]'
-for POLL_INDEX in $(seq 1 30); do
-  RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
-    --event workflow_dispatch --branch main --limit 50 \
-    --json databaseId,displayTitle,url)"
-  MATCHES="$(jq -c --arg title "$RUN_TITLE" \
-    '[.[] | select(.displayTitle == $title)]' <<<"$RUNS")"
-  test "$(jq 'length' <<<"$MATCHES")" -le 1
-  test "$(jq 'length' <<<"$MATCHES")" -eq 0 || break
-  sleep 10
-done
-test "$(jq 'length' <<<"$MATCHES")" -eq 1
-RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")"
+find_dispatch_run "$HEAD_CORRELATION_ID"
+save_dispatch_result candidate "$HEAD_CORRELATION_ID" "$RUN_ID" "$RUN_URL"
 gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status || true
 RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
 jq -e --arg sha "$WORKFLOW_SHA" '
@@ -201,8 +277,10 @@ test "$BASE_REPOSITORY" = NVIDIA/NemoClaw
 
 node tools/task-continuation/checkpoint.mts resume "${TASK_RECORD:?Read the existing task record before replay}"
 test -n "${E2E_JOBS//[[:space:]]/}${E2E_TARGETS//[[:space:]]/}"
-# Complete the authorization, budget, active-run, and persisted-intent checks above.
 BASE_CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+save_dispatch_intent base "$BASE_CORRELATION_ID" \
+  "${E2E_BASE_BUDGET:?Use the separately authorized comparison budget key}" \
+  "$BASE_SHA" "$BASE_REPOSITORY" false
 gh workflow run .github/workflows/e2e.yaml \
   --repo NVIDIA/NemoClaw \
   --ref main \
@@ -219,15 +297,31 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "correlation_id=${BASE_CORRELATION_ID}"
 ```
 
-Find the base run with the same bounded lookup used above and this exact title:
+Find and record the base run before waiting. Then verify its workflow and PR identities:
 
 ```bash
-RUN_TITLE="E2E PR #${PR_NUMBER} (${BASE_CORRELATION_ID})"
+set -euo pipefail
+find_dispatch_run "$BASE_CORRELATION_ID"
+save_dispatch_result base "$BASE_CORRELATION_ID" "$RUN_ID" "$RUN_URL"
+gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status || true
+RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
+jq -e --arg sha "$WORKFLOW_SHA" '
+  .run_attempt >= 1 and .head_sha == $sha and
+  .status == "completed" and (.conclusion | type == "string")
+' <<<"$RUN_JSON" >/dev/null
+BASE_RUN_ID="$RUN_ID"
+BASE_RUN_URL="$(jq -r .html_url <<<"$RUN_JSON")"
+BASE_CONCLUSION="$(jq -r .conclusion <<<"$RUN_JSON")"
+CURRENT_PR="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
+test "$(jq -r .state <<<"$CURRENT_PR")" = open
+test "$(jq -r .head.sha <<<"$CURRENT_PR")" = "$HEAD_SHA"
+test "$(jq -r .base.sha <<<"$CURRENT_PR")" = "$BASE_SHA"
+test "$(jq -r .head.repo.full_name <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
+test "$(jq -r .base.repo.full_name <<<"$CURRENT_PR")" = "$BASE_REPOSITORY"
+test "$(jq -r .head.repo.owner.login <<<"$CURRENT_PR")" = "$HEAD_OWNER"
+test "$(jq -r .head.repo.owner.type <<<"$CURRENT_PR")" = "$HEAD_OWNER_TYPE"
 ```
 
-Verify that its Actions run `head_sha` is the same `WORKFLOW_SHA`. Record its run ID, URL, and
-conclusion as `BASE_RUN_ID`, `BASE_RUN_URL`, and `BASE_CONCLUSION`. Re-read the PR and require that
-its state, head SHA, base SHA, head repository, and base repository still match the captured values.
 Classify a failed base job with the same read-only CI classification skill when available.
 
 Report exactly one outcome:

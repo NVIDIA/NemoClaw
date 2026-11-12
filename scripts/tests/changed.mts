@@ -5,18 +5,26 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execTimeout } from "../../test/helpers/timeouts.ts";
 import { resolveVitestWatchTests } from "../../test/helpers/vitest-watch-triggers.ts";
 
 export const sourceProjects = ["cli", "integration", "plugin", "e2e-support"];
 
 export function changedInputs(root: string, base = "HEAD"): string[] {
   const git = (...args: string[]) =>
-    execFileSync("git", args, { cwd: root, encoding: "utf8" }).split("\0").filter(Boolean);
+    execFileSync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      timeout: execTimeout(),
+      killSignal: "SIGKILL",
+    })
+      .split("\0")
+      .filter(Boolean);
   // Resolve a commit before using user input as a diff operand.
   const commit = execFileSync(
     "git",
     ["rev-parse", "--verify", "--end-of-options", `${base}^{commit}`],
-    { cwd: root, encoding: "utf8" },
+    { cwd: root, encoding: "utf8", timeout: execTimeout(), killSignal: "SIGKILL" },
   ).trim();
   return [
     ...new Set([
@@ -67,19 +75,31 @@ export function main(argv = process.argv.slice(2)): number {
     console.log("No changed inputs; no tests executed.");
     return 0;
   }
+  return runRelatedTests(args);
+}
+
+export function runRelatedTests(args: string[], timeoutMs = execTimeout(30 * 60 * 1000)): number {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
+    throw new Error("Related-test timeout must be a positive integer");
   const started = performance.now();
   const result = spawnSync(process.execPath, [resolve("node_modules/vitest/vitest.mjs"), ...args], {
     stdio: "inherit",
+    timeout: timeoutMs,
+    // spawnSync waits for termination after its deadline; an ignored SIGTERM must not keep it blocked.
+    killSignal: "SIGKILL",
   });
+  const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
   console.log(
     JSON.stringify({
       elapsedMs: Math.round(performance.now() - started),
+      timeoutMs,
+      timedOut,
       exitCode: result.status,
       signal: result.signal,
     }),
   );
-  if (result.error) throw result.error;
-  return result.status ?? 1;
+  if (result.error) console.error(result.error.message);
+  return result.error || result.signal ? 1 : (result.status ?? 1);
 }
 
 if (
