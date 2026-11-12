@@ -101,67 +101,81 @@ fn colossus_workflow() -> Value {
     .unwrap()
 }
 
-/// v1 pushes run Station; manual runs retain the temporary qualification branch.
+/// Hardware is optional on PRs and never a dependency of the Rust platform gates.
 #[test]
-fn colossus_runs_on_v1_pushes_and_limits_temporary_branch_access() {
+fn bundle_shows_colossus_skipped_until_a_pr_is_enabled() {
+    let workflow: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/rust.yml")).unwrap(),
+    )
+    .unwrap();
+    let events = &workflow["on"];
+    assert_eq!(events["push"]["branches"], serde_json::json!(["v1"]));
+    let types = events["pull_request"]["types"].as_array().unwrap();
+    for event in ["opened", "synchronize", "reopened", "labeled", "unlabeled"] {
+        assert!(types.iter().any(|value| value == event));
+    }
+    let jobs = &workflow["jobs"];
+    let smoke = &jobs["colossus_smoke"];
+    assert_eq!(
+        smoke["if"],
+        "github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'push' && github.ref == 'refs/heads/v1') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'run-colossus')))"
+    );
+    assert_eq!(smoke["continue-on-error"], true);
+    assert_eq!(
+        smoke["outputs"]["ready"],
+        "${{ steps.gpu.outcome == 'success' }}"
+    );
+    assert_eq!(smoke["steps"][0]["id"], "gpu");
+    assert_eq!(smoke["steps"][0]["run"], "nvidia-smi");
+    let station = &jobs["colossus"];
+    assert_eq!(needs(station), ["colossus_smoke"]);
+    assert_eq!(
+        station["if"],
+        "!cancelled() && needs.colossus_smoke.outputs.ready == 'true'"
+    );
+    assert_eq!(station["uses"], "./.github/workflows/hcl-e2e.yml");
+    assert_eq!(
+        station["with"],
+        serde_json::json!({"target":"dgx-station", "hosted":false})
+    );
+    assert!(station["continue-on-error"].is_null());
+    assert!(
+        !needs(&jobs["native"])
+            .iter()
+            .any(|job| job.starts_with("colossus"))
+    );
+}
+
+/// The separate Colossus workflow retains only manual connectivity and bundle checks.
+#[test]
+fn colossus_connectivity_remains_manual_and_v1_only() {
     let workflow = colossus_workflow();
     let events = workflow["on"]
         .as_object()
         .expect("explicit workflow events");
-    assert_eq!(events.len(), 2);
-    assert_eq!(events["push"]["branches"], serde_json::json!(["v1"]));
+    assert_eq!(events.len(), 1);
     assert!(!events.contains_key("pull_request"));
     let suite = &workflow["on"]["workflow_dispatch"]["inputs"]["suite"];
     assert_eq!(suite["type"], "choice");
-    assert_eq!(
-        suite["options"],
-        serde_json::json!(["smoke", "bundle", "station"])
-    );
+    assert_eq!(suite["options"], serde_json::json!(["smoke", "bundle"]));
     assert_eq!(suite["default"], "smoke");
     let jobs = workflow["jobs"].as_object().expect("workflow jobs");
     assert_eq!(
         jobs.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["bundle", "smoke", "station"]
+        ["bundle", "smoke"]
     );
     for (name, job) in jobs {
-        let reference = if name == "bundle" {
-            "github.ref == 'refs/heads/v1'"
-        } else {
-            "(github.ref == 'refs/heads/v1' || github.ref == 'refs/heads/hple/dgx-station-reference-e2e')"
-        };
-        let selection = match name.as_str() {
-            "smoke" => {
-                "(github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'smoke' || inputs.suite == 'station')))"
-            }
-            "station" => {
-                "(github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.suite == 'station')) && needs.smoke.outputs.ready == 'true'"
-            }
-            _ => "github.event_name == 'workflow_dispatch' && inputs.suite == 'bundle'",
-        };
-        let prefix = if name == "station" {
-            "!cancelled() && "
-        } else {
-            ""
-        };
         assert_eq!(
             job["if"],
-            format!("{prefix}github.repository == 'NVIDIA/NemoClaw' && {reference} && {selection}"),
+            format!(
+                "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == '{name}'"
+            ),
             "only intended events and suites may execute {name}"
         );
     }
-    assert_eq!(needs(&jobs["station"]), ["smoke"]);
     for name in ["smoke", "bundle"] {
         assert!(needs(&jobs[name]).is_empty(), "{name} runs independently");
     }
-    assert_eq!(jobs["smoke"]["continue-on-error"], true);
-    assert_eq!(
-        jobs["smoke"]["outputs"]["ready"],
-        "${{ steps.gpu.outcome == 'success' }}"
-    );
-    assert!(
-        jobs["station"]["continue-on-error"].is_null(),
-        "E2E failures must fail the lane"
-    );
     assert!(
         !workflow.to_string().contains("secrets"),
         "no secret references or inherited secrets"
@@ -191,7 +205,6 @@ fn colossus_smoke_checks_gpu_access_without_credentials() {
     assert!(steps[0]["uses"].is_null(), "no checkout or other actions");
     assert!(steps[0]["env"].is_null(), "no step environment variables");
     assert_eq!(steps[0]["shell"], "bash");
-    assert_eq!(steps[0]["id"], "gpu");
     assert_eq!(steps[0]["run"], "nvidia-smi");
 }
 
@@ -311,10 +324,10 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
     assert_eq!(
         callers,
         [
-            ".github/workflows/colossus-connectivity.yml: station",
-            ".github/workflows/e2e-platform.yml: gpu"
+            ".github/workflows/e2e-platform.yml: gpu",
+            ".github/workflows/rust.yml: colossus"
         ],
-        "the manual Colossus entry and the E2E platform workflow call Live / HCL"
+        "Bundle and the E2E platform workflow share Live / HCL"
     );
 
     let platform = read(".github/workflows/e2e-platform.yml");
@@ -578,16 +591,10 @@ runs:
     );
 }
 
-/// Station is an explicit manual target; the existing artifact callers keep RTX.
+/// Station accepts v1 pushes and explicitly enabled PRs; artifact callers keep RTX.
 #[test]
 #[cfg(unix)]
 fn hcl_target_selection_preserves_rtx_and_bounds_station_qualification() {
-    let caller = colossus_workflow()["jobs"]["station"].clone();
-    assert_eq!(caller["uses"], "./.github/workflows/hcl-e2e.yml");
-    assert_eq!(
-        caller["with"],
-        serde_json::json!({"target":"dgx-station", "hosted":false})
-    );
     let workflow: Value = serde_saphyr::from_str(
         &fs::read_to_string(repository().join(".github/workflows/hcl-e2e.yml")).unwrap(),
     )
@@ -647,7 +654,7 @@ fn hcl_target_selection_preserves_rtx_and_bounds_station_qualification() {
             "refs/heads/hple/dgx-station-reference-e2e",
             "workflow_dispatch",
             "",
-            Some("runner=colossus-gb300-pilot\nplatform=linux_arm64\n"),
+            None,
         ),
         (
             "dgx-station",
@@ -672,6 +679,20 @@ fn hcl_target_selection_preserves_rtx_and_bounds_station_qualification() {
         ),
         (
             "dgx-station",
+            "refs/pull/14356/merge",
+            "pull_request",
+            "",
+            Some("runner=colossus-gb300-pilot\nplatform=linux_arm64\n"),
+        ),
+        (
+            "dgx-station",
+            "refs/pull/14357/merge",
+            "pull_request",
+            "",
+            None,
+        ),
+        (
+            "dgx-station",
             "refs/heads/hple/dgx-station-reference-e2e",
             "workflow_dispatch",
             "artifacts",
@@ -685,6 +706,14 @@ fn hcl_target_selection_preserves_rtx_and_bounds_station_qualification() {
             .env("GITHUB_REF", reference)
             .env("GITHUB_EVENT_NAME", event)
             .env("TESTS", tests)
+            .env(
+                "PR_COLOSSUS",
+                if reference == "refs/pull/14356/merge" {
+                    "true"
+                } else {
+                    "false"
+                },
+            )
             .env("GITHUB_OUTPUT", output.path())
             .output()
             .unwrap();

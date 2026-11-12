@@ -89,12 +89,12 @@ jobs:
         env:
           TARGET: ${{ inputs.target || 'rtx-pro-6000' }}
           TESTS: ${{ inputs.tests }}
+          PR_COLOSSUS: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'run-colossus') }}
         run: |
           case "$TARGET" in
             rtx-pro-6000) runner=linux-amd64-gpu-rtxpro6000-latest-1 platform=linux_amd64 ;;
             dgx-station)
-              # Temporary PR #14356 qualification; revert this branch exception after the run.
-              [[ -z $TESTS && ( ( $GITHUB_REF == refs/heads/v1 && ( $GITHUB_EVENT_NAME == push || $GITHUB_EVENT_NAME == workflow_dispatch ) ) || ( $GITHUB_REF == refs/heads/hple/dgx-station-reference-e2e && $GITHUB_EVENT_NAME == workflow_dispatch ) ) ]] || exit 1
+              [[ -z $TESTS && ( ( $GITHUB_REF == refs/heads/v1 && ( $GITHUB_EVENT_NAME == push || $GITHUB_EVENT_NAME == workflow_dispatch ) ) || ( $GITHUB_EVENT_NAME == pull_request && $PR_COLOSSUS == true ) ) ]] || exit 1
               runner=colossus-gb300-pilot platform=linux_arm64 ;;
             dgx-spark) echo 'DGX Spark is not qualified yet.' >&2; exit 1 ;;
             *) echo "Unknown target: $TARGET" >&2; exit 1 ;;

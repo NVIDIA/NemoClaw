@@ -158,12 +158,15 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 
 ### DGX Station on Colossus
 
-Every `v1` push runs the Station lane in **E2E / Colossus runner connectivity**; manual dispatch with `suite=station` remains available.
-The same workflow run first checks `nvidia-smi`; only a successful smoke job starts **Live / HCL** with `target=dgx-station`, mapping to `colossus-gb300-pilot` and Linux ARM64.
+**CI / Bundle** shows the Colossus smoke and Station jobs as skipped on pull requests by default.
+To enable them for a same-repository PR, add the `run-colossus` label. Adding or removing the label starts a new Bundle run; while present, it also enables the lane on subsequent PR commits. Fork PRs cannot enable the lane.
+Every `v1` push, including a merged PR, enables the Station lane automatically.
+The same Bundle run first checks `nvidia-smi`; only success starts **Live / HCL** with `target=dgx-station`, mapping to `colossus-gb300-pilot` and Linux ARM64.
 The default target remains the RTX PRO 6000 runner; DGX Spark is not qualified yet.
 Adding Spark requires a runner/platform mapping and qualified case inputs in this shared HCL path, without another Rust module or workflow copy.
-`suite=smoke` checks `nvidia-smi` only.
+The separate **E2E / Colossus runner connectivity** workflow retains manual `suite=smoke` and `suite=bundle` diagnostics; it no longer starts Station E2E.
 A failed smoke is non-blocking and skips Station build and E2E. Once smoke passes, build, inference, and cleanup failures fail the lane.
+The required `Test / PLATFORM` checks do not depend on Colossus jobs.
 An offline runner leaves smoke queued until GitHub assigns a runner or expires the queued job; this dependency does not detect lease expiry or provide an immediate offline skip.
 Colorunner owns leasing and host preparation; the workflow requires Ubuntu 24.04, GB300, working Docker GPU access, and the containerd image store, without changing host services.
 

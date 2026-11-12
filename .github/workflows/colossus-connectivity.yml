@@ -3,15 +3,13 @@
 name: E2E / Colossus runner connectivity
 
 on:
-  push:
-    branches: [v1]
   workflow_dispatch:
     inputs:
       suite:
         description: >-
-          smoke checks nvidia-smi; bundle runs ARM64 checks; station runs smoke then the reference E2E.
+          smoke checks nvidia-smi; bundle runs ARM64 checks. Station E2E runs in CI / Bundle.
         type: choice
-        options: [smoke, bundle, station]
+        options: [smoke, bundle]
         default: smoke
 
 permissions: {}
@@ -21,18 +19,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Temporary PR #14356 qualification; restore v1-only dispatch before merge.
   smoke:
-    if: github.repository == 'NVIDIA/NemoClaw' && (github.ref == 'refs/heads/v1' || github.ref == 'refs/heads/hple/dgx-station-reference-e2e') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'smoke' || inputs.suite == 'station')))
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == 'smoke'
     runs-on: colossus-gb300-pilot
     timeout-minutes: 2
-    # Unavailable hardware skips the Station lane without failing other CI.
-    continue-on-error: true
-    outputs:
-      ready: ${{ steps.gpu.outcome == 'success' }}
     steps:
       - name: Check NVIDIA GPU access
-        id: gpu
         shell: bash
         run: nvidia-smi
 
@@ -53,14 +45,3 @@ jobs:
       lifecycle: true
       e2e: false
       save-cache: false
-
-  station:
-    needs: smoke
-    if: "!cancelled() && github.repository == 'NVIDIA/NemoClaw' && (github.ref == 'refs/heads/v1' || github.ref == 'refs/heads/hple/dgx-station-reference-e2e') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.suite == 'station')) && needs.smoke.outputs.ready == 'true'"
-    permissions:
-      contents: read
-      packages: read
-    uses: ./.github/workflows/hcl-e2e.yml
-    with:
-      target: dgx-station
-      hosted: false
