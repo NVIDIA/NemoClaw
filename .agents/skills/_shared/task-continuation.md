@@ -91,6 +91,13 @@ The input is a version `1` JSON object with these fields:
 - `identities`: named source, candidate, base, PR, artifact, active-run, and watcher identities relevant to the next action.
 - `evidence`: `{ "path": "/absolute/evidence/file", "sha256": "<64 lowercase hex characters>" }` entries.
 - `limits`: operation-budget keys and their authorized integer limits.
+- `budgetIdentities`: one `{ candidate, workflow, failureClass }` object per budget key.
+  Use the tested candidate identity, stable workflow identity, and diagnosed failure class. Do not use
+  a run ID or retry label as the workflow identity. Use `initial` for
+  an operation that does not respond to a failure. Distinguish a base-comparison workflow from its
+  candidate workflow and identify each external-write workflow by its operation, such as Git
+  publication or PR-description update. These are structured values, not labels
+  derived from the budget key. The helper rejects duplicate tuples and changes to existing tuples.
 - `operations`: initially empty; append `{ "id", "action", "budget", "state": "pending", "observation": "" }` before each external write.
 
 Follow the [bounded retry policy](pr-follow-up.md#bounded-retry-policy): one automatic transient retry
@@ -100,14 +107,22 @@ Use candidate/workflow/failure-class keys for retries and different keys for bas
 Keep those keys and spent counts across compaction and handoff. Repair deterministic defects before rerunning;
 do not spend a transient retry on unchanged broken code or reset its allowance by renaming the key.
 A new budget key requires additional authorization evidence appended to `authorization` on a new line.
-Preserve the prior authorization text. Cite the existing task authority or a later user decision that covers the distinct allowance.
+Preserve the prior authorization text on every save. Cite the existing task authority or a later user decision that covers the distinct allowance.
 A new key must not rename a spent allowance. A new candidate, workflow, or failure class may need a distinct authorized key;
 record why its allowance is separate. This does not require renewed user approval when existing task authority covers that work.
+Assign the new key its structured identity. A renamed key with the same identity is rejected even
+when authorization text is appended. The lifecycle owner must verify those identities against the
+actual task; the helper cannot authenticate a claimed candidate, workflow, or failure class.
 The helper requires this explicit record transition; it does not authenticate the evidence or authorize the action.
 Persist the intent before executing it. A pending intent already consumes its budget, including after interruption.
 After reading external state, change the entry to `observed` and record the evidence location in `observation`.
 An observed failure is not a successful result; the owning publication or execution contract decides what follows.
 The helper rejects lost history, budget resets, stale revisions, and new writes while an earlier write remains unresolved.
+
+Older version `1` records without `budgetIdentities` remain readable. Before their next save, inspect
+the existing allowances and bind every key to its identity without changing limits or operation history.
+Append authorization evidence that records this migration. The helper rejects saving an unbound legacy
+record or silently assigning its identities. Retain the same record and revision sequence.
 
 For handoff, save with the outgoing owner and a new `owner` value.
 Include fresh `handoff` evidence identifying the receiving owner's acknowledgement.

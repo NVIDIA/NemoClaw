@@ -33,6 +33,23 @@ function fixture() {
     evidence: [{ path: artifact, sha256: createHash("sha256").update("passed").digest("hex") }],
     operations: [],
     limits: { "candidate-a/ci/transient": 1, "candidate-a/base-comparison": 1, publication: 2 },
+    budgetIdentities: {
+      "candidate-a/ci/transient": {
+        candidate: "candidate-a",
+        workflow: "ci",
+        failureClass: "transient",
+      },
+      "candidate-a/base-comparison": {
+        candidate: "candidate-a",
+        workflow: "ci",
+        failureClass: "comparison",
+      },
+      publication: {
+        candidate: "candidate-a",
+        workflow: "publication",
+        failureClass: "initial",
+      },
+    },
   };
   saveCheckpoint(file, state, -1, state.owner);
   return { root, file, state, artifact };
@@ -260,7 +277,7 @@ describe("task checkpoint recovery", () => {
     expect(() => saveCheckpoint(file, retry, 1, state.owner)).toThrow(/budget exhausted/);
   });
 
-  it("rejects renamed retry budgets without additional authorization evidence", () => {
+  it("rejects new retry budgets without additional authorization evidence", () => {
     const { file, state } = fixture();
     state.revision = 1;
     state.operations.push({
@@ -279,6 +296,10 @@ describe("task checkpoint recovery", () => {
     const renamed = structuredClone(state);
     renamed.revision++;
     renamed.limits["candidate-a/ci/transient-renamed"] = 1;
+    renamed.budgetIdentities!["candidate-a/ci/transient-renamed"] = {
+      ...state.budgetIdentities!["candidate-a/ci/transient"]!,
+      failureClass: "different-transient",
+    };
     renamed.operations.push({
       ...state.operations[0]!,
       id: "retry-2",
@@ -289,8 +310,66 @@ describe("task checkpoint recovery", () => {
     expect(() => saveCheckpoint(file, renamed, 2, state.owner)).toThrow(/authorization evidence/);
     renamed.authorization += "\n   ";
     expect(() => saveCheckpoint(file, renamed, 2, state.owner)).toThrow(/authorization evidence/);
+    const rewritten = structuredClone(state);
+    rewritten.revision++;
+    rewritten.authorization = "Replacement authority";
+    expect(() => saveCheckpoint(file, rewritten, 2, state.owner)).toThrow(
+      /authorization evidence cannot be rewritten/,
+    );
     expect(readCheckpoint(file)).toEqual(state);
     expect(resumeCheckpoint(file).usage["candidate-a/ci/transient"]).toBe(1);
+  });
+
+  it("rejects a second key for a spent allowance even with appended authorization text", () => {
+    const { file, state } = fixture();
+    state.revision++;
+    state.operations.push({
+      id: "retry",
+      action: "Retry CI",
+      budget: "candidate-a/ci/transient",
+      state: "pending",
+      observation: "",
+    });
+    saveCheckpoint(file, state, 0, state.owner);
+    state.revision++;
+    state.operations[0]!.state = "observed";
+    state.operations[0]!.observation = "Retry failed";
+    saveCheckpoint(file, state, 1, state.owner);
+    const renamed = structuredClone(state);
+    renamed.revision++;
+    renamed.authorization += "\nAnother allowance is claimed.";
+    renamed.limits.alias = 1;
+    renamed.budgetIdentities!.alias = { ...state.budgetIdentities!["candidate-a/ci/transient"]! };
+    expect(() => saveCheckpoint(file, renamed, 2, state.owner)).toThrow(
+      /Duplicate budget identity/,
+    );
+    const rewritten = structuredClone(state);
+    rewritten.revision++;
+    rewritten.budgetIdentities!["candidate-a/ci/transient"]!.failureClass = "renamed";
+    expect(() => saveCheckpoint(file, rewritten, 2, state.owner)).toThrow(
+      /identities cannot be rewritten/,
+    );
+    expect(readCheckpoint(file)).toEqual(state);
+  });
+
+  it("reads legacy records but requires an explicit budget identity migration before saving", () => {
+    const { file, state } = fixture();
+    const legacy = structuredClone(state);
+    delete legacy.budgetIdentities;
+    writeFileSync(file, JSON.stringify(legacy));
+    expect(readCheckpoint(file)).toEqual(legacy);
+    expect(() => saveCheckpoint(file, { ...legacy, revision: 1 }, 0, state.owner)).toThrow(
+      /structured identity/,
+    );
+    expect(() => saveCheckpoint(file, { ...state, revision: 1 }, 0, state.owner)).toThrow(
+      /authorization evidence/,
+    );
+    state.revision++;
+    state.authorization +=
+      "\nOwner checked existing allowances and bound their identities; no new allowance.";
+    saveCheckpoint(file, state, 0, state.owner);
+    expect(readCheckpoint(file).operations).toEqual(legacy.operations);
+    expect(readCheckpoint(file).limits).toEqual(legacy.limits);
   });
 
   it("retains spent budgets when recorded authorization covers a new candidate allowance", () => {
@@ -312,6 +391,10 @@ describe("task checkpoint recovery", () => {
     next.revision++;
     next.identities.candidate = "candidate-b";
     next.limits["candidate-b/ci/transient"] = 1;
+    next.budgetIdentities!["candidate-b/ci/transient"] = {
+      ...state.budgetIdentities!["candidate-a/ci/transient"]!,
+      candidate: "candidate-b",
+    };
     next.authorization +=
       "\nThe existing task authorizes one transient CI retry for the repaired candidate-b; see the recorded task request.";
     saveCheckpoint(file, next, 2, state.owner);

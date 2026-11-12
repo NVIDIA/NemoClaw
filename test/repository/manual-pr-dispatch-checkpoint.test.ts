@@ -14,6 +14,56 @@ const { candidate, headResult, base, baseResult } = manualPrProcedures;
 afterEach(cleanupManualPrDispatchFixtures);
 
 describe.skipIf(process.platform === "win32")("manual PR dispatch recovery", () => {
+  it.each([
+    {
+      phase: "candidate",
+      prepare: "",
+      dispatch: candidate,
+      count: 0,
+      field: "E2E_TARGETS" as const,
+      value: "unauthorized-target",
+    },
+    {
+      phase: "candidate",
+      prepare: "",
+      dispatch: candidate,
+      count: 0,
+      field: "INCLUDE_STAGING_BREV_LAUNCHABLE" as const,
+      value: "true",
+    },
+    {
+      phase: "base",
+      prepare: `${candidate}\n${headResult}`,
+      dispatch: base,
+      count: 1,
+      field: "E2E_TARGETS" as const,
+      value: "unauthorized-target",
+    },
+    {
+      phase: "base",
+      prepare: `${candidate}\n${headResult}`,
+      dispatch: base,
+      count: 1,
+      field: "INCLUDE_STAGING_BREV_LAUNCHABLE" as const,
+      value: "true",
+    },
+  ])(
+    "rejects $phase $field mismatches before dispatch",
+    ({ prepare, dispatch, count, field, value }) => {
+      const { file, service, env, run } = manualPrDispatchFixture();
+      const prepared = run(prepare);
+      expect(prepared.status, prepared.stdout + prepared.stderr).toBe(0);
+      const before = readCheckpoint(file);
+      env[field] = value;
+      const result = run(dispatch);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("differs from recorded authorization");
+      expect(readCheckpoint(file)).toEqual(before);
+      expect(JSON.parse(readFileSync(service, "utf8"))).toHaveLength(count);
+    },
+    30000,
+  );
+
   it("stops before dispatch when checkpoint functions have not been loaded", () => {
     const { file, service, env, runWithoutFunctions } = manualPrDispatchFixture();
     const result = runWithoutFunctions(candidate);

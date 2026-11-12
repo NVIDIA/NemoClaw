@@ -92,6 +92,14 @@ Run these functions in the same Bash session as both dispatch procedures.
 They update the existing checkpoint; they do not create a second record or grant authorization.
 The intent consumes the recorded budget before the GitHub write. The result records a discovered run before waiting for completion.
 
+The lifecycle owner must first store the accepted dispatch values as JSON in
+`identities["manualE2E.candidate.authorization"]` and, when authorized,
+`identities["manualE2E.base.authorization"]`. Each value uses the fields in `action` below,
+except `correlationId`, which is generated for each dispatch. Obtain those values from the accepted
+task authorization, including its budget key, source, selectors, credential flags, cost and cleanup
+bounds. Do not derive this authorization record from the environment being checked.
+The recipe compares the entire context with that record before saving intent or calling GitHub.
+
 ```bash
 set -euo pipefail
 observe_dispatch() {
@@ -139,6 +147,12 @@ save_dispatch_intent() {
       correlationId:$correlation,budgetKey:$budget,cleanupOwner:$owner,
       cleanupObligation:$cleanup,costBounds:$cost,inferenceMode:"mock",
       allowJetsonDispatch:$jetson,includeStagingBrevLaunchable:$launchable}')"
+  jq -e --arg key "manualE2E.${phase}.authorization" --argjson action "$action" '
+    (.identities[$key] | fromjson) == ($action | del(.correlationId))
+  ' <<<"$view" >/dev/null || {
+    echo "Dispatch context differs from recorded authorization; stop before dispatch" >&2
+    return 1
+  }
   next="$(jq --arg phase "$phase" --arg id "$correlation" \
     --arg budget "$budget" --arg action "$action" '
     del(.checkpoint,.usage,.staleEvidence,.resumeAction,.pendingOperationIds) |

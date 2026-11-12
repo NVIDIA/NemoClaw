@@ -43,7 +43,45 @@ export function manualPrDispatchFixture() {
     operations: [],
     evidence: [],
     limits: { "candidate-dispatch": 1, "base-comparison": 1 },
+    budgetIdentities: {
+      "candidate-dispatch": {
+        candidate: "a".repeat(40),
+        workflow: "c".repeat(40),
+        failureClass: "initial",
+      },
+      "base-comparison": {
+        candidate: "b".repeat(40),
+        workflow: "c".repeat(40),
+        failureClass: "comparison",
+      },
+    },
   };
+  const authorized = {
+    prNumber: "123",
+    baseSha: "b".repeat(40),
+    workflowSha: "c".repeat(40),
+    repository: "NVIDIA/NemoClaw",
+    jobs: "",
+    targets: "sandbox-operations",
+    cleanupOwner: state.owner,
+    cleanupObligation: "Remove fixture-owned resources",
+    costBounds: "Fake service; no external cost",
+    inferenceMode: "mock",
+    allowJetsonDispatch: false,
+    includeStagingBrevLaunchable: false,
+  };
+  state.identities["manualE2E.candidate.authorization"] = JSON.stringify({
+    ...authorized,
+    phase: "candidate",
+    checkoutSha: "a".repeat(40),
+    budgetKey: "candidate-dispatch",
+  });
+  state.identities["manualE2E.base.authorization"] = JSON.stringify({
+    ...authorized,
+    phase: "base",
+    checkoutSha: "b".repeat(40),
+    budgetKey: "base-comparison",
+  });
   saveCheckpoint(file, state, -1, state.owner);
   writeFileSync(service, "[]");
   const fake = join(root, "gh.mjs");

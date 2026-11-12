@@ -38,6 +38,15 @@ export interface Checkpoint {
     observation: string;
   }>;
   limits: Record<string, number>;
+  // Older records remain readable; the owner must bind their budgets before the next save.
+  budgetIdentities?: Record<
+    string,
+    {
+      candidate: string;
+      workflow: string;
+      failureClass: string;
+    }
+  >;
 }
 
 const text = { type: "string", minLength: 1 };
@@ -68,6 +77,15 @@ const validate = new Ajv().compile({
     nextAction: text,
     identities: { type: "object", minProperties: 1, additionalProperties: text },
     limits: { type: "object", additionalProperties: { type: "integer", minimum: 0 } },
+    budgetIdentities: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        additionalProperties: false,
+        required: ["candidate", "workflow", "failureClass"],
+        properties: { candidate: text, workflow: text, failureClass: text },
+      },
+    },
     evidence: {
       type: "array",
       items: {
@@ -98,6 +116,7 @@ const validate = new Ajv().compile({
 export function parseCheckpoint(value: unknown): Checkpoint {
   if (!validate(value)) throw new Error("Invalid checkpoint schema");
   const state = value as Checkpoint;
+  if (state.budgetIdentities) checkBudgetIdentities(state);
   if (state.evidence.some(({ path }) => !isAbsolute(path)))
     throw new Error("Evidence paths must be absolute");
   const ids = new Set<string>();
@@ -115,6 +134,28 @@ export function parseCheckpoint(value: unknown): Checkpoint {
       throw new Error("Operation budget exhausted or missing");
   }
   return state;
+}
+
+function budgetIdentity(identity: NonNullable<Checkpoint["budgetIdentities"]>[string]): string {
+  const fields = [identity.candidate, identity.workflow, identity.failureClass];
+  if (fields.some((field) => !field.trim() || field !== field.trim()))
+    throw new Error("Budget identities must use nonempty trimmed fields");
+  return JSON.stringify(fields);
+}
+
+function checkBudgetIdentities(state: Checkpoint): void {
+  const identities = state.budgetIdentities;
+  if (!identities || Object.keys(identities).length !== Object.keys(state.limits).length)
+    throw new Error("Bind every budget key to its structured identity before saving");
+  const seen = new Set<string>();
+  for (const key of Object.keys(state.limits)) {
+    if (!Object.hasOwn(identities, key))
+      throw new Error("Bind every budget key to its structured identity before saving");
+    const identity = budgetIdentity(identities[key]!);
+    if (seen.has(identity))
+      throw new Error("Duplicate budget identity cannot create another allowance");
+    seen.add(identity);
+  }
 }
 
 export function readCheckpoint(file: string): Checkpoint {
@@ -135,17 +176,26 @@ function checkTransition(previous: Checkpoint, next: Checkpoint, owner: string):
   const addedBudgets = Object.keys(next.limits).filter(
     (key) => !Object.hasOwn(previous.limits, key),
   );
-  if (addedBudgets.length) {
-    const authorizationPrefix = `${previous.authorization}\n`;
-    if (
-      !next.authorization.startsWith(authorizationPrefix) ||
-      !next.authorization.slice(authorizationPrefix.length).trim()
-    )
-      throw new Error("Record additional authorization evidence before adding budget keys");
+  const appendedAuthorization =
+    next.authorization.startsWith(`${previous.authorization}\n`) &&
+    Boolean(next.authorization.slice(previous.authorization.length + 1).trim());
+  if (next.authorization !== previous.authorization && !appendedAuthorization)
+    throw new Error("Existing authorization evidence cannot be rewritten");
+  if (addedBudgets.length || !previous.budgetIdentities) {
+    if (!appendedAuthorization)
+      throw new Error(
+        "Record additional authorization evidence before allocating or binding budgets",
+      );
   }
   for (const [key, limit] of Object.entries(previous.limits)) {
     if (next.limits[key] !== limit)
       throw new Error("Existing budgets cannot be reset or increased");
+    if (
+      previous.budgetIdentities &&
+      budgetIdentity(previous.budgetIdentities[key]!) !==
+        budgetIdentity(next.budgetIdentities![key]!)
+    )
+      throw new Error("Existing budget identities cannot be rewritten");
   }
   for (const before of previous.operations) {
     const after = next.operations.find(({ id }) => id === before.id);
@@ -175,6 +225,7 @@ export function saveCheckpoint(
   owner: string,
 ): void {
   const next = parseCheckpoint(value);
+  checkBudgetIdentities(next);
   const lock = `${file}.lock`;
   const descriptor = openSync(lock, "wx", 0o600);
   const temporary = `${file}.${randomUUID()}.tmp`;
