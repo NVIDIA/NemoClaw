@@ -102,7 +102,7 @@ fn colossus_workflow() -> Value {
 }
 
 /// Manual v1 runs remain available; only smoke and Station also admit the
-/// temporary qualification branch. A dispatch selects one suite.
+/// temporary qualification branch. Station includes smoke in the same run.
 #[test]
 fn colossus_runs_are_manual_and_limit_temporary_branch_access() {
     let workflow = colossus_workflow();
@@ -128,12 +128,27 @@ fn colossus_runs_are_manual_and_limit_temporary_branch_access() {
         } else {
             "(github.ref == 'refs/heads/v1' || github.ref == 'refs/heads/hple/dgx-station-reference-e2e')"
         };
+        let selection = match name.as_str() {
+            "smoke" => "(inputs.suite == 'smoke' || inputs.suite == 'station')",
+            "station" => "inputs.suite == 'station' && needs.smoke.result == 'success'",
+            _ => "inputs.suite == 'bundle'",
+        };
         assert_eq!(
             job["if"],
             format!(
-                "github.repository == 'NVIDIA/NemoClaw' && {reference} && github.event_name == 'workflow_dispatch' && inputs.suite == '{name}'"
+                "github.repository == 'NVIDIA/NemoClaw' && {reference} && github.event_name == 'workflow_dispatch' && {selection}"
             ),
             "only the intended manual branch and suite may execute {name}"
+        );
+    }
+    assert_eq!(needs(&jobs["station"]), ["smoke"]);
+    for name in ["smoke", "bundle"] {
+        assert!(needs(&jobs[name]).is_empty(), "{name} runs independently");
+    }
+    for name in ["smoke", "station"] {
+        assert!(
+            jobs[name]["continue-on-error"].is_null(),
+            "{name} failure must remain visible"
         );
     }
     assert!(
