@@ -16,14 +16,14 @@ function sqliteIdentifier(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-function sessionBlobContainsCredential(value: Uint8Array): boolean {
+export const DCODE_QUICKJS_DIAGNOSTIC = "\0unexpected token: '%.*s'\0";
+
+export function normalizeDcodeSessionDiagnostic(text: string): string {
   // quickjs-rs 0.2.5 checkpoints include this NUL-delimited engine diagnostic.
   // Its printf format is public code, not a token assignment. Normalize only
   // that exact constant; scan the rest of the interpreter memory as before.
-  const text = Buffer.from(value)
-    .toString("utf8")
-    .replaceAll("\0unexpected token: '%.*s'\0", "\0unexpected syntax: '%.*s'\0");
-  return textContainsCredential(text);
+  // Leave the closing NUL available as the next diagnostic's opening delimiter.
+  return text.replace(/\0unexpected token: '%\.\*s'(?=\0)/gu, "\0unexpected syntax: '%.*s'");
 }
 
 type InspectionFailure = "integrity-check" | "table-name" | "sqlite-query" | "file-access";
@@ -37,7 +37,7 @@ function cellContainsCredential(
 ): boolean {
   if (value instanceof Uint8Array) {
     return databaseKind === "dcode"
-      ? sessionBlobContainsCredential(value)
+      ? textContainsCredential(normalizeDcodeSessionDiagnostic(Buffer.from(value).toString("utf8")))
       : textContainsCredential(Buffer.from(value).toString("utf8"));
   }
   if (typeof value !== "string") return false;
