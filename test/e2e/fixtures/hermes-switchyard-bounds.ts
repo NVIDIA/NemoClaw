@@ -14,6 +14,15 @@ import {
   HERMES_SWITCHYARD_LOCAL_UPSTREAM,
 } from "./hermes-switchyard-package.ts";
 
+export const HERMES_SWITCHYARD_BOUNDS_REQUEST = String.raw`
+def bounds_request_body(target):
+    return {
+        'model': 'switchyard',
+        'messages': [{'role': 'user', 'content': 'Bound this fixture call.'}],
+        'stream': target != 'judge',
+    }
+`;
+
 // Every child owns one native runtime and its loopback providers. Parallel cases
 // keep qualification bounded without shortening the production client deadline.
 export const HERMES_SWITCHYARD_BOUNDS_WORKER = String.raw`
@@ -32,6 +41,7 @@ import nemo_relay
 from agent import relay_runtime
 ${HERMES_SWITCHYARD_LOCAL_UPSTREAM}
 ${HERMES_SWITCHYARD_LOCALIZE_DEPLOYMENT}
+${HERMES_SWITCHYARD_BOUNDS_REQUEST}
 
 judge_mode, target, fault, encoded_deployment, encoded_plugins, encoded_state = sys.argv[1:]
 judge = 'judge' if judge_mode == 'dedicated' else 'capable'
@@ -82,10 +92,8 @@ with TemporaryDirectory() as directory, ExitStack() as resources:
             yield None
 
         async def run():
-            request = nemo_relay.LLMRequest({'x-switchyard-session-id': str(uuid.uuid4())}, {
-                'model': 'switchyard',
-                'messages': [{'role': 'user', 'content': 'Bound this fixture call.'}],
-            })
+            request = nemo_relay.LLMRequest(
+                {'x-switchyard-session-id': str(uuid.uuid4())}, bounds_request_body(target))
             if target == 'judge':
                 await nemo_relay.llm.execute('openai.chat_completions', request, reject_passthrough)
             else:
@@ -130,6 +138,7 @@ with TemporaryDirectory() as directory, ExitStack() as resources:
         if fault == 'cancel':
             assert cancellation['observed'], 'caller did not settle as cancelled'
             assert finished - cancellation['started'] <= 5
+            assert providers[failed_role].released.wait(5), 'upstream connection survived caller cancellation'
         else:
             assert failed, 'native call unexpectedly succeeded'
         provider = providers[failed_role]
@@ -159,7 +168,6 @@ with TemporaryDirectory() as directory, ExitStack() as resources:
         runtime.shutdown()
     if fault == 'cancel':
         assert time.monotonic() - shutdown_started <= 5, 'shutdown exceeded cancellation cleanup bound'
-        assert providers[failed_role].released.wait(5), 'upstream connection survived shutdown'
     assert nemo_relay.plugin.report() is None
     # Include late replay or fallback during cancellation and native shutdown.
     assert {role: len(p.calls) for role, p in providers.items()} == expected_calls

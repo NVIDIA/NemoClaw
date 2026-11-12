@@ -65,6 +65,7 @@ on:
       - "test/package-contract/channels/hermes-discord-runtime.test.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
       - "test/e2e/fixtures/hermes-switchyard-package.ts"
+      - "test/e2e/fixtures/hermes-switchyard-bounds.ts"
       - "test/e2e/fixtures/hermes-crash-capture.ts"
       - "test/e2e/live/hermes-root-entrypoint-smoke.test.ts"
       - "test/e2e/live/mcp-bridge*.ts"

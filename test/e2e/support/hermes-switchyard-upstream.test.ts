@@ -14,7 +14,37 @@ import {
   HERMES_SWITCHYARD_LOCAL_UPSTREAM,
   HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES,
 } from "../fixtures/hermes-switchyard-package.ts";
-import { HERMES_SWITCHYARD_BOUNDS_WORKER } from "../fixtures/hermes-switchyard-bounds.ts";
+import {
+  HERMES_SWITCHYARD_BOUNDS_REQUEST,
+  HERMES_SWITCHYARD_BOUNDS_WORKER,
+} from "../fixtures/hermes-switchyard-bounds.ts";
+
+test.each(["efficient", "capable", "judge"])(
+  "%s bounds request selects streaming only for answer clients",
+  (target) => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        HERMES_SWITCHYARD_BOUNDS_REQUEST +
+          String.raw`
+import json
+import sys
+print(json.dumps(bounds_request_body(sys.argv[1])))
+`,
+        target,
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      model: "switchyard",
+      messages: [{ role: "user", content: "Bound this fixture call." }],
+      stream: target !== "judge",
+    });
+  },
+);
 
 test("bounds worker compiles as an isolated Python program", () => {
   const result = spawnSync(

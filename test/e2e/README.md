@@ -57,7 +57,7 @@ and make one attempt. Separate HTTP 503 cases exhaust the configured answer cand
 one failed attempt per physical call. Judge failures stop before answer selection.
 One active answer stream per judge mode is cancelled after its partial event. Caller settlement
 and runtime shutdown each have a five-second bound; the fixture must observe upstream connection
-release before server cleanup. Timeout and cancellation cases reject fallback, replay, successful
+release before runtime shutdown. Timeout and cancellation cases reject fallback, replay, successful
 stream terminators, and native routing bypass. Every case retains a bounded result before aggregate
 failure. A separate process watchdog fails a hung probe; it cannot establish deadline success.
 The cases run concurrently in separate native processes and are removed with their owned container.
