@@ -101,60 +101,15 @@ fn colossus_workflow() -> Value {
     .unwrap()
 }
 
-/// Hardware is optional on PRs and never a dependency of the Rust platform gates.
+/// Only manual v1 dispatches can execute jobs on the leased machine's runner,
+/// and a dispatch selects one of them.
 #[test]
-fn bundle_shows_colossus_skipped_until_a_pr_is_enabled() {
-    let workflow: Value = serde_saphyr::from_str(
-        &fs::read_to_string(repository().join(".github/workflows/rust.yml")).unwrap(),
-    )
-    .unwrap();
-    let events = &workflow["on"];
-    assert_eq!(events["push"]["branches"], serde_json::json!(["v1"]));
-    let types = events["pull_request"]["types"].as_array().unwrap();
-    for event in ["opened", "synchronize", "reopened", "labeled", "unlabeled"] {
-        assert!(types.iter().any(|value| value == event));
-    }
-    let jobs = &workflow["jobs"];
-    let smoke = &jobs["colossus_smoke"];
-    assert_eq!(
-        smoke["if"],
-        "github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'push' && github.ref == 'refs/heads/v1') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'run-colossus')))"
-    );
-    assert_eq!(smoke["continue-on-error"], true);
-    assert_eq!(
-        smoke["outputs"]["ready"],
-        "${{ steps.gpu.outcome == 'success' }}"
-    );
-    assert_eq!(smoke["steps"][0]["id"], "gpu");
-    assert_eq!(smoke["steps"][0]["run"], "nvidia-smi");
-    let station = &jobs["colossus"];
-    assert_eq!(needs(station), ["colossus_smoke"]);
-    assert_eq!(
-        station["if"],
-        "!cancelled() && needs.colossus_smoke.outputs.ready == 'true'"
-    );
-    assert_eq!(station["uses"], "./.github/workflows/hcl-e2e.yml");
-    assert_eq!(
-        station["with"],
-        serde_json::json!({"target":"dgx-station", "hosted":false})
-    );
-    assert!(station["continue-on-error"].is_null());
-    assert!(
-        !needs(&jobs["native"])
-            .iter()
-            .any(|job| job.starts_with("colossus"))
-    );
-}
-
-/// The separate Colossus workflow retains only manual connectivity and bundle checks.
-#[test]
-fn colossus_connectivity_remains_manual_and_v1_only() {
+fn colossus_runs_are_manual_and_v1_only() {
     let workflow = colossus_workflow();
     let events = workflow["on"]
         .as_object()
         .expect("explicit workflow events");
-    assert_eq!(events.len(), 1);
-    assert!(!events.contains_key("pull_request"));
+    assert_eq!(events.len(), 1, "the pilot runner takes manual runs only");
     let suite = &workflow["on"]["workflow_dispatch"]["inputs"]["suite"];
     assert_eq!(suite["type"], "choice");
     assert_eq!(suite["options"], serde_json::json!(["smoke", "bundle"]));
@@ -170,11 +125,8 @@ fn colossus_connectivity_remains_manual_and_v1_only() {
             format!(
                 "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == '{name}'"
             ),
-            "only intended events and suites may execute {name}"
+            "only a manual dispatch on the canonical v1 branch may execute {name}"
         );
-    }
-    for name in ["smoke", "bundle"] {
-        assert!(needs(&jobs[name]).is_empty(), "{name} runs independently");
     }
     assert!(
         !workflow.to_string().contains("secrets"),
@@ -589,142 +541,4 @@ runs:
         problems,
         [".github/allowed-actions.yml lists third-party/action@approved, which no workflow uses"]
     );
-}
-
-/// Station accepts v1 pushes and explicitly enabled PRs; artifact callers keep RTX.
-#[test]
-#[cfg(unix)]
-fn hcl_target_selection_preserves_rtx_and_bounds_station_qualification() {
-    let workflow: Value = serde_saphyr::from_str(
-        &fs::read_to_string(repository().join(".github/workflows/hcl-e2e.yml")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        workflow["on"]["workflow_call"]["inputs"]["target"]["default"],
-        "rtx-pro-6000"
-    );
-    let script = workflow["jobs"]["cases"]["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|step| step["id"] == "target")
-        .unwrap()["run"]
-        .as_str()
-        .unwrap();
-    for (target, reference, event, tests, expected) in [
-        (
-            "rtx-pro-6000",
-            "refs/heads/v1",
-            "push",
-            "artifacts",
-            Some("runner=linux-amd64-gpu-rtxpro6000-latest-1\nplatform=linux_amd64\n"),
-        ),
-        (
-            "dgx-station",
-            "refs/heads/v1",
-            "workflow_dispatch",
-            "",
-            Some("runner=colossus-gb300-pilot\nplatform=linux_arm64\n"),
-        ),
-        (
-            "dgx-station",
-            "refs/heads/main",
-            "workflow_dispatch",
-            "",
-            None,
-        ),
-        (
-            "dgx-station",
-            "refs/heads/v1",
-            "push",
-            "",
-            Some("runner=colossus-gb300-pilot\nplatform=linux_arm64\n"),
-        ),
-        (
-            "dgx-station",
-            "refs/heads/v1",
-            "workflow_dispatch",
-            "artifacts",
-            None,
-        ),
-        ("dgx-spark", "refs/heads/v1", "workflow_dispatch", "", None),
-        ("unknown", "refs/heads/v1", "workflow_dispatch", "", None),
-        (
-            "dgx-station",
-            "refs/heads/hple/dgx-station-reference-e2e",
-            "workflow_dispatch",
-            "",
-            None,
-        ),
-        (
-            "dgx-station",
-            "refs/heads/hple/dgx-station-reference-e2e-other",
-            "workflow_dispatch",
-            "",
-            None,
-        ),
-        (
-            "dgx-station",
-            "refs/heads/hple/dgx-station-reference-e2e",
-            "push",
-            "",
-            None,
-        ),
-        (
-            "dgx-station",
-            "refs/heads/hple/dgx-station-reference-e2e",
-            "pull_request",
-            "",
-            None,
-        ),
-        (
-            "dgx-station",
-            "refs/pull/14356/merge",
-            "pull_request",
-            "",
-            Some("runner=colossus-gb300-pilot\nplatform=linux_arm64\n"),
-        ),
-        (
-            "dgx-station",
-            "refs/pull/14357/merge",
-            "pull_request",
-            "",
-            None,
-        ),
-        (
-            "dgx-station",
-            "refs/heads/hple/dgx-station-reference-e2e",
-            "workflow_dispatch",
-            "artifacts",
-            None,
-        ),
-    ] {
-        let output = tempfile::NamedTempFile::new().unwrap();
-        let result = std::process::Command::new("bash")
-            .args(["-euo", "pipefail", "-c", script])
-            .env("TARGET", target)
-            .env("GITHUB_REF", reference)
-            .env("GITHUB_EVENT_NAME", event)
-            .env("TESTS", tests)
-            .env(
-                "PR_COLOSSUS",
-                if reference == "refs/pull/14356/merge" {
-                    "true"
-                } else {
-                    "false"
-                },
-            )
-            .env("GITHUB_OUTPUT", output.path())
-            .output()
-            .unwrap();
-        assert_eq!(
-            result.status.success(),
-            expected.is_some(),
-            "{target} {reference} {event} {tests}"
-        );
-        assert_eq!(
-            fs::read_to_string(output.path()).unwrap(),
-            expected.unwrap_or_default()
-        );
-    }
 }
