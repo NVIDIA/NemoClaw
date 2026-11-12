@@ -446,6 +446,22 @@ describe("blueprint native creation", () => {
     expect(f.deps.writeConfig).not.toHaveBeenCalled();
   });
 
+  it("stops before policy preparation when the recorded sandbox is replaced", async () => {
+    const f = fixture();
+    f.input.persist
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => {
+        f.replaceSandbox();
+      });
+    await expect(createBlueprintNativeInference(f.input, f.deps)).rejects.toThrow(
+      "identity changed",
+    );
+    expect(f.input.prepareSandboxPolicy).not.toHaveBeenCalled();
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.deps.writeConfig).not.toHaveBeenCalled();
+  });
+
   it("stops before provider creation when the sandbox changes during policy verification", async () => {
     const f = fixture();
     f.input.prepareSandboxPolicy.mockImplementationOnce(async () => {

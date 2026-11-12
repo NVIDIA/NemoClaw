@@ -551,7 +551,7 @@ export async function runManagedActivationAgentTurn(
       : undefined,
   );
   const options = {
-    artifactName: `${agent}-agent-turn-${phase}-restart`,
+    artifactName: `${sandboxName}-${agent}-agent-turn-${phase}-restart`,
     env,
     redactionValues: [API_KEY],
     timeoutMs:

@@ -15,7 +15,7 @@ import {
   hardenPodmanSocketDirectory,
   type PodmanSocketAuthorityDeps,
 } from "../../adapters/podman";
-import { writePrivateConfig } from "./portable-private-config";
+import { readPrivateConfig, writePrivateConfig } from "./portable-private-config";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
 import { isPortableExperimentalProfile } from "./portable-profile";
@@ -468,21 +468,14 @@ function requireCurrentRegistryGeneration(
 }
 
 function loadReceipt(sandboxName: string, stateDir: string): PortableDemoLifecycleReceipt | null {
-  let file;
+  const source = readPrivateConfig(receiptPath(sandboxName, stateDir), MAX_RECEIPT_BYTES);
+  if (source === null) return null;
   try {
-    file = openRegularFileNoFollow(receiptPath(sandboxName, stateDir));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-  try {
-    return parseReceipt(JSON.parse(file.readUtf8(MAX_RECEIPT_BYTES)), sandboxName);
+    return parseReceipt(JSON.parse(source), sandboxName);
   } catch (error) {
     if (error instanceof SyntaxError)
       throw new Error("Portable demo lifecycle receipt is malformed");
     throw error;
-  } finally {
-    file.close();
   }
 }
 

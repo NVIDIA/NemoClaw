@@ -600,24 +600,34 @@ describe("blueprint identity wrapper", () => {
     },
   );
 
-  it("stops identity mutation when the verified native selection changes", async () => {
-    responseQueue([
-      [
-        "sandbox get test-sandbox",
-        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
-      ],
-    ]);
+  it("stops policy and identity mutation when the verified native selection changes", async () => {
+    installPolicyIdentityResponses();
+    const capture = mockExeca.getMockImplementation()!;
+    mockExeca.mockImplementation(async (command: string, args: string[]) =>
+      args.join(" ") === "sandbox get test-sandbox"
+        ? { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }
+        : capture(command, args),
+    );
     const nativeInferenceObserver = vi
       .fn()
       .mockResolvedValueOnce("original")
       .mockResolvedValue("replacement");
     await expect(
-      actionApply("default", blueprint({ identity: oktaIdentity() }), { nativeInferenceObserver }),
+      actionApply(
+        "default",
+        blueprint({
+          identity: oktaIdentity(),
+          policy: { additions: identityPolicyAdditions },
+        }),
+        { nativeInferenceObserver },
+      ),
     ).rejects.toThrow(/Native inference identity changed/);
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(
       commands.some((command) =>
-        /^(?:inference set|provider (?:create|refresh)|sandbox provider attach)/u.test(command),
+        /^(?:policy set|inference set|provider (?:create|refresh)|sandbox provider attach)/u.test(
+          command,
+        ),
       ),
     ).toBe(false);
   });

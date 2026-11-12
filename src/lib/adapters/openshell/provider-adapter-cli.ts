@@ -110,6 +110,11 @@ export type CliOpenShellProviderProfileResult =
       operation: CliOpenShellProviderProfileOperation;
     }>;
 
+type VerifiedProviderProfile = Readonly<{
+  matches: (exported: string) => boolean;
+  contract?: CheckedInProviderProfileContract;
+}>;
+
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/u;
 const TERMINAL_OSC_RE = /(?:\x1B\]|\x9D)[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/gu;
 const TERMINAL_STRING_RE = /(?:\x1B[PX^_]|[\x90\x98\x9E\x9F])[\s\S]*?(?:\x1B\\|\x9C|$)/gu;
@@ -491,17 +496,18 @@ export function createCliOpenShellProviderAdapter(
 ): CliOpenShellProviderAdapter {
   const run = deps.run ?? runOpenshellProviderCommand;
   const environment = deps.environment ?? process.env;
-  const verifiedProfiles = new Map<string, Map<string, (exported: string) => boolean>>();
+  const verifiedProfiles = new Map<string, Map<string, VerifiedProviderProfile>>();
   const targetKey = (target: OpenShellGatewayTarget) =>
     target.kind === "named" ? `named:${target.gatewayName}` : "selected";
   const rememberVerifiedProfile = (
     target: OpenShellGatewayTarget,
     profileId: string,
     matches: (exported: string) => boolean,
+    contract?: CheckedInProviderProfileContract,
   ) => {
     const key = targetKey(target);
     const profiles = verifiedProfiles.get(key) ?? new Map();
-    profiles.set(profileId, matches);
+    profiles.set(profileId, { matches, ...(contract ? { contract } : {}) });
     verifiedProfiles.set(key, profiles);
   };
   const warn = (message: string) => {
@@ -542,7 +548,7 @@ export function createCliOpenShellProviderAdapter(
   };
 
   const warnIfVerifiedProfileChanged = (request: OpenShellProviderRequest, profileId: string) => {
-    const matches = verifiedProfiles.get(targetKey(request.target))?.get(profileId);
+    const matches = verifiedProfiles.get(targetKey(request.target))?.get(profileId)?.matches;
     if (!matches) return;
     const exported = invoke(
       ["provider", "profile", "export", profileId, "--output", "json"],
@@ -619,8 +625,11 @@ export function createCliOpenShellProviderAdapter(
   const createProvider: OpenShellProviderAdapter["createProvider"] = async (request) => {
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);
     if (targetError) return failure(targetError);
+    const verified = verifiedProfiles.get(targetKey(request.target))?.get(request.type);
+    const credentialFree = verified?.contract?.boundary.credentials.length === 0;
     if (
-      (!request.fromExisting && request.credentials.length === 0) ||
+      (!request.fromExisting && request.credentials.length === 0 && !credentialFree) ||
+      (credentialFree && (request.fromExisting || request.credentials.length > 0)) ||
       (request.fromExisting && request.credentials.length > 0) ||
       request.credentials.some(
         (credential) =>
@@ -631,6 +640,27 @@ export function createCliOpenShellProviderAdapter(
         kind: "validation",
         message: "Provider credential input is missing or conflicts with imported credentials.",
       });
+    }
+    if (!request.fromExisting && request.credentials.length === 0) {
+      const exported = invoke(
+        ["provider", "profile", "export", request.type, "--output", "json"],
+        request,
+        undefined,
+        2,
+        true,
+      );
+      const error = commandError(exported);
+      if (error)
+        return failure({
+          ...error,
+          message: "OpenShell credential-free provider profile could not be verified.",
+        });
+      if (!verified?.matches(commandStdout(exported)))
+        return failure({
+          kind: "command",
+          reason: "profile_incompatible",
+          message: "The OpenShell provider profile changed before credential-free creation.",
+        });
     }
     const args = ["provider", "create", "--name", request.name, "--type", request.type];
     if (request.fromExisting) {
@@ -800,8 +830,11 @@ export function createCliOpenShellProviderAdapter(
       request,
       { ...deps, environment, run },
       (target, contract) => {
-        rememberVerifiedProfile(target, contract.profileId, (exported) =>
-          exportedProviderProfileMatchesContract(exported, contract),
+        rememberVerifiedProfile(
+          target,
+          contract.profileId,
+          (exported) => exportedProviderProfileMatchesContract(exported, contract),
+          contract,
         );
       },
     );
@@ -854,8 +887,11 @@ export function createCliOpenShellProviderAdapter(
     }
     const expectedProfile = request.expectedProfile;
     if (expectedProfile) {
-      rememberVerifiedProfile(request.target, request.profileType, (exported) =>
-        exportedProviderProfileMatchesContract(exported, expectedProfile),
+      rememberVerifiedProfile(
+        request.target,
+        request.profileType,
+        (exported) => exportedProviderProfileMatchesContract(exported, expectedProfile),
+        expectedProfile,
       );
     } else if (supplied !== undefined) {
       const snapshot: unknown = JSON.parse(commandStdout(result));

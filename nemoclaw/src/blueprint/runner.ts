@@ -1732,6 +1732,7 @@ export async function actionApply(
     }
   };
   const prepareSandboxPolicy = async (): Promise<void> => {
+    await revalidateNativeInference();
     if (Object.keys(policyAdditions).length > 0) {
       progress(30, "Applying policy additions");
       await applyBlueprintPolicyAdditions(policyGateway, sandboxName, policyAdditions, stateDir);

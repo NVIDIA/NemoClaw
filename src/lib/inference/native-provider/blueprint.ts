@@ -409,6 +409,7 @@ export async function createBlueprintNativeInference(
     });
     receipt = { ...receipt, sandboxId };
     input.persist(receipt);
+    requireCreatedSandbox(receipt, deps);
     await input.prepareSandboxPolicy();
     requireCreatedSandbox(receipt, deps);
     const providerAttachment = await ensureNativeProvider({
