@@ -1036,6 +1036,11 @@ Before and after rebuild, all three identity aliases must exit successfully and 
 provider, model, and endpoint. Both installed identity files must remain root-owned with mode `0444`,
 and the sandbox user must be unable to open them for writing. Wrapper unit tests own metadata parsing,
 legacy fallback, unsafe-file rejection, and output filtering; this live check owns installed startup and restore composition.
+After native tool use, the revocation rebuild must preserve the logical conversation database and
+the three tool-written workspace files while restoring effective `disabled` capability behavior.
+The probe compares private state digests and never emits database contents. Deterministic tests in
+`test/state/dcode-wal-snapshot.test.ts` own diagnostic acceptance in an active WAL, chunk boundaries,
+archive readback, and credential rejection in raw sidecar bytes.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.

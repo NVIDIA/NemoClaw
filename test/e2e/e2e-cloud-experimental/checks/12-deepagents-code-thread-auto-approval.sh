@@ -164,6 +164,44 @@ assert_saved_identity() {
     || fail "saved preferences or installed DCode identity failed verification"
 }
 
+native_state_digest_source() {
+  cat <<'PY'
+import hashlib
+from pathlib import Path
+import sqlite3
+import sys
+
+try:
+    root = Path(sys.argv[1]).resolve()
+    database = root / ".deepagents/.state/sessions.db"
+    digest = hashlib.sha256()
+    with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute("PRAGMA trusted_schema = OFF")
+        connection.execute("BEGIN")
+        has_rows = False
+        # Logical state includes committed WAL data without checkpointing the native database.
+        for line in connection.iterdump():
+            has_rows = has_rows or line.startswith("INSERT INTO")
+            digest.update((line + "\n").encode())
+        if not has_rows:
+            raise ValueError("conversation state is empty")
+    for name in (".nemoclaw-e2e-autorun-shell-1", ".nemoclaw-e2e-autorun-write",
+                 ".nemoclaw-e2e-autorun-shell-3"):
+        content = (root / name).read_bytes()
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    print(digest.hexdigest())
+except Exception:
+    raise SystemExit("could not inspect native conversation and workspace state") from None
+PY
+}
+
+native_state_digest() {
+  timeout --kill-after=5 30 openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    /opt/venv/bin/python3 -I -c "$(native_state_digest_source)" /sandbox
+}
+
 export_baseline_registry_state() {
   SANDBOX_NAME="$SANDBOX_NAME" node - <<'NODE'
 const fs = require("node:fs");
@@ -486,17 +524,22 @@ main() {
   run_boundary_check "OpenShell network policy boundary" "$NETWORK_BOUNDARY_CHECK"
   run_boundary_check "managed credential boundary" "$CREDENTIAL_BOUNDARY_CHECK"
 
+  local state_before state_after
+  state_before="$(native_state_digest)" || fail "could not capture native state before revocation"
+  [[ "$state_before" =~ ^[a-f0-9]{64}$ ]] || fail "native state digest is missing or malformed"
   info "Disabling thread-opt-in through the named sandbox rebuild interface"
   rebuild_output="$(rebuild_named_sandbox disabled --no-observability)" \
     || fail "named sandbox rebuild could not restore the export baseline: $rebuild_output"
 
+  state_after="$(native_state_digest)" || fail "could not inspect native state after revocation"
+  [ "$state_after" = "$state_before" ] || fail "revocation changed conversation or workspace state"
   assert_capability_projection disabled
   assert_status_mode disabled
   assert_default_denial_ignores_ambient_override
   [ "$(export_baseline_registry_state)" = "disabled:disabled" ] \
     || fail "named sandbox rebuild did not restore retained approval and observability state"
   EXPORT_BASELINE_RECOVERY_ARMED=0
-  pass "named sandbox rebuild restores the disabled export baseline"
+  pass "named sandbox rebuild preserves native state and restores the disabled export baseline"
 
   printf '%s: 8 passed, 0 failed\n' "$PREFIX"
 }
