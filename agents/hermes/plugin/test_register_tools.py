@@ -88,6 +88,18 @@ class RegisterToolSchemaShapeTest(unittest.TestCase):
         self.assertIn("model", params.get("properties", {}))
         self.assertEqual(params.get("required"), ["file_path"])
 
+    def test_named_connector_source_boundary_hooks_are_registered(self):
+        self.assertTrue(
+            {
+                "pre_llm_call",
+                "pre_tool_call",
+                "post_tool_call",
+                "transform_tool_result",
+                "transform_llm_output",
+                "post_llm_call",
+            }.issubset(self.ctx.hooks),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
