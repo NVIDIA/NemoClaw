@@ -7,7 +7,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { inspectExtractedDcodeSessionsDatabase } from "./sqlite-credential-scan.js";
+import {
+  inspectExtractedDcodeSessionsDatabase,
+  inspectExtractedOpenClawDatabase,
+} from "./sqlite-credential-scan.js";
 
 const fixtures: string[] = [];
 
@@ -83,12 +86,16 @@ describe("DCode session database credential scan", () => {
     }
   });
 
-  it("rejects an opaque credential assignment stored in a session transcript", () => {
+  it.each([
+    ["TEXT", 'Example configuration: {"API_KEY":"not-a-secret-marker"}'],
+    ["TEXT", 'log("note \'SELECT 1"); password=?'],
+    ["BLOB", 'log("note \'SELECT 1"); password=?'],
+  ])("rejects an opaque credential assignment stored as %s: %s", (storageType, content) => {
     const fixture = createDatabase();
-    fixture.database.exec("CREATE TABLE sessions (content TEXT)");
+    fixture.database.exec(`CREATE TABLE sessions (content ${storageType})`);
     fixture.database
       .prepare("INSERT INTO sessions VALUES (?)")
-      .run('Example configuration: {"API_KEY":"not-a-secret-marker"}');
+      .run(storageType === "BLOB" ? Buffer.from(content) : content);
     fixture.database.close();
 
     expect(
@@ -107,6 +114,49 @@ describe("DCode session database credential scan", () => {
     expect(
       inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
     ).toBe(false);
+  });
+
+  it.each(["TEXT", "BLOB"])(
+    "preserves a parameterized SQL conversation stored as %s (#14074)",
+    (storageType) => {
+      const fixture = createDatabase();
+      const content = [
+        "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
+        "db.execute('SELECT id FROM users WHERE password=?')",
+        "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
+        "db.execute('SELECT id FROM users WHERE (password = ?)', (pw,))",
+        'db.execute("SELECT id FROM users WHERE ((password = ?))", (pw,))',
+        "Do not use tools or execute SQL. Keep these examples as conversation context: " +
+          "'SELECT id FROM users WHERE (password = ?)' and " +
+          "'SELECT id FROM users WHERE ((password = ?))'. Reply with exactly one word: PONG",
+      ].join("\n");
+      fixture.database.exec(`CREATE TABLE sessions (content ${storageType})`);
+      fixture.database
+        .prepare("INSERT INTO sessions VALUES (?)")
+        .run(storageType === "BLOB" ? Buffer.from(content) : content);
+      fixture.database.close();
+      const before = fs.readFileSync(fixture.path);
+
+      expect(
+        inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+      ).toBe(false);
+      expect(
+        inspectExtractedOpenClawDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+      ).toBe(true);
+      expect(fs.readFileSync(fixture.path)).toEqual(before);
+    },
+  );
+
+  it("keeps SQL-shaped assignments credential-bearing in the database schema", () => {
+    const fixture = createDatabase();
+    fixture.database.exec(
+      "CREATE TABLE sessions (content TEXT DEFAULT 'SELECT id FROM users WHERE password=? AND id=1')",
+    );
+    fixture.database.close();
+
+    expect(
+      inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+    ).toBe(true);
   });
 
   it("preserves the pinned QuickJS diagnostic embedded in interpreter checkpoints", () => {

@@ -37,7 +37,12 @@ function cellContainsCredential(
 ): boolean {
   if (value instanceof Uint8Array) {
     return databaseKind === "dcode"
-      ? textContainsCredential(normalizeDcodeSessionDiagnostic(Buffer.from(value).toString("utf8")))
+      ? textContainsCredential(
+          normalizeDcodeSessionDiagnostic(Buffer.from(value).toString("utf8")),
+          {
+            sqlBindParameters: true,
+          },
+        )
       : textContainsCredential(Buffer.from(value).toString("utf8"));
   }
   if (typeof value !== "string") return false;
@@ -51,7 +56,7 @@ function cellContainsCredential(
   ) {
     return false;
   }
-  return textContainsCredential(value);
+  return textContainsCredential(value, { sqlBindParameters: databaseKind === "dcode" });
 }
 
 /** Inspect logical SQLite values so record framing cannot create token-shaped byte sequences. */
