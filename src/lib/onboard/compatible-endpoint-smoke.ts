@@ -21,6 +21,7 @@ import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
 import { resolveMaxTokensField } from "../inference/max-tokens-field";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "./env";
+import { DCODE_AGENT_NAME } from "./observability-policy-presets";
 import type { HostLocalInferenceSandboxProofAuthority } from "./runtime-provider/host-local-inference-routing";
 import {
   buildCompatibleEndpointSmokeRequestScript,
@@ -90,6 +91,16 @@ function providerNeutralSmokeCommandTimeoutMs(requestTimeoutSeconds: number): nu
     1000
   );
 }
+const DCODE_PYTHON = "/opt/venv/bin/python3";
+const DCODE_INFERENCE_CREDENTIAL_CHECK_TIMEOUT_MS = 30_000;
+const DCODE_INFERENCE_CREDENTIAL_CHECK = `import sys
+try:
+    from deepagents_code import _nemoclaw_managed as managed
+    managed.managed_inference_api_key(managed.managed_inference_base_url())
+except Exception as error:
+    print(f"Deep Agents Code inference credential check failed: {error}", file=sys.stderr)
+    sys.exit(1)
+print("DCODE_INFERENCE_CREDENTIAL_OK")`;
 const OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT = Object.freeze({
   version: 1,
   httpStatus: 403,
@@ -153,15 +164,30 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   const local = normalizeNativeLocalProviderAttachment(options.nativeLocalProviderAttachment);
   if (options.nativeLocalProviderAttachment && !local)
     throw new Error("Invalid native local inference ownership receipt.");
+  const forceCanonicalRoute = options.forceCanonicalRoute === true || Boolean(local);
+  const selection = options.registeredSelection;
+  const recordedNative = () =>
+    selection && !forceCanonicalRoute
+      ? recordedNativeProviderAttachment({
+          ...selection,
+          provider: options.provider,
+          endpointUrl: options.endpointUrl ?? selection.endpointUrl,
+          credentialEnv: options.credentialEnv ?? selection.credentialEnv,
+        })
+      : undefined;
+  const dcodeNative =
+    agentName === DCODE_AGENT_NAME && options.provider === "compatible-endpoint"
+      ? recordedNative()
+      : undefined;
   if (
     !local &&
     options.forceCanonicalRoute !== true &&
+    !dcodeNative &&
     (agentName !== "openclaw" || options.provider !== "compatible-endpoint")
   ) {
     return;
   }
 
-  const forceCanonicalRoute = options.forceCanonicalRoute === true || Boolean(local);
   const providerName = local?.providerName ?? options.provider;
   console.log(
     local
@@ -190,16 +216,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       };
     },
   });
-  const selection = options.registeredSelection;
-  const native =
-    selection && !forceCanonicalRoute
-      ? recordedNativeProviderAttachment({
-          ...selection,
-          provider: options.provider,
-          endpointUrl: options.endpointUrl ?? selection.endpointUrl,
-          credentialEnv: options.credentialEnv ?? selection.credentialEnv,
-        })
-      : undefined;
+  const native = dcodeNative ?? recordedNative();
   if (native && selection) {
     if (selection.model !== options.model) {
       throw new Error("Compatible endpoint verification does not match the registered model.");
@@ -215,11 +232,34 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       sandboxName: options.sandboxName,
       expected: native,
     });
-    const configCheck = buildCompatibleEndpointConfigSmokeScript(options.model, {
-      baseUrl: native.endpointUrl!,
-      credentialEnv: nativeHostedAgentConfig(options.provider, native.endpointUrl!)!.credentialEnv,
-      api: native.custom?.api,
-    });
+    if (dcodeNative) {
+      const check = await options.sandboxCommandExecutor.runBuffered({
+        sandboxName: options.sandboxName,
+        target: nativeTarget,
+        command: [DCODE_PYTHON, "-I", "-c", DCODE_INFERENCE_CREDENTIAL_CHECK],
+        timeoutMilliseconds: DCODE_INFERENCE_CREDENTIAL_CHECK_TIMEOUT_MS,
+      });
+      if (
+        check.outcome.kind !== "completed" ||
+        check.outcome.exitCode !== 0 ||
+        !check.stdout.includes("DCODE_INFERENCE_CREDENTIAL_OK")
+      ) {
+        const detail = compactText(options.redact(check.stderr || check.stdout)).slice(-800);
+        console.error(
+          "  LangChain Deep Agents Code cannot use the selected inference route inside the sandbox.",
+        );
+        if (detail) console.error(`  ${detail}`);
+        fail(1);
+      }
+    }
+    const configCheck = dcodeNative
+      ? null
+      : buildCompatibleEndpointConfigSmokeScript(options.model, {
+          baseUrl: native.endpointUrl!,
+          credentialEnv: nativeHostedAgentConfig(options.provider, native.endpointUrl!)!
+            .credentialEnv,
+          api: native.custom?.api,
+        });
     const result = await probeSandboxInferenceInvocation(
       {
         sandboxName: options.sandboxName,
@@ -228,24 +268,32 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
         preferredInferenceApi: native.custom?.api ?? selection.preferredInferenceApi ?? null,
         nativeProvider: true,
         nativeEndpointUrl: native.endpointUrl,
+        ...(dcodeNative
+          ? {
+              agentName: DCODE_AGENT_NAME,
+              ...(selection.gatewayName ? { gatewayName: selection.gatewayName } : {}),
+            }
+          : {}),
       },
-      {
-        execute: async (_name, command, timeout) => {
-          const completed = await options.sandboxCommandExecutor.runBuffered({
-            sandboxName: options.sandboxName,
-            target: nativeTarget,
-            command: ["sh", "-c", `set -eu\n{\n${configCheck}\n} >/dev/null\n${command}`],
-            timeoutMilliseconds: timeout,
-          });
-          return completed.outcome.kind === "completed"
-            ? {
-                status: completed.outcome.exitCode,
-                stdout: completed.stdout,
-                stderr: completed.stderr,
-              }
-            : null;
-        },
-      },
+      dcodeNative
+        ? { commandExecutor: options.sandboxCommandExecutor }
+        : {
+            execute: async (_name, command, timeout) => {
+              const completed = await options.sandboxCommandExecutor.runBuffered({
+                sandboxName: options.sandboxName,
+                target: nativeTarget,
+                command: ["sh", "-c", `set -eu\n{\n${configCheck}\n} >/dev/null\n${command}`],
+                timeoutMilliseconds: timeout,
+              });
+              return completed.outcome.kind === "completed"
+                ? {
+                    status: completed.outcome.exitCode,
+                    stdout: completed.stdout,
+                    stderr: completed.stderr,
+                  }
+                : null;
+            },
+          },
     );
     if (!result.ok) {
       console.error(`  Compatible endpoint sandbox smoke check failed: ${result.detail}.`);
