@@ -17,6 +17,7 @@ import {
   verifyNativeLocalProviderAttachment,
   verifyRecordedNativeLocalProviderAttachment,
 } from "../../inference/native-local/profile";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import type { SandboxEntry } from "../../state/registry/types";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { hostedNativeProvider } from "../../inference/native-provider/hosted";
@@ -87,20 +88,26 @@ export async function verifyNativeNvidiaStatusAttachment(input: {
   });
 }
 
-export type VerifyRegisteredStatusAttachment = (input: {
-  gatewayName: string;
-  sandboxName: string;
-  expected: RegisteredInferenceProviderAttachment;
-}) => Promise<void>;
+export type VerifyRegisteredStatusAttachment = (
+  input: {
+    gatewayName: string;
+    sandboxName: string;
+    expected: RegisteredInferenceProviderAttachment;
+  },
+  adapter?: OpenShellProviderAdapter,
+) => Promise<void>;
 
-export const verifyRegisteredStatusAttachment: VerifyRegisteredStatusAttachment = async (input) => {
+export const verifyRegisteredStatusAttachment: VerifyRegisteredStatusAttachment = async (
+  input,
+  adapter,
+) => {
   if (
     input.expected.gatewayName !== input.gatewayName ||
     input.expected.sandboxName !== input.sandboxName
   )
     throw new Error("Registered provider sandbox or gateway binding changed.");
   await verifyRegisteredInferenceProviderAttachment({
-    adapter: createCliOpenShellProviderAdapter(),
+    adapter: adapter ?? createCliOpenShellProviderAdapter(),
     expected: input.expected,
   });
 };

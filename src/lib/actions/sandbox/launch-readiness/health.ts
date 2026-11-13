@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { probeInferenceRoute, createBoundReadinessObservations } from "./bound-observations";
+export { createLaunchReadinessInferenceRouteObserver } from "./bound-observations";
+import {
+  observeSandboxOnGateway,
+  type SandboxRecreateObserver,
+} from "../../../onboard/sandbox-recreate-probe";
 import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
 import { recordedRegisteredInferenceProviderAttachment } from "../../../inference/native-provider/registered";
 import { normalizeNativeLocalProviderAttachment } from "../../../inference/native-local/contract";
@@ -25,8 +31,8 @@ import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { createCliOpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
 import {
-  OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
+  OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
 } from "../../../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../../../agent/defs";
 import { isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
@@ -34,10 +40,6 @@ import * as agentRuntime from "../../../agent/runtime";
 import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../../inference/openrouter";
 import { runAgentSmokeCommands } from "../../../agent/terminal-smoke";
 import { checkTerminalAgentVersion } from "../../../agent/terminal-version-drift";
-import {
-  observeSandboxOnGateway,
-  type SandboxRecreateObserver,
-} from "../../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../../state/registry";
 import {
   normalizeNativeNvidiaProviderAttachment,
@@ -45,12 +47,10 @@ import {
 } from "../../../inference/native-nvidia";
 import type { NativeProviderAttachment } from "../../../inference/native-provider/contract";
 import { recordedNativeProviderAttachment } from "../../../inference/native-provider/recorded-selection";
-import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
 import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
 import {
-  buildSandboxInferenceRouteProbeRequest,
   type InferenceRouteProbeAgent,
-  parseSandboxInferenceRouteProbeResult,
+  type parseSandboxInferenceRouteProbeResult,
 } from "../connect-inference-route-probe";
 import { areSandboxLaunchForwardsHealthy } from "../forward-recovery";
 import {
@@ -58,8 +58,8 @@ import {
   runSandboxInferenceInvocationProbe,
 } from "../inference-route-health";
 import {
-  isSandboxGatewayHttpReachableForStatus,
   isSandboxGatewayRunningForStatus,
+  isSandboxGatewayHttpReachableForStatus,
 } from "../process-recovery";
 
 export type LaunchReadinessObservationCategory =
@@ -124,41 +124,26 @@ export type LaunchReadinessBoundCapture = (
   options?: NonNullable<Parameters<typeof captureOpenshell>[1]>,
 ) => LaunchReadinessCaptureResult;
 
-/** Bind the route observer to the same capture owner as the other readiness reads. */
-export function createLaunchReadinessInferenceRouteObserver(
-  capture: LaunchReadinessBoundCapture,
-): OpenShellInferenceRouteObserver {
-  return createSynchronousCliOpenShellInferenceRouteObserver(capture);
-}
-
-/** Route every OpenShell-backed readiness observation through one bound capture owner. */
+/** Route readiness observations through the caller's existing command owners. */
 export function createBoundLaunchReadinessDeps(
   capture: LaunchReadinessBoundCapture,
   commandExecutor: OpenShellSandboxBufferedCommandExecutor,
 ): LaunchReadinessHealthDeps & { observeSandbox: SandboxRecreateObserver } {
-  return {
-    capture: (args, options) =>
-      capture(args, {
-        ...options,
-        ignoreError: options?.ignoreError ?? true,
-        timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
-      }),
-    inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
-    switchyardProviderAdapter: createCliOpenShellProviderAdapter({
+  return createBoundReadinessObservations({
+    capture,
+    commandExecutor,
+    providerAdapter: createCliOpenShellProviderAdapter({
       run: (args, options) => capture(args, options),
       defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     }),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
-      isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, {
-        commandExecutor,
-      }),
+      isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, { commandExecutor }),
     forwardsHealthy: (sandboxName, gatewayName) =>
       areSandboxLaunchForwardsHealthy(sandboxName, gatewayName),
-    inferenceProbe: (sandboxName, agent, gatewayName) =>
-      probeInferenceRoute(sandboxName, agent, gatewayName, commandExecutor),
-    commandExecutor,
-  };
+    timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    inferenceTimeoutMs: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+  });
 }
 
 export class LaunchReadinessObservationError extends Error {
@@ -438,30 +423,6 @@ export async function requireNativeInferenceHealth(input: {
   return true;
 }
 
-async function probeInferenceRoute(
-  sandboxName: string,
-  agent: InferenceRouteProbeAgent,
-  gatewayName: string,
-  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
-): Promise<ReturnType<typeof parseSandboxInferenceRouteProbeResult>> {
-  const completed = await commandExecutor.runBuffered(
-    buildSandboxInferenceRouteProbeRequest(
-      sandboxName,
-      agent,
-      gatewayName,
-      OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-    ),
-  );
-  return parseSandboxInferenceRouteProbeResult({
-    status: completed.outcome.kind === "completed" ? completed.outcome.exitCode : null,
-    output: completed.stdout,
-    stderr:
-      completed.outcome.kind === "completed"
-        ? completed.stderr
-        : completed.stderr || completed.outcome.error.message,
-  });
-}
-
 export async function requireLaunchSemanticHealth(
   sandboxName: string,
   gatewayName: string,
@@ -576,7 +537,13 @@ export async function requireLaunchSemanticHealth(
         deps.inferenceProbe ??
         ((name: string, targetAgent: InferenceRouteProbeAgent, targetGateway: string) => {
           if (!deps.commandExecutor) throw new LaunchReadinessEvidenceError();
-          return probeInferenceRoute(name, targetAgent, targetGateway, deps.commandExecutor);
+          return probeInferenceRoute(
+            name,
+            targetAgent,
+            targetGateway,
+            deps.commandExecutor,
+            OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+          );
         });
       inference = await inferenceProbe(sandboxName, agent, gatewayName);
     } catch (error) {
