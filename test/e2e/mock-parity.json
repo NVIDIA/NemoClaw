@@ -740,6 +740,7 @@
         "test/e2e/live/hermes-skill-lifecycle.ts"
       ],
       "fast": [
+        "test/e2e/support/hermes-switchyard-boundary.test.ts",
         "src/lib/actions/sandbox/skill-install.test.ts",
         "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
