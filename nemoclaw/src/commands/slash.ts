@@ -69,9 +69,13 @@ function slashHelp(): PluginCommandResult {
 
 function slashStatus(api: OpenClawPluginApi, nativeConfig: OpenClawConfig): PluginCommandResult {
   const onboardConfig = loadOnboardConfig();
-  const { sandboxName } = getPluginConfig(api);
 
   const route = readNativeRoute(nativeConfig);
+
+  const state = loadState();
+  const pluginConfig = getPluginConfig(api);
+  // Prefer persisted sandbox name from state over plugin config default
+  const sandboxName = state.sandboxName ?? pluginConfig.sandboxName;
 
   const lines = [
     "**NemoClaw Status**",
@@ -83,7 +87,6 @@ function slashStatus(api: OpenClawPluginApi, nativeConfig: OpenClawConfig): Plug
     `Onboarded: ${onboardConfig?.onboardedAt ?? "(not recorded)"}`,
   ];
 
-  const state = loadState();
   if (state.migrationSnapshot) {
     lines.push("", `Rollback snapshot: ${state.migrationSnapshot}`);
   }
