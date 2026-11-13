@@ -279,6 +279,9 @@ The pinned CLI doesn't renew a token it got this way ([NVIDIA/OpenShell#4287](ht
 
 `openshell status` reports the gateway as connected and authenticated.
 Then [select the gateway and workspace](../agents-inference/interfaces.md#select-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
+A token with the role `admin_role` names reaches the deployment's workspace.
+A token with only the role `user_role` names reaches it once a platform admin adds the token's subject to the workspace; until then, sandbox commands fail with `not a member of workspace` and print the `openshell workspace member add` command to run.
+With only that role, `openshell status` also reports `authorization denied`, because its check reads gateway details that only an admin may read.
 The client certificate's key grants transport access to the gateway; keep it private and delete the `mtls` directory when you no longer need access.
 See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
