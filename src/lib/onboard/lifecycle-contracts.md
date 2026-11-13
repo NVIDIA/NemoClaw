@@ -10,17 +10,12 @@ References use stable symbols and modules rather than line numbers.
 
 Related guides: [`README.md`](README.md) describes package placement, [`machine/README.md`](machine/README.md) describes the FSM, and [`../messaging/AGENTS.md`](../messaging/AGENTS.md) describes manifest-first messaging.
 
-## Native Model Router resume
+## Retired Model Router selections
 
-Ready Model Router reuse restores the recorded native provider attachment through `ensureNativeLocalProviderAttached` before recording sandbox success.
-This applies to OpenClaw, Hermes, Deep Agents Code, and Pi with `nvidia-router` or the provider name configured by the routed blueprint.
-`nativeModelRouterEndpoint` verifies the recorded endpoint against that blueprint.
-The sandbox handler holds its existing sandbox and gateway mutation locks and requires matching provider authority.
-It revalidates the registered live sandbox identity before provider commands and completion.
-A changed profile, provider identity, sandbox identity, or attachment receipt stops resume.
-An already-attached provider is verified without another attach command.
-Fresh creation retains its post-create attachment owner.
-`sandbox-native-router-resume.test.ts` covers this recovery boundary, including a configured provider name for all four agents.
+`rejectRetiredModelRouter` rejects legacy Model Router providers before the sandbox handler acquires its mutation lock.
+`rejectRetiredModelRouterSession` also rejects sessions that retain router process, port, or credential-hash metadata.
+These guards preserve existing resources for explicit cleanup through `destroy` or `uninstall`.
+They do not migrate the provider or resume the retired route.
 
 ## Shared vocabulary
 
