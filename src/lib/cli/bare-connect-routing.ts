@@ -44,7 +44,8 @@ export async function resolveBareConnectArgv(
   }
 
   if (normalized.connectHelpRequested) {
-    deps.printSandboxConnectHelp(deps.getDefault() ?? undefined);
+    // Keep bare `connect --help` state-independent across hosts (#14079).
+    deps.printSandboxConnectHelp();
     return null;
   }
 
