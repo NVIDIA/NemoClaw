@@ -9,6 +9,7 @@ import {
 } from "../native-nvidia/contract";
 import { hostedNativeProvider } from "./hosted";
 import { hostedNativeProviderForAttachment } from "./hosted-attachment";
+import { isLocalInferenceProvider } from "../native-local/agent-config";
 import type { NativeProviderAttachment, NativeProviderDefinition } from "./contract";
 
 const nvidiaDefinition: NativeProviderDefinition = {
@@ -35,6 +36,8 @@ export function nativeOpenClawProviderKey(
   if (provider === "compatible-endpoint") return "inference";
   if (provider === "compatible-anthropic-endpoint")
     return inferenceApi === "anthropic-messages" ? "anthropic" : "inference";
+  // Dedicated local providers route through the managed "inference" provider key.
+  if (isLocalInferenceProvider(provider)) return "inference";
   const definition = fixedNativeProvider(provider);
   if (!definition) return undefined;
   if (definition.logicalProvider === "openai-api") return "openai";
