@@ -54,7 +54,7 @@ import {
   reconcileStationExpressInstallerResumeRetirement,
   type StationExpressResumeIntent,
 } from "../onboard/station-express-resume";
-import { redactSensitiveText, redactUrl } from "../security/redact";
+import { redactFull, redactSensitiveText, redactUrl } from "../security/redact";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
@@ -111,7 +111,7 @@ const LEGACY_STATE_MIGRATION_LOCK = path.join(
   onboardStateRoot(process.env.HOME || "/tmp", DEFAULT_GATEWAY_PORT),
   ".gateway-state-migration.lock",
 );
-const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
+const SAFE_CHECKPOINT_MODEL_ID = /^[A-Za-z0-9._:/-]+$/;
 
 export class InvalidPersistedApfInterceptorIntentError extends Error {}
 export class InvalidPersistedCancellationRecoveryError extends Error {}
@@ -346,6 +346,11 @@ export interface SessionResourceProfile {
   memory: string;
 }
 
+export interface PendingNvidiaModel {
+  model: string;
+  source?: ModelSelectionProvenance["modelSource"];
+}
+
 export interface Session {
   version: number;
   sessionId: string;
@@ -365,6 +370,8 @@ export interface Session {
   provider: string | null;
   model: string | null;
   modelSelectionProvenance?: ModelSelectionProvenance | null;
+  /** Absent before choosing NVIDIA Endpoints, null at its key prompt, then the selected model and its picker source. */
+  pendingNvidiaModel?: PendingNvidiaModel | null;
   /** Secret-free model intent retained only while a managed vLLM install is unfinished. */
   vllmInstallModel: string | null;
   /** GPU exposed to the host-side managed vLLM container for this onboarding attempt. */
@@ -620,10 +627,24 @@ function readString(value: SessionJsonValue | undefined): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function parsePendingNvidiaModel(value: unknown): PendingNvidiaModel | null | undefined {
+  if (!isObjectRecord(value)) return value === null ? null : undefined;
+  const { model, source } = value;
+  if (
+    typeof model !== "string" ||
+    !SAFE_CHECKPOINT_MODEL_ID.test(model) ||
+    redactFull(model) !== model
+  )
+    return null;
+  return source === "product_catalog" || source === "provider_catalog" || source === "custom"
+    ? { model, source }
+    : { model };
+}
+
 function parseVllmInstallModel(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const model = value.trim();
-  return model.length > 0 && model.length <= 512 && SAFE_VLLM_INSTALL_MODEL.test(model)
+  return model.length > 0 && model.length <= 512 && SAFE_CHECKPOINT_MODEL_ID.test(model)
     ? model
     : null;
 }
@@ -1095,6 +1116,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
           ),
         }
       : {}),
+    pendingNvidiaModel: overrides.pendingNvidiaModel,
     vllmInstallModel: parseVllmInstallModel(overrides.vllmInstallModel),
     vllmGpuDevice: parseVllmGpuDevice(overrides.vllmGpuDevice),
     servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
@@ -1253,6 +1275,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    pendingNvidiaModel: parsePendingNvidiaModel(data.pendingNvidiaModel),
     ...(readModelSelectionProvenance(data.modelSelectionProvenance)
       ? { modelSelectionProvenance: readModelSelectionProvenance(data.modelSelectionProvenance) }
       : {}),
@@ -2327,6 +2350,9 @@ export function markStepStarted(stepName: string, updates: SessionUpdates = {}):
     // Record the step and its context in one write so an interruption cannot
     // keep the started step without the context it was started with.
     Object.assign(session, safeUpdates);
+    if (stepName === "provider_selection" && safeUpdates.provider && safeUpdates.model) {
+      delete session.pendingNvidiaModel;
+    }
     const now = new Date().toISOString();
     step.status = "in_progress";
     step.startedAt = now;
@@ -2366,7 +2392,10 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {})
     session.lastCompletedStep = stepName;
     session.failure = null;
     Object.assign(session, safeUpdates);
-    if (stepName === "provider_selection") session.vllmInstallModel = null;
+    if (stepName === "provider_selection") {
+      delete session.pendingNvidiaModel;
+      session.vllmInstallModel = null;
+    }
     if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
     else if (sparkExpressComplete) session.stationExpressIntent = null;
     return session;
@@ -2398,6 +2427,7 @@ export function markStepRejected(stepName: string): Session {
     step.error = null;
     if (session.lastStepStarted === stepName) session.lastStepStarted = null;
     if (stepName === "provider_selection") {
+      delete session.pendingNvidiaModel;
       session.provider = null;
       session.model = null;
       session.vllmInstallModel = null;
@@ -2448,6 +2478,7 @@ export function checkpointVllmInstallModel(modelId: string): Session {
         "Managed vLLM install intent can only be checkpointed during provider selection.",
       );
     }
+    delete session.pendingNvidiaModel;
     session.vllmInstallModel = model;
   });
 }
@@ -2469,6 +2500,7 @@ export function checkpointManagedLlamaCppSelection(input: {
         "Managed llama.cpp selection can only be checkpointed during provider selection.",
       );
     }
+    delete session.pendingNvidiaModel;
     session.provider = "llama-cpp-local";
     session.model = model;
     session.servingProfileProvenance = provenance;
@@ -2571,6 +2603,7 @@ export function completeSession(
     Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
+    delete session.pendingNvidiaModel;
     session.vllmInstallModel = null;
     session.stationExpressIntent = null;
     session.stationExpressReceiptRetirement = receiptGeneration;

@@ -4,7 +4,7 @@
 import { rejectRetiredModelRouter } from "../inference/provider-key/contract";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
-import { providerNameToOptionKey } from "./provider-recovery";
+import { providerNameToOptionKey, readPendingNvidiaModel } from "./provider-recovery";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 
 interface ProviderDiscoveryDeps {
@@ -110,6 +110,7 @@ export function prepareProviderDiscovery(options: {
 }): {
   requestedProvider: string | null;
   requestedModel: string | null;
+  resumedNvidiaModel: ReturnType<typeof readPendingNvidiaModel>;
   recoveredRegistryRoute: RegistryInferenceRoute | null;
   recordedProviderReaders: RecordedProviderReaders;
   probeOllama: boolean;
@@ -136,9 +137,11 @@ export function prepareProviderDiscovery(options: {
     recoverySessionId,
   );
   const nonInteractive = deps.isNonInteractive();
-  const requestedProvider = deps.getNonInteractiveProvider();
-  let providerChanged = false;
-  if (nonInteractive && requestedProvider && recoverProvider) {
+  const explicitProvider = deps.getNonInteractiveProvider();
+  const pendingNvidiaModel = nonInteractive ? readPendingNvidiaModel(recoverySessionId) : undefined;
+  const requestedProvider = explicitProvider ?? (pendingNvidiaModel !== undefined ? "build" : null);
+  let providerChanged = pendingNvidiaModel !== undefined && requestedProvider !== "build";
+  if (!providerChanged && nonInteractive && requestedProvider && recoverProvider) {
     const recordedProviderName = recordedProviderReaders.readRecordedProvider(sandboxName);
     const hasRecordedNimContainer =
       recordedProviderName === "vllm-local" &&
@@ -201,6 +204,8 @@ export function prepareProviderDiscovery(options: {
   return {
     requestedProvider,
     requestedModel,
+    resumedNvidiaModel:
+      requestedProvider === "build" && !requestedModel ? pendingNvidiaModel : undefined,
     recoveredRegistryRoute,
     recordedProviderReaders,
     // Interactive menus always probe: the probe only drives status display

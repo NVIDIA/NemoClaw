@@ -23,6 +23,7 @@ export function clearAgentScopedResumeState(session: Session, selectedAgentName:
   session.agent = normalizedAgentName === "openclaw" ? null : normalizedAgentName;
   session.provider = null;
   session.model = null;
+  delete session.pendingNvidiaModel;
   session.endpointUrl = null;
   session.credentialEnv = null;
   session.hermesAuthMethod = null;

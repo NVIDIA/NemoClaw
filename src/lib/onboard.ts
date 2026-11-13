@@ -1518,7 +1518,6 @@ const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
     },
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
-type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
 const {
@@ -1645,16 +1644,7 @@ type OllamaModelSelectionDefaults =
   import("./onboard/setup-nim-selection").OllamaModelSelectionDefaults;
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
-type RemoteProviderSelectionArgs = {
-  selected: ProviderChoice;
-  requestedModel: string | null;
-  recoveredFromSandbox: boolean;
-  recoveredModel: string | null;
-  sandboxName: string | null;
-  gatewayName: string | null;
-  intendedInferenceApi: string | null;
-  recoverySessionId: string | null | undefined;
-};
+type RemoteProviderSelectionArgs = import("./onboard/setup-nim-flow").SetupNimRemoteSelectionArgs;
 
 async function handleNimLocalSelection(
   gpu: ReturnType<typeof nim.detectGpu>,
@@ -1951,6 +1941,7 @@ async function handleRemoteProviderSelection(
       state.reuseGatewayCredentialWithoutLocalKey = state.skipHostInferenceSmoke;
     } else {
       assertSelectionMutationAuthority(state, "register the NVIDIA provider credential");
+      args.checkpointNvidiaModel(null);
       apiKeyNavigation = await ensureApiKey();
     }
     state.model = await selectFeaturedModelAfterCredentialPrompt(
@@ -2172,6 +2163,7 @@ async function handleRemoteProviderSelection(
       `Missing model for ${remoteConfig.label}`,
     );
     state.assertRouteCompatible?.();
+    args.checkpointNvidiaModel(buildModel);
     const buildValidation = await buildCredentialReuse.resolveBuildPreferredInferenceApi({
       reuseGatewayCredentialWithoutLocalKey: state.skipHostInferenceSmoke === true,
       note,

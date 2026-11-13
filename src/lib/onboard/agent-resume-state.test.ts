@@ -13,6 +13,7 @@ describe("clearAgentScopedResumeState", () => {
   it("invalidates agent-scoped checkpoint decisions and effect receipts", () => {
     const session = createSession({
       agent: null,
+      pendingNvidiaModel: null,
       sandboxName: "my-sandbox",
       sandboxPromptProgress: {
         sandboxName: true,
@@ -39,6 +40,7 @@ describe("clearAgentScopedResumeState", () => {
 
     clearAgentScopedResumeState(session, "hermes");
 
+    expect(session.pendingNvidiaModel).toBeUndefined();
     expect(session.checkpoint).toMatchObject({
       sandboxIdentity: { kind: "unset" },
       webSearch: { kind: "unset" },
