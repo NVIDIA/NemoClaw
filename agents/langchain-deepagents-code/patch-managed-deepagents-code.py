@@ -182,6 +182,24 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     _nemoclaw_assert_safe_runtime()
 '''
 
+MAIN_SCRIPT_GUARD_MARKER = '\nif __name__ == "__main__":\n    cli_main()\n'
+MAIN_APPROVAL_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code startup approval mode.
+_nemoclaw_original_resolve_approval_mode = _resolve_approval_mode
+
+
+def _resolve_approval_mode(args):
+    """Apply the managed capability before the native startup-mode resolver."""
+    from deepagents_code._nemoclaw_managed import managed_auto_approval_enabled
+
+    if managed_auto_approval_enabled():
+        return _nemoclaw_original_resolve_approval_mode(args)
+    from deepagents_code.approval_mode import ApprovalMode
+
+    return ApprovalMode.MANUAL
+'''
+
 APP_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
@@ -1894,6 +1912,7 @@ def main() -> None:
             ("config", CONFIG_PATCH),
             ("entrypoint", ENTRYPOINT_PATCH),
             ("main", MAIN_PATCH),
+            ("main", MAIN_APPROVAL_PATCH),
             ("tools", TOOLS_PATCH),
             ("app", APP_PATCH),
             ("approval", APPROVAL_PATCH),
@@ -1909,6 +1928,14 @@ def main() -> None:
                 raise RuntimeError(
                     f"Managed package {name} patch is incomplete in {paths[name]}"
                 )
+        if (
+            texts["main"].count(MAIN_SCRIPT_GUARD_MARKER) != 1
+            or texts["main"].index(MAIN_APPROVAL_PATCH.lstrip())
+            > texts["main"].index(MAIN_SCRIPT_GUARD_MARKER)
+        ):
+            raise RuntimeError(
+                "Managed package startup approval patch must precede the script guard"
+            )
         if texts["server"].count(SERVER_ENV_OVERRIDES_PATCH.lstrip()) != 1:
             raise RuntimeError(
                 "Managed package server override patch is incomplete in "
@@ -1942,7 +1969,9 @@ def main() -> None:
             "refusing mixed source state"
         )
 
-    _require_functions(paths["main"], texts["main"], {"parse_args"})
+    _require_functions(
+        paths["main"], texts["main"], {"parse_args", "_resolve_approval_mode"}
+    )
     _require_methods(
         paths["app"],
         texts["app"],
@@ -2126,6 +2155,10 @@ def main() -> None:
         raise RuntimeError(
             f"Expected one Deep Agents Code non-interactive timeout marker in {paths['main']}"
         )
+    if texts["main"].count(MAIN_SCRIPT_GUARD_MARKER) != 1:
+        raise RuntimeError(
+            f"Expected one Deep Agents Code script guard marker in {paths['main']}"
+        )
     transformed = dict(texts)
     transformed["entrypoint"] = texts["entrypoint"].replace(
         ENTRYPOINT_MARKER, ENTRYPOINT_PATCH, 1
@@ -2141,6 +2174,11 @@ def main() -> None:
     transformed["main"] = transformed["main"].replace(
         NON_INTERACTIVE_TIMEOUT_MARKER,
         NON_INTERACTIVE_TIMEOUT_PATCH,
+        1,
+    )
+    transformed["main"] = transformed["main"].replace(
+        MAIN_SCRIPT_GUARD_MARKER,
+        f"\n{MAIN_APPROVAL_PATCH.lstrip()}\n{MAIN_SCRIPT_GUARD_MARKER}",
         1,
     )
     transformed["app"] = _append_patch(paths["app"], texts["app"], APP_PATCH)

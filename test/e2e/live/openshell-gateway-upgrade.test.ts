@@ -49,6 +49,7 @@ import {
   gatewayUpgradeRecoverySucceeded,
   gatewayUpgradeAgentResponseIsSuccessful,
   gatewayUpgradeInstallerCommand,
+  gatewayUpgradeMarkerWriteCommand,
   type GatewayUpgradeServiceEvidence,
   captureGatewayUpgradeService,
   prepareGatewayUpgradeUserManager,
@@ -451,7 +452,7 @@ async function createStoppedLegacySandboxes(
     const marker = `gateway-upgrade-stopped-${sandboxName}`;
     const markerWrite = await bash(
       host,
-      `openshell sandbox exec --name ${shellQuote(sandboxName)} -- sh -lc ${shellQuote(`mkdir -p /sandbox/.openclaw/workspace && printf '%s\n' ${shellQuote(marker)} >${shellQuote(STOPPED_SANDBOX_MARKER_PATH)}`)}`,
+      `openshell sandbox exec --name ${shellQuote(sandboxName)} -- sh -lc ${shellQuote(gatewayUpgradeMarkerWriteCommand(STOPPED_SANDBOX_MARKER_PATH, marker))}`,
       {
         artifactName: `old-marker-${sandboxName}`,
         env: onboardEnv,
@@ -569,7 +570,7 @@ async function installOldNemoclawAndClaw(
 async function writeSurvivorMarker(host: HostCliClient): Promise<void> {
   await bash(
     host,
-    `openshell sandbox exec --name ${shellQuote(SURVIVOR_SANDBOX)} -- sh -lc ${shellQuote(`mkdir -p /sandbox/.openclaw/workspace && printf '%s\\n' ${shellQuote(SURVIVOR_MARKER)} >${shellQuote(SURVIVOR_MARKER_PATH)}`)}`,
+    `openshell sandbox exec --name ${shellQuote(SURVIVOR_SANDBOX)} -- sh -lc ${shellQuote(gatewayUpgradeMarkerWriteCommand(SURVIVOR_MARKER_PATH, SURVIVOR_MARKER))}`,
     { artifactName: "write-survivor-marker", timeoutMs: 60_000 },
   );
 }

@@ -2568,7 +2568,8 @@ maybe_install_openshell_during_install() {
   if [[ "$platform" == "Darwin" ]]; then
     macos_install_method="$(observed_macos_openshell_install_method)" || return 1
   fi
-  if ! _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
+  if ! _NEMOCLAW_OPENSHELL_INSTALL_DIR="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR:-}" \
+    _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
     spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
     if [[ "$platform" == "Darwin" && "$macos_install_method" == "homebrew" ]] \
       && truthy_env "${FORCE_FRESH_INSTALL:-}" \
@@ -2600,6 +2601,9 @@ maybe_install_openshell_during_install() {
         error "The macOS OpenShell installation method could not be verified. The installer stopped before selecting OpenShell binaries or recovering the gateway."
         ;;
     esac
+  elif [[ -n "${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR:-}" ]]; then
+    export NEMOCLAW_OPENSHELL_BIN="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR}/openshell"
+    export PATH="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR}:$PATH"
   else
     prefer_user_local_openshell
   fi
@@ -5109,6 +5113,17 @@ preinstall_backup_and_retire_legacy_gateway() {
     || error "Could not determine the installed OpenShell version. The installer stopped after backup without retiring the gateway."
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
     || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
+    local replacement_installer="${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
+    # Older helpers ignore unknown arguments and would install during preparation.
+    # shellcheck disable=SC2016 # Match the helper's literal positional-argument expression.
+    if ! grep -qF 'if [[ "${1:-}" == --prepare-install-directory ]]; then' "$replacement_installer"; then
+      error "The prepared source cannot verify an OpenShell replacement destination before installation. The gateway was not retired, and sandbox backups were preserved. Use a current installer source, then rerun."
+    fi
+    if ! _NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR="$(
+      bash "$replacement_installer" --prepare-install-directory
+    )"; then
+      error "Could not prepare a safe OpenShell replacement destination. The gateway was not retired, and sandbox backups were preserved."
+    fi
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \

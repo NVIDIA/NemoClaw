@@ -809,7 +809,7 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
   it("confirms the startup breadcrumb when the bridge logs the starting-provider line", async () => {
     testLog = [
       "[telegram] [default] starting provider",
-      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+      "[telegram] [default] provider ready (Bot API reachable)",
     ].join("\n");
 
     await addSandboxChannel("test-sb", { channel: "telegram" });

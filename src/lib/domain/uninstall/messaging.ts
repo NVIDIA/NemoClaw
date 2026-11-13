@@ -25,6 +25,29 @@ export function sandboxDeleteFailureMessage(sandboxName: string): string {
   return `OpenShell sandbox '${sandboxName}' could not be removed or was unreachable`;
 }
 
+const CLEANUP_REASON_LIMIT = 200;
+
+function oneLine(text: string): string {
+  return text
+    .replace(/\p{Cc}\[[0-9;?]*[A-Za-z]/gu, "")
+    .replace(/\p{Cc}+|\s+/gu, " ")
+    .trim();
+}
+
+/** Say why OpenShell refused a cleanup, as one bounded line (#13443). */
+export function sandboxCleanupReasonMessage(failure: {
+  diagnostic: string;
+  error: { message: string };
+}): string {
+  const reason =
+    oneLine(failure.diagnostic) || oneLine(failure.error.message) || "OpenShell gave no details.";
+  const bounded =
+    reason.length > CLEANUP_REASON_LIMIT
+      ? `${reason.slice(0, CLEANUP_REASON_LIMIT - 3)}...`
+      : reason;
+  return `Reason: ${bounded}`;
+}
+
 /**
  * Warnings shown when uninstall preserves sandboxes.json: uninstall removes
  * the gateway registration, provider registrations, and Docker image the
