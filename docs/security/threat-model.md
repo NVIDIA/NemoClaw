@@ -25,7 +25,7 @@ The protections below depend on the component that enforces each boundary.
 
 | Threat | Mitigation | Relies on |
 |---|---|---|
-| A prompt-injected or malicious agent reaches hosts or files it shouldn't | Each agent runs in its own sandbox, and the sandbox policy grants only declared destinations, executables, and paths | OpenShell policy enforcement; Landlock where the host supports it |
+| A prompt-injected or malicious agent reaches hosts or files it shouldn't | Each agent runs in its own sandbox, and the sandbox policy grants only declared destinations, executables, and paths | OpenShell policy enforcement; Landlock where the host supports it; on Kubernetes and OpenShift, a network plugin that enforces NetworkPolicy |
 | An agent reads an upstream key | Agents see an opaque placeholder; the OpenShell proxy substitutes the key only on requests to the registered endpoint | OpenShell credential injection |
 | An agent calls tools beyond its task | MCP grants limit methods and tools at the proxy, and harness tool lists limit what the agent is offered | OpenShell MCP policy; the harness |
 | One agent reads another's data | Separate sandboxes and separate volumes | OpenShell sandboxes; the platform's volume access controls |

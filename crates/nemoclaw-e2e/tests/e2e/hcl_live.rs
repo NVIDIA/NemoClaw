@@ -39,6 +39,47 @@ fn case() {
         fs::create_dir_all(directory).unwrap();
     }
     let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap_or_else(|_| format!("cases/{case}.yaml"));
+    if var("NEMOCLAW_HCL_PERSISTENT").as_deref() == Ok("true") {
+        assert!(!run.join("deployment").exists(), "use a fresh run");
+        assert_eq!(
+            fs::canonicalize(&config).unwrap().parent().unwrap(),
+            fs::canonicalize(&run).unwrap(),
+            "bind a private copy inside this run"
+        );
+        for label in ["nemoclaw.nvidia.com/uid", "openshell.ai/sandbox-namespace"] {
+            assert!(
+                docker_list(
+                    &["container", "ls", "--quiet", "--filter"],
+                    &format!("label={label}")
+                )
+                .is_empty(),
+                "another deployment is still running"
+            );
+        }
+        let mut document: Value =
+            serde_saphyr::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+        let ids = docker(&["network", "ls", "--quiet"]);
+        let mut occupied = Vec::new();
+        for id in ids.lines() {
+            occupied.extend(
+                docker(&[
+                    "network",
+                    "inspect",
+                    "--format",
+                    "{{range .IPAM.Config}}{{.Subnet}} {{end}}",
+                    id,
+                ])
+                .split_whitespace()
+                .map(str::to_owned),
+            );
+        }
+        document["spec"]["gateway"]["networkCIDR"] =
+            nemoclaw_build::ci::live::free_subnet(&occupied, &[])
+                .unwrap()
+                .into();
+        fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+        fs::write(reports.join("identity.json"), json!({"candidate":var("GITHUB_SHA").unwrap(),"uid":document["metadata"]["uid"],"case":case}).to_string()).unwrap();
+    }
     let context = json!({
         "config": fs::canonicalize(config).unwrap(),
         "state_dir": run.join("deployment"),
@@ -50,6 +91,15 @@ fn case() {
         "evidence_dir": reports,
         "versions": fs::canonicalize("../../versions.json").unwrap(),
     });
+    let directory = var("NEMOCLAW_HCL_TEST_DIRECTORY").unwrap_or_else(|_| "tests".into());
+    let modules = fs::canonicalize("tests/e2e/hcl").unwrap();
+    assert!(
+        modules
+            .join(&directory)
+            .join(format!("{case}.tftest.hcl"))
+            .is_file(),
+        "missing HCL case"
+    );
     let providers = run.join("providers.tfrc");
     fs::write(
         &providers,
@@ -72,22 +122,81 @@ fn case() {
             .env("TF_VAR_context", context.to_string());
         tofu
     };
-    let modules = fs::canonicalize("tests/e2e/hcl").unwrap();
     let initialized = tofu()
         .args(["init", "-input=false", "-no-color"])
+        .arg(format!("-test-directory={directory}"))
         .arg(format!("-from-module={}", modules.display()))
         .status();
     assert!(initialized.unwrap().success(), "tofu init failed");
     // The test's core log times its runs.
     let log = CoreLog::create(work.join("tofu-test.log"));
-    let filter = format!("-filter=tests/{case}.tftest.hcl");
+    let filter = format!("-filter={directory}/{case}.tftest.hcl");
     let tested = tofu()
-        .args(["test", "-no-color", &filter])
+        .args([
+            "test",
+            "-no-color",
+            &format!("-test-directory={directory}"),
+            &filter,
+        ])
         .env("TF_LOG_CORE", "debug")
         .env("TF_LOG_PATH", &log.0)
         .status();
     report_timings(&case, &log.run_durations());
     assert!(tested.unwrap().success(), "tofu test failed");
+}
+
+fn docker(args: &[&str]) -> String {
+    nemoclaw_build::ci::live::docker_lines(
+        Command::new("docker")
+            .args(["--host", "unix:///var/run/docker.sock"])
+            .args(args),
+    )
+    .expect("Docker observation failed")
+    .join("\n")
+}
+
+fn docker_list(args: &[&str], filter: &str) -> Vec<String> {
+    let args: Vec<_> = args.iter().copied().chain([filter]).collect();
+    docker(&args).lines().map(str::to_owned).collect()
+}
+
+#[test]
+#[ignore = "live: independently verifies owned Docker objects after SDK destroy"]
+fn docker_cleanup() {
+    let run = PathBuf::from(var("NEMOCLAW_HCL_RUN").unwrap());
+    let document =
+        Document::parse(fs::File::open(var("NEMOCLAW_HCL_DOCUMENT").unwrap()).unwrap()).unwrap();
+    let workspace = document.workspace();
+    let owner = format!("label=nemoclaw.nvidia.com/uid={}", document.metadata.uid);
+    let sandbox = format!("label=openshell.ai/sandbox-namespace={workspace}-gateway");
+    let containers = &["container", "ls", "--all", "--quiet", "--filter"];
+    let mut clean = docker_list(containers, &sandbox).is_empty();
+    for id in docker_list(containers, &owner) {
+        let rows: Vec<Value> =
+            serde_json::from_str(&docker(&["container", "inspect", &id])).unwrap();
+        clean &= rows.len() == 1
+            && rows[0]["Name"] == format!("/{workspace}-gateway-initialize")
+            && rows[0]["State"]["Status"] == "exited"
+            && rows[0]["State"]["ExitCode"] == 0;
+    }
+    let volumes = nemoclaw_e2e::state::docker_volumes(&run.join("deployment"));
+    for (kind, expected) in [
+        ("volume", volumes),
+        ("network", vec![format!("{workspace}-network")]),
+    ] {
+        clean &= docker_list(&[kind, "ls", "--format", "{{.Name}}", "--filter"], &owner)
+            .iter()
+            .all(|name| expected.contains(name));
+    }
+    fs::write(
+        run.join("reports/cleanup.json"),
+        json!({"succeeded":clean}).to_string(),
+    )
+    .unwrap();
+    assert!(
+        clean,
+        "owned Docker objects remain outside the retained state"
+    );
 }
 
 /// Invoke one target's agent. The published report records the outcome; the
