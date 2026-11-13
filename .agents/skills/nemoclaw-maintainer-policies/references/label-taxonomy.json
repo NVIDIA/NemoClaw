@@ -55,6 +55,15 @@
   },
   "canonical_labels": [
     {
+      "name": "v1",
+      "family": "architecture_refactor",
+      "item_kinds": ["issue", "pull_request"],
+      "description": "Work in the next NemoClaw architecture refactor on the v1 branch.",
+      "positive_signals": ["PR base branch is v1", "feature issue, Epic, or Task intended for v1", "recorded test against an identified v1 build, regardless of outcome"],
+      "negative_signals": ["API or schema version alone", "model name alone", "main-only feature without v1 evidence", "planned test only"],
+      "mutually_exclusive_group": null
+    },
+    {
       "name": "bug-fix",
       "family": "pr_type",
       "item_kinds": ["pull_request"],
