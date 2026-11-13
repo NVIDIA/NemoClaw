@@ -2,6 +2,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Mirror the CLI bounds for numeric auto-pair inputs: finite positive seconds,
+# and a positive safe integer for the poll count.
+nemoclaw_valid_auto_pair_number() {
+  local name="$1" value="$2" mantissa exponent=0 digits
+  if [ "$name" = "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS" ]; then
+    [[ "$value" =~ ^[0-9]{1,16}$ ]] && ((10#$value > 0 && 10#$value <= 9007199254740991))
+    return
+  fi
+  [[ "$value" =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)([eE]([+-]?[0-9]{1,3}))?$ ]] || return 1
+  mantissa="${BASH_REMATCH[1]}"
+  if [ -n "${BASH_REMATCH[3]}" ]; then
+    digits="${BASH_REMATCH[3]#[+-]}"
+    exponent=$((10#$digits))
+    [ "${BASH_REMATCH[3]:0:1}" != "-" ] || exponent=$((-exponent))
+  fi
+  [[ "$mantissa" =~ [1-9] ]] || return 1
+  digits="${mantissa%%.*}"
+  digits="${digits#"${digits%%[!0]*}"}"
+  ((${#digits} + exponent <= 308))
+}
+
 # Normalize OpenShell's sandbox-create command when an OCI runtime invokes the
 # image ENTRYPOINT with the literal argv:
 #
@@ -137,6 +158,15 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
         printf '%s\n' \
           "[SECURITY] Managed startup env wrapper repeats variable '${_nemoclaw_name}'." >&2
         return 1
+        ;;
+    esac
+    case "$_nemoclaw_name" in
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS | NEMOCLAW_AUTO_PAIR_*_SECS)
+        if ! nemoclaw_valid_auto_pair_number "$_nemoclaw_name" "${_nemoclaw_token#*=}"; then
+          printf '%s\n' \
+            "[SECURITY] Managed startup env wrapper has an invalid value for '${_nemoclaw_name}'." >&2
+          return 1
+        fi
         ;;
     esac
     _nemoclaw_assignments+=("$_nemoclaw_token")
