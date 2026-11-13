@@ -284,7 +284,7 @@ export function assertOnboardSystemReadiness(
   ) {
     printDockerNotReachableError();
   } else if (admission.findingIds.includes("host.docker.runtime_unsupported")) {
-    printUnsupportedRuntimeError();
+    printUnsupportedRuntimeError(host.platform);
   } else if (
     admission.findingIds.includes("host.gpu.cdi_missing") ||
     admission.findingIds.includes("host.gpu.cdi_stale")
