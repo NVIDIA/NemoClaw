@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+import { validateSwitchyardBindingState } from "../../hermes-switchyard-routing";
+import {
+  observeSwitchyardProviderBindings,
+  verifySwitchyardProviderBindings,
+} from "../switchyard/bindings";
+
 import {
   importHermesToolGatewayProfile,
   LEGACY_HERMES_TOOL_GATEWAY_PROVIDER_TYPE,
@@ -51,6 +58,7 @@ type ProviderPreparationInput = {
   readonly messagingProviders: readonly string[];
   readonly messagingProviderRequests: SandboxCreateIntent["messagingProviderRequests"];
   readonly extraProviders: readonly string[];
+  readonly hermesSwitchyard?: SandboxEntry["hermesSwitchyard"];
   readonly gatewayName: string;
   readonly directCreateProviderNames?: readonly string[];
   readonly hermesToolGateway?: Readonly<{ providerName: string }>;
@@ -62,6 +70,66 @@ type ProviderPreparationDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpens
   readonly providerAdapter?: OpenShellProviderAdapter &
     Partial<Pick<CliOpenShellProviderAdapter, "warnIfVerifiedProfilesChangedAfterSandboxCreate">>;
 };
+
+export async function validateAttachedSwitchyardProvidersBeforeSandboxCreation(
+  input: ProviderPreparationInput,
+  deps: ProviderPreparationDeps,
+): Promise<void> {
+  if (!input.hermesSwitchyard) return;
+  try {
+    const state = validateSwitchyardBindingState(input.hermesSwitchyard);
+    const observed = await observeSwitchyardProviderBindings({
+      routing: state.routing,
+      adapter: resolveProviderAdapter(deps),
+      target: namedOpenShellGateway(input.gatewayName),
+      providerNames: Object.fromEntries(
+        state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
+      ),
+    });
+    if (!isDeepStrictEqual(state.bindings, observed))
+      throw new Error("Switchyard provider state changed before sandbox creation.");
+  } catch (error) {
+    throwAfterCleanup(
+      deps,
+      error instanceof Error ? error : new Error("Switchyard provider validation failed."),
+    );
+  }
+}
+
+export async function verifySwitchyardAttachmentAfterCreate(
+  sandboxName: string,
+  input: ProviderPreparationInput,
+  deps: ProviderPreparationDeps,
+): Promise<void> {
+  if (!input.hermesSwitchyard) return;
+  const state = validateSwitchyardBindingState(input.hermesSwitchyard);
+  await verifySwitchyardProviderBindings({
+    routing: state.routing,
+    expected: state.bindings,
+    sandboxName,
+    adapter: resolveProviderAdapter(deps),
+    target: namedOpenShellGateway(input.gatewayName),
+    providerNames: Object.fromEntries(
+      state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
+    ),
+  });
+}
+
+/** Keep the workload held until its native provider attachments have been verified. */
+export async function runWithVerifiedSwitchyardAttachments<T>(
+  sandboxName: string,
+  input: ProviderPreparationInput,
+  deps: ProviderPreparationDeps,
+  revalidateSandboxIdentity: (operation: string) => void,
+  activate: () => T,
+): Promise<T> {
+  if (input.hermesSwitchyard) {
+    revalidateSandboxIdentity("verify Switchyard providers before managed startup");
+    await verifySwitchyardAttachmentAfterCreate(sandboxName, input, deps);
+    revalidateSandboxIdentity("activate verified Switchyard provider attachments");
+  }
+  return activate();
+}
 
 function expectedMessagingBindings(input: ProviderPreparationInput) {
   return new Map(
@@ -359,8 +427,8 @@ async function inspectExpectedMessagingBinding(
   };
 }
 
-function throwAfterCleanup(deps: ProviderPreparationDeps, message: string): never {
-  const providerFailure = new Error(message);
+function throwAfterCleanup(deps: ProviderPreparationDeps, failure: string | Error): never {
+  const providerFailure = typeof failure === "string" ? new Error(failure) : failure;
   try {
     deps.cleanupCreateSources();
   } catch (error) {
@@ -368,7 +436,7 @@ function throwAfterCleanup(deps: ProviderPreparationDeps, message: string): neve
       error instanceof Error ? error : new Error("Temporary sandbox create-source cleanup failed.");
     throw new AggregateError(
       [providerFailure, cleanupFailure],
-      `${message} Temporary sandbox create-source cleanup also failed.`,
+      `${providerFailure.message} Temporary sandbox create-source cleanup also failed.`,
     );
   }
   throw providerFailure;
@@ -458,6 +526,9 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
   const adapter = resolveProviderAdapter(deps);
   const target = namedOpenShellGateway(input.gatewayName);
   for (const attachedProvider of attachedProviders) {
+    // These fresh providers were already observed. An empty update changes their resource versions.
+    if (input.hermesSwitchyard?.bindings.providers.some((p) => p.providerName === attachedProvider))
+      continue;
     if (providersRequiringExistenceProbe.has(attachedProvider)) {
       const observed = await adapter.getProvider({ target, providerName: attachedProvider });
       if (!observed.ok) {

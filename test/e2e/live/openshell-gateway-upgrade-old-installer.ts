@@ -82,6 +82,16 @@ hook = r'''    if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" ]]; then
         exit 1
       fi
       cp -- "$NEMOCLAW_OLD_OPENCLAW_ARCHIVE" "$archive_context_path"
+      python3 - "$nemoclaw_src/scripts/install-openshell.sh" <<'NEMOCLAW_OLD_OPENSHELL_PATH_PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+marker = "\ninstall_bins() {\n"
+replacement = '\n# E2E historical upgrade fixture: keep executables in the private runner directory.\ntarget_dir="$HOME/.local/bin"\ninstall_bins() {\n'
+path.write_text(text.replace(marker, replacement, 1), encoding="utf-8")
+NEMOCLAW_OLD_OPENSHELL_PATH_PY
       python3 - "$nemoclaw_src/Dockerfile" "$NEMOCLAW_OLD_OPENCLAW_VERSION" <<'NEMOCLAW_OLD_DOCKERFILE_PIN_PY'
 from pathlib import Path
 import sys

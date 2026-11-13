@@ -12,6 +12,7 @@ import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__
 import { getDockerDriverGatewayLocalTlsBundle } from "../../onboard/docker-driver-gateway-local-tls";
 import {
   deleteAllSelectedGatewaySandboxes,
+  deleteSelectedGatewaySandbox,
   selectedGatewayCleanupRuntimeSelection,
 } from "./runtime-commands";
 
@@ -162,9 +163,10 @@ describe("uninstall bulk sandbox cleanup", () => {
     [
       "the submission is ambiguous",
       result(null, "", "", Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })),
+      "Reason: OpenShell sandbox delete timed out after 60 seconds. Deletion could not be confirmed.",
     ],
-    ["OpenShell rejects the command", result(1, "", "cleanup failed")],
-  ])("preserves cleanup authority when %s (#11831)", async (_case, deleteResult) => {
+    ["OpenShell rejects the command", result(1, "", "cleanup failed"), "Reason: cleanup failed"],
+  ])("preserves cleanup authority when %s (#11831)", async (_case, deleteResult, reason) => {
     const calls: string[][] = [];
     const warnings: string[] = [];
     const runtime = {
@@ -190,6 +192,7 @@ describe("uninstall bulk sandbox cleanup", () => {
     expect(warnings).toContain(
       "OpenShell sandbox cleanup was not accepted; preserving its state for retry.",
     );
+    expect(warnings).toContain(reason);
   });
 
   it("preserves cleanup authority when empty inventory is not stable (#11831)", async () => {
@@ -255,5 +258,25 @@ describe("uninstall bulk sandbox cleanup", () => {
         "inventory could not be verified: OpenShell could not authenticate the sandbox observation.",
       ),
     ]);
+  });
+
+  it("reports the reason when a timed-out single delete stays unconfirmed (#13443)", async () => {
+    const warnings: string[] = [];
+    const runtime = {
+      env: { PATH: "/usr/bin" },
+      log: vi.fn(),
+      run: (_command: string, args: string[]) =>
+        args[1] === "delete"
+          ? result(null, "", "", Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }))
+          : result(1, "", "permission denied"),
+      sleep: vi.fn(),
+      warn: (message: string) => warnings.push(message),
+    };
+
+    await expect(deleteSelectedGatewaySandbox(runtime, "nemoclaw-8091", "alpha")).resolves.toBe(
+      false,
+    );
+
+    expect(warnings.filter((line) => line.startsWith("Reason: "))).toHaveLength(1);
   });
 });

@@ -111,6 +111,11 @@ function writeHistoricalFixture(advisoryAuditCount = 1): {
   temporaryDirectories.push(root);
   const sourceRoot = path.join(root, "source");
   fs.mkdirSync(path.join(sourceRoot, "nemoclaw", "src"), { recursive: true });
+  fs.mkdirSync(path.join(sourceRoot, "scripts"));
+  fs.writeFileSync(
+    path.join(sourceRoot, "scripts", "install-openshell.sh"),
+    '#!/bin/bash\ntarget_dir="/foreign/system/bin"\ninstall_bins() {\n  :\n}\nprintf "%s" "$target_dir"\n',
+  );
 
   fs.writeFileSync(
     path.join(sourceRoot, "Dockerfile"),
@@ -241,6 +246,33 @@ afterEach(() => {
 }, 60_000);
 
 describe("historical OpenShell gateway upgrade installer adapter", () => {
+  it("installs the historical CLI into the private runner directory", () => {
+    const fixture = writeHistoricalFixture();
+    patchOldInstallerFixture(fixture.installer, REVIEWED_GATEWAY_UPGRADE_FIXTURE);
+    const prepared = spawnSync("bash", [fixture.installer], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NEMOCLAW_OLD_OPENCLAW_ARCHIVE: fixture.archive,
+        NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
+      },
+      timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
+    });
+    expect(prepared.status, prepared.stderr).toBe(0);
+    const home = path.join(fixture.sourceRoot, "runner-home");
+    const selected = spawnSync(
+      "bash",
+      [path.join(fixture.sourceRoot, "scripts", "install-openshell.sh")],
+      {
+        encoding: "utf8",
+        env: { ...process.env, HOME: home },
+        timeout: SYNC_SUBPROCESS_TIMEOUT_MS,
+      },
+    );
+    expect(selected.status, selected.stderr).toBe(0);
+    expect(selected.stdout).toBe(`${home}/.local/bin`);
+  });
+
   it.each(REVIEWED_GATEWAY_UPGRADE_FIXTURES)(
     "binds retained NemoClaw release $nemoclawRef to its reviewed commit (#11898)",
     (fixture) => {

@@ -12,6 +12,7 @@ import {
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
 } from "./inference/native-nvidia/contract.ts";
 
 export const HERMES_SWITCHYARD_ROUTING_SCHEMA_VERSION = 1 as const;
@@ -71,10 +72,12 @@ export interface HermesSwitchyardRoutingIntent {
   readonly routeId: typeof HERMES_SWITCHYARD_ROUTE_ID;
   readonly efficient: HermesSwitchyardTargetSelection;
   readonly capable: HermesSwitchyardTargetSelection;
-  readonly judge: {
-    readonly mode: "reuse-capable";
-    readonly target: "capable";
-  };
+  readonly judge:
+    | { readonly mode: "reuse-capable"; readonly target: "capable" }
+    | (HermesSwitchyardTargetSelection & {
+        readonly mode: "dedicated";
+        readonly target: "judge";
+      });
 }
 
 export interface SerializedHermesSwitchyardRouting {
@@ -168,31 +171,74 @@ export function validateHermesSwitchyardRoutingIntent(
   if (efficient.model === capable.model) {
     fail("efficient and capable must select different model IDs");
   }
-  const judge = record(routing.judge, "routing.judge");
-  rejectUnknownKeys(judge, new Set(["mode", "target"]), "routing.judge");
-  if (judge.mode !== "reuse-capable" || judge.target !== "capable") {
-    fail("judge must explicitly reuse the capable target");
+  const requestedJudge = record(routing.judge, "routing.judge");
+  let judge: HermesSwitchyardRoutingIntent["judge"];
+  if (requestedJudge.mode === "dedicated") {
+    rejectUnknownKeys(
+      requestedJudge,
+      new Set(["mode", "target", "provider", "model"]),
+      "routing.judge",
+    );
+    if (requestedJudge.target !== "judge") fail("routing.judge.target must be judge");
+    const selection = target(
+      { provider: requestedJudge.provider, model: requestedJudge.model },
+      "routing.judge",
+    );
+    if (selection.model === capable.model || selection.model === efficient.model)
+      fail("routing.judge must select a dedicated model ID");
+    judge = { mode: "dedicated", target: "judge", ...selection };
+  } else {
+    rejectUnknownKeys(requestedJudge, new Set(["mode", "target"]), "routing.judge");
+    if (requestedJudge.mode !== "reuse-capable" || requestedJudge.target !== "capable")
+      fail("routing.judge must reuse capable or select a dedicated judge");
+    judge = { mode: "reuse-capable", target: "capable" };
   }
   return {
     schemaVersion: HERMES_SWITCHYARD_ROUTING_SCHEMA_VERSION,
     routeId: HERMES_SWITCHYARD_ROUTE_ID,
     efficient,
     capable,
-    judge: { mode: "reuse-capable", target: "capable" },
+    judge,
   };
 }
 
 export function createHermesSwitchyardRoutingIntent(input: {
   readonly efficient: unknown;
   readonly capable: unknown;
+  readonly judge?: unknown;
 }): HermesSwitchyardRoutingIntent {
   return validateHermesSwitchyardRoutingIntent({
     schemaVersion: HERMES_SWITCHYARD_ROUTING_SCHEMA_VERSION,
     routeId: HERMES_SWITCHYARD_ROUTE_ID,
     efficient: input.efficient,
     capable: input.capable,
-    judge: { mode: "reuse-capable", target: "capable" },
+    judge:
+      input.judge === undefined
+        ? { mode: "reuse-capable", target: "capable" }
+        : { mode: "dedicated", target: "judge", ...target(input.judge, "routing.judge") },
   });
+}
+
+/** Preserve the judge's logical role when it shares a target's physical provider. */
+export function switchyardJudgeSelection(
+  routing: HermesSwitchyardRoutingIntent,
+): HermesSwitchyardTargetSelection {
+  return routing.judge.mode === "dedicated"
+    ? { provider: routing.judge.provider, model: routing.judge.model }
+    : routing.capable;
+}
+
+/** One native provider per fixed credential and endpoint boundary, not per model role. */
+export function switchyardPhysicalProviders(
+  routing: HermesSwitchyardRoutingIntent,
+): readonly HermesSwitchyardProvider[] {
+  return [
+    ...new Set([
+      routing.efficient.provider,
+      routing.capable.provider,
+      switchyardJudgeSelection(routing).provider,
+    ]),
+  ];
 }
 
 export function encodeHermesSwitchyardRoutingIntent(value: HermesSwitchyardRoutingIntent): string {
@@ -270,7 +316,9 @@ function validateClientProfile(profile: SwitchyardClientProfile): SwitchyardClie
   return profile;
 }
 
-function clientProfile(providerId: HermesSwitchyardProvider): SwitchyardClientProfile {
+export function switchyardClientProfile(
+  providerId: HermesSwitchyardProvider,
+): SwitchyardClientProfile {
   if (providerId === NVIDIA_HOSTED_LOGICAL_PROVIDER) {
     return validateClientProfile({
       baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
@@ -305,22 +353,25 @@ function tomlStringMap(value: Readonly<Record<string, string>>): string {
 }
 
 function clientAndTargetToml(
-  role: "efficient" | "capable",
+  role: "efficient" | "capable" | "judge",
   selection: HermesSwitchyardTargetSelection,
+  bindings: SwitchyardProviderBindings,
 ): string[] {
-  const client = clientProfile(selection.provider);
+  const client = switchyardClientProfile(selection.provider);
+  const observed = bindings.providers.find((p) => p.providerId === bindings[role].providerId);
+  if (!observed) return fail("a target has no observed provider binding");
   return [
     `[llm_clients.${role}]`,
     `format = ${tomlString(client.format)}`,
-    `base_url = ${tomlString(client.baseUrl)}`,
-    `api_key_env = ${tomlString(client.apiKeyEnv)}`,
+    `base_url = ${tomlString(observed.endpointUrl)}`,
+    `api_key_env = ${tomlString(observed.credentialEnv)}`,
     "forward_auth = false",
     ...(Object.keys(client.extraHeaders).length > 0
       ? [`extra_headers = ${tomlStringMap(client.extraHeaders)}`]
       : []),
     "",
     `[targets.${role}]`,
-    `id = ${tomlString(selection.model)}`,
+    `id = ${tomlString(bindings[role].model)}`,
     `llm_client = ${tomlString(role)}`,
     "",
   ];
@@ -329,8 +380,10 @@ function clientAndTargetToml(
 /** Serialize only the released Relay 0.8.x and Switchyard 0.3.0 contracts. */
 export function serializeHermesSwitchyardRouting(
   value: HermesSwitchyardRoutingIntent,
+  observedBindings?: SwitchyardProviderBindings,
 ): SerializedHermesSwitchyardRouting {
   const routing = validateHermesSwitchyardRoutingIntent(value);
+  const bindings = validateSwitchyardProviderBindings(observedBindings, routing);
   const relayPluginsToml = [
     "version = 1",
     "",
@@ -348,13 +401,16 @@ export function serializeHermesSwitchyardRouting(
   const switchyardDeploymentToml = [
     "schema_version = 1",
     "",
-    ...clientAndTargetToml("efficient", routing.efficient),
-    ...clientAndTargetToml("capable", routing.capable),
+    ...clientAndTargetToml("efficient", routing.efficient, bindings),
+    ...clientAndTargetToml("capable", routing.capable, bindings),
+    ...(routing.judge.mode === "dedicated"
+      ? clientAndTargetToml("judge", switchyardJudgeSelection(routing), bindings)
+      : []),
     `[routes.${routing.routeId}]`,
     `id = ${tomlString(routing.routeId)}`,
     'type = "llm_classifier"',
     'mode = "capability"',
-    'classifier_target = "capable"',
+    `classifier_target = ${tomlString(routing.judge.target)}`,
     'strong_target = "capable"',
     'weak_target = "efficient"',
     "base_threshold = 0.5",
@@ -396,4 +452,227 @@ export function serializeHermesSwitchyardRouting(
     2,
   )}\n`;
   return { relayPluginsToml, relayPluginStateJson, switchyardDeploymentToml };
+}
+
+export const HERMES_SWITCHYARD_BINDINGS_ENV = "NEMOCLAW_HERMES_SWITCHYARD_BINDINGS_B64";
+
+export interface SwitchyardPhysicalProviderBinding {
+  readonly logicalProvider: HermesSwitchyardProvider;
+  readonly providerName: string;
+  readonly providerId: string;
+  readonly resourceVersion: number;
+  readonly profileId: string;
+  readonly profileSha256: string;
+  readonly endpointUrl: string;
+  readonly credentialEnv: string;
+}
+
+interface SwitchyardTargetBinding {
+  readonly providerId: string;
+  readonly model: string;
+}
+
+/** Public observations only. Credentials remain in OpenShell. */
+export interface SwitchyardProviderBindings {
+  readonly schemaVersion: 1;
+  readonly providers: readonly SwitchyardPhysicalProviderBinding[];
+  readonly efficient: SwitchyardTargetBinding;
+  readonly capable: SwitchyardTargetBinding;
+  readonly judge: SwitchyardTargetBinding & {
+    readonly mode: HermesSwitchyardRoutingIntent["judge"]["mode"];
+    readonly target: HermesSwitchyardRoutingIntent["judge"]["target"];
+  };
+}
+
+export interface SwitchyardBindingState {
+  readonly routing: HermesSwitchyardRoutingIntent;
+  readonly bindings: SwitchyardProviderBindings;
+}
+
+export function validateSwitchyardBindingState(value: unknown): SwitchyardBindingState {
+  const state = bindingRecord(value, ["routing", "bindings"]);
+  const routing = validateHermesSwitchyardRoutingIntent(state.routing);
+  return { routing, bindings: validateSwitchyardProviderBindings(state.bindings, routing) };
+}
+
+export class SwitchyardProviderBindingError extends Error {
+  constructor(message: string) {
+    super("Hermes Switchyard provider binding: " + message);
+    this.name = "SwitchyardProviderBindingError";
+  }
+}
+
+function failBinding(): never {
+  throw new SwitchyardProviderBindingError("missing, invalid, or ambiguous provider state.");
+}
+
+function bindingRecord(value: unknown, keys: readonly string[]): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return failBinding();
+  const result = value as Record<string, unknown>;
+  if (Object.keys(result).length !== keys.length || keys.some((key) => !Object.hasOwn(result, key)))
+    return failBinding();
+  return result;
+}
+
+export function isSwitchyardProviderIdentity(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/u.test(value) &&
+    !/(?:nvapi-|nvcf-|sk-|ghp_|github_pat_)/u.test(value)
+  );
+}
+
+/** Validate persisted observations against the selected roles and approved fixed boundaries. */
+export function validateSwitchyardProviderBindings(
+  value: unknown,
+  intent: HermesSwitchyardRoutingIntent,
+): SwitchyardProviderBindings {
+  const routing = validateHermesSwitchyardRoutingIntent(intent);
+  const bindings = bindingRecord(value, [
+    "schemaVersion",
+    "providers",
+    "efficient",
+    "capable",
+    "judge",
+  ]);
+  const logicalProviders = switchyardPhysicalProviders(routing);
+  if (
+    bindings.schemaVersion !== 1 ||
+    !Array.isArray(bindings.providers) ||
+    bindings.providers.length !== logicalProviders.length
+  )
+    return failBinding();
+  const providers = bindings.providers.map(
+    (input: unknown, index: number): SwitchyardPhysicalProviderBinding => {
+      const entry = bindingRecord(input, [
+        "logicalProvider",
+        "providerName",
+        "providerId",
+        "resourceVersion",
+        "profileId",
+        "profileSha256",
+        "endpointUrl",
+        "credentialEnv",
+      ]);
+      const logicalProvider = logicalProviders[index];
+      const definition = hostedNativeProvider(logicalProvider);
+      const profileId =
+        logicalProvider === "nvidia-prod" ? NVIDIA_HOSTED_NATIVE_PROFILE_ID : definition?.profileId;
+      const endpointUrl =
+        logicalProvider === "nvidia-prod" ? NVIDIA_HOSTED_NATIVE_ENDPOINT : definition?.endpoint;
+      const credentialEnv =
+        logicalProvider === "nvidia-prod"
+          ? NVIDIA_HOSTED_CREDENTIAL_ENV
+          : definition?.credentialEnv;
+      if (
+        !logicalProvider ||
+        !profileId ||
+        !endpointUrl ||
+        !credentialEnv ||
+        entry.logicalProvider !== logicalProvider ||
+        entry.profileId !== profileId ||
+        entry.endpointUrl !== endpointUrl ||
+        entry.credentialEnv !== credentialEnv ||
+        typeof entry.providerName !== "string" ||
+        !/^[a-z0-9][a-z0-9-]{0,62}$/u.test(entry.providerName) ||
+        !isSwitchyardProviderIdentity(entry.providerId) ||
+        typeof entry.resourceVersion !== "number" ||
+        !Number.isSafeInteger(entry.resourceVersion) ||
+        entry.resourceVersion < 1 ||
+        typeof entry.profileSha256 !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(entry.profileSha256)
+      )
+        return failBinding();
+      return {
+        logicalProvider,
+        providerName: entry.providerName,
+        providerId: entry.providerId,
+        resourceVersion: entry.resourceVersion,
+        profileId,
+        profileSha256: entry.profileSha256,
+        endpointUrl,
+        credentialEnv,
+      };
+    },
+  );
+  if (
+    new Set(providers.map((p) => p.providerId)).size !== providers.length ||
+    new Set(providers.map((p) => p.providerName)).size !== providers.length
+  )
+    return failBinding();
+  const role = (key: "efficient" | "capable"): SwitchyardTargetBinding => {
+    const selected = routing[key];
+    const binding = providers.find((p) => p.logicalProvider === selected.provider);
+    const entry = bindingRecord(bindings[key], ["providerId", "model"]);
+    if (!binding || entry.providerId !== binding.providerId || entry.model !== selected.model)
+      return failBinding();
+    return { providerId: binding.providerId, model: selected.model };
+  };
+  const efficient = role("efficient");
+  const capable = role("capable");
+  const judge = bindingRecord(bindings.judge, ["providerId", "model", "mode", "target"]);
+  const judgeSelection = switchyardJudgeSelection(routing);
+  const judgeProvider = providers.find((p) => p.logicalProvider === judgeSelection.provider);
+  if (
+    !judgeProvider ||
+    judge.mode !== routing.judge.mode ||
+    judge.target !== routing.judge.target ||
+    judge.providerId !== judgeProvider.providerId ||
+    judge.model !== judgeSelection.model
+  )
+    return failBinding();
+  return {
+    schemaVersion: 1,
+    providers,
+    efficient,
+    capable,
+    judge: {
+      providerId: judgeProvider.providerId,
+      model: judgeSelection.model,
+      mode: routing.judge.mode,
+      target: routing.judge.target,
+    },
+  };
+}
+
+export function encodeSwitchyardProviderBindings(
+  value: SwitchyardProviderBindings,
+  routing: HermesSwitchyardRoutingIntent,
+): string {
+  return Buffer.from(
+    JSON.stringify(validateSwitchyardProviderBindings(value, routing)),
+    "utf8",
+  ).toString("base64");
+}
+
+export function readSwitchyardProviderBindingsEnvironment(
+  env: NodeJS.ProcessEnv,
+  routing: HermesSwitchyardRoutingIntent,
+): SwitchyardProviderBindings {
+  const encoded = env[HERMES_SWITCHYARD_BINDINGS_ENV];
+  if (!encoded || encoded.length > 16_384 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(encoded))
+    return failBinding();
+  let parsed: unknown;
+  try {
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.toString("base64") !== encoded) return failBinding();
+    parsed = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return failBinding();
+  }
+  return validateSwitchyardProviderBindings(parsed, routing);
+}
+
+/** OpenShell injects workload references; root setup must not supply credential values or handles. */
+export function assertSwitchyardRootApplyEnvironment(
+  env: Readonly<NodeJS.ProcessEnv>,
+  state: SwitchyardBindingState,
+): void {
+  const validated = validateSwitchyardBindingState(state);
+  for (const provider of validated.bindings.providers) {
+    if (env[provider.credentialEnv] !== undefined)
+      throw new SwitchyardProviderBindingError(
+        "managed startup must not supply provider credentials or credential placeholders.",
+      );
+  }
 }

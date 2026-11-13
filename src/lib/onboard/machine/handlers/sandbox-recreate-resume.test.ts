@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { switchyardBindingFixture } from "../../../../../test/helpers/hermes-switchyard";
 
 import { planRegisteredExtraProviders } from "../../extra-provider-reconciliation";
 import { createSession } from "../../../state/onboard-session";
@@ -91,54 +92,60 @@ async function prepareResumedGpuSandboxRecreate(
   };
 }
 
-async function captureHermesRoutingRecreateFingerprint(efficientModel: string | null) {
-  let fingerprint: string | undefined;
-  const session = createSession({ sandboxName: "saved" });
-  const journal = bindJournaledRecreate(session, "saved", "hermes");
-  const { deps } = createDeps(
-    {
-      getSandboxReuseState: () => "ready",
-      getSandboxRecreateObservation: journal.observe,
-      createSandbox: vi.fn(async (...args: unknown[]) => {
-        fingerprint = session.checkpoint?.sandboxRecreate?.targetIntentFingerprint;
-        return journal.completeCreate(...args);
-      }),
-    },
-    session,
-  );
-  const env = efficientModel
-    ? {
-        [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(
-          createHermesSwitchyardRoutingIntent({
-            efficient: { provider: "nvidia-prod", model: efficientModel },
-            capable: { provider: "openai-api", model: "capable-model" },
-          }),
-        ),
-      }
-    : {};
-  await handleSandboxState({
-    ...baseOptions(deps, session),
-    agent: { name: "hermes" },
-    resume: true,
-    sandboxName: "saved",
-    recreateSandbox: () => true,
-    env,
-  });
-  expect(fingerprint).toMatch(/^[a-f0-9]{64}$/u);
-  return fingerprint;
-}
-
 describe("handleSandboxState resume recreation", () => {
   it.each([
     ["enabled", null, "efficient-model"],
     ["changed", "efficient-model", "changed-efficient-model"],
     ["disabled", "efficient-model", null],
   ])(
-    "changes the replacement fingerprint when Hermes routing is %s (#13862)",
+    "rejects resumed recreation when Hermes routing is %s (#13863)",
     async (_label, before, after) => {
-      expect(await captureHermesRoutingRecreateFingerprint(before)).not.toBe(
-        await captureHermesRoutingRecreateFingerprint(after),
+      const routing = (efficientModel: string | null) =>
+        efficientModel
+          ? createHermesSwitchyardRoutingIntent({
+              efficient: { provider: "nvidia-prod", model: efficientModel },
+              capable: { provider: "openai-api", model: "capable-model" },
+            })
+          : null;
+      const recorded = routing(before);
+      const desired = routing(after);
+      const saved = {
+        name: "saved",
+        agent: "hermes",
+        ...(recorded
+          ? {
+              hermesSwitchyard: { routing: recorded, bindings: switchyardBindingFixture(recorded) },
+            }
+          : {}),
+      };
+      const session = createSession({ sandboxName: "saved", agent: "hermes" });
+      const journal = bindJournaledRecreate(session, "saved", "hermes");
+      const observe = vi.fn(journal.observe);
+      const { deps, calls } = createDeps(
+        {
+          getSandboxReuseState: () => "ready",
+          getSandboxRegistryEntry: () => saved,
+          getSandboxRecreateObservation: observe,
+        },
+        session,
       );
+      const original = structuredClone(saved);
+      await expect(
+        handleSandboxState({
+          ...baseOptions(deps, session),
+          agent: { name: "hermes" },
+          resume: true,
+          sandboxName: "saved",
+          recreateSandbox: () => true,
+          env: desired
+            ? { [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(desired) }
+            : {},
+        }),
+      ).rejects.toThrow("new sandbox name");
+      expect(calls.createSandbox).not.toHaveBeenCalled();
+      expect(calls.recordSkip).not.toHaveBeenCalled();
+      expect(observe).not.toHaveBeenCalled();
+      expect(saved).toEqual(original);
     },
   );
 
@@ -169,7 +176,7 @@ describe("handleSandboxState resume recreation", () => {
             ),
           },
         }),
-      ).rejects.toThrow("--recreate-sandbox");
+      ).rejects.toThrow("Preserve this sandbox and onboard with a new sandbox name.");
       expect(calls.createSandbox).not.toHaveBeenCalled();
       expect(calls.recordSkip).not.toHaveBeenCalled();
     },

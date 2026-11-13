@@ -66,6 +66,7 @@ import {
   type SelectedModelOrigin,
   resolveSelectedEndpointSource,
   resolveRequestedProviderSelection,
+  resolveSwitchyardProviderSelection,
   vllmInstallRecoveryOptions,
 } from "./provider-selection";
 import { reportProviderSelectionFailure } from "./provider-selection-failure";
@@ -983,7 +984,7 @@ export function createSetupNim(
   const localModelProfileIntegration =
     deps.localModelProfileIntegration ?? createLocalModelProfileIntegration(deps);
 
-  return async function setupNimWithDeps(
+  const setupOrdinaryNim: SetupNim = async function setupNimWithDeps(
     gpu: SetupNimGpu,
     sandboxName: string | null = null,
     agent: AgentDefinition | null = null,
@@ -1648,6 +1649,12 @@ export function createSetupNim(
       ...(provider === "vllm-local" && vllmModelIdentity ? { vllmModelIdentity } : {}),
       inferenceCapabilityCache,
     };
+  };
+  return async (...args: Parameters<SetupNim>) => {
+    deps.step(3, 8, "Configuring inference provider");
+    return (
+      resolveSwitchyardProviderSelection(process.env, args[2]?.name) ?? setupOrdinaryNim(...args)
+    );
   };
 }
 

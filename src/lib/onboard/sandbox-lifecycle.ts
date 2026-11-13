@@ -7,6 +7,14 @@ import * as registry from "../state/registry";
 import { registryEntryGatewayPort } from "../state/gateway-registry";
 import { normalizeSelectionComponent, type SelectionDrift } from "./selection-drift";
 
+function assertNoSwitchyardProviderOwnership(entry: SandboxEntry): void {
+  if (entry.hermesSwitchyard !== undefined) {
+    throw new Error(
+      `Cannot discard Switchyard provider ownership for sandbox '${entry.name}'. Resume the owning onboarding session or use a new sandbox name. Explicit sandbox destruction must retire these providers before their reservation can be removed.`,
+    );
+  }
+}
+
 export function removeSandboxUnlessSessionReservation(
   entry: SandboxEntry | null,
   sandboxName: string,
@@ -16,6 +24,7 @@ export function removeSandboxUnlessSessionReservation(
   if (registry.isPendingReservationForSession(entry, session?.sessionId)) return;
   if (entry?.pendingRouteReservation === true) {
     if (!session || !onboardSession.isOnboardLockHeldByCurrentProcess()) return;
+    assertNoSwitchyardProviderOwnership(entry);
     if (!registry.removeSandboxRouteReservationIfCurrent(entry)) {
       throw new Error(
         `Cannot recreate sandbox '${sandboxName}' because its pending create recovery state is protected or changed. Run the same onboarding command with \`--resume\` to continue the saved onboarding session. NemoClaw removes the reservation only when that session retains authority.`,
@@ -60,6 +69,7 @@ export function releaseAbandonedRouteReservation(
   const session = onboardSession.loadSession();
   if (!session || !onboardSession.isOnboardLockHeldByCurrentProcess()) return false;
   if (registry.isPendingReservationForSession(entry, session.sessionId)) return false;
+  assertNoSwitchyardProviderOwnership(entry);
   if (!registry.isRouteOnlySandboxReservation(entry)) {
     const authority = session.checkpoint?.gatewayAuthority;
     if (

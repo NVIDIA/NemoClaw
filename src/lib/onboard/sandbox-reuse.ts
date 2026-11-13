@@ -4,7 +4,12 @@
 import { isDeepStrictEqual } from "node:util";
 
 import type { AgentDefinition } from "../agent/defs";
-import { readHermesSwitchyardRoutingEnvironment } from "../hermes-switchyard-routing";
+import {
+  readHermesSwitchyardRoutingEnvironment,
+  type SwitchyardBindingState,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+  encodeSwitchyardProviderBindings,
+} from "../hermes-switchyard-routing";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { resolveExternalDashboardUrlForPort } from "../dashboard/url";
@@ -34,6 +39,24 @@ interface SandboxCaptureResult {
   signal?: NodeJS.Signals | null;
 }
 
+/** Restore only the binding record paired with this explicit create intent. */
+export function bindHermesSwitchyardCreateEnvironment(
+  state: SwitchyardBindingState | undefined,
+  env: NodeJS.ProcessEnv,
+): void {
+  const requested = readHermesSwitchyardRoutingEnvironment(env);
+  if (!requested) {
+    if (state) throw new Error("Switchyard provider bindings require explicit routing intent.");
+    return;
+  }
+  if (!state || !isDeepStrictEqual(state.routing, requested))
+    throw new Error("Switchyard sandbox creation requires the selected provider binding receipts.");
+  env[HERMES_SWITCHYARD_BINDINGS_ENV] = encodeSwitchyardProviderBindings(
+    state.bindings,
+    state.routing,
+  );
+}
+
 /** Keep ordinary create fingerprints unchanged when Hermes routing is disabled. */
 export function hermesSwitchyardRoutingCreateIntentFields(
   agentName: string | null | undefined,
@@ -43,18 +66,35 @@ export function hermesSwitchyardRoutingCreateIntentFields(
   return routing ? { switchyardRouting: routing } : {};
 }
 
-/** Require explicit recreation before changing an existing sandbox's routing files. */
+/** Preserve ordinary reuse while requiring fresh setup for routed Hermes sandboxes. */
 export function assertHermesSwitchyardRoutingReusable(input: {
   agentName: string | null | undefined;
   entry: SandboxEntry | null | undefined;
   env: NodeJS.ProcessEnv;
   recreate: boolean;
   sandboxState: string;
+  reservationSessionId?: string | null;
 }): void {
-  if (input.agentName !== "hermes" || input.recreate || input.sandboxState !== "ready") return;
-  const desired = readHermesSwitchyardRoutingEnvironment(input.env);
-  let recorded = null;
   const workload = input.entry?.workload;
+  if (
+    input.agentName !== "hermes" &&
+    !input.entry?.hermesSwitchyard &&
+    workload?.kind !== "managed-image"
+  )
+    return;
+  const desired =
+    input.agentName === "hermes" ? readHermesSwitchyardRoutingEnvironment(input.env) : null;
+  if (input.sandboxState === "missing" && !input.entry?.workload) {
+    const ownsFreshReservation =
+      input.agentName === "hermes" &&
+      input.entry?.pendingRouteReservation === true &&
+      typeof input.reservationSessionId === "string" &&
+      input.reservationSessionId.length > 0 &&
+      input.entry.reservationSessionId === input.reservationSessionId &&
+      isDeepStrictEqual(input.entry.hermesSwitchyard?.routing, desired);
+    if (!input.entry?.hermesSwitchyard || ownsFreshReservation) return;
+  }
+  let recorded = null;
   if (workload?.kind === "managed-image") {
     try {
       const profile = decodeManagedStartupProfile(workload.encodedProfile);
@@ -64,16 +104,20 @@ export function assertHermesSwitchyardRoutingReusable(input: {
     } catch {
       throw new Error(
         "Cannot verify the existing Hermes Switchyard routing configuration. " +
-          "Re-run onboarding with --recreate-sandbox before reusing this sandbox.",
+          "Preserve this sandbox and onboard with a new sandbox name.",
       );
     }
   }
   if (!isDeepStrictEqual(recorded, desired)) {
     throw new Error(
       "Hermes Switchyard routing configuration changed. " +
-        "Re-run onboarding with --recreate-sandbox to apply the requested routing configuration.",
+        "Preserve this sandbox and onboard with a new sandbox name.",
     );
   }
+  if (desired || input.entry?.hermesSwitchyard)
+    throw new Error(
+      "Switchyard onboarding requires a fresh sandbox; provider reuse is not supported. Existing bindings were not changed. Preserve this sandbox and onboard with a new sandbox name.",
+    );
 }
 
 export interface SandboxReuseDeps {
@@ -294,9 +338,10 @@ export async function applyReusedSandboxDashboardState(
 export async function restoreReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput & { releaseDashboardPort(): Promise<void> },
 ): Promise<ReusedSandboxDashboardStateResult> {
+  const entry = (input.getSandbox ?? registry.getSandbox)(input.sandboxName);
   assertHermesSwitchyardRoutingReusable({
     agentName: input.agent?.name,
-    entry: (input.getSandbox ?? registry.getSandbox)(input.sandboxName),
+    entry,
     env: input.env,
     recreate: false,
     sandboxState: "ready",

@@ -48,3 +48,14 @@ export function servingProfile(): NonNullable<SandboxEntry["servingProfileProven
     estimatedModelDownloadBytes: 2_000,
   };
 }
+
+export const launchReadinessPolicy = `version: 1
+network_policies:
+  public_api:
+    name: Public API
+    endpoints:
+      - host: example.com
+        port: 443
+    binaries:
+      - path: /usr/bin/curl
+`;

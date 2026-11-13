@@ -41,9 +41,23 @@ The clean Hermes root-entrypoint scenario also owns the Switchyard package's rea
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
 native loading and cleanup on the image's architecture. The isolated process loads the
-production-generated adaptive deployment with local upstream fixtures. It sends one request
+production-generated adaptive deployment with local upstream fixtures. It sends a request
 through the `switchyard` route and requires the classifier to select the efficient target.
-The probe does not call external providers or change the supervised gateway.
+It then runs the shipped judge qualifier against native routing marks and separate
+judge/answer token accounting. The qualifier's deterministic tests own evidence rejection,
+cleanup, and both gateway launch gates. A separate routed-startup scenario installs the
+production-generated routing files at their root-owned production paths. It starts the real
+entrypoint with resolver placeholders and local provider fixtures on a network-disabled
+container. It covers both a reused capable judge and an explicitly configured dedicated
+judge. Each mode requires the selected judge and answer calls before the gateway listens,
+with no call to the unselected judge client. The scenario
+then requires gateway readiness with routing activation configured under the gateway user.
+The packaged qualifier validates classification and separate token accounting before startup
+continues. This proves the successful entrypoint handoff, not OpenShell credential rewriting
+or real provider access. Container cleanup removes the fixture processes, placeholders, and
+routing files. The clean package probe still leaves its supervised gateway unchanged.
+`support/hermes-switchyard-upstream.test.ts` owns deterministic fixture authentication,
+per-client endpoint localization, and preservation of production judge selection and credentials.
 `test/agents/hermes/hermes-switchyard-package.test.ts`
 owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.
 The Hermes jobs in `.github/workflows/managed-images.yaml` run this suite on native
@@ -781,8 +795,11 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
+| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prepare private OpenShell and npm install locations before the historical install, preserving existing private executables. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
+
+The gateway fixture sets a canonical private `XDG_BIN_HOME` for both installer generations.
+Its current installer still receives duplicate-slash `HOME` and `XDG_CONFIG_HOME` values for the systemd service scenario.
 
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
@@ -1026,6 +1043,11 @@ Before and after rebuild, all three identity aliases must exit successfully and 
 provider, model, and endpoint. Both installed identity files must remain root-owned with mode `0444`,
 and the sandbox user must be unable to open them for writing. Wrapper unit tests own metadata parsing,
 legacy fallback, unsafe-file rejection, and output filtering; this live check owns installed startup and restore composition.
+After native tool use, the revocation rebuild must preserve the logical conversation database and
+the three tool-written workspace files while restoring effective `disabled` capability behavior.
+The probe compares private state digests and never emits database contents. Deterministic tests in
+`test/state/dcode-wal-snapshot.test.ts` own diagnostic acceptance in an active WAL, chunk boundaries,
+archive readback, and credential rejection in raw sidecar bytes.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
@@ -2440,6 +2462,13 @@ capability unchanged to an audited subprocess boundary; do not replace it with
 a custom, copied, or no-op adapter.
 
 ## Push and Manual PR E2E
+
+Manual PR candidate runs and exact-base comparison runs use separate workflow concurrency groups.
+Baseline groups include jobs and targets, so different selections cannot replace each other's pending runs.
+New candidate runs can supersede older candidate runs for the same PR. They cannot cancel a baseline comparison.
+Baseline groups include the PR number and base commit and disable active-run cancellation.
+Check for an existing matching run before dispatch; concurrency groups do not provide an ordered queue for duplicate pending runs.
+Preserve both run IDs across handoffs and avoid overlapping shared-resource work when measuring runtime differences.
 
 The `token-rotation` target uses real OpenShell sandbox recreation with test messaging tokens
 and a local inference fixture. It leaves the default pre-recreation backup enabled and checks

@@ -159,7 +159,7 @@ jobs:
   codeql-javascript-complete:
     # Keep the existing check name. A partial suite can never satisfy it.
     name: CodeQL (javascript-typescript)
-    needs: [codeql-javascript, codeql-javascript-report, codeql]
+    needs: [codeql-javascript, codeql-javascript-report]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 1
@@ -169,8 +169,7 @@ jobs:
         env:
           PARTITION_RESULT: ${{ needs.codeql-javascript.result }}
           REPORT_RESULT: ${{ needs.codeql-javascript-report.result }}
-          PYTHON_RESULT: ${{ needs.codeql.result }}
-        run: test "$PARTITION_RESULT" = success && test "$REPORT_RESULT" = success && test "$PYTHON_RESULT" = success
+        run: test "$PARTITION_RESULT" = success && test "$REPORT_RESULT" = success
 
   shellcheck:
     name: ShellCheck SARIF

@@ -37,6 +37,7 @@ import {
 import {
   encodeHermesSwitchyardRoutingIntent,
   HERMES_SWITCHYARD_ROUTING_ENV,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
   type HermesSwitchyardRoutingIntent,
   loadSwitchyardOnboardConfig,
   type OnboardFlags,
@@ -736,6 +737,7 @@ interface OnboardCommandEnvironmentSnapshot {
   vllmGpuDevice: string | undefined;
   ollamaAutostart: { present: boolean; value: string | undefined };
   switchyardRouting: string | undefined;
+  switchyardBindings: string | undefined;
 }
 
 function resolveCommandResumeIntent(deps: RunOnboardCommandDeps): ResolvedOnboardResumeIntent {
@@ -800,6 +802,7 @@ function restoreOnboardCommandEnvironment(
     delete env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
   }
   restoreOptionalEnvironmentValue(env, HERMES_SWITCHYARD_ROUTING_ENV, snapshot.switchyardRouting);
+  restoreOptionalEnvironmentValue(env, HERMES_SWITCHYARD_BINDINGS_ENV, snapshot.switchyardBindings);
 }
 
 async function runOnboardCommandAttempt(
@@ -822,6 +825,7 @@ async function runOnboardCommandAttempt(
       value: env.NEMOCLAW_OLLAMA_NO_AUTOSTART,
     },
     switchyardRouting: env[HERMES_SWITCHYARD_ROUTING_ENV],
+    switchyardBindings: env[HERMES_SWITCHYARD_BINDINGS_ENV],
   };
   let options = resolvedOptions;
   try {
@@ -842,6 +846,7 @@ async function runOnboardCommandAttempt(
     if (options.noOllamaAutostart && !options.experimentalProfile) {
       env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
     }
+    delete env[HERMES_SWITCHYARD_BINDINGS_ENV];
     if (options.switchyardRouting) {
       env[HERMES_SWITCHYARD_ROUTING_ENV] = encodeHermesSwitchyardRoutingIntent(
         options.switchyardRouting,

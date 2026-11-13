@@ -10,6 +10,7 @@
 // isolation. See issue #767 for the broader provider extraction plan.
 
 export { setupHermesProviderInference } from "./hermes";
+export { setupSwitchyardInferenceIfConfigured } from "../switchyard/setup";
 export { setupOllamaLocalInference } from "./ollama-local";
 export { setupRemoteProviderInference } from "./remote";
 export { setupVllmLocalInference } from "./vllm-local";

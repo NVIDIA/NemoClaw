@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { finishTelemetryOperation, recordTelemetryTarget } from "../telemetry/operation";
-import { retireUnselectedNativeLocalProviders } from "../../inference/native-local/selection";
 import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
 import { listNativeLocalProviderAuthorities } from "../../state/registry/native-local-provider-authority";
 import { isDeepStrictEqual } from "node:util";
@@ -46,6 +45,7 @@ import {
 import {
   type DetachSandboxProvidersResult,
   runSandboxProviderPreDeleteCleanup,
+  retireDestroyedSandboxInferenceProviders,
 } from "../../onboard/sandbox-provider-cleanup";
 import { redact, redactFull } from "../../security/redact";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
@@ -806,6 +806,7 @@ export async function executeSandboxDestroy({
     }
     const hasNativeLocalAuthority =
       Boolean(sandbox?.nativeLocalProviderAttachment) ||
+      Boolean(sandbox?.hermesSwitchyard) ||
       listNativeLocalProviderAuthorities(sandboxName, effectiveDeleteGatewayName).length > 0;
     // A successful preflight absence is already the required OpenShell
     // lifecycle proof. Do not issue a later mutable-name delete that could
@@ -1050,10 +1051,9 @@ export async function retireDestroyedSandboxNativeLocalProvider(
           replaceEnv: true,
         })
     : undefined;
-  await retireUnselectedNativeLocalProviders({
+  await retireDestroyedSandboxInferenceProviders({
     adapter: createManagedProviderAdapter(selectedRunOpenshell),
-    destroyedAttachment: sandbox.nativeLocalProviderAttachment,
-    sandboxName: sandbox.name,
+    sandbox,
     gatewayName,
   });
 }
