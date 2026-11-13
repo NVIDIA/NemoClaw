@@ -42,6 +42,18 @@ describe("canonicaliseHost", () => {
     expect(canonicaliseHost("ht!tp://broken host")).toBeNull();
     expect(canonicaliseHost("http://host with spaces")).toBeNull();
   });
+
+  it("reduces a scoped subdomain wildcard to the domain it covers", () => {
+    expect(canonicaliseHost("*.atlassian.net")).toBe("atlassian.net");
+    expect(canonicaliseHost(" *.Wikipedia.ORG. ")).toBe("wikipedia.org");
+  });
+
+  it.each(["*", "*.", "**.example.com", "*.*.example.com", "a.*.example.com", "*example.com"])(
+    "returns null for the non-scoped wildcard %s",
+    (value) => {
+      expect(canonicaliseHost(value)).toBeNull();
+    },
+  );
 });
 
 describe("isInternalHost", () => {
@@ -137,5 +149,20 @@ describe("hostStemsFromEndpoints", () => {
     ]);
     expect(result.public).toEqual(["valid.example.com"]);
     expect(result.redactedCount).toBe(2);
+  });
+
+  it("keeps public subdomain wildcards and still redacts internal ones", () => {
+    const result = hostStemsFromEndpoints([
+      "*.atlassian.net",
+      "api.atlassian.com",
+      "*.corp",
+      "*.internal",
+      "*.svc.cluster.local",
+      "*.10.0.0.1",
+      "*",
+    ]);
+
+    expect(result.public).toEqual(["api.atlassian.com", "atlassian.net"]);
+    expect(result.redactedCount).toBe(5);
   });
 });

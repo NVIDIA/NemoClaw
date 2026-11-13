@@ -84,6 +84,18 @@ describe("policy context", () => {
     expect(active.redactedHostCount).toBe(2);
   });
 
+  it("lists public subdomain wildcards instead of counting them as internal hosts", async () => {
+    vi.mocked(policies.getGatewayPresets).mockResolvedValue(["npm"]);
+    vi.mocked(policies.getPresetEndpoints).mockReturnValue([
+      "*.atlassian.net",
+      "api.atlassian.com",
+      "*.corp.internal",
+    ]);
+    const [active] = (await buildPolicyContext("alpha")).activePresets;
+    expect(active.allowedHostCategories).toEqual(["api.atlassian.com", "atlassian.net"]);
+    expect(active.redactedHostCount).toBe(1);
+  });
+
   it("skips the live OpenShell probe when requested", async () => {
     const gatewayProbe = vi.mocked(policies.getGatewayPresets);
     const context = await buildPolicyContext("alpha", { skipGatewayProbe: true });
