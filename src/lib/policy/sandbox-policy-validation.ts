@@ -10,6 +10,7 @@ import Ajv from "ajv/dist/2020.js";
 import {
   isOpenShellSandboxPolicyCredentialFree,
   parseOpenShellPolicy,
+  stripProviderComposedPolicies,
 } from "../adapters/openshell/policy-boundary";
 
 const PACKAGE_ROOT = path.resolve(__dirname, "..", "..", "..");
@@ -83,6 +84,15 @@ function boundedSchemaErrorSummary(errors: ErrorObject[] | null | undefined): st
     details.push(`${String(errors.length - MAX_SCHEMA_ERRORS)} more error(s)`);
   }
   return details.join("; ").slice(0, MAX_SCHEMA_ERROR_SUMMARY_CHARS);
+}
+
+/**
+ * Validate an OpenShell effective policy. OpenShell composes provider-owned
+ * `_provider_*` entries into it, such as an MCP credential binding that carries
+ * only a name, which are not part of the authored sandbox policy (#13956).
+ */
+export function parseAndValidateEffectiveSandboxPolicy(content: string): Record<string, unknown> {
+  return parseAndValidateSandboxPolicy(stripProviderComposedPolicies(content));
 }
 
 /** Parse and validate a complete sandbox policy without admitting input values to errors. */
