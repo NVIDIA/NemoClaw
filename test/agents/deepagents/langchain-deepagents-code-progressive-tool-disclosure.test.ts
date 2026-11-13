@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   approvalPackageSources,
   nonInteractivePackageSource,
+  threadOwnershipPackageSource,
 } from "../../helpers/langchain-deepagents-code-patch-fixture";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
@@ -320,6 +321,7 @@ class HooksManager:
     def inert(cls): return cls()
 `,
   "client/non_interactive.py": nonInteractivePackageSource,
+  "thread_ownership.py": threadOwnershipPackageSource,
 };
 
 interface PatchFixture {
