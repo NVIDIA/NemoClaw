@@ -52,6 +52,7 @@ import {
 } from "./provider-metadata-cli";
 import {
   type CheckedInProviderProfileContract,
+  appliedProviderProfileLaggingContract,
   exportedProviderProfileMatchesContract,
   isMissingProviderProfile,
   parseCheckedInProviderProfileContract,
@@ -372,20 +373,45 @@ function importCliOpenShellProviderProfileWithCallback(
   ): CliOpenShellProviderProfileResult => {
     const exportError = commandError(exported);
     if (exportError) return { ok: false, error: exportError, operation: "verify" };
-    if (!exportedProviderProfileMatchesContract(commandStdout(exported), contract)) {
-      return {
-        ok: false,
-        error: {
-          kind: "command",
-          reason: "profile_incompatible",
-          message:
-            "The OpenShell provider profile does not match the checked-in credential boundary.",
-        },
-        operation: "verify",
-      };
+    if (exportedProviderProfileMatchesContract(commandStdout(exported), contract)) {
+      onProfileVerified?.(request.target, contract);
+      return { ok: true };
     }
-    onProfileVerified?.(request.target, contract);
-    return { ok: true };
+    // The applied profile differs from the checked-in source. Refresh a profile
+    // that merely lags the checked-in allowlist (e.g. an older import missing a
+    // path the checked-in boundary now requires, such as /usr/bin/curl) so the
+    // sandbox egress policy admits the in-sandbox probe binary (#13657). A
+    // widened or contradictory boundary is still rejected below (#9806).
+    if (appliedProviderProfileLaggingContract(commandStdout(exported), contract)) {
+      const refreshed = invoke(
+        ["provider", "profile", "update", "--file", request.profilePath, contract.profileId],
+        2,
+        true,
+      );
+      if (commandError(refreshed)) {
+        return {
+          ok: false,
+          error: {
+            kind: "command",
+            reason: "profile_incompatible",
+            message:
+              "The applied OpenShell provider profile lags the checked-in boundary and its refresh was refused.",
+          },
+          operation: "verify",
+        };
+      }
+      return validateExportedProfile(exportProfile());
+    }
+    return {
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "profile_incompatible",
+        message:
+          "The OpenShell provider profile does not match the checked-in credential boundary.",
+      },
+      operation: "verify",
+    };
   };
 
   const existing = exportProfile();
