@@ -112,12 +112,15 @@ fn colossus_runs_are_manual_and_v1_only() {
     assert_eq!(events.len(), 1, "the pilot runner takes manual runs only");
     let suite = &workflow["on"]["workflow_dispatch"]["inputs"]["suite"];
     assert_eq!(suite["type"], "choice");
-    assert_eq!(suite["options"], serde_json::json!(["smoke", "bundle"]));
+    assert_eq!(
+        suite["options"],
+        serde_json::json!(["smoke", "bundle", "nemotron"])
+    );
     assert_eq!(suite["default"], "smoke");
     let jobs = workflow["jobs"].as_object().expect("workflow jobs");
     assert_eq!(
         jobs.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["bundle", "smoke"]
+        ["bundle", "nemotron", "smoke"]
     );
     for (name, job) in jobs {
         assert_eq!(
@@ -537,5 +540,256 @@ runs:
     assert_eq!(
         problems,
         [".github/allowed-actions.yml lists third-party/action@approved, which no workflow uses"]
+    );
+}
+
+/// The manual hardware lane reuses the real HCL boundary and reserves cleanup.
+#[test]
+fn colossus_nemotron_runs_the_live_case_with_terminal_cleanup() {
+    let workflow = colossus_workflow();
+    let job = &workflow["jobs"]["nemotron"];
+    assert_eq!(job["runs-on"], "colossus-gb300-pilot");
+    assert_eq!(job["permissions"], serde_json::json!({"contents": "read"}));
+    assert_eq!(job["timeout-minutes"], 135);
+    assert_eq!(job["env"]["NEMOCLAW_HCL_CASE"], "gb300-openclaw-nemotron35");
+    let steps = job["steps"].as_array().expect("manual lifecycle steps");
+    let cleanup = steps
+        .iter()
+        .find(|step| step["id"] == "cleanup")
+        .expect("terminal cleanup");
+    assert_eq!(cleanup["if"], "always()");
+    assert_eq!(cleanup["timeout-minutes"], 10);
+    let lifecycle = steps
+        .iter()
+        .find(|step| step["id"] == "lifecycle")
+        .expect("live case");
+    assert_eq!(lifecycle["working-directory"], "crates/nemoclaw-e2e");
+    assert!(
+        lifecycle["run"]
+            .as_str()
+            .unwrap()
+            .contains("hcl_live::case")
+    );
+    for step in steps {
+        if step["uses"]
+            .as_str()
+            .is_some_and(|action| action.starts_with("actions/checkout@"))
+        {
+            assert_eq!(step["with"]["persist-credentials"], false);
+        }
+    }
+}
+
+/// A denied host or failed compiler bootstrap must not continue with stale artifacts.
+#[test]
+#[cfg(unix)]
+fn colossus_preparation_stops_and_keeps_native_errors_private() {
+    use std::{os::unix::fs::PermissionsExt, process::Command};
+    let workflow = colossus_workflow();
+    let script = workflow["jobs"]["nemotron"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["name"] == "Build candidate artifacts and bind the case")
+        .unwrap()["run"]
+        .as_str()
+        .unwrap();
+    for failed in ["uname", "nvidia-smi", "rustup", "tools-env", "tools-path"] {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::create_dir(root.path().join("work")).unwrap();
+        for name in [
+            "uname",
+            "nvidia-smi",
+            "rustup",
+            "cargo",
+            "docker",
+            "cp",
+            "jq",
+            "protoc",
+        ] {
+            let contents = match name {
+                "uname" if failed != "uname" => "#!/bin/sh\necho aarch64\n".to_owned(),
+                "uname" => "#!/bin/sh\necho unsupported\n".to_owned(),
+                "nvidia-smi" if failed != "nvidia-smi" => {
+                    "#!/bin/sh\necho 'NVIDIA GB300'\n".to_owned()
+                }
+                "rustup" if failed.starts_with("tools-") => "#!/bin/sh\nexit 0\n".to_owned(),
+                "protoc" => "#!/bin/sh\nexit 0\n".to_owned(),
+                "jq" => "#!/bin/sh\necho 36.2\n".to_owned(),
+                "cargo" if failed.starts_with("tools-") => r#"#!/bin/sh
+if [ "$*" = 'ci tools' ]; then
+  mkdir -p .tools/protoc-36.2/bin
+  printf '#!/bin/sh\nexit 0\n' > .tools/protoc-36.2/bin/protoc
+  chmod +x .tools/protoc-36.2/bin/protoc
+  echo "PROTOC=$SELECTED_PROTOC" >> "$GITHUB_ENV"
+  exit 0
+fi
+if [ "$PROTOC" = "$SELECTED_PROTOC" ]; then
+  touch tool-env-passed
+fi
+exit 23
+"#
+                .to_owned(),
+                "nvidia-smi" | "rustup" => {
+                    "#!/bin/sh\necho private-diagnostic-marker >&2\nexit 23\n".to_owned()
+                }
+                _ => r#"#!/bin/sh
+touch "$SENTINEL"
+exit 99
+"#
+                .to_owned(),
+            };
+            let path = bin.join(name);
+            fs::write(&path, contents).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        // The operating-system check is supplied by the owned live host; these
+        // isolated tests exercise failure control without reading the test host's OS.
+        let script = script.replace(". /etc/os-release", "ID=ubuntu; VERSION_ID=24.04");
+        let output = Command::new("bash")
+            .args(["-e", "-o", "pipefail", "-c", &script])
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("NEMOCLAW_HCL_RUN", root.path())
+            .env("SENTINEL", root.path().join("continued"))
+            .env("GITHUB_ENV", root.path().join("github-env"))
+            .env(
+                "SELECTED_PROTOC",
+                if failed == "tools-path" {
+                    "protoc".to_owned()
+                } else {
+                    root.path()
+                        .join(".tools/protoc-36.2/bin/protoc")
+                        .display()
+                        .to_string()
+                },
+            )
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{failed} must fail preparation");
+        if failed.starts_with("tools-") {
+            assert!(
+                root.path().join("tool-env-passed").exists(),
+                "the direct build needs the tools installed in the same step"
+            );
+        }
+        assert!(
+            !root.path().join("continued").exists(),
+            "{failed} continued into a build"
+        );
+        let public = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !public.contains("private-diagnostic-marker"),
+            "raw native output escaped"
+        );
+        assert!(public.contains("Candidate preparation failed"));
+    }
+}
+
+/// A successful CLI receipt is insufficient when Docker cannot confirm absence.
+#[test]
+#[cfg(unix)]
+fn colossus_cleanup_fails_for_unobserved_or_remaining_owned_containers() {
+    use std::{os::unix::fs::PermissionsExt, process::Command};
+    let workflow = colossus_workflow();
+    let script = workflow["jobs"]["nemotron"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"] == "cleanup")
+        .unwrap()["run"]
+        .as_str()
+        .unwrap();
+    for scenario in ["unreachable", "remaining", "network_remaining", "absent"] {
+        let root = tempfile::tempdir().unwrap();
+        for path in ["bin", "bundle/bin", "work", "reports", "deployment"] {
+            fs::create_dir_all(root.path().join(path)).unwrap();
+        }
+        fs::write(
+            root.path().join("uid"),
+            "35a87971-1114-44f9-92cd-ab7a27a3e603",
+        )
+        .unwrap();
+        let cli = root.path().join("bundle/bin/nemoclaw");
+        fs::write(
+            &cli,
+            "#!/bin/sh\necho '{\"outcome\":\"destroyed\",\"retained\":[]}'\n",
+        )
+        .unwrap();
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o700)).unwrap();
+        let docker = root.path().join("bin/docker");
+        fs::write(
+            &docker,
+            match scenario {
+                "unreachable" => "#!/bin/sh\nexit 7\n",
+                "remaining" => "#!/bin/sh\necho owned-container\n",
+                "network_remaining" => {
+                    "#!/bin/sh\nif [ \"$1\" = network ]; then echo owned-network; fi\n"
+                }
+                _ => "#!/bin/sh\nexit 0\n",
+            },
+        )
+        .unwrap();
+        fs::set_permissions(&docker, fs::Permissions::from_mode(0o700)).unwrap();
+        let output = Command::new("bash")
+            .args(["-e", "-x", "-o", "pipefail", "-c", script])
+            .env_clear()
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    root.path().join("bin").display(),
+                    std::env::var("PATH").unwrap()
+                ),
+            )
+            .env("NEMOCLAW_HCL_RUN", root.path())
+            .env("NEMOCLAW_TEST_BUNDLE", root.path().join("bundle"))
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.success(),
+            scenario == "absent",
+            "{scenario}: stdout={}, stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            root.path().join("reports/cleanup.json").exists(),
+            scenario == "absent"
+        );
+    }
+}
+
+/// Native replies, generated keys, state and diagnostics must remain private.
+#[test]
+fn colossus_uploads_only_allowlisted_outcomes() {
+    let workflow = colossus_workflow();
+    let steps = workflow["jobs"]["nemotron"]["steps"].as_array().unwrap();
+    let upload = steps
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("actions/upload-artifact@"))
+        })
+        .unwrap();
+    assert_eq!(
+        upload["with"]["path"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        [
+            "${{ env.NEMOCLAW_HCL_RUN }}/reports/candidate.json",
+            "${{ env.NEMOCLAW_HCL_RUN }}/reports/outcome.json",
+            "${{ env.NEMOCLAW_HCL_RUN }}/reports/cleanup.json",
+        ]
     );
 }

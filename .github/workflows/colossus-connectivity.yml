@@ -8,9 +8,9 @@ on:
       suite:
         description: >-
           smoke runs `true`; bundle runs the Linux ARM64 bundle, unit, contract,
-          and integration jobs, to compare their timings with the hosted runners'.
+          and integration jobs; nemotron runs the GB300 OpenClaw/local-model lifecycle.
         type: choice
-        options: [smoke, bundle]
+        options: [smoke, bundle, nemotron]
         default: smoke
 
 permissions: {}
@@ -46,3 +46,129 @@ jobs:
       lifecycle: true
       e2e: false
       save-cache: false
+
+  nemotron:
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch' && inputs.suite == 'nemotron'
+    runs-on: colossus-gb300-pilot
+    timeout-minutes: 135
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_INCREMENTAL: "0"
+      NEMOCLAW_HCL_CASE: gb300-openclaw-nemotron35
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_CONTEXT: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare a private, fresh run
+        run: |
+          umask 077
+          parent="$HOME/.local/state/nemoclaw-hardware-e2e"
+          mkdir -p "$parent"
+          run=$(mktemp -d "$parent/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")
+          mkdir "$run/work" "$run/reports"
+          printf '%s\n' "NEMOCLAW_HCL_RUN=$run" "NEMOCLAW_TEST_BUNDLE=$run/bundle" \
+            "NEMOCLAW_HCL_DOCUMENT=$run/deployment.yaml" \
+            "HARDWARE_IMAGE_PREFIX=nc-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          cat /proc/sys/kernel/random/uuid > "$run/uid"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Build candidate artifacts and bind the case
+        timeout-minutes: 50
+        run: |
+          umask 077
+          # Raw build logs stay on the operator-owned host, not in public logs.
+          exec 3>&1
+          trap 'echo "Candidate preparation failed; private diagnostics retained on the runner." >&3' ERR
+          exec > "$NEMOCLAW_HCL_RUN/work/build.log" 2>&1
+          set -Eeuo pipefail
+          test "$(uname -m)" = aarch64
+          # shellcheck source=/dev/null
+          . /etc/os-release
+          [[ $ID == ubuntu && $VERSION_ID == 24.04 ]]
+          test "$(nvidia-smi --query-gpu=name --format=csv,noheader)" = 'NVIDIA GB300'
+          rustup toolchain install
+          cargo ci tools
+          # GITHUB_ENV applies to later steps, not this shell's direct Cargo build.
+          PROTOC=$(sed -n 's/^PROTOC=//p' "$GITHUB_ENV" | tail -1)
+          command -v -- "$PROTOC" > /dev/null
+          export PROTOC
+          cargo ci bundle
+          executable=$(cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json |
+            jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test) | .executable' | tail -1)
+          test -x "$executable"
+          cp "$executable" "$NEMOCLAW_HCL_RUN/e2e"
+          cp -a dist/linux_arm64 "$NEMOCLAW_TEST_BUNDLE"
+          IMAGE_PREFIX="$HARDWARE_IMAGE_PREFIX" cargo images build --platform linux/arm64 openclaw
+          docker buildx bake vllm --set "vllm.tags=$HARDWARE_IMAGE_PREFIX:vllm-base"
+          docker buildx build --load --pull=false \
+            --build-arg "BASE_IMAGE=$HARDWARE_IMAGE_PREFIX:vllm-base" \
+            -t "$HARDWARE_IMAGE_PREFIX:vllm" crates/nemoclaw-e2e/images/nemotron35
+          agent=$(docker image inspect --format '{{index .RepoDigests 0}}' "$HARDWARE_IMAGE_PREFIX:openclaw")
+          runtime=$(docker image inspect --format '{{index .RepoDigests 0}}' "$HARDWARE_IMAGE_PREFIX:vllm")
+          [[ $agent =~ @sha256:[a-f0-9]{64}$ && $runtime =~ @sha256:[a-f0-9]{64}$ ]]
+          sed -E -e "s#^  uid: .*#  uid: $(cat "$NEMOCLAW_HCL_RUN/uid")#" \
+            -e "s#nc-fabric@sha256:0{64}#$agent#" \
+            -e "s#nc-prototype-vllm@sha256:0{64}#$runtime#" \
+            crates/nemoclaw-e2e/cases/manual/gb300-openclaw-nemotron35.yaml > "$NEMOCLAW_HCL_DOCUMENT"
+          jq -n --arg commit "$GITHUB_SHA" --arg agent "$agent" --arg runtime "$runtime" \
+            '{commit:$commit,agent_image:$agent,runtime_image:$runtime,architecture:"aarch64",os:"Ubuntu 24.04",gpu:"NVIDIA GB300"}' > "$NEMOCLAW_HCL_RUN/reports/candidate.json"
+      - name: Run the real-model HCL lifecycle
+        id: lifecycle
+        timeout-minutes: 65
+        working-directory: crates/nemoclaw-e2e
+        run: |
+          umask 077
+          if ! "$NEMOCLAW_HCL_RUN/e2e" hcl_live::case --exact --ignored --nocapture \
+            > "$NEMOCLAW_HCL_RUN/work/scenario.log" 2>&1; then
+            echo 'Hardware lifecycle failed; private diagnostics retained on the runner.'
+            exit 1
+          fi
+          echo 'Nemotron/OpenClaw lifecycle passed.'
+      - name: Destroy owned runtime resources and verify absence
+        id: cleanup
+        if: always()
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ -n ${NEMOCLAW_HCL_RUN:-} ]] || exit 0
+          if [[ -d $NEMOCLAW_HCL_RUN/deployment ]]; then
+            "$NEMOCLAW_TEST_BUNDLE/bin/nemoclaw" destroy --output json --progress off \
+              --state-dir "$NEMOCLAW_HCL_RUN/deployment" \
+              > "$NEMOCLAW_HCL_RUN/work/destroy.json" 2> "$NEMOCLAW_HCL_RUN/work/destroy.log" || exit 1
+            jq -e '.outcome == "destroyed"' "$NEMOCLAW_HCL_RUN/work/destroy.json" > /dev/null || exit 1
+            uid=$(cat "$NEMOCLAW_HCL_RUN/uid")
+            [[ $uid =~ ^[a-f0-9-]{36}$ ]] || exit 1
+            remaining=$(docker ps -aq --filter "label=nemoclaw.nvidia.com/uid=$uid") || exit 1
+            [[ -z $remaining ]] || exit 1
+            remaining_networks=$(docker network ls -q --filter "label=nemoclaw.nvidia.com/uid=$uid") || exit 1
+            [[ -z $remaining_networks ]] || exit 1
+            jq '{outcome,retained}' "$NEMOCLAW_HCL_RUN/work/destroy.json" > "$NEMOCLAW_HCL_RUN/reports/cleanup.json"
+          fi
+      - name: Record the bounded outcome
+        if: always()
+        env:
+          LIFECYCLE_OUTCOME: ${{ steps.lifecycle.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+        run: |
+          [[ -n ${NEMOCLAW_HCL_RUN:-} ]] || exit 0
+          jq -n --arg lifecycle "$LIFECYCLE_OUTCOME" --arg cleanup "$CLEANUP_OUTCOME" \
+            --arg commit "$GITHUB_SHA" \
+            '{commit:$commit,lifecycle:$lifecycle,cleanup:$cleanup,model:"nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",model_revision:"da5b2650a835292c678994a1fa3fb653250fb508"}' \
+            > "$NEMOCLAW_HCL_RUN/reports/outcome.json"
+      # Upload only fixed outcome/candidate/cleanup fields, never work, state or keys.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && env.NEMOCLAW_HCL_RUN != ''
+        with:
+          name: gb300-nemotron-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.NEMOCLAW_HCL_RUN }}/reports/candidate.json
+            ${{ env.NEMOCLAW_HCL_RUN }}/reports/outcome.json
+            ${{ env.NEMOCLAW_HCL_RUN }}/reports/cleanup.json
+          retention-days: 7
+          if-no-files-found: ignore

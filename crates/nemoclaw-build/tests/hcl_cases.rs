@@ -85,3 +85,33 @@ fn a_suite_runs_its_requested_cases_and_refuses_cases_placed_elsewhere() {
     let error = docker(Some(&["hosted-c"])).unwrap_err();
     assert!(error.contains("hosted-c"), "{error}");
 }
+
+/// The leased ARM64 variant must not enter automatic AMD64 GPU selection.
+#[test]
+fn colossus_variant_is_manual_only_and_binds_local_inference() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let ids = nemoclaw_build::hcl_cases::live(&root).unwrap();
+    assert!(!ids.contains("gb300-openclaw-nemotron35"));
+    let source = fs::read_to_string(
+        root.join("crates/nemoclaw-e2e/cases/manual/gb300-openclaw-nemotron35.yaml"),
+    )
+    .unwrap();
+    let needed = needs(&source).unwrap();
+    assert!(
+        !needed.nvidia_key,
+        "the local model needs no hosted-inference key"
+    );
+    let document: serde_json::Value = serde_saphyr::from_str(&source).unwrap();
+    let service = &document["spec"]["services"]["super"];
+    assert_eq!(service["hardware"]["profile"], "dgx-station");
+    assert_eq!(
+        service["model"]["repository"],
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"
+    );
+    assert_eq!(
+        service["model"]["revision"],
+        "da5b2650a835292c678994a1fa3fb653250fb508"
+    );
+    assert_eq!(service["serving"]["maxSequences"], 1);
+    assert_eq!(service["memory"]["gpuMemoryGiB"], 96);
+}

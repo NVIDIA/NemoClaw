@@ -155,6 +155,30 @@ NVIDIA_INFERENCE_API_KEY=... \
 
 Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deployment` with the same bundle, whether or not the scenario passed.
 
+## Manual GB300 Reference
+
+The existing Colossus workflow has a `nemotron` suite for one ARM64 GB300 with Ubuntu 24.04 and local Nemotron 3.5 Super VL NVFP4 inference through OpenClaw. It is manual-only on canonical `v1`; it is not a required PR check. Trigger policy is deferred to #14346.
+
+Before dispatch, the operator must own the active lease, reserve at least the job's 135-minute maximum, and provide the registered `colossus-gb300-pilot` runner. Host preparation is separate: Docker with its containerd store and GPU access, Buildx, Rustup, a C linker and jq must already work as the runner service user. The job installs no host packages, changes no drivers/kernel, and acquires or renews no leases. Stop the runner and remove its registration before returning its host. Labels select jobs; they do not authorize workflows.
+
+Dispatch the existing file on `v1`:
+
+```sh
+gh workflow run colossus-connectivity.yml --repo NVIDIA/NemoClaw --ref v1 -f suite=nemotron
+```
+
+The job builds the exact dispatch commit's ARM64 bundle, test executable, catalog-aware OpenClaw image and vLLM runtime. Its test-only derived runtime backports the merged vLLM #64506 field-name fix; the model revision and the current image build inputs remain pinned. Remove that backport when the ordinary runtime supplies the fix, after verifying model initialization. This does not change the ordinary image pin or qualify every use of that image.
+
+`hcl_live::case` runs `gb300-openclaw-nemotron35` against a fresh copy of `cases/manual/gb300-openclaw-nemotron35.yaml`: apply, a `READY` response from the recorded agent runtime, unchanged plan, unchanged apply, and destroy. The case uses the same `cli` and `verifier` modules as the other HCL cases. Its document is outside the automatically paired case directory, so automatic selection cannot send this ARM64 variant to an AMD64 GPU runner. It is selected only by the manual workflow's explicit document override.
+
+A separate `always()` step attempts destroy after a failed or cancelled lifecycle and checks that Docker reports no containers or networks with the fresh deployment UID. An unavailable Docker observation fails cleanup. A killed runner or expired lease can prevent that step from executing; it is not cleanup evidence. Never delete the borrowed host or another deployment to recover a failed run.
+
+Raw build/test output, deployment state, keys and replies stay in an owner-only directory under the runner account's `~/.local/state/nemoclaw-hardware-e2e/`. Preserve a failed run there for recovery with the matching bundle and state, as [interrupted-operation recovery](../../docs/build-deploy/usage.md#recover-an-interrupted-operation) describes. Generated model cache, gateway storage and inference credentials are retained after destroy; retain their ownership records until the operator removes them. The workflow does not claim full data erasure or model-cache reuse across fresh deployments. Shared weight caching is tracked separately in #13994.
+
+The run directory, copied bundle/test executable and three run-tagged images also persist for recovery. Before returning the lease, finish recovery, remove only that run's retained resources and directory, and remove its image tags with `docker image rm nc-e2e-RUN_ID-RUN_ATTEMPT:openclaw nc-e2e-RUN_ID-RUN_ATTEMPT:vllm nc-e2e-RUN_ID-RUN_ATTEMPT:vllm-base`, substituting the recorded run IDs. Do not use a host-wide prune. Inspect free disk space before another run; this workflow does not implement retention or garbage collection.
+
+The artifact contains only candidate image identities, source/model revision and lifecycle/cleanup outcomes. Raw native errors are not published. Successful text inference and convergence do not qualify tool calls, vision/video, long contexts, other agents, or another hardware family.
+
 ## Spark and Fabric
 
 The `docker-openclaw-vllm-shared` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
