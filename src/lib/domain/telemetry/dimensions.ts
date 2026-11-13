@@ -7,6 +7,7 @@ import {
   recordedNativeProviderAttachment,
 } from "../../inference/native-provider/recorded-selection";
 import { authorizedNativeLocalAttachment } from "../../inference/native-local/recorded-selection";
+import { recordedRegisteredInferenceProviderAttachment } from "../../inference/selection";
 import type { SandboxEntry } from "../../state/registry/types";
 import type {
   TelemetryAgent,
@@ -306,9 +307,14 @@ export function projectRecordedNativeInferenceRoute(entry: SandboxEntry, gateway
   const local = entry.nativeLocalProviderAttachment;
   let valid = false;
   try {
-    if (local === undefined && !recordedNativeProviderAttachment(entry)) return undefined;
-    // The same validation as `inference get`, so both report one route authority.
-    valid = local === undefined || !!authorizedNativeLocalAttachment(entry, gatewayName);
+    if (entry.registeredInferenceProviderAttachment !== undefined) {
+      const binding = recordedRegisteredInferenceProviderAttachment(entry);
+      valid = binding?.gatewayName === gatewayName;
+    } else {
+      if (local === undefined && !recordedNativeProviderAttachment(entry)) return undefined;
+      // The same validation as `inference get`, so both report one route authority.
+      valid = local === undefined || !!authorizedNativeLocalAttachment(entry, gatewayName);
+    }
   } catch {
     /* An invalid recorded attachment is reported as a route collection error. */
   }
