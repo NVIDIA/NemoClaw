@@ -735,6 +735,7 @@
     {
       "live": "test/e2e/live/hermes-e2e.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/hermes-switchyard-boundary.ts",
         "test/e2e/live/hermes-cli-adapter-live.ts",
         "test/e2e/live/hermes-e2e-phases.ts",
         "test/e2e/live/hermes-skill-lifecycle.ts"
@@ -1212,10 +1213,12 @@
     {
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/hermes-switchyard-bounds.ts",
         "test/e2e/fixtures/hermes-switchyard-package.ts",
         "test/e2e/fixtures/hermes-crash-capture.ts"
       ],
       "fast": [
+        "test/e2e/support/hermes-switchyard-upstream.test.ts",
         "test/e2e/support/hermes-crash-capture.test.ts",
         "src/lib/hermes-switchyard-routing.test.ts",
         "test/agents/hermes/hermes-switchyard-package.test.ts",
