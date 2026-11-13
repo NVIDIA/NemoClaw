@@ -339,6 +339,16 @@ Correct the reported configuration or route error, then rerun `$$nemoclaw <sandb
 
 Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, inference route, policy, MCP, agent, and operation-lock state. When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`. At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
 
+<AgentOnly variant="openclaw">
+
+If `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` is nonempty, rebuild requires an integer from 1500 to 10000 milliseconds.
+An invalid value stops rebuild before its backup, deletion, or replacement.
+An installer-driven upgrade can already have created its strict pre-upgrade backup before rebuild runs this check.
+Unset the variable to use the default, or set a valid value, then rerun the original command.
+The existing sandbox remains unchanged after this preflight refusal.
+
+</AgentOnly>
+
 For a remote inference provider other than Hermes Provider, preflight checks the selected credential's non-secret expiration metadata from OpenShell.
 For these providers, a provider that no longer exposes the recorded credential key, an expired credential, or expiration metadata that NemoClaw cannot verify stops rebuild before backup or deletion, including with `--force`.
 A provider that exposes the recorded credential key without an expiration entry is treated as non-expiring. That credential or one with a future expiration continues through the remaining preflight checks.
