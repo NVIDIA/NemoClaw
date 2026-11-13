@@ -378,6 +378,16 @@ Preserve the existing installation and sandbox data.
 Follow the [OpenShell upgrade restrictions](update-sandboxes#use-the-automatic-upgrade-path).
 NemoClaw does not automatically migrate these providers or their state volumes.
 
+<AgentOnly variant="openclaw">
+
+If `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` is nonempty, rebuild requires an integer from 1500 to 10000 milliseconds.
+An invalid value stops rebuild before its backup, deletion, or replacement.
+An installer-driven upgrade can already have created its strict pre-upgrade backup before rebuild runs this check.
+Unset the variable to use the default, or set a valid value, then rerun the original command.
+The existing sandbox remains unchanged after this preflight refusal.
+
+</AgentOnly>
+
 For a remote inference provider other than Hermes Provider, preflight checks the selected credential's non-secret expiration metadata from OpenShell.
 For these providers, a provider that no longer exposes the recorded credential key, an expired credential, or expiration metadata that NemoClaw cannot verify stops rebuild before backup or deletion, including with `--force`.
 A provider that exposes the recorded credential key without an expiration entry is treated as non-expiring. That credential or one with a future expiration continues through the remaining preflight checks.

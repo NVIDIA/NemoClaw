@@ -64,7 +64,7 @@ describe("telegram.statusHealth hook", () => {
       status: 0,
       stdout: probeStdout(
         [
-          "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+          "[telegram] [default] provider ready (Bot API reachable)",
           "[telegram] [default] inbound update received (update_id=present; message_id=present)",
         ],
         ["PROC 42 node /opt/openclaw gateway"],
@@ -114,9 +114,7 @@ describe("telegram.statusHealth hook", () => {
     const exec = makeExec({
       status: 1,
       stdout: probeStdout(
-        [
-          "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
-        ],
+        ["[telegram] [default] provider ready (Bot API reachable)"],
         ["PROC 42 node /opt/openclaw gateway"],
       ),
       stderr: "sandbox exec timed out",
