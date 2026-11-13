@@ -134,7 +134,17 @@ pub(crate) async fn run_with_progress(
     let status = tokio::select! {
         status=child.wait()=>status,
         ()=cancel.cancelled()=>{
-            #[cfg(unix)] {let _=child.signal(2);}
+            // Only OpenTofu gets the interrupt. Its provider plugins share its
+            // process group, and one that doesn't ignore the interrupt would
+            // end in the middle of its operation; OpenTofu stops them itself.
+            #[cfg(unix)] {
+                if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(pid),
+                        nix::sys::signal::Signal::SIGINT,
+                    );
+                }
+            }
             #[cfg(windows)] {let _=child.start_kill();}
             // An interrupted OpenTofu apply starts no further resource
             // operations and saves the state once those in progress finish,
@@ -151,25 +161,37 @@ pub(crate) async fn run_with_progress(
                     None => std::future::pending::<()>().await,
                 }
             };
-            let exited = tokio::select! {
-                exited = async {
+            // `None` when the caller stopped the command or its time ran out.
+            let ended = tokio::select! {
+                ended = async {
                     if apply {
-                        child.wait().await.is_ok()
+                        Some(child.wait().await)
                     } else {
-                        tokio::time::timeout(Duration::from_secs(5), child.wait()).await.is_ok()
+                        tokio::time::timeout(Duration::from_secs(5), child.wait()).await.ok()
                     }
-                } => exited,
-                () = force_stop => false,
+                } => ended,
+                () = force_stop => None,
             };
             let _=child.start_kill();
             let _=tokio::time::timeout(Duration::from_secs(5),child.wait()).await;
-            if exited {
+            let mut diagnostic = Vec::new();
+            if matches!(ended, Some(Ok(_))) {
                 // Deliver the events OpenTofu printed while it stopped.
                 let _=tokio::time::timeout(Duration::from_secs(5), async {
                     let _=stdout.await;
-                    let _=stderr.await;
+                    if let Ok(Ok((bytes, _, _))) = stderr.await {
+                        diagnostic = bytes;
+                    }
                 }).await;
             }
+            if apply
+                && let Some(callback) = &mutation_progress
+                && let Some(ended) = &ended
+                && let Some(message) = abnormal_stop(ended, &diagnostic, &redactions)
+            {
+                callback(crate::Progress::Warning { message });
+            }
+            diagnostic.fill(0);
             return Err(Error::Cancelled);
         }
     };
@@ -242,6 +264,44 @@ pub(crate) async fn run_with_progress(
         diagnostic: message.trim().into(),
         postcondition_failures,
     })
+}
+
+/// How an interrupted apply ended when OpenTofu didn't stop by itself, which
+/// can leave its state without the resources it created; `None` when it
+/// stopped by itself, with status 1, or finished first, with status 0.
+fn abnormal_stop(
+    ended: &std::io::Result<std::process::ExitStatus>,
+    diagnostic: &[u8],
+    redactions: &[String],
+) -> Option<String> {
+    let how = match ended {
+        Ok(status) => match status.code() {
+            Some(0 | 1) => return None,
+            Some(code) => format!("exited with status {code}"),
+            None => {
+                #[cfg(unix)]
+                let signal = std::os::unix::process::ExitStatusExt::signal(status);
+                #[cfg(not(unix))]
+                let signal: Option<i32> = None;
+                match signal {
+                    Some(signal) => format!("was ended by signal {signal}"),
+                    None => format!("ended with {status}"),
+                }
+            }
+        },
+        Err(_) => "could not be observed stopping and was killed".into(),
+    };
+    let mut message = format!(
+        "OpenTofu {how} while stopping the cancelled apply, so its state may lack resources it created."
+    );
+    // Redact before shortening, so a cut can't leave part of a credential.
+    let mut reported = String::from_utf8_lossy(diagnostic).trim().to_owned();
+    if !reported.is_empty() && !has_short_secret(redactions) {
+        redact(&mut reported, redactions);
+        message.push_str(" It reported: ");
+        message.extend(reported.chars().take(2048));
+    }
+    Some(message)
 }
 
 /// The most bytes of child diagnostics that a failed command's error carries.
@@ -814,6 +874,125 @@ mod tests {
             events.lock().unwrap().contains(&crate::Progress::Stopping),
             "the caller was not told that the apply is stopping"
         );
+        assert!(
+            !events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| matches!(event, crate::Progress::Warning { .. })),
+            "an apply that stopped by itself was reported as ending abnormally"
+        );
+    }
+
+    /// Waits until `directory` holds `ready`, then cancels `token`.
+    fn cancel_when_ready(directory: &Path, token: &CancellationToken) {
+        let (ready, interrupt) = (directory.join("ready"), token.clone());
+        tokio::spawn(async move {
+            for _ in 0..300 {
+                if ready.exists() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            interrupt.cancel();
+        });
+    }
+
+    /// Catches an interrupt sent to OpenTofu's whole process group. Provider
+    /// plugins share that group, and a plugin that doesn't ignore the
+    /// interrupt ends in the middle of its operation, so OpenTofu can't
+    /// record what it created.
+    #[tokio::test]
+    async fn an_interrupted_apply_lets_provider_operations_in_progress_finish() {
+        let directory = tempfile::tempdir().unwrap();
+        // `apply` stands in for OpenTofu and runs `provider` in the foreground,
+        // in its process group. A shell runs its trap only after the
+        // foreground command ends.
+        std::fs::write(
+            directory.path().join("apply"),
+            "trap 'exit 1' INT\nsh provider\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join("provider"),
+            "trap ': > interrupted; exit 1' INT\n: > ready\n\
+             i=0; while [ $i -lt 10 ]; do sleep 0.1; i=$((i + 1)); done\n: > finished\n",
+        )
+        .unwrap();
+        let token = CancellationToken::new();
+        cancel_when_ready(directory.path(), &token);
+        let result = run_with_progress(
+            directory.path(),
+            Path::new("/bin/sh"),
+            &["apply", "-json"],
+            &Default::default(),
+            &token,
+            None,
+            None,
+        )
+        .await;
+        assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+        assert!(
+            !directory.path().join("interrupted").exists(),
+            "the interrupt reached a provider plugin"
+        );
+        assert!(
+            directory.path().join("finished").exists(),
+            "the provider's operation in progress did not finish"
+        );
+    }
+
+    /// Catches an interrupted apply whose OpenTofu crashes or is killed
+    /// without anyone learning of it: its state can then lack the resources
+    /// it created, and the caller sees only `Cancelled`.
+    #[tokio::test]
+    async fn an_interrupted_apply_that_ends_abnormally_warns_without_disclosing_secrets() {
+        for (ending, reported) in [
+            ("exit 2", "exited with status 2"),
+            ("kill -KILL $$", "was ended by signal 9"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            std::fs::write(
+                directory.path().join("apply"),
+                format!(
+                    "trap 'printf \"panic: %s\\n\" \"$CUSTOM_CREDENTIAL\" >&2; {ending}' INT\n\
+                     : > ready\ni=0; while [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done\n"
+                ),
+            )
+            .unwrap();
+            let token = CancellationToken::new();
+            cancel_when_ready(directory.path(), &token);
+            let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let recorded = events.clone();
+            let result = run_with_progress(
+                directory.path(),
+                Path::new("/bin/sh"),
+                &["apply", "-json"],
+                &[("CUSTOM_CREDENTIAL".into(), "secret-sentinel".into())].into(),
+                &token,
+                None,
+                Some(std::sync::Arc::new(move |event| {
+                    recorded.lock().unwrap().push(event)
+                })),
+            )
+            .await;
+            assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+            let warnings: Vec<String> = events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|event| match event {
+                    crate::Progress::Warning { message } => Some(message.clone()),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                matches!(warnings.as_slice(), [warning]
+                    if warning.contains(reported) && warning.contains("panic: [redacted]")),
+                "{ending}: {warnings:?}"
+            );
+            assert!(!format!("{warnings:?}").contains("secret-sentinel"));
+        }
     }
 }
 
