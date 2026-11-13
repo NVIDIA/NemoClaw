@@ -30,6 +30,17 @@ provider attachment, persisted state, native configuration, stop/start, and clea
 The native Hermes rebuild receives the synthetic transport separately from the
 stored bot token. The rebuild still reads that token from its credential store.
 
+The `hermes-e2e` target also exercises the packaged native Switchyard plugin through real
+OpenShell credential injection and egress enforcement. A host-side HTTP fixture supplies a
+healthy provider and a separately listening forbidden destination. The test checks successful
+judge/answer routing, a forbidden redirect, direct destination denial, recovery, caller-auth
+non-disclosure, and a salted credential scan. It restores the fixture policy and removes its
+provider in `finally`. Only temporary child-process transport configuration changes; production
+provider validation and protected startup files stay unchanged. This does not qualify hosted
+provider TLS, adaptive onboarding, or `inference.local` isolation in a routed sandbox. The
+standard Hermes sandbox still uses `inference.local`. Support tests own fixture responses,
+redacted evidence, and probe syntax; they are not live OpenShell evidence.
+
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
