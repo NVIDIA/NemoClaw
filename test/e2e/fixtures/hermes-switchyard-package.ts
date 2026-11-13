@@ -43,13 +43,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import socket
-from threading import Thread
+import select
+from threading import Event, Thread
+import time
 
 class LocalUpstream:
-    def __init__(self, role, evidence=None):
+    def __init__(self, role, evidence=None, *, fault=None, phase='answer', p_solve=0.9, prefix_delay=0):
         self.role = role
         self.calls = []
         self.evidence = evidence
+        self.fault = fault
+        self.phase = phase
+        self.p_solve = p_solve
+        self.prefix_delay = prefix_delay
+        self.faults = []
+        self.stopping = Event()
+        self.released = Event()
 
     def __enter__(self):
         upstream = self
@@ -73,12 +82,50 @@ class LocalUpstream:
                             'role': upstream.role, 'model': body['model'],
                             'gatewayListening': gateway_listening,
                         }) + '\n')
+                phase = 'judge' if 'response_format' in body else 'answer'
+                if upstream.fault is not None and phase == upstream.phase:
+                    observation = {'phase': phase, 'started': time.monotonic(), 'stream': body.get('stream') is True}
+                    upstream.faults.append(observation)
+                    if upstream.fault == 'retryable':
+                        self.send_response(503)
+                        self.send_header('retry-after', '0')
+                        self.send_header('content-length', '0')
+                        self.end_headers()
+                        return
+                    if upstream.fault != 'stall':
+                        raise ValueError('Unknown fixture fault')
+                    self.send_response(200)
+                    self.send_header('content-type', 'text/event-stream' if observation['stream'] else 'application/json')
+                    self.end_headers()
+                    upstream.stopping.wait(upstream.prefix_delay)
+                    if observation['stream']:
+                        chunk = {'id': 'bounds', 'object': 'chat.completion.chunk', 'created': 1,
+                                 'model': body['model'], 'choices': [{'index': 0,
+                                 'delta': {'role': 'assistant', 'content': 'partial'}, 'finish_reason': None}]}
+                        self.wfile.write(('data: ' + json.dumps(chunk) + '\n\n').encode())
+                    else:
+                        self.wfile.write(b' ')
+                    self.wfile.flush()
+                    observation['prefixSent'] = True
+                    # Observe peer release separately from test-owned server cleanup.
+                    until = time.monotonic() + 135
+                    while not upstream.stopping.wait(0.05) and time.monotonic() < until:
+                        readable, _, _ = select.select([self.connection], [], [], 0)
+                        if readable:
+                            try:
+                                closed = self.connection.recv(1, socket.MSG_PEEK) == b''
+                            except ConnectionResetError:
+                                closed = True
+                            if closed:
+                                upstream.released.set()
+                                break
+                    return
                 if upstream.role in ('capable', 'judge'):
                     content = json.dumps({
                         'crux': 'bounded fixture task',
                         'primary_rule': 'SUP-1',
                         'capability_boundary': 'supported',
-                        'p_solve': 0.9,
+                        'p_solve': upstream.p_solve,
                     }, separators=(',', ':'))
                 else:
                     content = 'routed-efficient'
@@ -113,6 +160,7 @@ class LocalUpstream:
         return f'http://127.0.0.1:{self.server.server_port}/v1'
 
     def __exit__(self, _type, _value, _traceback):
+        self.stopping.set()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
