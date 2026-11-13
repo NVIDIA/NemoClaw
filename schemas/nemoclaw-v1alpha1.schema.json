@@ -127,9 +127,51 @@
       "type": "object"
     },
     "ApfPolicyAuthority": {
-      "additionalProperties": false,
-      "description": "APF policy authority settings; none yet.",
-      "type": "object"
+      "description": "Who registers APF with the gateway as its interceptor and provider-profile source.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "NemoClaw registers APF in a managed Docker gateway's configuration file.",
+          "properties": {
+            "endpoint": {
+              "description": "APF's gRPC origin as the gateway reaches it: `https://HOST[:PORT]`, without a path.",
+              "pattern": "^https://[^/?#@]+$",
+              "type": "string"
+            },
+            "registration": {
+              "const": "managed",
+              "description": "Who registers APF with the gateway: managed means NemoClaw does, external means the gateway's operator does.",
+              "type": "string"
+            },
+            "tls": {
+              "$ref": "#/$defs/InterceptorTls",
+              "description": "The CA certificate that verifies APF; omission uses the gateway's system roots."
+            }
+          },
+          "required": [
+            "registration",
+            "endpoint"
+          ],
+          "title": "Registered by NemoClaw",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The gateway's operator registers APF, such as in spec.gateway.config. Required on an external gateway.",
+          "properties": {
+            "registration": {
+              "const": "external",
+              "description": "Who registers APF with the gateway: managed means NemoClaw does, external means the gateway's operator does.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "registration"
+          ],
+          "title": "Registered by the gateway's operator",
+          "type": "object"
+        }
+      ]
     },
     "ApiAuthStyle": {
       "description": "How an API key is sent.",
@@ -1360,6 +1402,20 @@
         }
       ]
     },
+    "InterceptorTls": {
+      "additionalProperties": false,
+      "description": "TLS file reference for a service the gateway dials.",
+      "properties": {
+        "ca": {
+          "$ref": "#/$defs/FileRef",
+          "description": "Environment variable whose value names the local CA certificate file. NemoClaw copies the certificate into the gateway's storage."
+        }
+      },
+      "required": [
+        "ca"
+      ],
+      "type": "object"
+    },
     "KubernetesAuthentication": {
       "additionalProperties": false,
       "allOf": [
@@ -2199,7 +2255,7 @@
       "properties": {
         "apf": {
           "$ref": "#/$defs/ApfPolicyAuthority",
-          "description": "APF's admission interceptor, registered in the gateway's configuration, replaces each sandbox's policy with its signed bundle's. Sandboxes must not author an explicit policy; NemoClaw requires APF's provenance on each sandbox and treats a later change to the loaded policy as drift."
+          "description": "APF's admission interceptor replaces each sandbox's policy with its signed bundle's, and APF serves the provider profiles. Sandboxes must not author an explicit policy; NemoClaw requires APF's provenance on each sandbox and treats a later change to the loaded policy as drift."
         }
       },
       "required": [

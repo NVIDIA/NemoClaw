@@ -114,7 +114,7 @@ Paths:
 
 ## ApfPolicyAuthority
 
-APF policy authority settings; none yet.
+Who registers APF with the gateway as its interceptor and provider-profile source.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
@@ -123,6 +123,26 @@ Paths:
 - `spec.gateway.policyAuthority.apf`
 
 Accepted input: object.
+
+### Alternative 1
+
+NemoClaw registers APF in a managed Docker gateway's configuration file.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `endpoint` | string | Yes | — | APF's gRPC origin as the gateway reaches it: `https://HOST[:PORT]`, without a path. Constraints: pattern `^https://[^/?#@]+$`. |
+| `registration` | string | Yes | — | Who registers APF with the gateway: managed means NemoClaw does, external means the gateway's operator does. Constraints: `"managed"`. |
+| `tls` | [InterceptorTls](#interceptortls) | No | — | The CA certificate that verifies APF; omission uses the gateway's system roots. |
+
+### Alternative 2
+
+The gateway's operator registers APF, such as in spec.gateway.config. Required on an external gateway.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `registration` | string | Yes | — | Who registers APF with the gateway: managed means NemoClaw does, external means the gateway's operator does. Constraints: `"external"`. |
 
 ## ApiAuthStyle
 
@@ -385,6 +405,7 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 Paths:
 
 - `spec.gateway.kubernetes.kubeconfig`
+- `spec.gateway.policyAuthority.apf.tls.ca`
 - `spec.gateway.tls.ca`
 - `spec.gateway.tls.certificate`
 - `spec.gateway.tls.key`
@@ -654,6 +675,20 @@ A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
 | `headerName` | string | No | — | The header that carries the key. Defaults to Authorization for bearer; required for header. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"api"`. |
 
+## InterceptorTls
+
+TLS file reference for a service the gateway dials.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.policyAuthority.apf.tls`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `ca` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local CA certificate file. NemoClaw copies the certificate into the gateway's storage. |
+
 ## KubernetesAuthentication
 
 Authentication provisioned for a managed Kubernetes gateway.
@@ -911,7 +946,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `apf` | [ApfPolicyAuthority](#apfpolicyauthority) | Yes | — | APF's admission interceptor, registered in the gateway's configuration, replaces each sandbox's policy with its signed bundle's. Sandboxes must not author an explicit policy; NemoClaw requires APF's provenance on each sandbox and treats a later change to the loaded policy as drift. |
+| `apf` | [ApfPolicyAuthority](#apfpolicyauthority) | Yes | — | APF's admission interceptor replaces each sandbox's policy with its signed bundle's, and APF serves the provider profiles. Sandboxes must not author an explicit policy; NemoClaw requires APF's provenance on each sandbox and treats a later change to the loaded policy as drift. |
 
 ## PolicyBinary
 

@@ -195,14 +195,50 @@ pub struct ManagedGateway {
 /// The component that authors every sandbox's policy on a gateway, instead of NemoClaw.
 pub struct PolicyAuthority {
     #[serde(rename = "apf")]
-    /// APF's admission interceptor, registered in the gateway's configuration, replaces each sandbox's policy with its signed bundle's. Sandboxes must not author an explicit policy; NemoClaw requires APF's provenance on each sandbox and treats a later change to the loaded policy as drift.
+    /// APF's admission interceptor replaces each sandbox's policy with its signed bundle's, and APF serves the provider profiles. Sandboxes must not author an explicit policy; NemoClaw requires APF's provenance on each sandbox and treats a later change to the loaded policy as drift.
     pub apf: ApfPolicyAuthority,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "registration", rename_all = "lowercase")]
+/// Who registers APF with the gateway as its interceptor and provider-profile source.
+pub enum ApfPolicyAuthority {
+    /// NemoClaw registers APF in a managed Docker gateway's configuration file.
+    #[schemars(title = "Registered by NemoClaw")]
+    Managed(ManagedApf),
+    /// The gateway's operator registers APF, such as in spec.gateway.config. Required on an external gateway.
+    #[schemars(title = "Registered by the gateway's operator")]
+    External(ExternalApf),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// APF's connection settings, which NemoClaw writes into the gateway's configuration. spec.gateway.config must not register interceptors or provider-profile sources.
+pub struct ManagedApf {
+    #[serde(rename = "endpoint")]
+    /// APF's gRPC origin as the gateway reaches it: `https://HOST[:PORT]`, without a path.
+    pub endpoint: String,
+    #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "InterceptorTls")]
+    /// The CA certificate that verifies APF; omission uses the gateway's system roots.
+    pub tls: Option<InterceptorTls>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-/// APF policy authority settings; none yet.
-pub struct ApfPolicyAuthority {}
+/// No settings: the operator's registration holds APF's connection.
+pub struct ExternalApf {}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// TLS file reference for a service the gateway dials.
+pub struct InterceptorTls {
+    #[serde(rename = "ca")]
+    /// Environment variable whose value names the local CA certificate file. NemoClaw copies the certificate into the gateway's storage.
+    pub ca: FileRef,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
