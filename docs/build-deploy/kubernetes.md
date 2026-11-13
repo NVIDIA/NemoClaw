@@ -83,7 +83,7 @@ A document has one gateway, one namespace and one OpenTofu state, so the cap als
 Size the cluster for the sandboxes you declare:
 
 - **Pods:** each sandbox runs in its own pod. At the kubelet's default of 110 pods per node, 256 sandboxes need at least three nodes, plus room for the gateway, the issuer and the cluster's own pods.
-- **Storage:** a managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless `workspace_storage_class` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) names another.
+- **Storage:** a managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless `workspace_storage_class` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) names another, as [the placement example](../../examples/kubernetes/sandbox-placement.yaml) does.
 - **Gateway:** the managed gateway is limited to 1 CPU and 1 GiB of memory, and the limit can't be changed yet ([#13835](https://github.com/NVIDIA/NemoClaw/issues/13835)).
   No apply of 256 sandboxes has been recorded, so it is unverified whether the gateway serves that many at this limit ([#14403](https://github.com/NVIDIA/NemoClaw/issues/14403)).
 
@@ -93,7 +93,7 @@ Each sandbox also attaches at most 32 providers, OpenShell's limit; see [inferen
 
 The SDK binds the namespace, creating it if it doesn't exist, adds a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
 The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs, also when you [publish the gateway](#publish-the-gateway-outside-the-cluster).
-Start from [the Kubernetes example](../../examples/kubernetes/managed-development.yaml). Replace these deployment-specific inputs before running the commands:
+Start from [the Kubernetes example](../../examples/kubernetes/managed-development.yaml); [the examples' index](../../examples/kubernetes/README.md) lists the others. Replace these deployment-specific inputs before running the commands:
 
 - `metadata.uid` to a new UUID.
 - `gateway.kubernetes.kubeconfig` to the environment variable holding the kubeconfig path, and `context` to the exact context; omit both when [NemoClaw runs in a pod](#run-nemoclaw-in-a-pod).
@@ -187,6 +187,7 @@ NemoClaw sets the OpenShell chart's own gateway Service to `NodePort` at the end
 The gateway certificate names the endpoint's host.
 The Service doesn't publish the gateway's plaintext metrics port, and the gateway then serves no metrics.
 CI publishes a gateway with the `oidc` profile on kind, where two agents reply to a client that dials the node's address with the gateway's client certificate.
+[The NodePort example](../../examples/kubernetes/published-nodeport.yaml) publishes one with the `oidc` profile.
 
 ```yaml
 spec:
