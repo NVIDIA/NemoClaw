@@ -23,7 +23,8 @@ NemoClaw v0.0.144 fixes Deep Agents Code startup approval mode, improves rebuild
 
 ### Rebuild, Installation, and Cleanup
 
-- OpenClaw rebuild validates `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` before backup, deletion, or replacement, including installer-driven upgrades.
+- OpenClaw rebuild validates `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` before its backup, deletion, or replacement.
+  Installer-driven upgrades use the same preflight, but their strict pre-upgrade backup can already exist.
   Set an integer from 1500 to 10000 milliseconds, or unset the variable, before retrying a rejected command.
   Related change: [PR #14439](https://github.com/NVIDIA/NemoClaw/pull/14439).
 - The installer prepares and revalidates the OpenShell replacement destination before retiring the old gateway, preserving the selected executable handoff.
