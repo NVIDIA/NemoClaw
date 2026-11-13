@@ -493,6 +493,12 @@ class Parser:
 parser = Parser()
 
 
+def _resolve_approval_mode(args):
+    from deepagents_code.approval_mode import ApprovalMode
+
+    return ApprovalMode(os.environ.get("FIXTURE_NATIVE_STARTUP_MODE", "manual"))
+
+
 def parse_args():
     args = parser.parse_args()
     return args
@@ -533,8 +539,13 @@ def cli_main():
     print(
         f"managed-posture-ok auto_approve={args.auto_approve} "
         f"yolo={getattr(args, 'yolo', False)} "
-        f"startup_mode={args.startup_mode} approval_mode={args.approval_mode}"
+        f"startup_mode={args.startup_mode} approval_mode={args.approval_mode} "
+        f"resolved_mode={_resolve_approval_mode(args).value}"
     )
+
+
+if __name__ == "__main__":
+    cli_main()
 `,
   );
   writeFixtureFile(
