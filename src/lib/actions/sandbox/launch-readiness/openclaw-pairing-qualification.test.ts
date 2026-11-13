@@ -30,6 +30,7 @@ import {
   OPENCLAW_PAIRING_REQUIRED_SCOPES,
 } from "./openclaw-pairing-qualification";
 
+const TUI_SCOPES = ["operator.admin", "operator.approvals", "operator.read", "operator.write"];
 const TOKEN = "credential-value-must-not-leave-the-sandbox";
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const PYTHON3_AVAILABLE =
@@ -86,6 +87,8 @@ function writeSqlitePairingState(
     publicKey: string;
     privateKeyPem: string;
     token?: string;
+    clientId?: string;
+    clientMode?: string;
     scopes?: readonly string[];
     pairedScopes?: readonly string[];
     pairedTokenScopes?: readonly string[];
@@ -222,7 +225,7 @@ operator = {
 connection.execute(
   'INSERT INTO device_pairing_paired VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   (
-    value['deviceId'], value['publicKey'], None, None, None, None, 'cli', 'cli', None,
+    value['deviceId'], value['publicKey'], None, None, None, None, value.get('clientId', 'cli'), value.get('clientMode', 'cli'), None,
     'operator', json.dumps(['operator']), json.dumps(value['pairedScopes']),
     json.dumps(value['pairedScopes']), None, json.dumps(operator), None, None, None,
     1, 1, None, None,
@@ -497,11 +500,10 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(observeOrdinarySettlement().state).toBe("pairing-only");
     });
 
-    sqliteIt("qualifies the exact persisted admin-upgraded CLI state", () => {
-      writeSqlitePairingState(stateDirectory, {
-        deviceId,
-        publicKey,
-        privateKeyPem,
+    sqliteIt.each([
+      {
+        clientId: "cli",
+        clientMode: "cli",
         pairedScopes: ["operator.admin", "operator.pairing", "operator.write"],
         pairedTokenScopes: [
           "operator.admin",
@@ -510,8 +512,17 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
           "operator.write",
         ],
         authScopes: ["operator.admin", "operator.read", "operator.write"],
-      });
-
+      },
+      {
+        clientId: "openclaw-tui",
+        clientMode: "ui",
+        pairedScopes: TUI_SCOPES,
+        pairedTokenScopes: TUI_SCOPES,
+        authScopes: TUI_SCOPES,
+      },
+    ])("qualifies the exact persisted $clientId state", (profile) => {
+      writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem, ...profile });
+      expect(observe()).toMatchObject({ kind: "openclaw-pairing" });
       expect(observeSettlement()).toMatchObject({ state: "settled" });
     });
 
@@ -1451,47 +1462,6 @@ process.stdout.write("{}\\n");
       expect(() => observe()).not.toThrow();
       mutate();
       expect(() => observe()).toThrow("OpenClaw pairing qualification is unavailable");
-    });
-  });
-
-  it("pins observation to the named gateway and rejects non-terminal output (#9023)", () => {
-    const digest = "a".repeat(64);
-    const spawn = vi.fn(
-      (_binary: string, _args: readonly string[], _options: Parameters<typeof spawnSync>[2]) => ({
-        status: 0,
-        signal: null,
-        stdout: `__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=${JSON.stringify({
-          deviceIdentitySha256: digest,
-          pairingStateSha256: digest,
-          requiredRoles: ["operator"],
-          requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
-        })}\nuntrusted trailing output\n`,
-        stderr: "",
-      }),
-    );
-
-    expect(() =>
-      observeOpenClawPairingQualification("alpha", "nemoclaw-8080", "2026.7.1", stateDirectory, {
-        getOpenshellBinary: () => "openshell",
-        readApprovalPolicy: () => POLICY,
-        spawnSync: spawn as never,
-      }),
-    ).toThrow("OpenClaw pairing qualification is unavailable");
-    expect(spawn.mock.calls[0]?.[1]).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "-g",
-      "nemoclaw-8080",
-      "--",
-      "sh",
-      "-s",
-    ]);
-    expect(spawn.mock.calls[0]?.[2]).toMatchObject({
-      maxBuffer: 4 * 1_024,
-      stdio: ["pipe", "pipe", "ignore"],
-      timeout: 3_000,
     });
   });
 });

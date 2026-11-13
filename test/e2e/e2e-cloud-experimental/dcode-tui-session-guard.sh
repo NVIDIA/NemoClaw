@@ -10,6 +10,7 @@ SESSION_ID=""
 BASELINE=""
 WAIT_TIMEOUT="0"
 PROCESS_ROOT="/proc"
+RESTORE_STARTUP_CONFIG=""
 
 if [[ ! "$SANDBOX_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
   printf 'invalid sandbox name\n' >&2
@@ -33,8 +34,13 @@ case "$MODE" in
     SESSION_ID="${3:-}"
     BASELINE="${4:-}"
     PROCESS_ROOT="${5:-/proc}"
+    RESTORE_STARTUP_CONFIG="${6:-}"
     if [[ ! "$SESSION_ID" =~ ^[0-9a-f-]{36}$ ]] || [[ ! "$BASELINE" =~ ^[0-9]+$ ]]; then
       printf 'invalid TUI cleanup arguments\n' >&2
+      exit 2
+    fi
+    if [[ -n "$RESTORE_STARTUP_CONFIG" && "$RESTORE_STARTUP_CONFIG" != restore-startup-config ]]; then
+      printf 'invalid TUI startup config recovery argument\n' >&2
       exit 2
     fi
     ;;
@@ -57,6 +63,7 @@ session_id="$2"
 baseline="$3"
 wait_timeout="$4"
 process_root="$5"
+restore_startup_config="$6"
 final_count=""
 
 dcode_process_count() {
@@ -133,6 +140,11 @@ case "$mode" in
     signal_tagged KILL
     deadline=$((SECONDS + 5))
     while [ -n "$(tagged_pids)" ] && [ "$SECONDS" -lt "$deadline" ]; do sleep 1; done
+    if [ "$restore_startup_config" = restore-startup-config ]; then
+      backup=/sandbox/.nemoclaw-e2e-startup-config.bak
+      config=/sandbox/.deepagents/config.toml
+      if [ -e "$backup" ]; then mv -f "$backup" "$config"; fi
+    fi
     remaining=$(tagged_pids)
     if [ -n "$remaining" ]; then
       printf 'tagged TUI processes survived: %s\n' "$remaining" >&2
@@ -146,4 +158,4 @@ REMOTE
 
 openshell sandbox exec --name "$SANDBOX_NAME" -- \
   bash -c "$guard_script" nemoclaw-tui-session-guard \
-  "$MODE" "$SESSION_ID" "$BASELINE" "$WAIT_TIMEOUT" "$PROCESS_ROOT"
+  "$MODE" "$SESSION_ID" "$BASELINE" "$WAIT_TIMEOUT" "$PROCESS_ROOT" "$RESTORE_STARTUP_CONFIG"
