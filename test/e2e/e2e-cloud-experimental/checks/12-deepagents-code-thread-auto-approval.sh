@@ -513,7 +513,8 @@ expect {
   timeout { puts "NEMOCLAW_STARTUP_MODE:timeout" }
   eof { puts "NEMOCLAW_STARTUP_MODE:eof"; exit 0 }
 }
-send -- "/quit\r"
+# Use the pinned runtime's dedicated quit action, as check 10 does.
+send -- "\004"
 set timeout 30
 expect {
   -re {NEMOCLAW_STARTUP_TUI_EXIT:([0-9]+)} { puts "NEMOCLAW_STARTUP_TUI_EXIT:$expect_out(1,string)" }
