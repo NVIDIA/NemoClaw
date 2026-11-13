@@ -19,6 +19,9 @@ import {
 } from "../../inference/native-provider/custom";
 import { parseCheckedInProviderProfileContract } from "./provider-profile";
 import { isManagedNativeHostedProfileResponse } from "./native-hosted-profile-response";
+import { prepareNativeLocalProfile } from "../../inference/native-local/profile";
+import type { NativeLocalBinding } from "../../inference/native-local/contract";
+import { isManagedNativeLocalProfileResponse } from "./native-inference-profile-response";
 
 function response(definition: HostedProviderDefinition) {
   const profilePath = nativeProviderLifecycle(definition).nativeProviderProfilePath();
@@ -29,9 +32,16 @@ function response(definition: HostedProviderDefinition) {
         ? boundHermesNativeProfile(definition)
         : fs.readFileSync(profilePath, "utf8"),
   )!;
+  return profileResponse(definition.profileId, contract.boundary);
+}
+
+function profileResponse(
+  profileId: string,
+  boundary: NonNullable<ReturnType<typeof parseCheckedInProviderProfileContract>>["boundary"],
+) {
   const base = managedBraveProfile();
-  const credential = contract.boundary.credentials[0];
-  const endpoint = contract.boundary.endpoints[0] as {
+  const credential = boundary.credentials[0];
+  const endpoint = boundary.endpoints[0] as {
     host: string;
     port: number;
     allowed_ips?: string[];
@@ -40,7 +50,7 @@ function response(definition: HostedProviderDefinition) {
   return {
     profile: {
       ...base,
-      id: definition.profileId,
+      id: profileId,
       inferenceCapable: true,
       credentials: [
         {
@@ -71,10 +81,55 @@ function response(definition: HostedProviderDefinition) {
           })),
         },
       ],
-      binaries: contract.boundary.binaries.map((path) => ({ path })),
+      binaries: boundary.binaries.map((path) => ({ path })),
     },
   };
 }
+
+function localResponse(agent: "openclaw" | "hermes", api?: "openai-responses") {
+  const binding: NativeLocalBinding = {
+    provider: "compatible-endpoint",
+    agent,
+    endpointUrl: "http://host.openshell.internal:11434/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "sentinel",
+    gatewayName: "local",
+    sandboxName: "alpha",
+    ...(api ? { api } : {}),
+  };
+  const prepared = prepareNativeLocalProfile(binding);
+  const contract = parseCheckedInProviderProfileContract(JSON.stringify(prepared.document))!;
+  return { binding, value: profileResponse(prepared.profileId, contract.boundary) };
+}
+
+describe.each(["openclaw", "hermes"] as const)("native %s local profile read boundary", (agent) => {
+  it.each([undefined, "openai-responses"] as const)(
+    "accepts the generated profile for API %s",
+    (api) => {
+      const { binding, value } = localResponse(agent, api);
+      expect(isManagedNativeLocalProfileResponse(value, binding)).toBe(true);
+    },
+  );
+
+  it.each([undefined, "openai-responses"] as const)(
+    "rejects the other API's route when API %s is selected",
+    (api) => {
+      const { binding, value } = localResponse(agent, api);
+      value.profile.endpoints[0].rules[1].allow.path =
+        api === "openai-responses" ? "/v1/chat/completions" : "/v1/responses";
+      expect(isManagedNativeLocalProfileResponse(value, binding)).toBe(false);
+    },
+  );
+
+  it("rejects a profile granting both completion APIs", () => {
+    const { binding, value } = localResponse(agent, "openai-responses");
+    const endpoint = value.profile.endpoints[0];
+    endpoint.rules.push({
+      allow: { ...endpoint.rules[1].allow, path: "/v1/chat/completions" },
+    });
+    expect(isManagedNativeLocalProfileResponse(value, binding)).toBe(false);
+  });
+});
 
 describe.each(HOSTED_NATIVE_PROVIDERS)("native $label profile read boundary", (definition) => {
   it.each([{ files: undefined }, { files: [] }])(

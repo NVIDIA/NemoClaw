@@ -200,7 +200,10 @@ export function isManagedNativeLocalProfileResponse(
     allowedIps: endpoint.allowed_ips,
     rules: [
       { method: "GET", path: `${url.pathname}/models` },
-      { method: "POST", path: `${url.pathname}/chat/completions` },
+      {
+        method: "POST",
+        path: `${url.pathname}/${binding.api === "openai-responses" ? "responses" : "chat/completions"}`,
+      },
     ],
     binaries: expected.document.binaries,
   });
