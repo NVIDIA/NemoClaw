@@ -277,6 +277,11 @@ export function buildExportConfig(
       gateway: {
         management: "managed",
         endpoint: `http://127.0.0.1:${source.gateway.port}`,
+        ...(source.gateway.externalComponentRef
+          ? {
+              externalComponentRef: source.gateway.externalComponentRef,
+            }
+          : {}),
       },
       ...(services ? { services } : {}),
       inferenceProviders: [inferenceProvider(source, providerName)],
