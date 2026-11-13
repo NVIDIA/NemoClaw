@@ -5,6 +5,7 @@ import { expect, it, vi } from "vitest";
 import { handleOnboardCommandError } from "./error-reporting";
 import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
 import { fixture } from "../../adapters/openshell/provider-policy.test-support";
+import { unownedNativeProviderRefusal } from "../../inference/native-provider/lifecycle";
 
 it("reports nested onboarding causes without replacing the failure", () => {
   const primary = new Error("Created sandbox identity changed");
@@ -83,3 +84,20 @@ it("prints the providers_v2 refusal with the administrator command on its own li
     "  Native local inference requires providers_v2_enabled=true on gateway 'selected'.",
   );
 });
+
+it.each(["selected", "token", "my-token", "secret", "api-key"])(
+  "prints the full provider removal command for gateway %s (#14079)",
+  (gatewayName) => {
+    const refusal = unownedNativeProviderRefusal("nemoclaw-nvidia-prod-v1", {
+      kind: "named",
+      gatewayName,
+    });
+    const error = vi.fn();
+    expect(handleOnboardCommandError(refusal, { error }, null)).toBe(1);
+    const lines = (error.mock.calls.flat() as string[]).join("\n").split("\n");
+    expect(lines).toContain(
+      `    openshell provider delete 'nemoclaw-nvidia-prod-v1' -g '${gatewayName}'`,
+    );
+    expect(lines).toContain("  Then run onboarding again.");
+  },
+);

@@ -8,6 +8,7 @@ import type {
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/sandbox-observer";
 import { shellQuote } from "../../core/shell-quote";
+import { OperatorRefusalError } from "../../domain/operator-refusal";
 
 export type NativeProviderAttachment = Readonly<{
   schemaVersion: 1;
@@ -32,17 +33,20 @@ export class NativeProviderError extends Error {
 /**
  * Refuse a provider that has no NemoClaw receipt, and name the command that
  * clears it. Each name is shell-quoted because operators copy the command.
+ * The command has its own line so onboard's per-line bound cannot cut it, and
+ * the gateway comes last so redaction cannot take the provider as its value.
  */
-export function unownedNativeProviderMessage(
+export function unownedNativeProviderRefusal(
   providerName: string,
   target: OpenShellGatewayTarget,
-): string {
+): OperatorRefusalError {
   const gatewayFlag = target.kind === "named" ? ` -g ${shellQuote(target.gatewayName)}` : "";
-  return [
+  return new OperatorRefusalError([
     `OpenShell provider '${providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
-    "Check whether any sandbox on this gateway uses this provider.",
-    `If none does, remove it with \`openshell provider delete${gatewayFlag} ${shellQuote(providerName)}\`, then run onboarding again.`,
-  ].join(" ");
+    "Check whether any sandbox on this gateway uses this provider. If none does, remove it with:",
+    `  openshell provider delete ${shellQuote(providerName)}${gatewayFlag}`,
+    "Then run onboarding again.",
+  ]);
 }
 
 export class NativeProviderCredentialExpiredError extends NativeProviderError {
@@ -247,7 +251,7 @@ export async function ensureNativeProvider(input: {
   if (before) {
     const receipt = nativeProviderAttachmentFromMetadata(before, profile);
     if (!input.expected) {
-      throw new NativeProviderError(unownedNativeProviderMessage(profile.providerName, target));
+      throw unownedNativeProviderRefusal(profile.providerName, target);
     }
     if (input.expected && input.expected.providerId !== receipt.providerId) {
       throw new NativeProviderError(
