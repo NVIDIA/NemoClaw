@@ -2,12 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args, Flags } from "@oclif/core";
-import { execSandbox } from "../../lib/actions/sandbox/exec";
+import { execSandbox, execUsage } from "../../lib/actions/sandbox/exec";
 import {
   assertHermesPortableCommandUnavailable,
   NemoClawCommand,
   withSandboxCommandLifecycleLock,
 } from "../../lib/cli/nemoclaw-oclif-command";
+
+type ParsedToken = Awaited<ReturnType<SandboxExecCommand["parse"]>>["raw"][number];
+
+/** True when the command began before the first `--`, so that `--` is the command's own. */
+function commandStartsBeforeSeparator(
+  raw: readonly ParsedToken[],
+  originalArgv: readonly string[],
+  separatorIndex: number,
+): boolean {
+  if (separatorIndex === -1) return false;
+  const commandTokenCount = raw.filter(
+    (token) => token.type === "arg" && token.arg !== "sandboxName",
+  ).length;
+  return commandTokenCount > originalArgv.length - separatorIndex - 1;
+}
 
 export default class SandboxExecCommand extends NemoClawCommand {
   static id = "sandbox:exec";
@@ -45,8 +60,12 @@ export default class SandboxExecCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const originalArgv = [...this.argv];
-    const { args, flags, argv } = await this.parse(SandboxExecCommand);
+    const { args, flags, argv, raw } = await this.parse(SandboxExecCommand);
     const separatorIndex = originalArgv.indexOf("--");
+    if (commandStartsBeforeSeparator(raw, originalArgv, separatorIndex)) {
+      // oclif drops that `--` from argv, so refuse rather than guess (#12584).
+      this.error(`Put -- before a command that contains --. Usage: ${execUsage(args.sandboxName)}`);
+    }
     // oclif's non-strict parser preserves ordinary inner flags, but sorts
     // repeated unknown flags by their first input position. That turns a
     // command such as `env -u A -u B` into `env -u -u A B`. Once the caller
