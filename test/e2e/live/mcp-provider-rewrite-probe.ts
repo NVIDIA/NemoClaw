@@ -61,7 +61,6 @@ const req = https.request({
   method: "POST",
   headers: {
     "content-type": "application/json",
-    "mcp-protocol-version": "2025-11-25",
     "content-length": Buffer.byteLength(body),
     "authorization": authorization
   }
