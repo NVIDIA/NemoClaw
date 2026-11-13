@@ -284,7 +284,10 @@ describe("full E2E sandbox inference probe", () => {
         });
         expect(denied.status).toBe(2);
         expect(denied.stdout).toBe("");
-        expect(denied.stderr).toBe("");
+        const category = invalid ? "INVALID" : "MISSING";
+        expect(denied.stderr).toBe(
+          provider === "compatible-endpoint" ? `NEMOCLAW_NATIVE_PROVIDER_HANDLE_${category}\n` : "",
+        );
         expect(fs.existsSync(marker)).toBe(false);
       } finally {
         fs.rmSync(directory, { recursive: true, force: true });

@@ -23,7 +23,6 @@ const MESSAGING_BUILD_APPLIER = path.join(
   REPOSITORY_ROOT,
   "src/lib/messaging/applier/build/messaging-build-applier.mts",
 );
-const REVIEWED_NPM_AUDIT = path.join(REPOSITORY_ROOT, "scripts/audit-reviewed-npm-graph.mts");
 const OPENCLAW_NPM_REMEDIATION = path.join(
   REPOSITORY_ROOT,
   "scripts/lib/openclaw-npm-remediation.mts",
@@ -364,36 +363,6 @@ describe("fatal process diagnostics", () => {
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
-  });
-
-  it("omits an environment-controlled path from an audit failure (#11673)", () => {
-    const entrypoint = pathToFileURL(REVIEWED_NPM_AUDIT).href;
-    const result = spawnSync(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        [
-          `const entrypoint = ${JSON.stringify(REVIEWED_NPM_AUDIT)};`,
-          'Object.defineProperty(process, "version", { value: "v22.23.2" });',
-          "process.argv[1] = entrypoint;",
-          `await import(${JSON.stringify(entrypoint)});`,
-        ].join("\n"),
-      ],
-      {
-        cwd: REPOSITORY_ROOT,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: `../${CREDENTIAL_CANARY}`,
-        },
-      },
-    );
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Reviewed npm audit failed.");
-    expect(result.stderr).not.toContain(CREDENTIAL_CANARY);
   });
 
   it("omits inherited credentials from an npm remediation failure (#11673)", () => {

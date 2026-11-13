@@ -79,10 +79,8 @@ type ReviewedAuditReport = Readonly<{
 }>;
 
 const TRUSTED_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const TARGET_REPO_ROOT = fs.realpathSync(
-  path.resolve(process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT ?? TRUSTED_REPO_ROOT),
-);
-const CONFIG_PATH = resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT);
+let targetRepoRoot: string | undefined;
+let auditStage = "configuration";
 const SEVERITIES: readonly Severity[] = ["info", "low", "moderate", "high", "critical"];
 export const NPM_AUDIT_SIGNATURE_ARGV = [
   "audit",
@@ -165,7 +163,10 @@ function trustedRepositoryPath(relativePath: string, label: string): string {
 }
 
 function targetRepositoryPath(relativePath: string, label: string): string {
-  return resolvePathWithinRoot(TARGET_REPO_ROOT, relativePath, label);
+  targetRepoRoot ??= fs.realpathSync(
+    path.resolve(process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT ?? TRUSTED_REPO_ROOT),
+  );
+  return resolvePathWithinRoot(targetRepoRoot, relativePath, label);
 }
 
 function graphCacheFile(graphId: string): string | undefined {
@@ -286,7 +287,9 @@ export function parseAuditConfig(contents: string): AuditConfig {
 }
 
 function readConfig(): AuditConfig {
-  return parseAuditConfig(fs.readFileSync(CONFIG_PATH, "utf-8"));
+  return parseAuditConfig(
+    fs.readFileSync(resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT), "utf-8"),
+  );
 }
 
 export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
@@ -992,16 +995,20 @@ export function assertReviewedAuditReportsPass(
 
 function main(): void {
   const config = readConfig();
+  auditStage = "node-version";
   const expectedNode = `v${config.nodeVersion}`;
   if (process.version !== expectedNode) {
     throw new Error(`npm audit requires Node ${expectedNode}; running ${process.version}`);
   }
+  auditStage = "artifact-path";
   const artifactDirectory = targetRepositoryPath(
     process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR ?? config.artifactDirectory,
     "audit artifact directory",
   );
+  auditStage = "exception-registry";
   const exceptionFile = trustedRepositoryPath(config.exceptionFile, "npm audit exception file");
   const exceptionRegistry = readAuditExceptionRegistry(exceptionFile);
+  auditStage = "exception-graphs";
   assertExceptionGraphs(
     exceptionRegistry.policy,
     new Set([
@@ -1010,20 +1017,26 @@ function main(): void {
       ...config.lockedGraphs.map((graph) => graph.id),
     ]),
   );
+  auditStage = "report-directory";
   fs.rmSync(artifactDirectory, { recursive: true, force: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
+  auditStage = "npm-version";
   const npmVersion = run("npm", ["--version"], TRUSTED_REPO_ROOT).stdout.trim();
   if (npmVersion !== config.npmVersion) {
     throw new Error(`npm audit requires npm ${config.npmVersion}; running npm ${npmVersion}`);
   }
+  auditStage = "temporary-directory";
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
+    auditStage = "source-graph";
     const sourceResult = auditSourceGraph(config, tempRoot, exceptionFile, artifactDirectory);
+    auditStage = "archive-materialization";
     const archiveDirectory = materializeArchiveGraph(
       config.archivePackages,
       tempRoot,
       config.archiveTarVersion,
     );
+    auditStage = "archive-audit";
     const archiveResult = runReviewedNpmAudit({
       cacheFile: graphCacheFile(config.archiveGraphId),
       directory: archiveDirectory,
@@ -1042,6 +1055,7 @@ function main(): void {
       threshold: config.severityThreshold,
       throwOnBlock: false,
     });
+    auditStage = "locked-graphs";
     const lockedAudits = config.lockedGraphs.map((graph, index) =>
       auditLockedGraph(graph, index, config, tempRoot, exceptionFile, artifactDirectory),
     );
@@ -1054,8 +1068,10 @@ function main(): void {
         result: lockedAudits[index]!.result,
       })),
     ];
+    auditStage = "audit-policy";
     assertReviewedAuditReportsPass(reports, config.severityThreshold);
 
+    auditStage = "receipts";
     emitAuditReceipt({
       artifactDirectory,
       graphId: SOURCE_GRAPH.id,
@@ -1100,8 +1116,11 @@ function main(): void {
       });
     });
   } finally {
+    const failedStage = auditStage;
+    auditStage = "cleanup";
     makeTreeOwnerWritable(tempRoot);
     fs.rmSync(tempRoot, { recursive: true, force: true });
+    auditStage = failedStage;
   }
 }
 
@@ -1138,7 +1157,15 @@ if (isMainModule()) {
   try {
     main();
   } catch (error) {
-    console.error(fatalAuditDiagnostic(error));
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    const category =
+      typeof code === "string" &&
+      ["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EEXIST", "EROFS", "ENOSPC"].includes(code)
+        ? code
+        : error instanceof SyntaxError
+          ? "invalid-json"
+          : "rejected";
+    console.error(`${fatalAuditDiagnostic(error)} [stage=${auditStage}; category=${category}]`);
     process.exit(1);
   }
 }
