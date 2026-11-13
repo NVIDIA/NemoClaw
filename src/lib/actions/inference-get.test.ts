@@ -269,6 +269,46 @@ describe("runInferenceGet", () => {
     },
   );
 
+  it.each([undefined, "openai-responses"] as const)(
+    "reads the recorded OpenClaw compatible %s route without consulting the shared gateway",
+    async (api) => {
+      const deps = createDeps(configuredRoute("stale-provider", "stale-model"));
+      const binding: NativeLocalBinding = {
+        provider: "compatible-endpoint",
+        agent: "openclaw",
+        api,
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "authenticated",
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      };
+      const sandbox = nativeLocalSandbox(
+        {
+          provider: binding.provider,
+          nativeLocalProviderAttachment: {
+            ...binding,
+            ...nativeLocalIdentity(binding),
+            schemaVersion: 1 as const,
+            providerId: "owned-provider-id",
+          },
+        },
+        "openclaw",
+      );
+      deps.getSandbox = () => sandbox;
+      await expect(runInferenceGet({ sandboxName: "alpha", json: true }, deps)).resolves.toEqual({
+        provider: binding.provider,
+        model: "qwen2.5:7b",
+        endpointUrl: binding.endpointUrl,
+      });
+      deps.getSandbox = () => ({ ...sandbox, gatewayName: "another-gateway" });
+      await expect(runInferenceGet({ sandboxName: "alpha", json: true }, deps)).rejects.toThrow(
+        "Invalid native local provider attachment for the recorded inference selection",
+      );
+      expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
     "reads the %s Local NIM attachment without querying the shared route",
     async (agent) => {

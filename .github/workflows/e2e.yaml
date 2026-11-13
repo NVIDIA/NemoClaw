@@ -104,8 +104,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: ${{ inputs.checkout_sha != '' && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
+  group: e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && (inputs.checkout_sha == inputs.base_sha && format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets)) || format('pr-{0}-candidate', inputs.pr_number)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
+  cancel-in-progress: ${{ inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
   UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
