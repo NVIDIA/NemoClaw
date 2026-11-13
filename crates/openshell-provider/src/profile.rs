@@ -506,13 +506,13 @@ impl ConnectedOpenShellGateway {
         .await
     }
 
-    pub(super) async fn observe_profile(
+    /// The profile OpenShell holds under `name`, if any.
+    async fn fetch_profile(
         &self,
         workspace: &str,
         name: &str,
-        removing: bool,
-    ) -> Result<Option<Row>, ObservationError> {
-        let response = authoritative(
+    ) -> Result<Option<proto::ProviderProfile>, ObservationError> {
+        authoritative(
             self.client
                 .raw_grpc()
                 .get_provider_profile(self.request(proto::GetProviderProfileRequest {
@@ -520,16 +520,20 @@ impl ConnectedOpenShellGateway {
                     workspace_scope: Some(proto::workspace_selector(workspace)),
                 }))
                 .await,
-        )?;
-        match response {
-            Some(response) => self
-                .checked_profile_row(
-                    response.profile.ok_or(ObservationError::Incomplete)?,
-                    workspace,
-                    name,
-                    true,
-                    removing,
-                )
+        )?
+        .map(|response| response.profile.ok_or(ObservationError::Incomplete))
+        .transpose()
+    }
+
+    pub(super) async fn observe_profile(
+        &self,
+        workspace: &str,
+        name: &str,
+        removing: bool,
+    ) -> Result<Option<Row>, ObservationError> {
+        match self.fetch_profile(workspace, name).await? {
+            Some(profile) => self
+                .checked_profile_row(profile, workspace, name, true, removing)
                 .await
                 .map(Some),
             None => Ok(None),
@@ -545,19 +549,9 @@ impl ConnectedOpenShellGateway {
         workspace: &str,
         name: &str,
     ) -> Result<Option<proto::ProviderProfile>, ObservationError> {
-        let Some(response) = authoritative(
-            self.client
-                .raw_grpc()
-                .get_provider_profile(self.request(proto::GetProviderProfileRequest {
-                    id: name.into(),
-                    workspace_scope: Some(proto::workspace_selector(workspace)),
-                }))
-                .await,
-        )?
-        else {
+        let Some(profile) = self.fetch_profile(workspace, name).await? else {
             return Ok(None);
         };
-        let profile = response.profile.ok_or(ObservationError::Incomplete)?;
         if profile.id != name
             || !profile.source.starts_with("interceptor/")
             || profile.credentials.len() > 1

@@ -20,8 +20,8 @@ const PENDING_PROFILE: &str = "pending-profile:";
 pub(crate) const APF_PROFILE: &str = "apf_provider_profile";
 
 /// Whether APF's interceptor, not NemoClaw, owns the resource's profile.
-fn apf_profile(kind: &str, row: &Row) -> bool {
-    KINDS.contains(&kind) && value(row, crate::POLICY_AUTHORITY) == "apf"
+fn apf_profile(row: &Row) -> bool {
+    value(row, crate::POLICY_AUTHORITY) == "apf"
 }
 
 /// Check that APF's observed profile gives the sandbox its credential in the
@@ -33,15 +33,6 @@ fn apf_credential(binding: &Row, observed: &Row) -> Result<(), ObservationError>
         return Err(ObservationError::BindingMismatch);
     }
     Ok(())
-}
-
-/// The kind the profile half reads as.
-fn profile_kind(kind: &str, row: &Row) -> &'static str {
-    if apf_profile(kind, row) {
-        APF_PROFILE
-    } else {
-        "provider_profile"
-    }
 }
 
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
@@ -187,9 +178,10 @@ pub(crate) async fn read(
     removing: bool,
 ) -> Result<Option<Row>, ObservationError> {
     let (profile_binding, registration_binding) = rows(kind, prior)?;
-    let apf = apf_profile(kind, prior);
+    let apf = apf_profile(prior);
+    let profile_kind = if apf { APF_PROFILE } else { "provider_profile" };
     let profile = backend
-        .read(profile_kind(kind, prior), &profile_binding, removing)
+        .read(profile_kind, &profile_binding, removing)
         .await?;
     let registration = backend
         .read("provider", &registration_binding, removing)
@@ -292,16 +284,17 @@ pub(crate) async fn ensure(
         Ok(rows) => rows,
         Err(error) => return Mutation::failed(error),
     };
-    let (profile_state, profile_error) = if apf_profile(kind, desired) {
+    let (profile_state, profile_error) = if apf_profile(desired) {
         // APF serves the profile; NemoClaw adopts it and never imports one.
-        match backend.read(APF_PROFILE, &profile, false).await {
-            Ok(Some(observed)) => match apf_credential(&profile, &observed) {
-                Ok(()) => (None, None),
-                Err(error) => return Mutation::failed(error),
-            },
-            Ok(None) => return Mutation::failed(ObservationError::Incomplete),
-            Err(error) => return Mutation::failed(error),
+        let adopted = backend
+            .read(APF_PROFILE, &profile, false)
+            .await
+            .and_then(|observed| observed.ok_or(ObservationError::Incomplete))
+            .and_then(|observed| apf_credential(&profile, &observed));
+        if let Err(error) = adopted {
+            return Mutation::failed(error);
         }
+        (None, None)
     } else {
         backend
             .ensure("provider_profile", &profile)
@@ -351,13 +344,12 @@ pub(crate) async fn remove(
     // Registration first: the API refuses to delete a profile a registration
     // still imports. Each half is deleted through its observed row, which
     // carries the ID it is bound to.
-    let halves = if apf_profile(kind, prior) {
-        // APF's profile is not NemoClaw's to delete.
-        vec![("provider", registration)]
-    } else {
-        vec![("provider", registration), ("provider_profile", profile)]
-    };
-    for (half, row) in halves {
+    // APF's profile is not NemoClaw's to delete.
+    let halves = if apf_profile(prior) { 1 } else { 2 };
+    for (half, row) in [("provider", registration), ("provider_profile", profile)]
+        .into_iter()
+        .take(halves)
+    {
         if let Some(observed) = backend.read(half, &row, true).await? {
             let mut bound = row;
             bound.extend(observed);

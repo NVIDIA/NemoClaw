@@ -409,18 +409,20 @@ fn active_policy(
     expected: Option<&str>,
 ) -> Result<String, ObservationError> {
     let revision = response.revision.ok_or(ObservationError::Incomplete)?;
+    let policy = revision
+        .policy
+        .as_ref()
+        .ok_or(ObservationError::Incomplete)?;
     if response.active_version == 0
         || response.active_version != revision.version
         || revision.status != proto::PolicyStatus::Loaded as i32
         || revision.policy_hash.is_empty()
-        || revision.policy.is_none()
     {
         return Err(ObservationError::Incomplete);
     }
-    let Some(expected) = expected else {
-        return Ok(revision.policy_hash);
-    };
-    if !network::loaded_policy_contains(revision.policy.as_ref().unwrap(), expected)? {
+    if let Some(expected) = expected
+        && !network::loaded_policy_contains(policy, expected)?
+    {
         return Err(ObservationError::Incomplete);
     }
     Ok(revision.policy_hash)

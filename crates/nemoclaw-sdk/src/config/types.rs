@@ -199,6 +199,16 @@ pub struct PolicyAuthority {
     pub apf: ApfPolicyAuthority,
 }
 
+impl PolicyAuthority {
+    /// APF's connection settings, when NemoClaw registers APF with the gateway.
+    pub fn managed(&self) -> Option<&ManagedApf> {
+        match &self.apf {
+            ApfPolicyAuthority::Managed(apf) => Some(apf),
+            ApfPolicyAuthority::External(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "registration", rename_all = "lowercase")]
 /// Who registers APF with the gateway as its interceptor and provider-profile source.

@@ -55,14 +55,18 @@ fn read_ca(
     }
 }
 
+/// A string input, empty when null, or `None` while unknown.
+fn known(value: &Value<String>) -> Option<String> {
+    match value {
+        Value::Value(value) => Some(value.clone()),
+        Value::Null => Some(String::new()),
+        Value::Unknown => None,
+    }
+}
+
 impl GatewayRuntimeState {
     /// The launch, or `None` while any input is unknown.
     fn launch(&self) -> Option<Result<GatewayLaunch, nemoclaw_sdk::Error>> {
-        let known = |value: &Value<String>| match value {
-            Value::Value(value) => Some(value.clone()),
-            Value::Null => Some(String::new()),
-            Value::Unknown => None,
-        };
         let (name, endpoint, data_path) = (
             known(&self.name)?,
             known(&self.endpoint)?,
@@ -73,11 +77,6 @@ impl GatewayRuntimeState {
 
     /// The configuration file, or `None` while any input is unknown.
     fn config_file(&self) -> Option<Result<String, nemoclaw_sdk::Error>> {
-        let known = |value: &Value<String>| match value {
-            Value::Value(value) => Some(value.clone()),
-            Value::Null => Some(String::new()),
-            Value::Unknown => None,
-        };
         let (name, data_path, config, endpoint, ca_env) = (
             known(&self.name)?,
             known(&self.data_path)?,
@@ -102,12 +101,12 @@ impl GatewayRuntimeState {
         &self,
         environment: impl Fn(&str) -> Option<String>,
     ) -> Option<Result<String, nemoclaw_sdk::Error>> {
-        match &self.apf_ca_env {
-            Value::Unknown => None,
-            Value::Null => Some(Ok(String::new())),
-            Value::Value(variable) if variable.is_empty() => Some(Ok(String::new())),
-            Value::Value(variable) => Some(read_ca(variable, environment)),
-        }
+        let variable = known(&self.apf_ca_env)?;
+        Some(if variable.is_empty() {
+            Ok(String::new())
+        } else {
+            read_ca(&variable, environment)
+        })
     }
 }
 

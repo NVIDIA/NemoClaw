@@ -407,16 +407,17 @@ impl Spec {
                     ),
                     None => None,
                 },
-                policy_authority: match row.get(APF_ATTRIBUTE).filter(|value| !value.is_empty()) {
-                    Some(value) => Some(crate::config::PolicyAuthority {
-                        apf: crate::config::ApfPolicyAuthority::Managed(
-                            serde_json::from_str(value).map_err(|_| {
-                                Error::Conflict("invalid managed gateway attribute")
-                            })?,
-                        ),
-                    }),
-                    None => None,
-                },
+                policy_authority: row
+                    .get(APF_ATTRIBUTE)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| {
+                        serde_json::from_str(value)
+                            .map(|apf| crate::config::PolicyAuthority {
+                                apf: crate::config::ApfPolicyAuthority::Managed(apf),
+                            })
+                            .map_err(|_| Error::Conflict("invalid managed gateway attribute"))
+                    })
+                    .transpose()?,
             },
             image: get("image")?,
             process: None,
@@ -791,10 +792,7 @@ impl Spec {
 impl Spec {
     /// APF's connection settings, when NemoClaw registers APF with this gateway.
     pub fn managed_apf(&self) -> Option<&crate::config::ManagedApf> {
-        match &self.gateway.policy_authority.as_ref()?.apf {
-            crate::config::ApfPolicyAuthority::Managed(apf) => Some(apf),
-            crate::config::ApfPolicyAuthority::External(_) => None,
-        }
+        self.gateway.policy_authority.as_ref()?.managed()
     }
 }
 

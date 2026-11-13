@@ -318,10 +318,7 @@ impl Gateway {
     }
     /// APF's connection settings, when NemoClaw registers APF with this gateway.
     pub fn managed_apf(&self) -> Option<&ManagedApf> {
-        match self.policy_authority()?.apf {
-            ApfPolicyAuthority::Managed(ref apf) => Some(apf),
-            ApfPolicyAuthority::External(_) => None,
-        }
+        self.policy_authority()?.managed()
     }
     /// The endpoint used to connect to either gateway configuration.
     pub fn endpoint(&self) -> &str {
