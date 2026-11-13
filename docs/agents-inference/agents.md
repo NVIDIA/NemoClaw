@@ -146,10 +146,12 @@ agent:
 ```
 
 NemoClaw registers the API with OpenShell for each image and harness that attaches it, as `openshell_api` does in HCL.
-OpenShell injects the key into requests to the endpoint's host, port and path subtree, from the harness's executables only, and the sandbox never sees the value.
+The profile grants access to the harness's executables. OpenShell replaces the placeholder on requests to the bound host, port and path subtree, and the sandbox never sees the key.
 The key goes in `Authorization` as a bearer token by default; set `authStyle: header` and `headerName` to send the raw value in another header.
 Set the referenced variable on the applying host; exported YAML and OpenTofu state retain only the reference.
-Whether the harness sends the placeholder depends on the harness; Hermes doesn't yet send it to MCP servers ([#13313](https://github.com/NVIDIA/NemoClaw/issues/13313)).
+Registering a key does not configure the harness to send it. The HCL travel team configures Hermes to send the placeholder in its MCP `Authorization` header and gives the credential profile an enforced MCP tool allowlist.
+A smaller Docker deployment verified that the MCP service received the key on both the quote and booking requests. [HCL travel-team test result](../../examples/hcl/travel-team/README.md#booking-authentication)
+The YAML `kind: api` integration creates a full-access REST rule for the endpoint's path subtree. An additional sandbox MCP allowlist does not restrict that rule. Use the HCL example when OpenShell must enforce which tools the agent can call on a key-authenticated endpoint.
 
 For OAuth-refresh credentials, use an [operator-managed OpenShell provider](oauth-refresh.md).
 NemoClaw does not wrap its refresh contract, and manual sandbox attachments affect drift checks.

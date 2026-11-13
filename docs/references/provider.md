@@ -196,8 +196,7 @@ resource "openshell_inference" "nemotron" {
 
 Use `openshell_api` when a sandbox needs to authenticate to an API other than inference or web search, such as a booking service over HTTP MCP.
 It owns an OpenShell profile and registration; attach its `ref` to the sandbox's `providers`.
-The profile binds credential injection to the endpoint's host, port and path subtree, and the named executables.
-OpenShell owns injection and destination checks when the sandbox connects.
+The profile grants endpoint access to the named executables. OpenShell replaces the placeholder only at the bound host, port and path.
 
 Set the credential in the environment of the process running OpenTofu, then name that variable in `credential_env`:
 
@@ -219,7 +218,13 @@ resource "openshell_api" "booking" {
 For an API key sent without the Bearer prefix, set `auth_style = "header"` and `header_name = "X-API-Key"`.
 Query parameters, OAuth and refresh flows are not supported by this resource.
 Endpoints must use HTTP(S) without embedded credentials, queries, fragments or globs.
-For `/mcp`, the profile allows `/mcp` and its descendants, not sibling paths.
+By default, the profile grants full REST access to the endpoint's path subtree.
+To restrict an MCP endpoint to specific methods and tools, declare an `mcp` block with one or more `rules` blocks on `openshell_api`. OpenShell enforces those rules on the exact URL path with its default MCP protocol revision.
+Use a canonical path such as `/mcp` or `/mcp/`. Paths with repeated slashes, path parameters, `^`, or `|` are rejected.
+Include the server's initialization and tool discovery methods and the allowed `tools/call` selectors. Use the profile as the only grant for that endpoint, because a broader matching grant can allow additional requests.
+Each tool rule may use one selector, either `allow.tool` or `allow.params.name`.
+If the gateway defines a global policy, that policy controls authorization.
+See the [HCL travel team](https://github.com/NVIDIA/NemoClaw/tree/v1/examples/hcl/travel-team) for the rules and Hermes header configuration.
 A literal IP grants only that address; a DNS name receives no private-network grant.
 `binaries` must list the absolute paths of the callers allowed to use the credential.
 
@@ -237,7 +242,7 @@ Foreign ownership or an incomplete observation stops planning.
 
 To remove the credential, first detach or explicitly remove sandboxes using its registration, then remove the API resource and apply.
 Removal deletes the registration and its owned profile; it does not unset the host variable or revoke the key at the API service.
-Endpoint, authentication and executable changes replace the pair, so detach consumers before making those changes.
+Endpoint, MCP policy, authentication and executable changes replace the pair. Arrange for attached sandboxes to detach or be replaced first.
 
 #### Web Search
 

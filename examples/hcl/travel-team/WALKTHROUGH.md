@@ -123,7 +123,7 @@ resource "openshell_inference" "local" {
 
 This registers the local model once it's ready, so the sandboxes that attach it, and their agents, wait for it too.
 `binaries` limits the registration to the executables of the harnesses that use the local model.
-`openshell_inference.frontier` registers the hosted model the same way, and OpenShell reads its key from `credential_env` during apply; the key never enters OpenTofu state.
+`openshell_inference.frontier` registers the hosted model the same way. During apply, NemoClaw's OpenTofu provider reads the key from the environment variable named in `credential_env` and sends it to OpenShell. The key stays out of OpenTofu state.
 
 ```hcl
 sandbox_env = var.search.provider == "brave" ? "BRAVE_SEARCH_API_KEY" : null
@@ -132,55 +132,32 @@ sandbox_env = var.search.provider == "brave" ? "BRAVE_SEARCH_API_KEY" : null
 One web search registration, which only researchers attach.
 Inside a sandbox, an agent finds a provider's key in a variable OpenShell sets; Hermes's Brave plugin reads `BRAVE_SEARCH_API_KEY`, so the registration names that variable instead of the default `BRAVE_API_KEY`.
 
+The buyer alone attaches `openshell_api.bookings`.
+The registration holds the credential. Its profile carries the `mcp` block's rules for setup, tool listing, and calls to `var.bookings.tools`.
+This rule permits the `get_quote` tool.
+
 ```hcl
-resource "openshell_api" "bookings" {
-  gateway        = local.gateway
-  workspace      = openshell_workspace.team.ref
-  name           = "bookings"
-  endpoint       = var.bookings.url
-  credential_env = var.bookings.credential_env
-  binaries       = local.binaries.buyer
+mcp {
+  rules {
+    allow {
+      method = "tools/call"
+      tool {
+        value = "get_quote"
+      }
+    }
+  }
 }
 ```
 
-This registers the booking service's key for the buyer's executables only.
-OpenShell puts the key into a request in place of its placeholder, so the agent never sees the key itself.
-Hermes doesn't send that placeholder to MCP servers yet, so for now the service receives no key; [#14417](https://github.com/NVIDIA/NemoClaw/issues/14417) tracks it.
+OpenShell enforces these rules on the credentialed endpoint. The buyer's sandbox policy adds no separate grant for that destination.
 
 ## `policies.tf`: Network Grants
 
-OpenShell denies every request a sandbox's policy doesn't grant.
-It already grants each attached provider's endpoint, such as a model, web search, or the booking service, to the executables its registration names.
-The policy grants only what no provider covers: researchers' own sources, and the booking service's MCP tools.
-
 ```hcl
-port = url.port != null ? tonumber(url.port) : (url.scheme == "https" ? 443 : 80)
+for host in lookup(var.research_sources, role, []) : "${role}-${replace(host, ".", "-")}" => host
 ```
 
-A URL without a port has a `null` port, which `tonumber` returns unchanged rather than rejecting, so `try(tonumber(url.port), 443)` would not fall back.
-
-```hcl
-allowed_ips = can(cidrhost("${url.host}/32", 0)) ? ["${url.host}/32"] : null
-```
-
-For a booking service at a literal IP address, OpenShell's own policy for the provider pins that address, and a grant on the same endpoint must agree.
-
-```hcl
-protocol    = "mcp"
-rules = concat(
-  [for method in ["initialize", "notifications/initialized", "tools/list"] : { method = method, path = null, tool = null }],
-  [for tool in var.bookings.tools : { method = "tools/call", path = null, tool = tool }],
-)
-```
-
-The booking grant allows MCP setup, tool listing, and calls to the listed tools only.
-Hermes can't limit which of an MCP server's tools an agent calls, so this grant is what does; OpenShell enforces it on the buyer's traffic.
-
-```hcl
-for host in lookup(var.research_sources, role, []) : "${role}-${replace(host, ".", "-")}" => {
-```
-
-`local.grants` gives each role a map of named grants: each researcher gets `GET` access to its own sources from `research_sources`, the buyer gets the booking grant, and the scheduler gets none.
+`local.grants` names the research sources for each role. Each researcher gets `GET` access to its own sources over HTTPS. The scheduler and buyer use their attached providers.
 
 ## `agents.tf`: Sandboxes and Agents
 
@@ -273,13 +250,9 @@ Without this trigger, `fabric_agent` refuses to change in a sandbox that stays.
 Replacing a sandbox deletes its files, except those on mounted volumes.
 If the trigger's input weren't known when planning, every apply would replace every sandbox.
 
-```hcl
-dynamic "mcp" {
-  for_each = each.value.bookings ? [var.bookings] : []
-```
+The `skills` block applies only to researchers with a skills volume. The buyer's `mcp` block passes the booking URL and `custom_headers` to Hermes. OpenTofu's `$${` escape leaves the `${NEMOCLAW_API_BOOKINGS_KEY}` reference for Hermes to expand from its environment. OpenShell substitutes the stored key when forwarding an admitted request. The URL, header, and policy rules are part of the buyer's replacement trigger.
 
-This starts each agent in its sandbox with Fabric's configuration format.
-The `skills` and `mcp` blocks are dynamic, so only researchers with a skills volume read skills, and only the buyer reaches the booking service.
+In the [Docker booking authentication test](README.md#booking-authentication), the service received the expected bearer key on both the quote and booking requests.
 
 ## `outputs.tf`: Invoking Agents
 

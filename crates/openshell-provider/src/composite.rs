@@ -6,6 +6,7 @@
 //! recreated in place; missing registrations replace the pair. Failed API
 //! creates retain the established profile or registration binding for recovery.
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
+use nemoclaw_openshell::api::MCP_POLICY;
 use nemoclaw_openshell::pairs::{
     api_rows, inference_provider_type, inference_rows, web_search_rows,
 };
@@ -71,8 +72,9 @@ fn validate(kind: &str, desired: &Row) -> Result<(), Error> {
                 value(desired, "endpoint"),
                 value(desired, "auth_style"),
                 value(desired, "header_name"),
+                value(desired, MCP_POLICY),
             ).map_err(|_| Error::Conflict(
-                "API credentials require an HTTP(S) endpoint and bearer or header authentication",
+                "API credentials require a valid HTTP(S) endpoint and authentication style. If set, MCP policy requires a canonical endpoint path and rules with at most one tool selector each",
             ))?;
             if value(desired, "credential_env").is_empty() {
                 return Err(Error::Conflict(
@@ -119,6 +121,7 @@ pub(crate) fn validate_api(
         "header_name",
         "credential_env",
         "binaries_json",
+        MCP_POLICY,
     ]
     .iter()
     .any(|field| unknown.contains(field))
@@ -209,7 +212,7 @@ pub(crate) async fn read(
                 value(&profile, "binaries_json").into(),
             );
             if kind == API {
-                for field in ["auth_style", "header_name"] {
+                for field in ["auth_style", "header_name", MCP_POLICY] {
                     observed.insert(field.into(), value(&profile, field).into());
                 }
             }

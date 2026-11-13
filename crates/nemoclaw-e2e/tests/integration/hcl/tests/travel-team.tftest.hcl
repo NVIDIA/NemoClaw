@@ -81,16 +81,36 @@ run "observe" {
     error_message = "A role does not attach exactly its registrations."
   }
 
-  # OpenShell grants attached providers' endpoints itself, so policies hold
-  # only researchers' sources and the buyer's booking service.
+  # The booking profile owns the buyer's MCP endpoint. An overlapping sandbox
+  # grant could admit a call that the provider's rules don't allow.
   assert {
     condition = (
       output.agents.scheduler.policy_endpoints == []
       && contains(output.agents.flights.policy_endpoints, "api.flights.example.com:443")
       && contains(output.agents.attractions.policy_endpoints, "api.attractions.example.com:443")
-      && anytrue([for endpoint in output.agents.buyer.policy_endpoints : startswith(endpoint, "bookings.example.com:443")])
+      && output.agents.buyer.policy_endpoints == []
     )
     error_message = "A role's policy grants the wrong destinations."
+  }
+
+  assert {
+    condition = (
+      contains(output.agents.buyer.providers, "bookings")
+      && try(tolist(output.openshell.profiles["nemoclaw-api-bookings"].endpoints), []) == tolist(["bookings.example.com:443/mcp"])
+    )
+    error_message = "The buyer must attach the booking registration whose profile grants only the exact MCP endpoint."
+  }
+
+  assert {
+    condition = toset(flatten([
+      for rule in output.openshell.profile_mcp_rules["nemoclaw-api-bookings"] :
+      rule.tool == null ? [rule.method] : [
+        for tool in compact(concat([rule.tool.glob], rule.tool.any)) : "${rule.method}:${tool}"
+      ]
+      ])) == toset([
+      "initialize", "notifications/initialized", "tools/list", "tools/call:book_option", "tools/call:get_quote",
+    ])
+    error_message = "The booking profile must allow MCP setup and discovery and calls to exactly get_quote and book_option."
   }
 
   assert {
@@ -107,6 +127,11 @@ run "observe" {
       && output.agents.buyer.start.configuration.mcp.servers.bookings.url == "https://bookings.example.com/mcp"
     )
     error_message = "A researcher's local model or the buyer's booking service is missing."
+  }
+
+  assert {
+    condition     = try(output.agents.buyer.start.configuration.mcp.servers.bookings.custom_headers.Authorization, "") == "Bearer $${NEMOCLAW_API_BOOKINGS_KEY}"
+    error_message = "The buyer does not send the booking key placeholder in its MCP Authorization header."
   }
 }
 
