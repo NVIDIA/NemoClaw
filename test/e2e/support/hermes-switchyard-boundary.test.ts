@@ -7,6 +7,7 @@ import {
   startSwitchyardBoundaryUpstream,
   switchyardBoundaryProbe,
   SWITCHYARD_BOUNDARY_ANSWER,
+  SWITCHYARD_BOUNDARY_CREDENTIAL_ENV,
   SWITCHYARD_CALLER_CANARY,
 } from "../fixtures/hermes-switchyard-boundary.ts";
 
@@ -57,18 +58,44 @@ test("boundary peers require the credential, expose redirect/denial witnesses, a
   }
 });
 
-test("boundary probe compiles and localizes only the temporary deployment transport", () => {
+test("boundary probe uses the injected handle and localizes the temporary deployment transport", () => {
   const args = switchyardBoundaryProbe("http://host.openshell.internal:12345/v1");
-  const compiled = spawnSync(
-    "python3",
-    ["-I", "-c", "import sys; compile(sys.stdin.read(), '<boundary>', 'exec')"],
-    {
-      input: args[3],
-      encoding: "utf8",
-      timeout: 10_000,
+  const sdk = String.raw`
+import os, sys, types
+class Runtime:
+    def __init__(self):
+        injected = os.environ['${SWITCHYARD_BOUNDARY_CREDENTIAL_ENV}']
+        if any(os.environ.get(key) != injected for key in ('NVIDIA_INFERENCE_API_KEY', 'OPENAI_API_KEY')):
+            raise RuntimeError('Client did not receive the injected credential handle')
+    def managed_execution_enabled(self):
+        return True
+    def shutdown(self):
+        pass
+async def execute(_capability, _request, _passthrough):
+    return {'choices': [{'message': {'content': '${SWITCHYARD_BOUNDARY_ANSWER}'}}]}
+relay = types.ModuleType('nemo_relay')
+relay.LLMRequest = lambda headers, body: (headers, body)
+relay.llm = types.SimpleNamespace(execute=execute)
+agent = types.ModuleType('agent')
+agent.relay_runtime = types.SimpleNamespace(RELAY_PLUGINS_CONFIG_ENV='TEST_RELAY_CONFIG', RelayRuntime=Runtime)
+sys.modules['nemo_relay'] = relay
+sys.modules['agent'] = agent
+`;
+  const probed = spawnSync("python3", ["-I", "-c", sdk + args[3], args[4]!], {
+    env: {
+      ...process.env,
+      [SWITCHYARD_BOUNDARY_CREDENTIAL_ENV]: `openshell:resolve:env:v7_${SWITCHYARD_BOUNDARY_CREDENTIAL_ENV}`,
     },
-  );
-  expect(compiled.status, compiled.stderr).toBe(0);
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  expect(probed.status, probed.stderr).toBe(0);
+  expect(JSON.parse(probed.stdout)).toEqual({
+    active: true,
+    failed: false,
+    passthrough: false,
+    answer: SWITCHYARD_BOUNDARY_ANSWER,
+  });
   const payload = JSON.parse(Buffer.from(args[4]!, "base64").toString());
   expect(payload.deployment.match(/^base_url = .*$/gm)).toEqual([
     'base_url = "http://host.openshell.internal:12345/v1"',

@@ -171,7 +171,7 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
     (root / '.dynamic-plugins.json').write_text(payload['state'])
     os.environ[relay_runtime.RELAY_PLUGINS_CONFIG_ENV] = str(config)
     for key in ('NVIDIA_INFERENCE_API_KEY', 'OPENAI_API_KEY'):
-        os.environ[key] = 'xapp-OPENSHELL-RESOLVE-ENV-${SWITCHYARD_BOUNDARY_CREDENTIAL_ENV}'
+        os.environ[key] = os.environ['${SWITCHYARD_BOUNDARY_CREDENTIAL_ENV}']
     runtime = relay_runtime.RelayRuntime()
     outcome = {'active': False, 'failed': False, 'passthrough': False, 'answer': None}
     try:
