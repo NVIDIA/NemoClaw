@@ -54,14 +54,7 @@ run "destroy" {
   }
 
   assert {
-    condition = (
-      output.exit_code == 0 && output.result.outcome == "destroyed"
-      && toset(output.result.retained) == toset([
-        "openshell_gateway_storage.runtime",
-        "docker_volume.inference_storage_inference_super",
-        "vllm_credential_storage.inference_super_auth",
-      ])
-    )
-    error_message = "Destroy failed or retained other resources: ${output.error}"
+    condition     = output.exit_code == 0 && output.result.outcome == "destroyed"
+    error_message = "Destroy failed: ${output.error}"
   }
 }

@@ -158,8 +158,13 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 
 ### DGX Station on Colossus
 
-**CI / Bundle** skips Colossus on PRs by default. Add `run-colossus` to a same-repository PR to enable it; label changes start a new run, and the label enables subsequent commits until removed. Fork PRs cannot opt in. Every `v1` push enables it automatically.
-GPU smoke failure skips Station without failing Bundle. After smoke passes, build, inference, and cleanup failures fail the lane; required `Test / PLATFORM` checks remain independent. An offline runner leaves smoke queued rather than immediately skipped.
+Station runs only through a manual **Live / HCL** dispatch. It does not run on PRs or `v1` pushes; [#14346](https://github.com/NVIDIA/NemoClaw/issues/14346) owns trigger and gating policy. Dispatch the candidate branch:
+
+```bash
+gh workflow run hcl-e2e.yml --ref <branch> -f target=dgx-station -f hosted=false
+```
+
+Build, inference, and cleanup failures fail that manual run. An offline runner leaves its hardware job queued.
 
 Colorunner must prepare Ubuntu 24.04 ARM64, GB300, Docker GPU access, and the containerd image store. CI does not provision the host or manage its lease.
 The shared HCL workflow binds the existing GTC Station example to its pinned Nemotron 3.5 model/runtime and candidate images, fresh UID, state, and nonoverlapping subnet. The scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup.

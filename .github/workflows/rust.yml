@@ -6,7 +6,6 @@ on:
     branches: [v1]
   # Stacked v1 PRs target feature branches, so do not filter by base branch.
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch:
 # The planner and the Linux live suites read the per-commit image package for
 # images to reuse. GitHub checks a reusable workflow's job permissions for every
@@ -20,27 +19,6 @@ concurrency:
   # outlasts the usual gap between merges. Cancelling pushes left those caches unwritten.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  colossus_smoke:
-    name: Colossus / GPU smoke
-    if: github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'push' && github.ref == 'refs/heads/v1') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'run-colossus')))
-    runs-on: colossus-gb300-pilot
-    timeout-minutes: 2
-    continue-on-error: true
-    outputs:
-      ready: ${{ steps.gpu.outcome == 'success' }}
-    steps:
-      - name: Check NVIDIA GPU access
-        id: gpu
-        shell: bash
-        run: nvidia-smi
-  colossus:
-    name: Colossus / Station
-    needs: colossus_smoke
-    if: "!cancelled() && needs.colossus_smoke.outputs.ready == 'true'"
-    uses: ./.github/workflows/hcl-e2e.yml
-    with:
-      target: dgx-station
-      hosted: false
   plan:
     uses: ./.github/workflows/validation-plan.yml
     with:

@@ -275,11 +275,8 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
         .collect();
     assert_eq!(
         callers,
-        [
-            ".github/workflows/e2e-platform.yml: gpu",
-            ".github/workflows/rust.yml: colossus"
-        ],
-        "Bundle and the E2E platform workflow share Live / HCL"
+        [".github/workflows/e2e-platform.yml: gpu"],
+        "the E2E platform workflow calls Live / HCL"
     );
 
     let platform = read(".github/workflows/e2e-platform.yml");
