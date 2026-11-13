@@ -167,6 +167,34 @@ describe("stopped Docker recovery capture", () => {
     expect(inspect).not.toHaveBeenCalled();
   });
 
+  it.each([null, undefined] as const)(
+    "accepts legacy Docker entries without driver metadata (%s)",
+    (openshellDriver) => {
+      const inspect = vi.fn((args: readonly string[]) => inspectStorage(args, observation()));
+      const capture = prepareStoppedDockerStateCapture(
+        { ...sandbox, openshellDriver },
+        runtime,
+        projection,
+        { inspect },
+      );
+      expect(capture.assertCurrent).not.toThrow();
+      expect(inspect).toHaveBeenCalled();
+    },
+  );
+
+  it.each(["podman", "vm"])("rejects an explicit %s driver before runtime access", (driver) => {
+    const inspect = vi.fn();
+    expect(() =>
+      prepareStoppedDockerStateCapture(
+        { ...sandbox, openshellDriver: driver },
+        runtime,
+        projection,
+        { inspect },
+      ),
+    ).toThrow("identified Docker OpenClaw or Deep Agents");
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
   it("captures the complete stopped Deep Agents native root (#11165, #11767)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-dcode-test-"));
     const archive = path.join(root, "archive");

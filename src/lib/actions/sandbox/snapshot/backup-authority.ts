@@ -403,20 +403,21 @@ export async function prepareStoppedAgentState(
   if (!entry || (agentName !== "openclaw" && agentName !== "langchain-deepagents-code"))
     return null;
   const authority = captureSnapshotAuthority(entry, dependencies);
-  const runtime = authority?.runtimeSnapshot;
-  if (!runtime || runtime.lifecycleState !== "stopped" || !authority.workload) return null;
-  const capture = prepareSandboxStoppedStateCapture(
-    dependencies.requireProvider(entry),
-    entry,
-    runtime,
-    {
-      nativeRoot: "/sandbox",
-      managedStateRoots:
-        authority.workload.kind === "managed-image"
-          ? managedStartupStateRootOwnership({ agent: agentName, sandboxName })
-          : [],
-    },
-  );
+  const provider = dependencies.requireProvider(entry);
+  if (
+    !authority?.workload &&
+    (!provider.snapshot.supported || !provider.snapshot.prepareStoppedStateCapture)
+  )
+    return null;
+  const runtime = authority?.runtimeSnapshot ?? dependencies.captureRuntime(provider, entry);
+  if (!runtime || runtime.lifecycleState !== "stopped") return null;
+  const capture = prepareSandboxStoppedStateCapture(provider, entry, runtime, {
+    nativeRoot: "/sandbox",
+    managedStateRoots:
+      authority?.workload?.kind === "managed-image"
+        ? managedStartupStateRootOwnership({ agent: agentName, sandboxName })
+        : [],
+  });
   if (!capture) return null;
   const assertCurrent = (): void => {
     const current = getSandbox(sandboxName);
@@ -427,7 +428,7 @@ export async function prepareStoppedAgentState(
     ) {
       rejectStoppedState("Stopped source registration changed during recovery.");
     }
-    authority.validateBeforePublish?.();
+    authority?.validateBeforePublish?.();
     capture.assertCurrent();
   };
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-state-"));
