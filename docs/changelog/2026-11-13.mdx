@@ -36,6 +36,8 @@ NemoClaw v0.0.144 fixes Deep Agents Code startup approval mode, improves rebuild
 
 ### Messaging and Contributor Workflows
 
+- Sandbox status warnings describe an unavailable inference probe without assuming the sandbox uses `inference.local`.
+  Related change: [PR #14457](https://github.com/NVIDIA/NemoClaw/pull/14457).
 - Telegram and WeChat readiness messages report channel API reachability without claiming to verify the agent's inference route.
   Related change: [PR #14448](https://github.com/NVIDIA/NemoClaw/pull/14448).
 - Interrupted upgrade tasks retain validated checkpoints, pending writes, and retry budgets.
