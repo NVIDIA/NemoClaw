@@ -1693,7 +1693,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           agentName(agent),
           { provider: provider, endpointUrl },
           Boolean(nimContainer),
-          preservesLegacyPiRoute(sandboxName, { provider: provider, model: model, endpointUrl }),
+          earlyManagedHostLocalLifecycleSelection?.setupOptions.hostLocalInference
+            ?.sharedInferenceRoute === true ||
+            preservesLegacyPiRoute(sandboxName, { provider: provider, model: model, endpointUrl }),
         ),
       );
       // A completed provider-selection checkpoint is not proof that a managed
@@ -2074,11 +2076,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         agentName(agent),
         { provider: selectedProvider, endpointUrl },
         Boolean(nimContainer),
-        preservesLegacyPiRoute(sandboxName, {
-          provider: selectedProvider,
-          model: selectedModel,
-          endpointUrl,
-        }),
+        resumeHostLocalInferenceSetupOptions.hostLocalInference?.sharedInferenceRoute === true ||
+          preservesLegacyPiRoute(sandboxName, {
+            provider: selectedProvider,
+            model: selectedModel,
+            endpointUrl,
+          }),
       ),
       nativeLocalAttached: () =>
         Boolean(sandboxName) &&

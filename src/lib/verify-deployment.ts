@@ -36,6 +36,7 @@ import { retryUntilAsync } from "./core/retry";
 import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import { requireHostedProviderAttachment } from "./inference/native-provider/hosted-attachment";
 import {
+  isPersistedHermesPortableSharedLocalInferenceRoute,
   isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalBinding,
   normalizeNativeLocalProviderAttachment,
@@ -1014,6 +1015,7 @@ export function onboardInferenceVerificationContext(
       > & {
         nimContainer?: string | null;
         agent?: string | null;
+        portableLifecycleProfile?: "openclaw" | "hermes" | null;
         provider?: string | null;
         model?: string | null;
         endpointUrl?: string | null;
@@ -1029,7 +1031,9 @@ export function onboardInferenceVerificationContext(
       flow.provider,
       flow.endpointUrl,
       flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
-    ) && !isPersistedPiSharedLocalInferenceRoute(attachment, flow);
+    ) &&
+    !isPersistedHermesPortableSharedLocalInferenceRoute(attachment, flow) &&
+    !isPersistedPiSharedLocalInferenceRoute(attachment, flow);
   const nativeLocalProviderAttachment =
     flow.provider === "vllm-local" && attachment?.nimContainer
       ? undefined

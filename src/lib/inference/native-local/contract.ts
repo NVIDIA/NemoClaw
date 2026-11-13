@@ -9,6 +9,7 @@ import {
 export {
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
+  isPersistedHermesPortableSharedLocalInferenceRoute,
   isPersistedPiSharedLocalInferenceRoute,
 } from "./eligibility";
 export {

@@ -3,6 +3,7 @@
 
 import {
   type HostLocalInferenceReceipt,
+  normalizeHostLocalOllamaModelRef,
   serializeHostLocalInferenceReceipt,
 } from "../../src/lib/onboard/runtime-provider/host-local-inference";
 
@@ -95,4 +96,59 @@ export function llamaCppHostLocalInferenceReceipt(
 
 export function serializedLlamaCppHostLocalInferenceReceipt(providerId = "docker"): string {
   return serializeHostLocalInferenceReceipt(llamaCppHostLocalInferenceReceipt(providerId));
+}
+
+export function ollamaHostLocalInferenceReceipt(
+  model = "qwen3-vl:4b",
+  providerId = "podman",
+): HostLocalInferenceReceipt {
+  return {
+    schemaVersion: 2,
+    providerId,
+    service: "ollama",
+    engineAuthority: {
+      schemaVersion: 1,
+      providerId,
+      operation: "host-local-inference",
+      engineId: providerId,
+      authorityId: `${providerId}:host-local`,
+      bindingSha256: "a".repeat(64),
+    },
+    endpoint: {
+      host: "host.openshell.internal",
+      port: 11434,
+      networkName: "nemoclaw-runtime-network",
+      networkId: "e".repeat(64),
+      networkGatewayIp: "10.89.0.1",
+      networkAuthoritySha256: "f".repeat(64),
+    },
+    inference: {
+      protocol: "openai-chat-completions",
+      model: normalizeHostLocalOllamaModelRef(model),
+      toolCallingRequired: true,
+    },
+    publication: {
+      transactionId: "1".repeat(64),
+      targetSha256: "2".repeat(64),
+      priorState: "absent",
+    },
+    runtime: {
+      kind: "container",
+      runtimeId: `${providerId}-ollama`,
+      name: "nemoclaw-ollama",
+      imageRef: `docker.io/ollama/ollama@sha256:${"b".repeat(64)}`,
+      probeImageRef: `quay.io/curl/curl@sha256:${"c".repeat(64)}`,
+      specSha256: "d".repeat(64),
+      launchSha256: "3".repeat(64),
+      modelDigest: `sha256:${"8".repeat(64)}`,
+      gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
+    },
+  };
+}
+
+export function serializedOllamaHostLocalInferenceReceipt(
+  model = "qwen3-vl:4b",
+  providerId = "podman",
+): string {
+  return serializeHostLocalInferenceReceipt(ollamaHostLocalInferenceReceipt(model, providerId));
 }
