@@ -255,7 +255,20 @@ describe("OpenShell stop/start sandbox cleanup", () => {
           args.join(" ") === "sandbox list -g nemoclaw -o json"
             ? {
                 ...success,
-                stdout: JSON.stringify([{ id: "sandbox-id-1", name: "e2e-survival-cleanup" }]),
+                stdout: JSON.stringify({
+                  next_page_token: "",
+                  sandboxes: [
+                    {
+                      id: "sandbox-id-1",
+                      name: "e2e-survival-cleanup",
+                      labels: {},
+                      resource_version: 1,
+                      created_at: "2026-11-13T00:00:00Z",
+                      phase: "Ready",
+                      current_policy_version: 1,
+                    },
+                  ],
+                }),
               }
             : success,
         ),

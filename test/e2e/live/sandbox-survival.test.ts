@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
+import { parseStrictOpenShellSandboxListJson } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import {
   buildNativePluginInvocationScript,
@@ -376,9 +377,8 @@ test(
       { artifactName: "cold-recovery-source-sandbox", env: sandboxEnv, timeoutMs: 10_000 },
     );
     assertExitZero(beforeRecovery, "record the cold-recovery source sandbox");
-    const sourceRows = (
-      JSON.parse(beforeRecovery.stdout) as Array<{ id: string; name: string }>
-    ).filter((row) => row.name === SANDBOX_NAME);
+    const sourceInventory = parseStrictOpenShellSandboxListJson(beforeRecovery.stdout);
+    const sourceRows = (sourceInventory ?? []).filter((row) => row.name === SANDBOX_NAME);
     expect(sourceRows).toHaveLength(1);
     const sourceSandboxId = sourceRows[0]!.id;
     expect(sourceSandboxId).toMatch(/^[A-Za-z0-9._-]{1,512}$/u);
@@ -454,7 +454,8 @@ test(
       },
     );
     assertExitZero(afterRecovery, "observe the recovered sandbox identity");
-    const recoveredIds = (JSON.parse(afterRecovery.stdout) as Array<{ id: string; name: string }>)
+    const recoveredInventory = parseStrictOpenShellSandboxListJson(afterRecovery.stdout);
+    const recoveredIds = (recoveredInventory ?? [])
       .filter((row) => row.name === SANDBOX_NAME)
       .map((row) => row.id);
     expect(recoveredIds).toEqual([sourceSandboxId]);

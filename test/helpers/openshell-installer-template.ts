@@ -213,6 +213,15 @@ export function installerReleaseTemplate(source: string, version: string): strin
     assert.ok(guardEnd > guardStart, "OpenShell 0.1.2 retirement guard fixture boundary");
     source = source.slice(0, guardStart) + source.slice(guardEnd);
     source = source.replace("verify_legacy_openshell_state\n\n", "");
+    for (const recheck of [
+      "  # Downloads can outlive the initial absence proof. Recheck before changing the tap.\n" +
+        "  verify_legacy_openshell_state\n",
+      "  # Formula inspection can also overlap new sandbox creation.\n" +
+        "  verify_legacy_openshell_state\n",
+    ]) {
+      assert.equal(source.split(recheck).length - 1, 1, "historical Homebrew guard recheck");
+      source = source.replace(recheck, "");
+    }
   }
   // Historical trust fixtures retain the installer bytes authorized before the
   // direct-install permission fix. The current candidate is checked separately.

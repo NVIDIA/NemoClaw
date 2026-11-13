@@ -37,7 +37,8 @@ export function buildMcpSecretAbsenceScript(
     '  [ -e "$scan_path" ] || exit 2',
     `  for scan_secret in ${secrets.map(shellQuote).join(" ")}; do`,
     // Do not use grep -q: a match must not suppress a read error elsewhere in the tree.
-    '    if grep -RF -- "$scan_secret" "$scan_path" >/dev/null 2>&1; then',
+    // Hermes creates Unix sockets in its state tree; scan stored file contents without opening IPC endpoints.
+    '    if grep -RF --devices=skip -- "$scan_secret" "$scan_path" >/dev/null 2>&1; then',
     "      exit 1",
     "    else",
     "      scan_status=$?",
