@@ -257,7 +257,11 @@ export function candidateSdkLocatorFixture(
     denied: false,
     decision: { ...decision, candidate: true },
   };
-  const availability = { missingReads: 0, pendingReads: 0, accessDenied: false };
+  const availability = {
+    missingReads: 0,
+    pendingReads: 0,
+    accessDenied: false as boolean | "parent",
+  };
   const bin = join(root, "bin");
   const trusted = join(root, ".trusted-sdk-package-decision");
   mkdirSync(bin);
@@ -283,7 +287,9 @@ const fs = require('node:fs');
 const stateFile = process.env.SDK_LOCATOR_STATE;
 const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : { artifactReads: 0, producerReads: 0, sleeps: 0 };
 const availability = JSON.parse(process.env.SDK_LOCATOR_AVAILABILITY);
-if (availability.accessDenied) process.exit(13);
+if (availability.accessDenied === true || (availability.accessDenied === 'parent' && route?.endsWith('/pulls'))) {
+  process.stderr.write('private diagnostic'); process.exit(13);
+}
 if (route?.endsWith('/pulls')) {
   process.stdout.write(JSON.stringify([JSON.parse(process.env.SDK_LOCATOR_PARENTS)]));
 } else if (route?.includes('/actions/artifacts?')) {

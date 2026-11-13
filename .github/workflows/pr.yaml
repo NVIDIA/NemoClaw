@@ -286,7 +286,10 @@ jobs:
           bundle_name="reviewed-openshell-sdk-$bundle"
           candidate="$(jq -er '.candidate // false | tostring' <<<"$decision")"
           if [ "$candidate" = "false" ] && [ "${GITHUB_BASE_REF:-main}" != "main" ]; then
-            main_artifacts="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$bundle_name&per_page=100")"
+            if ! main_artifacts="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$bundle_name&per_page=100" 2>/dev/null)"; then
+              echo "::error::Could not list approved SDK artifacts. Restore Actions access, then rerun this CI job."
+              exit 1
+            fi
             main_available="$(jq -er --arg name "$bundle_name" --argjson repo "$REPOSITORY_ID" '
               [.[] | .artifacts[] | select(.name == $name and .expired == false
                 and .workflow_run.head_branch == "main" and .workflow_run.head_repository_id == $repo)] | (length > 0 | tostring)' <<<"$main_artifacts")"
@@ -294,12 +297,15 @@ jobs:
           if [ "$main_available" = "false" ]; then
             # A stacked child may inherit an admitted SDK that main has not published yet.
             # Reuse the parent's admission, never relabel its artifact as a main publication.
-            parent="$(gh api --method GET --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls" \
-              -f state=open -f base=main -f head="${GITHUB_REPOSITORY%%/*}:$GITHUB_BASE_REF" -f per_page=100 \
+            if ! parent="$(gh api --method GET --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls" \
+              -f state=open -f base=main -f head="${GITHUB_REPOSITORY%%/*}:$GITHUB_BASE_REF" -f per_page=100 2>/dev/null \
               | jq -er --arg sha "$UPGRADE_BASE_SHA" --arg repo "$GITHUB_REPOSITORY" '
                 add | if length == 1 and .[0].head.sha == $sha
                   and .[0].head.repo.full_name == $repo and .[0].base.repo.full_name == $repo
-                  and .[0].base.ref == "main" then .[0] else error("No unique current stack parent") end')"
+                  and .[0].base.ref == "main" then .[0] else error("No unique current stack parent") end')"; then
+              echo "::error::Could not resolve the current SDK stack parent. Check pull-request access and the parent identity."
+              exit 1
+            fi
             cmp ci/reviewed-npm-audit.json .trusted-sdk-package-decision/ci/reviewed-npm-audit.json
             UPGRADE_PR_NUMBER="$(jq -er '.number' <<<"$parent")"
             CANDIDATE_SHA="$(jq -er '.head.sha' <<<"$parent")"

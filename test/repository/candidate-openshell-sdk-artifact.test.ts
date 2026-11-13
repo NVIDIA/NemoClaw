@@ -35,7 +35,7 @@ describe("candidate SDK artifact provenance", () => {
     expect(result.output).toContain("artifact_id=42");
     expect(result.output).toContain(f.artifact.name);
   });
-  it("rejects a stack parent whose admission no longer covers the child's inputs", () => {
+  it("rejects a stack parent when the trusted admission inspector denies reuse", () => {
     const f = fixture("stacked");
     f.stack.denied = true;
     const result = f.execute();
@@ -88,9 +88,15 @@ describe("candidate SDK artifact provenance", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(join(f.root, "verified-sdk", f.decision.artifactName))).toBe(true);
   });
-  it.each(["revoked", "changed review"])("rejects %s parent admission after download", (kind) => {
+  it("rejects revoked parent admission after download", () => {
     const f = fixture("stacked");
-    f.stack.denied = kind === "revoked";
+    f.stack.denied = true;
+    const result = f.execute(true);
+    expect(result.status).not.toBe(0);
+    expect(existsSync(join(f.root, "verified-sdk"))).toBe(false);
+  });
+  it("rejects changed parent review after download", () => {
+    const f = fixture("stacked");
     f.stack.decision.bundleName += "-changed";
     const result = f.execute(true);
     expect(result.status).not.toBe(0);
@@ -124,12 +130,25 @@ describe("candidate SDK artifact provenance", () => {
     expect(result.output).not.toContain("artifact_id=");
   });
 
-  it("stops on an artifact access denial without waiting or publishing SDK outputs", () => {
-    const f = fixture();
-    f.availability.accessDenied = true;
+  it.each(["candidate", "stacked"] as const)(
+    "stops on %s artifact access denial without leaking diagnostics",
+    (mode) => {
+      const f = fixture(mode);
+      f.availability.accessDenied = true;
+      const result = f.execute();
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).not.toContain("private diagnostic");
+      expect(result.state).toBeUndefined();
+      expect(result.output).not.toContain("artifact_id=");
+    },
+  );
+  it("stops on parent access denial without leaking diagnostics", () => {
+    const f = fixture("stacked");
+    f.availability.accessDenied = "parent";
     const result = f.execute();
     expect(result.status).not.toBe(0);
-    expect(result.state).toBeUndefined();
+    expect(result.stdout + result.stderr).not.toContain("private diagnostic");
+    expect(result.state?.artifactReads).toBe(1);
     expect(result.output).not.toContain("artifact_id=");
   });
 
