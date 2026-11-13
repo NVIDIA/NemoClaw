@@ -32,6 +32,8 @@ import {
 import {
   assertLoopbackNoAuthCompatibleEndpointUrl,
   COMPATIBLE_ENDPOINT_GATEWAY_PORTS,
+  bindCompatibleEndpointRouteCheck,
+  compatibleEndpointNoAuthSelection,
   gatewayReachableCompatibleEndpointUrl,
   isLoopbackNoAuthCompatibleEndpointUrl,
   reuseRegisteredProviderWithGatewayEndpoint,
@@ -148,6 +150,133 @@ describe("compatible endpoint gateway routing", () => {
       expect(isLoopbackNoAuthCompatibleEndpointUrl(provider, endpointUrl)).toBe(false);
     },
   );
+
+  it.each([
+    ["interactive", "custom", "http://localhost:11434/v1", false, {}, true, true],
+    [
+      "non-interactive none",
+      "custom",
+      "http://localhost:11434/v1",
+      true,
+      { NEMOCLAW_COMPATIBLE_AUTH_MODE: " None " },
+      true,
+      true,
+    ],
+    ["non-interactive unset", "custom", "http://localhost:11434/v1", true, {}, true, false],
+    [
+      "non-interactive other mode",
+      "custom",
+      "http://localhost:11434/v1",
+      true,
+      { NEMOCLAW_COMPATIBLE_AUTH_MODE: "key" },
+      true,
+      false,
+    ],
+    [
+      "remote endpoint",
+      "custom",
+      "https://inference.example.com/v1",
+      false,
+      { NEMOCLAW_COMPATIBLE_AUTH_MODE: "none" },
+      false,
+      false,
+    ],
+    [
+      "Anthropic-compatible key",
+      "anthropicCompatible",
+      "http://localhost:11434/v1",
+      true,
+      { NEMOCLAW_COMPATIBLE_AUTH_MODE: "none" },
+      false,
+      false,
+    ],
+  ] as const)(
+    "classifies no-auth selection for %s (#13733)",
+    (_label, selectedKey, endpointUrl, nonInteractive, env, eligible, noAuth) => {
+      expect(
+        compatibleEndpointNoAuthSelection(
+          selectedKey,
+          "compatible-endpoint",
+          endpointUrl,
+          nonInteractive,
+          env,
+        ),
+      ).toEqual({ eligible, noAuth });
+    },
+  );
+
+  describe("bindCompatibleEndpointRouteCheck (#13733)", () => {
+    const PROXY = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
+    const state = (endpointUrl: string) => ({
+      provider: "compatible-endpoint",
+      endpointUrl,
+      credentialEnv: "COMPATIBLE_API_KEY" as string | null,
+      assertRouteCompatible: vi.fn(),
+    });
+
+    it.each([
+      { name: "an API-key run", env: {}, credentialEnv: "COMPATIBLE_API_KEY" },
+      {
+        name: "an explicit no-auth run",
+        env: { NEMOCLAW_COMPATIBLE_AUTH_MODE: "none" },
+        credentialEnv: PROXY,
+      },
+    ])("checks the route at once for $name in non-interactive mode", ({ env, credentialEnv }) => {
+      const selection = state("http://localhost:11434/v1");
+      const check = bindCompatibleEndpointRouteCheck("custom", selection, true, PROXY, env);
+
+      expect(selection.credentialEnv).toBe(credentialEnv);
+      expect(selection.assertRouteCompatible).toHaveBeenCalledOnce();
+      expect(check.beforeSave).toBeUndefined();
+      const guard = vi.fn();
+      expect(check.guardSave(guard)).toBe(guard);
+    });
+
+    it("checks the route at once for an interactive endpoint that needs a key", () => {
+      const selection = state("https://compatible.example.test/v1");
+      const check = bindCompatibleEndpointRouteCheck("custom", selection, false, PROXY, {});
+
+      expect(check.eligible).toBe(false);
+      expect(selection.assertRouteCompatible).toHaveBeenCalledOnce();
+      check.afterPrompt("sk-key");
+      expect(selection.assertRouteCompatible).toHaveBeenCalledOnce();
+    });
+
+    it("defers an interactive no-auth-eligible check to each credential save", () => {
+      const selection = state("http://localhost:11434/v1");
+      const check = bindCompatibleEndpointRouteCheck("custom", selection, false, PROXY, {});
+      expect(selection.assertRouteCompatible).not.toHaveBeenCalled();
+
+      check.beforeSave?.();
+      expect(selection.assertRouteCompatible).toHaveBeenCalledTimes(1);
+
+      const order: string[] = [];
+      selection.assertRouteCompatible.mockImplementation(() => order.push("route"));
+      check.guardSave((operation) => order.push(operation))?.("save API key");
+      expect(order).toEqual(["route", "save API key"]);
+
+      selection.assertRouteCompatible.mockImplementation(() => {
+        throw new Error("credential identity conflict");
+      });
+      const guard = vi.fn();
+      expect(() => check.guardSave(guard)?.("save API key")).toThrow("credential identity");
+      expect(guard).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { name: "the no-auth choice", credential: "", credentialEnv: PROXY },
+      { name: "an API key", credential: "sk-key", credentialEnv: "COMPATIBLE_API_KEY" },
+    ])("checks the route after the prompt returns $name", ({ credential, credentialEnv }) => {
+      const selection = state("http://localhost:11434/v1");
+      const seen: Array<string | null> = [];
+      selection.assertRouteCompatible.mockImplementation(() => seen.push(selection.credentialEnv));
+      bindCompatibleEndpointRouteCheck("custom", selection, false, PROXY, {}).afterPrompt(
+        credential,
+      );
+
+      expect(seen).toEqual([credentialEnv]);
+    });
+  });
 
   it("rejects dotted loopback at the final proxy mutation boundary", () => {
     expect(() => assertLoopbackNoAuthCompatibleEndpointUrl("http://localhost.:11434/v1")).toThrow(
