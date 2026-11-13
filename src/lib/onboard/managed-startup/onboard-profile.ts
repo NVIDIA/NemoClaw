@@ -78,6 +78,8 @@ export interface ManagedStartupOnboardProfileInput {
   readonly manageDashboard: boolean;
   readonly dashboardBindAddress: string | undefined;
   readonly wslExposure: boolean;
+  /** Extra OpenClaw dashboard browser origins, already validated (#13177). */
+  readonly dashboardOrigins?: readonly string[];
   readonly hermesDashboardState: HermesDashboardOnboardState;
   readonly webSearch: {
     readonly fetchEnabled: boolean;
@@ -193,6 +195,11 @@ function dashboardForInput(
   agent: ManagedStartupAgent,
   input: ManagedStartupOnboardProfileInput,
 ): ManagedStartupDashboard {
+  if (agent !== "openclaw" && input.dashboardOrigins?.length) {
+    throw new ManagedStartupOnboardProfileError(
+      `dashboard origins are supported only for OpenClaw, not ${agent}`,
+    );
+  }
   if (agent === "langchain-deepagents-code") {
     if (input.manageDashboard) {
       throw new ManagedStartupOnboardProfileError("DCode must not enable a dashboard");
@@ -230,6 +237,7 @@ function dashboardForInput(
       port: requireDashboardPort(input.effectiveDashboardPort),
       bindAddress,
       wslExposure: input.wslExposure,
+      ...(input.dashboardOrigins?.length ? { extraOrigins: [...input.dashboardOrigins] } : {}),
     };
   }
 

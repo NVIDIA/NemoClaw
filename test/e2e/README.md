@@ -904,7 +904,7 @@ and staging Launchable job own its product coverage:
 | `telegram-injection` | Unified E2E | `telegram-injection` |
 | `messaging-providers` | Unified E2E | `messaging-providers` |
 | `messaging-compatible-endpoint` | Unified E2E | `messaging-compatible-endpoint` |
-| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup for OpenClaw and Hermes. It retains OpenClaw remote-dashboard audit findings and verifies after onboarding and restart that Hermes API health works on loopback while the host non-loopback API port refuses TCP connections. |
+| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup for OpenClaw and Hermes. It retains OpenClaw remote-dashboard audit findings and verifies after onboarding and restart that Hermes API health works on loopback while the host non-loopback API port refuses TCP connections. It also checks that OpenClaw onboarding and rebuild apply recorded dashboard origins (#13177). |
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 

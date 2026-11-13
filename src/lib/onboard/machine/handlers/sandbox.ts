@@ -246,6 +246,7 @@ export interface SandboxStateOptions<
   hermesToolGateways: string[];
   hermesAuthMethod: HermesAuthMethod | null;
   controlUiPort: number | null;
+  dashboardOrigins?: readonly string[];
   rootDir: string;
   env: NodeJS.ProcessEnv;
   deps: dcodeResume.Deps & {
@@ -541,6 +542,12 @@ function deferredSandboxEffectsIntent(enabled: boolean): {
   readonly deferSandboxEffectsUntilIdentityVerification?: true;
 } {
   return enabled ? { deferSandboxEffectsUntilIdentityVerification: true } : {};
+}
+
+function dashboardOriginsCreateIntentFields(
+  origins: readonly string[] | undefined,
+): Pick<SandboxCreateIntent, "dashboardOrigins"> {
+  return origins?.length ? { dashboardOrigins: [...origins] } : {};
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
@@ -2130,6 +2137,7 @@ class SandboxStateFlow<
           env: this.options.env,
         }) ?? toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
+      ...dashboardOriginsCreateIntentFields(this.options.dashboardOrigins),
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(endpointUrl ? { endpointUrl } : {}),
       ...ownedLocalNimCreateIntentFields(this.options.provider, this.options.nimContainer),

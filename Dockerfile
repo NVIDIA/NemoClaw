@@ -708,9 +708,7 @@ COPY scripts/lib/openclaw-device-patch-payloads.mts /usr/local/lib/nemoclaw/open
 COPY scripts/lib/openclaw-mcp-retry-payloads.mts scripts/lib/patch-openclaw-worker-mcp-reliability.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/patch-openclaw-worker-archive.py /usr/local/lib/nemoclaw/patch-openclaw-worker-archive.py
 COPY scripts/lib/patch-openclaw-explicit-proxy.mts /usr/local/lib/nemoclaw/patch-openclaw-explicit-proxy.mts
-COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
-COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
-COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts
+COPY scripts/patch-openclaw-mcp-npx.mts scripts/patch-openclaw-mcp-reliability.mts scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/
 COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
 COPY scripts/patch-openclaw-managed-transport-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts
 COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
@@ -735,6 +733,8 @@ COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/provi
 COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
 COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
 COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
+COPY src/lib/dashboard/url.ts /src/lib/dashboard/
+COPY src/lib/core/url-utils.ts src/lib/core/provider-endpoint.ts /src/lib/core/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
