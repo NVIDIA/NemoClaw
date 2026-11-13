@@ -14,7 +14,8 @@ network_policies:
         port: 4318
         protocol: rest
         enforcement: enforce
-        # Docker/Podman bridge gateway addresses vary by host and network.
+        # Docker/Podman bridge gateway addresses vary by host and network, and
+        # Docker Desktop also resolves the bridge to an IPv6 unique-local address.
         # OpenShell's SSRF guard rejects their private resolutions unless the
         # policy allowlists them. The exact hostname, port, method, path, and
         # managed-Python binary remain independently enforced below.
@@ -22,6 +23,7 @@ network_policies:
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16
+          - fc00::/7
         rules:
           - allow: { method: POST, path: "/v1/traces" }
     binaries:
