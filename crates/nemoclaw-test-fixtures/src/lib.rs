@@ -7,6 +7,7 @@
 pub mod bundle;
 #[path = "../../test-support/http.rs"]
 pub mod http;
+pub mod middleware;
 pub mod openshell;
 pub mod schema;
 pub mod ssh;

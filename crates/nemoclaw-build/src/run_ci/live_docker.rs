@@ -315,7 +315,28 @@ fn prepare(
         let document = match case.as_str() {
             // The dummy reports native health, so its whole HCL E2E lifecycle
             // completes.
-            DUMMY_CASE => dummy_case(&template, &uid, &endpoint, &subnet, &dummy)?,
+            DUMMY_CASE => {
+                let host = subnet
+                    .strip_suffix(".0/24")
+                    .ok_or("a gateway subnet is a /24")?;
+                let bypass = docker_output(&[
+                    "network",
+                    "inspect",
+                    "bridge",
+                    "--format",
+                    "{{(index .IPAM.Config 0).Gateway}}",
+                ])?;
+                let document = dummy_case(&template, &uid, &endpoint, &subnet, &dummy)?;
+                live::bind_case(
+                    &document,
+                    &[
+                        ("172.30.122.1", &format!("{host}.1")),
+                        ("172.17.0.1", &bypass),
+                        ("17701", &live::free_port()?.to_string()),
+                        ("17702", &live::free_port()?.to_string()),
+                    ],
+                )?
+            }
             INTERFACES_CASE => {
                 let host = subnet
                     .strip_suffix(".0/24")

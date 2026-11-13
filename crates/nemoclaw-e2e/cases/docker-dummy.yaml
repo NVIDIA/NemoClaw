@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # The reference dummy agent behind a managed Docker gateway. The dummy
-# implements the image's bridge contract, including native health, without
-# Fabric, a model, or credentials, and replies with its reply setting. Its
+# runs Fabric's runtime with the test adapter, including native health,
+# without a model or credentials, and replies with its reply setting. Its
 # workspace is a named volume, which the gateway allows sandboxes to mount.
+# The case runner serves an external middleware and HTTP effect recorder on
+# host ports. The gateway bridge selects middleware; the default Docker bridge
+# is an otherwise-permitted excluded destination to the same recorder.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -22,6 +25,13 @@ spec:
     config:
       openshell.drivers.docker:
         allow_driver_config: true
+      openshell.supervisor.middleware:
+        - name: live-guard
+          grpc_endpoint: http://172.30.122.1:17701
+          allow_insecure_transport: true
+          max_payload_bytes: 4096
+          binding_policy: exact
+          bindings: [http_request_pre_credentials]
   inferenceProviders:
     hosted:
       provider: openai
@@ -37,7 +47,45 @@ spec:
         settings:
           reply: dummy-reply
       network:
-        tier: isolated
+        policy:
+          explicit:
+            version: 1
+            filesystem_policy:
+              include_workdir: false
+              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
+              read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
+            landlock:
+              compatibility: best_effort
+            process:
+              run_as_user: "10001"
+              run_as_group: "10001"
+            network_policies:
+              fixture:
+                name: HTTP effect recorder
+                endpoints:
+                  - host: 172.30.122.1
+                    port: 17702
+                    allowed_ips: [172.30.122.1/32]
+                    protocol: rest
+                    enforcement: enforce
+                    rules:
+                      - allow: {method: GET, path: "/**"}
+                  - host: 172.17.0.1
+                    port: 17702
+                    allowed_ips: [172.17.0.1/32]
+                    protocol: rest
+                    enforcement: enforce
+                    rules:
+                      - allow: {method: GET, path: "/**"}
+                binaries:
+                  - path: /usr/local/bin/python3.14
+            network_middlewares:
+              guard:
+                middleware: live-guard
+                on_error: fail_closed
+                endpoints:
+                  include: [172.30.122.1, 172.17.0.1]
+                  exclude: [172.17.0.1]
       driverConfig:
         docker:
           mounts:

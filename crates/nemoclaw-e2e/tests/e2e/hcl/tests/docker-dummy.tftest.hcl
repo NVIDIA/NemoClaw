@@ -7,6 +7,9 @@
 # storage, then a redeploy that reuses that storage with a new gateway
 # container, the marker read back in the new sandbox, the reply again, and
 # destroy. It needs no model or credentials; cargo ci live-docker runs it.
+# Before destroy, actual sandbox HTTP requests prove middleware selection,
+# denial without a destination effect, and exclusion. Reapply must preserve
+# the sandbox identity without changing resources.
 
 # The workspace volume, which a platform provides before apply. The agent
 # image runs agents as 10001:10001 (image/fabric/Dockerfile).
@@ -78,6 +81,93 @@ run "write_marker" {
   assert {
     condition     = length(output.failed) == 0
     error_message = "failed: ${join(", ", output.failed)}"
+  }
+}
+
+# Capture the identity and the bound request URLs before issuing traffic.
+run "middleware_before" {
+  module {
+    source = "./middleware"
+  }
+}
+
+run "middleware_requests" {
+  module {
+    source = "./command"
+  }
+  variables {
+    connection = run.apply.result.connection
+    targets    = run.middleware_before.targets
+  }
+  assert {
+    condition     = length(output.failed) == 0
+    error_message = "Middleware request statuses failed: ${join(", ", output.failed)}"
+  }
+}
+
+run "middleware_effects" {
+  module {
+    source = "./middleware"
+  }
+  variables {
+    baseline = run.middleware_before.sandbox
+  }
+  assert {
+    condition     = try(output.effects.middleware["/allow"], 0) == 1
+    error_message = "The allowed request did not reach middleware exactly once."
+  }
+  assert {
+    condition     = try(output.effects.destination["/allow"], 0) == 1
+    error_message = "The allowed request did not produce exactly one destination effect."
+  }
+  assert {
+    condition     = try(output.effects.middleware["/deny"], 0) == 1
+    error_message = "The denied request did not reach middleware exactly once."
+  }
+  assert {
+    condition     = try(output.effects.destination["/deny"], 0) == 0
+    error_message = "The denied request reached the destination."
+  }
+  assert {
+    condition     = try(output.effects.middleware["/bypass"], 0) == 0
+    error_message = "The excluded destination reached middleware."
+  }
+  assert {
+    condition     = try(output.effects.destination["/bypass"], 0) == 1
+    error_message = "The otherwise-permitted excluded destination was not reached exactly once."
+  }
+}
+
+run "unchanged_apply" {
+  module {
+    source = "./cli"
+  }
+  variables {
+    operation = "apply"
+  }
+  assert {
+    condition     = output.exit_code == 0 && output.changes == {}
+    error_message = "Unchanged reconciliation changed resources or failed: ${output.error}"
+  }
+}
+
+run "middleware_after_reapply" {
+  module {
+    source = "./middleware"
+  }
+  variables {
+    baseline = run.middleware_effects.sandbox
+  }
+  assert {
+    condition     = output.same_sandbox
+    error_message = "Unchanged reconciliation replaced the sandbox."
+  }
+}
+
+# Leave this module's final variables independent of earlier run outputs for cleanup.
+run "middleware_cleanup_inputs" {
+  module {
+    source = "./middleware"
   }
 }
 
