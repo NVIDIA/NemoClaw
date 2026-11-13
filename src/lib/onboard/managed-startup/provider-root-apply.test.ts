@@ -362,6 +362,14 @@ function createOwnerLeaseDeadlineFixture(expiry: number) {
   return { apply, execute: fixture.execute, timedOut: () => timedOut };
 }
 
+function createVirtualDiscoveryTiming(startMs = 0) {
+  let nowMs = startMs;
+  const sleep = vi.fn((milliseconds: number) => {
+    nowMs += milliseconds;
+  });
+  return { now: () => nowMs, sleep };
+}
+
 function delegatedFixture(
   agent: Parameters<typeof createDockerRootApplyFixture>[1] = "openclaw",
   phase: "none" | "pending" | "committed" = "none",
@@ -796,7 +804,36 @@ describe("provider-owned managed startup root application", () => {
 
     expect(transaction?.containerId).toBe(CONTAINER_ID);
     expect(resolveTarget).toHaveBeenCalledTimes(3);
-    expect(sleep.mock.calls).toEqual([[250], [250]]);
+    expect(sleep.mock.calls).toEqual([[250], [375]]);
+  });
+
+  it("discovers the exact container when it appears more than five seconds after create returns", () => {
+    const { now, sleep } = createVirtualDiscoveryTiming();
+    const resolveTarget = vi.fn(() => ({ resourceHandle: CONTAINER_ID }));
+    Array.from({ length: 7 }, () => {
+      resolveTarget.mockImplementationOnce(() => {
+        throw new DirectSandboxContainerNotFoundError("container absent");
+      });
+    });
+    const { request, runtimeProvider } = createDockerRootApplyFixture(resolveTarget);
+
+    const transaction = applyProviderManagedStartupRootRequest(
+      {
+        runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        request,
+        environment: {},
+      },
+      { now, sleep },
+    );
+
+    expect(transaction?.containerId).toBe(CONTAINER_ID);
+    expect(sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([
+      250, 375, 562.5, 843.75, 1_265.625, 1_898.4375, 2_000,
+    ]);
+    expect(now()).toBeGreaterThan(5_000);
   });
 
   it("fails with bounded evidence when the exact OpenShell container stays absent", () => {
@@ -804,7 +841,7 @@ describe("provider-owned managed startup root application", () => {
       throw new DirectSandboxContainerNotFoundError("container absent");
     });
     const { request, runtimeProvider } = createDockerRootApplyFixture(resolveTarget);
-    const sleep = vi.fn();
+    const { now, sleep } = createVirtualDiscoveryTiming();
 
     expect(() =>
       applyProviderManagedStartupRootRequest(
@@ -816,17 +853,17 @@ describe("provider-owned managed startup root application", () => {
           request,
           environment: {},
         },
-        { sleep },
+        { now, sleep },
       ),
-    ).toThrow(/remained absent after 21 observations over \d+ms \(budget 5000ms\)/u);
-    expect(resolveTarget).toHaveBeenCalledTimes(21);
-    expect(sleep).toHaveBeenCalledTimes(20);
+    ).toThrow(/remained absent after 34 observations over 60000ms \(budget 60000ms\)/u);
+    expect(resolveTarget).toHaveBeenCalledTimes(34);
+    expect(sleep).toHaveBeenCalledTimes(34);
   });
 
   it("bounds slow container discovery by the remaining handoff deadline", () => {
     let nowMs = 10_000;
     const resolveTarget = vi.fn((input: { readonly timeoutMs?: number }) => {
-      nowMs += input.timeoutMs === 5_000 ? 3_000 : 2_000;
+      nowMs += input.timeoutMs === 60_000 ? 3_000 : (input.timeoutMs ?? 0);
       throw new DirectSandboxContainerNotFoundError("container absent");
     });
     const { request, runtimeProvider } = createDockerRootApplyFixture(resolveTarget);
@@ -844,9 +881,9 @@ describe("provider-owned managed startup root application", () => {
         },
         { now: () => nowMs, sleep },
       ),
-    ).toThrow(/remained absent after 2 observations over 5000ms \(budget 5000ms\)/u);
+    ).toThrow(/remained absent after 2 observations over 60000ms \(budget 60000ms\)/u);
     expect(resolveTarget).toHaveBeenCalledTimes(2);
-    expect(resolveTarget.mock.calls.map(([input]) => input.timeoutMs)).toEqual([5_000, 2_000]);
+    expect(resolveTarget.mock.calls.map(([input]) => input.timeoutMs)).toEqual([60_000, 57_000]);
     expect(sleep.mock.calls).toEqual([[250]]);
   });
 
