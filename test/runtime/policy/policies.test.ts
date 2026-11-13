@@ -136,6 +136,40 @@ describe("policies", () => {
       );
       expect(whatsapp?.description).not.toContain("network_policies:");
     });
+
+    it.each([
+      ['name: "my-service-api"'],
+      ["name: 'my-service-api'"],
+      ["name: my-service-api # reviewed endpoint"],
+    ])("lists a source catalog preset whose header uses %s by its YAML name", (nameLine) => {
+      const presetsDir = path.join(REPO_ROOT, "nemoclaw-blueprint", "policies", "presets");
+      const catalogFile = "my-service-api.yaml";
+      const content = [
+        "preset:",
+        `  ${nameLine}`,
+        '  description: "Reviewed external service"',
+        "network_policies: {}",
+        "",
+      ].join("\n");
+      const readdirSync = fs.readdirSync;
+      const readFileSync = fs.readFileSync;
+      vi.spyOn(fs, "readdirSync").mockImplementation(((dir: fs.PathLike, ...rest: unknown[]) => {
+        const entries = Reflect.apply(readdirSync, fs, [dir, ...rest]) as string[];
+        return String(dir) === presetsDir ? [...entries, catalogFile] : entries;
+      }) as typeof fs.readdirSync);
+      vi.spyOn(fs, "readFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, ...rest) =>
+        String(file) === path.join(presetsDir, catalogFile)
+          ? content
+          : Reflect.apply(readFileSync, fs, [file, ...rest])) as typeof fs.readFileSync);
+
+      const preset = policies.listPresets().find((p) => p.file === catalogFile);
+
+      expect(preset).toEqual({
+        file: catalogFile,
+        name: "my-service-api",
+        description: "Reviewed external service",
+      });
+    });
   });
 
   describe("loadPreset", () => {
