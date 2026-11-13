@@ -48,7 +48,48 @@ impl OpenShell {
         row.insert(services::URLS.into(), urls);
         Ok(())
     }
-    async fn reconcile(&self, kind: &str, want: &Row) -> Result<Mutation, ObservationError> {
+    /// Bring a live sandbox's declared endpoints to `want`, as `openshell
+    /// service expose` and `openshell service delete` would: expose those
+    /// missing or different, then delete those the prior binding declared and
+    /// `want` doesn't, so an exposure the gateway rejects removes nothing.
+    /// Endpoints under names neither declares are left alone.
+    async fn update_services(
+        &self,
+        want: &Row,
+        sandbox: &Row,
+        prior: Option<&Row>,
+    ) -> Result<(), ObservationError> {
+        let workspace = value(want, "workspace");
+        let wanted = services::exposures(value(want, services::FIELD))?;
+        for exposure in &wanted {
+            let served = self
+                .gateway
+                .service(workspace, sandbox, &exposure.name)
+                .await?
+                .is_some_and(|endpoint| exposure.served_by(&endpoint));
+            if !served {
+                self.gateway
+                    .expose_service(workspace, sandbox, exposure)
+                    .await?;
+            }
+        }
+        if let Some(prior) = prior {
+            for name in services::names(value(prior, services::FIELD))? {
+                if !wanted.iter().any(|exposure| exposure.name == name) {
+                    self.gateway
+                        .delete_service(workspace, sandbox, &name)
+                        .await?;
+                }
+            }
+        }
+        Ok(())
+    }
+    async fn reconcile(
+        &self,
+        kind: &str,
+        want: &Row,
+        prior: Option<&Row>,
+    ) -> Result<Mutation, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         if kind != "workspace" {
@@ -70,6 +111,9 @@ impl OpenShell {
             Some(row) => {
                 if kind == "provider" {
                     self.gateway.update_provider(want, &row).await?;
+                }
+                if kind == "sandbox" {
+                    self.update_services(want, &row, prior).await?;
                 }
                 row
             }
@@ -211,6 +255,41 @@ impl Backend for OpenShell {
         Ok(observed)
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
+        self.converge(kind, desired, None).await
+    }
+    /// A sandbox's update needs the exposures its prior binding declared, to
+    /// delete those the desired row no longer declares.
+    async fn update(&self, kind: &str, desired: &Row, prior: &Row) -> Mutation {
+        let prior = nemoclaw_openshell::without_gateway(prior);
+        self.converge(kind, desired, Some(&prior)).await
+    }
+    async fn remove(
+        &self,
+        kind: &str,
+        prior: &Row,
+        destroying: bool,
+    ) -> Result<(), ObservationError> {
+        let prior = &nemoclaw_openshell::without_gateway(prior);
+        if !matches!(
+            openshell_lifecycle(kind),
+            Some(OpenShellLifecycle::Reconstructible)
+        ) && !(destroying
+            && matches!(
+                openshell_lifecycle(kind),
+                Some(OpenShellLifecycle::Retained)
+            ))
+        {
+            return Err(ObservationError::Query);
+        }
+        tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))
+            .await
+            .map_err(|_| ObservationError::Transport)?
+    }
+}
+impl OpenShell {
+    /// Check the desired row, then reconcile it, given the prior binding when
+    /// it updates one in place.
+    async fn converge(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Mutation {
         let desired = &nemoclaw_openshell::without_gateway(desired);
         let fields: &[&str] = match kind {
             "workspace" => &["name", "owner", "generation"],
@@ -235,30 +314,8 @@ impl Backend for OpenShell {
         if kind == "sandbox" && validate_row_policy(desired).is_err() {
             return Mutation::failed(ObservationError::Query);
         }
-        self.reconcile(kind, desired)
+        self.reconcile(kind, desired, prior)
             .await
             .unwrap_or_else(Mutation::failed)
-    }
-    async fn remove(
-        &self,
-        kind: &str,
-        prior: &Row,
-        destroying: bool,
-    ) -> Result<(), ObservationError> {
-        let prior = &nemoclaw_openshell::without_gateway(prior);
-        if !matches!(
-            openshell_lifecycle(kind),
-            Some(OpenShellLifecycle::Reconstructible)
-        ) && !(destroying
-            && matches!(
-                openshell_lifecycle(kind),
-                Some(OpenShellLifecycle::Retained)
-            ))
-        {
-            return Err(ObservationError::Query);
-        }
-        tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))
-            .await
-            .map_err(|_| ObservationError::Transport)?
     }
 }

@@ -20,6 +20,7 @@ pub(crate) struct CapacityDataSource(
 pub(crate) struct CapacityState {
     engine: Value<String>,
     contracts: Value<Vec<Value<String>>>,
+    gpu_devices: Value<Vec<Value<String>>>,
     required_bytes: Value<u64>,
     observed_bytes: Value<u64>,
     compatible: Value<bool>,
@@ -62,6 +63,19 @@ fn requirements(
     }
     Ok(())
 }
+/// Check the GPUs `gpu_devices` lists, deferring entries not yet known.
+fn gpu_devices(devices: &[Value<String>]) -> Result<(), nemoclaw_sdk::Error> {
+    use crate::services::{capacity::GPU_DEVICES_ENTRY, validate_capacity_gpu_devices};
+    let devices = devices
+        .iter()
+        .map(|device| match device {
+            Value::Value(device) => Ok(Some(device.as_str())),
+            Value::Unknown => Ok(None),
+            Value::Null => Err(crate::Error::Conflict(GPU_DEVICES_ENTRY)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_capacity_gpu_devices(&devices)
+}
 #[async_trait]
 impl DataSource for CapacityDataSource {
     type State<'a> = CapacityState;
@@ -80,6 +94,11 @@ impl DataSource for CapacityDataSource {
                         "contracts",
                         AttributeType::List(Box::new(AttributeType::String)),
                         AttributeConstraint::Required,
+                    ),
+                    (
+                        "gpu_devices",
+                        AttributeType::List(Box::new(AttributeType::String)),
+                        AttributeConstraint::Optional,
                     ),
                     (
                         "required_bytes",
@@ -114,6 +133,16 @@ impl DataSource for CapacityDataSource {
         })
     }
     async fn validate<'a>(&self, diags: &mut Diagnostics, config: CapacityState) -> Option<()> {
+        if let Value::Value(devices) = &config.gpu_devices
+            && let Err(error) = gpu_devices(devices)
+        {
+            diags.error(
+                "Invalid service capacity GPU devices",
+                error.to_string(),
+                AttributePath::new("gpu_devices"),
+            );
+            return None;
+        }
         match requirements(&config, self.1) {
             Ok(()) => Some(()),
             Err(error) => {
@@ -150,8 +179,35 @@ impl DataSource for CapacityDataSource {
                     )),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            crate::services::observe_service_capacity(self.0.connections(), engine, &contracts)
-                .await
+            let gpu_devices = match &config.gpu_devices {
+                Value::Value(devices) => {
+                    gpu_devices(devices)?;
+                    Some(
+                        devices
+                            .iter()
+                            .map(|device| match device {
+                                Value::Value(device) => Ok(device.clone()),
+                                _ => Err(nemoclaw_sdk::Error::State(
+                                    "capacity requirements are not yet known",
+                                )),
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )
+                }
+                Value::Null => None,
+                Value::Unknown => {
+                    return Err(nemoclaw_sdk::Error::State(
+                        "capacity requirements are not yet known",
+                    ));
+                }
+            };
+            crate::services::observe_service_capacity(
+                self.0.connections(),
+                engine,
+                &contracts,
+                gpu_devices.as_deref(),
+            )
+            .await
         }
         .await;
         match work {
@@ -210,6 +266,7 @@ mod tests {
                     CapacityState {
                         engine,
                         contracts,
+                        gpu_devices: Value::Null,
                         required_bytes: Value::Null,
                         observed_bytes: Value::Null,
                         compatible: Value::Null,
@@ -243,6 +300,7 @@ mod tests {
             let state = CapacityState {
                 engine: Value::Value("unix:///var/run/docker.sock".into()),
                 contracts: Value::Value(vec![Value::Value(contract.into())]),
+                gpu_devices: Value::Null,
                 required_bytes: Value::Null,
                 observed_bytes: Value::Null,
                 compatible: Value::Null,
@@ -251,6 +309,133 @@ mod tests {
             let message = format!("{diagnostics:?}");
             assert!(message.contains(expected), "{message}");
             assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
+        }
+    }
+
+    /// Records the GPU each observation names.
+    struct Recorder(std::sync::Mutex<Vec<Option<String>>>);
+    #[async_trait]
+    impl crate::hardware::HostObserver for Recorder {
+        async fn observe(
+            &self,
+            _: &crate::docker::Engine,
+            gpu: Option<&str>,
+        ) -> Result<crate::hardware::HostObservation, nemoclaw_sdk::Error> {
+            self.0.lock().unwrap().push(gpu.map(Into::into));
+            // Report the listed GPU, as `nvidia-smi --id` does.
+            let mut capacity = crate::services::capacity::tests::capacity();
+            if let Some(index) = gpu.and_then(|gpu| gpu.parse().ok()) {
+                capacity.gpus[0].index = index;
+            }
+            Ok(crate::hardware::HostObservation {
+                engine_id: "engine".into(),
+                capacity,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_capacity_read_observes_only_the_gpu_it_lists() {
+        let fixture = crate::docker::fixture::Fixture::engine(|request| {
+            assert_eq!(request.path, "/info");
+            Some((
+                200,
+                serde_json::json!({"ID": "engine"}).to_string().into_bytes(),
+            ))
+        })
+        .await;
+        let recorder = Arc::new(Recorder(Default::default()));
+        let connections = crate::docker::Connections::fixed([fixture
+            .engine_for("ssh://operator@gpu-box")
+            .with_host_observer(recorder.clone())])
+        .unwrap();
+        let source = CapacityDataSource(
+            Arc::new(ConfiguredBackend::fixed(connections)),
+            crate::services::ServiceRuntime::Vllm,
+        );
+        let contracts: Vec<_> = crate::services::capacity::tests::specs()
+            .into_iter()
+            .map(Value::Value)
+            .collect();
+        for gpu_devices in [Value::Value(vec![Value::Value("1".into())]), Value::Null] {
+            let mut diagnostics = Diagnostics::default();
+            let state = CapacityState {
+                engine: Value::Value("ssh://operator@gpu-box".into()),
+                contracts: Value::Value(contracts.clone()),
+                gpu_devices,
+                required_bytes: Value::Null,
+                observed_bytes: Value::Null,
+                compatible: Value::Null,
+            };
+            let read = source
+                .read(&mut diagnostics, state, ValueEmpty::default())
+                .await;
+            assert!(read.is_some(), "{diagnostics:?}");
+        }
+        assert_eq!(*recorder.0.lock().unwrap(), [Some("1".into()), None]);
+    }
+
+    /// `gpu_devices` lists GPUs as `container.gpuDevices` does, exactly one for
+    /// now; anything else fails before the host is read, at that attribute,
+    /// without repeating the value.
+    #[tokio::test]
+    async fn capacity_gpu_devices_list_one_uuid_or_index() {
+        let source = CapacityDataSource(
+            Arc::new(ConfiguredBackend::default()),
+            crate::services::ServiceRuntime::Vllm,
+        );
+        let list = |devices: &[&str]| {
+            Value::Value(
+                devices
+                    .iter()
+                    .map(|device| Value::Value((*device).into()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let entry = "each gpu_devices entry must be a lowercase GPU UUID or an index";
+        let one = "serving one model across several GPUs isn't implemented yet";
+        for (gpu_devices, error) in [
+            (Value::Unknown, None),
+            (Value::Value(vec![Value::Unknown]), None),
+            (list(&["0"]), None),
+            (list(&["999"]), None),
+            (list(&["GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3"]), None),
+            (list(&[]), Some(one)),
+            (list(&["0", "1"]), Some(one)),
+            (
+                Value::Value(vec![Value::Value("0".into()), Value::Unknown]),
+                Some(one),
+            ),
+            (list(&["0", "0"]), Some("gpu_devices must not repeat a GPU")),
+            (Value::Value(vec![Value::Null]), Some(entry)),
+            (list(&["all"]), Some(entry)),
+            (list(&["0,1"]), Some(entry)),
+            (list(&["device=0"]), Some(entry)),
+            (list(&["01"]), Some(entry)),
+            (list(&["1000"]), Some(entry)),
+            (
+                list(&["GPU-79B44E99-D10D-A381-8CD6-5CCB073EAEA3"]),
+                Some(entry),
+            ),
+            (list(&["PRIVATE_SENTINEL"]), Some(entry)),
+        ] {
+            let mut diagnostics = Diagnostics::default();
+            let state = CapacityState {
+                engine: Value::Value("ssh://gpu-box".into()),
+                contracts: Value::Unknown,
+                gpu_devices: gpu_devices.clone(),
+                required_bytes: Value::Null,
+                observed_bytes: Value::Null,
+                compatible: Value::Null,
+            };
+            let result = source.validate(&mut diagnostics, state).await;
+            assert_eq!(result.is_none(), error.is_some(), "{gpu_devices:?}");
+            let message = format!("{diagnostics:?}");
+            assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
+            if let Some(error) = error {
+                assert!(message.contains(error), "{message}");
+                assert!(message.contains("\"gpu_devices\""), "{message}");
+            }
         }
     }
 }

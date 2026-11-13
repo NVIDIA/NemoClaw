@@ -37,6 +37,44 @@ pub struct ManagedKubernetes {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 32))]
     pub image_pull_secrets: Vec<String>,
+    /// How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host. NemoClaw's own commands still forward a free local port to the gateway pod. Its Service type is fixed after the first successful plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "KubernetesExpose")]
+    pub expose: Option<KubernetesExpose>,
+}
+
+/// Publication of a managed Kubernetes gateway's endpoint.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KubernetesExpose {
+    /// The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged.
+    pub service: ExposureService,
+}
+
+/// The Service that publishes a managed Kubernetes gateway.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExposureService {
+    /// `NodePort` listens on the endpoint's port on every node; the port must be in the cluster's node-port range, 30000 through 32767 by default.
+    #[serde(rename = "type")]
+    pub service_type: ExposureServiceType,
+}
+
+/// The Kubernetes Service type that publishes a managed gateway.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(inline)]
+pub enum ExposureServiceType {
+    /// A port on every node.
+    NodePort,
+}
+
+impl ExposureServiceType {
+    /// The Service `spec.type` value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NodePort => "NodePort",
+        }
+    }
 }
 
 /// Authentication provisioned for a managed Kubernetes gateway.

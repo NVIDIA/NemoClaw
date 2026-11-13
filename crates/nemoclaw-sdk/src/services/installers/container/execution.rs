@@ -55,6 +55,11 @@ impl ContainerExecution {
             shared_memory_bytes,
             host_ipc: self.ipc == ServiceIpc::Host,
             cpu_limit_millis: self.cpu_limit_millis,
+            gpus: if self.gpu {
+                crate::managed::Gpus::All
+            } else {
+                crate::managed::Gpus::None
+            },
         })
     }
 }

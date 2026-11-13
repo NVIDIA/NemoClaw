@@ -44,7 +44,8 @@ See [CLI options and output](../references/cli.md) for bundle selection, formats
 
 ## Configure Sandboxes and Inference
 
-A document contains one to 32 sandboxes keyed by name, each with one harness and one agent.
+A document contains sandboxes keyed by name, each with one harness and one agent: up to 256 with a Kubernetes or OpenShift gateway, and up to 32 with Docker or Podman, which run every sandbox on one host.
+See [sandbox count and cluster size](kubernetes.md#sandbox-count-and-cluster-size) for the reasons.
 Use the [multiple-sandbox example](../../examples/multiple-sandboxes.yaml) to share inference across different harnesses.
 [OpenClaw and Pi](../agents-inference/agents.md) can select multiple models; each Deep Agents instance selects one.
 
@@ -83,7 +84,7 @@ Apply starts each new agent through Fabric's `fabric-agent-ctl` in its sandbox, 
 It does not invoke agents, send generation requests, or replay work.
 Plan and apply ask Fabric whether each agent's runtime still runs, with `fabric-agent-ctl check`, which sends no prompt and makes no model request.
 When Fabric reports the runtime stopped, the plan updates the agent and says `agent runtime is not running`; apply stops that runtime in Fabric and starts another in the same sandbox, which keeps its files and conversation history.
-Fabric reports a harness process that exited as unknown rather than stopped, and an unknown result counts as running, so such a runtime is found at its next invocation ([NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298)).
+Fabric reports a confirmed process exit as `failed/agent_exited`, which lets plan replace the runtime. If the health connection fails without confirming an exit, the result remains `unknown` and counts as running.
 
 Use an [agent image built from this revision](build.md#build-agent-images).
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
@@ -98,12 +99,14 @@ Choose the configuration owner for each setting and keep credential values out o
 
 ### Run an Application Container
 
-Declare a `kind: container` service with an immutable image on a managed local Docker gateway. Follow [Configure a Container Service](container-services.md) for inputs, readiness, credential exposure, disposable data, and the distinction between application readiness and successful inference. VoiceClaw still needs separate qualification. The typed `ollama` and `vllm` kinds use the same assembly base but retain their own policies.
+Declare a `kind: container` service with an immutable image on a managed local Docker gateway.
+The [application container example](../../examples/application-container.yaml) runs an application beside one agent and passes it the workspace, sandbox, agent, and gateway address as literal environment values; NemoClaw does not interpret them.
+Follow [Configure a Container Service](container-services.md) for inputs, readiness, credential exposure, disposable data, and the distinction between application readiness and successful inference. VoiceClaw still needs separate qualification. The typed `ollama` and `vllm` kinds use the same assembly base but retain their own policies.
 
 ### Configure a Managed Gateway
 
 `spec.gateway.config` passes OpenShell gateway settings to a managed gateway in the format of the OpenShell Helm chart's `gatewayConfig` value.
-Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields; nested maps become inline tables, and a list of maps becomes an array of tables.
+Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields; nested maps become inline tables, and a list of maps becomes an array of tables.
 
 ```yaml
 gateway:
@@ -118,7 +121,7 @@ gateway:
 ```
 
 Docker and Podman gateways write these tables into their configuration file beside the keys NemoClaw sets.
-Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources; see OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/kubernetes/migrate-gateway-config.mdx).
+Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources; see OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/migrate-gateway-config.mdx).
 Plan rejects a setting that replaces a key NemoClaw manages, such as the gateway's authentication, signing paths, or the driver's images.
 OpenShell validates the rest when the gateway starts: an unknown or misplaced field in the selected driver's table stops the gateway, and tables for other drivers are ignored.
 A change replaces a Docker or Podman gateway's container, which receives the new file and keeps the gateway's data, and upgrades a Kubernetes gateway's chart release.
@@ -130,7 +133,7 @@ An external gateway takes no `config`; its operator configures it.
 ### Supply Credential References
 
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
-Use the [field reference](../references/v1-configuration.md) for names, defaults, and validation rules.
+Use the [field reference](../reference/configuration.md) for names, defaults, and validation rules.
 
 Unknown fields, duplicate keys, and unsupported combinations are rejected; images require immutable SHA-256 references.
 Container `environment` values are literal settings retained in configuration and state, not the credential references described below.
@@ -267,7 +270,7 @@ Keep `$schema` in the comment; a YAML field named `$schema` is an unknown config
 Exported YAML omits comments, so add the association again if you want editor assistance for an export.
 
 Editor validation does not replace SDK parsing or deployment checks.
-See [validation beyond the schema](../references/v1-configuration.md#validation-beyond-the-schema) for those limits.
+See [validation beyond the schema](../reference/configuration.md#validation-beyond-the-schema) for those limits.
 
 ## Updates and Recovery
 
@@ -294,8 +297,9 @@ Check whether the desired edit updates a running resource, replaces it, or requi
 |---|---|
 | Models, settings, or public Fabric configuration within the selected adapter | Replaces the agent and its sandbox, deleting the sandbox's files and conversations; review the plan |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; a change to a sandbox's launch specification replaces the sandbox |
-| Harness adapter, sandbox image, driver configuration, service exposures, agent identity, or provider attachments | Replaces the sandbox, deleting its files and conversations |
-| Sandbox network policy | Follow [policy change constraints](../security/sandbox-network.md); a change that needs a new sandbox replaces it |
+| Harness adapter, sandbox image, driver configuration, agent identity, or provider attachments | Replaces the sandbox, deleting its files and conversations |
+| Service exposures | Updates the sandbox's endpoints in place; the sandbox keeps its files and conversations |
+| Sandbox network policy | Replaces the sandbox, deleting its files and conversations (except on mounted volumes); see [policy changes](../security/sandbox-network.md#verify-and-change-the-configuration) |
 | Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy), and [model constraints](../agents-inference/models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation may replace the proxy container while retaining its independently bound credential storage |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |

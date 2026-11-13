@@ -5,7 +5,7 @@
 
 Use `nemoclaw` from a [verified native bundle](../build-deploy/build.md).
 Run commands from the directory containing your deployment YAML, and select the same state directory for every operation.
-The [v1 CLI parser](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-cli/src/args.rs) defines the commands and options below; the [matching process tests](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-cli/tests/commands.rs) cover execution behavior.
+The [CLI parser](../../crates/nemoclaw-cli/src/args.rs) defines the commands and options below; the [process tests](../../crates/nemoclaw-cli/tests/commands.rs) cover execution behavior.
 
 ## Commands
 
@@ -13,7 +13,7 @@ Use these commands for deployment authoring and lifecycle operations; invocation
 
 | Syntax | Input | Result and effect |
 |---|---|---|
-| `nemoclaw onboard [FILE]` | Optional supported YAML template | Interactive authoring; saves validated YAML to a new file and optionally reads target capabilities |
+| `nemoclaw onboard [FILE]` | Optional supported YAML template | Interactive authoring; reads the target without changing it and saves validated YAML to a new file |
 | `nemoclaw plan FILE` | YAML path or `-` for stdin | Text preview; observes resources without mutating runtime resources |
 | `nemoclaw plan --destroy` | Retained state; no YAML | Text preview of workload deletion and retention |
 | `nemoclaw apply FILE` | YAML path or `-` for stdin | Text result; computes a checked plan and applies it |
@@ -28,7 +28,8 @@ Read [deployment lifecycle](../build-deploy/usage.md) and preview deletion befor
 It uses the template's answers as suggestions, or built-in defaults when no template is supplied.
 The output defaults to `deployment.yaml`; onboarding never overwrites an existing file.
 It requires a terminal and does not create deployment state or apply resources.
-A verified bundle enables read-only provider discovery; without one, authoring remains available with the target marked unverified.
+It reads the target's engines, the selected image, and the model catalog without a bundle or OpenTofu; a read that fails leaves the target unverified, and you can still save.
+The saved file holds only the template's values and your answers; `plan` fills the omitted fields with the defaults of the release in use.
 Known engine incompatibility or conflicting image platform, manifest digest, or Fabric adapter requirements blocks onboarding review and saving.
 The [onboarding guide](../../crates/nemoclaw-onboarding/README.md) describes how to run it, what it reads from the target, and what to do with the saved file.
 
@@ -90,6 +91,7 @@ Text output also summarizes advertised models and credential-reference availabil
 JSON output preserves the full discovery report, including query provenance and separate runtime/deployment resource scopes.
 
 Apply summarizes actual changes; a successful operation does not establish working model or agent responses.
+Plan and apply text list each sandbox's agent with the runtime ID that state records, and print the command that invokes it; a plan lists the runtimes the last apply left.
 For each enabled agent interface, apply text also prints the commands that forward it and read its token, and how to sign in; it never prints a token.
 Destroy distinguishes removed resources from retained storage.
 The retained list describes tracked resources, not every surviving host file or external service.
@@ -129,6 +131,7 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
 | `connection` | Plan/apply gateway endpoint and UID-derived workspace selectors; does not establish access or configure OpenShell CLI credentials |
 | `serviceUrls` | Apply-only URLs the gateway reports for sandbox service exposures, by sandbox and service name, with `""` for the unnamed endpoint; the URLs carry no credential, so the service must authenticate its own clients; omitted when empty, and when apply can't read them, `warnings` says so |
+| `agents` | Each sandbox's agent, by sandbox name: `agent`, its name, and `runtimeId`, the runtime ID that `fabric-agent-ctl invoke --runtime-id` takes; a plan reports the runtimes the last apply left, and apply the runtimes after its changes; `runtimeId` is omitted while state records no runtime; never a credential; omitted when empty, and when apply can't read state, `warnings` says so; see [invoke an agent](../agents-inference/interfaces.md#invoke-an-agent) |
 | `deferred` | Unresolved planning prerequisites; omitted when empty |
 | `resourceSources` | Authored provider `name` and definition `path`, keyed by opaque scoped resource address; intent metadata, not proof of an established resource; omitted when empty |
 | `unverified` | Apply-time service-readiness checks; does not change `complete`; omitted when empty |

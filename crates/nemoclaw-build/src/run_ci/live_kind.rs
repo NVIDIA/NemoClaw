@@ -209,6 +209,9 @@ pub(super) async fn run_live_kind(
     let pushed = registry
         .push(&node_container, &image, &metadata, &pushed_metadata)
         .await?;
+    // The host reaches the node at its address on the kind network, where a
+    // NodePort Service publishes a case's gateway.
+    let node = node_address(&node_container)?;
 
     // Each kind HCL E2E case, bound to this cluster and agent image in new
     // namespaces, runs as its own nextest command: `hcl_live::case` runs one
@@ -232,7 +235,7 @@ pub(super) async fn run_live_kind(
                         .join(format!("{case_name}.yaml")),
                 )?,
                 &live::uuid()?,
-                &format!("https://127.0.0.1:{}", live::free_port()?),
+                node,
                 &format!("nc-hcl-{}", nemoclaw_build::hex(&namespace)),
                 &format!("kind-{name}"),
                 &pushed,
@@ -298,25 +301,56 @@ pub(super) async fn run_live_kind(
     result
 }
 
+/// The endpoint of a case whose gateway the SDK reaches through a
+/// port-forward.
+const FORWARDED_ENDPOINT: &str = "https://127.0.0.1:17701";
+/// The endpoint's scheme and host in a case whose NodePort Service publishes
+/// the gateway. The case's node port stays.
+const PUBLISHED_ENDPOINT: &str = "https://192.0.2.1:";
+
+/// The node's IPv4 address on its Docker network.
+fn node_address(container: &str) -> Result<std::net::Ipv4Addr> {
+    let output = Command::new("docker")
+        .args([
+            "inspect",
+            "--format",
+            "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+            container,
+        ])
+        .stdin(Stdio::null())
+        .output()?;
+    String::from_utf8(output.stdout)?
+        .split_whitespace()
+        .find_map(|address| address.parse().ok())
+        .ok_or_else(|| format!("cannot read the address of {container}").into())
+}
+
 /// The kind case bound to one run: its UID, which is also its token audience,
 /// gateway endpoint, namespace (which also names the stub model's and the
 /// issuer's), kubeconfig context, agent image in the run's registry, and
-/// harness.
+/// harness. The endpoint is a free loopback port, or the node's address when
+/// a NodePort Service publishes the gateway.
 fn kind_case(
     template: &str,
     uid: &str,
-    endpoint: &str,
+    node: std::net::Ipv4Addr,
     namespace: &str,
     context: &str,
     image: &str,
     harness: &str,
 ) -> Result<String> {
     let zero = format!("nc-registry:5000/agent@sha256:{}", "0".repeat(64));
+    let endpoint = if template.contains(PUBLISHED_ENDPOINT) {
+        (PUBLISHED_ENDPOINT, format!("https://{node}:"))
+    } else {
+        let port = live::free_port()?;
+        (FORWARDED_ENDPOINT, format!("https://127.0.0.1:{port}"))
+    };
     Ok(live::bind_case(
         template,
         &[
             ("3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36", uid),
-            ("https://127.0.0.1:17701", endpoint),
+            (endpoint.0, &endpoint.1),
             ("nc-hcl-kind", namespace),
             ("kind-nemoclaw", context),
             (&zero, image),
@@ -438,32 +472,37 @@ mod tests {
 
     #[test]
     fn the_kind_cases_bind_their_cluster_namespace_and_image() {
+        let node = std::net::Ipv4Addr::new(172, 18, 0, 9);
         let development =
             include_str!("../../../nemoclaw-e2e/cases/kind-kubernetes-development.yaml");
         let bound = kind_case(
             development,
             "u-1",
-            "https://127.0.0.1:1",
+            node,
             "nc-n",
             "kind-c",
             "nc-registry-1:5000/agent@sha256:1",
             "h",
         )
         .unwrap();
+        assert!(bound.contains("    endpoint: https://127.0.0.1:"));
         assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
         assert!(!bound.contains("nc-hcl-kind") && !bound.contains("@sha256:0000"));
+        assert!(!bound.contains(FORWARDED_ENDPOINT) && !bound.contains("172.18.0.9"));
 
         let template = include_str!("../../../nemoclaw-e2e/cases/kind-kubernetes-oidc.yaml");
         let bound = kind_case(
             template,
             "u-1",
-            "https://127.0.0.1:1",
+            node,
             "nc-n",
             "kind-c",
             "nc-registry-1:5000/agent@sha256:1",
             "h",
         )
         .unwrap();
+        // A published gateway's endpoint names the node, at the case's port.
+        assert!(bound.contains("    endpoint: https://172.18.0.9:30080\n"));
         assert!(bound.contains("      namespace: nc-n\n"));
         assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
         assert!(bound.contains("https://issuer-oidc.nc-n-issuer.svc.cluster.local:8443"));

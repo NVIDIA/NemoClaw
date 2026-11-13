@@ -146,7 +146,7 @@
         },
         {
           "title": "YAML Configuration Reference",
-          "source": "docs/references/v1-configuration.md",
+          "source": "docs/reference/configuration.md",
           "slug": "reference/configuration"
         },
         {

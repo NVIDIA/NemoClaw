@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_runtime::{
-    hardware::Capacity, hardware::GIB, vllm::hardware_capacity::check_capacity,
+    hardware::Capacity, hardware::GIB, hardware::Gpu, vllm::hardware_capacity::check_capacity,
 };
 use nemoclaw_sdk::{config::Document, config::schema::input_schema, services::ServiceDefinition};
 use serde_json::{Value, json};
@@ -42,24 +42,29 @@ fn explicit_spark_profile_preserves_its_hardware_and_memory_requirements() {
     let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
         panic!("expected vllm")
     };
-    let capacity = Capacity {
+    let mut capacity = Capacity {
         architecture: "arm64".into(),
-        gpu: "NVIDIA GB10".into(),
-        driver_major: 580,
-        compute_capability: 121,
         total: 121 * GIB,
         available: 100 * GIB,
         free: 90 * GIB,
         disk_free: 200 * GIB,
         ..Default::default()
     };
+    capacity.set_gpus(vec![Gpu {
+        index: 0,
+        uuid: "GPU-00000000-0000-0000-0000-000000000000".into(),
+        name: "NVIDIA GB10".into(),
+        driver_major: 580,
+        compute_capability: 121,
+        memory: None,
+    }]);
     check_capacity(service, &capacity, true, 0, 0).unwrap();
     for dimension in ["architecture", "gpu", "driver", "total", "available"] {
         let mut bad = capacity.clone();
         match dimension {
             "architecture" => bad.architecture = "amd64".into(),
-            "gpu" => bad.gpu = "another GPU".into(),
-            "driver" => bad.driver_major = 579,
+            "gpu" => bad.gpus[0].name = "another GPU".into(),
+            "driver" => bad.gpus[0].driver_major = 579,
             "total" => bad.total = 117 * GIB,
             "available" => bad.available = 39 * GIB,
             _ => unreachable!(),

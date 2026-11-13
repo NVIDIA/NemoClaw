@@ -23,21 +23,26 @@ Accepted platform and model declarations are not a tested matrix; verify the exa
 
 | Limit | Issue |
 |---|---|
-| Linux AMD64 deployment has not reached an agent reply end to end | [#11997](https://github.com/NVIDIA/NemoClaw/issues/11997) |
-| No general DGX Station setup procedure; most Station configurations are untested | [#12122](https://github.com/NVIDIA/NemoClaw/issues/12122) |
-| Managed Ollama with OpenClaw on DGX Station | [#12154](https://github.com/NVIDIA/NemoClaw/issues/12154) |
+| No general DGX Station setup procedure; most Station configurations are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| Managed Ollama with OpenClaw on DGX Station | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | AMD64 Nemotron image and GPU inference | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Local GPU deployment on Windows/WSL or macOS | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A model service on a separate physical SSH host | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| Serving one model across several GPUs on one host: `container.gpuDevices` takes one entry, so vLLM refuses a [parallel layout](../agents-inference/models.md#set-the-parallel-layout) larger than one GPU | [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) |
 | Distributed inference across several Sparks or Stations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Podman beyond a local rootless Linux gateway: managed inference, rootful operation and remote engines | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | OpenShift beyond [OpenShift Local runs by hand](../build-deploy/kubernetes.md); no automated run covers OpenShift, and kind can't run a managed `openshift` gateway, which needs OpenShift to assign its `fsGroup` | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A managed OpenShift gateway needs `runtime.provider: openshift`: the pinned chart doesn't leave the gateway's UID and `fsGroup` to OpenShift by itself, so NemoClaw sets both to `null` on that value. This has run by hand on one OpenShift Local 4.22.14 node (linux/amd64) | [#13828](https://github.com/NVIDIA/NemoClaw/issues/13828) |
 | Changing a managed Kubernetes or OpenShift gateway's CPU and memory: NemoClaw sets the chart's `resources` to requests of 250m CPU and 256Mi and limits of 1 CPU and 1Gi | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
+| An apply of 256 sandboxes with a `kubernetes` or `openshift` gateway, the most a document holds there, hasn't been recorded; the managed gateway's 1 CPU and 1 GiB limit may not serve that many. See [sandbox count and cluster size](../build-deploy/kubernetes.md#sandbox-count-and-cluster-size) | [#14403](https://github.com/NVIDIA/NemoClaw/issues/14403) |
 | Choosing the StorageClass of a managed Kubernetes or OpenShift gateway's own volume: it uses the cluster's default, because NemoClaw doesn't pass the chart's `server.dataStorageClass` | [#13829](https://github.com/NVIDIA/NemoClaw/issues/13829) |
+| Putting a managed Kubernetes or OpenShift gateway behind an ingress or an OpenShift Route: NemoClaw doesn't pass the chart's `grpcRoute` or `openshiftRoute` values; use [an external gateway behind an ingress](../build-deploy/kubernetes.md#reach-an-external-gateway-through-an-ingress) instead | [#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) |
 | Model services that NemoClaw places with a Kubernetes or OpenShift gateway; sandboxes can use [a server you run in the cluster](../build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | [A model server you run in the cluster](../build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) has been tried on one kind cluster with NemoClaw's vLLM runtime behind a key ([#13546](https://github.com/NVIDIA/NemoClaw/issues/13546)) and its Ollama runtime, and with Ollama on one OpenShift Local node; vLLM on OpenShift and other network plugins are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| Live GPU inference, tools and replies through managed Ollama | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| A gateway published through [`gateway.kubernetes.expose`](../build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster) on a cluster other than kind | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| NemoClaw's own plan, apply and destroy dialing a [published gateway](../build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster) instead of port forwards, so they still need `pods/portforward` | [#14422](https://github.com/NVIDIA/NemoClaw/issues/14422) |
+| A managed gateway published through a `LoadBalancer` Service: the pinned OpenShell chart's Service takes no annotations or source ranges, and listens on the gateway's own port | [#14421](https://github.com/NVIDIA/NemoClaw/issues/14421) |
+| Tool use through managed Ollama, managed Ollama with harnesses other than Hermes, and managed Ollama on GPUs and hosts other than CI's Linux AMD64 [GPU runner](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A tested matrix of harness, model, provider and platform combinations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 
@@ -47,11 +52,11 @@ A configured connection or ready container does not establish successful model r
 
 | Limit | Issue |
 |---|---|
-| Fabric reports a harness process that exited as unknown rather than stopped, so plan doesn't [start it again](../build-deploy/usage.md#agent-runtimes-during-apply); the runtime is found at its next invocation | [NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298) |
-| Hermes doesn't reject a managed Ollama window below its 64,000-token minimum, because Ollama reports the model's native window; see [sizing the context for Hermes](../agents-inference/inference.md#size-the-context-for-hermes) | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) |
+| Hermes doesn't reject a managed Ollama window below its 64,000-token minimum; see [sizing the context for Hermes](../agents-inference/inference.md#size-the-context-for-hermes) | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) |
 | Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |
-| Managed NVIDIA NIM service | [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |
+| Managed NVIDIA NIM service; use NIM as an external OpenAI-compatible endpoint | Not planned ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)) |
+| More than 32 providers attached to one sandbox: OpenShell refuses more, and its inference providers, its web search and each `api` integration count one each | By design: OpenShell's limit per sandbox |
 
 ## Agents and Integrations
 
@@ -76,7 +81,10 @@ Access paths and diagnostic signals depend on the gateway and harness in use.
 |---|---|
 | The OpenClaw request walkthrough, rehearsed once OpenClaw starts in a sandbox | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
 | A live rehearsal against an external gateway that requires an issuer or mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli), and those steps have not been run on a cluster | By design: the development issuer serves only NemoClaw |
+| An error holds at most 16 KiB of a command's OpenTofu diagnostics, such as several managed services' [stop details](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime): it lists the whole diagnostics that fit, then the next one's summary and a count of the rest; a diagnostic longer than 16 KiB keeps as much of its detail as fits | By design: bounds the error's size |
+| An error shows `child output exceeds the supported limit` in place of a command's output when OpenTofu writes more than 16 KiB to standard error, as a provider crash can, or more than 64 MiB to standard output: cut output can end inside a credential that redaction no longer recognizes | By design: keeps credentials out of errors |
+| A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli), which no automated test covers | By design: the development issuer serves only NemoClaw |
+| [Service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) on a managed Kubernetes or OpenShift gateway name `openshell.localhost` and the gateway pod's port, 8080, so they don't open as printed; reach them through a port forward to the gateway, sending the URL's host name and the gateway's client certificate | [#14316](https://github.com/NVIDIA/NemoClaw/issues/14316) |
 
 ## Data and Cleanup
 
@@ -87,7 +95,6 @@ Preserve state and native data before attempting a destructive operation.
 | Native conversation continuity across runtime replacement | [Per-harness limits](../build-deploy/state.md#choose-what-to-retain-for-each-harness); depends on Fabric and the selected harness |
 | Backup, restore, snapshots and transfer of mounted agent data | [Platform-owned storage](../build-deploy/state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command |
 | Moving data from the earlier product to v1 and back | No NemoClaw procedure; native data belongs to the harness and moving its storage to the platform ([migration](../get-started/migration.md)) |
-| Verified removal of retained objects on SSH engines; the [Docker procedure](../build-deploy/usage.md#remove-retained-resources) covers them | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
 
 ## Security
 
@@ -101,7 +108,8 @@ Sandbox policy and credential routing depend on OpenShell and the host's control
 | [Proxy](../security/sandbox-network.md#use-an-upstream-proxy) credentials for a managed Docker or Podman gateway: OpenShell reads them only from a file on the gateway (`proxy_auth_file`), which NemoClaw doesn't mount | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
 | A proxy CA (`proxy_ca_bundle`) for any managed gateway: Docker and Podman read it from a file on the gateway, and the chart mounts it only from its `upstreamProxy.caBundle.configMapName` value, which NemoClaw doesn't set | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
 | OAuth-refresh credentials have no NemoClaw YAML wrapper; use [operator-managed OpenShell providers](../agents-inference/oauth-refresh.md), with separate sandbox attachments | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
-| Interactive network-request approval, named policy presets, and explaining policy to an agent | [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |
+| Interactive network-request approval and explaining policy to an agent; OpenShell's policy advisor owns both | Not planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)) |
+| Named policy presets; named [`grants`](../security/sandbox-network.md#choose-a-policy) extend the isolated preset instead | Not planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)) |
 
 ## SDK and Provider
 

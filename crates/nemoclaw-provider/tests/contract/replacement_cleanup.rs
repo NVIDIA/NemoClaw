@@ -21,7 +21,7 @@ fn container() -> String {
     )
 }
 
-fn read(root: &Path, name: &str) -> Value {
+pub(crate) fn read(root: &Path, name: &str) -> Value {
     serde_json::from_slice(&fs::read(root.join(name)).unwrap()).unwrap()
 }
 
@@ -56,13 +56,18 @@ provider "docker" {{
     workspace
 }
 
-struct Scenario {
+pub(crate) struct Scenario {
     workspace: TofuWorkspace,
     remote: tempfile::TempDir,
 }
 
 impl Scenario {
     fn new() -> Self {
+        Self::with(&container())
+    }
+
+    /// A scenario whose configuration declares `body` after the provider.
+    pub(crate) fn with(body: &str) -> Self {
         let remote = tempfile::tempdir().unwrap();
         let root = remote.path();
         // The Docker provider runs `ssh` from PATH without passing the
@@ -79,15 +84,23 @@ impl Scenario {
             &json!({"effects":0, "creates":0, "network":{"Name":"bridge"}}),
         );
         save(root, "control.json", &json!({}));
-        let workspace = workspace(&container());
+        let workspace = workspace(body);
         Self { workspace, remote }
     }
 
-    fn root(&self) -> &Path {
+    pub(crate) fn root(&self) -> &Path {
         self.remote.path()
     }
 
-    fn tofu(&self, args: &[&str]) -> Vec<u8> {
+    /// Replace `old` with `new` in the configuration.
+    pub(crate) fn reconfigure(&self, old: &str, new: &str) {
+        let path = self.workspace.path().join("main.tf");
+        let body = fs::read_to_string(&path).unwrap();
+        assert!(body.contains(old), "{body}");
+        fs::write(path, body.replace(old, new)).unwrap();
+    }
+
+    pub(crate) fn tofu(&self, args: &[&str]) -> Vec<u8> {
         let output = self
             .workspace
             .command()
@@ -110,7 +123,7 @@ impl Scenario {
     /// The saved plan's changes to the container, current and deposed. The
     /// SDK also reads drift, and its canned plans report none for the old
     /// container.
-    fn plan(&self) -> Vec<Value> {
+    pub(crate) fn plan(&self) -> Vec<Value> {
         self.tofu(&["plan", "-input=false", "-no-color", "-out=cleanup.plan"]);
         let plan: Value =
             serde_json::from_slice(&self.tofu(&["show", "-json", "cleanup.plan"])).unwrap();
@@ -185,7 +198,7 @@ fn deposed(changes: &[Value]) -> &Value {
     deposed[0]
 }
 
-fn current(changes: &[Value]) -> &Value {
+pub(crate) fn current(changes: &[Value]) -> &Value {
     changes
         .iter()
         .find(|change| change.get("deposed").is_none_or(Value::is_null))

@@ -3,7 +3,7 @@
     "fabric_harnesses": {
       "sandbox_assistant": {
         "architecture": "${jsondecode(data.host_engine.current.engine_json).architecture}",
-        "config_json": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"primary\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_NVIDIA_PROD_32AAE74F8CBCD339756C6BC7_KEY\",\"base_url\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"nvidia/nemotron-3.5-super-vl-120b-a12b\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_NVIDIA_PROD_32AAE74F8CBCD339756C6BC7_KEY\",\"base_url\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"nvidia/nemotron-3.5-super-vl-120b-a12b\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}",
+        "config_json": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.openclaw\",\"settings\":{}},\"metadata\":{\"name\":\"primary\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_NVIDIA_PROD_32AAE74F8CBCD339756C6BC7_KEY\",\"base_url\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"nvidia/nemotron-3.5-super-vl-120b-a12b\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_NVIDIA_PROD_32AAE74F8CBCD339756C6BC7_KEY\",\"base_url\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"nvidia/nemotron-3.5-super-vl-120b-a12b\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\",\"keep_state\":true},\"schema_version\":\"fabric.agent/v1alpha1\"}",
         "engine": "unix:///var/run/docker.sock",
         "image": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
         "lifecycle": {
@@ -21,6 +21,14 @@
         "operating_system": "${jsondecode(data.host_engine.current.engine_json).operating_system}"
       }
     },
+    "host_engine": {
+      "current": {
+        "engine": "unix:///var/run/docker.sock"
+      },
+      "target_0": {
+        "engine": "unix:///var/run/docker.sock"
+      }
+    },
     "openshell_gateway_prerequisites": {
       "current": {
         "compute_driver": "docker",
@@ -36,14 +44,6 @@
         },
         "name": "nc-449be4b09efa1b23-gateway",
         "owner": "12345678-1234-4234-9234-123456789abc"
-      }
-    },
-    "host_engine": {
-      "current": {
-        "engine": "unix:///var/run/docker.sock"
-      },
-      "target_0": {
-        "engine": "unix:///var/run/docker.sock"
       }
     }
   },

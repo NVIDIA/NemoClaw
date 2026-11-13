@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[serde(untagged, deny_unknown_fields)]
 /// Explicit execution hardware: a named profile or dedicated GPU requirements. Excludes an inline recipe.
 pub enum ServiceHardware {
-    /// One NVIDIA GPU with dedicated memory on Linux AMD64.
+    /// NVIDIA GPUs with dedicated memory on Linux AMD64; each selected GPU must meet the requirements.
     Dedicated(DedicatedHardware),
     /// A named hardware contract with fixed compatibility requirements.
     #[serde(rename_all = "camelCase")]
@@ -19,7 +19,7 @@ pub enum ServiceHardware {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(default, with = "String")]
         architecture: Option<String>,
-        /// Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity.
+        /// Minimum dedicated memory of each selected GPU in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(default, with = "u64")]
         min_gpu_memory_bytes: Option<u64>,
@@ -27,12 +27,29 @@ pub enum ServiceHardware {
 }
 
 impl ServiceHardware {
+    /// Check the host, then each selected GPU: selected GPUs may differ, as
+    /// long as each one meets the requirements.
     pub fn check_compatibility(
         &self,
         capacity: &crate::hardware::Capacity,
     ) -> Result<(), crate::Error> {
-        use crate::hardware::{GIB, HardwareDiagnostic, architecture, at_least};
+        use crate::hardware::{architecture, at_least};
         architecture(self.architecture()?, &capacity.architecture)?;
+        if let Self::Profile { profile, .. } = self {
+            at_least(
+                "host total memory (bytes)",
+                profile.min_host_memory_bytes(),
+                capacity.total,
+            )?;
+        }
+        for gpu in capacity.selected_gpus()? {
+            crate::hardware::on_gpu(gpu, self.check_gpu(gpu))?;
+        }
+        Ok(())
+    }
+
+    fn check_gpu(&self, gpu: &crate::hardware::Gpu) -> Result<(), crate::Error> {
+        use crate::hardware::{GIB, HardwareDiagnostic, at_least};
         let (compute, driver, memory) = match self {
             Self::Dedicated(required) => (
                 required.min_compute_capability,
@@ -44,18 +61,13 @@ impl ServiceHardware {
                 min_gpu_memory_bytes,
                 ..
             } => {
-                if !profile.matches_gpu(&capacity.gpu) {
+                if !profile.matches_gpu(&gpu.name) {
                     return Err(crate::Error::Hardware(HardwareDiagnostic::Mismatch {
                         field: "hardware.profile",
                         required: profile.gpu_family(),
                         observed: "different GPU family",
                     }));
                 }
-                at_least(
-                    "host total memory (bytes)",
-                    profile.min_host_memory_bytes(),
-                    capacity.total,
-                )?;
                 (
                     profile.compute_capability(),
                     580,
@@ -67,16 +79,16 @@ impl ServiceHardware {
         at_least(
             "hardware.minComputeCapability",
             compute.into(),
-            capacity.compute_capability.into(),
+            gpu.compute_capability.into(),
         )?;
         at_least(
             "hardware.minDriverMajor",
             driver.into(),
-            capacity.driver_major.into(),
+            gpu.driver_major.into(),
         )?;
         if let Some(required) = memory {
-            let gpu = capacity
-                .gpu_memory
+            let gpu = gpu
+                .memory
                 .as_ref()
                 .ok_or(crate::Error::State("dedicated GPU memory is unobservable"))?;
             if gpu.free > gpu.total {
@@ -108,13 +120,13 @@ impl ServiceHardware {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.
+/// Requirements each selected NVIDIA GPU with dedicated memory on Linux AMD64 must meet. Declaring requirements does not qualify a model or host.
 pub struct DedicatedHardware {
     /// CPU architecture; this dedicated-memory contract requires amd64.
     pub architecture: String,
     /// Minimum NVIDIA compute capability, encoded as major times ten plus minor; 90 means 9.0.
     pub min_compute_capability: u32,
-    /// Minimum total dedicated GPU memory in bytes. Host RAM is measured separately.
+    /// Minimum total dedicated memory of each selected GPU in bytes. Host RAM is measured separately.
     pub min_gpu_memory_bytes: u64,
     /// Minimum installed NVIDIA driver major version.
     pub min_driver_major: u32,

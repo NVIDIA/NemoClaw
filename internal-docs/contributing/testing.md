@@ -18,7 +18,7 @@ Before pushing, choose checks that cover the changed behavior and its affected c
 
 For changes spanning categories, combine the applicable checks.
 A YAML or configuration file can change runtime behavior; choose by impact rather than extension.
-Report the commands and results in the PR, and name checks deferred to CI with the reason.
+Report the commands and results to whoever asked for the change, and name checks deferred to CI with the reason; a PR description names only checks outside CI.
 Repeat validation when relevant inputs change, a check fails, or an unresolved concern requires it; a push alone does not require another run.
 Required PR checks still apply before merging.
 
@@ -61,7 +61,7 @@ The comparison includes committed, staged, unstaged, and untracked files; Git-ig
 The outer Cargo invocation still builds the CI runner when needed.
 Formatting, Clippy, the workspace build, unit tests, doctests, and schema checks always run in `cargo ci`; only bundle construction and the contract and integration steps can skip.
 Use `cargo ci --full` to run the complete local suite, or `cargo ci --full --dry-run` to preview it.
-`--base` and `--full` are mutually exclusive and cannot be combined with a named step, a partition, an archive, or live-image inputs.
+`--base` and `--full` are mutually exclusive and cannot be combined with a named step, a partition, an archive, live-image inputs, or `--hcl-cases`.
 
 The bundle retains all crate sources, so a change outside the contract and integration dependency graph can rebuild the bundle while skipping those tests.
 The planner accounts for the fixture provider launched by OpenTofu as well as Cargo dependencies.
@@ -139,7 +139,7 @@ Other ignored tests, such as the Brev and hosted-model tests, run only when sele
 
 Run every command from the repository root.
 `cargo ci STEP` runs one step after checking the pinned tools.
-The default steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bundle`, `contract`, and `integration`; `archive`, `live-docker`, and `live-kind` run only when named.
+The default steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bundle`, `contract`, and `integration`; `archive`, `live-images`, `live-docker`, and `live-kind` run only when named.
 
 | Layer | All of it | One binary or test |
 |---|---|---|
@@ -160,9 +160,10 @@ A contract test runs the provider built from the checkout, but an integration te
 [Run integration tests](integration-tests.md#opentofu-and-bundle-lifecycle) covers the fixture executables that a single `cargo test` needs.
 
 `cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../../docs/build-deploy/build.md).
-It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, and an image derived from the dummy under a fresh `nc-live-` prefix; and writes gateway documents, and binds the dummy HCL E2E case, with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
-It runs the `live-docker` profile in five nextest commands: one for the tests that need no gateway document, one for each of the two gateway tests with its own document, then one for each HCL E2E case, `docker-dummy` and `docker-openclaw-hermes-interfaces`, with its bound document.
-The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
+It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, and an image derived from the dummy under a fresh `nc-live-` prefix; and writes gateway documents, and binds each selected Docker HCL E2E case, with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
+It runs the `live-docker` profile in one nextest command for the tests that need no gateway document, one for each of the two gateway tests with its own document, then one for each selected HCL E2E case, `docker-dummy` and `docker-openclaw-hermes-interfaces`, with its bound document: five commands when both cases are selected.
+`--hcl-cases` names the cases, as CI passes the plan's selection; without it, every case that the suite runs is selected.
+Every test in the profile uses Docker, so all of them run one at a time, in its `docker-engine` test group.
 Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
 When the tests pass, the step fails if OpenShell left a sandbox object or if it cannot list or remove an object labelled with one of those UUIDs.
 It requests no inference from a model server and needs no GPU or credentials.
@@ -179,10 +180,11 @@ It builds the OpenClaw and Hermes agent images and the reference dummy image und
 The command exports directly from Docker's local containerd store before compression.
 This requires Docker to report its containerd address and namespace, `sudo -n ctr` access, and temporary disk space for the uncompressed archive.
 The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.
+On GitHub Actions, each image's build imports the layers, including builder stages, that an earlier run saved to the Actions cache under `live-images-IMAGE-ARCH`; see [CI caches](#ci-caches).
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
 
 Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, and reference images that a `v1` commit pushed to `ghcr.io/nvidia/nemoclaw/v1-ci`, after `docker login ghcr.io`.
-`cargo run -p nemoclaw-build -- changes live-images --base REV` names such a commit: the newest of the latest 30 on `REV`'s first-parent history that pushed all four images for both architectures, provided the image rules find no change between it and `HEAD`.
+`cargo run -p nemoclaw-build -- changes live-images --base REV` names such a commit: the newest of the latest 30 on `REV`'s first-parent history that pushed all three images for both architectures, provided the image rules find no change between it and `HEAD`.
 
 ## Budgets and Per-Test Limits
 
@@ -193,15 +195,15 @@ Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, and refe
 | `test` | The `ci` nextest run, without the doctests | 45 s | 8 s | 24 s |
 | `contract` | Each partition's nextest run | 300 s | 16 s | 32 s |
 | `integration` | Each partition's nextest run | 300 s | 90 s | 180 s |
-| `live-docker` | Its five nextest commands together | 360 s | 180 s | 360 s |
+| `live-docker` | Its nextest commands together | 360 s | 180 s | 360 s |
 | `live-kind` | Its nextest commands, one per HCL case, together | 300 s | 180 s | 360 s |
 
 Its `binaries` section budgets each provider's contract binary by its nextest name: the binary's test times summed across a platform's contract partitions, and a limit for any one of its tests:
 
 | Binary | Summed budget | Per-test limit | Nextest stops a test after |
 |---|---|---|---|
-| `fabric-provider::contract` | 25 s | 10 s | 20 s |
-| `nemoclaw-provider::contract` | 45 s | 8 s | 16 s |
+| `fabric-provider::contract` | 32 s | 16 s | 32 s |
+| `nemoclaw-provider::contract` | 82 s | 12 s | 24 s |
 | `openshell-provider::contract` | 180 s | 12 s | 24 s |
 
 Budgets are measured from each step's JUnit report, so compilation, image builds, and cluster setup do not count.
@@ -274,7 +276,7 @@ To produce the same report locally, download the `STEP-PLATFORM-SHARD-ATTEMPT` a
 cargo run -q --locked -p nemoclaw-build --no-default-features -- suite-timing integration DIRECTORY --platform linux_amd64 --shards '[1, 2]'
 ```
 
-CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-ATTEMPT`, `contract-PLATFORM-SHARD-ATTEMPT`, `integration-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its four nextest commands.
+CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-ATTEMPT`, `contract-PLATFORM-SHARD-ATTEMPT`, `integration-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its nextest commands.
 The live reports hold outcomes and times only, so they can be shared as a run's result; failing tests' output stays in the job log.
 Each [HCL E2E scenario](live-tests.md#hcl-e2e-scenarios) also prints the time of each of its run blocks and, in GitHub Actions, adds them to the job summary.
 The rest of what a live run used is on its GitHub run: the commit and runner, and the `bundle-PLATFORM-COMMIT-ATTEMPT` and `live-images-PLATFORM-COMMIT-ATTEMPT` artifacts it downloaded, each with its digest, or the `v1` commit whose images it pulled, which the plan's summary names.
@@ -291,11 +293,12 @@ Documentation previews publish only for PRs targeting `v1`.
 |---|---|
 | CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; each platform's jobs start with their test layer, such as `linux_amd64 / Contract tests 1 of 1` or `linux_amd64 / E2E / E2E Docker tests` |
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
-| CI / Dependencies | `Policy` |
+| CI / Dependencies | `Policy`, `Python scripts` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
+| E2E / Colossus runner connectivity | Manual, on `v1` only: `smoke` runs `true` on the `colossus-gb300-pilot` runner without credentials, and `bundle` runs the Linux ARM64 bundle, unit, contract, and integration jobs there one after another, to compare their times with the hosted runners'; it restores the hosted runners' Rust caches but never saves them |
 
-The `v1` ruleset requires the first eight checks.
+The `v1` ruleset requires the four `Test /` checks, the two `Build /` checks, `Policy`, and `Validate`; `Python scripts` isn't required.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
 A `Test / PLATFORM` check succeeds only when every job of that platform that runs succeeds: its unit, contract, and integration tests, and, on Linux, its selected live suites. A job the plan doesn't select is skipped.
 
@@ -314,12 +317,15 @@ Two tests in `nemoclaw-build`'s `workflows` module check what a workflow run wou
 
 ### Jobs of One Platform
 
+On Linux, `Unit build and test` and `Build bundle` run on Ubuntu 22.04, the oldest supported Linux, and `Build bundle` then runs `nemoclaw-build check-glibc --minimum 2.35`, which fails if any bundle executable needs a non-weak glibc symbol version newer than 2.35.
+The other jobs run on Ubuntu 24.04: executables built against an older glibc run on newer ones, but not the other way around.
+
 Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners, whose job names start with their test layer:
 
-1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables.
+1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables. On Linux, it runs `docker buildx version` before the tests, so the Bake tests' first Docker call doesn't spend their time limit reading the Docker CLI and Buildx from disk.
 2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
 3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions, and `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets.
-4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E build images` with `cargo ci live-images`, and `E2E Docker tests` and `E2E Kubernetes (kind) tests`, from the platform's archive and bundle. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, from the same artifacts, and `E2E GPU` for those on the NVIDIA GPU runner; see [live suites](#live-suites).
+4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E build images` with `cargo ci live-images`, and `E2E Docker tests` and `E2E Kubernetes (kind) tests`, from the platform's archive and bundle. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, and `E2E GPU` for those on the NVIDIA GPU runner, from the same artifacts; see [live suites](#live-suites).
 
 When a pull request changes no image input since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
 
@@ -368,7 +374,7 @@ tar -xf .build/ci/lifecycle-inputs.tar
 The checkout must be at the path where the tests were built: they read fixtures through paths that `env!("CARGO_MANIFEST_DIR")` fixed at compile time, which the remap does not change.
 
 The worker compiles nothing and writes JUnit timings under `target/nextest/integration`; repeating the command overwrites the extracted files.
-`--partition` requires the `contract` or `integration` step, `--archive-file` requires `contract`, `integration`, `live-docker`, or `live-kind`, and `--images` and `--images-commit` require `live-docker` or `live-kind`, so none of them narrows plain `cargo ci`.
+`--partition` requires the `contract` or `integration` step, `--archive-file` requires `contract`, `integration`, `live-docker`, or `live-kind`, and `--images`, `--images-commit`, and `--hcl-cases` require `live-docker` or `live-kind`, so none of them narrows plain `cargo ci`.
 
 ### Windows
 
@@ -403,8 +409,9 @@ Only the hosted and GPU jobs receive the key, and a GPU case receives it only wh
 `E2E Kubernetes (kind) tests` runs only HCL cases, so it is skipped when none is selected; `cargo ci live-docker` and `live-kind` take the selection as `--hcl-cases`, and without it run every case placed on them.
 
 Whenever the plan selects a hosted case, Linux AMD64 runs it as `linux_amd64 / E2E / E2E HCL CASE`, from the same test archive, bundle, and live images as the live suites, except on a fork's pull request, which cannot use the inference secret.
-On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts, so a pull request never runs them.
-Live / HCL builds its own bundle, test executable, and agent images on Ubuntu 22.04, whose older glibc the GPU runner can run, and each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services. Dispatch it to run the hosted or GPU cases alone against that build.
+On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts, so a pull request never runs them.
+Live / HCL's `Cases` job lists the cases and fetches the model runtime images' pinned sources, and each case's job runs the same test archive, bundle, and live images as the hosted cases, which the GPU runner can run because CI / Bundle builds them on Ubuntu 22.04. Each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services.
+Dispatch Live / HCL to run the hosted or GPU cases alone: without CI / Bundle's artifacts, its `Build` job builds the bundle, test executable, and agent images on Ubuntu 22.04 from the dispatched branch.
 
 To see which live HCL cases a pull request affects, such as before dispatching the GPU cases, which its CI does not run, run from a clean checkout of its commit:
 
@@ -426,7 +433,7 @@ The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-test
 ## Dependency Policy
 
 The [dependency workflow](../../.github/workflows/dependencies.yml) runs on every pull request, including stacked PRs, so its check is available even when no dependencies change.
-Pushes to `v1` run it only when Rust manifests, lockfiles, the toolchain, the policy, or the workflow change.
+Pushes to `v1` run it only when Rust manifests, lockfiles, the toolchain, the policy, the scripts in `tools/ci`, or the workflow change.
 It runs once on Linux, outside the native build matrix, without compiling the workspace or caching build artifacts.
 The [policy](../../deny.toml) permits the current license inventory and the explicitly listed Git sources; dependency revisions remain pinned in the manifests and lockfile.
 
@@ -439,8 +446,7 @@ cargo deny --locked check advisories
 ```
 
 Advisories use the current advisory database and are a manual check, separate from the required license and source checks.
-The workflow also defines a manual advisory step, but GitHub requires the workflow file on the repository's default branch before it accepts manual dispatch.
-Until that requirement is met, run the advisory command locally on `v1`.
+The workflow runs the advisory step only on a manual run, such as `gh workflow run dependencies.yml --ref v1`. GitHub's documentation requires a dispatched workflow on the default branch, but GitHub has accepted dispatches of this one from other branches.
 There is no scheduled advisory run on this branch.
 A denied license or source requires reviewing the dependency and policy; do not add blanket exceptions to make the check pass.
 
@@ -451,11 +457,13 @@ For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
 cargo test -p nemoclaw-build --test integration bake::
+cargo images fetch
 AGENT_PLATFORM=linux/arm64 docker buildx bake --check dummy agents ollama-proxy
 AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
 The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
+`cargo images fetch` places the remote files that `versions.json` pins under `imageSources` in `.build/image-sources`, where Bake reads them, even to check the Dockerfiles.
 Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, reference-backend tests without Fabric, and generic runtime behavior tests against Fabric's installed fixture adapter.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
 Checks produce build cache entries and no tagged runtime images.
@@ -535,22 +543,29 @@ Profiles live in `.cargo/config.toml`, whose hash and the current month are part
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
 Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
 Within a month, manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
-The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v3` cache keeps those of its debug build tool and the target-specific release profile.
+The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v4` cache keeps those of its debug build tool and the target-specific release profile.
+On Linux, those jobs run on Ubuntu 22.04 and write the platform's caches, which the Ubuntu 24.04 `E2E build images` job restores.
+A cache written on a newer Ubuntu would carry its glibc headers' requirements into the bundle, because Cargo does not rebuild C objects when the system headers change; `native-deps-v5` and `native-bundle-v4` started fresh for that reason.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
 Only `v1` writes Rust dependency caches; PRs restore the base branch cache and skip uploads.
 This avoids spending PR time saving caches scoped to individual pull requests.
 
 Dependency caches are keyed by platform and the Rust toolchain, manifests, lockfile, and build environment, rather than each source commit.
-Native, Docker, and Kind jobs share each platform's dependency cache instead of adding their job names to its key.
-Only the native build-and-test job writes that shared cache; Docker and Kind jobs restore it without uploading duplicate copies, and the bundle job writes its own.
-Documentation and Brev retain separate cache prefixes.
+The native build-and-test job and `E2E build images` share each platform's dependency cache instead of adding their job names to its key.
+Only the native build-and-test job writes that shared cache; `E2E build images` restores it without uploading a duplicate copy, and the bundle job writes its own.
+The live suites' Docker, Kind, and HCL jobs compile nothing, so they restore no Rust cache.
+Documentation restores a bundle cache without saving one, but it names `native-bundle-v3`, which nothing writes since the bundle job moved to `native-bundle-v4` ([#14414](https://github.com/NVIDIA/NemoClaw/issues/14414)); Live / Brev and Live / HCL's `Build` job keep their own prefixes.
 The shared key causes a one-time cold build when first enabled; old job-specific entries can expire normally.
+
+`E2E build images` keeps BuildKit's layers for the live images in the same cache, through `cargo images build --gha-cache`: about 1.8 GB per Linux platform, mostly the OpenClaw application, the Rust toolchain, and the Fabric runtime's Rust build.
+Only `v1` saves them, and pull requests into `v1` import them; a layer hits while its inputs, such as the pinned upstream images, the Fabric revision, or `image/fabric`, stay unchanged.
+RUN cache mounts, such as the uv and Cargo download caches, are not saved, and a hit reuses the layer's packages, such as those `apt-get` installed, until its inputs change or the cache expires.
 
 The checksum-addressed OpenTofu archives in `.build/downloads` use a separate cache keyed by platform and `versions.json`.
 Source-only changes reuse that archive cache without uploading it again.
 Bundle assembly still verifies every archive checksum and builds a fresh bundle; `dist` is not cached.
 
-The [shared Rust setup](../../.github/actions/setup-rust/action.yml) runs `cargo ci tools` for native, documentation, and Brev builds and exports the installed `PROTOC` to later steps.
+The [shared Rust setup](../../.github/actions/setup-rust/action.yml) runs `cargo ci tools` for native, documentation, Brev, and Live / HCL builds and for `E2E build images`, and exports the installed `PROTOC` to later steps.
 That runner compiles without the SDK in `target/ci-runner`, so it can install the compiler before anything needs it.
 GitHub restricts cache access by branch: temporary Brev branches may start cold because `v1` is not the default branch.
 Parallel VM preparation reduces the build's contribution to elapsed time even on a cold run.

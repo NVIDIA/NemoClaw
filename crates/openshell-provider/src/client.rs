@@ -461,6 +461,15 @@ impl Backend for OpenShellBackend {
             Err(error) => Mutation::failed(error),
         }
     }
+    async fn update(&self, kind: &str, desired: &Row, prior: &Row) -> Mutation {
+        if crate::composite::KINDS.contains(&kind) {
+            return crate::composite::ensure(self, kind, desired).await;
+        }
+        match self.0.client_for(desired).await {
+            Ok(client) => client.update(kind, desired, prior).await,
+            Err(error) => Mutation::failed(error),
+        }
+    }
     async fn remove(
         &self,
         kind: &str,

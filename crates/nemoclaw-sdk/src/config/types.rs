@@ -39,7 +39,7 @@ pub struct Metadata {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.
+/// The configuration requires at least one named sandbox and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.
 pub struct Spec {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     #[schemars(default)]
@@ -69,7 +69,7 @@ pub struct Spec {
     /// Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements.
     pub inference_providers: std::collections::BTreeMap<String, InferenceProvider>,
     #[serde(rename = "sandboxes")]
-    /// One to 32 named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.
+    /// Named sandboxes: one to 256 with a kubernetes or openshift gateway runtime, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent.
     pub sandboxes: std::collections::BTreeMap<String, Sandbox>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(default, length(max = 32))]
@@ -158,7 +158,7 @@ pub struct ManagedGateway {
     pub runtime: Runtime,
     #[serde(rename = "endpoint")]
     #[schemars(default)]
-    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; providers forward free local ports of their own to the owned gateway, so this port is not bound.
+    /// Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Providers forward free local ports of their own to the owned gateway. Without `kubernetes.expose`, the host is `127.0.0.1` and this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port other clients dial, and the gateway certificate names its host.
     pub endpoint: String,
     #[serde(rename = "engine", skip_serializing_if = "String::is_empty")]
     #[schemars(default)]
@@ -313,7 +313,7 @@ pub struct Sandbox {
         skip_serializing_if = "std::collections::BTreeMap::is_empty"
     )]
     #[schemars(default)]
-    /// OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names when it creates the sandbox. Exposures belong to the sandbox's creation: changing them replaces the sandbox.
+    /// OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks each name when it exposes the service. Changing them updates the running sandbox's endpoints in place.
     pub service_exposures: std::collections::BTreeMap<String, ServiceExposure>,
     #[serde(rename = "agent")]
     /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
@@ -462,7 +462,7 @@ pub struct Route {
 /// Model settings for one named inference choice.
 pub struct Overrides {
     #[serde(rename = "model")]
-    /// Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository.
+    /// Model identifier. For a managed service, match its served model: vLLM's recipe serving.modelName, serving.modelName, or model.repository; Ollama's model.name; an Ollama proxy's upstream.model.name.
     pub model: String,
     #[serde(flatten)]
     /// Shared public model limits. Native model settings belong in settings.

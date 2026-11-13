@@ -30,7 +30,7 @@ impl Engine {
             } else {
                 #[cfg(unix)]
                 {
-                    std::sync::Arc::new(crate::hardware::LocalHost)
+                    std::sync::Arc::new(crate::hardware::LocalHost::default())
                 }
                 #[cfg(not(unix))]
                 {

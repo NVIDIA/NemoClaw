@@ -81,6 +81,11 @@ fn render(test: &str) {
     let mut openshift = spec();
     openshift.settings.runtime.provider = ComputeDriver::OpenShift;
     write("openshift.json", &values(&openshift));
+    let mut exposed = spec();
+    exposed.settings.endpoint = "https://gateway.agents.example.com:30851".into();
+    exposed.settings.kubernetes.as_mut().unwrap().expose =
+        Some(serde_json::from_value(json!({"service": {"type": "NodePort"}})).unwrap());
+    write("exposed.json", &values(&exposed));
     // The objects NemoClaw creates before the release, which Helm must not own.
     let auth = tempfile::tempdir().unwrap();
     let material = Development::new(
@@ -112,6 +117,12 @@ fn kubernetes_values_render_in_the_pinned_chart() {
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; pulls the pinned chart"]
 fn pull_secret_names_reach_pods_and_the_sandbox_driver() {
     render("tests/pull-secrets.tftest.hcl");
+}
+
+#[test]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; pulls the pinned chart"]
+fn an_exposed_gateway_is_published_by_the_charts_own_node_port_service() {
+    render("tests/exposed.tftest.hcl");
 }
 
 #[test]

@@ -33,14 +33,14 @@ Prepare these inputs before running apply:
 - An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-For the [first-deployment tutorial](first-deployment.md), use OpenShell **0.1.6** for the gateway and native CLI.
-The tutorial's pinned NemoClaw implementation (`86b8d94273a76a696e06b300dc29f7035b163667`) records this version and OpenShell source revision `ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47` in its `versions.json`.
+For the [first-deployment tutorial](first-deployment.md), use OpenShell **0.1.7** for the gateway and native CLI.
+The tutorial's pinned NemoClaw implementation (`637bdb6276309ea71d1f1fcb68fff518fe2db926`) records this version and OpenShell source revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c` in its `versions.json`.
 Its gateway check rejects a different reported OpenShell version or an incompatible compute driver.
 For another NemoClaw revision, use its own `versions.json` rather than assuming this version applies.
 Select a compatible [inference API](../agents-inference/inference.md) and verify an actual agent reply; endpoint reachability alone is insufficient.
 
-Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.6`.
-The guides assume an operator provides the external gateway and its credentials; register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
+Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.7`.
+The guides assume an operator provides the external gateway and its credentials; register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
 For an existing profile or plaintext loopback gateway, use [gateway/workspace selection](../agents-inference/interfaces.md#select-the-gateway-and-workspace).
 See the [first-deployment guide](first-deployment.md) for its rehearsal status.
 
@@ -52,6 +52,10 @@ Keep the bundle unchanged while an operation uses it.
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
 `CI / Bundle` builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64; that does not qualify GPU deployment on every platform.
 
+On Linux, the oldest supported release is Ubuntu 22.04, whose glibc is 2.35.
+`CI / Bundle` builds the Linux bundles there and fails if any bundle executable needs a newer glibc; it runs the contract, integration, and live tests on Ubuntu 24.04.
+A bundle runs only where the glibc is at least as new as on the host that built it, so build it on the oldest Linux release that will run it.
+
 There are no release downloads or installer yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 
 ## Runtime and Inference Requirements
@@ -61,7 +65,7 @@ Choose the gateway and model placement that matches the available engine and end
 | Configuration | Requirements and owning guide |
 |---|---|
 | External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API/model, and an immutable sandbox image; see [usage](../build-deploy/usage.md) and [inference](../agents-inference/inference.md) |
-| Fabric agent image | Deep Agents and OpenClaw use a native Linux ARM64 or AMD64 Docker builder with Buildx; other agent targets use ARM64; see [image prerequisites](../build-deploy/build.md#build-agent-images) |
+| Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; see [image prerequisites](../build-deploy/build.md#build-agent-images) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage/capacity for the selected hardware contract; see [managed models](../agents-inference/models.md) and [AMD64 Nemotron configuration](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host) |
 | Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware/placement/capacity contract as vLLM; see [managed Ollama](../agents-inference/inference.md#run-managed-ollama) |
 | Managed rootless Podman gateway | Podman 5 or later, local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](../build-deploy/usage.md#use-a-managed-podman-gateway) |

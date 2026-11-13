@@ -78,8 +78,8 @@ Select the SDK call for the effect you need; keep the same state directory and b
 
 | Method | Input and result | Effect |
 |---|---|---|
-| `plan(&document, &cancel)` | `OperationResult` with changes, deferred prerequisites, and unverified checks | Observes and previews the desired deployment |
-| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness, with the URLs the gateway reports for sandbox service exposures in `service_urls`; a failed read leaves it empty and emits `Progress::Warning` | Can create/change resources, download models, and check readiness without generation |
+| `plan(&document, &cancel)` | `OperationResult` with changes, deferred prerequisites, unverified checks, and each agent's runtime ID from the last apply in `agents` | Observes and previews the desired deployment |
+| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness, with the URLs the gateway reports for sandbox service exposures in `service_urls` and each agent's runtime ID in `agents`; a failed read of the state leaves both empty and emits `Progress::Warning` | Can create/change resources, download models, and check readiness without generation |
 | `export(&cancel)` | Observed `Document`; call `yaml()` to serialize it | Checks retained intent and observations; does not back up agent data |
 | `plan_destroy(&cancel)` | `OperationResult` from retained state | Previews owned workload removal and retained resources |
 | `destroy(&cancel)` | `OperationResult` from retained state | Deletes sandbox writable layers and in-memory conversations under the [retention rules](../build-deploy/state.md) |
@@ -236,8 +236,8 @@ This transport does not tunnel inference traffic.
 
 ## Package Distribution and API Reference
 
-The public Rust API is exported from [the pinned v1 SDK crate](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-sdk/src/lib.rs).
-The [pinned deployment implementation](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-sdk/src/deployment/mod.rs) defines the lifecycle methods used above.
+The public Rust API is exported from [the SDK crate](../../crates/nemoclaw-sdk/src/lib.rs).
+The [deployment implementation](../../crates/nemoclaw-sdk/src/deployment/mod.rs) defines the lifecycle methods used above.
 See [the provider guide](provider.md) for the bundled OpenTofu boundary and [CLI reference](cli.md) for terminal access.
 
 The SDK crate is not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).

@@ -7,7 +7,11 @@ use crate::Error;
 pub(super) struct RemoteHost;
 #[async_trait::async_trait]
 impl crate::hardware::HostObserver for RemoteHost {
-    async fn observe(&self, _: &Engine) -> Result<crate::hardware::HostObservation, Error> {
+    async fn observe(
+        &self,
+        _: &Engine,
+        _: Option<&str>,
+    ) -> Result<crate::hardware::HostObservation, Error> {
         Err(Error::Conflict(
             "remote host capacity requires an explicit observer",
         ))

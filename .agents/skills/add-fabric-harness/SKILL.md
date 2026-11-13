@@ -17,7 +17,7 @@ Deliver one pull request, titled like `feat: add the OpenCode agent image`.
 ## 1. Gather the Inputs
 
 - **Adapter ID** from Fabric, such as `nvidia.fabric.opencode`, and a short **harness name** for the image and example, lowercase and hyphenated, such as `opencode`.
-- **Fabric revision.** NemoClaw pins one Fabric revision for every image. If the pin predates the adapter, bump it first, in its own pull request: `FABRIC_REVISION` and `FABRIC_SHA256` in [the agent Dockerfile](../../../image/fabric/Dockerfile), then [regenerate the bundled catalog](../../../internal-docs/contributing/agent-image-maintenance.md#regenerate-the-bundled-catalog). The SDK learns adapter IDs and descriptors from that catalog; it needs no code change.
+- **Fabric revision.** NemoClaw pins one Fabric revision for every image. If the pin predates the adapter, bump it first, in its own pull request: the URL and SHA-256 of `fabric.tar.gz` under `imageSources.fabric` in [`versions.json`](../../../versions.json), then [regenerate the bundled catalog](../../../internal-docs/contributing/agent-image-maintenance.md#regenerate-the-bundled-catalog). The SDK learns adapter IDs and descriptors from that catalog; it needs no code change.
 - **The adapter's descriptor** (`*.fabric-adapter.json` in Fabric's source at that revision): its runner command and `requirements.binaries` name the runtime the image must carry.
 - **Its packaging:** a Python adapter with a Fabric extra, or anything else, such as a TypeScript adapter or a native agent.
 
@@ -34,7 +34,7 @@ The stage:
 - installs the adapter and what it drives from Fabric's source and lockfiles at the pinned revision, or from an upstream release pinned by digest, or by revision and checksum;
 - copies any runtime the descriptor requires from an image pinned by digest, never a mutable tag;
 - links only the descriptor into `/opt/fabric/share/nemo-fabric/adapters/<name>/`, because Fabric's discovery skips symlinked directories;
-- writes `/opt/nemoclaw/adapters.json`, the declaration the catalog label publishes: `{"<adapter_id>": {"files": [directories the adapter reads], "binaries": [runtimes it runs]}}`;
+- writes `/opt/nemoclaw/adapters.json`, the declaration the catalog label publishes: `{"<adapter_id>": {"files": [directories the adapter reads], "binaries": [runtimes it runs]}}`, plus `"read_write"` for paths outside the defaults that its image's default policy must let it write, as Hermes lists `/dev/pts` and `/dev/ptmx`;
 - keeps sources and notices for third-party code, as the [image notice](../../../image/NOTICE.md) describes;
 - ends with `USER node`, the 10001 user OpenShell runs sandboxes as.
 
@@ -54,7 +54,7 @@ The stage:
 ## 5. Validate
 
 - Build and qualify the image on each platform you can reach natively: `cargo images build --platform linux/arm64 <name>`, then `cargo images qualify nc-fabric:<name>`.
-- Run `docker buildx bake check` and `cargo ci`. Tests that walk every example also count them, such as the [deployment journey](../../../crates/nemoclaw-authoring/tests/deployment_journey.rs); update their counts.
+- Run `cargo images fetch`, then `docker buildx bake check`, and `cargo ci`. Tests that walk every example also count them, such as the [deployment journey](../../../crates/nemoclaw-authoring/tests/deployment_journey.rs); update their counts.
 - CI's image jobs build and qualify every harness on both platforms.
 - Deploying the example is optional; it exercises Fabric's adapter rather than NemoClaw.
 

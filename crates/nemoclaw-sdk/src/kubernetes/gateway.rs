@@ -61,6 +61,35 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             "limits": {"cpu": "1", "memory": "1Gi"},
         },
     });
+    // An exposed gateway's own Service publishes the endpoint's port on every
+    // node and forwards it to the gateway's TLS listener, so TLS and client
+    // certificates pass through unchanged. The plaintext metrics port stays
+    // unpublished: at 0, the chart serves no metrics. The certificate names
+    // the endpoint host clients dial; the chart's always names 127.0.0.1 and
+    // in-cluster names.
+    if let Some(expose) = &target.expose {
+        let endpoint = url::Url::parse(&spec.settings.endpoint)
+            .map_err(|_| Error::State("invalid managed Kubernetes endpoint"))?;
+        let port = endpoint
+            .port_or_known_default()
+            .ok_or(Error::State("managed Kubernetes endpoint has no port"))?;
+        values["service"] = json!({
+            "type": expose.service.service_type.as_str(),
+            "nodePort": port,
+            // NVIDIA/OpenShell#5478 replaces this with metrics.enabled: false;
+            // the chart contract's exposed scenario catches the pin bump.
+            "metricsPort": 0,
+        });
+        match endpoint.host() {
+            Some(url::Host::Domain(name)) => {
+                values["pkiInitJob"]["serverDnsNames"] = json!([name]);
+            }
+            Some(url::Host::Ipv4(address)) if !address.is_loopback() => {
+                values["pkiInitJob"]["serverIpAddresses"] = json!([address.to_string()]);
+            }
+            _ => {}
+        }
+    }
     // On OpenShift, unset the gateway's UID and fsGroup as the chart's own
     // OpenShift install does, so restricted-v2 assigns the namespace's first
     // UID and group.

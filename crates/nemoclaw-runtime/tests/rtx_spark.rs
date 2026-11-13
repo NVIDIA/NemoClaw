@@ -4,7 +4,7 @@
 
 use nemoclaw_runtime::{
     RuntimeSpec,
-    hardware::{Capacity, GIB},
+    hardware::{Capacity, GIB, Gpu},
     vllm::{Service, hardware_capacity::serving_memory},
 };
 use serde_json::{Value, json};
@@ -54,8 +54,8 @@ fn rtx_spark_requires_arm64_compute_12_1_and_a_current_driver() {
         let mut capacity = rtx_spark_capacity("NVIDIA RTX Spark N1X");
         match mismatch {
             "architecture" => capacity.architecture = "amd64".into(),
-            "compute" => capacity.compute_capability = 120,
-            "driver" => capacity.driver_major = 579,
+            "compute" => capacity.gpus[0].compute_capability = 120,
+            "driver" => capacity.gpus[0].driver_major = 579,
             _ => unreachable!(),
         }
         assert!(
@@ -136,14 +136,20 @@ fn rtx_spark_service() -> Box<Service> {
 }
 
 fn rtx_spark_capacity(gpu: &str) -> Capacity {
-    Capacity {
+    let mut capacity = Capacity {
         architecture: "arm64".into(),
-        gpu: gpu.into(),
-        driver_major: 580,
-        compute_capability: 121,
         total: 128 * GIB,
         available: 120 * GIB,
         disk_free: 500 * GIB,
         ..Default::default()
-    }
+    };
+    capacity.set_gpus(vec![Gpu {
+        index: 0,
+        uuid: "GPU-00000000-0000-0000-0000-000000000000".into(),
+        name: gpu.into(),
+        driver_major: 580,
+        compute_capability: 121,
+        memory: None,
+    }]);
+    capacity
 }

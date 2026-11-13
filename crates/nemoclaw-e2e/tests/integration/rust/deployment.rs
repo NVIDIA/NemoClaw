@@ -470,6 +470,73 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
     lifecycle.destroy();
 }
 
+/// A changed, added, or removed service exposure updates the sandbox in
+/// place: the sandbox and its agent keep running, and apply reports the URLs
+/// of the declared endpoints. The provider's sandbox contract scenario checks
+/// the endpoints the gateway holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn changed_service_exposures_keep_the_sandbox_and_its_agent() {
+    let mut document =
+        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
+            .unwrap();
+    let exposures = |value| serde_json::from_value(value).unwrap();
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .service_exposures = exposures(serde_json::json!({
+        "dashboard": {"targetPort": 18800},
+        "api": {"targetPort": 8642}
+    }));
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    lifecycle.apply().await;
+    let (created, starts) = {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        (state.created_sandboxes.len(), state.fabric_starts.clone())
+    };
+    let mut changed = lifecycle.document.clone();
+    changed
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .service_exposures = exposures(serde_json::json!({
+        "dashboard": {"targetPort": 18801},
+        "web": {"targetPort": 3000, "authorizationMode": "BEARER_PASSTHROUGH"}
+    }));
+    let applied = lifecycle
+        .deployment
+        .apply(&changed, &lifecycle.cancel)
+        .await
+        .unwrap();
+    {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        assert_eq!(
+            state.created_sandboxes.len(),
+            created,
+            "the change replaced the sandbox"
+        );
+        assert_eq!(
+            state.fabric_starts, starts,
+            "the change restarted the agent"
+        );
+    }
+    let workspace = lifecycle.document.workspace();
+    let url =
+        |service: &str| format!("http://{workspace}--assistant--{service}.services.fixture.test/");
+    let expected: BTreeMap<_, _> = [(
+        "assistant".to_owned(),
+        [("dashboard", url("dashboard")), ("web", url("web"))]
+            .map(|(service, url)| (service.to_owned(), url))
+            .into(),
+    )]
+    .into();
+    assert_eq!(applied.service_urls, expected);
+    lifecycle.destroy();
+}
+
 /// Progress events that the deployment's callback records.
 type Recorded<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
 

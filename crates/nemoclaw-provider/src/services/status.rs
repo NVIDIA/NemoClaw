@@ -10,16 +10,34 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 struct Status {
     phase: String,
     updated: String,
+    // Ollama's status doesn't require a detail.
+    #[serde(default)]
+    detail: serde_json::Value,
 }
 
 #[derive(Deserialize)]
 struct InferenceStatus {
     phase: String,
-    #[serde(rename = "detail")]
-    _detail: String,
+    detail: String,
     updated: String,
     #[serde(rename = "pid")]
     _pid: u32,
+}
+
+/// What a runtime reports in its status file: its phase, and the runtime's
+/// detail, which says why a stopped runtime stopped.
+pub(super) struct RuntimeStatus {
+    pub phase: String,
+    pub detail: String,
+}
+
+impl RuntimeStatus {
+    fn starting() -> Self {
+        Self {
+            phase: "initializing".into(),
+            detail: String::new(),
+        }
+    }
 }
 
 fn timestamp(value: &str) -> Result<OffsetDateTime, Error> {
@@ -32,22 +50,23 @@ pub(super) async fn runtime_phase(
     engine: &Engine,
     observed: &crate::managed::RuntimeObservation,
 ) -> Result<String, Error> {
-    phase(
+    read(
         engine,
         &observed.spec.kind,
         &observed.container_id,
         &observed.started_at,
     )
     .await
+    .map(|status| status.phase)
 }
 
-/// The phase a `kind` runtime reports in its status file.
-pub(super) async fn phase(
+/// The status a `kind` runtime reports in its status file.
+pub(super) async fn read(
     engine: &Engine,
     kind: &str,
     container_id: &str,
     started_at: &str,
-) -> Result<String, Error> {
+) -> Result<RuntimeStatus, Error> {
     let (missing, incomplete, unknown) = match kind {
         vllm::SERVICE_KIND => (
             "inference runtime status is unobservable",
@@ -68,7 +87,7 @@ pub(super) async fn phase(
     let Some(bytes) = bytes else {
         let elapsed = OffsetDateTime::now_utc() - started;
         return if elapsed >= time::Duration::ZERO && elapsed < time::Duration::seconds(30) {
-            Ok("initializing".into())
+            Ok(RuntimeStatus::starting())
         } else {
             Err(Error::State(missing))
         };
@@ -78,19 +97,24 @@ pub(super) async fn phase(
         serde_json::from_slice::<InferenceStatus>(&bytes).map(|status| Status {
             phase: status.phase,
             updated: status.updated,
+            detail: status.detail.into(),
         })
     } else {
         serde_json::from_slice::<Status>(&bytes)
     }
     .map_err(|_| Error::State(incomplete))?;
     if timestamp(&status.updated)? < started {
-        return Ok("initializing".into());
+        return Ok(RuntimeStatus::starting());
     }
     match status.phase.as_str() {
-        "initializing" | "downloading" | "loading" | "ready" | "stopped" => Ok(status.phase),
-        "preparing" if kind == vllm::SERVICE_KIND => Ok(status.phase),
-        _ => Err(Error::State(unknown)),
+        "initializing" | "downloading" | "loading" | "ready" | "stopped" => {}
+        "preparing" if kind == vllm::SERVICE_KIND => {}
+        _ => return Err(Error::State(unknown)),
     }
+    Ok(RuntimeStatus {
+        detail: status.detail.as_str().unwrap_or_default().into(),
+        phase: status.phase,
+    })
 }
 
 #[cfg(test)]

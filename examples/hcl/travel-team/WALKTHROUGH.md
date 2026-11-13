@@ -145,7 +145,7 @@ resource "openshell_api" "bookings" {
 
 This registers the booking service's key for the buyer's executables only.
 OpenShell puts the key into a request in place of its placeholder, so the agent never sees the key itself.
-Hermes doesn't send that placeholder to MCP servers yet, so for now the service receives no key; [#13313](https://github.com/NVIDIA/NemoClaw/issues/13313) tracks it.
+Hermes doesn't send that placeholder to MCP servers yet, so for now the service receives no key; [#14417](https://github.com/NVIDIA/NemoClaw/issues/14417) tracks it.
 
 ## `policies.tf`: Network Grants
 
@@ -196,7 +196,7 @@ roles = merge(
 
 This table describes the team.
 Grants, registrations, sandboxes, and agents are all derived from it, so adding a researcher means adding one entry to `local.researchers`.
-Every role runs Hermes; Fabric's Deep Agents adapter can't turn a model's reasoning off yet ([NVIDIA/NeMo-Fabric#433](https://github.com/NVIDIA/NeMo-Fabric/issues/433)), and a reasoning model there can't finish within Fabric's 320-second invocation deadline.
+Every role runs Hermes.
 
 ```hcl
 binaries = { for role, harness in data.fabric_harness.agent : role => jsondecode(harness.launch_json).binaries }

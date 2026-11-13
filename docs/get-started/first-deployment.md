@@ -5,8 +5,8 @@
 
 In this tutorial, you configure one OpenClaw sandbox with an existing OpenShell gateway and inference endpoint.
 You then plan the deployment, apply it, and send one request to the agent.
-The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `86b8d94273`](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/examples/openclaw.yaml).
-The example keys providers and sandboxes by name, as do both inspected revisions. Keep the bundle and generated schema from the source revision used to build the image.
+The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `637bdb6276`](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/examples/openclaw.yaml).
+Keep the bundle and generated schema from the source revision used to build the image.
 A successful apply starts a runtime; only an invocation checks whether the agent replies.
 
 ## Prepare the Tools and Services
@@ -21,13 +21,13 @@ From the root of your NemoClaw checkout, run:
 
 ```sh
 git fetch origin v1
-git worktree add --detach ../nemoclaw-v1 86b8d94273a76a696e06b300dc29f7035b163667
+git worktree add --detach ../nemoclaw-v1 637bdb6276309ea71d1f1fcb68fff518fe2db926
 cd ../nemoclaw-v1
 ```
 
 Choose another unused directory if `../nemoclaw-v1` already exists; do not replace an existing worktree.
 Run the remaining commands from this v1 worktree root on the client host unless noted otherwise.
-Do not mix bundles, examples, and generated schemas from different revisions: their field validation can differ even when their map shape agrees.
+Do not mix bundles, examples, and generated schemas from different revisions: their field validation can differ.
 
 [Build a native bundle](../build-deploy/build.md#build-a-native-bundle) from this v1 worktree and add its CLI to `PATH`:
 
@@ -80,7 +80,7 @@ Replace the following illustrative values before planning:
 Keep `spec.gateway.management: external`; this deployment does not manage the gateway or inference server.
 The external gateway's engine is used for image inspection; it does not transfer ownership of that gateway.
 Update the editor schema comment in the copied file to `../../schemas/nemoclaw-v1alpha1.schema.json`.
-For other fields, use the generated configuration reference from the selected v1 worktree (`docs/reference/configuration.md` there) or its [source-pinned v1 snapshot](../references/v1-configuration.md). This checkout's generated reference has the same map shape but different types for three optional fields; use the source-pinned schema to validate this example. Refer to [inference configuration](../agents-inference/inference.md) for task-specific choices.
+For other fields, use the [field reference](../reference/configuration.md), which the v1 worktree generates at `docs/reference/configuration.md` together with its schema. Refer to [inference configuration](../agents-inference/inference.md) for task-specific choices.
 
 If your endpoint requires a key, add a reference under `spec.inferenceProviders.local`:
 
@@ -132,16 +132,17 @@ export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
 Replace the endpoint and workspace with the values reported for your deployment.
 For an authenticated gateway, follow the [profile selection procedure](../agents-inference/interfaces.md#select-the-gateway-and-workspace) instead.
 
-Read the runtime ID for the `assistant` sandbox from this deployment's state, then invoke its agent named `main`:
+The apply result reports the agent's runtime ID as `agents.assistant.runtimeId`.
+Read it again from a plan, which changes no runtime resources and needs the same credential environment as apply, then invoke the agent named `main`:
 
 ```sh
-RUNTIME_ID=$(jq -er '.resources[] | select(.mode == "managed" and .type == "fabric_agent" and .name == "assistant") | .instances[].attributes.runtime_id | select(type == "string" and length > 0)' .local/first-deployment/state/terraform.tfstate) || exit 1
+RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml | jq -er '.agents.assistant.runtimeId') || exit 1
 openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
 "Reply with a short greeting."
 JSON
 ```
 
-Stop if the ID check fails; inspect the apply result and state rather than invoking with an empty ID.
+Stop if the ID check fails; inspect the apply result rather than invoking with an empty ID.
 This request can incur inference charges and add to the agent's conversation history.
 Check both the command outcome and `result.status` in its JSON response; a successful invocation has `result.status: succeeded`.
 Inspect `result.output` for the adapter's reply rather than assuming every adapter returns the same output shape.

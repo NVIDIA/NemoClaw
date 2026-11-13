@@ -24,6 +24,7 @@ mod fabric_cache;
 #[cfg(feature = "sdk")]
 #[path = "fern.rs"]
 mod fern;
+mod glibc;
 #[path = "hcl_cases.rs"]
 mod hcl_cases;
 #[cfg(feature = "sdk")]

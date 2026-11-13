@@ -284,6 +284,24 @@ impl Deployment {
                 "state is bound to a different deployment UID or gateway",
             ));
         }
+        // Like the endpoint, the Service type selects the address clients
+        // dial and the names the gateway certificate covers.
+        let exposure = |document: &Document| {
+            let expose = document
+                .spec
+                .gateway
+                .as_managed()?
+                .kubernetes
+                .as_ref()?
+                .expose
+                .as_ref()?;
+            Some(expose.service.service_type)
+        };
+        if exposure(&record.document) != exposure(&document) {
+            return Err(Error::Conflict(
+                "state is bound to a different gateway exposure: kubernetes.expose and its Service type stay as first planned; create a separate deployment to change them",
+            ));
+        }
         record.allocate_missing_generations(&document)?;
         let bindings = if record.pending() || record.digest != document.digest() {
             self.state_bindings(

@@ -108,12 +108,39 @@ exit "${CARGO_RESULT:-0}"
                 openshell["url"] = "http://offline.invalid/openshell.tar.gz".into();
             }
         }
+        // Image builds place their pinned sources first, which
+        // seed_image_sources downloads as an earlier run would have; these
+        // pins lead nowhere.
+        for files in pins["imageSources"].as_object_mut().unwrap().values_mut() {
+            for (name, source) in files.as_object_mut().unwrap() {
+                use sha2::{Digest, Sha256};
+                let checksum = nemoclaw_build::hex(&Sha256::digest(name.as_bytes()));
+                *source = serde_json::json!({
+                    "url": format!("https://offline.invalid/{name}"),
+                    "sha256": checksum,
+                });
+            }
+        }
         fs::write(
             root.path().join("versions.json"),
             serde_json::to_vec_pretty(&pins).unwrap(),
         )
         .unwrap();
         Self(root)
+    }
+
+    /// Download each pinned image source, whose bytes are its file name.
+    fn seed_image_sources(&self) {
+        let pins: serde_json::Value =
+            serde_json::from_slice(&fs::read(self.0.path().join("versions.json")).unwrap())
+                .unwrap();
+        let downloads = self.0.path().join(".build/downloads");
+        fs::create_dir_all(&downloads).unwrap();
+        for files in pins["imageSources"].as_object().unwrap().values() {
+            for (name, source) in files.as_object().unwrap() {
+                fs::write(downloads.join(source["sha256"].as_str().unwrap()), name).unwrap();
+            }
+        }
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -538,6 +565,7 @@ fn live_suites_accept_an_archive_of_their_tests() {
 fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
+    fixture.seed_image_sources();
     let output = fixture.run(&["live-images"]);
     assert!(
         output.status.success(),
@@ -571,10 +599,53 @@ fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed(
     );
 }
 
+/// CI saves the live images' layers on v1 only; every build imports them.
+#[test]
+fn live_images_import_cached_layers_and_save_them_only_when_ci_asks() {
+    for save in [None, Some("false"), Some("true")] {
+        let fixture = Fixture::new();
+        fixture.fake_container_tools();
+        fixture.seed_image_sources();
+        let mut command = fixture.command(&["live-images"]);
+        command.env_remove("NEMOCLAW_SAVE_GHA_CACHE");
+        if let Some(save) = save {
+            command.env("NEMOCLAW_SAVE_GHA_CACHE", save);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let log = fixture.docker_log();
+        for name in ["openclaw", "hermes", "dummy"] {
+            let builds: Vec<&str> = log
+                .lines()
+                .filter(|line| line.starts_with(&format!("buildx bake {name} ")))
+                .collect();
+            assert_eq!(builds.len(), 2, "{log}");
+            let scope = format!("type=gha,scope=live-images-{name}-arm64");
+            for build in &builds {
+                assert!(
+                    build.contains(&format!("{name}.cache-from={scope}")),
+                    "{build}"
+                );
+            }
+            assert_eq!(
+                builds[1].contains(&format!("{name}.cache-to={scope},")),
+                save == Some("true"),
+                "NEMOCLAW_SAVE_GHA_CACHE={save:?}: {}",
+                builds[1]
+            );
+        }
+    }
+}
+
 #[test]
 fn live_images_report_each_build_duration() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
+    fixture.seed_image_sources();
     let output = fixture.run(&["live-images"]);
     let report = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{report}");
@@ -606,6 +677,7 @@ fn live_images_report_failed_build_duration_and_stop() {
     for (index, image) in images.iter().enumerate() {
         let fixture = Fixture::new();
         fixture.fake_container_tools();
+        fixture.seed_image_sources();
         let output = fixture
             .command(&["live-images"])
             .env("DOCKER_FAIL_IMAGE", image)

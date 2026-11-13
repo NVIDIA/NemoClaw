@@ -99,7 +99,7 @@ Each provider that reaches such a gateway opens its own port forward on a free l
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
 Objects keep their gateway connection in state, so refresh and removal reach the same gateway without provider configuration.
 Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects, sandboxes included, and the retained workspace refuses it.
-These schemas are version 1; state from an earlier provider is rejected rather than upgraded.
+These schemas are version 2; state from an earlier provider is rejected rather than upgraded.
 When a registration names a managed vLLM or Ollama proxy credential, the provider reads the key from the owning container during apply, so the key never enters OpenTofu state.
 
 Each OpenShell resource exports a computed `ref` object identifying it: its `type`, `name`, `owner`, `generation`, and `id`, plus `workspace` for objects inside a workspace.
@@ -111,7 +111,6 @@ Objects name each other by `ref`, never by separate name strings:
 A consumer checks the ref's `type` and rejects a ref of another type.
 It keeps only the ref attributes it uses, so a ref can be fully known during planning before the referenced object's ID exists.
 Changing a referenced object's name or replacing it replaces its consumers, subject to the replacement protections below.
-These schemas are version 1; state recorded by an earlier provider schema is rejected rather than upgraded.
 
 Other inputs are typed too:
 
@@ -124,14 +123,14 @@ Other inputs are typed too:
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
 - `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
-  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/runtimes.mdx).
+  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
   It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, replaces the sandbox, as for the image; see [change paths](../build-deploy/usage.md#choose-the-change-path).
 - `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
-  They are passed through unchanged in the creation request, so OpenShell's defaults apply: an omitted mode is `STRIP`, and an empty name is the unnamed endpoint.
-  Like `driver_config`, they are part of the sandbox's creation: changing them, or a different endpoint observed on the gateway, replaces the sandbox.
+  A new sandbox's creation request carries them unchanged, so OpenShell's defaults apply: an omitted mode is `STRIP`, and an empty name is the unnamed endpoint.
+  Adding, changing, or removing a block updates the sandbox in place, as `openshell service expose` and `openshell service delete` do; so does a declared endpoint observed differently on the gateway. Endpoints under other names stay as they are.
 - The computed `policy_hash` is the hash OpenShell reports for the sandbox's loaded policy, including paths OpenShell adds itself. It's recorded when the policy first loads with every declared rule intact; a different hash later is drift.
-- The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry.
+- The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry. A plan that changes the `service` blocks leaves it unknown until apply.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
 
 ```hcl
@@ -180,7 +179,7 @@ Plans reject a missing `server` or `binaries`; the schema lists them as optional
 A rotated credential reference updates the registration in place. Adding or removing authentication, or any other change, replaces the resource, and removal deletes both objects.
 A sandbox that attaches it also needs a policy that allows traffic to the server's endpoint.
 Its `ref` has type `openshell_provider`, so sandboxes take it in `providers`.
-Generated graphs register each selected inference provider this way, passing a literal `inference_server` object built from the provider definition. Reading servers instead depends on one OpenTofu root ([#13254](https://github.com/NVIDIA/NemoClaw/issues/13254)) and on checking external servers ([#13256](https://github.com/NVIDIA/NemoClaw/issues/13256)).
+Generated graphs register each selected inference provider this way, passing a literal `inference_server` object built from the provider definition rather than a readiness read's `ref`; by design, they don't check external servers ([#13256](https://github.com/NVIDIA/NemoClaw/issues/13256)).
 
 ```hcl
 resource "openshell_inference" "nemotron" {
@@ -595,7 +594,7 @@ No GPU advertisement means unknown inventory, not zero GPUs.
 
 For complete host measurements, the provider library exposes `hardware_observation::observe_host_hardware` with the selected engine and a `HostObserver`.
 The operation checks the collector's daemon identity before accepting measurements and has a 30-second bound.
-It reports unsupported GPU memory counters separately from unobserved counters.
+It reports every GPU the collector reads, each with its UUID as `id`, and reports unsupported GPU memory counters separately from unobserved counters.
 Collector failure never falls back to the client's hardware.
 `host_engine` uses passive engine information and does not execute a collector or launch a probe container.
 Existing configured service-capacity checks retain their daemon-bound `HostObserver` collectors; this passive source neither replaces nor disables those checks.
@@ -631,9 +630,9 @@ A positive timeout retries only transport failures, not authentication failures,
 For a managed gateway, the generated graph sets this timeout to 90 seconds and reads capabilities after gateway reconciliation.
 The capability postcondition must succeed before OpenShell resource refresh proceeds.
 
-For managed Docker gateways, the runtime graph first reads `data.openshell_docker_gateway_readiness.current` and orders the capability read after it.
+For managed Docker gateways, the generated graph first reads `data.openshell_docker_gateway_readiness.current` and orders the capability read after it.
 `openshell_docker_gateway_readiness` takes the container's `engine`, `container_id`, `name`, and `owner`, the gateway `endpoint`, and optional `wait_timeout_seconds` and `read_trigger`.
-The runtime graph waits 90 seconds and takes `container_id` from the Docker provider's process resource, so the read waits until apply.
+The generated graph waits 90 seconds and takes `container_id` from the Docker provider's process resource, so the read waits until apply.
 The data source checks the exact container ID, name, and owner through read-only engine inspection while waiting for the gateway to answer its OpenShell health call without credentials, then returns `ready`.
 Two matching stopped or absent observations, separated by 200 milliseconds, stop a positive readiness wait; a restarting process can recover within the existing timeout.
 A zero timeout reports a stopped process on its first observation and continues inspecting a running process while the single API request is pending.
@@ -656,7 +655,7 @@ After correcting compatibility or access, reapply the same configuration with it
 Teardown omits the capability gates so a version or driver mismatch alone does not prevent cleanup.
 
 [OpenShell contract tests](../../crates/openshell-provider/tests/contract) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
-[Deployment fixtures](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-e2e/tests/integration/deployment.rs) and [Fabric lifecycle fixtures](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-e2e/tests/integration/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
+[Deployment fixtures](../../crates/nemoclaw-e2e/tests/integration/rust/deployment.rs) and [Fabric lifecycle fixtures](../../crates/nemoclaw-e2e/tests/integration/rust/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
 Starting and stopping agent runtimes is owned by `fabric_agent`; an unchanged apply leaves the running runtime alone.
 Its inputs compose the canonical public Fabric configuration, separate from immutable sandbox identity.
 
@@ -691,8 +690,12 @@ data "vllm_runtime" "qwen" {
 `launch` and `requirements` describe the server for any platform, so a Docker container, a Kubernetes pod, or any other placement can run it without the SDK:
 
 - `launch` has `entrypoint`, `command`, `environment` (only `NEMOCLAW_RUNTIME_SPEC`, holding `spec`), the `port` the server listens on, the `data_path` for its model cache, and `key_env`: with `authentication`, the variable a platform sets to [supply the server's API key](../agents-inference/inference.md#supply-the-key-on-other-platforms), otherwise empty.
-- `requirements` has `gpu`, a recommended minimum `shared_memory_bytes` (8 GiB), and `ulimits` by name, where `-1` is unlimited: `memlock` and `stack`. Platforms that cannot set process limits leave them to the node.
+- `requirements` has `gpu`; `gpu_count`, the number of GPUs to give the container; a recommended minimum `shared_memory_bytes` (8 GiB); and `ulimits` by name, where `-1` is unlimited: `memlock` and `stack`. Platforms that cannot set process limits leave them to the node.
 - Memory and CPU limits, IPC, publication, and credentials are the placement's choice.
+
+The optional `gpu_count` input is the number of GPUs the service uses, and `requirements.gpu_count` reports it, so a Kubernetes or other placement can request that many devices its own way and choose which.
+It doesn't change `spec`, and it must be 1, because serving one model across several GPUs isn't implemented yet.
+Without it, `gpu_count` is 1, because the runtime requires exactly one visible GPU.
 
 ```hcl
 resource "docker_container" "qwen" {
@@ -716,7 +719,10 @@ Generated graphs place managed vLLM with Docker and declare:
 - `entrypoint = ["/usr/local/bin/nemoclaw-runtime"]` and `env = ["NEMOCLAW_RUNTIME_SPEC=${data.vllm_runtime.NAME.spec}"]`.
 - The model cache volume at `/data` and, with bearer authentication, the `vllm_credential_storage` credential volume at `/credentials`.
 - The serving port, published on the service's bind address.
-- `gpus = "all"`; `memory` and `memory_swap` follow `container.memoryLimitGiB`, defaulting to 106496 MiB (104 GiB); `shm_size` defaults to 8192 MiB unless the service sets another size.
+- `gpus = "all"`, which gives the container every GPU, or `gpus = "device=GPU"` when the service lists one GPU in `container.gpuDevices`, whose length the runtime contract data source also receives as `gpu_count`.
+  A list of several GPUs compiles to `device_requests { driver = "nvidia", device_ids = [...], capabilities = ["gpu"] }`, because Docker provider v4.6.0 reads a list in `gpus` as one device and a count ([kreuzwerker/terraform-provider-docker#1019](https://github.com/kreuzwerker/terraform-provider-docker/issues/1019)).
+  `container.gpuDevices` accepts one entry until serving one model across several GPUs is implemented.
+- `memory` and `memory_swap` follow `container.memoryLimitGiB`, defaulting to 106496 MiB (104 GiB); `shm_size` defaults to 8192 MiB unless the service sets another size.
 - No CPU cap unless `container.cpuLimitMillis` is supplied; Docker then enforces `cpu_quota = cpuLimitMillis × 100` microseconds per `cpu_period = 100000` (100 ms, as on Kubernetes), with a minimum quota of 1000 microseconds.
 - A `nemoclaw.nvidia.com/cpu-limit-millis` label when a CPU limit is set and a `nemoclaw.nvidia.com/memory-limit-gib` label when the memory limit differs from 104 GiB; because label changes replace the container, changing either limit is a replacement rather than an in-place `docker update`.
 - Private IPC unless the service selects host IPC, an unlimited `memlock` ulimit, and a `stack` ulimit of 67108864.
@@ -729,7 +735,7 @@ See [container limits and update policy](../agents-inference/inference.md#set-co
 
 ## Ollama Runtime Contracts
 
-`ollama_runtime` computes the managed Ollama runtime's `NEMOCLAW_RUNTIME_SPEC` the same way, with the same `launch` and `requirements` outputs.
+`ollama_runtime` computes the managed Ollama runtime's `NEMOCLAW_RUNTIME_SPEC` the same way, with the same `gpu_count` input and `launch` and `requirements` outputs.
 Its blocks follow the Ollama runtime contract with snake_case names: `hardware`, `model` with `name` and `digest`, `serving`, and `memory`.
 
 `ollama_proxy_runtime` computes the external Ollama proxy's `NEMOCLAW_OLLAMA_PROXY` value from `bind_address`, `upstream`, `model`, and `digest`.
@@ -805,7 +811,7 @@ A successful plan therefore does not establish that a model will fit or load.
 
 The hosted runtime checks its hardware, startup headroom, model artifacts, and available memory before serving.
 Its resident supervisor continues protecting host memory after the CLI exits and does not automatically restart a stopped workload.
-The runtime graph uses `vllm_readiness` and `ollama_readiness` to wait for current application status from the Docker provider's container ID.
+Generated graphs use `vllm_readiness` and `ollama_readiness` to wait for current application status from the Docker provider's container ID.
 Each validates the runtime contract and container identity, reads the service's status contract, and checks generated vLLM credential permissions when the contract enables authentication.
 It does not repeat model-file verification, collect hardware inventory, or request model responses.
 Startup phases may be polled; stopped services, failed observations, and malformed status fail the read.
@@ -819,7 +825,7 @@ It reads readiness in one of two modes:
 The `ref` is `{ type = "inference_server", endpoint, model, credential_env, credential_source }`: `endpoint` is the sandbox endpoint, `model` the contract's served model, `credential_env` empty, and `credential_source` set only for a server that requires its generated key. It names the key's location and never holds the key.
 
 Setting both modes' inputs fails validation, as does endpoint mode with an authenticated contract.
-Until inference registrations take the `ref`, pass its endpoint: `endpoint = data.vllm_readiness.NAME.ref.endpoint`.
+Pass the `ref` as `openshell_inference`'s `server`, as in [Inference Providers](#inference-providers).
 
 ```hcl
 data "vllm_readiness" "qwen" {
@@ -835,8 +841,7 @@ Successful reads return `ready: true`; unsuccessful reads report an error.
 The optional `read_trigger` has the same scheduling semantics as the gateway trigger above.
 The compiler references the container's `id` and uses `timestamp() != ""` to defer readiness until apply, including unchanged apply.
 This apply-time read appears as `unverified` in SDK plan results; it does not make an otherwise resolved resource plan incomplete or relax the apply gate.
-The runtime graph must succeed before the SDK proceeds to the OpenShell graph.
-The OpenShell graph uses `ollama_proxy_readiness` for Ollama proxies, with a 30-second wait and dependencies from their selected provider registrations.
+Within one apply, OpenShell objects wait for every runtime resource and readiness read; `ollama_proxy_readiness` reads each Ollama proxy with a 30-second wait.
 For a proxy contract, the observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
 It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
 The SDK runs no readiness loop of its own.
@@ -850,8 +855,17 @@ See [runtime ownership](../../internal-docs/design/runtime.md) and [recovery](..
 The optional `vllm_capacity` and `ollama_capacity` data sources observe capacity for one runtime's services on an engine.
 Each takes an `engine` and `contracts`, the `spec` of each of that runtime's contract data sources on the engine, and rejects a contract listed twice or one for another runtime.
 No data source combines services of different runtimes on one host.
-It reports required and observed bytes and compatibility using the selected execution host's measurements.
+It reports required and observed bytes and compatibility using the selected execution host's measurements:
+
+- On dedicated memory, a service's budget applies to each GPU it selects, so each selected GPU must hold the sum of the listed services' budgets on it. A `gpuMemoryUtilization` is taken of each GPU's own total for vLLM, and of the smallest selected GPU's total for Ollama.
+- On unified memory, the budgets and the largest host reserve must fit the host's total memory.
+- On dedicated memory, `required_bytes` and `observed_bytes` are those of the selected GPU with the least room, so `compatible` is true only when every selected GPU fits.
 The SDK's default service graph does not use it as an admission gate.
+Without `gpu_devices`, its host observation reads every GPU on the engine and refuses a host with two or more.
+`gpu_devices` lists GPUs as `container.gpuDevices` does, as in `gpu_devices = ["1"]`: each entry a lowercase GPU UUID or an index from `"0"` to `"999"`, and exactly one entry, because serving one model across several GPUs isn't implemented yet.
+With it, the observation reads only the listed GPU, through `nvidia-smi --id`, and resolves the entry to the UUID the host reports for it; two entries that resolve to one GPU are refused.
+The data source then describes that one GPU, so list only the contracts of services whose `container.gpuDevices` lists it, and use one data source for each GPU.
+It can't check which GPU a contract's service uses, because a contract doesn't carry the service's `container` settings.
 Per-service runtime protection does not reserve capacity across deployments or schedule shared GPUs.
 Operators must choose budgets appropriate for the shared host.
 
@@ -879,7 +893,7 @@ The deployment lock excludes other NemoClaw operations using the same state dire
 
 ## Managed Kubernetes Gateway
 
-The runtime graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
+The generated graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
 
 1. `openshell_kubernetes_storage.runtime` binds the namespace by UID, creating it if it doesn't exist, and creates the encryption key; it retains both, with `prevent_destroy`.
 2. `openshell_kubernetes_auth.runtime` prepares the development token issuer.

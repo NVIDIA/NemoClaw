@@ -5,6 +5,7 @@ mod assessment_cli;
 mod platform;
 mod run_ci;
 use clap::{Parser, Subcommand};
+use nemoclaw_build::download::{Artifact, download};
 #[cfg(feature = "sdk")]
 use nemoclaw_sdk::bundle::{self, Manifest};
 use serde::Deserialize;
@@ -175,6 +176,14 @@ enum Action {
         #[arg(long)]
         shards: String,
     },
+    /// Check that no executable under DIRECTORY needs a newer glibc than the
+    /// minimum, as CI does after building a Linux bundle.
+    CheckGlibc {
+        /// The oldest glibc the executables must run on, such as 2.35.
+        #[arg(long)]
+        minimum: String,
+        directory: PathBuf,
+    },
 }
 #[derive(Clone, clap::ValueEnum)]
 enum AssessmentFormat {
@@ -239,9 +248,23 @@ enum ImageAction {
         /// linux/arm64 or linux/amd64; must match the Docker host.
         #[arg(long)]
         platform: String,
+        /// Import each target's BuildKit layers from GitHub Actions' cache,
+        /// under SCOPE-TARGET-ARCH. Buildx reads the cache service from
+        /// ACTIONS_RUNTIME_TOKEN and ACTIONS_RESULTS_URL, and builds without
+        /// the cache when they are unset.
+        #[arg(long, value_name = "SCOPE")]
+        gha_cache: Option<String>,
+        /// Also save each target's layers, including its builder stages, to
+        /// the --gha-cache scope.
+        #[arg(long, requires = "gha_cache")]
+        save_gha_cache: bool,
         #[arg(required = true)]
         targets: Vec<String>,
     },
+    /// Download the remote files that image builds copy, as versions.json pins
+    /// them, into .build/image-sources, where docker-bake.hcl reads them.
+    /// `images build` does this itself; run it before `docker buildx bake`.
+    Fetch,
     /// Run the reference image's runtime contract: NemoClaw's test adapter through fabric-agent-ctl, offline.
     Qualify {
         #[arg(required = true)]
@@ -265,11 +288,6 @@ enum ImageAction {
         #[arg(long)]
         output: PathBuf,
     },
-}
-#[derive(Deserialize)]
-struct Artifact {
-    url: String,
-    sha256: String,
 }
 #[derive(Deserialize)]
 struct Pins {
@@ -340,42 +358,6 @@ fn run(command: &mut Command) -> Result<()> {
 #[cfg(feature = "sdk")]
 fn sources() -> Result<Vec<(String, Vec<u8>)>> {
     Ok(nemoclaw_build::source_inputs(Path::new("."))?)
-}
-async fn download(artifact: &Artifact) -> Result<Vec<u8>> {
-    let directory = Path::new(".build/downloads");
-    fs::create_dir_all(directory)?;
-    let path = directory.join(&artifact.sha256);
-    if path.is_file() {
-        let bytes = fs::read(&path)?;
-        if nemoclaw_build::hex(&Sha256::digest(&bytes)) == artifact.sha256 {
-            return Ok(bytes);
-        }
-        return Err("cached build artifact failed its immutable checksum".into());
-    }
-    if !artifact.url.starts_with("https://") {
-        return Err("artifact origin must use HTTPS".into());
-    }
-    let http = reqwest::Client::builder()
-        .https_only(true)
-        .no_proxy()
-        .timeout(Duration::from_secs(300))
-        .build()?;
-    let mut response = http.get(&artifact.url).send().await?.error_for_status()?;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        if bytes.len() + chunk.len() > 256 << 20 {
-            return Err("build artifact exceeds size limit".into());
-        }
-        bytes.extend(chunk);
-    }
-    if nemoclaw_build::hex(&Sha256::digest(&bytes)) != artifact.sha256 {
-        return Err("downloaded artifact failed its immutable checksum".into());
-    }
-    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
-    temporary.write_all(&bytes)?;
-    temporary.as_file().sync_all()?;
-    temporary.persist(path)?;
-    Ok(bytes)
 }
 #[cfg(feature = "sdk")]
 fn target(platform: &str) -> Result<&'static str> {
@@ -693,9 +675,20 @@ async fn main() -> Result<()> {
     if let Action::Images { action } = cli.command {
         let root = Path::new(".");
         return match action {
-            ImageAction::Build { platform, targets } => {
-                nemoclaw_build::images::build(root, &platform, &targets)
+            ImageAction::Build {
+                platform,
+                gha_cache,
+                save_gha_cache,
+                targets,
+            } => {
+                nemoclaw_build::images::fetch_sources(root).await?;
+                let cache = gha_cache.map(|scope| nemoclaw_build::images::GhaCache {
+                    scope,
+                    save: save_gha_cache,
+                });
+                nemoclaw_build::images::build(root, &platform, &targets, cache.as_ref())
             }
+            ImageAction::Fetch => nemoclaw_build::images::fetch_sources(root).await,
             ImageAction::Runtimes => {
                 nemoclaw_build::hcl_cases::runtimes(root).and_then(|runtimes| {
                     let runtimes = serde_json::to_string(&runtimes).map_err(|e| e.to_string())?;
@@ -725,6 +718,10 @@ async fn main() -> Result<()> {
             }
         }
         .map_err(Into::into);
+    }
+    if let Action::CheckGlibc { minimum, directory } = &cli.command {
+        let minimum = nemoclaw_build::glibc::parse_minimum(minimum)?;
+        return nemoclaw_build::glibc::check(directory, minimum).map_err(Into::into);
     }
     if let Action::SuiteTiming {
         step,
@@ -915,7 +912,8 @@ async fn main() -> Result<()> {
         | Action::ReleaseAssess { .. }
         | Action::Images { .. }
         | Action::Changes { .. }
-        | Action::SuiteTiming { .. } => {
+        | Action::SuiteTiming { .. }
+        | Action::CheckGlibc { .. } => {
             unreachable!("CI, image, change, and timing commands returned before build tool checks")
         }
         #[cfg(feature = "sdk")]

@@ -6,7 +6,7 @@ use nemoclaw_provider::{
     docker::Engine, hardware::HostObservation, hardware::HostObserver,
     hardware_observation::observe_host_hardware,
 };
-use nemoclaw_runtime::{hardware::Capacity, hardware::GpuMemory};
+use nemoclaw_runtime::hardware::{Capacity, Gpu, GpuMemory};
 use nemoclaw_sdk::discovery::ObservationStatus;
 use serde_json::json;
 
@@ -15,7 +15,11 @@ struct FixedHost {
 }
 #[async_trait::async_trait]
 impl HostObserver for FixedHost {
-    async fn observe(&self, _: &Engine) -> Result<HostObservation, nemoclaw_sdk::Error> {
+    async fn observe(
+        &self,
+        _: &Engine,
+        _: Option<&str>,
+    ) -> Result<HostObservation, nemoclaw_sdk::Error> {
         Ok(HostObservation {
             engine_id: self.daemon.into(),
             capacity: Capacity {
@@ -32,6 +36,17 @@ impl HostObserver for FixedHost {
                 free: 300 << 30,
                 disk_free: 1 << 40,
                 foreign_gpu_processes: 0,
+                gpus: vec![Gpu {
+                    index: 0,
+                    uuid: "GPU-00000000-0000-0000-0000-000000000000".into(),
+                    name: "NVIDIA GB300".into(),
+                    driver_major: 610,
+                    compute_capability: 103,
+                    memory: Some(GpuMemory {
+                        total: 240 << 30,
+                        free: 200 << 30,
+                    }),
+                }],
             },
         })
     }
@@ -59,6 +74,11 @@ async fn explicit_host_observation_reuses_collector_and_rejects_another_daemon()
     .await;
     assert_eq!(observed.gpu_status, ObservationStatus::Available);
     assert!(observed.gpu_inventory_complete);
+    assert_eq!(observed.gpus.len(), 1);
+    assert_eq!(
+        observed.gpus[0].id.as_deref(),
+        Some("GPU-00000000-0000-0000-0000-000000000000")
+    );
     assert_eq!(observed.gpus[0].compute_capability, Some(103));
     assert_eq!(observed.gpus[0].driver_major, Some(610));
     assert_eq!(observed.gpus[0].memory_total_bytes, Some(240 << 30));
@@ -102,7 +122,11 @@ fn engine_feature_projection_preserves_unknowns_and_advertises_networking_withou
 struct IncompleteHost;
 #[async_trait::async_trait]
 impl HostObserver for IncompleteHost {
-    async fn observe(&self, _: &Engine) -> Result<HostObservation, nemoclaw_sdk::Error> {
+    async fn observe(
+        &self,
+        _: &Engine,
+        _: Option<&str>,
+    ) -> Result<HostObservation, nemoclaw_sdk::Error> {
         Ok(HostObservation {
             engine_id: "selected-daemon".into(),
             capacity: Capacity::default(),
@@ -130,7 +154,11 @@ async fn explicit_observer_cannot_promote_incomplete_zero_values_to_available_ha
 struct CpuOnlyHost;
 #[async_trait::async_trait]
 impl HostObserver for CpuOnlyHost {
-    async fn observe(&self, _: &Engine) -> Result<HostObservation, nemoclaw_sdk::Error> {
+    async fn observe(
+        &self,
+        _: &Engine,
+        _: Option<&str>,
+    ) -> Result<HostObservation, nemoclaw_sdk::Error> {
         Ok(HostObservation {
             engine_id: "selected-daemon".into(),
             capacity: Capacity {

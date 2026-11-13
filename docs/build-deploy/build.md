@@ -77,8 +77,14 @@ Both platforms build every harness in the Bake file's `HARNESSES` map.
 Agent images share a Python 3.14.10 base without pip.
 Only OpenClaw, Hermes, and Pi add Node.js 24.22.2 LTS: OpenClaw's CLI and the Pi adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
-Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
+Build stages supply the pinned toolchains for image assembly; the host uses Rust to run the image builder and source downloader.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
+`cargo images build` downloads the remote files that image builds copy, such as the Fabric and Hermes source archives, as `versions.json` pins them under `imageSources`.
+It checks each file's SHA-256, keeps it in `.build/downloads`, and places it in `.build/image-sources`, where the Bake file reads it.
+When a server rate-limits a download or answers with a server error, it retries up to three times, waiting as long as `Retry-After` asks, for at most a minute.
+If the server asks for a longer wait, the download stops without retrying early.
+Before building or checking an agent or Ollama image with `docker buildx bake` directly, run `cargo images fetch`, which places the same files; without them, Bake stops with `failed to get build context sources`.
+Run it again after changing a pin or checking out another revision: Bake copies whatever `.build/image-sources` holds without comparing it to `versions.json`, while `cargo images build` places the pinned files every time.
 Digest-based sandbox use requires a Docker image store that retains repository digests for local builds, such as the tested containerd store.
 
 On a native Linux ARM64 host, run from the repository root:
@@ -146,7 +152,8 @@ To extend an agent image with your own skills and tools, refer to [derived agent
 Runtime images build with Docker Buildx Bake on a Linux ARM64 or AMD64 host, always for that host's platform, so the supervisor compiles natively rather than under emulation.
 They require a Docker daemon using the containerd image store, which keeps each local image's digest.
 Run `docker info --format '{{json .DriverStatus}}'` against the selected daemon and check for `["driver-type","io.containerd.snapshotter.v1"]`; Docker's classic image store is unsupported.
-Build stages use pinned Rust and upstream images, so the host needs no Rust toolchain.
+Build stages use pinned Rust and upstream images.
+The vLLM build needs no host Rust toolchain; Ollama requires Rust to fetch its pinned sources.
 Initial builds need network access for the base images and the supervisor's dependency sources.
 A build does not launch inference or publish an image.
 
@@ -164,6 +171,7 @@ Selecting this artifact does not qualify GPU inference on the host.
 A model that needs preparation tools or patches uses an image its recipe's authors build; see [inline recipes](../agents-inference/recipes.md).
 
 `docker buildx bake ollama` builds the [managed Ollama](../agents-inference/inference.md#run-managed-ollama) image, and `docker buildx bake runtimes` builds both.
+Run `cargo images fetch` first: it places the Ollama license that the image retains, as `versions.json` pins it.
 Use the `NAME@sha256:DIGEST` reference that `docker image inspect` prints for `spec.services.<name>.image`.
 Builds use fixed timestamps, so rebuilding the same sources keeps the same digest.
 Do not substitute a mutable tag or a digest copied from another build.
@@ -193,7 +201,7 @@ When the image must be acquired, plan reports compatibility as deferred; apply m
 Matching labels establish the declared backend, recipe, and authentication, not successful model loading or inference.
 
 An image built by a different NemoClaw revision may carry the right labels yet reject the runtime contract when its runtime starts, after the deployment has created the service's storage and network.
-In either case, rebuild the selected image from the bundle's source revision with `docker buildx bake vllm` or `docker buildx bake ollama`, as above.
+In either case, rebuild the selected image from the bundle's source revision with `docker buildx bake vllm`, or `cargo images fetch` and then `docker buildx bake ollama`, as above.
 Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to its new digest.
 Keep the deployment state and reapply; existing model and credential storage remain subject to their retention and identity checks.
 Destroy omits image compatibility gates so a mismatched image alone does not prevent cleanup.
