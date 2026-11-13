@@ -182,26 +182,27 @@ describe("sandbox GPU preflight routing", () => {
     }
   });
 
-  it("skips CDI spec validation on Docker Desktop WSL so Docker --gpus can be used", () => {
+  it("does not prepare CDI during preflight when sandbox GPU is disabled", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const getDockerCdiSpecDirs = vi.fn(() => ["/etc/cdi"]);
     const findReadableNvidiaCdiSpecFiles = vi.fn(() => []);
+    const prepareWslNvidiaCdi = vi.fn(() => true);
 
     try {
       expect(() =>
-        validateSandboxGpuPreflight(sandboxGpuConfig(), {
+        validateSandboxGpuPreflight(sandboxGpuConfig({ sandboxGpuEnabled: false }), {
           platform: "linux",
           env: { WSL_DISTRO_NAME: "Ubuntu" },
           dockerInfoFormat: vi.fn(() => '"Docker Desktop"'),
           getDockerCdiSpecDirs,
           findReadableNvidiaCdiSpecFiles,
+          prepareWslNvidiaCdi,
         }),
       ).not.toThrow();
       expect(getDockerCdiSpecDirs).not.toHaveBeenCalled();
       expect(findReadableNvidiaCdiSpecFiles).not.toHaveBeenCalled();
-      expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain(
-        "Docker --gpus compatibility path",
-      );
+      expect(prepareWslNvidiaCdi).not.toHaveBeenCalled();
+      expect(logSpy).not.toHaveBeenCalled();
     } finally {
       logSpy.mockRestore();
     }
@@ -233,6 +234,45 @@ describe("sandbox GPU preflight routing", () => {
     } finally {
       errorSpy.mockRestore();
       exitSpy.mockRestore();
+    }
+  });
+
+  it("uses prepared Desktop CDI without looking for specs in the Ubuntu filesystem", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const findReadableNvidiaCdiSpecFiles = vi.fn(() => []);
+    const prepareWslNvidiaCdi = vi.fn(() => true);
+    try {
+      validateSandboxGpuPreflight(sandboxGpuConfig(), {
+        platform: "linux",
+        env: { WSL_DISTRO_NAME: "Ubuntu" },
+        dockerInfoFormat: vi.fn(() => '"Docker Desktop"'),
+        prepareWslNvidiaCdi,
+        findReadableNvidiaCdiSpecFiles,
+      });
+      expect(prepareWslNvidiaCdi).toHaveBeenCalledTimes(1);
+      expect(findReadableNvidiaCdiSpecFiles).not.toHaveBeenCalled();
+      expect(logSpy.mock.calls.flat().join("\n")).toContain("native OpenShell GPU creation");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("stops preflight on preparation failure without suggesting compatibility recreation", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      expect(() =>
+        validateSandboxGpuPreflight(sandboxGpuConfig(), {
+          platform: "linux",
+          env: { WSL_DISTRO_NAME: "Ubuntu" },
+          dockerInfoFormat: vi.fn(() => '"Docker Desktop"'),
+          prepareWslNvidiaCdi: () => {
+            throw new Error("requires NAT");
+          },
+        }),
+      ).toThrow("requires NAT");
+      expect(logSpy).not.toHaveBeenCalled();
+    } finally {
+      logSpy.mockRestore();
     }
   });
 
