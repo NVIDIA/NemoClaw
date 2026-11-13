@@ -243,6 +243,31 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     expect(mockRegistryState.defaultSandbox).toBe("alpha");
   });
 
+  it("keeps an existing row's GPU, NIM and observability settings when a mistyped sandbox name triggers recovery (#12583)", async () => {
+    mockRegistryState.sandboxes.e2e = {
+      name: "e2e",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      gpuEnabled: true,
+      nimContainer: "nemoclaw-nim-e2e",
+      observabilityEnabled: true,
+    };
+    vi.mocked(loadSession).mockReturnValue(
+      Object.assign(completedSession("e2e", []), { observabilityEnabled: false }),
+    );
+    vi.mocked(captureOpenshell).mockReturnValue({ output: "e2e Ready", status: 0 } as never);
+
+    await recoverRegistryEntries({ requestedSandboxName: "e2x" });
+
+    expect(mockRegistryState.sandboxes.e2e).toMatchObject({
+      gpuEnabled: true,
+      nimContainer: "nemoclaw-nim-e2e",
+      observabilityEnabled: true,
+      gatewayName: "nemoclaw",
+    });
+    expect(mockRegistryState.sandboxes.e2x).toBeUndefined();
+  });
+
   it("keeps a missing requested sandbox absent while recovering other live entries", async () => {
     vi.mocked(captureOpenshell).mockReturnValue({ output: "alpha Ready", status: 0 } as never);
 
