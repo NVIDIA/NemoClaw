@@ -35,7 +35,11 @@ export interface StartCommandDeps {
 
 export interface StopCommandDeps {
   listSandboxes: () => SandboxSummary;
-  stopAll: (options: { sandboxName?: string; releaseGatewayPort?: boolean }) => void;
+  stopAll: (options: {
+    sandboxName?: string;
+    releaseGatewayPort?: boolean;
+    stopSandboxGateway?: boolean;
+  }) => void;
   /** Legacy `nemoclaw stop` tears down the managed host gateway too. */
   releaseGatewayPort?: boolean;
 }
@@ -109,9 +113,19 @@ export async function runStartCommand(deps: StartCommandDeps): Promise<void> {
 }
 
 export function runStopCommand(deps: StopCommandDeps): void {
-  const options: { sandboxName?: string; releaseGatewayPort?: boolean } = {
+  const options: {
+    sandboxName?: string;
+    releaseGatewayPort?: boolean;
+    stopSandboxGateway?: boolean;
+  } = {
     sandboxName: resolveDefaultSandboxName(deps.listSandboxes),
   };
-  if (deps.releaseGatewayPort) options.releaseGatewayPort = true;
+  if (deps.releaseGatewayPort) {
+    options.releaseGatewayPort = true;
+  } else {
+    // `tunnel stop` only stops host services. An OpenClaw gateway is the sandbox's
+    // main process, so stopping it would exit the container and leave the sandbox in Error (#14321).
+    options.stopSandboxGateway = false;
+  }
   deps.stopAll(options);
 }
