@@ -92,6 +92,7 @@ import {
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
 export { createBoundLaunchReadinessDeps, formatOpenClawPairingMismatchField };
 export {
+  formatUnknownLaunchAgent,
   getNativeProviderAttachment,
   hasRecordedNativeNvidiaAttachment,
   requireNativeInferenceHealth,
@@ -173,6 +174,7 @@ export type LaunchReadinessPublicationResult =
       kind: "validation-failed";
       category: "identity" | "config" | "health" | "session";
       failedCheck?: LaunchReadinessFailedCheck;
+      unknownAgent?: string;
     }
   | { kind: "policy-observation-failed"; error: OpenShellSandboxError }
   | {
@@ -987,12 +989,14 @@ function debugDecision(category: LaunchReadinessDecisionCategory): void {
 function publicationValidationCategory(error: unknown): {
   category: LaunchReadinessPublicationValidationCategory;
   failedCheck?: LaunchReadinessFailedCheck;
+  unknownAgent?: string;
 } | null {
   if (!(error instanceof ObservationError)) return null;
   if (!["identity", "config", "health", "session"].includes(error.category)) return null;
   return {
     category: error.category as LaunchReadinessPublicationValidationCategory,
     ...(error.failedCheck ? { failedCheck: error.failedCheck } : {}),
+    ...(error.unknownAgent === undefined ? {} : { unknownAgent: error.unknownAgent }),
   };
 }
 
