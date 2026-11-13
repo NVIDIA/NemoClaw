@@ -157,6 +157,62 @@ describe("sandbox mutation lock acquisition", () => {
     expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({ token: "foreign" });
   });
 
+  it.each([
+    { mode: "async", suffix: "" },
+    { mode: "sync", suffix: "" },
+    { mode: "async", suffix: ".reaper" },
+    { mode: "sync", suffix: ".reaper" },
+  ])("names the holder of a $suffix lock it keeps waiting on ($mode)", async ({ mode, suffix }) => {
+    const heldPath = `${getMcpLifecycleLockPath("alpha", stateDir)}${suffix}`;
+    fs.mkdirSync(path.dirname(heldPath), { recursive: true });
+    fs.writeFileSync(
+      heldPath,
+      JSON.stringify({
+        ...createMcpLifecycleLockOwner("alpha", "foreign"),
+        pid: 65483,
+        hostIdentity: "darwin:old-name.local",
+        acquiredAt: new Date(Date.now() - 90_000).toISOString(),
+      }),
+    );
+    // Each clock read advances one tick, so the notice (5) always precedes the timeout (40).
+    const timeoutMs = 40;
+    const waitNoticeMs = 5;
+    let tick = 0;
+    let noticeAt = -1;
+    const notices: string[] = [];
+    const opts = {
+      ...options({ timeoutMs, waitNoticeMs }),
+      monotonicNow: () => tick++,
+      onWaitNotice: (message: string) => {
+        noticeAt = tick;
+        notices.push(message);
+      },
+    };
+    const run =
+      mode === "sync"
+        ? Promise.resolve().then(() => withMcpLifecycleLockSync("alpha", () => undefined, opts))
+        : withMcpLifecycleLock("alpha", () => undefined, opts);
+    await expect(run).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+    expect(notices).toHaveLength(1);
+    expect(noticeAt).toBeGreaterThanOrEqual(waitNoticeMs);
+    expect(noticeAt).toBeLessThan(timeoutMs);
+    expect(notices[0]).toContain("held by PID 65483 on host darwin:old-name.local");
+    expect(notices[0]).toMatch(/for (89|9\d)s\./);
+    expect(notices[0]).toContain(`Lock file: ${heldPath}\n`);
+    expect(JSON.parse(fs.readFileSync(heldPath, "utf8"))).toMatchObject({ token: "foreign" });
+  });
+
+  it("stays quiet when the lock frees up before the notice delay", async () => {
+    const notices: string[] = [];
+    await expect(
+      withMcpLifecycleLock("alpha", () => "acquired", {
+        ...options({ waitNoticeMs: 60_000 }),
+        onWaitNotice: (message) => notices.push(message),
+      }),
+    ).resolves.toBe("acquired");
+    expect(notices).toEqual([]);
+  });
+
   it("reclaims a continuously corrupt main generation after the grace period", async () => {
     const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
