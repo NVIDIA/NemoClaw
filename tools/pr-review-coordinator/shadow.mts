@@ -70,7 +70,7 @@ export function buildCoordinatorShadowSnapshot(input: ShadowInput): CoordinatorS
     })),
   );
   const advisor =
-    input.gate.status === "clear"
+    input.gate.status === "clear" && input.gate.unresolvedRecommendationCount === 0
       ? {
           identity: "exact-head" as const,
           headSha: input.headSha,

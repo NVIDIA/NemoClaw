@@ -29,4 +29,4 @@ A migration may be intentionally staged when the stages, compatibility contract,
 
 ## Report a finding when
 
-The pull request introduces, worsens, or materially depends on an incomplete cutover, leaves reachable old and new paths that can diverge, strands callers or state, removes compatibility before its contract permits, retains obsolete authority without a defined lifecycle, or fails in a supported intermediate state. Cite changed lines and parent-state evidence. Explain the reachable consequence, remaining work, and verification of completion.
+The incomplete cutover meets the shared finding eligibility rule. Prove a reachable failing caller, stranded state, premature compatibility removal, or failed supported intermediate state introduced or worsened by the PR. Cite changed lines, parent-state evidence, and the actual consumer. Retained old code or two owners alone is insufficient; trace the concrete divergence and consequence. State the smallest completion step and its verification.

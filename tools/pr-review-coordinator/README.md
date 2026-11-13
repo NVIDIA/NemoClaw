@@ -35,6 +35,9 @@ Automatic runs inherit a passing required-check state only from the successful e
 manual dispatches remain pending and cannot propose a review. The trusted aggregate makes surviving
 exact-head P0/P1 ledger entries eligible for the shadow decision. A `product-scope` finding keeps the
 approval gate closed; otherwise shadow mode records that no missing-scope defect was reported.
+A clear defect gate with unresolved E2E recommendations is incomplete Advisor evidence for the
+coordinator. Without a proven blocker, the coordinator stays quiet until that coverage is resolved;
+it does not propose approval or manufacture a defect finding.
 
 Shadow mode reconstructs prior writes from trusted maintainer reviews and the dedicated coordinator
 bot. Future coordinator-generated changes-requested reviews must carry a hidden

@@ -17,4 +17,6 @@ Compare parent and proposed states. Distinguish newly added or weakened evidence
 
 ## Findings
 
-For each verification defect, identify the changed behavior or claim, parent state, plausible escaping regression, why evidence passes or does not execute, exact citations, and smallest stronger proof. Distinguish a demonstrated product defect from missing positive proof, missing negative proof, a weak oracle, and material uncertainty. Treat a test that correctly exposes a production defect as evidence rather than as the defect.
+Apply the shared finding eligibility rule to each candidate verification defect. Identify the required behavior or security protection, parent evidence, changed assertion or enforcing boundary, and a specific violation that now passes unnoticed. Trace the real caller and independent oracle, and search other applicable coverage before concluding that the PR weakens protection.
+
+Missing positive proof, missing negative proof, a weak oracle, and an empty evidence-matrix cell require further investigation. They are not themselves proof of a blocking consequence. Report a blocker when evidence establishes that the PR bypasses or weakens a required check, or leaves a demonstrated regression undetected. State unresolved proof as a limitation and name the smallest evidence that would settle it. Keep every investigation dimension above; do not substitute fewer checks for stronger proof. Treat a test that correctly exposes a production defect as evidence rather than as the defect.

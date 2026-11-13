@@ -91,7 +91,7 @@ export function evaluateAdvisorBlockers(options: {
   }
 
   return Object.freeze({
-    status: findingCount > 0 || unresolvedRecommendationCount > 0 ? "blocked" : "clear",
+    status: findingCount > 0 ? "blocked" : "clear",
     findingCount,
     unresolvedRecommendationCount,
     findingInterests: Object.freeze(findingInterests),
@@ -195,15 +195,14 @@ function sameMembers(left: readonly string[], right: readonly string[]): boolean
 }
 
 function gateSummary(result: AdvisorBlockerGateResult): string {
-  if (result.status === "clear") {
-    return "PR Review Advisor is clear: all specialist blocker ledgers and E2E receipts passed.";
-  }
   const findingOwners = result.findingInterests.join(", ") || "none";
   const unresolvedOwners = result.unresolvedInterests.join(", ") || "none";
   return (
-    `PR Review Advisor is blocked: ${result.findingCount} P0/P1 finding(s) ` +
+    `PR Review Advisor is ${result.status}: ${result.findingCount} P0/P1 finding(s) ` +
     `(${findingOwners}); ${result.unresolvedRecommendationCount} unresolved E2E recommendation(s) ` +
-    `(${unresolvedOwners}).`
+    `(${unresolvedOwners}). ` +
+    "Unresolved coverage is retained for validation follow-up; it is not a defect finding. " +
+    "This result does not establish E2E completion or merge readiness."
   );
 }
 
