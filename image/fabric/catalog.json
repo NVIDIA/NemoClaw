@@ -586,6 +586,35 @@
             }
           ],
           "properties": {
+            "auxiliary": {
+              "additionalProperties": false,
+              "description": "Native Hermes auxiliary-task controls written to config.yaml for every execution path. Only authored fields are written.",
+              "properties": {
+                "background_review": {
+                  "additionalProperties": false,
+                  "description": "Hermes's native auxiliary.background_review section.",
+                  "properties": {
+                    "enabled": {
+                      "description": "Whether Hermes starts automatic background memory and skill reviews after turns. Explicit native /refine remains available. When omitted, Hermes's default applies.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "title_generation": {
+                  "additionalProperties": false,
+                  "description": "Hermes's native auxiliary.title_generation section.",
+                  "properties": {
+                    "enabled": {
+                      "description": "Whether Hermes generates session titles automatically. When omitted, Relay-enabled runtimes disable it and other runtimes keep Hermes's default.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
             "interfaces": {
               "additionalProperties": false,
               "description": "Native interfaces served by the runtime as child processes.",
@@ -725,6 +754,36 @@
               "description": "Maximum number of seconds for a Hermes terminal operation.",
               "exclusiveMinimum": 0,
               "type": "number"
+            },
+            "tools": {
+              "additionalProperties": false,
+              "description": "Native Hermes tools section written to config.yaml. Distinct from NeMo Fabric's normalized top-level tools.enabled and tools.blocked. Only authored fields are written.",
+              "properties": {
+                "tool_search": {
+                  "additionalProperties": false,
+                  "description": "Hermes's native tools.tool_search section.",
+                  "properties": {
+                    "enabled": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "enum": [
+                            "auto",
+                            "on",
+                            "off"
+                          ],
+                          "type": "string"
+                        }
+                      ],
+                      "description": "Hermes tool search: auto, on, or off; true and false are native aliases for on and off. off presents the selected tool schemas directly. When omitted, Hermes's default applies."
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
             }
           },
           "required": [],
@@ -1515,6 +1574,46 @@
               "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$",
               "type": "string"
             },
+            "agents": {
+              "additionalProperties": false,
+              "description": "Native OpenClaw agents.defaults controls for NeMo Fabric-owned Gateways. Only authored fields are written; attached Gateways reject them.",
+              "properties": {
+                "defaults": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "compaction": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "memoryFlush": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "enabled": {
+                              "description": "Whether OpenClaw runs its pre-compaction memory flush turn. This does not stop compaction itself.",
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "heartbeat": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "every": {
+                          "description": "Native recurring heartbeat interval, such as 30m or 1h30m. Units are required; 0m disables the recurring cadence but not event-driven turns.",
+                          "pattern": "^(?:[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d))+$",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
             "channel_config": {
               "additionalProperties": false,
               "description": "OpenClaw-native channels and bindings for NeMo Fabric-owned services. Every binding must target the configured agent. Managed runtimes reject channel configuration.",
@@ -1614,6 +1713,41 @@
               "minLength": 1,
               "type": "string"
             },
+            "plugins": {
+              "additionalProperties": false,
+              "description": "Native OpenClaw plugin controls for NeMo Fabric-owned Gateways. Only authored fields are written; attached Gateways reject them.",
+              "properties": {
+                "entries": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "memory-core": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "config": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "dreaming": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "enabled": {
+                                  "description": "Whether the memory-core plugin runs scheduled dreaming.",
+                                  "type": "boolean"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
             "port_range": {
               "additionalProperties": false,
               "description": "Inclusive consumer-allocated port range. The adapter selects a Gateway base port whose complete derived footprint through base + 110 fits within the range. When omitted, the adapter selects an available local range.",
@@ -1652,6 +1786,31 @@
               "exclusiveMinimum": 0,
               "maximum": 75,
               "type": "number"
+            },
+            "tools": {
+              "additionalProperties": false,
+              "description": "Native OpenClaw tools controls for NeMo Fabric-owned Gateways, merged with the allow and deny lists generated from NeMo Fabric's normalized top-level tools. Only authored fields are written; attached Gateways reject them.",
+              "properties": {
+                "codeMode": {
+                  "description": "Whether OpenClaw Code Mode is enabled. Code Mode can take precedence over tool search.",
+                  "type": "boolean"
+                },
+                "exec": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "notifyOnExit": {
+                      "description": "Whether OpenClaw emits a system event and heartbeat when a backgrounded exec process exits.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "toolSearch": {
+                  "description": "Whether OpenClaw compacts large tool catalogs behind search tools.",
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
             }
           },
           "type": "object"
@@ -2321,8 +2480,8 @@
       ]
     }
   ],
-  "fabric_revision": "f33fa19a1aff584625e02af9007d8113e7b95dd8",
+  "fabric_revision": "9228d18abcaddb6488ee955e0377cc0041d6d144",
   "schema_version": 2,
-  "source_sha256": "8a7ec44bf82a2473c9b7a4332d6e99fb49205adcb5ec099336422689297054e3",
+  "source_sha256": "29bc1708d0932bd7657abfe34ae75b5c1c028398dcdd33b0db1d448204d424f9",
   "targets": []
 }
