@@ -48,6 +48,7 @@ tar.workspace = true
 [dev-dependencies]
 base64 = "0.22.1"
 bollard.workspace = true
+nemoclaw-build = { path = "../nemoclaw-build", default-features = false }
 # The integration runner sets the providers' diagnostics directory.
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk", features = ["test-scenarios"] }
