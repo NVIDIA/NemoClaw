@@ -2500,6 +2500,17 @@ For other failures, report the diagnostic, plugin name and NemoClaw version to a
 NemoClaw manages the package pins and build cache; do not edit them or bypass plugin verification to continue.
 After a maintainer resolves the reported build failure, rerun the original onboarding or rebuild command.
 
+</AgentOnly>
+
+{/*
+  This troubleshooting section applies to both OpenClaw and Hermes Discord
+  integrations and is cross-referenced from docs/manage-sandboxes/set-up-discord.mdx.
+  Keep this section available in both variant documentations so cross-page links
+  resolve and scroll correctly.
+*/}
+<AgentOnly variant="openclaw,hermes">
+
+<a id="discord-bot-logs-in-but-the-channel-still-does-not-work"></a>
 ### Discord bot logs in, but the channel still does not work
 
 Separate the problem into two parts:
@@ -2525,6 +2536,10 @@ In that case:
 - verify the sandbox was created with the Discord provider attached
 - inspect gateway logs and blocked requests with `openshell term`
 - treat the failure as a native Discord gateway problem, not as a bridge startup problem
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
 
 ### Discord preset validation behind a proxy
 
