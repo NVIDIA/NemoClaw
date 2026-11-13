@@ -245,3 +245,104 @@ function sortChronologically(entries: ScoredLine[]): void {
     return a.lineIndex - b.lineIndex;
   });
 }
+
+// A replay line longer than this is relayed instead of buffered for matching.
+const MAX_REPLAY_FILTER_LINE_CHARS = 4_096;
+
+export type ReplayLineFilter = {
+  finish: () => string;
+  write: (chunk: string) => string;
+};
+
+/**
+ * Drop the part of a follow stream's replay that a history read already covered.
+ *
+ * Follow mode starts each follower with its own `--tail N` replay before it
+ * reads the merged, capped history, so the two overlap and nothing written
+ * during setup is lost. This filter removes that overlap from the follower
+ * (#12666). A follower stream is an older prefix, then lines the history also
+ * holds, then new lines. Each history line suppresses one identical follower
+ * line. With timestamps, a line older than the oldest history line is dropped
+ * and the filter stops at the first line newer than the newest history line;
+ * untimestamped lines follow the entry above them. Without timestamps, stream
+ * order decides: unmatched lines before a history match belong to the older
+ * prefix and are dropped, and the first unmatched line after a match ends the
+ * filter. Lines that never resolve are relayed rather than lost.
+ */
+export function createReplayLineFilter(history: string): ReplayLineFilter {
+  const pending = new Map<string, number>();
+  let historyLineCount = 0;
+  let oldest: number | null = null;
+  let newest: number | null = null;
+  for (const line of history.split(LINE_SPLIT_RE)) {
+    if (!line) continue;
+    historyLineCount += 1;
+    pending.set(line, (pending.get(line) ?? 0) + 1);
+    const timestamp = parseLineTimestamp(line);
+    if (timestamp === null) continue;
+    oldest = oldest === null ? timestamp : Math.min(oldest, timestamp);
+    newest = newest === null ? timestamp : Math.max(newest, timestamp);
+  }
+  let active = historyLineCount > 0;
+  let partial = "";
+  let matched = false;
+  let held: string[] = [];
+  // Untimestamped lines belong to the entry above them, as in mergeTailLogLines.
+  let lastSeen: number | null = null;
+
+  const deactivate = (): string => {
+    active = false;
+    const released = held.join("");
+    held = [];
+    return released;
+  };
+
+  // `segment` is one line with its original line ending, if any.
+  const filterLine = (segment: string): string => {
+    const line = segment.replace(/\r?\n$/u, "");
+    const timestamp = parseLineTimestamp(line);
+    if (timestamp !== null) lastSeen = timestamp;
+    if (timestamp !== null && newest !== null && timestamp > newest) {
+      return deactivate() + segment;
+    }
+    const count = pending.get(line) ?? 0;
+    if (count > 0) {
+      pending.set(line, count - 1);
+      matched = true;
+      held = [];
+      return "";
+    }
+    if (lastSeen !== null && oldest !== null) return lastSeen >= oldest ? segment : "";
+    if (matched) return deactivate() + segment;
+    held.push(segment);
+    return held.length > historyLineCount ? deactivate() : "";
+  };
+
+  return {
+    write(chunk: string): string {
+      if (!active) return chunk;
+      const segments = `${partial}${chunk}`.split("\n");
+      partial = segments.pop() ?? "";
+      const output: string[] = [];
+      for (const [index, segment] of segments.entries()) {
+        if (!active) {
+          output.push(...segments.slice(index).map((line) => `${line}\n`));
+          break;
+        }
+        output.push(filterLine(`${segment}\n`));
+      }
+      if (!active || partial.length > MAX_REPLAY_FILTER_LINE_CHARS) {
+        output.push(active ? deactivate() : "", partial);
+        partial = "";
+      }
+      return output.join("");
+    },
+    finish(): string {
+      const rest = partial;
+      partial = "";
+      if (!active) return rest;
+      const output = rest ? filterLine(rest) : "";
+      return deactivate() + output;
+    },
+  };
+}
