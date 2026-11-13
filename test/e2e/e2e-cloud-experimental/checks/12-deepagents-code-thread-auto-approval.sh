@@ -581,6 +581,14 @@ restore_export_baseline_on_exit() {
 main() {
   [ -n "$SANDBOX_NAME" ] || fail "sandbox name is required"
   [ -x "$CLI" ] || fail "NemoClaw CLI is not executable at $CLI"
+  if [ "${1:-}" = --verify-export-baseline ]; then
+    assert_capability_projection disabled
+    assert_status_mode disabled
+    [ "$(export_baseline_registry_state)" = "disabled:disabled" ] \
+      || fail "caller recovery did not restore the disabled export baseline"
+    printf '%s\n' NEMOCLAW_DCODE_EXPORT_BASELINE_OK
+    return 0
+  fi
   [ -x "$NETWORK_BOUNDARY_CHECK" ] || fail "network boundary check is not executable"
   [ -x "$CREDENTIAL_BOUNDARY_CHECK" ] || fail "credential boundary check is not executable"
   # The generic cloud-onboard target runs shared checks against OpenClaw. Typed
