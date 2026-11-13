@@ -1031,6 +1031,26 @@ describe("printDashboardUi announces per-sandbox Hermes API ports (#8543)", () =
     expect(output).not.toContain("Port 8642 must be forwarded before connecting.");
   });
 
+  it("announces the sandbox's own API port in the bearer-auth summary block (#14077)", () => {
+    getSandboxMock.mockReturnValue({ hermesApiPort: 8643 });
+    const hermesWithBearerAuth = makeAgent({
+      ...hermesShipped,
+      webAuth: { method: "bearer_token", env: "API_SERVER_KEY" },
+    });
+
+    printDashboardUi("hermes-clone", null, hermesWithBearerAuth, {
+      note: noteSpy,
+      effectiveDashboardPort: 18790,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("OpenAI-compatible API (bearer auth)");
+    expect(output).toContain("Port 8643 must be forwarded; clients send an Authorization header:");
+    expect(output).toContain("Port 8643 must be forwarded before connecting.");
+    expect(output).not.toContain("8642");
+  });
+
   it("announces the sandbox's own API port from an API-kind dashboard", () => {
     const hermesApiDashboard = makeAgent({
       name: "hermes",
