@@ -1,0 +1,147 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Automation / Report PR Merge Outcomes
+on:
+  pull_request:
+    paths:
+      - tools/ci/pr-merge-report*.rs
+      - .github/workflows/pr-merge-report.yml
+  pull_request_target:
+    branches: [main, v1]
+    types: [closed]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: merge-outcomes-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test the reporter without GitHub access
+        run: |
+          rustfmt --edition 2024 --check tools/ci/pr-merge-report*.rs
+          rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report.rs -o "$RUNNER_TEMP/report-tests"
+          "$RUNNER_TEMP/report-tests"
+          rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report-workflow.rs -o "$RUNNER_TEMP/adapter-tests"
+          "$RUNNER_TEMP/adapter-tests"
+  # GitHub returns the repository's merge-method settings only to a token with
+  # contents: write. Keep that grant in this job, which checks out nothing and
+  # runs no PR code, so the report job can stay read-only.
+  merge-settings:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Require squash-only merging
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY" --jq '.allow_squash_merge and (.allow_merge_commit | not) and (.allow_rebase_merge | not)' | grep -qx true
+  report:
+    needs: merge-settings
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: write
+    steps:
+      # Only squash merges are enabled (checked by merge-settings). Resolve
+      # their parent without checking out PR code, including when a PR changes
+      # the reporter itself.
+      - name: Resolve the commit before the merge
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          parent="$(gh api "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA" --jq 'if (.parents | length) == 1 then .parents[0].sha else error("Expected a squash merge") end')"
+          [[ "$parent" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\n' "$parent" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.base.outputs.sha }}
+          persist-credentials: false
+      - name: Check whether this base has the reporter
+        id: installed
+        run: |
+          if [ -f tools/ci/pr-merge-report.rs ]; then
+            printf 'available=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'Reporter installation: reports start with the next merged PR.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Record publication inputs
+        if: steps.installed.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_SHA: ${{ steps.base.outputs.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"
+          git diff --exit-code -- tools/ci/pr-merge-report.rs
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+            | jq 'add | [.[] | select(.body | contains("<!-- agent-session-report:v1 -->")) | {id,body}] | sort_by(.id)' > "$RUNNER_TEMP/opening-before.json"
+      - name: Compile the trusted reporter
+        if: steps.installed.outputs.available == 'true'
+        run: rustc --edition=2024 -D warnings tools/ci/pr-merge-report.rs -o "$RUNNER_TEMP/merge-report"
+      - name: Post one merge report
+        if: steps.installed.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          "$RUNNER_TEMP/merge-report" "$GITHUB_REPOSITORY" "$PR_NUMBER" --post > "$RUNNER_TEMP/merge-outcomes.md"
+      - name: Verify hosted publication
+        if: steps.installed.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          comments="repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100"
+          gh api --paginate --slurp "$comments" > "$RUNNER_TEMP/comments-after.json"
+          jq 'add | [.[] | select(.body | contains("<!-- agent-session-report:v1 -->")) | {id,body}] | sort_by(.id)' "$RUNNER_TEMP/comments-after.json" > "$RUNNER_TEMP/opening-after.json"
+          cmp "$RUNNER_TEMP/opening-before.json" "$RUNNER_TEMP/opening-after.json"
+          query='add | [.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- nemoclaw-merge-report:v1 -->"))) | {id,body}]'
+          jq "$query" "$RUNNER_TEMP/comments-after.json" > "$RUNNER_TEMP/report.json"
+          jq -e --arg head "$PR_HEAD_SHA" 'length == 1 and (.[0].body | startswith("<details>")) and (.[0].body | contains($head))' "$RUNNER_TEMP/report.json"
+          changed="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" --jq '.[] | select(.filename == "tools/ci/pr-merge-report.rs") | .filename')"
+          jq -n --arg workflow "$GITHUB_WORKFLOW_SHA" --arg reporter "$(git rev-parse HEAD)" \
+            --arg blob "$(git rev-parse HEAD:tools/ci/pr-merge-report.rs)" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson opening_count "$(jq length "$RUNNER_TEMP/opening-before.json")" \
+            --arg repository "$GITHUB_REPOSITORY" --arg number "$PR_NUMBER" --arg head "$PR_HEAD_SHA" \
+            --arg fork "$PR_HEAD_REPOSITORY" --arg changed "$changed" \
+            '{workflow_revision:$workflow,reporter_revision:$reporter,reporter_blob:$blob,run_id:$run,run_attempt:$attempt,repository:$repository,pr:$number,pr_head:$head,opening_report_count:$opening_count,
+              fork_modified_reporter:($fork != "" and $fork != $repository and $changed != ""),
+              trusted_checkout:true,publication_readback:true,opening_preserved:true,report_unique:true}' > "$RUNNER_TEMP/merge-outcomes-receipt.json"
+      - name: Retain the generated report
+        id: evidence
+        if: always() && steps.installed.outputs.available == 'true'
+        run: |
+          if [ -s "$RUNNER_TEMP/merge-outcomes.md" ]; then
+            printf 'available=true\n' >> "$GITHUB_OUTPUT"
+            cat "$RUNNER_TEMP/merge-outcomes.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.evidence.outputs.available == 'true'
+        with:
+          name: merge-outcomes-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/merge-outcomes.md
+            ${{ runner.temp }}/merge-outcomes-receipt.json
+          retention-days: 90
