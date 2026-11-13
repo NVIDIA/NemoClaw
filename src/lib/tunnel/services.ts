@@ -837,6 +837,12 @@ function cloudflaredArgs(commandLine: string | null): string[] | null {
   return command?.split(/\0|\s+/).filter(Boolean) ?? null;
 }
 
+/**
+ * Determine whether process arguments represent a quick tunnel command.
+ *
+ * @param args Tokenized process argument array.
+ * @returns True if arguments include tunnel with a url flag.
+ */
 function isQuickTunnelArgs(args: string[] | null): boolean {
   const tunnelIndex = args?.indexOf("tunnel") ?? -1;
   return (
@@ -845,6 +851,14 @@ function isQuickTunnelArgs(args: string[] | null): boolean {
   );
 }
 
+/**
+ * Determine whether a quick tunnel command line targets the dashboard port.
+ *
+ * @param pidDir Process state directory for cloudflared.
+ * @param commandLine Command line string of the running process.
+ * @param dashboardPort Target dashboard port to match.
+ * @returns True if the process targets the dashboard port.
+ */
 function quickTunnelTargetsDashboard(
   pidDir: string,
   commandLine: string | null,
@@ -867,6 +881,22 @@ function quickTunnelTargetsDashboard(
   } catch {
     return false;
   }
+}
+
+/**
+ * Verify whether a running quick tunnel includes the localhost host-header flag.
+ *
+ * @param commandLine Command line string of the running process.
+ * @returns True if the host-header flag is present or command line is unavailable.
+ */
+function quickTunnelHasHostHeader(commandLine: string | null): boolean {
+  const args = cloudflaredArgs(commandLine);
+  if (!args) return true;
+  const flagIndex = args.indexOf("--http-host-header");
+  if (flagIndex >= 0 && args[flagIndex + 1]?.toLowerCase() === "localhost") {
+    return true;
+  }
+  return args.some((arg) => /^--http-host-header=localhost$/i.test(arg));
 }
 
 // ---------------------------------------------------------------------------
@@ -1503,6 +1533,15 @@ function resolveTunnelOriginSandboxName(opts: ServiceOptions): string | null {
   return raw;
 }
 
+/**
+ * Start host-side auxiliary services, including cloudflared tunnel processes.
+ *
+ * Inspects existing tunnels and safely replaces any quick tunnel that targets
+ * an outdated dashboard port or lacks the localhost host-header flag.
+ *
+ * @param opts Startup options including sandbox name and dashboard port.
+ * @returns Promise that resolves when services startup completes.
+ */
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const pidDir = resolvePidDir(opts);
   const requestedPort = opts.dashboardPort;
@@ -1603,13 +1642,20 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       const targetMatches = runningNamedTunnel
         ? true
         : quickTunnelTargetsDashboard(pidDir, commandLine, dashboardPort);
+      const hasHostHeader = runningNamedTunnel ? true : quickTunnelHasHostHeader(commandLine);
       if (runningQuickTunnel && !targetMatches && !cloudflaredAvailable) {
         throw new Error(
           `The existing quick tunnel targets a different dashboard port and cloudflared is unavailable to replace it; restore cloudflared availability or stop the verified process, then retry for port ${String(dashboardPort)}. Its PID and target records were retained.`,
         );
       }
+      if (runningQuickTunnel && targetMatches && !hasHostHeader && !cloudflaredAvailable) {
+        throw new Error(
+          `The existing quick tunnel lacks the required localhost host header and cloudflared is unavailable to replace it; restore cloudflared availability or stop the verified process, then retry for port ${String(dashboardPort)}. Its PID and target records were retained.`,
+        );
+      }
       const needsReplacement =
-        cloudflaredAvailable && ((tunnelToken && !runningNamedTunnel) || !targetMatches);
+        cloudflaredAvailable &&
+        ((tunnelToken && !runningNamedTunnel) || !targetMatches || !hasHostHeader);
       if (needsReplacement) {
         if (!stopService(pidDir, "cloudflared", processControl)) {
           throw new Error(
@@ -1652,7 +1698,13 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
             pidDir,
             "cloudflared",
             "cloudflared",
-            ["tunnel", "--url", `http://localhost:${String(dashboardPort)}`],
+            [
+              "tunnel",
+              "--url",
+              `http://localhost:${String(dashboardPort)}`,
+              "--http-host-header",
+              "localhost",
+            ],
             undefined,
             processControl,
           )
