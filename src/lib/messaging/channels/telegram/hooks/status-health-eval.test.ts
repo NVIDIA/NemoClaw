@@ -178,7 +178,7 @@ describe("parseTelegramBreadcrumbs", () => {
 
   it("classifies the known startup phrases", () => {
     const bc = parseTelegramBreadcrumbs([
-      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+      "[telegram] [default] provider ready (Bot API reachable)",
       "[telegram] [default] inbound update received (update_id=present; message_id=present)",
     ]);
     expect(bc).toMatchObject({ providerReady: true, inboundReceived: true });
@@ -287,7 +287,7 @@ describe("evaluateTelegramDiagnostics over real gateway-log windows (#6743)", ()
   it("does not stay token_rejected when a later provider-ready follows a stale 401 (#6887)", () => {
     const bc = parseTelegramBreadcrumbs([
       "[telegram] [default] Bot API rejected startup probe with HTTP 401; token invalid or credential placeholder unresolved",
-      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+      "[telegram] [default] provider ready (Bot API reachable)",
       "[telegram] [default] inbound update received (update_id=present; message_id=present)",
     ]);
     expect(bc).toMatchObject({
@@ -313,7 +313,7 @@ describe("evaluateTelegramDiagnostics over real gateway-log windows (#6743)", ()
   it("clears a stale HTTP 5xx error once a later provider-ready follows (#6887)", () => {
     const bc = parseTelegramBreadcrumbs([
       "[telegram] [default] Bot API startup probe returned HTTP 502",
-      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+      "[telegram] [default] provider ready (Bot API reachable)",
       "[telegram] [default] inbound update received (update_id=present; message_id=present)",
     ]);
     expect(bc).toMatchObject({
@@ -334,7 +334,7 @@ describe("evaluateTelegramDiagnostics over real gateway-log windows (#6743)", ()
     const bc = parseTelegramBreadcrumbs([
       "[telegram] [default] inbound update received (update_id=present; message_id=present)",
       "[telegram] [default] Bot API startup probe failed: ETIMEDOUT",
-      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+      "[telegram] [default] provider ready (Bot API reachable)",
     ]);
     expect(bc).toMatchObject({ providerReady: true, inboundReceived: false });
     expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc })).verdict).toBe("idle");
@@ -344,7 +344,7 @@ describe("evaluateTelegramDiagnostics over real gateway-log windows (#6743)", ()
     const bc = parseTelegramBreadcrumbs([
       "[telegram] [default] inbound update received (update_id=present; message_id=present)",
       "[telegram] [default] Bot API startup probe failed: ETIMEDOUT",
-      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+      "[telegram] [default] provider ready (Bot API reachable)",
       "[telegram] Inbound message telegram:5209865443 -> @bot (direct, 3 chars)",
     ]);
     expect(bc).toMatchObject({ providerReady: true, inboundReceived: true });
