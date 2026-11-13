@@ -31,6 +31,7 @@ function fixture(desktopName: unknown = "Docker Desktop 4.97.0 (12345)") {
       dockerCapture,
       runCapture,
       isWsl: () => true,
+      arch: "arm64" as const,
       env: { PATH: "/usr/bin:/bin", DOCKER_HOST: "unix:///var/run/docker.sock" },
       realpath: vi.fn(() => "/run/docker.sock"),
     },
@@ -93,6 +94,22 @@ describe("Docker Desktop NVIDIA CDI release gate", () => {
 });
 
 describe("WSL NVIDIA CDI preparation", () => {
+  it("leaves x86 WSL hosts on their existing route without host preparation", () => {
+    const { deps } = fixture();
+    expect(prepareWslNvidiaCdi({ ...deps, arch: "x64" })).toBe(false);
+    expect(deps.realpath).not.toHaveBeenCalled();
+    expect(deps.dockerCapture).not.toHaveBeenCalled();
+    expect(deps.runCapture).not.toHaveBeenCalled();
+  });
+  it("rejects an active transaction even when Docker already discovers its device", () => {
+    const { info, deps } = fixture();
+    info.DiscoveredDevices = [nvidia];
+    deps.runCapture.mockImplementation(() => {
+      throw new Error("active transaction");
+    });
+    expect(() => prepareWslNvidiaCdi(deps)).toThrow("active transaction");
+    expect(deps.dockerCapture).toHaveBeenCalledTimes(1);
+  });
   it.each([
     "/run/docker.sock",
     "/mnt/wsl/docker-desktop/shared-sockets/guest-services/docker.sock",
@@ -112,6 +129,7 @@ describe("WSL NVIDIA CDI preparation", () => {
       "-s",
       "--",
       "test-engine-id",
+      "1",
     ]);
     expect(
       deps.dockerCapture.mock.calls.every(
@@ -124,9 +142,11 @@ describe("WSL NVIDIA CDI preparation", () => {
     (version) => {
       const { info, deps } = fixture(`Docker Desktop ${version}`);
       info.DiscoveredDevices = [nvidia];
+      deps.dockerCapture.mockReset().mockImplementation(() => JSON.stringify(info));
       expect(prepareWslNvidiaCdi(deps)).toBe(true);
-      expect(deps.runCapture).toHaveBeenCalledTimes(1);
-      expect(deps.dockerCapture).toHaveBeenCalledTimes(1);
+      expect(deps.runCapture).toHaveBeenCalledTimes(2);
+      expect(deps.runCapture.mock.calls[1][0].at(-1)).toBe("0");
+      expect(deps.dockerCapture).toHaveBeenCalledTimes(2);
       expect(deps.dockerCapture.mock.calls[0][0]).not.toContain("version");
     },
   );

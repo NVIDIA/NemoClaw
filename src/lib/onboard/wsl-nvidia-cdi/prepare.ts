@@ -20,6 +20,7 @@ export type WslNvidiaCdiDeps = {
   runCapture?: Capture;
   realpath?: (value: string) => string;
   isWsl?: () => boolean;
+  arch?: NodeJS.Architecture;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -105,6 +106,8 @@ function hasNvidiaCdi(info: DockerInfo): boolean {
 
 /** Prepare before both preflight and create, including rebuilds that skip initial onboarding. */
 export function prepareWslNvidiaCdi(deps: WslNvidiaCdiDeps = {}): boolean {
+  // Other architectures retain the existing compatibility route, without new host prerequisites.
+  if ((deps.arch ?? process.arch) !== "arm64") return false;
   if (!(deps.isWsl ?? detectWsl)()) throw new Error("CDI preparation requires a local WSL host.");
 
   const env = deps.env ?? process.env;
@@ -155,11 +158,14 @@ export function prepareWslNvidiaCdi(deps: WslNvidiaCdiDeps = {}): boolean {
     );
   }
   // Existing CDI belongs to its current owner, regardless of the installed Desktop version.
-  if (hasNvidiaCdi(info)) return true;
-  const platformName = JSON.parse(
-    docker(["version", "--format", "{{json .Server.Platform.Name}}"]),
-  );
-  requireWslNvidiaCdiGenerationVersion(platformName);
+  const existing = hasNvidiaCdi(info);
+  if (!existing) {
+    const platformName = JSON.parse(
+      docker(["version", "--format", "{{json .Server.Platform.Name}}"]),
+    );
+    requireWslNvidiaCdiGenerationVersion(platformName);
+  }
+  // Discovery can observe an uncommitted writer. Verify its lock even when CDI already exists.
   const result = exec(
     [
       "wsl.exe",
@@ -172,6 +178,7 @@ export function prepareWslNvidiaCdi(deps: WslNvidiaCdiDeps = {}): boolean {
       "-s",
       "--",
       info.ID,
+      existing ? "0" : "1",
     ],
     {
       ...options,

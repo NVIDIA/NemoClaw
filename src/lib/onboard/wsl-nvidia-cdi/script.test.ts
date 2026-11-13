@@ -22,7 +22,7 @@ function fixture() {
 set -eu
 if [ "$2" = generate ]; then
   if [ -e "$FIXTURE_ROOT/concurrent" ]; then
-    /bin/sh "$FIXTURE_ROOT/install.sh" "$FIXTURE_ROOT" "$0" "$(id -u)" > "$FIXTURE_ROOT/concurrent-result" 2>&1 && exit 14
+    /bin/sh "$FIXTURE_ROOT/install.sh" "$FIXTURE_ROOT" "$0" "$(id -u)" 1 > "$FIXTURE_ROOT/concurrent-result" 2>&1 && exit 14
   fi
   if [ -e "$FIXTURE_ROOT/directory-race" ]; then mkdir "$FIXTURE_ROOT/cdi/nemoclaw-nvidia.yaml"; fi
   printf 'cdiVersion: "0.3.0"\\nkind: nvidia.com/gpu\\n'
@@ -39,13 +39,17 @@ else exit 12; fi
   const file = path.join(root, "cdi/nemoclaw-nvidia.yaml");
   const state = path.join(root, "nemoclaw-nvidia-cdi");
   fs.writeFileSync(path.join(root, "install.sh"), NVIDIA_CDI_INSTALL_SCRIPT);
-  const run = () =>
-    spawnSync("/bin/sh", ["-s", "--", root, toolkit, String(process.getuid?.())], {
-      input: NVIDIA_CDI_INSTALL_SCRIPT,
-      encoding: "utf8",
-      timeout: 5000,
-      env: { PATH: "/usr/bin:/bin", FIXTURE_ROOT: root },
-    });
+  const run = (generationAllowed = "1") =>
+    spawnSync(
+      "/bin/sh",
+      ["-s", "--", root, toolkit, String(process.getuid?.()), generationAllowed],
+      {
+        input: NVIDIA_CDI_INSTALL_SCRIPT,
+        encoding: "utf8",
+        timeout: 5000,
+        env: { PATH: "/usr/bin:/bin", FIXTURE_ROOT: root },
+      },
+    );
   return { root, file, state, run };
 }
 
@@ -62,17 +66,42 @@ describe("NVIDIA CDI daemon-filesystem transaction", () => {
     const first = f.run();
     expect(first.status, first.stderr).toBe(0);
     expect(first.stdout.trim()).toBe("NEMOCLAW_CDI_PREPARED");
-    const identity = fs.statSync(f.file);
-    expect(fs.readFileSync(f.file, "utf8")).toEqual(
-      fs.readFileSync(path.join(f.state, "spec.yaml"), "utf8"),
-    );
-    expect(fs.statSync(f.file).mode & 0o777).toBe(0o644);
+    const descriptor = fs.openSync(f.file, "r");
+    let identity: fs.Stats;
+    try {
+      identity = fs.fstatSync(descriptor);
+      expect(fs.readFileSync(descriptor, "utf8")).toEqual(
+        fs.readFileSync(path.join(f.state, "spec.yaml"), "utf8"),
+      );
+      expect(identity.mode & 0o777).toBe(0o644);
+    } finally {
+      fs.closeSync(descriptor);
+    }
     const second = f.run();
     expect(second.status, second.stderr).toBe(0);
     expect(second.stdout.trim()).toBe("NEMOCLAW_CDI_EXISTING");
     expect(fs.statSync(f.file).ino).toBe(identity.ino);
     expect(fs.readdirSync(path.dirname(f.file))).toEqual(["nemoclaw-nvidia.yaml"]);
     expect(fs.existsSync(path.join(f.state, "lock"))).toBe(false);
+  });
+  it("refuses a discovered specification until its writer commits", () => {
+    const f = fixture();
+    fs.mkdirSync(path.dirname(f.file), { mode: 0o755 });
+    fs.writeFileSync(f.file, "published but uncommitted");
+    fs.mkdirSync(path.join(f.state, "lock"), { recursive: true, mode: 0o700 });
+    const result = f.run();
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("active or interrupted");
+    expect(fs.readFileSync(f.file, "utf8")).toBe("published but uncommitted");
+    expect(fs.existsSync(path.join(f.state, "lock"))).toBe(true);
+  });
+  it("does not generate if previously discovered CDI disappears before verification", () => {
+    const f = fixture();
+    const result = f.run("0");
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("no generation was authorized");
+    expect(fs.existsSync(f.state)).toBe(false);
+    expect(fs.existsSync(f.file)).toBe(false);
   });
   it("preserves an existing operator inventory without creating state", () => {
     const f = fixture();

@@ -7,6 +7,7 @@ set -eu
 run_root=$1
 toolkit=$2
 owner_uid=$3
+generation_allowed=$4
 state="$run_root/nemoclaw-nvidia-cdi"
 cdi="$run_root/cdi"
 file="$cdi/nemoclaw-nvidia.yaml"
@@ -29,9 +30,13 @@ check_directory "$run_root"
 command -v link >/dev/null || fail 'Atomic CDI publication is unavailable'
 inventory=$("$toolkit" cdi list) || fail 'Cannot inspect the existing NVIDIA CDI configuration'
 if has_gpu "$inventory"; then
+  # Check after inventory: a writer locks before publication and releases only after commit/cleanup.
+  [ ! -e "$state/lock" ] && [ ! -L "$state/lock" ] || fail 'CDI preparation is active or interrupted; inspect its lock before retrying'
   printf 'NEMOCLAW_CDI_EXISTING\n'
   exit 0
 fi
+
+[ "$generation_allowed" = 1 ] || fail 'NVIDIA CDI disappeared; no generation was authorized'
 
 if [ ! -e "$state" ] && [ ! -L "$state" ]; then mkdir -m 700 "$state"; fi
 check_directory "$state"
@@ -88,6 +93,7 @@ set -eu
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 expected_id=$1
+generation_allowed=$2
 pids=''
 for proc in /proc/[0-9]*; do
   if [ "$(cat "$proc/comm" 2>/dev/null || true)" = dockerd ]; then pids="$pids $(basename "$proc")"; fi
@@ -97,12 +103,12 @@ set -- $pids
 root="/proc/$1/root"
 # Enter the daemon filesystem before resolving /run. /var/run can be an absolute symlink.
 # The engine ID binds this filesystem to the Docker endpoint selected by NemoClaw.
-exec chroot "$root" /bin/sh -s -- "$expected_id" <<'NEMOCLAW_DAEMON'
+exec chroot "$root" /bin/sh -s -- "$expected_id" "$generation_allowed" <<'NEMOCLAW_DAEMON'
 set -eu
 [ "$(id -u)" = 0 ] || exit 1
 [ -f /var/lib/docker/engine-id ] && [ ! -L /var/lib/docker/engine-id ] || exit 1
 [ "$(cat /var/lib/docker/engine-id)" = "$1" ] || { printf 'Docker daemon identity changed\n' >&2; exit 1; }
-set -- /run /usr/bin/nvidia-ctk 0
+set -- /run /usr/bin/nvidia-ctk 0 "$2"
 ${NVIDIA_CDI_INSTALL_SCRIPT}
 NEMOCLAW_DAEMON
 `;

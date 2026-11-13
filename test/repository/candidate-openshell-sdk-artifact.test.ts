@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { candidateSdkLocatorFixture } from "../support/candidate-openshell-sdk.ts";
 
 const roots: string[] = [];
-function fixture(mode: "candidate" | "trusted" = "candidate") {
+function fixture(mode: "candidate" | "trusted" | "stacked" = "candidate") {
   const root = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-artifact-locator-"));
   roots.push(root);
   return candidateSdkLocatorFixture(root, mode);
@@ -18,6 +18,84 @@ afterEach(() => {
 });
 
 describe("candidate SDK artifact provenance", () => {
+  it("keeps existing main archive reuse for an ordinary stacked PR", () => {
+    const f = fixture("trusted");
+    f.stack.baseRef = "feature";
+    f.stack.parents = [];
+    const result = f.execute();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toContain("artifact_id=42");
+    expect(result.output).not.toContain("stack_pr=");
+  });
+  it("reuses a stack parent's separately admitted SDK without relabeling it", () => {
+    const f = fixture("stacked");
+    const result = f.execute();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toContain("stack_pr=123");
+    expect(result.output).toContain("artifact_id=42");
+    expect(result.output).toContain(f.artifact.name);
+  });
+  it("rejects a stack parent whose admission no longer covers the child's inputs", () => {
+    const f = fixture("stacked");
+    f.stack.denied = true;
+    const result = f.execute();
+    expect(result.status).not.toBe(0);
+    expect(result.output).not.toContain("artifact_id=");
+    expect(result.state?.artifactReads).toBe(1);
+  });
+  it("rejects a parent's different SDK artifact selection", () => {
+    const f = fixture("stacked");
+    f.stack.decision.artifactName = "other-sdk.tgz";
+    const result = f.execute();
+    expect(result.status).not.toBe(0);
+    expect(result.output).not.toContain("artifact_id=");
+  });
+  it.each(["missing", "ambiguous", "changed head", "fork", "different base"])(
+    "rejects %s stack parent before artifact lookup",
+    (kind) => {
+      const f = fixture("stacked");
+      const parent = f.stack.parents[0]!;
+      const changes = {
+        missing: () => f.stack.parents.splice(0),
+        ambiguous: () => f.stack.parents.push(parent),
+        "changed head": () => {
+          parent.head.sha = "f".repeat(40);
+        },
+        fork: () => {
+          parent.head.repo.full_name = "attacker/NemoClaw";
+        },
+        "different base": () => {
+          parent.base.ref = "upgrade";
+        },
+      };
+      changes[kind as keyof typeof changes]();
+      const result = f.execute();
+      expect(result.status).not.toBe(0);
+      expect(result.output).not.toContain("artifact_id=");
+      expect(result.state?.artifactReads).toBe(1);
+    },
+  );
+  it("rejects child audit policy changes before admitting the parent's SDK", () => {
+    const f = fixture("stacked");
+    writeFileSync(join(f.root, "ci/reviewed-npm-audit.json"), "{}");
+    const result = f.execute();
+    expect(result.status).not.toBe(0);
+    expect(result.output).not.toContain("artifact_id=");
+  });
+  it("rechecks the parent's admission after download before releasing the archive", () => {
+    const f = fixture("stacked");
+    const result = f.execute(true);
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(join(f.root, "verified-sdk", f.decision.artifactName))).toBe(true);
+  });
+  it.each(["revoked", "changed review"])("rejects %s parent admission after download", (kind) => {
+    const f = fixture("stacked");
+    f.stack.denied = kind === "revoked";
+    f.stack.decision.bundleName += "-changed";
+    const result = f.execute(true);
+    expect(result.status).not.toBe(0);
+    expect(existsSync(join(f.root, "verified-sdk"))).toBe(false);
+  });
   it("waits for the approved candidate archive and completed producer", () => {
     const f = fixture();
     f.availability.missingReads = 2;

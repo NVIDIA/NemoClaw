@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { prepareWslNvidiaCdi } from "./wsl-nvidia-cdi/prepare";
 
 import {
   type DockerGpuRoutePlan,
@@ -10,6 +11,19 @@ import {
 } from "./docker-gpu-sandbox-create";
 
 describe("resolveDockerGpuSandboxCreatePlan", () => {
+  it("preserves the compatibility create and rebuild route on x86 WSL", () => {
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: true },
+      {
+        dockerDriverGateway: true,
+        dockerDesktopWsl: true,
+        platform: "linux",
+        env: {},
+        prepareWslNvidiaCdi: () => prepareWslNvidiaCdi({ arch: "x64" }),
+      },
+    );
+    expect(result.gpuRoutePlan).toBe("compatibility-only");
+  });
   it("uses native creation after WSL NVIDIA CDI preparation", () => {
     const prepare = vi.fn(() => true);
     const result = resolveDockerGpuSandboxCreatePlan(

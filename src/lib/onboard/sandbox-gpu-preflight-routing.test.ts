@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { prepareWslNvidiaCdi } from "./wsl-nvidia-cdi/prepare";
 
 vi.mock("../adapters/docker", () => ({
   dockerInfoFormat: vi.fn(),
@@ -237,6 +238,20 @@ describe("sandbox GPU preflight routing", () => {
     }
   });
 
+  it("preserves the existing public GPU preflight on x86 WSL", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      validateSandboxGpuPreflight(sandboxGpuConfig(), {
+        platform: "linux",
+        env: { WSL_DISTRO_NAME: "Ubuntu" },
+        dockerInfoFormat: vi.fn(() => '"Docker Desktop"'),
+        prepareWslNvidiaCdi: () => prepareWslNvidiaCdi({ arch: "x64" }),
+      });
+      expect(log.mock.calls.flat().join("\n")).toContain("Docker --gpus compatibility path");
+    } finally {
+      log.mockRestore();
+    }
+  });
   it("uses prepared Desktop CDI without looking for specs in the Ubuntu filesystem", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const findReadableNvidiaCdiSpecFiles = vi.fn(() => []);

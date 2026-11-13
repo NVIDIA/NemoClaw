@@ -226,6 +226,7 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: |
+            ci/reviewed-npm-audit.json
             package.json
             package-lock.json
             nemoclaw/package.json
@@ -284,6 +285,36 @@ jobs:
           bundle="$(jq -cS '[.sourceRegistryPackage, .sourceRegistryPackageReplacement // empty]' .trusted-sdk-package-decision/ci/reviewed-npm-audit.json | sha256sum | cut -d ' ' -f 1)"
           bundle_name="reviewed-openshell-sdk-$bundle"
           candidate="$(jq -er '.candidate // false | tostring' <<<"$decision")"
+          if [ "$candidate" = "false" ] && [ "${GITHUB_BASE_REF:-main}" != "main" ]; then
+            main_artifacts="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$bundle_name&per_page=100")"
+            main_available="$(jq -er --arg name "$bundle_name" --argjson repo "$REPOSITORY_ID" '
+              [.[] | .artifacts[] | select(.name == $name and .expired == false
+                and .workflow_run.head_branch == "main" and .workflow_run.head_repository_id == $repo)] | (length > 0 | tostring)' <<<"$main_artifacts")"
+          else main_available=true; fi
+          if [ "$main_available" = "false" ]; then
+            # A stacked child may inherit an admitted SDK that main has not published yet.
+            # Reuse the parent's admission, never relabel its artifact as a main publication.
+            parent="$(gh api --method GET --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls" \
+              -f state=open -f base=main -f head="${GITHUB_REPOSITORY%%/*}:$GITHUB_BASE_REF" -f per_page=100 \
+              | jq -er --arg sha "$UPGRADE_BASE_SHA" --arg repo "$GITHUB_REPOSITORY" '
+                add | if length == 1 and .[0].head.sha == $sha
+                  and .[0].head.repo.full_name == $repo and .[0].base.repo.full_name == $repo
+                  and .[0].base.ref == "main" then .[0] else error("No unique current stack parent") end')"
+            cmp ci/reviewed-npm-audit.json .trusted-sdk-package-decision/ci/reviewed-npm-audit.json
+            UPGRADE_PR_NUMBER="$(jq -er '.number' <<<"$parent")"
+            CANDIDATE_SHA="$(jq -er '.head.sha' <<<"$parent")"
+            UPGRADE_BASE_SHA="$(jq -er '.base.sha' <<<"$parent")"
+            # Inspect the parent head, not the child's synthetic merge. The existing trusted
+            # inspector checks live approval and exact equality of both manifests and locks.
+            decision="$(env -u GITHUB_EVENT_NAME NEMOCLAW_OPEN_SHELL_SDK_CANDIDATE=1 \
+              NEMOCLAW_CI_NPM_PACKAGE_MODE=inspect NEMOCLAW_CI_TARGET_ROOT="$GITHUB_WORKSPACE" \
+              UPGRADE_PR_NUMBER="$UPGRADE_PR_NUMBER" CANDIDATE_SHA="$CANDIDATE_SHA" \
+              UPGRADE_BASE_SHA="$UPGRADE_BASE_SHA" node "$trusted_inspector")"
+            jq -e --arg name "$artifact_name" '.required == true and .candidate == true and .artifactName == $name' <<<"$decision" >/dev/null
+            printf 'stack_pr=%s\nstack_head=%s\nstack_base=%s\nstack_decision=%s\n' \
+              "$UPGRADE_PR_NUMBER" "$CANDIDATE_SHA" "$UPGRADE_BASE_SHA" "$(jq -c . <<<"$decision")" >> "$GITHUB_OUTPUT"
+            candidate=true
+          fi
           if [ "$candidate" = "true" ]; then
             bundle_name="$(jq -er '.bundleName | select(test("^candidate-openshell-sdk-[0-9]+-[a-f0-9]{40}-[a-f0-9]{40}-[0-9]+$"))' <<<"$decision")"
           fi
@@ -356,6 +387,10 @@ jobs:
         if: steps.locate.outputs.required == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          STACK_PR: ${{ steps.locate.outputs.stack_pr }}
+          STACK_HEAD: ${{ steps.locate.outputs.stack_head }}
+          STACK_BASE: ${{ steps.locate.outputs.stack_base }}
+          STACK_DECISION: ${{ steps.locate.outputs.stack_decision }}
           ARTIFACT_NAME: ${{ steps.locate.outputs.artifact_name }}
           NEMOCLAW_CI_NPM_PACKAGE_MODE: artifact
           NEMOCLAW_CI_TARGET_ROOT: ${{ github.workspace }}
@@ -363,6 +398,13 @@ jobs:
           NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
         run: |
           set -euo pipefail
+          if [ -n "$STACK_PR" ]; then
+            decision="$(env -u GITHUB_EVENT_NAME NEMOCLAW_OPEN_SHELL_SDK_CANDIDATE=1 \
+              NEMOCLAW_CI_NPM_PACKAGE_MODE=inspect UPGRADE_PR_NUMBER="$STACK_PR" \
+              CANDIDATE_SHA="$STACK_HEAD" UPGRADE_BASE_SHA="$STACK_BASE" \
+              node .trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts)"
+            [ "$(jq -cS . <<<"$decision")" = "$(jq -cS . <<<"$STACK_DECISION")" ]
+          fi
           mkdir -p "$NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY" "$NEMOCLAW_CI_NPM_CACHE"
           cp "$RUNNER_TEMP/openshell-sdk-bundle/$ARTIFACT_NAME" "$NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY/$ARTIFACT_NAME"
           node .trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts
