@@ -109,6 +109,7 @@ if (command.includes("tar -C")) {
     }
     fs.rmSync(path.join(copyRoot, ".nemoclaw", "config.json"), { force: true });
     fs.rmSync(path.join(copyRoot, ".nemoclaw", "blueprints"), { recursive: true, force: true });
+    fs.rmSync(path.join(copyRoot, ".deepagents", ".nemoclaw-observability-enabled"), { force: true });
     fs.rmSync(path.join(copyRoot, ".openclaw", ".nemoclaw-post-upgrade-doctor"), { force: true });
     const sessionDirectory = path.join(copyRoot, ".openclaw", "agents", "main", "sessions");
     if (fs.existsSync(sessionDirectory)) {
