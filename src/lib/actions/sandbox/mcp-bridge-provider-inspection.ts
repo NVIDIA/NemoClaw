@@ -42,6 +42,17 @@ import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
 
 export const MCP_BRIDGE_PROVIDER_TYPE = "nemoclaw-mcp-v1";
 
+export function formatDeleteMcpProviderCommand(providerName: string, gatewayName?: string): string {
+  return gatewayName
+    ? `openshell provider delete -g ${gatewayName} ${providerName}`
+    : `openshell provider delete ${providerName}`;
+}
+
+export function formatMcpGatewayAttachmentCheckCommands(gatewayName?: string): string {
+  const gatewayFlag = gatewayName ? ` -g ${gatewayName}` : "";
+  return `\`openshell sandbox list${gatewayFlag}\` and \`openshell sandbox provider list${gatewayFlag} <sandbox-name>\` for each listed sandbox`;
+}
+
 export type McpProviderInspection = {
   exists: boolean | null;
   id: string | null;
@@ -417,7 +428,7 @@ export function providerShapeDetail(
       allowLegacyGeneric: true,
     })
   ) {
-    return `Provider type 'generic' predates the OpenShell 0.0.106 endpoint-binding contract. Remove this MCP server, then add it again with '${expectedCredential ?? "<missing>"}' exported.`;
+    return `Provider type 'generic' predates the OpenShell 0.0.106 endpoint-binding contract. Remove this MCP server, delete the preserved provider after confirming no sandbox on the gateway uses it, then add the server again with '${expectedCredential ?? "<missing>"}' exported.`;
   }
   const type = inspection.type ?? "unparseable";
   const keys = inspection.credentialKeys?.join(", ") || "none or unparseable";
@@ -449,7 +460,7 @@ export async function assertMcpProviderRecoverable(
       })
     ) {
       throw new McpBridgeError(
-        `OpenShell provider '${entry.providerName}' uses the legacy generic profile, which OpenShell 0.0.106 cannot bind to an MCP endpoint. Run mcp remove for '${entry.server}', then add it again with '${expectedCredential}' exported.`,
+        `OpenShell provider '${entry.providerName}' uses the legacy generic profile, which OpenShell 0.0.106 cannot bind to an MCP endpoint. Run mcp remove for '${entry.server}', delete the preserved provider after confirming no sandbox on the gateway uses it, then add it again with '${expectedCredential}' exported.`,
       );
     }
     if (!providerMatchesCredential(inspection, expectedCredential, entry.providerId)) {
