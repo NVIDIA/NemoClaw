@@ -22,6 +22,7 @@ import {
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURES,
   REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE,
 } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -245,7 +246,10 @@ async function collectOpenClawCredentialBoundary(
   const requestOffset = fake.requests().length;
   const sessionId = `e2e-state-upgrade-${phase}`;
   const agentCommand = `agent --agent main --json --thinking off --session-id ${shellQuote(sessionId)} -m ${shellQuote("Reply with only: ok")}`;
-  // OpenClaw 2026.9.1's local convenience command requests operator.admin.
+  const useNativeAgentRpc =
+    phase === "upgraded" ||
+    OLD_OPENCLAW_VERSION === REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE.openclawVersion;
+  // OpenClaw 2026.9.2's local convenience command requests operator.admin.
   // The same native agent RPC needs operator.write for this ordinary message.
   const rpcParams = JSON.stringify({
     message: "Reply with only: ok",
@@ -260,14 +264,13 @@ async function collectOpenClawCredentialBoundary(
     redactionValues: [GATEWAY_CREDENTIAL],
     timeoutMs: 120_000,
   };
-  const agent =
-    phase === "upgraded"
-      ? await bash(
-          host,
-          `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec -- openclaw gateway call agent --json --expect-final --timeout 120000 --params ${shellQuote(rpcParams)}`,
-          agentOptions,
-        )
-      : await runInSurvivorSandbox(host, `openclaw ${agentCommand}`, agentOptions);
+  const agent = useNativeAgentRpc
+    ? await bash(
+        host,
+        `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec -- openclaw gateway call agent --json --expect-final --timeout 120000 --params ${shellQuote(rpcParams)}`,
+        agentOptions,
+      )
+    : await runInSurvivorSandbox(host, `openclaw ${agentCommand}`, agentOptions);
   const requests = fake
     .requests()
     .slice(requestOffset)
@@ -279,7 +282,7 @@ async function collectOpenClawCredentialBoundary(
     valid:
       secretNonExposure.exitCode === 0 &&
       agent.exitCode === 0 &&
-      (phase !== "upgraded" || gatewayUpgradeAgentResponseIsSuccessful(agent.stdout)) &&
+      (!useNativeAgentRpc || gatewayUpgradeAgentResponseIsSuccessful(agent.stdout)) &&
       parseOpenClawAgentText(agent.stdout).trim().toLowerCase() === "ok" &&
       requests.length > 0 &&
       requests.every((request) => request.auth === "ok" && request.authorizationSent === true),

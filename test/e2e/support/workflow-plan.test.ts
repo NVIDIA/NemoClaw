@@ -41,8 +41,7 @@ const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
 const PLANNER_CLI_PREFIX = ["--import", "tsx", PLANNER_CLI];
 const PLANNER_COMPILE_CACHE = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cache-"));
 
-// Each case owns its output files; bound child-process overlap on CI and retain
-// the child-process timeout under aggregate runner load.
+// Each case owns its output files; bound CI overlap and retain the child-process timeout.
 vi.setConfig({ maxConcurrency: 4, testTimeout: 35_000 });
 afterAll(() => rmSync(PLANNER_COMPILE_CACHE, { force: true, recursive: true }));
 
@@ -102,7 +101,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(79);
+    expect(plan.coverageMatrix).toHaveLength(80);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -770,13 +769,14 @@ describe("E2E workflow plan", () => {
     "src/lib/actions/maintenance.ts",
     "src/lib/actions/sandbox/forward-recovery.ts",
     "src/lib/actions/upgrade-sandboxes.ts",
-  ])("selects both gateway-upgrade fixtures when %s changes", (changedFile) => {
+  ])("selects all reviewed gateway-upgrade fixtures when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
       ...(changedFile === "scripts/install.sh"
         ? ["deferred-onboarding-hermes", "deferred-onboarding-langchain-deepagents-code"]
         : []),
       "openshell-gateway-upgrade-v0-0-89-x86-64",
       "openshell-gateway-upgrade-v0-0-123-x86-64",
+      "openshell-gateway-upgrade-v0-0-141-x86-64",
     ]);
   });
 
