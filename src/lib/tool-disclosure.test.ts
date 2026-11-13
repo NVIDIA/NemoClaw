@@ -32,6 +32,8 @@ describe("tool disclosure", () => {
 
   it("shares the build-time environment parser across agent generators", () => {
     expect(readToolDisclosureEnv({})).toBe("progressive");
+    expect(readToolDisclosureEnv({ NEMOCLAW_TOOL_DISCLOSURE: "" })).toBe("progressive");
+    expect(readToolDisclosureEnv({ NEMOCLAW_TOOL_DISCLOSURE: "   " })).toBe("progressive");
     expect(readToolDisclosureEnv({ NEMOCLAW_TOOL_DISCLOSURE: " DIRECT " })).toBe("direct");
     expect(() => readToolDisclosureEnv({ NEMOCLAW_TOOL_DISCLOSURE: "sometimes" })).toThrow(
       "NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct",

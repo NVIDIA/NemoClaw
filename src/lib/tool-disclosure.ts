@@ -19,7 +19,11 @@ export function normalizeToolDisclosure(value: unknown): ToolDisclosure | null {
 export function readToolDisclosureEnv(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): ToolDisclosure {
-  const raw = env[TOOL_DISCLOSURE_ENV] || DEFAULT_TOOL_DISCLOSURE;
+  // Blank values are unset, the same rule resolveToolDisclosureRequest applies:
+  // a whitespace-only value must adopt the default instead of failing the
+  // closed-enum check.
+  const raw = typeof env[TOOL_DISCLOSURE_ENV] === "string" ? env[TOOL_DISCLOSURE_ENV]!.trim() : "";
+  if (!raw) return DEFAULT_TOOL_DISCLOSURE;
   const normalized = normalizeToolDisclosure(raw);
   if (!normalized) {
     throw new Error(`${TOOL_DISCLOSURE_ENV} must be progressive or direct`);
