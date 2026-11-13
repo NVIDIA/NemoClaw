@@ -6,7 +6,7 @@
 ## Baseline Preconditions
 
 - The [launch](../SKILL.md#launch) completed for this run, including the Fabric-boundary YAML edits, the seeded caller volumes, and `bindings.md`, and the [doctor](../SKILL.md#doctor) passes.
-- `$EVIDENCE/checks.md` lists every selected check with an empty outcome: 137 rows for `hermes`, 135 for `openclaw`.
+- `$EVIDENCE/checks.md` lists every selected check with an empty outcome: 136 rows for `hermes`, 134 for `openclaw`.
 - The inference source the target file chose answers its `/models` request.
 - The OpenShell CLI matching `versions.json` on `PATH`, with `OPENSHELL_GATEWAY_ENDPOINT` and `OPENSHELL_WORKSPACE` set by the doctor.
 - `jq`, `curl`, and `openssl` on the host.

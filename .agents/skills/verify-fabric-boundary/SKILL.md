@@ -27,7 +27,7 @@ Fabric owns adapter-native path mapping; its [OpenClaw test](https://github.com/
 - **Gateway:** a managed Docker gateway on the DGX Spark running the skill, as in [verify-yaml-deployment's scope](../verify-yaml-deployment/SKILL.md#scope).
 - **Agent:** one sandbox named `assistant` with one Fabric agent from the [agent table](#choose-the-agent-and-target).
 - **Target:** [dgx-spark](../verify-yaml-deployment/targets/dgx-spark.md) only. Another host type needs its own target file and proof first.
-- **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 137 checks for `hermes`, 135 for `openclaw`.
+- **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 136 checks for `hermes`, 134 for `openclaw`.
 
 [Completed Runs](#completed-runs) lists the agent–target pairs run to completion, with the revision, date, and counts by outcome; a completed run doesn't prove the pair.
 A pair that isn't listed has no completed run: say so with the result.
@@ -230,7 +230,7 @@ Before the first check, write every selected check to `checks.md` with an empty 
 grep -c '^| [a-z-]* | [A-Z]' "$EVIDENCE/checks.md"
 ```
 
-The count must be 137 for `hermes`, 135 for `openclaw`.
+The count must be 136 for `hermes`, 134 for `openclaw`.
 Fill in each row's outcome, finding ID, and evidence path as the check finishes; leave no row empty at the end.
 Write each finding in `findings.md` as:
 
