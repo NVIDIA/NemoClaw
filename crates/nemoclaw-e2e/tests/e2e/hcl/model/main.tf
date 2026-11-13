@@ -6,8 +6,9 @@
 # nginx-unprivileged image the development issuer runs, on the host network
 # at the port the case's `model` provider names. It lists one model and
 # answers every chat completion with `reply`, streamed when the request asks,
-# and refuses any request without `Authorization: Bearer KEY`. The test
-# runner removes it after the case.
+# followed by the name of each of `markers` that the request holds, so a
+# test can see what an agent sent the model. It refuses any request without
+# `Authorization: Bearer KEY`. The test runner removes it after the case.
 
 terraform {
   required_version = "= 1.12.12"
@@ -32,27 +33,56 @@ variable "key" {
 }
 
 variable "reply" {
-  description = "The text of every completion."
+  description = "The text that starts every completion."
   type        = string
+  # nginx puts the reply in a header and in the completion's JSON unescaped.
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._-]+$", var.reply))
+    error_message = "The reply must be one word of letters, digits, '.', '_', and '-'."
+  }
+}
+
+variable "markers" {
+  description = "By name, text to look for in each chat completion request. The completion names each marker its request holds, in name order, after the reply."
+  type        = map(string)
+  default     = {}
+  # nginx matches the text as a regular expression and puts the name in the
+  # completion's JSON unescaped.
+  validation {
+    condition = alltrue([
+      for name, text in var.markers :
+      can(regex("^[a-z0-9-]+$", name)) && can(regex("^[A-Za-z0-9-]+$", text))
+    ])
+    error_message = "Marker names must be lowercase letters, digits, and '-', and marker text letters, digits, and '-'."
+  }
 }
 
 locals {
   document = yamldecode(file(var.context.config))
   port     = tonumber(regex(":([0-9]+)/v1$", local.document.spec.inferenceProviders.model.endpoint)[0])
   image    = jsondecode(file(var.context.versions)).images.developmentIssuer
+  # Only the server that reads the request body can match it, so it composes
+  # the completion's text from `reply` and one variable per marker, which
+  # holds the marker's name when the body holds its text.
+  marker_names = sort(keys(var.markers))
+  marker_maps = join("\n", [
+    for index, name in local.marker_names :
+    "    map $request_body $marker_${index} { \"~${var.markers[name]}\" \" ${name}\"; default \"\"; }"
+  ])
+  text = join("", concat([var.reply], [for index, _ in local.marker_names : "$marker_${index}"]))
   # Responses, as nginx returns them: it expands the escaped line breaks in
-  # single-quoted text.
+  # single-quoted text, and $http_x_reply to the text the first server composed.
   models = jsonencode({ object = "list", data = [{ id = "fixture-model", object = "model" }] })
   completion = jsonencode({
     id      = "chatcmpl-nemoclaw-stub"
     object  = "chat.completion"
     created = 0
     model   = "fixture-model"
-    choices = [{ index = 0, message = { role = "assistant", content = var.reply }, finish_reason = "stop" }]
+    choices = [{ index = 0, message = { role = "assistant", content = "$http_x_reply" }, finish_reason = "stop" }]
     usage   = { prompt_tokens = 1, completion_tokens = 1, total_tokens = 2 }
   })
   chunks = [
-    { delta = { role = "assistant", content = var.reply }, finish = null, usage = null },
+    { delta = { role = "assistant", content = "$http_x_reply" }, finish = null, usage = null },
     { delta = {}, finish = "stop", usage = { prompt_tokens = 1, completion_tokens = 1, total_tokens = 2 } },
   ]
   stream = join("", concat([
@@ -64,8 +94,9 @@ locals {
       choices = [{ index = 0, delta = chunk.delta, finish_reason = chunk.finish }]
     }, chunk.usage == null ? {} : { usage = chunk.usage }))}\\n\\n"
   ], ["data: [DONE]\\n\\n"]))
-  # The request body selects a streamed reply. nginx reads the body before it
-  # sends the proxied request, so the second server sees the choice as a header.
+  # The request body selects a streamed reply and the completion's text. nginx
+  # reads the body before it sends the proxied request, so the second server
+  # sees both as headers.
   config = <<-EOT
     worker_processes 1;
     pid /tmp/nginx.pid;
@@ -82,6 +113,7 @@ locals {
             "~\"stream\"\s*:\s*true" stream;
             default plain;
         }
+    ${local.marker_maps}
         server {
             listen ${local.port};
             if ($http_authorization != "Bearer ${var.key}") { return 401; }
@@ -93,6 +125,7 @@ locals {
                 client_body_buffer_size 1m;
                 client_body_in_single_buffer on;
                 proxy_set_header X-Reply-Kind $reply_kind;
+                proxy_set_header X-Reply "${local.text}";
                 proxy_pass http://unix:/tmp/stub.sock:/completion;
             }
             location / { return 404; }

@@ -253,9 +253,10 @@ async fn probe() {
 /// Request one service a sandbox exposes, as a person would with what apply
 /// reports: read the interface's token in the sandbox and forward its port
 /// with the pinned OpenShell CLI, then send one request, with the token as a
-/// Bearer credential when there is one. The published report holds the
-/// status; the token stays in memory and the body in the private work
-/// directory for `hcl/interface`.
+/// Bearer credential when there is one. A service without a token file can
+/// name the page global that holds its session token, which a browser reads
+/// from the page. The published report holds the status; the token stays in
+/// memory and the body in the private work directory for `hcl/interface`.
 #[tokio::test]
 #[ignore = "run by tests/e2e/hcl/interface for one target"]
 async fn interface() {
@@ -303,31 +304,34 @@ async fn interface() {
         .timeout(Duration::from_secs(120))
         .build()
         .unwrap();
-    let url = format!("http://127.0.0.1:{local}{}", input("PATH"));
-    let body = input("BODY");
-    let (status, text) = loop {
-        let mut request = if body.is_empty() {
-            client.get(&url)
-        } else {
-            client
-                .post(&url)
-                .header("Content-Type", "application/json")
-                .body(body.clone())
-        };
-        if let Some(token) = &token {
-            request = request.bearer_auth(token);
-        }
-        match request.send().await {
-            Ok(response) => {
-                let status = response.status().as_u16();
-                break (status, response.text().await.unwrap_or_default());
-            }
-            Err(_) if Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            Err(error) => panic!("the request through the forward failed: {error}"),
+    let base = format!("http://127.0.0.1:{local}");
+    let token = match input("PAGE_TOKEN").as_str() {
+        "" => token,
+        name => {
+            let (_, page) = through_forward(|| client.get(&base), deadline).await;
+            page_global(&page, name)
         }
     };
+    let url = format!("{base}{}", input("PATH"));
+    let body = input("BODY");
+    let (status, text) = through_forward(
+        || {
+            let request = if body.is_empty() {
+                client.get(&url)
+            } else {
+                client
+                    .post(&url)
+                    .header("Content-Type", "application/json")
+                    .body(body.clone())
+            };
+            match &token {
+                Some(token) => request.bearer_auth(token),
+                None => request,
+            }
+        },
+        deadline,
+    )
+    .await;
     let _ = forward.kill();
     let _ = forward.wait();
     fs::write(input("RESPONSE"), text).unwrap();
@@ -336,6 +340,38 @@ async fn interface() {
         json!({"sandbox": sandbox, "port": input("PORT"), "status": status}).to_string(),
     )
     .unwrap();
+}
+
+/// The status and body of a request through a forward, retried until
+/// `deadline` while the forward's tunnel opens.
+async fn through_forward(
+    request: impl Fn() -> reqwest::RequestBuilder,
+    deadline: std::time::Instant,
+) -> (u16, String) {
+    loop {
+        match request().send().await {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                return (status, response.text().await.unwrap_or_default());
+            }
+            Err(_) if std::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(error) => panic!("the request through the forward failed: {error}"),
+        }
+    }
+}
+
+/// The string that a page's script assigns to `window.NAME`.
+fn page_global(page: &str, name: &str) -> Option<String> {
+    let global = format!("window.{name}");
+    let value = page[page.find(&global)? + global.len()..]
+        .trim_start()
+        .strip_prefix('=')?;
+    serde_json::Deserializer::from_str(value)
+        .into_iter()
+        .next()?
+        .ok()
 }
 
 /// The pinned OpenShell CLI, on the gateway and workspace that apply reports.
@@ -1008,4 +1044,16 @@ fn timing_tables_list_each_run_in_order_with_their_total() {
 fn visible_text_drops_control_sequences() {
     let output = b"\x1b]0;openclaw tui\x07\x1b(B\x1b[?25l\x1b[1;32mconnected\x1b[0m | idle\r\n\x1b[2Knemoclaw-stub-reply";
     assert_eq!(visible(output), "connected | idle\nnemoclaw-stub-reply");
+}
+
+/// Hermes's dashboard serves its page with the session token in a script.
+#[test]
+fn page_globals_read_the_string_a_script_assigns() {
+    let page = r#"<script>window.__HERMES_SESSION_TOKEN__ = "a-b_c";window.__HERMES_AUTH_REQUIRED__=false;</script>"#;
+    assert_eq!(
+        page_global(page, "__HERMES_SESSION_TOKEN__").as_deref(),
+        Some("a-b_c")
+    );
+    assert_eq!(page_global(page, "__HERMES_AUTH_REQUIRED__"), None);
+    assert_eq!(page_global(page, "__HERMES_BASE_PATH__"), None);
 }
