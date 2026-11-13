@@ -94,8 +94,8 @@ it("stops before cleanup for a label-only Docker container without trusted state
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") printf '0123456789ab\n' ;;
-  "ps -a --format {{.ID}} {{.Image}} {{.Names}}")
-    printf '0123456789ab registry.example.com/unrelated:latest arbitrary-name\n'
+  "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}")
+    printf '0123456789ab|registry.example.com/unrelated:latest|arbitrary-name\n'
     ;;
   "volume ls --format {{.Name}}") exit 0 ;;
   *) exit 1 ;;
@@ -132,8 +132,8 @@ it("stops before cleanup for a convention-matching Docker-only container", () =>
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
-  "ps -a --format {{.ID}} {{.Image}} {{.Names}}")
-    printf 'fedcba987654 redis:7 openshell-orphan\n'
+  "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}")
+    printf 'fedcba987654|redis:7|openshell-orphan\n'
     ;;
   "volume ls --format {{.Name}}") exit 0 ;;
   *) exit 1 ;;
@@ -161,6 +161,173 @@ esac
   expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
+it("stops before cleanup when a convention-matching Docker container has an empty image field", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-empty-image-");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+case "$*" in
+  info) exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
+  "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}")
+    printf 'fedcba987654||openshell-orphan\n'
+    ;;
+  "volume ls --format {{.Name}}") exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+  );
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    },
+  );
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain("unverified Docker container fedcba987654");
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
+});
+
+it("stops before cleanup when an owned-image Docker container has an empty name field", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-empty-name-");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+case "$*" in
+  info) exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
+  "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}")
+    printf 'fedcba987654|nemoclaw-sandbox-local:build-1|\n'
+    ;;
+  "volume ls --format {{.Name}}") exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+  );
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    },
+  );
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain("unverified Docker container fedcba987654");
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
+});
+
+it("stops before cleanup when an unparseable row follows a managed container", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-trailing-row-");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+case "$*" in
+  info) exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
+  "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}")
+    printf '0123456789ab|redis:7|openshell-orphan\nfedcba987654|nemoclaw-sandbox-local:build-1\n'
+    ;;
+  "volume ls --format {{.Name}}") exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+  );
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    },
+  );
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain(
+    "Inspect and reconcile this row in the selected Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started.",
+  );
+  expect(`${result.stdout}${result.stderr}`).toContain("fedcba987654");
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
+});
+
+it.each([
+  ["a row missing the final name separator", "fedcba987654|nemoclaw-sandbox-local:build-1"],
+  ["a space-separated row", "fedcba987654 redis:7 openshell-orphan"],
+  ["whitespace in the image field", "fedcba987654|redis: 7|ordinary-container"],
+  ["whitespace in the name field", "fedcba987654|redis:7| openshell-orphan"],
+])(
+  "stops before cleanup when the Docker container inventory contains %s",
+  (_kind, containerRow) => {
+    const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-bad-row-");
+    const cleanupMarker = path.join(tmp, "cleanup-started");
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+case "$*" in
+  info) exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
+  "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}")
+    printf '%s\n' "$CONTAINER_ROW"
+    ;;
+  "volume ls --format {{.Name}}") exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+    );
+
+    const result = callPayloadFunction(
+      `
+        warn() { :; }
+        prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+        run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+        remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+        run_force_fresh_install_reset
+      `,
+      {
+        CLEANUP_MARKER: cleanupMarker,
+        CONTAINER_ROW: containerRow,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Inspect and reconcile this row in the selected Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started.",
+    );
+    expect(`${result.stdout}${result.stderr}`).toContain("fedcba987654");
+    expect(fs.existsSync(cleanupMarker)).toBe(false);
+  },
+);
+
 it("stops before cleanup for a labelled receipt-volume-only state", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-receipt-detect-");
   const cleanupMarker = path.join(tmp, "cleanup-started");
@@ -171,7 +338,7 @@ it("stops before cleanup for a labelled receipt-volume-only state", () => {
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
-  "ps -a --format {{.ID}} {{.Image}} {{.Names}}") exit 0 ;;
+  "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}") exit 0 ;;
   "volume ls --format {{.Name}}") printf '%s\n' "$RECEIPT_VOLUME" ;;
   *) exit 1 ;;
 esac
@@ -210,7 +377,7 @@ it("stops before cleanup for an unlabelled receipt-volume-only state", () => {
 case "$*" in
   info) exit 0 ;;
   "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
-  "ps -a --format {{.ID}} {{.Image}} {{.Names}}") exit 0 ;;
+  "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}") exit 0 ;;
   "volume ls --format {{.Name}}") printf '%s\n' "$LEGACY_VOLUME" ;;
   *)
     if [[ "$1" == "volume" && "$2" == "inspect" ]]; then

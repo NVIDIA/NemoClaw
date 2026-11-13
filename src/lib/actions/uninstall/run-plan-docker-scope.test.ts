@@ -45,11 +45,11 @@ afterEach(() => {
 });
 
 const FOREIGN_ROWS = [
-  "foreign-prefix redis:7 nemoclaw-unrelated",
-  "foreign-openshell redis:7 openshell-scratch",
-  "foreign-image nemoclaw-hermes-sandbox-base-local:build-1 foreign-workload",
-  "foreign-openclaw ghcr.io/openclaw/openclaw:latest my-openclaw-test",
-  "foreign-cache redis:7 cache",
+  "foreign-prefix|redis:7|nemoclaw-unrelated",
+  "foreign-openshell|redis:7|openshell-scratch",
+  "foreign-image|nemoclaw-hermes-sandbox-base-local:build-1|foreign-workload",
+  "foreign-openclaw|ghcr.io/openclaw/openclaw:latest|my-openclaw-test",
+  "foreign-cache|redis:7|cache",
 ];
 const IMAGES_OUTPUT = [
   "i-nemoclaw ghcr.io/nvidia/nemoclaw:test",
@@ -60,7 +60,7 @@ const IMAGES_OUTPUT = [
   "i-registry registry.example.com/nemoclaw/tool:1",
   "i-unrelated redis:7",
 ].join("\n");
-const CONTAINER_FORMAT = "{{.ID}} {{.Image}} {{.Names}}";
+const CONTAINER_FORMAT = "{{.ID}}|{{.Image}}|{{.Names}}";
 
 async function runWithDockerInventory(
   options: {
@@ -100,10 +100,10 @@ async function runWithDockerInventory(
   options.prepareHome?.(homeDir);
   const leftovers = options.leftovers ?? FOREIGN_ROWS;
   const owned = [
-    `owned-gateway openshell/cluster:old openshell-cluster-${gateway}`,
-    "owned-sandbox nemoclaw-sandbox-local:build-1 openshell-default--my-assistant-runtime-id",
-  ].filter((row) => !leftovers.some((foreign) => foreign.split(" ")[2] === row.split(" ")[2]));
-  const rows = new Map([...owned, ...leftovers].map((row) => [row.split(" ")[0]!, row]));
+    `owned-gateway|openshell/cluster:old|openshell-cluster-${gateway}`,
+    "owned-sandbox|nemoclaw-sandbox-local:build-1|openshell-default--my-assistant-runtime-id",
+  ].filter((row) => !leftovers.some((foreign) => foreign.split("|")[2] === row.split("|")[2]));
+  const rows = new Map([...owned, ...leftovers].map((row) => [row.split("|")[0]!, row]));
   const calls: string[][] = [];
   const commands: string[][] = [];
   const errors: string[] = [];
@@ -201,7 +201,7 @@ describe("uninstall Docker resource scope", () => {
     expect(result.exitCode).toBe(0);
     expect(commands).toContainEqual(["openshell", "sandbox", "delete", "--all"]);
     expect(commands.some((args) => args[1] === "gateway" && args[2] === "destroy")).toBe(true);
-    expect(remaining).toEqual(FOREIGN_ROWS.map((row) => row.split(" ")[0]));
+    expect(remaining).toEqual(FOREIGN_ROWS.map((row) => row.split("|")[0]));
     expect(calls.filter((args) => args[0] === "rm")).toEqual([]);
     expect(commands).toContainEqual(["npm", "uninstall", "-g", "--loglevel=error", "nemoclaw"]);
     expect(calls.filter((args) => args[0] === "rmi").map((args) => args[2])).toEqual([
@@ -221,7 +221,7 @@ describe("uninstall Docker resource scope", () => {
         deleteResult: { status, stdout: "", stderr: "" },
         registration: { openshellDriver: "docker", lifecycleLiveIdentityFingerprint: fingerprint },
         leftovers: [
-          `${id} nemoclaw-sandbox-local:build-1 openshell-default--my-assistant-runtime-id`,
+          `${id}|nemoclaw-sandbox-local:build-1|openshell-default--my-assistant-runtime-id`,
         ],
         dockerResponses: {
           "ps -a --no-trunc --filter label=openshell.ai/sandbox-name=my-assistant --format {{.ID}}":
@@ -269,7 +269,7 @@ describe("uninstall Docker resource scope", () => {
       "--format",
       "{{.ID}}",
     ]);
-    expect(result.remaining).toEqual(FOREIGN_ROWS.map((row) => row.split(" ")[0]));
+    expect(result.remaining).toEqual(FOREIGN_ROWS.map((row) => row.split("|")[0]));
   });
 
   it("preserves a published same-name sibling during nondefault uninstall", async () => {
@@ -307,7 +307,7 @@ describe("uninstall Docker resource scope", () => {
         openshellDriver: "docker",
         lifecycleLiveIdentityFingerprint: "b".repeat(64),
       },
-      leftovers: [`${id} nemoclaw-sandbox-local:build-1 openshell-my-assistant-sibling`],
+      leftovers: [`${id}|nemoclaw-sandbox-local:build-1|openshell-my-assistant-sibling`],
       dockerResponses: {
         "ps -a --no-trunc --filter label=openshell.ai/sandbox-name=my-assistant --format {{.ID}}":
           ok(id),
@@ -340,14 +340,14 @@ describe("uninstall Docker resource scope", () => {
   });
 
   it.each<[string, string[], boolean]>([
-    ["cluster", ["foreign-exact redis:7 openshell-cluster-nemoclaw"], false],
-    ["gateway", ["foreign-exact redis:7 nemoclaw-openshell-gateway"], false],
-    ["sandbox", ["foreign-exact redis:7 openshell-my-assistant"], true],
+    ["cluster", ["foreign-exact|redis:7|openshell-cluster-nemoclaw"], false],
+    ["gateway", ["foreign-exact|redis:7|nemoclaw-openshell-gateway"], false],
+    ["sandbox", ["foreign-exact|redis:7|openshell-my-assistant"], true],
     [
       "ambiguous sandbox",
       [
-        "first redis:7 openshell-my-assistant-runtime-a",
-        "second redis:7 openshell-my-assistant-runtime-b",
+        "first|redis:7|openshell-my-assistant-runtime-a",
+        "second|redis:7|openshell-my-assistant-runtime-b",
       ],
       true,
     ],
@@ -359,12 +359,12 @@ describe("uninstall Docker resource scope", () => {
       expect(result.result.exitCode).toBe(1);
       expect(result.remaining).toEqual([
         ...(keepGateway ? ["owned-gateway"] : []),
-        ...leftovers.map((row) => row.split(" ")[0]),
+        ...leftovers.map((row) => row.split("|")[0]),
       ]);
       expect(result.metadataWrites.length === 0).toBe(keepGateway);
       expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
       expect(result.errors.join("\n")).toContain(
-        _kind.includes("sandbox") ? "my-assistant" : leftovers[0]!.split(" ")[2],
+        _kind.includes("sandbox") ? "my-assistant" : leftovers[0]!.split("|")[2],
       );
       expect(result.retainedRegistry).toBe(result.registry);
       expect(result.rmSync.mock.calls.some(([target]) => target === result.stateDir)).toBe(false);
@@ -379,9 +379,21 @@ describe("uninstall Docker resource scope", () => {
   it.each([
     { status: 42, stdout: "", stderr: "inventory unavailable" },
     { status: 0, stdout: "incomplete", stderr: "" },
+    { status: 0, stdout: "0123456789ab", stderr: "" },
+    { status: 0, stdout: "0123456789ab  ", stderr: "" },
+    { status: 0, stdout: "0123456789ab redis:7", stderr: "" },
+    { status: 0, stdout: "0123456789ab|redis:7", stderr: "" },
+    { status: 0, stdout: "0123456789ab||", stderr: "" },
+    { status: 0, stdout: "0123456789ab|redis: 7|foreign", stderr: "" },
+    { status: 0, stdout: "0123456789ab|redis:7| foreign", stderr: "" },
   ])("preserves state and the CLI when Docker inventory is inconclusive: %j", async (inventory) => {
     const result = await runWithDockerInventory({ inventory });
     expect(result.result.exitCode).toBe(1);
+    expect(result.errors.join("\n")).toContain(
+      inventory.status === 0
+        ? "rows that NemoClaw could not parse"
+        : "Could not inventory Docker containers",
+    );
     expect(result.errors.join("\n")).toContain("preserved for retry");
     expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
     expect(result.retainedRegistry).toBe(result.registry);
@@ -392,6 +404,102 @@ describe("uninstall Docker resource scope", () => {
       ),
     ).toBe(false);
   });
+
+  it.each([
+    {
+      inventory: {
+        status: 0,
+        stdout: "0123456789ab||\nfedcba987654|redis:7|foreign-workload",
+        stderr: "",
+      },
+      named: "container 0123456789ab",
+    },
+    {
+      inventory: {
+        status: 0,
+        stdout: "0123456789ab redis:7 missing-separator\nfedcba987654|redis:7|foreign-workload",
+        stderr: "",
+      },
+      named: "row '0123456789ab redis:7 missing-separator'",
+    },
+    {
+      inventory: { status: 0, stdout: "x".repeat(100), stderr: "" },
+      named: `row '${"x".repeat(77)}...'`,
+    },
+  ])(
+    "names an unparseable inventory row and stops cleanup: $named",
+    async ({ inventory, named }) => {
+      const result = await runWithDockerInventory({ inventory });
+      expect(result.result.exitCode).toBe(1);
+      expect(result.errors.join("\n")).toContain(
+        `container inventory rows that NemoClaw could not parse (${named})`,
+      );
+      expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
+      expect(result.retainedRegistry).toBe(result.registry);
+      expect(result.metadataWrites).toEqual([]);
+      expect(
+        result.commands.some(
+          ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("completes uninstall when unrelated Docker containers omit image or name fields", async () => {
+    const result = await runWithDockerInventory({
+      leftovers: ["0123456789ab||foreign-untagged-image", "fedcba987654|redis:7|"],
+    });
+    expect(result.result.exitCode, result.errors.join("\n")).toBe(0);
+    expect(result.errors).toEqual([]);
+    expect(result.calls.filter((args) => args[0] === "rm")).toEqual([]);
+    expect(result.commands).toContainEqual([
+      "npm",
+      "uninstall",
+      "-g",
+      "--loglevel=error",
+      "nemoclaw",
+    ]);
+  });
+
+  it.each([
+    ["0123456789ab||openshell-my-assistant", "my-assistant"],
+    ["0123456789ab||openshell-cluster-nemoclaw", "openshell-cluster-nemoclaw"],
+  ])(
+    "preserves state when a sandbox or gateway container row has an empty image field: %s",
+    async (leftover, expectedMessage) => {
+      const result = await runWithDockerInventory({ leftovers: [leftover] });
+      expect(result.result.exitCode).toBe(1);
+      expect(result.errors.join("\n")).toContain(expectedMessage);
+      expect(result.retainedRegistry).toBe(result.registry);
+      expect(
+        result.commands.some(
+          ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    ["0123456789ab|nemoclaw-sandbox-local:build-1|", "nemoclaw-sandbox-local:build-1"],
+    ["0123456789ab|openshell/sandbox-from:1780294581|", "openshell/sandbox-from:1780294581"],
+  ])(
+    "preserves state when an owned-image container row has an empty name field: %s",
+    async (leftover, expectedImage) => {
+      const result = await runWithDockerInventory({ leftovers: [leftover] });
+      expect(result.result.exitCode).toBe(1);
+      expect(result.errors.join("\n")).toContain(
+        `unverified ownership: image ${expectedImage} (0123456789ab)`,
+      );
+      expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
+      expect(result.metadataWrites).toEqual([]);
+      expect(result.retainedRegistry).toBe(result.registry);
+      expect(
+        result.commands.some(
+          ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("retains state when Docker is unreachable after runtime cleanup", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
@@ -480,8 +588,8 @@ describe("uninstall Docker resource scope", () => {
     vi.resetModules();
     const { runUninstallPlan: runPlan } = await import("./run-plan");
     const leftovers = [
-      "default-cluster redis:7 openshell-cluster-nemoclaw",
-      "default-gateway redis:7 nemoclaw-openshell-gateway",
+      "default-cluster|redis:7|openshell-cluster-nemoclaw",
+      "default-gateway|redis:7|nemoclaw-openshell-gateway",
     ];
     const result = await runWithDockerInventory({ port: 18080, runPlan, leftovers });
     expect(result.result.exitCode).toBe(0);
@@ -509,7 +617,7 @@ describe("uninstall Docker resource scope", () => {
     const calls: string[][] = [];
     const routes: Record<string, () => RunResult> = {
       info: () => ok(),
-      "ps -a --format {{.ID}} {{.Image}} {{.Names}}": () => ok(),
+      "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}": () => ok(),
       "volume ls --format {{.Name}}": () => ok(volume),
       "volume inspect openshell-cluster-nemoclaw": () => ({
         status: 1,
@@ -569,7 +677,7 @@ describe("uninstall Docker resource scope", () => {
     async ({ failureCommand, plannedVolumeInspection }) => {
       const routes: Record<string, RunResult> = {
         info: ok(),
-        "ps -a --format {{.ID}} {{.Image}} {{.Names}}": ok(),
+        "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}": ok(),
         "volume inspect openshell-cluster-nemoclaw": plannedVolumeInspection,
         "volume rm -f openshell-cluster-nemoclaw": {
           status: 1,
@@ -619,8 +727,8 @@ describe("uninstall Docker resource scope", () => {
     const calls: string[][] = [];
     const routes: Record<string, RunResult> = {
       info: ok(),
-      "ps -a --format {{.ID}} {{.Image}} {{.Names}}": ok(
-        "foreign-id registry.example.com/unrelated:latest openshell-foreign",
+      "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}": ok(
+        "foreign-id|registry.example.com/unrelated:latest|openshell-foreign",
       ),
       "volume inspect openshell-cluster-nemoclaw": {
         status: 1,
@@ -659,7 +767,7 @@ describe("uninstall Docker resource scope", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(calls).toContainEqual(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"]);
+    expect(calls).toContainEqual(["ps", "-a", "--format", CONTAINER_FORMAT]);
     expect(calls).not.toContainEqual(["rm", "-f", "foreign-id"]);
     expect(calls.some((args) => args[0] === "rmi")).toBe(false);
   });
