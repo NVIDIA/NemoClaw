@@ -18,13 +18,14 @@ The default-branch workflow and helper under `tools/ci/` serve merged PRs into
 Install the workflow on the default branch and the reporter on each target
 branch (`main` and `v1`). A merge whose parent lacks the reporter is skipped, so
 reporting starts with the next eligible merge into that branch. Each eligible PR
-gets one collapsed bot report. Runs serialize per PR, stop after 20 minutes, and
-retain artifacts for 90 days. Existing comments stay intact; retries avoid
-duplicates. A separate job with `contents: write` and no checkout confirms that
-only squash merging is enabled; GitHub withholds those settings from a
-read-only token. Compile only the verified squash-parent reporter, disable
-persisted checkout credentials, and expose the short-lived token only to API
-steps with the declared job permissions.
+gets one collapsed bot report. Runs serialize per PR and stop after 20 minutes.
+The workflow attempts to retain generated reports for 90 days. Failures before
+report generation have no report artifact. Existing comments stay intact;
+retries avoid duplicates. A separate job with `contents: write` and no checkout
+confirms that only squash merging is enabled; GitHub withholds those settings
+from a read-only token. Compile only the verified squash-parent reporter,
+disable persisted checkout credentials, and expose the short-lived token only
+to API steps with the declared job permissions.
 
 Validation covers metadata, rejected parents and events, API refusal,
 publication readback, failure retention, and recovery. Hosted acceptance follows
@@ -101,10 +102,11 @@ These fields bind the evidence to the installed implementation. Keep a failed
 or missing observation pending; a checked-in scenario or fixture pass is not a
 hosted acceptance receipt. A changed workflow or reporter needs fresh evidence.
 
-Keep readback API failure injection in fixtures. For a live failure, retain the
-run and report, then inspect the bot comment. If readback content differs from
-the posted report, stop and investigate. Do not retry integrity failures or
-access denials. Retry transient API failures only under the repository's
+Keep readback API failure injection in fixtures. For a live publication failure,
+retain the run and any generated report. Then inspect the bot comment. If
+readback content differs from the posted report, stop and investigate. Do not
+retry integrity failures or access denials. Retry transient API failures only
+under the repository's
 [bounded retry policy](../../.agents/skills/_shared/pr-follow-up.md#bounded-retry-policy).
 An allowed retry regenerates the report. For an existing bot report, recovery
 requires exactly one copy matching the intended published body, including
