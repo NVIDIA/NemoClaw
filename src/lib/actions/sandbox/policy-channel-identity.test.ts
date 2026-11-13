@@ -25,7 +25,7 @@ describe("channel add lifecycle identity", () => {
     vi.stubEnv("NEMOCLAW_SKIP_TELEGRAM_REACHABILITY", "1");
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:AAH-test-telegram-token");
     vi.stubEnv("TELEGRAM_ALLOWED_IDS", "12345");
-    vi.stubEnv("TELEGRAM_REQUIRE_MENTION", "true");
+    vi.stubEnv("TELEGRAM_REQUIRE_MENTION", "1");
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(process, "exit").mockImplementation((code) => {
