@@ -221,4 +221,66 @@ describe("raw gateway port listener enumeration (#6576)", () => {
       complete: false,
     });
   });
+
+  it("falls back to ss when lsof is not installed, so a free port stays complete", () => {
+    // Arch and other minimal images ship ss without lsof. A missing scanner is
+    // not an unknown listener: ss answers the question, so onboarding proceeds.
+    const runCaptureEx = vi.fn((args: readonly string[]) =>
+      args[0] === "lsof"
+        ? { stdout: "", exitCode: 127, timedOut: false }
+        : { stdout: "", exitCode: 0, timedOut: false },
+    );
+    const { helpers } = makeHelpers({ runCaptureEx });
+
+    expect(helpers.getGatewayPortListenerRawScan({ ok: true })).toEqual({
+      pids: [],
+      complete: true,
+    });
+    expect(runCaptureEx).toHaveBeenNthCalledWith(1, ["lsof", "-ti", ":18080", "-sTCP:LISTEN"]);
+    expect(runCaptureEx).toHaveBeenNthCalledWith(2, ["ss", "-H", "-ltnp", "sport = :18080"]);
+  });
+
+  it("reads listener PIDs from the ss users: column", () => {
+    const runCaptureEx = vi.fn((args: readonly string[]) =>
+      args[0] === "lsof"
+        ? { stdout: "", exitCode: 127, timedOut: false }
+        : {
+            stdout:
+              'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("openshell-gateway",pid=4321,fd=9))\n',
+            exitCode: 0,
+            timedOut: false,
+          },
+    );
+    const { helpers } = makeHelpers({ runCaptureEx });
+
+    expect(helpers.getGatewayPortListenerRawScan({ ok: false, process: "x", pid: 0 })).toEqual({
+      pids: [4321],
+      complete: true,
+    });
+  });
+
+  it("stays incomplete when ss sees a socket but cannot name its owner", () => {
+    // Without root, ss prints the socket row with no process information. That
+    // is the same visibility contradiction lsof reports, not a free port.
+    const runCaptureEx = vi.fn((args: readonly string[]) =>
+      args[0] === "lsof"
+        ? { stdout: "", exitCode: 127, timedOut: false }
+        : { stdout: "LISTEN 0 4096 0.0.0.0:18080 0.0.0.0:*\n", exitCode: 0, timedOut: false },
+    );
+    const { helpers } = makeHelpers({ runCaptureEx });
+
+    expect(
+      helpers.getDockerDriverGatewayPortListenerScan({ ok: false, process: "x", pid: 0 }),
+    ).toEqual({ pids: [], unverifiedPids: [], complete: false });
+  });
+
+  it("stays incomplete when neither listener scanner can run", () => {
+    const runCaptureEx = vi.fn(() => ({ stdout: "", exitCode: 127, timedOut: false }));
+    const { helpers } = makeHelpers({ runCaptureEx });
+
+    expect(helpers.getGatewayPortListenerRawScan({ ok: true })).toEqual({
+      pids: [],
+      complete: false,
+    });
+  });
 });
