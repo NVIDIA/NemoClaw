@@ -919,6 +919,48 @@ async fn a_policy_changed_outside_apf_is_reissued_in_place() {
 }
 
 #[tokio::test]
+async fn a_policy_changed_outside_apf_stays_unproven_until_apf_issues_it() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    change_loaded_policy(&fixture, &key);
+    // A refresh records the observation; the next one must not accept the
+    // changed policy because it was recorded.
+    let refreshed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed[POLICY_HASH], recorded[POLICY_HASH]);
+    let observed = client
+        .read("sandbox", &refreshed, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed[POLICY_PROVENANCE], "");
+    assert_eq!(observed[POLICY_HASH], recorded[POLICY_HASH]);
+}
+
+#[tokio::test]
+async fn a_failed_reissue_leaves_the_policy_unproven() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    change_loaded_policy(&fixture, &key);
+    // The sandbox no longer reads back as the bound one while APF reissues.
+    fixture.state.lock().unwrap().config_update = Some(Arc::new(|sandbox: &mut proto::Sandbox| {
+        sandbox.metadata.as_mut().unwrap().id = "replaced".into();
+    }));
+    let mut desired = recorded.clone();
+    desired.insert(POLICY_PROVENANCE.into(), String::new());
+    let (state, error) = client.ensure("sandbox", &desired).await.into_parts();
+    assert!(error.is_some());
+    let state = state.unwrap();
+    assert_eq!(state[POLICY_PROVENANCE], "");
+    assert_eq!(state[POLICY_HASH], recorded[POLICY_HASH]);
+}
+
+#[tokio::test]
 async fn a_policy_changed_before_its_first_observation_is_reissued() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
