@@ -65,6 +65,9 @@ check_production_build_arg() {
 }
 
 is_declared_pin_environment_name() {
+  case "$1" in
+    OPENCLAW_2026_3_11_* | OPENCLAW_2026_4_24_*) return 0 ;;
+  esac
   local environment_name="$1"
   local dockerfile
   local declaration

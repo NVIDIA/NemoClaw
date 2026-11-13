@@ -460,34 +460,27 @@ describe("onboard host-local inference routing", () => {
 
   it("explicitly clears stale host-local ownership for a remote route", async () => {
     const harness = createHarness({
-      overrides: {
-        isRoutedInferenceProvider: () => true,
-        reconcileModelRouter: vi.fn(async () => undefined),
-        routedInference: {
-          upsertRoutedProvider: vi.fn(() => ({
-            ok: true,
-            endpointUrl: "https://api.example.test/v1",
-            result: { message: "configured" },
-          })),
-        },
-      },
+      legacyCustomRoute: true,
+      overrides: { hydrateCredentialEnv: () => "test-only-remote-credential" },
     });
-    await expect(
-      harness.setupInference(
-        "sandbox-a",
-        "remote-model",
-        "nvidia-router",
-        "https://api.example.test/v1",
-        "REMOTE_API_KEY",
-        null,
-        [],
-      ),
-    ).resolves.toEqual({ ok: true });
+    const result = await harness.setupInference(
+      "sandbox-a",
+      "remote-model",
+      "compatible-endpoint",
+      "https://api.example.test/v1",
+      "REMOTE_API_KEY",
+      null,
+      [],
+      { endpointPinnedAddresses: ["93.184.216.34"] },
+    );
+    expect(result, JSON.stringify({ errors: harness.errors, logs: harness.logs })).toEqual({
+      ok: true,
+    });
 
     expect(harness.updateSandbox).toHaveBeenCalledWith(
       "sandbox-a",
       expect.objectContaining({
-        provider: "nvidia-router",
+        provider: "compatible-endpoint",
         model: "remote-model",
         hostLocalInferenceReceipt: null,
       }),

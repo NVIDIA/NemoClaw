@@ -44,7 +44,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     'getattr(args, "auto_approve", False)',
     "_nemoclaw_assert_safe_runtime()",
     'os.environ.pop("PYTHONPATH", None)',
-  ])("patches every 0.1.71 mutation and credential boundary idempotently [case %#]", (expected) => {
+  ])("patches every 0.1.87 mutation and credential boundary idempotently [case %#]", (expected) => {
     const tempDir = createPatchedPackageFixture();
     patchFixture(tempDir);
 
@@ -108,6 +108,11 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ],
     ["server override", "client/launch/server.py", 'env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["server", "client/launch/server.py", "env = _nemoclaw_original_build_server_env()"],
+    [
+      "non-interactive",
+      "client/non_interactive.py",
+      "if quiet and _nemoclaw_json_run.get() is None:",
+    ],
     ["app", "app.py", "blocked_managed_command = root in {"],
     ["approval", "tui/widgets/approval.py", "if managed_auto_approval_enabled():"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
@@ -1397,7 +1402,7 @@ print("managed-auto-approval-ok")
       encoding: "utf8",
     });
     expect(versionResult.status).not.toBe(0);
-    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.71");
+    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.87");
 
     const missingMethod = createPackageFixture();
     const appPath = path.join(missingMethod, "deepagents_code", "app.py");

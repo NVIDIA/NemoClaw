@@ -368,6 +368,7 @@ async function recoverRegistryFromLiveGateway(
       }
       ephemeralSandboxes.push({
         ...buildRecoveredSandboxEntry(validName, metadata),
+        gatewayName,
         recoveredFromGateway: true,
         livePhase: phase,
       });

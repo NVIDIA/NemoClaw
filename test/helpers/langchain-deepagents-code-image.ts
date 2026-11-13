@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type SpawnSyncReturns, spawnSync } from "node:child_process";
+import { execFileSync, spawn, type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { expect } from "vitest";
@@ -143,4 +143,76 @@ export async function runWrapperAsync(
       });
     });
   });
+}
+
+export function writeMinimalWheel(directory: string): string {
+  const wheelPath = path.join(directory, "nemoclaw_hash_contract-1.0-py3-none-any.whl");
+  execFileSync(
+    "python3",
+    [
+      "-c",
+      `
+import sys
+import zipfile
+
+wheel_path = sys.argv[1]
+dist_info = "nemoclaw_hash_contract-1.0.dist-info"
+with zipfile.ZipFile(wheel_path, "w") as wheel:
+    wheel.writestr("nemoclaw_hash_contract/__init__.py", "")
+    wheel.writestr(
+        f"{dist_info}/METADATA",
+        "Metadata-Version: 2.1\\nName: nemoclaw-hash-contract\\nVersion: 1.0\\n",
+    )
+    wheel.writestr(
+        f"{dist_info}/WHEEL",
+        "Wheel-Version: 1.0\\nGenerator: nemoclaw-test\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n",
+    )
+    wheel.writestr(f"{dist_info}/RECORD", f"{dist_info}/RECORD,,\\n")
+`,
+      wheelPath,
+    ],
+    { stdio: "pipe" },
+  );
+  return wheelPath;
+}
+
+export function baseImagePipInstallArgs(dockerfile: string, requirementsPath: string): string[] {
+  const logicalDockerfile = dockerfile.replace(/\\\r?\n\s*/g, " ");
+  const copiedLock = logicalDockerfile.match(
+    /COPY\s+agents\/langchain-deepagents-code\/requirements\.lock\s+(\S+)/,
+  );
+  expect(copiedLock, "base image must copy the reviewed lockfile").not.toBeNull();
+  const invocation = logicalDockerfile.match(/"\$VIRTUAL_ENV\/bin\/pip3" install\s+([^\n]+?)\s+&&/);
+  expect(
+    invocation,
+    "base image must install the reviewed lockfile with the managed venv",
+  ).not.toBeNull();
+  const args = (invocation?.[1] ?? "").trim().split(/\s+/);
+  const requirementsFlag = args.indexOf("-r");
+  expect(
+    requirementsFlag,
+    "base image pip install must consume a requirements file",
+  ).toBeGreaterThanOrEqual(0);
+  expect(args[requirementsFlag + 1]).toBe(copiedLock?.[1]);
+  return [...args.slice(0, requirementsFlag), "-r", requirementsPath];
+}
+
+export function assertEveryRequirementIsHashLocked(requirementsLock: string): void {
+  const lines = requirementsLock.split(/\r?\n/);
+  const requirementStarts = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => line.length > 0 && !/^\s|#/.test(line));
+  expect(requirementStarts.length).toBeGreaterThan(0);
+
+  for (const [position, requirement] of requirementStarts.entries()) {
+    expect(
+      requirement.line,
+      `lock entry on line ${requirement.index + 1} must be exactly pinned`,
+    ).toMatch(/^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\[[^\]]+\])?==[^\s\\]+\s+\\$/);
+    const nextIndex = requirementStarts[position + 1]?.index ?? lines.length;
+    const block = lines.slice(requirement.index, nextIndex).join("\n");
+    const hashTokens = block.match(/--hash=[^\s\\]+/g) ?? [];
+    expect(hashTokens.length, requirement.line).toBeGreaterThan(0);
+    expect(hashTokens.every((token) => /^--hash=sha256:[a-f0-9]{64}$/.test(token))).toBe(true);
+  }
 }

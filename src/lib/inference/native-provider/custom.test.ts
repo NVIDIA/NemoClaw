@@ -93,6 +93,7 @@ function harness() {
     api: binding.api,
     credentialEnv: binding.credentialEnv,
     credentialValue: "synthetic-host-secret",
+    sandboxPolicyDocument: null,
     lookup,
     adapter: adapter as unknown as OpenShellProviderAdapter,
     readAuthority: (_gateway: string, name: string) =>
@@ -281,7 +282,7 @@ describe("custom native endpoint ownership", () => {
       getSandbox: () => ({ nativeHostedProviderAttachment: first }),
       isNonInteractive: () => true,
       providerExistsInGateway: vi.fn(() => false),
-      isRoutedInferenceProvider: () => false,
+
       replaceNamedCredential,
     });
     const recovery = await shim.ensureResumeProviderReady(

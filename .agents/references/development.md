@@ -91,7 +91,8 @@ When writing tests:
 - Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
 - Keep project globs disjoint and exhaustive; `npm run test:projects:check` compares filesystem candidates with Vitest and rejects missing, overlapping, or unexpected membership.
 - Follow `test/README.md` for regression evidence, source-shape exceptions, assertion, cleanup, language, and title contracts.
-- Use `npm run test:changed` or `npm run test:watch` for focused CLI, plugin, and E2E-support feedback. Add only concrete opaque-input mappings to `test/helpers/vitest-watch-triggers.ts` when the import graph cannot see a YAML, Python, shell, generated, or workflow dependency.
+- Use `npm run test:changed` for CLI, integration, plugin, and E2E-support feedback.
+  It includes opaque-input mappings in one-shot runs; `npm run test:watch` retains the focused watch projects. Add only concrete opaque-input mappings to `test/helpers/vitest-watch-triggers.ts` when the import graph cannot see a YAML, Python, shell, generated, or workflow dependency.
 - Use `npm run test:shuffle -- --sequence.seed=<seed>` to replay a printed test-order seed. Use `npm run test:diagnose:leaks` for async-resource or shutdown-hang diagnostics; both commands keep coverage disabled, and leak diagnostics can accompany exit code 0 when assertions pass.
 - Mock external dependencies; don't call real NVIDIA APIs in unit tests
 - E2E tests run on ephemeral Brev cloud instances

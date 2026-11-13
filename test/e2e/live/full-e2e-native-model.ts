@@ -48,10 +48,12 @@ export function buildNativeModelRestartFixture(
               : nativeNvidia
                 ? NVIDIA_HOSTED_NATIVE_ENDPOINT
                 : "https://inference.local/v1",
+            // OpenShell supplies opaque, revision-scoped handles rather than
+            // exporting credentials for OpenClaw's environment SecretRefs.
             apiKey: nativeCustom
-              ? "${COMPATIBLE_API_KEY}"
+              ? "openshell:resolve:env:COMPATIBLE_API_KEY"
               : nativeNvidia
-                ? "${NVIDIA_INFERENCE_API_KEY}"
+                ? "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY"
                 : "unused",
             api: "openai-completions",
             models: [{ id: model, name: model }],

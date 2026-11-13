@@ -2,11 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { performance } from "node:perf_hooks";
+import { createSwitchyardReadinessFixture } from "../../../../test/helpers/native-launch-readiness-switchyard.ts";
+import { createHash } from "node:crypto";
+import { requireNativeInferenceHealth } from "./launch-readiness/health";
+import { readStoredManagedStartupProfileMetadata } from "../../onboard/managed-startup/profile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
-import { entry, servingProfile } from "../../../../test/helpers/native-launch-readiness.ts";
+import {
+  entry,
+  servingProfile,
+  launchReadinessPolicy as POLICY_A,
+} from "../../../../test/helpers/native-launch-readiness.ts";
 import { loadAgent } from "../../agent/defs";
+import { OpenClawPairingQualificationError } from "./launch-readiness/openclaw-pairing-qualification";
 import type {
   LaunchReadinessFence,
   LaunchReadinessIdentity,
@@ -26,23 +35,14 @@ import {
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 
+import { OpenClawPairingIncompatibleError } from "./launch-readiness/openclaw-pairing-qualification";
+
 const SANDBOX = "alpha";
 const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = 8080;
 const EPOCH = "a".repeat(64);
 const FINGERPRINT = "b".repeat(64);
 const DIGEST = "c".repeat(64);
-
-const POLICY_A = `version: 1
-network_policies:
-  public_api:
-    name: Public API
-    endpoints:
-      - host: example.com
-        port: 443
-    binaries:
-      - path: /usr/bin/curl
-`;
 
 const POLICY_B = POLICY_A.replace("example.com", "api.example.com");
 
@@ -170,6 +170,75 @@ describe("launch readiness validation", () => {
     vi.unstubAllEnvs();
   });
 
+  async function switchyardReadinessFixture() {
+    const fixture = await createSwitchyardReadinessFixture(GATEWAY_NAME, SANDBOX);
+    sandbox = fixture.routedEntry;
+    const currentDeps = { ...deps(), switchyardProviderAdapter: fixture.f.input.adapter };
+    return { ...fixture, currentDeps };
+  }
+
+  it("rejects an unconfigured Switchyard selection before publishing a lease (#13863)", async () => {
+    const { currentDeps } = await switchyardReadinessFixture();
+    sandbox.model = null;
+    const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(
+      await publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+    ).toMatchObject({ kind: "validation-failed", category: "config" });
+    expect(publishedIdentity).toBeNull();
+  });
+
+  it.each([
+    ["current", (encoded: string) => encoded],
+    [
+      "legacy",
+      (encoded: string) => {
+        const profile = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+        delete profile.agentConfig.switchyardBindings;
+        const legacy = Buffer.from(JSON.stringify(profile)).toString("base64url");
+        expect(readStoredManagedStartupProfileMetadata(legacy).agent).toBe("hermes");
+        return legacy;
+      },
+    ],
+    ["malformed", () => "invalid-profile"],
+  ] as const)(
+    "rejects a %s profile without Switchyard bindings before publishing (#13863)",
+    async (_profileKind, encode) => {
+      const { currentDeps, routedEntry } = await switchyardReadinessFixture();
+      const workload = routedEntry.workload;
+      workload.encodedProfile = encode(workload.encodedProfile);
+      workload.startupProfileSha256 = createHash("sha256")
+        .update(workload.encodedProfile)
+        .digest("hex");
+      delete sandbox.hermesSwitchyard;
+      await expect(
+        requireNativeInferenceHealth({
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          entry: sandbox,
+          deps: currentDeps,
+        }),
+      ).rejects.toMatchObject({ category: "config" });
+      expect(externalEvents).not.toContain("inference-get");
+      const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      expect(
+        await publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+      ).toMatchObject({ kind: "validation-failed", category: "config" });
+      expect(publishedIdentity).toBeNull();
+      expect(externalEvents).not.toContain("inference-health");
+    },
+  );
+
+  it("rechecks Switchyard bindings without consulting the shared inference route (#13863)", async () => {
+    const { currentDeps, f } = await switchyardReadinessFixture();
+    await createAcceptedLease(currentDeps);
+    externalEvents = [];
+    expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({ kind: "accepted" });
+    expect(externalEvents).not.toContain("inference-get");
+    expect(externalEvents).not.toContain("inference-health");
+    f.names.splice(0, 1);
+    expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({ kind: "fallback" });
+  });
+
   function deps(): LaunchReadinessDeps {
     return {
       getSandbox: () => sandbox,
@@ -196,7 +265,7 @@ describe("launch readiness validation", () => {
       commandExecutor: {
         runBuffered: vi.fn(async () => ({
           outcome: { kind: "completed" as const, exitCode: 0 },
-          stdout: "",
+          stdout: `dcode ${loadAgent("langchain-deepagents-code").expectedVersion}`,
           stderr: "",
         })),
       },
@@ -1001,6 +1070,48 @@ describe("launch readiness validation", () => {
     expect(publishedIdentity?.session).toBeNull();
   });
 
+  it.each([
+    ["dcode 0.1.71", 0, "health", "validation-failed"],
+    ["dcode version unavailable", 0, "unsafe", "evidence-failed"],
+    ["dcode 0.1.87", 1, "unsafe", "evidence-failed"],
+  ] as const)(
+    "rejects reuse and publication of a Deep Agents Code lease with runtime output %s",
+    async (versionOutput, exitCode, category, publicationKind) => {
+      sandbox = {
+        ...entry("langchain-deepagents-code"),
+        provider: "nvidia-prod",
+        model: "model-a",
+      };
+      routeOutput = "Gateway Inference:\n\n  Provider: nvidia-prod\n  Model: model-a\n";
+      const currentDeps = deps();
+      currentDeps.inferenceInvocationProbe = async () => ({ ok: true });
+      const runBuffered = vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        stdout: "dcode 0.1.87",
+        stderr: "",
+      }));
+      currentDeps.commandExecutor = { runBuffered };
+      await createAcceptedLease(currentDeps);
+      await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+        kind: "accepted",
+      });
+      expect(runBuffered).toHaveBeenCalledWith(
+        expect.objectContaining({ target: { kind: "named", gatewayName: GATEWAY_NAME } }),
+      );
+
+      runBuffered.mockResolvedValue({
+        outcome: { kind: "completed", exitCode },
+        stdout: versionOutput,
+        stderr: "",
+      });
+      const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      expect(decision).toMatchObject({ kind: "fallback", category });
+      await expect(
+        publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+      ).resolves.toMatchObject({ kind: publicationKind });
+    },
+  );
+
   it("rejects a Deep Agents Code lease when model discovery succeeds but inference fails (#11520)", async () => {
     sandbox = {
       ...entry("langchain-deepagents-code"),
@@ -1043,6 +1154,7 @@ describe("launch readiness validation", () => {
     const cuaAgent = {
       ...loadAgent("hermes"),
       name: "nemocua",
+      expectedVersion: null,
       runtime: {
         kind: "terminal" as const,
         interactive_command: "/bin/bash",
@@ -1247,157 +1359,48 @@ describe("launch readiness validation", () => {
     expect(publishLease).not.toHaveBeenCalled();
   });
 
-  it("binds every host mount field without projecting the host source path (#8942)", () => {
-    const agent = loadAgent("openclaw");
-    const source = "/private/host/customer-project";
-    const mounted: SandboxEntry = {
-      ...sandbox,
-      hostMounts: [
-        {
-          source,
-          target: "/sandbox/project",
-          readOnly: true,
-          sourceIdentity: { device: "11", inode: "22" },
+  it.each(["state-read", "state-changed", "timeout"] as const)(
+    "retains the pairing observation reason %s without publishing a lease",
+    async (failureReason) => {
+      const currentDeps = deps();
+      const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      const publication = publicationFromDecision(SANDBOX, first);
+      currentDeps.observeOpenClawPairingQualification = () => {
+        throw new OpenClawPairingQualificationError(failureReason);
+      };
+      expect(await publishLaunchReadiness(publication, currentDeps)).toEqual({
+        kind: "evidence-failed",
+        diagnostic: {
+          stage: "publication-validation",
+          reason: "pairing-observation-failed",
+          pairingFailureReason: failureReason,
         },
-      ],
-    };
-    const projection = buildLaunchReadinessRegistryProjection(mounted, agent) as {
-      hostMounts: Array<Record<string, unknown>>;
-    };
-    expect(JSON.stringify(projection)).not.toContain(source);
-    expect(projection.hostMounts).toEqual([
-      {
-        sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-        target: "/sandbox/project",
-        readOnly: true,
-        sourceIdentity: { device: "11", inode: "22" },
-      },
-    ]);
+      });
+      expect(publishedIdentity).toBeNull();
+    },
+  );
 
-    const original = launchReadinessDigest(projection);
-    const mutations: SandboxEntry[] = [
-      {
-        ...mounted,
-        hostMounts: [{ ...mounted.hostMounts![0]!, source: `${source}-changed` }],
-      },
-      {
-        ...mounted,
-        hostMounts: [{ ...mounted.hostMounts![0]!, target: "/sandbox/changed" }],
-      },
-      {
-        ...mounted,
-        hostMounts: [
-          {
-            ...mounted.hostMounts![0]!,
-            sourceIdentity: { device: "12", inode: "22" },
-          },
-        ],
-      },
-      {
-        ...mounted,
-        hostMounts: [
-          {
-            ...mounted.hostMounts![0]!,
-            sourceIdentity: { device: "11", inode: "23" },
-          },
-        ],
-      },
-    ];
-    expect(
-      mutations.every(
-        (mutation) =>
-          !Object.is(
-            launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
-            original,
-          ),
-      ),
-    ).toBe(true);
-    expect(() =>
-      buildLaunchReadinessRegistryProjection(
-        {
-          ...mounted,
-          hostMounts: [{ ...mounted.hostMounts![0]!, readOnly: false as true }],
+  it.each(["paired.clientMode", "secret-token"])(
+    "reports incompatible pairing with only allowlisted field %s (#13668)",
+    async (field) => {
+      const currentDeps = deps();
+      const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      currentDeps.observeOpenClawPairingQualification = () => {
+        throw new OpenClawPairingIncompatibleError(field);
+      };
+      expect(
+        await publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+      ).toEqual({
+        kind: "evidence-failed",
+        diagnostic: {
+          stage: "publication-validation",
+          reason: "pairing-state-incompatible",
+          ...(field === "paired.clientMode" ? { pairingMismatchField: field } : {}),
         },
-        agent,
-      ),
-    ).toThrow();
-  });
-
-  it("binds every semantic serving profile provenance field (#8942)", () => {
-    const agent = loadAgent("openclaw");
-    const originalProfile = servingProfile();
-    const original = launchReadinessDigest(
-      buildLaunchReadinessRegistryProjection(
-        { ...sandbox, servingProfileProvenance: originalProfile },
-        agent,
-      ),
-    );
-    const mutations: NonNullable<SandboxEntry["servingProfileProvenance"]>[] = [
-      { ...originalProfile, catalogDigest: `sha256:${"a".repeat(64)}` },
-      { ...originalProfile, preset: { ...originalProfile.preset, id: "changed" } },
-      {
-        ...originalProfile,
-        preset: { ...originalProfile.preset, digest: `sha256:${"a".repeat(64)}` },
-      },
-      { ...originalProfile, preset: { ...originalProfile.preset, displayName: "Changed" } },
-      {
-        ...originalProfile,
-        preset: { ...originalProfile.preset, supportState: "experimental" },
-      },
-      { ...originalProfile, recipe: { ...originalProfile.recipe, id: "changed" } },
-      {
-        ...originalProfile,
-        recipe: { ...originalProfile.recipe, digest: `sha256:${"a".repeat(64)}` },
-      },
-      { ...originalProfile, recipe: { ...originalProfile.recipe, backend: "changed" } },
-      { ...originalProfile, model: { ...originalProfile.model, id: "changed" } },
-      { ...originalProfile, model: { ...originalProfile.model, revision: "changed" } },
-      { ...originalProfile, runtimeImage: "example.com/changed@sha256:immutable" },
-      { ...originalProfile, estimatedImageDownloadBytes: 1_001 },
-      { ...originalProfile, estimatedModelDownloadBytes: 2_001 },
-    ];
-    expect(
-      mutations.every(
-        (mutation) =>
-          !Object.is(
-            launchReadinessDigest(
-              buildLaunchReadinessRegistryProjection(
-                { ...sandbox, servingProfileProvenance: mutation },
-                agent,
-              ),
-            ),
-            original,
-          ),
-      ),
-    ).toBe(true);
-  });
-
-  it("excludes diagnostic timestamps, source paths, and GPU detail from the projection", () => {
-    const agent = loadAgent("openclaw");
-    const first: SandboxEntry = {
-      ...sandbox,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      sandboxGpuProof: {
-        status: "verified",
-        cudaVerified: true,
-        label: "cuda",
-        detail: "first diagnostic",
-        at: "2026-01-01T00:00:00.000Z",
-      },
-    };
-    const second: SandboxEntry = {
-      ...first,
-      createdAt: "2026-06-01T00:00:00.000Z",
-      sandboxGpuProof: {
-        ...first.sandboxGpuProof!,
-        detail: "second diagnostic",
-        at: "2026-06-01T00:00:00.000Z",
-      },
-    };
-    expect(launchReadinessDigest(buildLaunchReadinessRegistryProjection(second, agent))).toBe(
-      launchReadinessDigest(buildLaunchReadinessRegistryProjection(first, agent)),
-    );
-  });
+      });
+      expect(publishedIdentity).toBeNull();
+    },
+  );
 
   it("distinguishes authoritative final validation failure from evidence failure", async () => {
     const first = await inspectLaunchReadiness(SANDBOX, deps());

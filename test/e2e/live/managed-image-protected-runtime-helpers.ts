@@ -550,6 +550,27 @@ async function inspectProtectedProviderContainer(
   return authority;
 }
 
+/** Capture the existing provider-native diagnostics even after its readiness budget expires. */
+export async function captureProtectedNimFailureLogs(
+  host: Pick<HostCliClient, "command">,
+  authority: ProtectedProviderContainerAuthority | null,
+  redactionValues: readonly string[],
+): Promise<void> {
+  if (!authority || authority.kind !== "nim" || !/^[a-f0-9]{64}$/u.test(authority.containerId))
+    return;
+  try {
+    await host.command("docker", ["logs", "--tail", "200", authority.containerId], {
+      artifactName: "cleanup-nim-failure-logs",
+      captureLimitBytes: PROTECTED_READINESS_CAPTURE_LIMIT_BYTES,
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [...redactionValues],
+      timeoutMs: 5_000,
+    });
+  } catch {
+    // Diagnostics must not prevent the original strict cleanup or change its result.
+  }
+}
+
 async function removeProtectedProviderContainer(
   host: HostCliClient,
   state: ProtectedProviderContainerState,
@@ -628,7 +649,7 @@ async function startProtectedVllm(
     VLLM_IMAGE,
     "inspect-vllm-authority",
   );
-  const readiness = protectedVllmReadinessCommand(state.name);
+  const readiness = protectedVllmReadinessCommand(state.authority.containerId);
   const ready = await host.command(readiness.command, readiness.args, {
     artifactName: "wait-vllm",
     captureLimitBytes: readiness.captureLimitBytes,
@@ -659,7 +680,8 @@ export function protectedVllmReadinessCommand(
   containerName: string,
 ): ProtectedRuntimeReadinessCommand {
   if (
-    containerName.length > PROTECTED_PROVIDER_CONTAINER_MAX_LENGTH ||
+    (containerName.length > PROTECTED_PROVIDER_CONTAINER_MAX_LENGTH &&
+      !/^[a-f0-9]{64}$/u.test(containerName)) ||
     !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(containerName)
   ) {
     throw new Error("protected provider container name is outside the Docker name contract");
@@ -673,11 +695,22 @@ export function protectedVllmReadinessCommand(
       "-c",
       `set -euo pipefail
 attempt=0
+diagnose_vllm() {
+  docker container inspect "${containerName}" --format 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}}' >&2 || true
+  docker logs --tail 200 "${containerName}" >&2 || true
+  printf 'managed-image-vllm-not-ready attempts=%s\n' "$attempt" >&2
+}
+# The supervisor can terminate this shell before the polling deadline.
+# Its existing kill grace also bounds these redacted diagnostics.
+trap diagnose_vllm EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 deadline=$((SECONDS + 600))
 while [ "$SECONDS" -lt "$deadline" ]; do
   attempt=$((attempt + 1))
   if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:${PROTECTED_PROVIDER_BACKEND_PORT}/v1/models >/dev/null 2>&1; then
     printf 'managed-image-vllm-ready attempts=%s\n' "$attempt"
+    trap - EXIT
     exit 0
   fi
   if ! docker container inspect "${containerName}" --format '{{.State.Running}}' | grep -Fx true >/dev/null; then
@@ -685,8 +718,6 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   fi
   sleep 2
 done
-docker logs --tail 200 "${containerName}" >&2 || true
-printf 'managed-image-vllm-not-ready attempts=%s\n' "$attempt" >&2
 exit 1`,
     ],
   };
@@ -696,7 +727,8 @@ export function protectedNimReadinessCommand(
   containerName: string,
 ): ProtectedRuntimeReadinessCommand {
   if (
-    containerName.length > PROTECTED_PROVIDER_CONTAINER_MAX_LENGTH ||
+    (containerName.length > PROTECTED_PROVIDER_CONTAINER_MAX_LENGTH &&
+      !/^[a-f0-9]{64}$/u.test(containerName)) ||
     !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(containerName)
   ) {
     throw new Error("protected provider container name is outside the Docker name contract");
@@ -710,11 +742,22 @@ export function protectedNimReadinessCommand(
       "-c",
       `set -euo pipefail
 attempt=0
+diagnose_nim() {
+  docker container inspect "${containerName}" --format 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}}' >&2 || true
+  docker logs --tail 200 "${containerName}" >&2 || true
+  printf 'managed-image-nim-not-ready attempts=%s\n' "$attempt" >&2
+}
+# The supervisor can terminate this shell before the polling deadline.
+# Its existing kill grace also bounds these redacted diagnostics.
+trap diagnose_nim EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 deadline=$((SECONDS + 1200))
 while [ "$SECONDS" -lt "$deadline" ]; do
   attempt=$((attempt + 1))
   if curl -fsS --connect-timeout 5 --max-time 5 http://127.0.0.1:${PROTECTED_PROVIDER_BACKEND_PORT}/v1/models >/dev/null 2>&1; then
     printf 'managed-image-nim-ready attempts=%s\n' "$attempt"
+    trap - EXIT
     exit 0
   fi
   if ! docker container inspect "${containerName}" --format '{{.State.Running}}' | grep -Fx true >/dev/null; then
@@ -722,8 +765,6 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   fi
   sleep 5
 done
-docker logs --tail 200 "${containerName}" >&2 || true
-printf 'managed-image-nim-not-ready attempts=%s\n' "$attempt" >&2
 exit 1`,
     ],
   };
@@ -805,7 +846,7 @@ async function startProtectedNim(
     image,
     "inspect-nim-authority",
   );
-  const readiness = protectedNimReadinessCommand(state.name);
+  const readiness = protectedNimReadinessCommand(state.authority.containerId);
   const ready = await host.command(readiness.command, readiness.args, {
     artifactName: "wait-nim",
     captureLimitBytes: readiness.captureLimitBytes,
@@ -977,6 +1018,11 @@ export async function qualifyProtectedManagedImageRuntime(
     await removeProtectedProviderContainer(fixtures.host, vllmState, "cleanup-vllm-container");
   });
   cleanup.trackDisposable("remove protected NIM container", async () => {
+    await captureProtectedNimFailureLogs(
+      fixtures.host,
+      nimState.removed ? null : nimState.authority,
+      [ngcApiKey],
+    );
     await removeProtectedProviderContainer(fixtures.host, nimState, "cleanup-nim-container");
   });
   cleanup.trackDisposable("stop protected Ollama runtime", async () => {

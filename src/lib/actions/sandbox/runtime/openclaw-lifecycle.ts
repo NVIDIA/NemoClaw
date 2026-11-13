@@ -18,6 +18,7 @@ export {
   finishOpenClawBackupQuiesce,
   finishOpenClawPostRestoreDoctor,
   finishUnregisteredOpenClawPostRestoreDoctor,
+  prepareUnregisteredOpenClawPostRestoreDoctor,
   releaseOpenClawPostRestoreDoctorForDelete,
 } from "../process-recovery";
 export type { OpenClawPostRestoreDoctorWindow } from "../process-recovery";

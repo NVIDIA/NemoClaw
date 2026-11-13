@@ -61,7 +61,12 @@ on:
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "test/helpers/openclaw-real-agent-reload-proof.ts"
+      - "test/helpers/openclaw-real-legacy-migration-proof.ts"
+      - "test/package-contract/channels/hermes-discord-runtime.test.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
+      - "test/e2e/fixtures/hermes-switchyard-package.ts"
+      - "test/e2e/fixtures/hermes-crash-capture.ts"
+      - "test/e2e/live/hermes-root-entrypoint-smoke.test.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
       - "test/e2e/fixtures/gateway-runtime-start.ts"
@@ -193,11 +198,14 @@ jobs:
             install -m 0644 "$source_file" "$destination_file"
           done
           for support_relative in \
+            agents/langchain-deepagents-code/patch-dependency-compatibility.py \
+            agents/langchain-deepagents-code/dependency-overrides.in \
             agents/langchain-deepagents-code/validate-runtime-contract.py \
             src/lib/agent/deep-agents-code-runtime-identity.json \
             ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
             scripts/lib/patch-bundled-npm-ip-address.mts \
+            scripts/lib/patch-bundled-npm-undici.mts \
             scripts/lib/reviewed-npm-archive.mts \
             scripts/lib/reviewed-npm-audit.mts \
             scripts/lib/reviewed-npm-identity.mts \
@@ -636,6 +644,25 @@ jobs:
         shell: bash
         run: scripts/check-production-build-args.sh -f agents/langchain-deepagents-code/Dockerfile.base
 
+      - name: Prepare OpenClaw image export memory
+        if: matrix.agent == 'openclaw'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Layer export exhausts the hosted runner's 16 GiB RAM and 3 GiB
+          # swap. Keep this additional swap until the disposable runner is
+          # retired; turning it off while Docker retains pages can cause OOM.
+          available_kib="$(df -Pk "$RUNNER_TEMP" | awk 'NR == 2 {print $4}')"
+          if [[ ! "$available_kib" =~ ^[0-9]+$ ]] || [ "$available_kib" -lt 67108864 ]; then
+            echo "ERROR: OpenClaw export needs 32 GiB swap plus 32 GiB free disk." >&2
+            exit 1
+          fi
+          swap_file="$(mktemp "$RUNNER_TEMP/nemoclaw-openclaw-export.XXXXXX")"
+          sudo fallocate -l 32G "$swap_file"
+          sudo chmod 0600 "$swap_file"
+          sudo mkswap "$swap_file"
+          sudo swapon "$swap_file"
+
       - name: Resolve digest-pinned native PR base
         id: base
         shell: bash
@@ -933,9 +960,33 @@ jobs:
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install managed-image direct harness dependencies
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
         run: |
-          npm ci --ignore-scripts --no-audit --no-fund
+          set -euo pipefail
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts prepare
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts check
+          fi
           npm run build:policy-boundary
+
+      - name: Build CLI for Hermes runtime contract
+        if: matrix.agent == 'hermes'
+        run: npm run build:cli
+
+      - name: Verify native Hermes Discord status before publication
+        if: matrix.agent == 'hermes'
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+            --image "$IMAGE_REFERENCE" --platform "$PLATFORM"
 
       - name: Exercise managed startup root stdin and hold
         shell: bash
@@ -949,6 +1000,81 @@ jobs:
             --agent "$AGENT" \
             --image "$IMAGE_REFERENCE" \
             --platform "$PLATFORM"
+
+      - name: Prepare passive Hermes native crash capture
+        id: hermes-crash-capture
+        if: matrix.agent == 'hermes' && matrix.arch == 'amd64'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v gdb >/dev/null; then
+            if ! sudo apt-get update || ! sudo apt-get install -y --no-install-recommends gdb; then
+              echo '::warning::Debugger installation failed; Hermes qualification will run without crash capture.'
+              exit 0
+            fi
+          fi
+          umask 077
+          saved="$RUNNER_TEMP/nemoclaw-hermes-original-core-pattern"
+          test ! -e "$saved"
+          test ! -L "$saved"
+          cp /proc/sys/kernel/core_pattern "$saved"
+          printf '%s\n' '/tmp/nemoclaw-hermes-crash/core.%p' | sudo tee /proc/sys/kernel/core_pattern >/dev/null
+          printf '%s\n' 'enabled=true' >> "$GITHUB_OUTPUT"
+
+      - name: Qualify Hermes root entrypoint and Switchyard package
+        if: matrix.agent == 'hermes'
+        timeout-minutes: 30
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
+          NEMOCLAW_HERMES_TEST_IMAGE: ${{ steps.contract.outputs.reference }}
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+          NEMOCLAW_HERMES_CRASH_CAPTURE: ${{ matrix.arch == 'amd64' && steps.hermes-crash-capture.outputs.enabled == 'true' && '1' || '0' }}
+        run: |
+          npx --no-install vitest run --project e2e-live \
+            test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+
+      - name: Restore core settings and remove private Hermes crash memory
+        if: always() && matrix.agent == 'hermes' && matrix.arch == 'amd64'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          saved="$RUNNER_TEMP/nemoclaw-hermes-original-core-pattern"
+          if [ -f "$saved" ]; then
+            if ! sudo tee /proc/sys/kernel/core_pattern <"$saved" >/dev/null; then
+              echo '::error::Failed to restore the original core pattern'
+              status=1
+            # Read procfs through a pipe: its reported file size can be zero.
+            elif ! cat /proc/sys/kernel/core_pattern | cmp -s "$saved" -; then
+              echo '::error::Failed to verify the restored core pattern'
+              status=1
+            else
+              rm -f "$saved" || status=1
+            fi
+          fi
+          find "$RUNNER_TEMP" -maxdepth 1 -type d -name 'nemoclaw-hermes-crash-*' -exec rm -rf -- {} + || status=1
+          if containers="$(docker ps -aq --filter label=io.nvidia.nemoclaw.hermes-crash-capture=1)"; then
+            if [ -n "$containers" ]; then
+              while IFS= read -r container; do
+                docker rm -f "$container" || status=1
+              done <<<"$containers"
+            fi
+          else
+            status=1
+          fi
+          exit "$status"
+
+      - name: Upload Hermes package qualification artifacts
+        if: always() && matrix.agent == 'hermes'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-root-entrypoint-pr-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Log in to GHCR for exact same-repository PR digest
         if: github.event.pull_request.head.repo.full_name == github.repository
@@ -1002,6 +1128,25 @@ jobs:
         shell: bash
         run: docker logout ghcr.io
 
+      - name: Pull exact published PR managed image
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ format('{0}@{1}', matrix.repository, steps.publish.outputs.digest) }}
+        run: |
+          set -euo pipefail
+          scripts/checks/pull-public-exact-digest.sh "$IMAGE_REFERENCE" "$PLATFORM"
+
+      - name: Verify published PR Hermes Discord status
+        if: matrix.agent == 'hermes' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ format('{0}@{1}', matrix.repository, steps.publish.outputs.digest) }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+            --image "$IMAGE_REFERENCE" --platform "$PLATFORM"
+
       - name: Export exact published PR managed-image contract
         if: github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
@@ -1025,7 +1170,6 @@ jobs:
           }
           reference="${IMAGE}@${DIGEST}"
           raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
-          scripts/checks/pull-public-exact-digest.sh "$reference" "$PLATFORM"
           if [ "$AGENT" = "hermes" ]; then
             published_layer_count="$(docker image inspect --format '{{len .RootFS.Layers}}' "$reference")"
             if [ "$published_layer_count" -gt 125 ]; then
@@ -1566,6 +1710,7 @@ jobs:
           retention-days: 1
 
   pi-candidate:
+    needs: [publication-identity]
     name: Build and validate the Pi candidate managed image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runner }}
@@ -1584,12 +1729,13 @@ jobs:
             platform: linux/arm64
             runner: ubuntu-24.04-arm
     env: &pi_candidate_env
+      RELEASE: ${{ needs.publication-identity.outputs.release }}
       BASE_DOCKERFILE: agents/pi/Dockerfile.base
       CANDIDATE_IMAGE: nemoclaw-managed-candidate/pi
       DOCKERFILE: agents/pi/Dockerfile
       LOCAL_BASE_REFERENCE: nemoclaw-managed-candidate/pi-base:${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       PLATFORM: ${{ matrix.platform }}
-      PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+      PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
       REPOSITORY: ghcr.io/nvidia/nemoclaw/pi-sandbox
       # Qualification receipts compare image sources with the PR head, never GitHub's synthetic merge.
       SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
@@ -1676,7 +1822,7 @@ jobs:
             io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            io.nvidia.nemoclaw.managed-image.cohort=${{ env.PUBLICATION_COHORT }}
           build-args: |
             BASE_IMAGE=nemoclaw-pi-base
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
@@ -1745,7 +1891,7 @@ jobs:
             io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            io.nvidia.nemoclaw.managed-image.cohort=${{ env.PUBLICATION_COHORT }}
           build-args: |
             BASE_IMAGE=nemoclaw-pi-base
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
@@ -1939,7 +2085,7 @@ jobs:
             echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
             exit 1
           fi
-          release="v$(node -p 'require("./package.json").version')"
+          release="$RELEASE"
           contract_dir="$RUNNER_TEMP/managed-candidate-contract"
           mkdir -p "$contract_dir"
           jq -n \
@@ -1981,6 +2127,7 @@ jobs:
           retention-days: 7
 
   pi-candidate-publish:
+    needs: [publication-identity]
     name: Publish and validate the Pi candidate managed image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw' && github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
@@ -2380,9 +2527,23 @@ jobs:
           sbom: true
 
       - name: Install managed-image publication harness dependencies
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
         run: |
-          npm ci --ignore-scripts --no-audit --no-fund
+          set -euo pipefail
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts prepare
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts check
+          fi
           npm run build:policy-boundary
+
+      - name: Build CLI for Hermes runtime contract
+        if: matrix.agent == 'hermes'
+        run: npm run build:cli
 
       - name: Validate exact managed image before promotion
         id: validate
@@ -2501,15 +2662,15 @@ jobs:
             fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"),
           );
           const packages = {
-            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.2"],
-            brave: ["@openclaw/brave-plugin", "2026.9.2"],
-            tavily: ["@openclaw/tavily-plugin", "2026.9.2"],
-            discord: ["@openclaw/discord", "2026.9.2"],
-            "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.9"],
-            slack: ["@openclaw/slack", "2026.9.2"],
-            whatsapp: ["@openclaw/whatsapp", "2026.9.2"],
-            msteams: ["@openclaw/msteams", "2026.9.2"],
-            googlechat: ["@openclaw/googlechat", "2026.9.2"],
+            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.10.5"],
+            brave: ["@openclaw/brave-plugin", "2026.10.5"],
+            tavily: ["@openclaw/tavily-plugin", "2026.10.5"],
+            discord: ["@openclaw/discord", "2026.10.5"],
+            "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.10"],
+            slack: ["@openclaw/slack", "2026.10.5"],
+            whatsapp: ["@openclaw/whatsapp", "2026.10.5"],
+            msteams: ["@openclaw/msteams", "2026.10.5"],
+            googlechat: ["@openclaw/googlechat", "2026.10.5"],
           };
           const projectsRoot = "/sandbox/.openclaw/npm/projects";
           const projectRoots = fs
@@ -2617,6 +2778,39 @@ jobs:
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+
+      - name: Verify native Hermes Discord status before publication
+        if: matrix.agent == 'hermes'
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.validate.outputs.reference }}
+          PLATFORM: ${{ matrix.platform }}
+          DOCKER_CONFIG: ${{ steps.build.outputs.docker-config }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+            --image "$IMAGE_REFERENCE" --platform "$PLATFORM"
+
+      - name: Qualify Hermes root entrypoint and Switchyard package
+        if: matrix.agent == 'hermes'
+        timeout-minutes: 30
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
+          NEMOCLAW_HERMES_TEST_IMAGE: ${{ steps.validate.outputs.local_id }}
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: |
+          npx --no-install vitest run --project e2e-live \
+            test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+
+      - name: Upload Hermes package qualification artifacts
+        if: always() && matrix.agent == 'hermes'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-root-entrypoint-publication-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Capture exact managed image publication evidence
         id: evidence

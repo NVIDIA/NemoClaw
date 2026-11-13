@@ -5,10 +5,13 @@ import { timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { dockerCapture } from "../../adapters/docker/local-model-runtime";
+import { dockerCapture, dockerRun } from "../../adapters/docker/local-model-runtime";
+import { isPodmanGatewayRuntimeEnabled } from "../../onboard/runtime-provider/configured-runtime";
+import { resolveCurrentRuntimeProviderBundle } from "../../onboard/runtime-provider/current";
 import { writeLocalAdapterJsonFile } from "../local-adapter-lifecycle";
-import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
+import { loadManagedVllmApiKey, managedVllmApiKeyPath, managedVllmStateDir } from "../vllm-api-key";
 import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
+import { assertNoManagedDistributedVllmRuntimeReceipts } from "./managed-runtime-receipts";
 import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
 import {
   resolveManagedVllmBridgeHost,
@@ -271,9 +274,146 @@ function inspectHostLocalContainer(
 ): string {
   return capture(["container", "inspect", HOST_LOCAL_VLLM_CONTAINER_NAME], {
     env: dockerEnv,
+    replaceEnv: true,
     ignoreError: true,
     timeout: 10_000,
   });
+}
+
+export class UnsafeLegacyVllmBindingsError extends Error {
+  constructor() {
+    super(
+      "Managed bearerless vLLM has unsafe host bindings. Follow 'Handle a Running vLLM Server' in the vLLM setup guide before recreating the owned `nemoclaw-vllm` container. Preserve the original model and port settings.",
+    );
+  }
+}
+
+export class ManagedVllmInspectionError extends Error {
+  constructor() {
+    super(
+      "Managed vLLM container inspection failed. Verify access to Docker's default local daemon before retrying.",
+    );
+  }
+}
+
+/** Reject unsafe owned bearerless bindings and select their private probe address. */
+export function getLegacyHostLocalManagedVllmBridgeHost(
+  servingPort: number,
+  capture: typeof dockerCapture = dockerCapture,
+): string | null {
+  const dockerEnv = buildLocalManagedVllmDockerEnv();
+  const inspection = dockerRun(["container", "inspect", HOST_LOCAL_VLLM_CONTAINER_NAME], {
+    env: dockerEnv,
+    replaceEnv: true,
+    ignoreError: true,
+    suppressOutput: true,
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  if (inspection.error || inspection.status !== 0) {
+    if (
+      !inspection.error &&
+      inspection.status === 1 &&
+      ["", "[]"].includes(String(inspection.stdout ?? "").trim()) &&
+      /^(?:Error response from daemon:\s*|Error:\s*)?No such (?:object|container): nemoclaw-vllm\.?$/iu.test(
+        String(inspection.stderr ?? "").trim(),
+      )
+    )
+      return null;
+    const missingDocker =
+      inspection.error !== undefined &&
+      "code" in inspection.error &&
+      inspection.error.code === "ENOENT";
+    let nativePodman = false;
+    if (
+      !inspection.error &&
+      inspection.status !== null &&
+      inspection.status > 0 &&
+      ["", "[]"].includes(String(inspection.stdout ?? "").trim()) &&
+      isPodmanGatewayRuntimeEnabled()
+    ) {
+      const runtime = resolveCurrentRuntimeProviderBundle();
+      nativePodman =
+        runtime.identity.id === "podman" &&
+        runtime.hostLocalInference.supported &&
+        runtime.hostLocalInference.services.includes("vllm");
+    }
+    if (missingDocker || nativePodman) {
+      // Existing-server attachment has no Docker dependency. Retained managed
+      // state still requires inspection, even after switching to native Podman.
+      try {
+        assertNoManagedDistributedVllmRuntimeReceipts();
+        for (const file of [runtimeReceiptPath(managedVllmStateDir()), managedVllmApiKeyPath()]) {
+          try {
+            fs.lstatSync(file);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw error;
+          }
+          throw new ManagedVllmInspectionError();
+        }
+      } catch {
+        throw new ManagedVllmInspectionError();
+      }
+      return null;
+    }
+    throw new ManagedVllmInspectionError();
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(inspection.stdout));
+  } catch {
+    throw new ManagedVllmInspectionError();
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 1 ||
+    !parsed[0] ||
+    typeof parsed[0] !== "object"
+  ) {
+    throw new ManagedVllmInspectionError();
+  }
+  const row = parsed[0] as DockerInspectRow;
+  const labels = row.Config?.Labels;
+  if (
+    typeof row.Id !== "string" ||
+    !/^[a-f0-9]{12,64}$/u.test(row.Id) ||
+    row.Name !== `/${HOST_LOCAL_VLLM_CONTAINER_NAME}` ||
+    typeof row.State?.Running !== "boolean" ||
+    labels === undefined ||
+    (labels !== null && (typeof labels !== "object" || Array.isArray(labels)))
+  ) {
+    throw new ManagedVllmInspectionError();
+  }
+  if (!row.State?.Running || labels === null) return null;
+  const labelMap = labels as Record<string, unknown>;
+  if (
+    labelMap[HOST_LOCAL_VLLM_MANAGED_LABEL] !== "true" ||
+    labelMap[HOST_LOCAL_VLLM_AUTH_LABEL] !== undefined ||
+    labelMap[DUAL_STATION_VLLM_ROLE_LABEL] !== undefined
+  )
+    return null;
+  const ports = row.NetworkSettings?.Ports;
+  const bindings =
+    ports && typeof ports === "object" && !Array.isArray(ports)
+      ? (ports as Record<string, unknown>)[`${String(HOST_LOCAL_VLLM_CONTAINER_PORT)}/tcp`]
+      : null;
+  const bridge = resolveManagedVllmBridgeHost(capture, dockerEnv);
+  const expectedHosts = new Set(["127.0.0.1", bridge]);
+  if (
+    !Array.isArray(bindings) ||
+    bindings.length !== 2 ||
+    !bindings.every(
+      (binding) =>
+        binding &&
+        typeof binding === "object" &&
+        binding.HostPort === String(servingPort) &&
+        expectedHosts.delete(binding.HostIp),
+    )
+  ) {
+    throw new UnsafeLegacyVllmBindingsError();
+  }
+  return bridge;
 }
 
 /** Recover only the exact authenticated host-local container with bounded host bindings. */

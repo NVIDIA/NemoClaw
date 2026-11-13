@@ -10,7 +10,7 @@ Read the canonical base SHA from GitHub. Fetch the canonical branch into the com
 ```bash
 nemoclaw_trusted_base_sha="$(gh api --method GET repos/NVIDIA/NemoClaw/git/ref/heads/main --jq '.object.sha')"
 test -n "$nemoclaw_trusted_base_sha"
-git fetch --no-tags https://github.com/NVIDIA/NemoClaw.git +refs/heads/main:refs/remotes/origin/main
+git fetch --no-tags git@github.com:NVIDIA/NemoClaw.git +refs/heads/main:refs/remotes/origin/main
 nemoclaw_fetched_base_sha="$(git rev-parse --verify refs/remotes/origin/main)"
 test "$nemoclaw_fetched_base_sha" = "$nemoclaw_trusted_base_sha"
 git branch --show-current

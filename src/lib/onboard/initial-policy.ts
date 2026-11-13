@@ -528,6 +528,7 @@ function resolveInitialSandboxCreatePolicy(
           basePolicy,
           options.inferenceProvider,
           options.nativeHostedProviderAttachment,
+          options.agentName ?? (isHermesPolicyPath(basePolicyPath) ? "hermes" : "openclaw"),
         ),
         "nemoclaw-native-hosted-inference-policy",
       );

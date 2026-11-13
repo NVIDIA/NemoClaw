@@ -310,7 +310,7 @@ describe("bounded direct execution proof process ownership", () => {
 
   it.runIf(process.platform === "linux" && fs.existsSync(timeoutExecutable))(
     "reaps TERM-resistant descendants through the bounded direct proof (#12281)",
-    () => {
+    async () => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-timeout-group-"));
       temporaryDirectories.push(directory);
       const pidPath = path.join(directory, "descendant.pid");
@@ -344,22 +344,27 @@ describe("bounded direct execution proof process ownership", () => {
       const descendantPid = Number.parseInt(fs.readFileSync(pidPath, "utf8").trim(), 10);
       try {
         const statPath = `/proc/${String(descendantPid)}/stat`;
-        let processState = "";
-        try {
-          processState = fs.readFileSync(statPath, "utf8").split(" ")[2];
-        } catch (error) {
-          // A reaped descendant can disappear before open or during the procfs read.
-          expect(["ENOENT", "ESRCH"]).toContain((error as NodeJS.ErrnoException).code);
-        }
-
         expect(result.error).toBeUndefined();
         expect([
           { status: 124, signal: null },
           { status: 137, signal: null },
           { status: null, signal: "SIGKILL" },
         ]).toContainEqual({ status: result.status, signal: result.signal });
-        // Linux can expose EXIT_DEAD (X) briefly before removing the task from /proc.
-        expect(["", "Z", "X"]).toContain(processState);
+        // timeout can exit before Linux finishes delivering SIGKILL to its descendants.
+        await vi.waitFor(
+          () => {
+            let processState = "";
+            try {
+              processState = fs.readFileSync(statPath, "utf8").split(" ")[2];
+            } catch (error) {
+              // A reaped descendant can disappear before open or during the procfs read.
+              expect(["ENOENT", "ESRCH"]).toContain((error as NodeJS.ErrnoException).code);
+            }
+            // Linux can expose EXIT_DEAD (X) briefly before removing the task from /proc.
+            expect(["", "Z", "X"]).toContain(processState);
+          },
+          { timeout: 1_000, interval: 10 },
+        );
       } finally {
         try {
           process.kill(descendantPid, "SIGKILL");

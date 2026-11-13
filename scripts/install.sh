@@ -69,7 +69,7 @@ resolve_repo_root() {
   fi
   printf "%s\n" "$base"
 }
-DEFAULT_NEMOCLAW_VERSION="0.1.0"
+DEFAULT_NEMOCLAW_VERSION="0.0.0"
 DEFAULT_INSTALL_REF="lkg"
 INSTALL_TAG_EXAMPLE="vX.Y.Z"
 TOTAL_STEPS=3
@@ -1134,7 +1134,7 @@ usage() {
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --defer-onboarding   Install NemoClaw without onboarding for a supported agent when NVIDIA inference credentials are absent\n"
   printf "                          Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
-  printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
+  printf "                          and the build or cloud NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall (Apple silicon macOS only)\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
@@ -1147,7 +1147,7 @@ usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_DEFER_ONBOARDING=1   Same as --defer-onboarding\n"
   printf "                                  Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
-  printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
+  printf "                                  and the build or cloud NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_FORCE_FRESH_INSTALL=1 Same as --force-fresh-install (Apple silicon macOS only)\n"
@@ -1174,7 +1174,7 @@ usage() {
   printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s bash\n" "$INSTALL_TAG_EXAMPLE"
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openrouter | openai | anthropic | anthropicCompatible\n"
-  printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
+  printf "                                  | gemini | ollama | custom | nim-local | vllm\n"
   printf "                                  | hermes-provider | llama-cpp | install-llama-cpp\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
@@ -2568,7 +2568,8 @@ maybe_install_openshell_during_install() {
   if [[ "$platform" == "Darwin" ]]; then
     macos_install_method="$(observed_macos_openshell_install_method)" || return 1
   fi
-  if ! _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
+  if ! _NEMOCLAW_OPENSHELL_INSTALL_DIR="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR:-}" \
+    _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
     spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
     if [[ "$platform" == "Darwin" && "$macos_install_method" == "homebrew" ]] \
       && truthy_env "${FORCE_FRESH_INSTALL:-}" \
@@ -2600,10 +2601,158 @@ maybe_install_openshell_during_install() {
         error "The macOS OpenShell installation method could not be verified. The installer stopped before selecting OpenShell binaries or recovering the gateway."
         ;;
     esac
+  elif [[ -n "${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR:-}" ]]; then
+    export NEMOCLAW_OPENSHELL_BIN="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR}/openshell"
+    export PATH="${_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR}:$PATH"
   else
     prefer_user_local_openshell
   fi
   install_nemoclaw_openshell_gateway_user_service
+}
+
+is_nemoclaw_owned_acp_cli_target() {
+  local candidate="${1:-}" node_path
+  [[ -n "$candidate" && -f "$candidate" && -x "$candidate" ]] || return 1
+  node_path="$(command -v node 2>/dev/null || true)"
+  [[ -n "$node_path" && -x "$node_path" ]] || return 1
+  # shellcheck disable=SC2016 # JavaScript template literals are evaluated by Node.js.
+  "$node_path" -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const candidate = process.argv[1];
+const expectedStateRoot = process.argv[2];
+const uid = typeof process.getuid === "function" ? process.getuid() : null;
+if (uid === null) process.exit(1);
+function ownedRegularFile(file) {
+  const stat = fs.lstatSync(file);
+  return stat.isFile() && !stat.isSymbolicLink() && stat.uid === uid;
+}
+try {
+  const candidateBefore = fs.lstatSync(candidate);
+  const resolved = fs.realpathSync(candidate);
+  const cliRelativePath = path.join("dist", "lib", "acp", "main.js");
+  const packageRoot = path.dirname(path.dirname(path.dirname(path.dirname(resolved))));
+  const expectedSourceRoot = path.join(expectedStateRoot, "source");
+  if (!path.isAbsolute(expectedStateRoot) || resolved !== path.join(packageRoot, cliRelativePath)) process.exit(1);
+  let managedSource = false;
+  try {
+    const stateStat = fs.lstatSync(expectedStateRoot);
+    const sourceStat = fs.lstatSync(expectedSourceRoot);
+    managedSource = stateStat.isDirectory() && !stateStat.isSymbolicLink() &&
+      sourceStat.isDirectory() && !sourceStat.isSymbolicLink() &&
+      stateStat.uid === uid && sourceStat.uid === uid &&
+      fs.realpathSync(expectedSourceRoot) === packageRoot;
+  } catch {}
+  if (!managedSource) {
+    const expectedLink = path.resolve(path.dirname(candidate), "../lib/node_modules/nemoclaw");
+    const expectedBinTarget = "../lib/node_modules/nemoclaw/dist/lib/acp/main.js";
+    const linkStat = fs.lstatSync(expectedLink);
+    if (!linkStat.isSymbolicLink() || linkStat.uid !== uid ||
+        fs.realpathSync(expectedLink) !== packageRoot ||
+        fs.readlinkSync(candidate) !== expectedBinTarget ||
+        packageRoot === path.resolve(expectedSourceRoot) ||
+        packageRoot.startsWith(path.resolve(expectedSourceRoot) + path.sep)) process.exit(1);
+  }
+  const packageStat = fs.lstatSync(packageRoot);
+  if (!packageStat.isDirectory() || packageStat.isSymbolicLink() || packageStat.uid !== uid) process.exit(1);
+  const packageFile = path.join(packageRoot, "package.json");
+  const identityFile = path.join(packageRoot, "dist", "build-identity.json");
+  if (!ownedRegularFile(packageFile) || !ownedRegularFile(identityFile) || !ownedRegularFile(resolved)) process.exit(1);
+  const pkgBefore = fs.lstatSync(packageFile);
+  const identityBefore = fs.lstatSync(identityFile);
+  const executableBefore = fs.statSync(resolved);
+  const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8"));
+  const identity = JSON.parse(fs.readFileSync(identityFile, "utf8"));
+  if (pkg.name !== "nemoclaw" || pkg.bin?.["nemoclaw-acp"] !== "./dist/lib/acp/main.js") process.exit(1);
+  // Keep these checks aligned with validateBuildIdentity in src/lib/core/version.ts.
+  const publicVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
+  if (!publicVersionPattern.test(pkg.version ?? "")) process.exit(1);
+  if (typeof identity.nemoclawVersion !== "string" ||
+      identity.nemoclawVersion.length > 128 ||
+      !publicVersionPattern.test(identity.nemoclawVersion)) process.exit(1);
+  if (typeof identity.sourceRevision !== "string" ||
+      !/^[0-9a-f]{40,64}$/.test(identity.sourceRevision)) process.exit(1);
+  const describedRevision = /-\d+-g([0-9a-f]{7,64})$/.exec(identity.nemoclawVersion)?.[1];
+  if (describedRevision && !identity.sourceRevision.startsWith(describedRevision)) process.exit(1);
+  let gitDir = path.join(packageRoot, ".git");
+  let gitStat = fs.lstatSync(gitDir);
+  if (ownedRegularFile(gitDir)) {
+    const gitFile = fs.readFileSync(gitDir, "utf8");
+    const gitDirMatch = /^gitdir: ([^\r\n]+)\r?\n?$/.exec(gitFile);
+    if (!gitDirMatch) process.exit(1);
+    gitDir = path.resolve(packageRoot, gitDirMatch[1]);
+    gitStat = fs.lstatSync(gitDir);
+  }
+  if (!gitStat.isDirectory() || gitStat.isSymbolicLink() || gitStat.uid !== uid) process.exit(1);
+  const gitEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("GIT_") && value !== undefined) gitEnv[key] = value;
+  }
+  // Keep verification local. A promisor remote must not be contacted mid-check.
+  // GIT_NO_LAZY_FETCH needs Git 2.46; the transport allowlist covers older Git.
+  gitEnv.GIT_NO_LAZY_FETCH = "1";
+  gitEnv.GIT_ALLOW_PROTOCOL = "none";
+  const gitOptions = {
+    encoding: "utf8",
+    env: gitEnv,
+    maxBuffer: 64 * 1024,
+    timeout: 3000,
+  };
+  function verifyGit(step, args, allowDirty = false) {
+    try {
+      return execFileSync("git", args, gitOptions);
+    } catch (error) {
+      if (allowDirty && error.status === 1) process.exit(1);
+      process.stderr.write(`ACP target Git verification did not complete at ${step}.\n`);
+      process.exit(2);
+    }
+  }
+  // Bind every Git command to the validated source and Git directories. Repository
+  // discovery through -C still honors core.worktree, which can redirect the work
+  // tree to a clean copy while the validated directory stays modified.
+  const gitRepoArgs = ["--git-dir", gitDir, "--work-tree", packageRoot];
+  const reportedGitDir = verifyGit(
+    "repository directory",
+    [...gitRepoArgs, "rev-parse", "--absolute-git-dir"],
+  ).trim();
+  const reportedTopLevel = verifyGit(
+    "work tree",
+    [...gitRepoArgs, "rev-parse", "--show-toplevel"],
+  ).trim();
+  if (fs.realpathSync(reportedGitDir) !== fs.realpathSync(gitDir) ||
+      fs.realpathSync(reportedTopLevel) !== packageRoot) process.exit(1);
+  // Disabling textconv and external diff does not disable clean/process filters.
+  const filterConfigKeys = verifyGit(
+    "filter configuration",
+    [...gitRepoArgs, "config", "--null", "--name-only", "--list"],
+  ).split("\0").filter(key => /^filter\..*\.(clean|process)$/i.test(key));
+  if (filterConfigKeys.some(key => key.includes("="))) process.exit(1);
+  const disableFilterArgs = filterConfigKeys.flatMap(key => ["-c", `${key}=`]);
+  const gitDiffArgs = [
+    ...disableFilterArgs,
+    "-c", "core.fsmonitor=false", ...gitRepoArgs,
+    "diff", "--no-ext-diff", "--no-textconv", "--quiet", "--ignore-submodules",
+  ];
+  const revision = verifyGit(
+    "source revision",
+    ["-c", "core.fsmonitor=false", ...gitRepoArgs, "rev-parse", "--verify", "HEAD^{commit}"],
+  ).trim();
+  if (revision !== identity.sourceRevision) process.exit(1);
+  verifyGit("working-tree diff", [...gitDiffArgs, "--"], true);
+  verifyGit("index diff", [...gitDiffArgs, "--cached", "--"], true);
+  const candidateAfter = fs.lstatSync(candidate);
+  const resolvedAfter = fs.realpathSync(candidate);
+  const executableAfter = fs.statSync(resolved);
+  const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
+  if (resolvedAfter !== resolved || !sameFile(candidateBefore, candidateAfter) ||
+      !sameFile(executableBefore, executableAfter) ||
+      !sameFile(pkgBefore, fs.lstatSync(packageFile)) ||
+      !sameFile(identityBefore, fs.lstatSync(identityFile))) process.exit(1);
+} catch {
+  process.exit(1);
+}
+' "$candidate" "$(nemoclaw_state_root)"
 }
 
 is_installer_managed_cli_shim() {
@@ -2612,8 +2761,10 @@ is_installer_managed_cli_shim() {
   local path_prefix path_middle path_suffix exec_prefix exec_suffix
   local -a lines=()
 
-  [[ -n "$shim_path" && -n "$cli_bin" && -n "$canonical_cli_path" ]] || return 1
-  [[ -f "$shim_path" && ! -L "$shim_path" && -e "$canonical_cli_path" ]] || return 1
+  [[ -n "$shim_path" && -n "$cli_bin" ]] || return 1
+  [[ -n "$canonical_cli_path" || "$cli_bin" == "nemoclaw-acp" ]] || return 1
+  [[ -f "$shim_path" && ! -L "$shim_path" ]] || return 1
+  [[ (-n "$canonical_cli_path" && -e "$canonical_cli_path") || "$cli_bin" == "nemoclaw-acp" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     lines[${#lines[@]}]="$line"
     [[ "${#lines[@]}" -le 3 ]] || return 1
@@ -2646,8 +2797,10 @@ is_installer_managed_cli_shim() {
   [[ "$exec_line" == "$exec_prefix"*"$exec_suffix" ]] || return 1
   shim_cli_path="${exec_line#"$exec_prefix"}"
   shim_cli_path="${shim_cli_path%"$exec_suffix"}"
-  [[ "$shim_cli_path" == */"$cli_bin" && -e "$shim_cli_path" ]] || return 1
-  [[ "$shim_cli_path" -ef "$canonical_cli_path" ]]
+  [[ "$shim_cli_path" == */"$cli_bin" ]] || return 1
+  [[ -e "$shim_cli_path" ]] || return 1
+  [[ -n "$canonical_cli_path" && "$shim_cli_path" -ef "$canonical_cli_path" ]] && return 0
+  [[ "$cli_bin" == "nemoclaw-acp" ]] && is_nemoclaw_owned_acp_cli_target "$shim_cli_path"
 }
 
 is_npm_managed_nemoclaw_acp_link() {
@@ -2660,6 +2813,7 @@ is_npm_managed_nemoclaw_acp_link() {
 
 assert_nemoclaw_acp_shim_replaceable() {
   local cli_bin="${1:-}" cli_path="${2:-}" shim_path before_identity after_identity
+  local ownership_status=0
   _NEMOCLAW_ACP_SHIM_REPLACE_IDENTITY=""
   [[ "$cli_bin" == "nemoclaw-acp" ]] || return 0
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
@@ -2670,7 +2824,11 @@ assert_nemoclaw_acp_shim_replaceable() {
   fi
   before_identity="$(cli_shim_entry_identity "$shim_path")" \
     || error "Installation stopped because NemoClaw could not inspect $shim_path without following symbolic links. NemoClaw left it unchanged."
-  if ! is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" \
+  is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" || ownership_status=$?
+  if [[ "$ownership_status" -eq 2 ]]; then
+    error "Installation stopped because ACP target ownership verification did not complete for $shim_path. NemoClaw left it unchanged. Check the Git verification error above, then rerun the installer."
+  fi
+  if [[ "$ownership_status" -ne 0 ]] \
     && ! is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path"; then
     error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
   fi
@@ -2700,6 +2858,7 @@ cli_shim_entry_identity() {
 
 assert_nemoclaw_acp_shim_unchanged() {
   local cli_bin="${1:-}" cli_path="${2:-}" expected_identity="${3:-}" shim_path current_identity
+  local ownership_status=0
   [[ "$cli_bin" == "nemoclaw-acp" ]] || return 0
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
   current_identity="$(cli_shim_entry_identity "$shim_path")" \
@@ -2707,14 +2866,20 @@ assert_nemoclaw_acp_shim_unchanged() {
   [[ -n "$expected_identity" && "$current_identity" == "$expected_identity" ]] \
     || error "Installation stopped because $shim_path changed while NemoClaw prepared its shim. NemoClaw left the current path unchanged. Rerun the installer."
   if [[ "$expected_identity" != "absent" ]]; then
-    is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" \
-      || is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path" \
-      || error "Installation stopped because $shim_path is no longer a NemoClaw-managed shim. NemoClaw left it unchanged. Rerun the installer."
+    is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" || ownership_status=$?
+    if [[ "$ownership_status" -eq 2 ]]; then
+      error "Installation stopped because ACP target ownership verification did not complete for $shim_path. NemoClaw left it unchanged. Check the Git verification error above, then rerun the installer."
+    fi
+    if [[ "$ownership_status" -ne 0 ]] \
+      && ! is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path"; then
+      error "Installation stopped because $shim_path is no longer a NemoClaw-managed shim. NemoClaw left it unchanged. Rerun the installer."
+    fi
   fi
 }
 
 preflight_nemoclaw_acp_shim() {
   local shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw-acp" npm_bin="" cli_path=""
+  local ownership_status=0
   [[ -e "$shim_path" || -L "$shim_path" ]] || return 0
   npm_bin="$(resolve_npm_bin)" \
     || error "Installation stopped because NemoClaw could not resolve the active npm prefix to verify $shim_path. NemoClaw left it unchanged. Fix the npm configuration, then rerun the installer."
@@ -2723,7 +2888,11 @@ preflight_nemoclaw_acp_shim() {
     "$cli_path" -ef "$shim_path" ]]; then
     return 0
   fi
-  is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" "$cli_path" && return 0
+  is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" "$cli_path" || ownership_status=$?
+  [[ "$ownership_status" -eq 0 ]] && return 0
+  if [[ "$ownership_status" -eq 2 ]]; then
+    error "Installation stopped because ACP target ownership verification did not complete for $shim_path. NemoClaw left it unchanged. Check the Git verification error above, then rerun the installer."
+  fi
   is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path" && return 0
   if truthy_env "${FORCE_FRESH_INSTALL:-}" && [[ "$cli_path" != "$shim_path" ]]; then
     _NEMOCLAW_FORCE_FRESH_SKIP_ACP_SHIM=true
@@ -2813,6 +2982,77 @@ try {
 ' "$source_path" "$destination_path" "$expected_identity"
 }
 
+user_local_executable_directory_safe() {
+  local current="$1" uid owner mode metadata mode_value
+  UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
+  [[ "$current" == /* && "$current" != */../* && "$current" != */.. &&
+    "$current" != */./* && "$current" != */. ]] || return 1
+  uid="$(id -u)" || return 1
+  while :; do
+    UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
+    [[ ! -L "$current" ]] || return 1
+    if [[ -e "$current" ]]; then
+      [[ -d "$current" ]] || return 1
+      if metadata="$(stat -c '%u %a' -- "$current" 2>/dev/null)"; then
+        :
+      elif metadata="$(stat -f '%u %Lp' "$current" 2>/dev/null)"; then
+        :
+      else
+        return 1
+      fi
+      read -r owner mode <<<"$metadata"
+      [[ "$owner" =~ ^[0-9]+$ && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+      mode_value=$((8#$mode))
+      [[ "$owner" == "$uid" || "$owner" == 0 ]] || return 1
+      if ((mode_value & 022)); then
+        [[ "$current" != "$1" && "$owner" == 0 ]] && ((mode_value & 01000)) || return 1
+      fi
+    fi
+    [[ "$current" != / ]] || return 0
+    current="${current%/*}"
+    [[ -n "$current" ]] || current=/
+  done
+}
+
+assert_npm_executable_prefix_safe() {
+  local npm_prefix="${1:-}"
+  [[ -n "$npm_prefix" ]] || error "Could not resolve the active npm executable directory."
+  local directory existing_parent parent_mode
+  if ! user_local_executable_directory_safe "$npm_prefix"; then
+    error "Unsafe npm executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
+  if [[ ! -e "$npm_prefix" && ! -L "$npm_prefix" ]]; then
+    existing_parent="$npm_prefix"
+    while [[ ! -e "$existing_parent" && ! -L "$existing_parent" ]]; do
+      existing_parent="${existing_parent%/*}"
+      [[ -n "$existing_parent" ]] || existing_parent=/
+    done
+    if parent_mode="$(stat -c '%a' -- "$existing_parent" 2>/dev/null)"; then
+      :
+    elif parent_mode="$(stat -f '%Lp' "$existing_parent" 2>/dev/null)"; then
+      :
+    else
+      error "Could not inspect npm executable directory $existing_parent."
+    fi
+    [[ "$parent_mode" =~ ^[0-7]{3,4}$ ]] || error "Could not inspect npm executable directory $existing_parent."
+    if (((8#$parent_mode) & 022)); then
+      error "Unsafe npm executable directory $npm_prefix. Create it under a private parent before linking the CLI."
+    fi
+  fi
+  for directory in "$npm_prefix/bin" "$npm_prefix/lib" "$npm_prefix/lib/node_modules"; do
+    if ! user_local_executable_directory_safe "$directory"; then
+      error "Unsafe npm executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+    fi
+  done
+}
+
+assert_user_local_npm_prefix_safe() {
+  local npm_prefix="${1:-}"
+  case "$npm_prefix" in
+    "$HOME" | "$HOME/"*) assert_npm_executable_prefix_safe "$npm_prefix" ;;
+  esac
+}
+
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
   local npm_bin shim_path node_path node_dir cli_path expected_shim temp_shim=""
@@ -2838,11 +3078,27 @@ ensure_cli_shim() {
   if [[ -z "$cli_path" || ! -x "$cli_path" ]]; then
     return 1
   fi
+  assert_npm_executable_prefix_safe "${npm_bin%/bin}"
+  if ! user_local_executable_directory_safe "$(dirname "$NEMOCLAW_SHIM_DIR")"; then
+    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   node_dir="$(dirname "$node_path")"
+
+  if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
+    # Reuse only a direct alias to the validated npm bin. An intermediate
+    # symlink can change after the same-file check. Its parent was checked above.
+    if [[ -L "$NEMOCLAW_SHIM_DIR" && "$(readlink "$NEMOCLAW_SHIM_DIR")" == "$npm_bin" &&
+    "$NEMOCLAW_SHIM_DIR" -ef "$npm_bin" &&
+    "$cli_path" != "$shim_path" && -e "$shim_path" && "$cli_path" -ef "$shim_path" ]]; then
+      :
+    else
+      error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+    fi
+  fi
 
   # If npm placed the binary at the same path as the shim target (e.g. when
   # npm_config_prefix=$HOME/.local), writing a shim would overwrite the real
-  # binary with a script that exec's itself — an infinite loop.  In that case
+  # binary with a script that exec's itself — an infinite loop. In that case
   # the binary is already where it needs to be; skip shim creation.
   if [[ "$cli_path" != "$shim_path" && -e "$shim_path" && "$cli_path" -ef "$shim_path" ]]; then
     refresh_path
@@ -2882,7 +3138,11 @@ EOF
     return 0
   fi
 
-  mkdir -p "$NEMOCLAW_SHIM_DIR"
+  # The shim parent must not become group-writable under a permissive umask.
+  (umask g-w,o-w && mkdir -p "$NEMOCLAW_SHIM_DIR")
+  if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
+    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   temp_shim="$(mktemp "${shim_path}.tmp.XXXXXX")" \
     || error "Could not create a temporary shim beside $shim_path."
   _cleanup_files+=("$temp_shim")
@@ -3103,10 +3363,8 @@ install_nodejs() {
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Fix npm permissions for global installs (Linux only).
-# If the npm global prefix points to a system directory (e.g. /usr or
-# /usr/local) the user likely lacks write permissions and npm link will fail
-# with EACCES.  Redirect the prefix to ~/.npm-global so the install succeeds
-# without sudo.
+# Redirect an unsafe or unwritable system npm prefix to ~/.npm-global.
+# Do not change shared toolchain permissions or weaken publication checks.
 # ---------------------------------------------------------------------------
 fix_npm_permissions() {
   if [[ "$(uname -s)" != "Linux" ]]; then
@@ -3118,24 +3376,33 @@ fix_npm_permissions() {
   if [[ -z "$npm_prefix" ]]; then
     return 0
   fi
+  assert_user_local_npm_prefix_safe "$npm_prefix"
 
-  if [[ -w "$npm_prefix" || -w "$npm_prefix/lib" ]]; then
+  if [[ -w "$npm_prefix" || -w "$npm_prefix/lib" ]] \
+    && (assert_npm_executable_prefix_safe "$npm_prefix" >/dev/null 2>&1); then
     return 0
   fi
 
-  info "npm global prefix '${npm_prefix}' is not writable — configuring user-local installs"
-  mkdir -p "$HOME/.npm-global"
+  info "npm global prefix '${npm_prefix}' is unsafe or not writable — configuring user-local installs"
+  assert_user_local_npm_prefix_safe "$HOME/.npm-global"
+  (umask g-w,o-w && mkdir -p "$HOME/.npm-global") \
+    || error "Could not create the user-local npm directory $HOME/.npm-global."
+  assert_user_local_npm_prefix_safe "$HOME/.npm-global"
   npm config set prefix "$HOME/.npm-global"
+  # Keep source .npmrc files and inherited prefix overrides from selecting
+  # the rejected toolchain again in later installer subprocesses.
+  export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+  export npm_config_prefix="$NPM_CONFIG_PREFIX"
 
   # shellcheck disable=SC2016
   local path_line='export PATH="$HOME/.npm-global/bin:$PATH"'
   for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
-    if [[ -f "$rc" ]] && ! grep -q ".npm-global" "$rc"; then
+    if [[ -f "$rc" ]] && [[ "$(tail -n 1 "$rc")" != "$path_line" ]]; then
       printf '\n# Added by NemoClaw installer\n%s\n' "$path_line" >>"$rc"
     fi
   done
 
-  if [[ ":$PATH:" != *":$HOME/.npm-global/bin:"* ]]; then
+  if [[ "$PATH" != "$HOME/.npm-global/bin" && "$PATH" != "$HOME/.npm-global/bin:"* ]]; then
     export PATH="$HOME/.npm-global/bin:$PATH"
   fi
   ok "npm configured for user-local installs (~/.npm-global)"
@@ -3384,6 +3651,17 @@ finish_nemoclaw_install() {
   ensure_nemoclaw_shim || true
 }
 
+link_nemoclaw_cli() {
+  local source_root="$1" npm_prefix
+  npm_prefix="$(cd "$source_root" && npm config get prefix 2>/dev/null || true)"
+  assert_npm_executable_prefix_safe "$npm_prefix"
+  # shellcheck disable=SC2016  # $1 expands in the child shell.
+  spin "Linking ${_CLI_DISPLAY} CLI" bash -c \
+    'umask g-w,o-w; cd "$1" && npm link --ignore-scripts' _ "$source_root"
+  npm_prefix="$(cd "$source_root" && npm config get prefix 2>/dev/null || true)"
+  assert_npm_executable_prefix_safe "$npm_prefix"
+}
+
 install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   local repo_root package_json
@@ -3410,7 +3688,7 @@ install_nemoclaw() {
     spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && node scripts/lib/openshell-sdk-install.mts prepare && npm install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && node scripts/lib/openshell-sdk-install.mts check"
     spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
     spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm ci --ignore-scripts && npm run build"
-    spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link --ignore-scripts"
+    link_nemoclaw_cli "$NEMOCLAW_SOURCE_ROOT"
 
     _NEMOCLAW_CLI_INSTALL_MODE=source
   else
@@ -3457,7 +3735,7 @@ install_nemoclaw() {
       spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && node scripts/lib/openshell-sdk-install.mts prepare && npm install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && node scripts/lib/openshell-sdk-install.mts check"
       spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
       spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
-      spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link --ignore-scripts"
+      link_nemoclaw_cli "$nemoclaw_src"
       restore_managed_source_lockfile "$nemoclaw_src" \
         || warn "Could not restore package-lock.json in ${nemoclaw_src} — the next install re-clones that checkout instead of reusing it."
     fi
@@ -4835,6 +5113,17 @@ preinstall_backup_and_retire_legacy_gateway() {
     || error "Could not determine the installed OpenShell version. The installer stopped after backup without retiring the gateway."
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
     || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
+    local replacement_installer="${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
+    # Older helpers ignore unknown arguments and would install during preparation.
+    # shellcheck disable=SC2016 # Match the helper's literal positional-argument expression.
+    if ! grep -qF 'if [[ "${1:-}" == --prepare-install-directory ]]; then' "$replacement_installer"; then
+      error "The prepared source cannot verify an OpenShell replacement destination before installation. The gateway was not retired, and sandbox backups were preserved. Use a current installer source, then rerun."
+    fi
+    if ! _NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR="$(
+      bash "$replacement_installer" --prepare-install-directory
+    )"; then
+      error "Could not prepare a safe OpenShell replacement destination. The gateway was not retired, and sandbox backups were preserved."
+    fi
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
@@ -5348,6 +5637,16 @@ agent_supports_deferred_onboarding() {
   grep -Eq '^deferred_onboarding:[[:space:]]*true[[:space:]]*$' "$manifest_path"
 }
 
+validate_retired_inference_provider() {
+  local provider
+  provider="$(printf '%s' "${NEMOCLAW_PROVIDER:-}" | tr '[:upper:]_' '[:lower:]-' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "$provider" in
+    routed | nvidia-router)
+      error "Model Router has been removed; choose a supported inference provider."
+      ;;
+  esac
+}
+
 validate_deferred_onboarding_request() {
   [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 0
 
@@ -5358,9 +5657,9 @@ validate_deferred_onboarding_request() {
     error "--defer-onboarding does not support a local model profile."
   fi
   case "${NEMOCLAW_PROVIDER:-build}" in
-    build | cloud | routed) ;;
+    build | cloud) ;;
     *)
-      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build, cloud, or routed."
+      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build or cloud."
       ;;
   esac
 }
@@ -5397,7 +5696,7 @@ should_defer_onboarding() {
       error "--defer-onboarding does not support a local model profile."
       ;;
     unsupported-provider)
-      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build, cloud, or routed."
+      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build or cloud."
       ;;
     *) error "Unexpected deferred-onboarding installer decision: ${decision:-empty}." ;;
   esac
@@ -7844,6 +8143,7 @@ main() {
   # Validate service-port overrides before dependency installation or any
   # other host mutation. The installed CLI applies the same canonical-decimal
   # contract when it consumes these forwarded values.
+  validate_retired_inference_provider
   validate_forwarded_service_port_overrides
 
   load_station_vllm_conflict_helpers

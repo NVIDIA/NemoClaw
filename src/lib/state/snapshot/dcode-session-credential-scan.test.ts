@@ -7,7 +7,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { inspectExtractedDcodeSessionsDatabase } from "./dcode-session-credential-scan.js";
+import { inspectExtractedDcodeSessionsDatabase } from "./sqlite-credential-scan.js";
 
 const fixtures: string[] = [];
 
@@ -40,6 +40,20 @@ describe("DCode session database credential scan", () => {
     expect(
       inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
     ).toBe(false);
+  });
+
+  it("keeps OpenClaw migration metadata outside the DCode exception", () => {
+    const fixture = createDatabase();
+    const migrationRunId = (hash: string): string => `legacy-main-session-keys:${hash}`;
+    fixture.database.exec("CREATE TABLE migration_runs (id TEXT)");
+    fixture.database
+      .prepare("INSERT INTO migration_runs VALUES (?)")
+      .run(migrationRunId("0123456789abcdef01234567"));
+    fixture.database.close();
+
+    expect(
+      inspectExtractedDcodeSessionsDatabase(fixture.fixture, ".deepagents/.state/sessions.db"),
+    ).toBe(true);
   });
 
   it("rejects a credential stored in a logical SQLite cell", () => {

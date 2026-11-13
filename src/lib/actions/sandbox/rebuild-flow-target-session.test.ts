@@ -181,7 +181,7 @@ describe("rebuildSandbox flow: target session", () => {
 
     try {
       const harness = createRebuildFlowHarness({
-        sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+        sandboxEntry: { agent: "hermes", provider: "build" },
         baseImagePreflight: {
           ok: true,
           imageRef: "nemoclaw-hermes-sandbox-base-local:12345678",
