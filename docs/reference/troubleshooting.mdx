@@ -1742,6 +1742,7 @@ A host-side config write binds to the SHA-256 digest of the matching read, insta
 If a concurrent command reports `Hermes config mutation is already in progress`, do not remove `/run/nemoclaw/hermes-config-mutation.lock` manually.
 Wait for the active config, recovery, or restart command to finish, then retry.
 
+<a id="hermes-startup-reports-hermes_config_mutation_orphaned"></a>
 ### Hermes startup reports `HERMES_CONFIG_MUTATION_ORPHANED`
 
 This refusal means a root-owned config transaction stopped without a safely recoverable complete state.
