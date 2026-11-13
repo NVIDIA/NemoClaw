@@ -4,6 +4,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HOSTED_NATIVE_PROVIDERS } from "../inference/native-provider/hosted";
 import { providerAdapter } from "../../../test/helpers/credentials-provider-adapter.ts";
+import {
+  createCliOpenShellProviderAdapter,
+  type RunProviderCommand,
+} from "../adapters/openshell/provider-adapter-cli";
 import { setGlobalCliActionRuntimeHooksForTest } from "./global";
 import { runCredentialsAddAction } from "./credentials-add";
 
@@ -174,6 +178,52 @@ describe("native hosted credential registration", () => {
     expect(JSON.stringify(result)).not.toContain("host-only-value");
     expect(JSON.stringify(result)).not.toContain("other-secret");
     expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("registers an extra nvidia provider with the profile-declared credential (#13541)", async () => {
+    vi.stubEnv("NVIDIA_API_KEY", "host-only-value");
+    const profile = {
+      id: "nvidia",
+      credentials: [{ env_vars: ["NVIDIA_API_KEY"], required: true }],
+    };
+    const run = vi.fn<RunProviderCommand>((args) => ({
+      status: 0,
+      stdout: args.includes("export") ? JSON.stringify(profile) : "",
+    }));
+    const adapter = createCliOpenShellProviderAdapter({ run, warn: vi.fn() });
+    const result = await runCredentialsAddAction(
+      {
+        provider: "demo-nvidia",
+        type: "nvidia",
+        credentials: ["NVIDIA_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+    const calls = run.mock.calls.map(([args, options]) => ({ args, env: options.env }));
+    expect(result.exitCode).toBe(0);
+    expect(calls[0]?.args).toEqual([
+      "provider",
+      "profile",
+      "-g",
+      "nemoclaw",
+      "export",
+      "nvidia",
+      "--output",
+      "json",
+    ]);
+    expect(calls.find(({ args }) => args.includes("create"))).toEqual({
+      args: expect.arrayContaining([
+        "demo-nvidia",
+        "--type",
+        "nvidia",
+        "--credential",
+        "NVIDIA_API_KEY",
+      ]),
+      env: expect.objectContaining({ NVIDIA_API_KEY: "host-only-value" }),
+    });
+    expect(JSON.stringify(result)).not.toContain("host-only-value");
   });
 
   it("refuses a fixed provider endpoint override without registering anything", async () => {
