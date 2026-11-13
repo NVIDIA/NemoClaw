@@ -40,10 +40,32 @@ describe("onboard build recreate credential reuse (#5441)", () => {
       // Fake openshell: the gateway already holds an nvidia-prod inference route
       // (recovered via `inference get`) and the provider exists (`provider get`
       // returns success), with provider policy composition already enabled.
+      // The existing sandbox is Ready and has the native provider attached.
       // Everything else is a no-op success.
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
+case "$*" in
+  "sandbox get -g nemoclaw rg-test-noninter")
+    cat <<'EOF'
+Name: rg-test-noninter
+Id: rg-test-native-sandbox-id
+Phase: Ready
+EOF
+    exit 0
+    ;;
+  "sandbox list -g nemoclaw")
+    printf '%s\\n' 'rg-test-noninter Ready'
+    exit 0
+    ;;
+  "sandbox provider list -g nemoclaw rg-test-noninter")
+    cat <<'EOF'
+NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS
+nemoclaw-nvidia-prod-v1 nemoclaw-nvidia-inference-v1 1 0
+EOF
+    exit 0
+    ;;
+esac
 if [ "$1" = "settings" ] && [ "$2" = "get" ]; then
   printf '%s\\n' '{"scope":"global","settings":{"providers_v2_enabled":"true"}}'
   exit 0

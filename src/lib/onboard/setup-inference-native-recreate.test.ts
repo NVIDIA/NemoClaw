@@ -32,6 +32,10 @@ function harness(source: Record<string, unknown>) {
     runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
     updateSandbox,
     getSandbox: () => source,
+    getSandboxRecreateObservation: vi.fn(() => ({
+      state: "ready",
+      liveIdentityFingerprint: "a".repeat(64),
+    })),
     getNativeNvidiaProviderAuthority: () => RECEIPT,
     upsertProvider: vi.fn(async () => ({ ok: true })),
     verifyInferenceRoute: vi.fn(),
@@ -53,6 +57,10 @@ function harness(source: Record<string, unknown>) {
       })),
       createProvider: vi.fn(),
       updateProvider: vi.fn(),
+      listProviderAttachments: vi.fn(async () => ({
+        ok: true,
+        value: { names: [RECEIPT.providerName] },
+      })),
     } as unknown as OpenShellProviderAdapter,
     hydrateCredentialEnv: vi.fn(() => null),
     localInference: {},
