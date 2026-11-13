@@ -27,8 +27,10 @@ Confirm client access, cluster permissions, image availability, and inference re
 - **Cluster setup, done by the platform operator:**
   - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 1.0.3. Without its API, the chart's preflight stops the install.
   - A default StorageClass for the gateway's volume. Without one, the volume's claim stays pending and apply fails when Helm's wait times out.
+  - A network plugin that enforces ingress and egress NetworkPolicy in the deployment's namespace, as [OpenShell requires](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/setup.mdx#prerequisites).
+    OpenShell's NetworkPolicies stop each sandbox's workload pod from reaching the network except through its supervisor, and the development issuer's policy admits only the gateway.
 
-  NemoClaw doesn't check either; the chart and the cluster report what is missing.
+  NemoClaw checks none of these. The chart and the cluster report a missing Agent Sandbox or StorageClass, but Kubernetes accepts NetworkPolicies that no plugin enforces, so nothing reports a plugin that ignores them.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
 - **Inference:** an endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).
   Managed model services under `spec.services` are not supported on Kubernetes ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
@@ -131,7 +133,7 @@ Keep the state directory: it holds the cluster ownership receipt and the develop
 
 The `development` profile runs a token issuer for this deployment, which is not an identity service.
 Only NemoClaw can get its tokens, so it gives you no access of your own: to invoke agents or run `openshell` commands against the gateway, use the `oidc` profile and [reach the gateway from the OpenShell CLI](#reach-the-gateway-from-the-openshell-cli).
-To have the gateway authenticate users through your identity provider instead, use the `oidc` profile:
+To have the gateway authenticate users through your identity provider instead, use the `oidc` profile, as [the OIDC example](../../examples/kubernetes/managed-oidc.yaml) does:
 
 ```yaml
 spec:
@@ -152,8 +154,17 @@ spec:
 ```
 
 - `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
-- `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it in the namespace before the first apply, or after NemoClaw creates the namespace and then rerun apply with the same state directory.
+- `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it in the namespace before the first apply, or after NemoClaw creates the namespace and then rerun apply with the same state directory:
+
+  ```sh
+  kubectl --kubeconfig "$NEMOCLAW_CLUSTER_KUBECONFIG" --context my-cluster \
+    --namespace nemoclaw-development create configmap issuer-ca \
+    --from-file=ca.crt=/path/to/issuer-ca.pem
+  ```
+
 - `token.env` names the variable holding the bearer token NemoClaw sends to the gateway.
+  NemoClaw reads the gateway's version and drivers, and creates and deletes its workspace, which OpenShell allows only to a Platform Admin, so the token needs the role `admin_role` names; without it, plan fails with `observation permission denied`.
+  If you set `scopes_claim`, the token also needs the scopes an [external gateway's token](#reach-an-external-gateway-through-an-ingress) does.
 
 NemoClaw runs no sign-in flow and stores no token.
 Before each plan, apply or destroy, get an access token for the audience from your identity provider, for example with its command-line tool, and put it in the variable `token.env` names:
@@ -205,7 +216,7 @@ A new deployment with the same `metadata.uid` in the same namespace reuses the r
 With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](../agents-inference/interfaces.md#invoke-an-agent) and run other `openshell` commands.
 It needs three things: a port forward to the gateway pod, the gateway's client certificate, and an OpenShell gateway entry that signs in through your identity provider.
 A [published gateway](#publish-the-gateway-outside-the-cluster) needs no forward: skip the first step, and add the gateway at `gateway.endpoint` instead of `https://127.0.0.1:17671`.
-No automated test covers these steps; [#14131](https://github.com/NVIDIA/NemoClaw/issues/14131) records one manual run against a bare-metal single-node OpenShift 4.22 cluster with Keycloak as the issuer.
+No automated test covers these steps. [#14131](https://github.com/NVIDIA/NemoClaw/issues/14131) records a manual run of the browser sign-in against a bare-metal single-node OpenShift 4.22 cluster, and [#14192](https://github.com/NVIDIA/NemoClaw/pull/14192) one of the client-credentials sign-in on kind; both used Keycloak as the issuer.
 
 In one terminal, forward the port in `gateway.endpoint` to the gateway, which listens on port 8080 in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets.
 Leave the forward running:
@@ -250,8 +261,27 @@ openshell gateway add https://127.0.0.1:17671 \
 openshell status
 ```
 
+Where no browser can open, such as in a CI job, sign in with a confidential client instead: put its secret in `OPENSHELL_OIDC_CLIENT_SECRET` and pass its ID to the same command.
+The CLI then gets a token from the issuer's token endpoint, without a browser.
+The client's tokens must carry the audience and a role from `openshell.gateway.oidc`:
+
+```sh
+export OPENSHELL_OIDC_CLIENT_SECRET="$(cat /private/openshell-ci-client.secret)"
+openshell gateway add https://127.0.0.1:17671 \
+  --name "$gateway_name" \
+  --oidc-issuer https://login.example.com/realms/openshell \
+  --oidc-client-id REPLACE_WITH_CONFIDENTIAL_CLIENT_ID \
+  --oidc-audience openshell
+openshell status
+```
+
+The pinned CLI doesn't renew a token it got this way ([NVIDIA/OpenShell#4287](https://github.com/NVIDIA/OpenShell/issues/4287)); when it expires, run `openshell gateway login "$gateway_name"` with the secret still set.
+
 `openshell status` reports the gateway as connected and authenticated.
 Then [select the gateway and workspace](../agents-inference/interfaces.md#select-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
+A token with the role `admin_role` names reaches the deployment's workspace.
+A token with only the role `user_role` names reaches it once a platform admin adds the token's subject to the workspace; until then, sandbox commands fail with `not a member of workspace` and print the `openshell workspace member add` command to run.
+With only that role, `openshell status` also reports `authorization denied`, because its check reads gateway details that only an admin may read.
 The client certificate's key grants transport access to the gateway; keep it private and delete the `mtls` directory when you no longer need access.
 See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
@@ -261,7 +291,7 @@ For a managed gateway, `gateway.kubernetes.imagePullSecrets` names Kubernetes Se
 The pinned chart attaches these references to gateway and helper pods and configures OpenShell to attach them to sandbox pods.
 Credential values stay in Kubernetes; NemoClaw does not read, create, rotate, or remove these Secrets.
 
-Add the names to the managed gateway settings:
+Add the names to the managed gateway settings, as [the OIDC example](../../examples/kubernetes/managed-oidc.yaml) does:
 
 ```yaml
 spec:
