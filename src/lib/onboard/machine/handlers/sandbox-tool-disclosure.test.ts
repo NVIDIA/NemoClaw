@@ -3,8 +3,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { buildConfig as buildOpenClawConfig } from "../../../../../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "../../../../../test/helpers/openclaw-env-fixture";
+import { loadServingCatalog } from "../../../inference/serving/catalog-loader";
 import { createSession, type Session } from "../../../state/onboard-session";
+import { resolveSandboxToolDisclosure, type ToolDisclosure } from "../../../tool-disclosure";
 import { handleSandboxState } from "./sandbox";
+import { isMuseGlimmerVllmRecipe } from "./sandbox-resume";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 vi.mock("../../messaging-channel-setup", () => ({
@@ -31,6 +36,39 @@ const registeredEntry = (name: string, overrides: Record<string, unknown> = {}) 
   gatewayName: "nemoclaw",
   ...overrides,
 });
+
+const sha = `sha256:${"a".repeat(64)}`;
+
+const servingProfileProvenanceFor = (recipeId: string, backend: string) => ({
+  schemaVersion: 1 as const,
+  catalogDigest: sha,
+  preset: {
+    id: "preset",
+    digest: sha,
+    displayName: "Preset",
+    supportState: "experimental" as const,
+  },
+  recipe: { id: recipeId, digest: sha, backend },
+  model: { id: "model", revision: "revision" },
+  runtimeImage: null,
+  estimatedImageDownloadBytes: null,
+  estimatedModelDownloadBytes: null,
+});
+
+const STRUCTURED_TOOL_SEARCH = { mode: "tools", searchDefaultLimit: 8, maxSearchLimit: 20 };
+
+/** Feeds the create intent through the sandbox-create resolver and the OpenClaw config generator. */
+const generatedToolSearch = (createIntent: unknown) =>
+  buildOpenClawConfig({
+    ...baseOpenClawGenerationEnv(),
+    NEMOCLAW_TOOL_DISCLOSURE: resolveSandboxToolDisclosure({
+      requested: (createIntent as { toolDisclosure: ToolDisclosure }).toolDisclosure,
+      recorded: undefined,
+      session: undefined,
+      sandboxExists: false,
+      recreate: false,
+    }),
+  }).tools?.toolSearch;
 
 describe("handleSandboxState tool disclosure", () => {
   it.each([
@@ -102,6 +140,114 @@ describe("handleSandboxState tool disclosure", () => {
       expect(calls.removeSandbox).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    [
+      "Muse Glimmer on DGX Spark",
+      "vllm-local",
+      "muse-glimmer",
+      "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
+      "vllm",
+      null,
+      "progressive",
+      "muse-glimmer",
+    ],
+    [
+      "Muse Glimmer on Linux amd64",
+      "vllm-local",
+      "muse-glimmer",
+      "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
+      "vllm",
+      null,
+      "progressive",
+      "muse-glimmer",
+    ],
+    [
+      "Muse Glimmer with an explicit direct choice",
+      "vllm-local",
+      "muse-glimmer",
+      "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
+      "vllm",
+      "direct",
+      "direct",
+      "muse-glimmer",
+    ],
+    [
+      "another managed vLLM recipe",
+      "vllm-local",
+      "qwen3-6-27b",
+      "vllm.qwen3-6-27b-fp8.linux-amd64-single.v1",
+      "vllm",
+      null,
+      "direct",
+      "qwen3-6-27b",
+    ],
+    [
+      "a Muse recipe recorded for another provider",
+      "ollama-local",
+      "muse-glimmer",
+      "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
+      "vllm",
+      null,
+      "direct",
+      "muse-glimmer",
+    ],
+    [
+      "a Muse reservation that records another model",
+      "vllm-local",
+      "muse-glimmer",
+      "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
+      "vllm",
+      null,
+      "direct",
+      "another-model",
+    ],
+  ] as const)(
+    "selects tool disclosure for %s (#14065)",
+    async (_case, provider, model, recipeId, backend, requested, expected, entryModel) => {
+      const session = createSession({
+        servingProfileProvenance: servingProfileProvenanceFor(recipeId, backend),
+      });
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) =>
+            registeredEntry(name, {
+              provider,
+              model: entryModel,
+              pendingRouteReservation: true,
+              reservationSessionId: session.sessionId,
+            }),
+        },
+        session,
+      );
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        provider,
+        model,
+        agent: { name: "openclaw" },
+        env: requested ? { NEMOCLAW_TOOL_DISCLOSURE: requested } : {},
+      });
+
+      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: expected });
+      expect(generatedToolSearch(createSandboxCall[15])).toEqual(
+        expected === "progressive" ? STRUCTURED_TOOL_SEARCH : false,
+      );
+      expect(calls.removeSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it("serves every catalog recipe the Muse default applies to on a 32K window (#14065)", () => {
+    const windows = loadServingCatalog()
+      .recipes.filter(isMuseGlimmerVllmRecipe)
+      .map(({ spec }) => {
+        const args = spec.serve && "arguments" in spec.serve ? (spec.serve.arguments ?? []) : [];
+        return args.find(({ name }) => name === "--max-model-len")?.value;
+      });
+    expect(windows).not.toHaveLength(0);
+    expect(new Set(windows)).toEqual(new Set([32768]));
+  });
 
   it.each(["progressive", "direct"] as const)(
     "preserves recorded %s disclosure for an N1x Qwen sandbox (#13088)",
