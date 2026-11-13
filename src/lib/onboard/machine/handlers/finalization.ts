@@ -5,7 +5,11 @@ import { CLI_NAME } from "../../../cli/branding";
 import { OPENROUTER_PROVIDER_NAME } from "../../../inference/openrouter";
 import type { ExternalComponentActivationIncomplete } from "../../../state/onboard-session";
 import { DCODE_AGENT_NAME } from "../../observability-policy-presets";
-import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
+import {
+  type DashboardRuntimeAgent,
+  manageLaterLines,
+  shouldManageDashboardForAgent,
+} from "../../dashboard-runtime";
 import type { PreparedExternalComponent } from "../../external-component";
 import type {
   ExternalComponentActivationProof,
@@ -198,6 +202,7 @@ function terminalInferenceIncompleteMessage(sandboxName: string, detail: string)
 
 function logTerminalReadyBlock(
   sandboxName: string,
+  model: string,
   agent: unknown,
   log: (message?: string) => void,
 ): void {
@@ -209,6 +214,10 @@ function logTerminalReadyBlock(
         ? terminalAgent.name
         : "Terminal agent";
   log(`  ✓ ${displayName} terminal runtime is ready`);
+  if (terminalAgent.name === DCODE_AGENT_NAME) {
+    log(`  Sandbox: ${sandboxName}`);
+    log(`  Model: ${model}`);
+  }
   // Lead with the one-step path (#6006); `connect` still opens a sandbox shell.
   // Only terminal agents reach this block, so the variant binary (for example
   // `nemo-deepagents`) is the common case — use the resolved name, not a literal.
@@ -220,6 +229,11 @@ function logTerminalReadyBlock(
   if (typeof terminalAgent.runtime?.headless_command === "string") {
     log(`  Headless: ${terminalAgent.runtime.headless_command} "<task>"`);
   }
+  if (terminalAgent.name !== DCODE_AGENT_NAME) return;
+  const onboard = `${CLI_NAME} onboard --agent ${DCODE_AGENT_NAME} --name ${sandboxName}`;
+  const reonboard = `${onboard} --fresh --recreate-sandbox  # choose the new model during onboarding`;
+  const rotate = `${onboard}  # with the replacement key exported`;
+  for (const line of manageLaterLines(CLI_NAME, sandboxName, reonboard, rotate)) log(line);
 }
 
 function recoveryIncompleteMessage(
@@ -504,7 +518,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     })) ?? { ok: false, detail: "bounded sandbox inference verification is unavailable" };
     deploymentHealthy = inference.ok;
     if (deploymentHealthy) {
-      logTerminalReadyBlock(sandboxName, agent, deps.log);
+      logTerminalReadyBlock(sandboxName, model, agent, deps.log);
     } else {
       const message = terminalInferenceIncompleteMessage(
         sandboxName,
@@ -515,7 +529,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     }
     deps.reportDeploymentReadiness(deploymentHealthy);
   } else {
-    logTerminalReadyBlock(sandboxName, agent, deps.log);
+    logTerminalReadyBlock(sandboxName, model, agent, deps.log);
   }
 
   const sessionUpdates = deps.toSessionUpdates({

@@ -345,7 +345,17 @@ describe("onboard dashboard helpers", () => {
     expect(output).not.toContain("gateway-token --quiet");
     expect(output).not.toContain("append  #token=<token>");
     expect(output).not.toMatch(/secret[-_]?token/);
-    expect(output).toContain("nemoclaw credentials reset <PROVIDER> && nemoclaw onboard");
+    expect(output).toContain(
+      [
+        "  Manage later",
+        "",
+        "    Status:      nemoclaw my-gpt-claw status",
+        "    Logs:        nemoclaw my-gpt-claw logs --follow",
+        "    Model:       nemoclaw inference set --model <model> --provider <provider> --sandbox my-gpt-claw",
+        "    Policies:    nemoclaw my-gpt-claw policy add",
+        "    Credentials: nemoclaw credentials reset <PROVIDER> && nemoclaw onboard",
+      ].join("\n"),
+    );
     expect(output).not.toContain("credentials reset <KEY>");
     expect(nimStatus).toHaveBeenCalledWith("my-gpt-claw");
   });
