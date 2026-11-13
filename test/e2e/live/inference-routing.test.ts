@@ -509,13 +509,42 @@ async function runRuntimeIdentityE2EScenario(
   expect(runId).toMatch(/^nc-[A-Za-z0-9-]+$/);
   progress.phase("prove inference remains live after identity attachment");
   const inferenceRequestOffset = inference.requests().length;
-  await expectOpenAiChatThroughSandbox(
+  const inferenceProbe = expectOpenAiChatThroughSandbox(
     sandbox,
     sandboxName,
     model,
     [inferenceKey],
     `${artifactPrefix}-inference-after-identity-attach`,
   );
+  await inferenceProbe.catch(async () => {
+    try {
+      // Observe the secret-free installation receipt after the failed request,
+      // so this diagnostic cannot delay or retry the request being diagnosed.
+      await sandbox.openshell(
+        [
+          "sandbox",
+          "provider",
+          "status",
+          sandboxName,
+          providerName,
+          "--output",
+          "json",
+          "--timeout",
+          "3",
+        ],
+        {
+          artifactName: `${artifactPrefix}-provider-readiness-after-inference-failure`,
+          env: openshellEnv,
+          redactionValues,
+          timeoutMs: 5_000,
+        },
+      );
+    } catch {
+      // Missing diagnostic evidence must not replace the original inference failure.
+    }
+  });
+  // Await the same request again to preserve its original result after observation.
+  await inferenceProbe;
   expect(inference.requests().length).toBeGreaterThan(inferenceRequestOffset);
   progress.phase("call the protected resource with the injected bearer");
   let placeholder = "";
