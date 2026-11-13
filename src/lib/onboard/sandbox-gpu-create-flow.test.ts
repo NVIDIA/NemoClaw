@@ -359,7 +359,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       .mockReturnValueOnce(30_000);
 
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "did not return one exact durable sandbox identity before post-create effects",
+      "cannot confirm the sandbox was created",
     );
 
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
