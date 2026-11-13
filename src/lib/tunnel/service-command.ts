@@ -113,11 +113,7 @@ export async function runStartCommand(deps: StartCommandDeps): Promise<void> {
 }
 
 export function runStopCommand(deps: StopCommandDeps): void {
-  const options: {
-    sandboxName?: string;
-    releaseGatewayPort?: boolean;
-    stopSandboxGateway?: boolean;
-  } = {
+  const options: Parameters<StopCommandDeps["stopAll"]>[0] = {
     sandboxName: resolveDefaultSandboxName(deps.listSandboxes),
   };
   if (deps.releaseGatewayPort) {

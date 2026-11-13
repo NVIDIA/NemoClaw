@@ -1352,8 +1352,9 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
   }
 
+  // `tunnel stop` leaves the in-sandbox gateway running: it is the sandbox's main process (#14321).
   if (opts.stopSandboxGateway === false) {
-    // Host-service stop only: leave the in-sandbox gateway running (#14321).
+    // Nothing to stop inside the sandbox.
   } else if (sandboxName) {
     sandboxGatewayStop.stopSandboxChannels(sandboxName, {
       ...(opts.channelStopTransport ? { channelStopTransport: opts.channelStopTransport } : {}),
