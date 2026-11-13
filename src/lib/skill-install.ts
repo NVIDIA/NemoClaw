@@ -378,9 +378,13 @@ export function buildCanonicalSkillAddCommand(
   skillName: string,
   stagedSkillDirectory: string,
   expectedDigest?: string,
+  removeCommand?: string,
 ): string[] {
   if (!validateSkillName(skillName)) throw new Error("Invalid skill name");
   if (!stagedSkillDirectory.endsWith(`/${skillName}`)) throw new Error("Invalid staged skill path");
+  const refusalHint = removeCommand
+    ? `Remove it first with: ${removeCommand}`
+    : "Native skill list remains authoritative.";
   if (expectedDigest !== undefined && !SHA256_PATTERN.test(expectedDigest)) {
     throw new Error("Invalid skill content digest");
   }
@@ -410,7 +414,7 @@ export function buildCanonicalSkillAddCommand(
       '[ -d "$source" ] && [ ! -L "$source" ] && [ "$(realpath -e -- "$source")" = "$source" ]',
       '[ -z "$(find "$source" -mindepth 1 ! -type d ! -type f -print -quit)" ]',
       'destination="$name"',
-      'if [ -e "$destination" ] || [ -L "$destination" ]; then printf "Refusing to replace existing %s in the canonical writable skill root. Native skill list remains authoritative.\\n" "$name" >&2; exit 1; fi',
+      `if [ -e "$destination" ] || [ -L "$destination" ]; then printf "Refusing to replace existing %s in the canonical writable skill root. %s\\n" "$name" ${shellQuote(refusalHint)} >&2; exit 1; fi`,
       'temporary="$(mktemp -d "$root/.nemoclaw-skill-add.$name.XXXXXX")"',
       ...(expectedDigest === undefined
         ? [
