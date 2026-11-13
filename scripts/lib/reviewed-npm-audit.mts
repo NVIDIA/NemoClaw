@@ -1053,6 +1053,7 @@ export function runReviewedNpmAudit(
     reviewedNpmIdentity?: ReviewedNpmIdentity;
     reportFile?: string;
     resultFile?: string;
+    reviewedLockSha256?: string;
     threshold: Severity;
     throwOnBlock?: boolean;
   }>,
@@ -1153,8 +1154,24 @@ export function runReviewedNpmAudit(
   ).join(" ");
   console.log(`${options.graph}: ${summary} status=${policyResult.status}`);
   if ((options.throwOnBlock ?? true) && policyResult.unacceptedBlockingAdvisories.length > 0) {
+    const advisories = policyResult.unacceptedBlockingAdvisories
+      .map((finding) => finding.advisory)
+      .join(", ");
+    // Trusted CI audits the committed lockfile before release. Advisories
+    // published later must not break local rebuilds of that exact graph; any
+    // other graph stays fail-closed.
+    if (
+      options.reviewedLockSha256 &&
+      sha256(fs.readFileSync(path.join(options.directory, "package-lock.json"))) ===
+        options.reviewedLockSha256
+    ) {
+      console.warn(
+        `WARNING: ${options.graph}: npm audit findings at or above ${options.threshold} published after the reviewed lockfile: ${advisories}; update NemoClaw to a release with patched dependencies`,
+      );
+      return policyResult;
+    }
     throw new Error(
-      `${options.graph}: unaccepted npm audit findings at or above ${options.threshold}: ${policyResult.unacceptedBlockingAdvisories.map((finding) => finding.advisory).join(", ")}`,
+      `${options.graph}: unaccepted npm audit findings at or above ${options.threshold}: ${advisories}`,
     );
   }
   return policyResult;
@@ -1171,6 +1188,7 @@ export function parseReviewedNpmAuditCliArgs(
   reviewedNpmIdentity?: ReviewedNpmIdentity;
   reportFile?: string;
   resultFile?: string;
+  reviewedLockSha256?: string;
   threshold: Severity;
 } {
   const values = new Map<string, string>();
@@ -1190,6 +1208,7 @@ export function parseReviewedNpmAuditCliArgs(
     "--graph",
     "--report",
     "--result",
+    "--reviewed-lock-config",
     "--threshold",
   ]);
   const unknown = [...values.keys()].filter((key) => !allowed.has(key));
@@ -1211,6 +1230,10 @@ export function parseReviewedNpmAuditCliArgs(
   const reviewedNpmIdentity = auditConfigFile
     ? parseReviewedNpmIdentityConfig(fs.readFileSync(auditConfigFile, "utf8"))
     : undefined;
+  const reviewedLockConfigFile = values.get("--reviewed-lock-config");
+  const reviewedLockSha256 = reviewedLockConfigFile
+    ? readReviewedLockSha256(reviewedLockConfigFile, graph)
+    : undefined;
   return {
     ...(cacheFile ? { cacheFile } : {}),
     directory,
@@ -1220,7 +1243,22 @@ export function parseReviewedNpmAuditCliArgs(
     threshold: threshold as Severity,
     ...(values.has("--report") ? { reportFile: values.get("--report") } : {}),
     ...(values.has("--result") ? { resultFile: values.get("--result") } : {}),
+    ...(reviewedLockSha256 ? { reviewedLockSha256 } : {}),
   };
+}
+
+function readReviewedLockSha256(configFile: string, graph: string): string {
+  const config = JSON.parse(fs.readFileSync(configFile, "utf8")) as { lockedGraphs?: unknown };
+  const entry = Array.isArray(config.lockedGraphs)
+    ? (config.lockedGraphs as Array<{ id?: unknown; lockSha256?: unknown }>).find(
+        (candidate) => candidate?.id === graph,
+      )
+    : undefined;
+  const lockSha256 = entry?.lockSha256;
+  if (typeof lockSha256 !== "string" || !/^[0-9a-f]{64}$/.test(lockSha256)) {
+    throw new Error(`reviewed lockfile config has no SHA-256 for graph ${graph}`);
+  }
+  return lockSha256;
 }
 
 function isMainModule(): boolean {
