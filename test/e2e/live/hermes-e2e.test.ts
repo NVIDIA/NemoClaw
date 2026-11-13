@@ -20,6 +20,7 @@ import {
   createExtraGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
 import { scopeGatewayOpenshellArgs } from "../../../src/lib/adapters/openshell/gateway-scope.ts";
+import { parseOpenShellPolicy } from "../../../src/lib/adapters/openshell/policy-boundary.ts";
 import {
   startSwitchyardBoundaryUpstream,
   switchyardBoundaryProbe,
@@ -973,7 +974,9 @@ test(
       removeBoundaryPolicyDirectory = async () =>
         fs.rmSync(boundaryPolicyDirectory, { recursive: true, force: true });
       const originalPolicyPath = path.join(boundaryPolicyDirectory, "policy.yaml");
-      fs.writeFileSync(originalPolicyPath, originalPolicy.stdout, { mode: 0o600 });
+      fs.writeFileSync(originalPolicyPath, parseOpenShellPolicy(originalPolicy.stdout).yamlBody, {
+        mode: 0o600,
+      });
       restoreBoundaryPolicy = () =>
         boundaryCommand(
           ["policy", "set", SANDBOX_NAME, "--policy", originalPolicyPath, "--wait"],
