@@ -252,6 +252,7 @@ describe("OpenShell gateway upgrade boundary", () => {
   });
 
   it("pins the v0.0.123 gateway-registration regression target to amd64 (#11898)", () => {
+    expect(REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.additionalStoppedSandboxes).toBe(1);
     const { environment, runner, shard } = catalogueTarget(
       "openshell-gateway-upgrade-v0-0-123-x86-64",
     );
