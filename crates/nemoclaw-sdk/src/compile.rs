@@ -300,9 +300,22 @@ fn targets_with_plans(
                 .insert("credential_source".into(), source);
         }
     }
-    // OpenShell objects and Fabric configurations name their gateway.
+    // OpenShell objects and Fabric configurations name their gateway. On a
+    // gateway APF governs, APF authors each sandbox's policy and serves the
+    // profile of each credential.
     let gateway = gateway_values(document, generations)?;
+    let apf = document.spec.gateway.policy_authority().is_some();
     for target in &mut result {
+        if apf
+            && matches!(
+                target.kind.as_str(),
+                "sandbox" | "web_search" | "api" | "inference"
+            )
+        {
+            target
+                .values
+                .insert("policy_authority".into(), "apf".into());
+        }
         if nemoclaw_openshell::references(&target.kind)
             .iter()
             .any(|reference| reference.kind == nemoclaw_openshell::GATEWAY_TYPE)

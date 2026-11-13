@@ -164,6 +164,9 @@ impl Document {
             names.extend(tls.certificate.iter().map(|file| file.env.as_str()));
             names.extend(tls.key.iter().map(|file| file.env.as_str()));
         }
+        if let Some(tls) = g.managed_apf().and_then(|apf| apf.tls.as_ref()) {
+            names.push(tls.ca.env.as_str());
+        }
         if let Ok(providers) = self.selected_inference_providers() {
             for provider in providers {
                 if let Some(credential) = &provider.credential {
@@ -305,6 +308,17 @@ impl Gateway {
             Self::Managed(gateway) => &mut gateway.runtime,
             Self::External(gateway) => &mut gateway.runtime,
         }
+    }
+    /// Who authors sandbox policy on this gateway; `None` means NemoClaw does.
+    pub fn policy_authority(&self) -> Option<&PolicyAuthority> {
+        match self {
+            Self::Managed(gateway) => gateway.policy_authority.as_ref(),
+            Self::External(gateway) => gateway.policy_authority.as_ref(),
+        }
+    }
+    /// APF's connection settings, when NemoClaw registers APF with this gateway.
+    pub fn managed_apf(&self) -> Option<&ManagedApf> {
+        self.policy_authority()?.managed()
     }
     /// The endpoint used to connect to either gateway configuration.
     pub fn endpoint(&self) -> &str {

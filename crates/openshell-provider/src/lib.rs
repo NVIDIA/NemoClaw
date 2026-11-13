@@ -295,7 +295,12 @@ fn sandbox_row(
     }
     let observed_policy = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
     let grants = network::recorded_grants(&input, observed_policy)?;
-    if policy_json(observed_policy)? != policy_json(&launch.granted_policy(&input, &grants)?)? {
+    let (authority, provenance) = policy_authority(&meta.annotations)?;
+    // NemoClaw authored the policy unless APF governs it; APF's admission
+    // replaces the submitted policy with its bundle's.
+    if authority.is_empty()
+        && policy_json(observed_policy)? != policy_json(&launch.granted_policy(&input, &grants)?)?
+    {
         return Err(ObservationError::BindingMismatch);
     }
     let expected_providers = inference::provider_names(&inference)?;
@@ -317,6 +322,8 @@ fn sandbox_row(
     row.insert("driver_config_json".into(), driver_config);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
+    row.insert(POLICY_AUTHORITY.into(), authority.into());
+    row.insert(POLICY_PROVENANCE.into(), provenance);
     // Empty until the loaded policy is observed.
     row.insert(POLICY_HASH.into(), String::new());
     // Empty unless OpenShell reports that the sandbox exited.
@@ -324,30 +331,97 @@ fn sandbox_row(
     // Phase is used by active checks, but is not a Terraform schema attribute.
     Ok((row, ready, grants))
 }
+/// The sandbox attribute naming who authors its policy: empty for NemoClaw,
+/// `apf` for APF's admission interceptor.
+pub(crate) const POLICY_AUTHORITY: &str = "policy_authority";
+/// The sandbox annotation recording [`POLICY_AUTHORITY`] at creation.
+pub(crate) const POLICY_AUTHORITY_ANNOTATION: &str = "nemoclaw.nvidia.com/policy-authority";
+/// The provenance APF records on each sandbox whose policy it admitted.
+const APF_PROVENANCE: [&str; 5] = [
+    "apf.nvidia.com/bundle-id",
+    "apf.nvidia.com/signer-identity",
+    "apf.nvidia.com/document-digest",
+    "apf.nvidia.com/policy-version",
+    APF_PROVENANCE_TOKEN,
+];
+/// APF's token for the policy it issued, new with each issue.
+const APF_PROVENANCE_TOKEN: &str = "apf.nvidia.com/provenance-token";
+
+/// Who authored an observed sandbox's policy, and for an APF-governed
+/// sandbox, APF's provenance token: empty when APF's provenance is incomplete.
+/// The token's signature is not verified here yet.
+fn policy_authority(
+    annotations: &std::collections::HashMap<String, String>,
+) -> Result<(&'static str, String), ObservationError> {
+    match annotations
+        .get(POLICY_AUTHORITY_ANNOTATION)
+        .map(String::as_str)
+    {
+        None => Ok(("", String::new())),
+        Some("apf") => {
+            let complete = APF_PROVENANCE
+                .iter()
+                .all(|key| annotations.get(*key).is_some_and(|v| !v.is_empty()));
+            let token = annotations
+                .get(APF_PROVENANCE_TOKEN)
+                .filter(|_| complete)
+                .cloned()
+                .unwrap_or_default();
+            Ok(("apf", token))
+        }
+        Some(_) => Err(ObservationError::BindingMismatch),
+    }
+}
+
+/// Plan APF to issue its policy again to a governed sandbox whose loaded policy
+/// was observed not to be the one APF issued; carry the token otherwise.
+fn reissue_when_unproven(
+    name: &str,
+    prior: &nemoclaw_tofu::State,
+) -> Option<tf_provider::value::Value<String>> {
+    use tf_provider::value::Value;
+    let governed = matches!(prior.get(POLICY_AUTHORITY), Some(Value::Value(a)) if a == "apf");
+    match prior.get(name) {
+        Some(Value::Value(token)) if governed && token.is_empty() => Some(Value::Unknown),
+        _ => nemoclaw_tofu::carry_prior(name, prior),
+    }
+}
+
 /// The state attribute recording the loaded policy revision's hash.
 pub(crate) const POLICY_HASH: &str = "policy_hash";
+/// The state attribute recording APF's provenance token for an APF-governed
+/// sandbox's loaded policy. Empty when that policy is not the one APF issued,
+/// which plans asking APF to issue it again.
+pub(crate) const POLICY_PROVENANCE: &str = "policy_provenance";
+/// The loaded policy revision's version, which an observation carries to the
+/// provider's checks and removes before it is recorded.
+pub(crate) const LOADED_VERSION: &str = "loaded_policy_version";
 /// The state attribute recording why OpenShell reports the sandbox exited:
 /// its terminal phase, reason, and exit code. A sandbox that exited plans a
 /// replacement.
 pub(crate) const EXITED: &str = "exited";
 
 /// The hash of the loaded policy revision, once it keeps every declared rule.
+/// `expected` is `None` when APF authored the policy: NemoClaw then declares
+/// no rules, and only records the hash.
 fn active_policy(
     response: proto::GetSandboxPolicyStatusResponse,
-    expected: &str,
+    expected: Option<&str>,
 ) -> Result<String, ObservationError> {
     let revision = response.revision.ok_or(ObservationError::Incomplete)?;
+    let policy = revision
+        .policy
+        .as_ref()
+        .ok_or(ObservationError::Incomplete)?;
     if response.active_version == 0
         || response.active_version != revision.version
         || revision.status != proto::PolicyStatus::Loaded as i32
         || revision.policy_hash.is_empty()
-        || !network::loaded_policy_contains(
-            revision
-                .policy
-                .as_ref()
-                .ok_or(ObservationError::Incomplete)?,
-            expected,
-        )?
+    {
+        return Err(ObservationError::Incomplete);
+    }
+    if let Some(expected) = expected
+        && !network::loaded_policy_contains(policy, expected)?
     {
         return Err(ObservationError::Incomplete);
     }
@@ -486,6 +560,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "binaries_json",
                 "auth_style",
                 "header_name",
+                POLICY_AUTHORITY,
             ],
             &["credential_env", "binaries_json"],
         )
@@ -495,6 +570,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "binaries_json",
             "auth_style",
             "header_name",
+            POLICY_AUTHORITY,
         ])
         .reset_when_omitted(&[
             "endpoint",
@@ -502,6 +578,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "binaries_json",
             "auth_style",
             "header_name",
+            POLICY_AUTHORITY,
         ])
         .validate_inputs(composite::validate_api)
         .replaces(binaries_changes)
@@ -522,12 +599,23 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "credential_env",
                 "sandbox_env",
                 "binaries_json",
+                POLICY_AUTHORITY,
             ],
             &["binaries_json"],
         )
-        .optional(&["credential_env", "sandbox_env", "binaries_json"])
+        .optional(&[
+            "credential_env",
+            "sandbox_env",
+            "binaries_json",
+            POLICY_AUTHORITY,
+        ])
         // Omission selects the default, not the previous value.
-        .reset_when_omitted(&["credential_env", "sandbox_env", "binaries_json"])
+        .reset_when_omitted(&[
+            "credential_env",
+            "sandbox_env",
+            "binaries_json",
+            POLICY_AUTHORITY,
+        ])
         .replaces(binaries_changes)
         .derived("registration", web_search_registration),
         // An inference server's profile and registration, as one resource
@@ -551,6 +639,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "api",
                 "binaries_json",
                 "cluster_source",
+                POLICY_AUTHORITY,
             ],
             &["credential_env", "binaries_json"],
         )
@@ -560,6 +649,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "credential_source",
             "binaries_json",
             "cluster_source",
+            POLICY_AUTHORITY,
         ])
         // Omission selects the default, not the previous value.
         .reset_when_omitted(&[
@@ -567,6 +657,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "credential_source",
             "binaries_json",
             "cluster_source",
+            POLICY_AUTHORITY,
         ])
         .replaces(inference_changes)
         .derived("registration", provider_registration)
@@ -583,6 +674,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "policy_json",
                 "provider_names_json",
                 "driver_config_json",
+                POLICY_AUTHORITY,
                 services::FIELD,
             ],
             // Service exposures change on the live sandbox, as `openshell
@@ -591,13 +683,17 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
         )
         // The policy hash is empty until the loaded policy is observed.
         .optional(&[
+            POLICY_AUTHORITY,
             "policy_json",
             "provider_names_json",
             "driver_config_json",
             services::FIELD,
             POLICY_HASH,
+            POLICY_PROVENANCE,
             EXITED,
         ])
+        // Omission means NemoClaw authors the policy, not the previous value.
+        .reset_when_omitted(&[POLICY_AUTHORITY])
         .validate_inputs(network::validate_grant_names)
         // The URLs the gateway reports for the exposures; changed exposures
         // report theirs when applied.
@@ -606,6 +702,9 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
         // The loaded policy's hash, OpenShell's additions included; later
         // observations must find the same one.
         .computed(POLICY_HASH, nemoclaw_tofu::carry_prior)
+        // APF's token for an APF-governed sandbox's loaded policy; a policy APF
+        // did not issue is planned to be issued again in place.
+        .computed(POLICY_PROVENANCE, reissue_when_unproven)
         // OpenShell doesn't restart an exited sandbox, so it is replaced.
         .computed(EXITED, nemoclaw_tofu::replace_when_observed)
         .replace_on_change(&[EXITED]),

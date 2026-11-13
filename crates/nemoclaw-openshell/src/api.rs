@@ -5,7 +5,8 @@ use nemoclaw_backend::ObservationError;
 use openshell_sdk::raw::proto;
 
 /// A stable placeholder name, independent of the host's credential reference.
-fn credential_key(name: &str) -> String {
+/// The variable a sandbox reads an API credential named `name` from.
+pub fn credential_key(name: &str) -> String {
     format!(
         "NEMOCLAW_API_{}_KEY",
         name.replace('-', "_").to_ascii_uppercase()

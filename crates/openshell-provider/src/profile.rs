@@ -203,6 +203,40 @@ fn native_definition(
     Ok(profile)
 }
 
+/// The observed field holding the variable an APF-served profile's credential
+/// reaches the sandbox in.
+pub(super) const APF_CREDENTIAL_VARIABLE: &str = "credential_variable";
+
+/// The variable a profile's credential reaches the sandbox in, or empty for a
+/// profile without one.
+pub(super) fn credential_variable(profile: &proto::ProviderProfile) -> &str {
+    profile
+        .credentials
+        .first()
+        .and_then(|c| c.env_vars.first())
+        .map(String::as_str)
+        .unwrap_or_default()
+}
+
+/// The variable NemoClaw tells the agent to read the credential of the profile
+/// half `want` from: the inference key when authenticated, the API key, or the
+/// search key's sandbox variable. Empty when the profile needs no credential.
+pub(super) fn apf_credential_variable(want: &Row) -> Result<String, ObservationError> {
+    let name = want.get("name").map(String::as_str).unwrap_or_default();
+    if let Some(registration) = name.strip_prefix("nemoclaw-inference-") {
+        return Ok(match want.get("authenticated").map(String::as_str) {
+            Some("true") => nemoclaw_openshell::profile::inference_key_env(registration),
+            _ => String::new(),
+        });
+    }
+    if let Some(api) = name.strip_prefix("nemoclaw-api-") {
+        return Ok(nemoclaw_openshell::api::credential_key(api));
+    }
+    SearchProvider::from_profile(name)
+        .map(|provider| sandbox_env(provider, want))
+        .ok_or(ObservationError::Query)
+}
+
 pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationError> {
     let name = want["name"]
         .strip_prefix("nemoclaw-api-")
@@ -472,13 +506,13 @@ impl ConnectedOpenShellGateway {
         .await
     }
 
-    pub(super) async fn observe_profile(
+    /// The profile OpenShell holds under `name`, if any.
+    async fn fetch_profile(
         &self,
         workspace: &str,
         name: &str,
-        removing: bool,
-    ) -> Result<Option<Row>, ObservationError> {
-        let response = authoritative(
+    ) -> Result<Option<proto::ProviderProfile>, ObservationError> {
+        authoritative(
             self.client
                 .raw_grpc()
                 .get_provider_profile(self.request(proto::GetProviderProfileRequest {
@@ -486,21 +520,68 @@ impl ConnectedOpenShellGateway {
                     workspace_scope: Some(proto::workspace_selector(workspace)),
                 }))
                 .await,
-        )?;
-        match response {
-            Some(response) => self
-                .checked_profile_row(
-                    response.profile.ok_or(ObservationError::Incomplete)?,
-                    workspace,
-                    name,
-                    true,
-                    removing,
-                )
+        )?
+        .map(|response| response.profile.ok_or(ObservationError::Incomplete))
+        .transpose()
+    }
+
+    pub(super) async fn observe_profile(
+        &self,
+        workspace: &str,
+        name: &str,
+        removing: bool,
+    ) -> Result<Option<Row>, ObservationError> {
+        match self.fetch_profile(workspace, name).await? {
+            Some(profile) => self
+                .checked_profile_row(profile, workspace, name, true, removing)
                 .await
                 .map(Some),
             None => Ok(None),
         }
     }
+    /// The profile APF's interceptor serves under `name`. OpenShell sets a
+    /// profile's source, so an interceptor source means the gateway took it
+    /// from an interceptor's snapshot, not from an import. Its content is
+    /// APF's, verified by APF; NemoClaw reads at most one credential from it,
+    /// which [`apf_credential_variable`] says where to find.
+    pub(super) async fn apf_profile(
+        &self,
+        workspace: &str,
+        name: &str,
+    ) -> Result<Option<proto::ProviderProfile>, ObservationError> {
+        let Some(profile) = self.fetch_profile(workspace, name).await? else {
+            return Ok(None);
+        };
+        if profile.id != name
+            || !profile.source.starts_with("interceptor/")
+            || profile.credentials.len() > 1
+            || profile.credentials.iter().any(|c| c.env_vars.len() != 1)
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        Ok(Some(profile))
+    }
+
+    /// [`Self::apf_profile`] as the profile half of a credential resource.
+    pub(super) async fn observe_apf_profile(
+        &self,
+        workspace: &str,
+        name: &str,
+    ) -> Result<Option<Row>, ObservationError> {
+        Ok(self.apf_profile(workspace, name).await?.map(|profile| {
+            [
+                ("id".into(), format!("{}/{}", profile.source, profile.id)),
+                ("name".into(), profile.id.clone()),
+                ("workspace".into(), workspace.into()),
+                (
+                    APF_CREDENTIAL_VARIABLE.into(),
+                    credential_variable(&profile).into(),
+                ),
+            ]
+            .into()
+        }))
+    }
+
     pub(super) async fn create_profile(&self, want: &Row) -> Result<String, ObservationError> {
         let search = SearchProvider::from_profile(&want["name"]);
         let api = want["name"].starts_with("nemoclaw-api-");

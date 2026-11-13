@@ -98,8 +98,8 @@ Earlier CLI commands, schemas, and state formats have no compatibility guarantee
 See [migration](../get-started/migration.md) for where each earlier task lives now, and [state](../build-deploy/state.md) for data preservation.
 Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents:
 
-- The intent record is now version 21.
-  `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, and 21 as later changes altered it.
+- The intent record is now version 22.
+  `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, 21, and 22 as later changes altered it.
   This release refuses any deployment whose intent record is an earlier version, including every one that `v0.1.0-rc9` created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - `spec.sandboxes`, `spec.inferenceProviders`, and a sandbox's `inferenceProviders` are maps keyed by name; the parser rejects the earlier lists.

@@ -16,6 +16,24 @@ pub(crate) const INFERENCE: &str = "inference";
 pub(crate) const API: &str = "api";
 pub(crate) const KINDS: [&str; 3] = [WEB_SEARCH, INFERENCE, API];
 const PENDING_PROFILE: &str = "pending-profile:";
+/// The profile half of a credential resource whose profile APF serves.
+pub(crate) const APF_PROFILE: &str = "apf_provider_profile";
+
+/// Whether APF's interceptor, not NemoClaw, owns the resource's profile.
+fn apf_profile(row: &Row) -> bool {
+    value(row, crate::POLICY_AUTHORITY) == "apf"
+}
+
+/// Check that APF's observed profile gives the sandbox its credential in the
+/// variable NemoClaw tells the agent to read.
+fn apf_credential(binding: &Row, observed: &Row) -> Result<(), ObservationError> {
+    if value(observed, crate::profile::APF_CREDENTIAL_VARIABLE)
+        != crate::profile::apf_credential_variable(binding)?
+    {
+        return Err(ObservationError::BindingMismatch);
+    }
+    Ok(())
+}
 
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
     row.get(field).map(String::as_str).unwrap_or_default()
@@ -160,17 +178,27 @@ pub(crate) async fn read(
     removing: bool,
 ) -> Result<Option<Row>, ObservationError> {
     let (profile_binding, registration_binding) = rows(kind, prior)?;
+    let apf = apf_profile(prior);
+    let profile_kind = if apf { APF_PROFILE } else { "provider_profile" };
     let profile = backend
-        .read("provider_profile", &profile_binding, removing)
+        .read(profile_kind, &profile_binding, removing)
         .await?;
     let registration = backend
         .read("provider", &registration_binding, removing)
         .await?;
+    if apf
+        && !removing
+        && let Some(observed) = &profile
+    {
+        apf_credential(&profile_binding, observed)?;
+    }
     if kind == API {
-        for (binding, observed) in [
+        // APF's profile carries no NemoClaw identity.
+        let halves = [
             (&profile_binding, &profile),
             (&registration_binding, &registration),
-        ] {
+        ];
+        for (binding, observed) in halves.into_iter().skip(usize::from(apf)) {
             if let Some(observed) = observed {
                 super::verify_identity(binding, observed)?;
             }
@@ -189,14 +217,20 @@ pub(crate) async fn read(
     }
     match (profile, registration) {
         (Some(profile), Some(registration)) => {
-            if kind == API && value(&profile, "endpoint") != value(&registration, "endpoint") {
+            if kind == API
+                && !apf
+                && value(&profile, "endpoint") != value(&registration, "endpoint")
+            {
                 return Err(ObservationError::BindingMismatch);
             }
             // Both halves must be the same incarnation; the resource reports
-            // its registration's identity so OpenTofu checks it.
-            if ["owner", "generation"]
-                .iter()
-                .any(|field| value(&profile, field) != value(&registration, field))
+            // its registration's identity so OpenTofu checks it. APF's
+            // profile carries no NemoClaw identity, and its executables and
+            // credential delivery are APF's to choose.
+            if !apf
+                && ["owner", "generation"]
+                    .iter()
+                    .any(|field| value(&profile, field) != value(&registration, field))
             {
                 return Err(ObservationError::BindingMismatch);
             }
@@ -204,17 +238,19 @@ pub(crate) async fn read(
             for field in ["owner", "generation"] {
                 observed.insert(field.into(), value(&registration, field).into());
             }
-            observed.insert(
-                "binaries_json".into(),
-                value(&profile, "binaries_json").into(),
-            );
-            if kind == API {
-                for field in ["auth_style", "header_name"] {
-                    observed.insert(field.into(), value(&profile, field).into());
+            if !apf {
+                observed.insert(
+                    "binaries_json".into(),
+                    value(&profile, "binaries_json").into(),
+                );
+                if kind == API {
+                    for field in ["auth_style", "header_name"] {
+                        observed.insert(field.into(), value(&profile, field).into());
+                    }
                 }
-            }
-            if kind == WEB_SEARCH {
-                observed.insert("sandbox_env".into(), value(&profile, "sandbox_env").into());
+                if kind == WEB_SEARCH {
+                    observed.insert("sandbox_env".into(), value(&profile, "sandbox_env").into());
+                }
             }
             for field in registration_fields(kind).iter().chain(&["id"]) {
                 observed.insert((*field).into(), value(&registration, field).into());
@@ -248,10 +284,23 @@ pub(crate) async fn ensure(
         Ok(rows) => rows,
         Err(error) => return Mutation::failed(error),
     };
-    let (profile_state, profile_error) = backend
-        .ensure("provider_profile", &profile)
-        .await
-        .into_parts();
+    let (profile_state, profile_error) = if apf_profile(desired) {
+        // APF serves the profile; NemoClaw adopts it and never imports one.
+        let adopted = backend
+            .read(APF_PROFILE, &profile, false)
+            .await
+            .and_then(|observed| observed.ok_or(ObservationError::Incomplete))
+            .and_then(|observed| apf_credential(&profile, &observed));
+        if let Err(error) = adopted {
+            return Mutation::failed(error);
+        }
+        (None, None)
+    } else {
+        backend
+            .ensure("provider_profile", &profile)
+            .await
+            .into_parts()
+    };
     let partial = |registration: Option<Row>, error| {
         let mut state = desired.clone();
         if kind == API && value(&state, "id").is_empty() {
@@ -295,7 +344,12 @@ pub(crate) async fn remove(
     // Registration first: the API refuses to delete a profile a registration
     // still imports. Each half is deleted through its observed row, which
     // carries the ID it is bound to.
-    for (half, row) in [("provider", registration), ("provider_profile", profile)] {
+    // APF's profile is not NemoClaw's to delete.
+    let halves = if apf_profile(prior) { 1 } else { 2 };
+    for (half, row) in [("provider", registration), ("provider_profile", profile)]
+        .into_iter()
+        .take(halves)
+    {
         if let Some(observed) = backend.read(half, &row, true).await? {
             let mut bound = row;
             bound.extend(observed);

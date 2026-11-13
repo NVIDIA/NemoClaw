@@ -489,19 +489,36 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                         .map_err(|_| { Error::State("cannot encode gateway config") })?
                 );
             }
+            let apf = gateway.managed_apf();
+            if let Some(apf) = apf {
+                settings["apf_endpoint"] = json!(apf.endpoint);
+                if let Some(tls) = &apf.tls {
+                    settings["apf_ca_env"] = json!(tls.ca.env);
+                }
+            }
             literal(&mut settings);
             settings["data_path"] = json!("${openshell_gateway_storage.runtime.data_path}");
             graph["data"][&source][&logical] = settings;
             for attribute in ["entrypoint", "command", "env"] {
                 attrs[attribute] = json!(format!("${{data.{source}.{logical}.{attribute}}}"));
             }
-            // Each new container receives the configuration file before it
-            // starts. Docker replaces the container when the file changes and
-            // keeps the storage.
-            attrs["upload"] = json!([{
+            // Each new container receives the configuration file, and APF's
+            // CA when one verifies APF, before it starts. Docker replaces the
+            // container when either changes and keeps the storage.
+            let mut upload = vec![json!({
                 "file": "${openshell_gateway_storage.runtime.data_path}/gateway.toml",
                 "content": format!("${{data.{source}.{logical}.config_file}}"),
-            }]);
+            })];
+            if apf.is_some_and(|apf| apf.tls.is_some()) {
+                upload.push(json!({
+                    "file": format!(
+                        "${{openshell_gateway_storage.runtime.data_path}}/{}",
+                        crate::managed::APF_CA_FILE
+                    ),
+                    "content": format!("${{data.{source}.{logical}.apf_ca}}"),
+                }));
+            }
+            attrs["upload"] = json!(upload);
             fn storage_path(value: &mut Value) {
                 match value {
                     Value::String(text) => {

@@ -47,6 +47,9 @@ pub(super) trait OpenShellGateway: Send + Sync {
     async fn create(&self, kind: &str, want: &Row) -> Result<String, ObservationError>;
     async fn update_provider(&self, want: &Row, live: &Row) -> Result<(), ObservationError>;
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError>;
+    /// Ask OpenShell to update the bound sandbox's configuration without a
+    /// policy, so its policy authority issues the policy again.
+    async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError>;
     /// One service endpoint of the bound sandbox, verified to belong to it.
     async fn service(
         &self,
@@ -220,6 +223,7 @@ impl ConnectedOpenShellGateway {
         let row = match kind {
             "workspace" => return self.workspace(name, removing).await,
             "provider_profile" => self.observe_profile(workspace, name, removing).await?,
+            crate::composite::APF_PROFILE => self.observe_apf_profile(workspace, name).await?,
             "provider" => {
                 let response = authoritative(
                     self.client
@@ -269,11 +273,15 @@ impl ConnectedOpenShellGateway {
                         .await
                         .map_err(|error| remote_error(&error))?
                         .into_inner();
-                    let hash = active_policy(
-                        status,
-                        &policy_json(&network::granted_row_policy(&row, &grants)?)?,
-                    )?;
+                    let expected = if row.get(crate::POLICY_AUTHORITY).is_some_and(|a| a == "apf") {
+                        None
+                    } else {
+                        Some(policy_json(&network::granted_row_policy(&row, &grants)?)?)
+                    };
+                    let version = status.active_version;
+                    let hash = active_policy(status, expected.as_deref())?;
                     row.insert(crate::POLICY_HASH.into(), hash);
+                    row.insert(crate::LOADED_VERSION.into(), version.to_string());
                 }
                 Some(row)
             }
@@ -314,6 +322,10 @@ impl OpenShellGateway for ConnectedOpenShellGateway {
 
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
         ConnectedOpenShellGateway::delete_bound_sandbox(self, want).await
+    }
+
+    async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError> {
+        ConnectedOpenShellGateway::reissue_policy(self, want).await
     }
 
     async fn service(
@@ -589,6 +601,10 @@ mod tests {
         }
 
         async fn delete_bound_sandbox(&self, _want: &Row) -> Result<(), ObservationError> {
+            unreachable!()
+        }
+
+        async fn reissue_policy(&self, _want: &Row) -> Result<(), ObservationError> {
             unreachable!()
         }
 

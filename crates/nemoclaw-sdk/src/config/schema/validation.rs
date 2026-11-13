@@ -311,6 +311,19 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         json!({"pattern": c::MODEL}),
     );
 
+    for apf in defs["ApfPolicyAuthority"]["oneOf"]
+        .as_array_mut()
+        .expect("APF registration variants")
+    {
+        property(
+            apf,
+            "registration",
+            json!({"description": "Who registers APF with the gateway: managed means NemoClaw does, external means the gateway's operator does."}),
+        );
+        if apf["properties"]["registration"]["const"] == "managed" {
+            property(apf, "endpoint", json!({"pattern": "^https://[^/?#@]+$"}));
+        }
+    }
     for gateway in defs["Gateway"]["oneOf"]
         .as_array_mut()
         .expect("gateway variants")

@@ -10,7 +10,81 @@ use std::time::Duration;
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
     row.get(field).map(String::as_str).unwrap_or("")
 }
+/// Whether the observed sandbox's loaded policy is the one recorded. Before
+/// the first observation of a loaded policy no hash is recorded. APF refuses
+/// every policy update but its own, which comes with a new token, so until
+/// then an APF-governed sandbox must still run its first revision. OpenShell
+/// updates a policy NemoClaw authored after start, so there is nothing to
+/// compare it with yet.
+fn policy_unchanged(prior: &Row, row: &Row) -> bool {
+    let observed = value(row, crate::POLICY_HASH);
+    if observed.is_empty() {
+        return true;
+    }
+    match value(prior, crate::POLICY_HASH) {
+        "" => {
+            value(row, crate::POLICY_AUTHORITY) != "apf"
+                || matches!(value(row, crate::LOADED_VERSION), "" | "1")
+        }
+        recorded => recorded == observed,
+    }
+}
+
+/// A sandbox observation whose loaded policy APF did not issue: no token, and
+/// the hash recorded before the change, so the next observation still sees the
+/// change and plans APF to issue its policy again.
+fn unproven_policy(mut row: Row, recorded: &Row) -> Row {
+    row.remove(crate::LOADED_VERSION);
+    row.insert(crate::POLICY_PROVENANCE.into(), String::new());
+    row.insert(
+        crate::POLICY_HASH.into(),
+        value(recorded, crate::POLICY_HASH).to_owned(),
+    );
+    row
+}
+
 impl OpenShell {
+    /// Ask APF to issue its policy to a bound sandbox again, then wait until
+    /// the sandbox has loaded a policy with a new token.
+    async fn reissue(&self, want: &Row, live: &Row) -> Result<Mutation, ObservationError> {
+        let workspace = value(want, "workspace");
+        let name = value(want, "name");
+        let failed = |error| {
+            Ok(Mutation::partial(
+                unproven_policy(live.clone(), want),
+                error,
+            ))
+        };
+        self.gateway.reissue_policy(want).await?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            let observed = match self.observe("sandbox", workspace, name, false).await {
+                Ok(Some(row)) => Some(row),
+                Ok(None) => return failed(ObservationError::Incomplete),
+                // The new revision is pending until the sandbox loads it.
+                Err(ObservationError::Incomplete) => None,
+                Err(error) => return failed(error),
+            };
+            if let Some(mut row) = observed {
+                if let Err(error) = verify_identity(live, &row) {
+                    return failed(error);
+                }
+                let token = value(&row, crate::POLICY_PROVENANCE);
+                if !token.is_empty()
+                    && token != value(live, crate::POLICY_PROVENANCE)
+                    && !value(&row, crate::POLICY_HASH).is_empty()
+                {
+                    row.remove(crate::LOADED_VERSION);
+                    self.observe_services(&mut row, want, false).await?;
+                    return Ok(Mutation::complete(row));
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return failed(ObservationError::Incomplete);
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
     /// Add a sandbox's declared service endpoints and their URLs to its
     /// observation, written as the reference row writes them. A sandbox being
     /// removed keeps the reference's: its endpoints go with it.
@@ -115,6 +189,13 @@ impl OpenShell {
                 if kind == "sandbox" {
                     self.update_services(want, &row, prior).await?;
                 }
+                if kind == "sandbox"
+                    && value(want, crate::POLICY_AUTHORITY) == "apf"
+                    && value(want, crate::POLICY_PROVENANCE).is_empty()
+                    && !value(want, "id").is_empty()
+                {
+                    return self.reissue(want, &row).await;
+                }
                 row
             }
             None => {
@@ -130,10 +211,12 @@ impl OpenShell {
             }
         };
         let readback = match self.observe(kind, workspace, name, false).await {
-            Ok(Some(mut row)) if kind == "sandbox" => self
-                .observe_services(&mut row, want, false)
-                .await
-                .map(|()| Some(row)),
+            Ok(Some(mut row)) if kind == "sandbox" => {
+                row.remove(crate::LOADED_VERSION);
+                self.observe_services(&mut row, want, false)
+                    .await
+                    .map(|()| Some(row))
+            }
             other => other,
         };
         match readback {
@@ -146,11 +229,26 @@ impl OpenShell {
                 }
                 // The ID and the computed URLs and policy hash come from the
                 // gateway; every other field must read back as written.
+                // A provider records no policy authority; its profile does.
                 if want.iter().any(|(key, v)| {
-                    !["id", services::URLS, crate::POLICY_HASH].contains(&key.as_str())
+                    ![
+                        "id",
+                        services::URLS,
+                        crate::POLICY_HASH,
+                        crate::POLICY_PROVENANCE,
+                    ]
+                    .contains(&key.as_str())
+                        && !(kind == "provider" && key == crate::POLICY_AUTHORITY)
                         && row.get(key) != Some(v)
                 }) {
                     return Ok(Mutation::partial(row, ObservationError::Incomplete));
+                }
+                // An APF-governed sandbox binds only with APF's provenance.
+                if kind == "sandbox"
+                    && value(&row, crate::POLICY_AUTHORITY) == "apf"
+                    && value(&row, crate::POLICY_PROVENANCE).is_empty()
+                {
+                    return Ok(Mutation::partial(row, ObservationError::BindingMismatch));
                 }
                 Ok(Mutation::complete(row))
             }
@@ -213,21 +311,25 @@ impl Backend for OpenShell {
         }
         // Why OpenShell reports the sandbox exited, if it did.
         let mut exited = String::new();
+        // Whether the loaded policy is not the one APF issued.
+        let mut unproven = false;
         if kind == "sandbox"
             && !removing
             && let Some(row) = &observed
         {
             verify_identity(prior, row)?;
             // The loaded policy, as recorded when it was applied, must not
-            // have changed since.
-            if let Some(recorded) = prior
-                .get(crate::POLICY_HASH)
-                .filter(|hash| !hash.is_empty())
-                && row
-                    .get(crate::POLICY_HASH)
-                    .is_some_and(|observed| !observed.is_empty() && observed != recorded)
-            {
-                return Err(ObservationError::BindingMismatch);
+            // have changed since, unless APF issued the change.
+            if !policy_unchanged(prior, row) {
+                if value(row, crate::POLICY_AUTHORITY) != "apf" {
+                    return Err(ObservationError::BindingMismatch);
+                }
+                // APF issues a policy with a new token. A change under the
+                // token it recorded is not APF's, so APF is asked again, and
+                // a change already found unproven stays so until APF's
+                // reissue records its policy.
+                let recorded = value(prior, crate::POLICY_PROVENANCE);
+                unproven = recorded.is_empty() || value(row, crate::POLICY_PROVENANCE) == recorded;
             }
             match self.check_sandbox_phase(row).await {
                 Ok(()) => {}
@@ -242,6 +344,10 @@ impl Backend for OpenShell {
         if kind == "sandbox"
             && let Some(row) = &mut observed
         {
+            row.remove(crate::LOADED_VERSION);
+            if unproven {
+                *row = unproven_policy(std::mem::take(row), prior);
+            }
             row.insert(crate::EXITED.into(), exited);
             // Teardown, or a sandbox that isn't ready yet, doesn't observe the
             // loaded policy, so the recorded hash still stands.

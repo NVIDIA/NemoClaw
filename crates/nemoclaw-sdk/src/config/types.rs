@@ -184,6 +184,70 @@ pub struct ManagedGateway {
     #[schemars(default, extend("additionalProperties" = {"anyOf": [{"type": "object"}, {"type": "array", "items": {"type": "object"}}]}))]
     /// OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.
     pub config: Option<crate::managed::gateway_config::GatewayConfig>,
+    #[serde(rename = "policyAuthority", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "PolicyAuthority")]
+    /// Who authors sandbox policy on this gateway; omission means NemoClaw does.
+    pub policy_authority: Option<PolicyAuthority>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// The component that authors every sandbox's policy on a gateway, instead of NemoClaw.
+pub struct PolicyAuthority {
+    #[serde(rename = "apf")]
+    /// APF's admission interceptor replaces each sandbox's policy with its signed bundle's, and APF serves the provider profiles. Sandboxes must not author an explicit policy; NemoClaw requires APF's provenance on each sandbox and treats a later change to the loaded policy as drift.
+    pub apf: ApfPolicyAuthority,
+}
+
+impl PolicyAuthority {
+    /// APF's connection settings, when NemoClaw registers APF with the gateway.
+    pub fn managed(&self) -> Option<&ManagedApf> {
+        match &self.apf {
+            ApfPolicyAuthority::Managed(apf) => Some(apf),
+            ApfPolicyAuthority::External(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "registration", rename_all = "lowercase")]
+/// Who registers APF with the gateway as its interceptor and provider-profile source.
+pub enum ApfPolicyAuthority {
+    /// NemoClaw registers APF in a managed Docker gateway's configuration file.
+    #[schemars(title = "Registered by NemoClaw")]
+    Managed(ManagedApf),
+    /// The gateway's operator registers APF, such as in spec.gateway.config. Required on an external gateway.
+    #[schemars(title = "Registered by the gateway's operator")]
+    External(ExternalApf),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// APF's connection settings, which NemoClaw writes into the gateway's configuration. spec.gateway.config must not register interceptors or provider-profile sources.
+pub struct ManagedApf {
+    #[serde(rename = "endpoint")]
+    /// APF's gRPC origin as the gateway reaches it: `https://HOST[:PORT]`, without a path.
+    pub endpoint: String,
+    #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "InterceptorTls")]
+    /// The CA certificate that verifies APF; omission uses the gateway's system roots.
+    pub tls: Option<InterceptorTls>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// No settings: the operator's registration holds APF's connection.
+pub struct ExternalApf {}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// TLS file reference for a service the gateway dials.
+pub struct InterceptorTls {
+    #[serde(rename = "ca")]
+    /// Environment variable whose value names the local CA certificate file. NemoClaw copies the certificate into the gateway's storage.
+    pub ca: FileRef,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -209,6 +273,10 @@ pub struct ExternalGateway {
     #[schemars(default, with = "TLS")]
     /// Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS.
     pub tls: Option<TLS>,
+    #[serde(rename = "policyAuthority", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "PolicyAuthority")]
+    /// Who authors sandbox policy on this gateway; omission means NemoClaw does.
+    pub policy_authority: Option<PolicyAuthority>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
