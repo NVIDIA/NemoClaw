@@ -66,14 +66,14 @@ describe("small CLI helper coverage", () => {
     });
     expect(startCalls).toEqual([{ sandboxName: "alpha", dashboardPort: 18_791 }]);
 
-    const stopCalls: Array<{ sandboxName?: string }> = [];
+    const stopCalls: Array<{ sandboxName?: string; stopSandboxGateway?: boolean }> = [];
     runStopCommand({
       listSandboxes: () => ({ defaultSandbox: null }),
       stopAll: (options) => {
         stopCalls.push(options);
       },
     });
-    expect(stopCalls).toEqual([{}]);
+    expect(stopCalls).toEqual([{ stopSandboxGateway: false }]);
   });
 
   it("reads version fallback files", () => {

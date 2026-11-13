@@ -206,7 +206,13 @@ describe("services command", () => {
       listSandboxes: () => ({ defaultSandbox: "bad name" }),
       stopAll,
     });
-    expect(stopAll).toHaveBeenCalledWith({ sandboxName: undefined });
+    expect(stopAll).toHaveBeenCalledWith({ sandboxName: undefined, stopSandboxGateway: false });
+  });
+
+  it("keeps the in-sandbox gateway running for tunnel stop (#14321)", () => {
+    const stopAll = vi.fn();
+    runStopCommand({ listSandboxes: () => ({ defaultSandbox: "alpha" }), stopAll });
+    expect(stopAll).toHaveBeenCalledWith({ sandboxName: "alpha", stopSandboxGateway: false });
   });
 
   it("opts the legacy full-stop command into managed gateway release", () => {
