@@ -49,7 +49,7 @@ export function isWslDockerDesktopRuntime(host: WslDockerDesktopHost): boolean {
   return host.isWsl && host.runtime === "docker-desktop";
 }
 
-function detectWsl(deps: WslDockerDesktopDetectionDeps): boolean {
+export function detectWsl(deps: WslDockerDesktopDetectionDeps = {}): boolean {
   const platform = deps.platform ?? process.platform;
   if (platform !== "linux") return false;
   const env = deps.env ?? process.env;

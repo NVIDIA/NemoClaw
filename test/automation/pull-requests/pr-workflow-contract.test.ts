@@ -83,7 +83,7 @@ function runWorkflowShellStep(
   const result = spawnSync("bash", ["-c", step.run ?? ""], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, ...step.env, ...env },
+    env: { ...process.env, GITHUB_BASE_REF: "main", ...step.env, ...env },
     timeout: 5_000,
   });
   return {

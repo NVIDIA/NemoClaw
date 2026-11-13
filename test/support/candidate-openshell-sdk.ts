@@ -197,7 +197,7 @@ export function sparseSdkWorkflowCheckout(root: string, workflowPath: string, jo
 
 export function candidateSdkLocatorFixture(
   root: string,
-  mode: "candidate" | "trusted" = "candidate",
+  mode: "candidate" | "trusted" | "stacked" = "candidate",
 ) {
   const f = candidateSdkFixture();
   const trustedIdentities = [
@@ -209,16 +209,16 @@ export function candidateSdkLocatorFixture(
       Object.fromEntries(Object.entries(identity).sort(([a], [b]) => a.localeCompare(b))),
     );
   const bundleName =
-    mode === "candidate"
+    mode !== "trusted"
       ? `candidate-openshell-sdk-123-${sdkCandidateIdentity.candidateSha}-${sdkCandidateIdentity.baseSha}-50`
       : `reviewed-openshell-sdk-${createHash("sha256")
           .update(`${JSON.stringify(trustedIdentities)}\n`)
           .digest("hex")}`;
   const decision = {
     required: true,
-    candidate: mode === "candidate" ? true : undefined,
+    candidate: mode !== "trusted" ? true : undefined,
     artifactName:
-      mode === "candidate" ? f.sdk.artifactName : f.trusted.sourceRegistryPackage.artifactName,
+      mode !== "trusted" ? f.sdk.artifactName : f.trusted.sourceRegistryPackage.artifactName,
     bundleName,
   };
   const artifact = {
@@ -227,17 +227,17 @@ export function candidateSdkLocatorFixture(
     expired: false,
     workflow_run: {
       id: 44,
-      head_branch: mode === "candidate" ? "upgrade" : "main",
+      head_branch: mode !== "trusted" ? "upgrade" : "main",
       head_repository_id: 888,
     },
   };
   const run = {
     path:
-      mode === "candidate"
+      mode !== "trusted"
         ? ".github/workflows/candidate-upgrade-admission.yaml"
         : ".github/workflows/main.yaml",
     head_sha: sdkCandidateIdentity.candidateSha,
-    head_branch: mode === "candidate" ? "upgrade" : "main",
+    head_branch: mode !== "trusted" ? "upgrade" : "main",
     pull_requests: [
       {
         number: sdkCandidateIdentity.prNumber,
@@ -245,13 +245,23 @@ export function candidateSdkLocatorFixture(
         base: { sha: sdkCandidateIdentity.baseSha },
       },
     ],
-    event: mode === "candidate" ? "pull_request_target" : "push",
+    event: mode !== "trusted" ? "pull_request_target" : "push",
     status: "completed",
     conclusion: "success",
     repository: { full_name: "NVIDIA/NemoClaw" },
     head_repository: { full_name: "NVIDIA/NemoClaw" },
   };
-  const availability = { missingReads: 0, pendingReads: 0, accessDenied: false };
+  const stack = {
+    baseRef: mode === "stacked" ? "upgrade" : "main",
+    parents: [f.pr],
+    denied: false,
+    decision: { ...decision, candidate: true },
+  };
+  const availability = {
+    missingReads: 0,
+    pendingReads: 0,
+    accessDenied: false as boolean | "parent",
+  };
   const bin = join(root, "bin");
   const trusted = join(root, ".trusted-sdk-package-decision");
   mkdirSync(bin);
@@ -260,8 +270,15 @@ export function candidateSdkLocatorFixture(
   writeFileSync(join(trusted, "ci/reviewed-npm-audit.json"), f.trustedSource);
   writeFileSync(
     join(trusted, "scripts/checks/prepare-ci-npm-install.mts"),
-    "process.stdout.write(process.env.SDK_LOCATOR_DECISION);\n",
+    `if (process.env.NEMOCLAW_OPEN_SHELL_SDK_CANDIDATE === '1') {
+  if (process.env.SDK_LOCATOR_STACK_DENIED === 'true' || process.env.GITHUB_EVENT_NAME !== undefined
+    || process.env.UPGRADE_PR_NUMBER !== '123' || process.env.CANDIDATE_SHA !== '${sdkCandidateIdentity.candidateSha}'
+    || process.env.UPGRADE_BASE_SHA !== '${sdkCandidateIdentity.baseSha}') process.exit(12);
+  process.stdout.write(process.env.SDK_LOCATOR_PARENT_DECISION);
+} else process.stdout.write(process.env.SDK_LOCATOR_DECISION);\n`,
   );
+  mkdirSync(join(root, "ci"));
+  writeFileSync(join(root, "ci/reviewed-npm-audit.json"), f.trustedSource);
   writeFileSync(
     join(bin, "gh"),
     `#!/usr/bin/env node
@@ -270,8 +287,12 @@ const fs = require('node:fs');
 const stateFile = process.env.SDK_LOCATOR_STATE;
 const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : { artifactReads: 0, producerReads: 0, sleeps: 0 };
 const availability = JSON.parse(process.env.SDK_LOCATOR_AVAILABILITY);
-if (availability.accessDenied) process.exit(13);
-if (route?.includes('/actions/artifacts?')) {
+if (availability.accessDenied === true || (availability.accessDenied === 'parent' && route?.endsWith('/pulls'))) {
+  process.stderr.write('private diagnostic'); process.exit(13);
+}
+if (route?.endsWith('/pulls')) {
+  process.stdout.write(JSON.stringify([JSON.parse(process.env.SDK_LOCATOR_PARENTS)]));
+} else if (route?.includes('/actions/artifacts?')) {
   state.artifactReads++;
   process.stdout.write(state.artifactReads <= availability.missingReads ? '[{"artifacts":[]}]' : process.env.SDK_LOCATOR_ARTIFACTS);
 } else if (route?.endsWith('/actions/runs/44')) {
@@ -301,14 +322,22 @@ fs.writeFileSync(file, JSON.stringify(state));
   const script = workflow.jobs["openshell-sdk-package"].steps.find(
     (step: { id?: string }) => step.id === "locate",
   ).run;
+  const verification = workflow.jobs["openshell-sdk-package"].steps.find(
+    (step: { name?: string }) =>
+      step.name === "Verify selected SDK archive against base policy and PR locks",
+  ).run;
+  mkdirSync(join(root, "openshell-sdk-bundle"));
+  writeFileSync(join(root, "openshell-sdk-bundle", decision.artifactName), "inert archive");
   const output = join(root, "outputs");
   return {
+    root,
     artifact,
     run,
     decision,
     availability,
-    execute: () => {
-      const result = spawnSync("bash", ["-c", script], {
+    stack,
+    execute: (verify = false) => {
+      const result = spawnSync("bash", ["-c", verify ? verification : script], {
         cwd: root,
         encoding: "utf8",
         timeout: 10_000,
@@ -316,16 +345,35 @@ fs.writeFileSync(file, JSON.stringify(state));
           ...process.env,
           PATH: `${bin}:${process.env.PATH}`,
           GITHUB_WORKSPACE: root,
+          RUNNER_TEMP: root,
+          STACK_PR: mode === "stacked" ? "123" : "",
+          STACK_HEAD: sdkCandidateIdentity.candidateSha,
+          STACK_BASE: sdkCandidateIdentity.baseSha,
+          STACK_DECISION: JSON.stringify({ ...decision, candidate: true }),
+          ARTIFACT_NAME: decision.artifactName,
+          NEMOCLAW_CI_NPM_PACKAGE_MODE: "artifact",
+          NEMOCLAW_CI_TARGET_ROOT: root,
+          NEMOCLAW_CI_NPM_CACHE: join(root, "cache"),
+          NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY: join(root, "verified-sdk"),
           GITHUB_OUTPUT: output,
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
           HEAD_REPOSITORY: "NVIDIA/NemoClaw",
           REPOSITORY_ID: "888",
           CANDIDATE_SHA: sdkCandidateIdentity.candidateSha,
-          UPGRADE_BASE_SHA: sdkCandidateIdentity.baseSha,
+          UPGRADE_BASE_SHA:
+            mode === "stacked" ? sdkCandidateIdentity.candidateSha : sdkCandidateIdentity.baseSha,
+          GITHUB_BASE_REF: stack.baseRef,
+          GITHUB_EVENT_NAME: "pull_request",
           UPGRADE_PR_NUMBER: String(sdkCandidateIdentity.prNumber),
           SDK_LOCATOR_STATE: stateFile,
           SDK_LOCATOR_AVAILABILITY: JSON.stringify(availability),
-          SDK_LOCATOR_DECISION: JSON.stringify(decision),
+          SDK_LOCATOR_DECISION: JSON.stringify({
+            ...decision,
+            candidate: mode === "stacked" ? false : decision.candidate,
+          }),
+          SDK_LOCATOR_PARENT_DECISION: JSON.stringify(stack.decision),
+          SDK_LOCATOR_PARENTS: JSON.stringify(stack.parents),
+          SDK_LOCATOR_STACK_DENIED: String(stack.denied),
           SDK_LOCATOR_ARTIFACTS: JSON.stringify([{ artifacts: [artifact] }]),
           SDK_LOCATOR_RUN: JSON.stringify(run),
         },
