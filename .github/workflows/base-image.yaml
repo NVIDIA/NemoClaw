@@ -108,6 +108,11 @@ on:
       - "scripts/lib/sandbox-rlimits.sh"
   workflow_dispatch:
     inputs:
+      run_security_scans:
+        description: "Scan managed images before promotion (requires Pulse onboarding)"
+        required: false
+        type: boolean
+        default: false
       openclaw_version:
         description: "OpenClaw version to install (leave blank to use the default in Dockerfile.base)"
         required: false
@@ -448,8 +453,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     uses: ./.github/workflows/managed-images.yaml
     with:
+      run_security_scans: ${{ inputs.run_security_scans || false }}
       dcode-base-contract-base64: ${{ needs.build-and-push-dcode.outputs.contract-base64 }}
       hermes-base-contract-base64: ${{ needs.build-and-push-hermes.outputs.contract-base64 }}
       openclaw-base-contract-base64: ${{ needs.build-and-push-openclaw.outputs.contract-base64 }}

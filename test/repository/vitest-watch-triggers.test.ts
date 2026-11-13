@@ -312,12 +312,14 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/jetson-dispatch-client.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
+      "test/e2e/support/managed-image-security-scan.test.ts",
       "test/inference/managed/managed-base-image-contract.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
+      "test/e2e/support/managed-image-security-scan.test.ts",
       "test/inference/managed/managed-image-discord-workflow-boundary.test.ts",
       "test/e2e/support/managed-podman-docker-guard.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",

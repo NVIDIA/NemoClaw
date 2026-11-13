@@ -365,11 +365,17 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/base-image\.yaml$/,
     testsToRun: runTests(
+      "test/e2e/support/managed-image-security-scan.test.ts",
       "test/inference/managed/managed-base-image-contract.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ),
+  },
+  {
+    pattern:
+      /(?:^|\/)\.github\/scripts\/(?:scan-managed-image\.sh|managed-image-scan-results\.mts)$/,
+    testsToRun: runTests("test/e2e/support/managed-image-security-scan.test.ts"),
   },
   {
     pattern: /(?:^|\/)scripts\/export-managed-base-image-contract\.sh$/,
@@ -382,6 +388,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
     testsToRun: runTests(
+      "test/e2e/support/managed-image-security-scan.test.ts",
       "test/inference/managed/managed-image-discord-workflow-boundary.test.ts",
       "test/e2e/support/managed-podman-docker-guard.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
