@@ -23,6 +23,27 @@ resource openshell_api (version 2)
   ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
   registration: string, computed
   workspace: object({ name = string, owner = string, type = string }), required
+  block mcp: optional
+    block rules: list
+      > The only MCP requests this endpoint admits.
+      block allow: single
+        > Request matcher.
+        method: string, optional
+          > HTTP or RPC method.
+        path: string, optional
+          > HTTP path glob.
+        block params: map
+          > MCP parameters; only name is supported by the pinned protocol.
+          any: list(string), optional
+            > Nonempty list of nonempty glob strings.
+          value: string, optional
+            > The value itself, instead of the other attributes.
+        block tool: optional
+          > MCP tool-name selector.
+          any: list(string), optional
+            > Nonempty list of nonempty glob strings.
+          value: string, optional
+            > The value itself, instead of the other attributes.
 
 resource openshell_gateway_storage (version 0)
   compute_driver: string, required
