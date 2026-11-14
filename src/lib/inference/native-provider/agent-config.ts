@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  CUSTOM_HOSTED_PROVIDERS,
   hostedNativeProvider,
   customNativeCredentialEnv,
   HOSTED_NATIVE_PROVIDERS,
   isCustomHostedProvider,
 } from "./hosted.ts";
 
-export { CUSTOM_HOSTED_PROVIDERS, hostedNativeProvider, HOSTED_NATIVE_PROVIDERS };
+export { hostedNativeProvider, HOSTED_NATIVE_PROVIDERS };
 
 /** Public configuration only. Never read the host's provider credential here. */
 export function nativeHostedAgentConfig(provider: string | null | undefined, baseUrl: string) {

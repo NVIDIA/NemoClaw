@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  CUSTOM_HOSTED_PROVIDERS,
   HOSTED_NATIVE_PROVIDERS,
   nativeHostedAgentConfig,
 } from "./inference/native-provider/agent-config.ts";
@@ -249,11 +248,21 @@ export function refreshHermesNativeLocalCredential(
   );
 }
 
+/** Custom endpoint kinds a Hermes route can use. Each reads its credential from the function that writes it. */
+export const HERMES_CUSTOM_ENDPOINT_PROVIDERS = [
+  "compatible-endpoint",
+  "compatible-anthropic-endpoint",
+] as const;
+const CUSTOM_ENDPOINT_PROBE_URL = "https://custom-endpoint.invalid/v1";
+
 /** Environment references that NemoClaw itself writes into a managed Hermes route. */
 export const HERMES_MANAGED_CREDENTIAL_TEMPLATES: readonly string[] = [
   NVIDIA_INFERENCE_PLACEHOLDER,
   ...HOSTED_NATIVE_PROVIDERS.map((definition) => `\${${definition.credentialEnv}}`),
-  ...CUSTOM_HOSTED_PROVIDERS.map((entry) => `\${${entry.credentialEnv}}`),
+  ...HERMES_CUSTOM_ENDPOINT_PROVIDERS.map(
+    (provider) =>
+      `\${${nativeHostedAgentConfig(provider, CUSTOM_ENDPOINT_PROBE_URL)!.credentialEnv}}`,
+  ),
 ];
 
 /** The route the sandbox registry records, as seen by the archive sanitizer. */
@@ -283,7 +292,7 @@ export function hermesManagedRouteReference(
   if (fixed) return { endpoint: fixed.endpoint, template: `\${${fixed.credentialEnv}}` };
   if (
     typeof baseUrl !== "string" ||
-    !CUSTOM_HOSTED_PROVIDERS.some((entry) => entry.logicalProvider === provider)
+    !(HERMES_CUSTOM_ENDPOINT_PROVIDERS as readonly string[]).includes(provider)
   ) {
     return null;
   }

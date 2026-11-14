@@ -11,10 +11,10 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import {
   applyHermesManagedRoute,
+  HERMES_CUSTOM_ENDPOINT_PROVIDERS,
   refreshHermesNativeLocalCredential,
   type HermesManagedRouting,
 } from "../../src/lib/hermes-managed-route.ts";
-import { CUSTOM_HOSTED_PROVIDERS } from "../../src/lib/inference/native-provider/agent-config.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../src/lib/inference/native-nvidia/contract.ts";
 import {
   useOrderedNativeCapture,
@@ -63,12 +63,13 @@ function writeSandboxRegistry(
   );
 }
 
-const CUSTOM_ENDPOINTS: Record<
-  (typeof CUSTOM_HOSTED_PROVIDERS)[number]["logicalProvider"],
-  string
-> = {
+const CUSTOM_ENDPOINTS: Record<(typeof HERMES_CUSTOM_ENDPOINT_PROVIDERS)[number], string> = {
   "compatible-endpoint": "http://203.0.113.10:11541/v1",
   "compatible-anthropic-endpoint": "https://llm.example.test/anthropic",
+};
+const CUSTOM_CREDENTIAL_ENVS: Record<(typeof HERMES_CUSTOM_ENDPOINT_PROVIDERS)[number], string> = {
+  "compatible-endpoint": "COMPATIBLE_API_KEY",
+  "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY",
 };
 
 describe("complete native-home machine authority", () => {
@@ -84,10 +85,10 @@ describe("complete native-home machine authority", () => {
       baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       template: "${NVIDIA_INFERENCE_API_KEY}",
     },
-    ...CUSTOM_HOSTED_PROVIDERS.map(({ logicalProvider, credentialEnv }) => ({
-      provider: logicalProvider,
-      baseUrl: CUSTOM_ENDPOINTS[logicalProvider],
-      template: `\${${credentialEnv}}`,
+    ...HERMES_CUSTOM_ENDPOINT_PROVIDERS.map((provider) => ({
+      provider,
+      baseUrl: CUSTOM_ENDPOINTS[provider],
+      template: `\${${CUSTOM_CREDENTIAL_ENVS[provider]}}`,
     })),
     {
       provider: "openai-api",
@@ -260,13 +261,9 @@ describe("complete native-home machine authority", () => {
   });
 
   it.each(
-    CUSTOM_HOSTED_PROVIDERS.flatMap(({ logicalProvider }) => [
-      {
-        provider: logicalProvider,
-        name: "another endpoint",
-        registered: "https://other.example/v1",
-      },
-      { provider: logicalProvider, name: "another provider", registered: "p" },
+    HERMES_CUSTOM_ENDPOINT_PROVIDERS.flatMap((provider) => [
+      { provider, name: "another endpoint", registered: "https://other.example/v1" },
+      { provider, name: "another provider", registered: "p" },
     ]),
   )(
     "strips a custom $provider reference when the registered route is $name (#14300)",
