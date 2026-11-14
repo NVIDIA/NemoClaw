@@ -8,6 +8,7 @@ import {
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+import type { SandboxEntry } from "../../state/registry";
 import type { SandboxDestroyExecutionResult } from "./destroy-execution";
 
 const TERMINATING_ALPHA_LIST =
@@ -207,5 +208,55 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     expect(warnOutput(harness)).toContain(
       "the local sandbox registry no longer confirms this was the last sandbox",
     );
+  });
+
+  it("refuses --cleanup-gateway with a nonzero exit when a peer sandbox still uses the gateway (#14426)", async () => {
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+    });
+    // The peer survives this destroy and stays registered on the same gateway,
+    // so the gateway is legitimately kept and --cleanup-gateway applies to nothing.
+    harness.setCrossRootGatewayCleanupOwners([
+      {
+        name: "cleanup-peer",
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
+      } as SandboxEntry,
+    ]);
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(harness.executeSandboxDestroySpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.finalGatewaySleepSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    // Preserving the gateway is the correct outcome, but the requested cleanup
+    // was not applied, so the exit status must not report success.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(warnOutput(harness)).toContain("--cleanup-gateway was not applied");
+    expect(warnOutput(harness)).toContain("sandbox 'cleanup-peer'");
+    expect(warnOutput(harness)).toContain("openshell gateway remove nemoclaw-19080");
+  });
+
+  it("stays silent about gateway cleanup when a peer remains and cleanup was not requested (#14426)", async () => {
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
+    });
+    harness.setCrossRootGatewayCleanupOwners([
+      {
+        name: "cleanup-peer",
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
+      } as SandboxEntry,
+    ]);
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(warnOutput(harness)).not.toContain("--cleanup-gateway was not applied");
   });
 });
