@@ -294,20 +294,31 @@ jobs:
               echo "::error::Could not list approved SDK artifacts. Restore Actions access, then rerun this CI job."
               exit 1
             fi
-            artifact="$(jq -cr --arg name "$bundle_name" --arg candidate "$candidate" --argjson repo "$REPOSITORY_ID" '
+            candidates="$(jq -cr --arg name "$bundle_name" --arg candidate "$candidate" --argjson repo "$REPOSITORY_ID" '
               [.[] | .artifacts[] | select(.name == $name and .expired == false
                 and ($candidate == "true" or .workflow_run.head_branch == "main") and .workflow_run.head_repository_id == $repo)]
-              | max_by(.id) // empty' <<<"$artifacts")"
-            if [ -n "$artifact" ]; then
-              if [ "$candidate" != "true" ]; then ready=true; break; fi
-              producer_id="$(jq -er '.workflow_run.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$artifact")"
-              producer_status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$producer_id" 2>/dev/null | jq -er '.status')"
+              | sort_by(.id) | reverse | .[]' <<<"$artifacts")"
+            artifact=""
+            while IFS= read -r entry; do
+              if [ -z "$entry" ]; then continue; fi
+              if [ "$candidate" != "true" ]; then artifact="$entry"; ready=true; break; fi
+              producer_id="$(jq -er '.workflow_run.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$entry")"
+              producer="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$producer_id" 2>/dev/null)"
+              producer_status="$(jq -er '.status' <<<"$producer")"
               case "$producer_status" in
-                completed) ready=true; break ;;
+                completed)
+                  producer_conclusion="$(jq -er '.conclusion' <<<"$producer")"
+                  case "$producer_conclusion" in
+                    success) artifact="$entry"; ready=true; break ;;
+                    failure|cancelled|timed_out|action_required|neutral|skipped|stale|startup_failure) ;;
+                    *) echo "::error::Invalid SDK producer conclusion."; exit 1 ;;
+                  esac
+                  ;;
                 queued|in_progress|waiting|pending|requested) ;;
                 *) echo "::error::Invalid SDK producer status."; exit 1 ;;
               esac
-            fi
+            done <<<"$candidates"
+            if [ "$ready" = "true" ]; then break; fi
             if [ "$candidate" != "true" ] || [ "$attempt" -eq 24 ]; then break; fi
             sleep 5
           done

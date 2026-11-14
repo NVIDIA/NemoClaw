@@ -47,6 +47,13 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)\.github\/workflows\/pr\.yaml$/,
+    testsToRun: runTests(
+      "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test/automation/pull-requests/pr-sdk-artifact-selection.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)scripts\/install-openshell\.sh$/,
     testsToRun: runTests(
       "test/installer-integration/install-openshell-version-check.test.ts",

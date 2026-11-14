@@ -870,20 +870,23 @@ describe("sandbox destroy host-local inference transaction", () => {
     expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "get")).toHaveLength(3);
   });
 
-  it("reconciles ambiguous acknowledgement loss without retrying the mutation", async () => {
-    const runtimeProvider = provider();
-    const { result, runOpenshell } = await runDestroy(runtimeProvider, {
-      deleteResult: {
-        status: 1,
-        stdout: "",
-        stderr: "transport error: connection reset",
-      },
-      listResult: { status: 0, stdout: "", stderr: "" },
-    });
+  it.each([
+    { status: 1, stdout: "", stderr: "transport error: connection reset" },
+    { status: 124, stdout: "", stderr: "" },
+    { status: 137, stdout: "", stderr: "" },
+  ])(
+    "reconciles ambiguous deletion exit $status without retrying the mutation",
+    async (deleteResult) => {
+      const runtimeProvider = provider();
+      const { result, runOpenshell } = await runDestroy(runtimeProvider, {
+        deleteResult,
+        listResult: { status: 0, stdout: "", stderr: "" },
+      });
 
-    expect(result).toMatchObject({ ok: true, alreadyGone: true });
-    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
-  });
+      expect(result).toMatchObject({ ok: true, alreadyGone: true });
+      expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "delete")).toHaveLength(1);
+    },
+  );
 
   it("reconciles retained authority only after stable sandbox absence", async () => {
     const destroy = vi
