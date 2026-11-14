@@ -191,9 +191,12 @@ describe("destroySandbox cross-root registry authority", () => {
         retainedRecoveryRecords: [recovery],
       });
 
+      // The sibling-root owner keeps the gateway alive, so the explicitly
+      // requested cleanup is refused with a nonzero exit. The recovery record is
+      // still preserved; only the exit status and diagnostic change (#14426).
       await expect(
         harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
-      ).resolves.toBeUndefined();
+      ).rejects.toThrow("process.exit(1)");
 
       expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
       expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
@@ -234,9 +237,11 @@ describe("destroySandbox cross-root registry authority", () => {
     );
     const harness = createDestroyHarness();
 
+    // beta keeps the gateway alive, so the explicitly requested cleanup is
+    // refused with a nonzero exit while both the gateway and beta survive (#14426).
     await expect(
       harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("process.exit(1)");
 
     expect(JSON.parse(fs.readFileSync(registryFile, "utf8"))).toMatchObject({
       defaultSandbox: "beta",
