@@ -4090,7 +4090,7 @@ For an older Hermes sandbox with an OpenClaw `POLICY.md` file, follow [Explain N
 Canonical supported provider IDs are `nvidia-prod`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `llama-cpp-local`, `ollama-local`, and `vllm-local`.
 The installer alias `llama-cpp` is accepted and normalized to `llama-cpp-local`.
 For NVIDIA Endpoints, select `nvidia-prod` or the installer alias `build`.
-The installer names `nim`, `nim-local`, `nim_local`, `nvidia-nim`, and `nvidia_nim` select Local NVIDIA NIM through `vllm-local`.
+The `inference set` aliases `nim`, `nim-local`, `nim_local`, `nvidia-nim`, and `nvidia_nim` select Local NVIDIA NIM through `vllm-local`.
 This local selection requires matching recorded NIM state.
 Refer to [Choose a Supported Provider](../inference/manage-inference/switch-providers#choose-a-supported-provider) for NIM prerequisites and recovery when that state is missing or inconsistent.
 Recognized underscore spellings of canonical provider IDs and hyphenated installer aliases are also accepted.

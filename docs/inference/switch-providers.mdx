@@ -29,7 +29,7 @@ It accepts recognized underscore spellings of canonical provider IDs and hyphena
 NemoClaw normalizes an accepted alias or underscore spelling to its canonical OpenShell provider ID and records the canonical name in the sandbox registry.
 
 For NVIDIA Endpoints, select `nvidia-prod` or the installer alias `build`.
-The installer names `nim`, `nim-local`, `nim_local`, `nvidia-nim`, and `nvidia_nim` select Local NVIDIA NIM through `vllm-local`.
+The `inference set` aliases `nim`, `nim-local`, `nim_local`, `nvidia-nim`, and `nvidia_nim` select Local NVIDIA NIM through `vllm-local`.
 This local selection requires the NIM container and endpoint recorded for the sandbox.
 When switching back from another provider, an onboarding session matching the sandbox, provider, and model can supply that metadata.
 The endpoint must match the NIM runtime, and that runtime must serve the requested model.

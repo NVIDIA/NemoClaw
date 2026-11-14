@@ -349,6 +349,7 @@ describe("MCP bridge onboarding environment", () => {
       PATH: "/tmp/exact-main:/usr/bin",
       NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
       NEMOCLAW_OPENSHELL_BIN: "/tmp/exact-main/openshell",
       NEMOCLAW_OPENSHELL_GATEWAY_BIN: "/usr/local/bin/openshell-gateway",
       NEMOCLAW_OPENSHELL_SANDBOX_BIN: "/usr/local/bin/openshell-sandbox",
