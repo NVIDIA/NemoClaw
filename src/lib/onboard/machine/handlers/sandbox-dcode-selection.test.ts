@@ -73,7 +73,6 @@ describe("handleSandboxState live DCode selection", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       resolved: expect.any(Object),
       recreate: false,
-      toolDisclosure: "progressive",
       observabilityEnabled: true,
       endpointSource: null,
       observabilityRequestedExplicitly: true,

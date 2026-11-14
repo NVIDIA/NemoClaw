@@ -67,20 +67,20 @@ export function initialOpenClawToolDisclosure(input: {
 }
 
 /**
- * Build the create-intent tool-disclosure fields. A new session seeds the default
- * mode, so mark that seed to keep it from overriding a recorded mode (#13975).
+ * Build the create intent's tool-disclosure request. A new session only seeds the default
+ * mode, so omit it unless something selected it: a recorded sandbox keeps its mode (#13975).
+ * A resumed session's mode stays a request, as the resume drift check treats it.
  */
 export function createIntentToolDisclosureFields(
   initial: ToolDisclosure | null,
   sessionMode: unknown,
   resume: boolean,
   env: NodeJS.ProcessEnv,
-): { toolDisclosure: ToolDisclosure; toolDisclosureSessionDefault?: true } {
+): { toolDisclosure?: ToolDisclosure } {
   if (initial) return { toolDisclosure: initial };
-  const toolDisclosure = toolDisclosureOrDefault(sessionMode);
   return resume || resolveToolDisclosureRequest(null, env) !== null
-    ? { toolDisclosure }
-    : { toolDisclosure, toolDisclosureSessionDefault: true };
+    ? { toolDisclosure: toolDisclosureOrDefault(sessionMode) }
+    : {};
 }
 
 export interface SandboxResumeSignals {

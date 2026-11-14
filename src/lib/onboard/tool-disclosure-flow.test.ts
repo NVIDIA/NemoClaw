@@ -23,7 +23,6 @@ vi.mock("./dockerfile-tool-disclosure-contract", () => ({
 
 import {
   applyOnboardToolDisclosureRequest,
-  createIntentToolDisclosureRequest,
   prepareHermesPortableToolDisclosure,
   prepareSandboxToolDisclosure,
 } from "./tool-disclosure-flow";
@@ -88,16 +87,7 @@ describe("onboard tool-disclosure flow", () => {
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [{ toolDisclosure: "progressive", toolDisclosureSessionDefault: true }, null],
-    [{ toolDisclosure: "progressive" }, "progressive"],
-    [{ toolDisclosure: "direct" }, "direct"],
-    [null, null],
-  ] as const)("reads create intent %j as request %s (#13975)", (intent, expected) => {
-    expect(createIntentToolDisclosureRequest(intent)).toBe(expected);
-  });
-
-  it("keeps a live sandbox's recorded mode when the intent holds only the session default (#13975)", () => {
+  it("keeps a live sandbox's recorded mode when no mode is requested (#13975)", () => {
     const result = prepareSandboxToolDisclosure(
       "alpha",
       null,
@@ -107,10 +97,7 @@ describe("onboard tool-disclosure flow", () => {
         preservedMcpState: undefined,
         liveExists: true,
       }),
-      createIntentToolDisclosureRequest({
-        toolDisclosure: "progressive",
-        toolDisclosureSessionDefault: true,
-      }),
+      null,
     );
 
     expect(result).toMatchObject({
@@ -133,7 +120,7 @@ describe("onboard tool-disclosure flow", () => {
           preservedMcpState: undefined,
           liveExists: true,
         }),
-        createIntentToolDisclosureRequest({ toolDisclosure: "progressive" }),
+        "progressive",
       ),
     ).toThrow("EXIT:1");
     expect(error).toHaveBeenCalledWith(

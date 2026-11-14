@@ -21,6 +21,10 @@ vi.mock("../../../state/registry", async (importOriginal) => ({
   getSandbox: vi.fn(() => null),
 }));
 
+/** The mode the create intent requests; undefined when only the session default exists. */
+const toolDisclosureRequest = (intent: unknown) =>
+  (intent as { toolDisclosure?: string }).toolDisclosure;
+
 const registeredEntry = (name: string, overrides: Record<string, unknown> = {}) => ({
   name,
   provider: "provider",
@@ -125,44 +129,41 @@ describe("handleSandboxState tool disclosure", () => {
       });
 
       const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
-      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: mode });
+      expect(toolDisclosureRequest(createSandboxCall[15])).toBeUndefined();
     },
   );
 
   it.each([
     ["ollama-local", "openclaw", "direct"],
     ["vllm-local", "openclaw", "direct"],
-    ["nvidia-prod", "openclaw", "progressive"],
-    ["llama-cpp-local", "openclaw", "progressive"],
-    ["ollama-local", "hermes", "progressive"],
-    ["vllm-local", "langchain-deepagents-code", "progressive"],
-  ] as const)(
-    "uses %s/%s initial tool disclosure %s (#12106)",
-    async (provider, agentName, mode) => {
-      const session = createSession();
-      const { deps, calls } = createDeps(
-        {
-          getSandboxRegistryEntry: (name) =>
-            registeredEntry(name, {
-              provider,
-              pendingRouteReservation: true,
-              reservationSessionId: session.sessionId,
-            }),
-        },
-        session,
-      );
+    ["nvidia-prod", "openclaw", undefined],
+    ["llama-cpp-local", "openclaw", undefined],
+    ["ollama-local", "hermes", undefined],
+    ["vllm-local", "langchain-deepagents-code", undefined],
+  ] as const)("%s/%s sends the create request %s (#12106)", async (provider, agentName, mode) => {
+    const session = createSession();
+    const { deps, calls } = createDeps(
+      {
+        getSandboxRegistryEntry: (name) =>
+          registeredEntry(name, {
+            provider,
+            pendingRouteReservation: true,
+            reservationSessionId: session.sessionId,
+          }),
+      },
+      session,
+    );
 
-      await handleSandboxState({
-        ...baseOptions(deps, session),
-        provider,
-        agent: { name: agentName },
-      });
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      provider,
+      agent: { name: agentName },
+    });
 
-      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
-      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: mode });
-      expect(calls.removeSandbox).not.toHaveBeenCalled();
-    },
-  );
+    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+    expect(toolDisclosureRequest(createSandboxCall[15])).toBe(mode);
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+  });
 
   it.each(["progressive", "direct"] as const)(
     "preserves an explicit %s choice for a fresh local OpenClaw sandbox (#12106)",
@@ -193,11 +194,11 @@ describe("handleSandboxState tool disclosure", () => {
   );
 
   it.each([
-    ["no selection", {}, true],
-    ["an explicit selection", { NEMOCLAW_TOOL_DISCLOSURE: "progressive" }, undefined],
+    ["no selection", {}, undefined],
+    ["an explicit selection", { NEMOCLAW_TOOL_DISCLOSURE: "progressive" }, "progressive"],
   ] as const)(
-    "marks only the session default seed when re-onboarding a recorded sandbox with %s (#13975)",
-    async (_case, env, sessionDefault) => {
+    "requests a mode when re-onboarding a recorded sandbox with %s (#13975)",
+    async (_case, env, requested) => {
       const session = createSession();
       const { deps, calls } = createDeps(
         {
@@ -214,10 +215,8 @@ describe("handleSandboxState tool disclosure", () => {
 
       const createIntent = (calls.createSandbox.mock.calls[0] as unknown[])[15] as {
         toolDisclosure?: string;
-        toolDisclosureSessionDefault?: true;
       };
-      expect(createIntent.toolDisclosure).toBe("progressive");
-      expect(createIntent.toolDisclosureSessionDefault).toBe(sessionDefault);
+      expect(createIntent.toolDisclosure).toBe(requested);
     },
   );
 
@@ -234,7 +233,7 @@ describe("handleSandboxState tool disclosure", () => {
       });
 
       const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
-      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: "progressive" });
+      expect(toolDisclosureRequest(createSandboxCall[15])).toBeUndefined();
       expect(calls.removeSandbox).not.toHaveBeenCalled();
     },
   );

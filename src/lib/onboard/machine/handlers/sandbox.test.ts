@@ -92,7 +92,6 @@ describe("handleSandboxState", () => {
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: false,
-        toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
@@ -563,7 +562,6 @@ describe("handleSandboxState", () => {
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: false,
-        toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
