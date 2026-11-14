@@ -43,8 +43,10 @@ import type { AgentMcpAdapter } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
-import { NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential.js";
-import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract.js";
+import {
+  HERMES_MANAGED_CREDENTIAL_TEMPLATES,
+  hermesManagedRouteReference,
+} from "../hermes-managed-route.js";
 import { shellQuote } from "../runner.js";
 import {
   createTempSshConfig,
@@ -1358,9 +1360,6 @@ function nativeStructuredAuthorityKind(
 }
 
 const HERMES_MANAGED_CONFIG = ".hermes/config.yaml";
-const HERMES_OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1";
-const HERMES_OPENROUTER_TEMPLATE = "${OPENROUTER_API_KEY}";
-
 /** Preserve the non-secret template only for the route that generated it. */
 function stripNativeStructuredCredentials(config: unknown, normalized: string): unknown {
   const sanitized = stripCredentials(config);
@@ -1377,17 +1376,15 @@ function stripNativeStructuredCredentials(config: unknown, normalized: string): 
   const custom = config.custom_providers;
   if (!isObjectRecord(upstream)) return sanitized;
   const provider = upstream.provider;
-  if (provider !== "openrouter-api" && provider !== "nvidia-prod") return sanitized;
-  const endpoint =
-    provider === "nvidia-prod" ? NVIDIA_HOSTED_NATIVE_ENDPOINT : HERMES_OPENROUTER_ENDPOINT;
-  const template =
-    provider === "nvidia-prod" ? NVIDIA_INFERENCE_PLACEHOLDER : HERMES_OPENROUTER_TEMPLATE;
+  if (typeof provider !== "string" || !isObjectRecord(model)) return sanitized;
+  const reference = hermesManagedRouteReference(provider, model.base_url);
+  if (!reference) return sanitized;
+  const { endpoint, template } = reference;
   const managed = isObjectRecord(providers) ? providers[provider] : null;
   const matches = Array.isArray(custom)
     ? custom.filter((entry) => isObjectRecord(entry) && entry.name === provider)
     : [];
   if (
-    !isObjectRecord(model) ||
     !isObjectRecord(managed) ||
     !Array.isArray(custom) ||
     upstream.provider_key !== provider ||
@@ -1781,9 +1778,10 @@ function scanNativeTarFilePayload(
         : hermesManagedConfig
           ? // The structured scan admits these literals only in the three
             // validated managed slots; raw scanning still catches other secrets.
-            raw
-              .replaceAll(HERMES_OPENROUTER_TEMPLATE, "unused")
-              .replaceAll(NVIDIA_INFERENCE_PLACEHOLDER, "unused")
+            HERMES_MANAGED_CREDENTIAL_TEMPLATES.reduce(
+              (text, template) => text.replaceAll(template, "unused"),
+              raw,
+            )
           : raw;
     if (
       textContainsCredential(credentialScanInput, {

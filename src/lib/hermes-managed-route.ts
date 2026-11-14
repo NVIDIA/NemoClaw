@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { nativeHostedAgentConfig } from "./inference/native-provider/agent-config.ts";
+import {
+  HOSTED_NATIVE_PROVIDERS,
+  nativeHostedAgentConfig,
+} from "./inference/native-provider/agent-config.ts";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./inference/native-nvidia/contract.ts";
 import {
   nativeLocalCredentialReference,
   NATIVE_LOCAL_CREDENTIAL_ENV,
@@ -242,4 +246,36 @@ export function refreshHermesNativeLocalCredential(
   config.custom_providers = custom.map((entry) =>
     entry === matches[0] ? { ...entry, api_key: route.nativeCredentialHandle } : entry,
   );
+}
+
+/** Credential environment of each custom endpoint kind, read from the function that writes it. */
+const CUSTOM_ENDPOINT_PROBE_URL = "https://custom-endpoint.invalid/v1";
+
+/** Environment references that NemoClaw itself writes into a managed Hermes route. */
+export const HERMES_MANAGED_CREDENTIAL_TEMPLATES: readonly string[] = [
+  NVIDIA_INFERENCE_PLACEHOLDER,
+  ...HOSTED_NATIVE_PROVIDERS.map((definition) => `\${${definition.credentialEnv}}`),
+  ...["compatible-endpoint", "compatible-anthropic-endpoint"].map(
+    (provider) =>
+      `\${${nativeHostedAgentConfig(provider, CUSTOM_ENDPOINT_PROBE_URL)!.credentialEnv}}`,
+  ),
+];
+
+/** Resolve the endpoint and environment reference NemoClaw generates for a route. */
+export function hermesManagedRouteReference(
+  provider: string,
+  baseUrl: unknown,
+): { endpoint: string; template: string } | null {
+  if (provider === "nvidia-prod") {
+    return { endpoint: NVIDIA_HOSTED_NATIVE_ENDPOINT, template: NVIDIA_INFERENCE_PLACEHOLDER };
+  }
+  if (typeof baseUrl !== "string") return null;
+  try {
+    // The same function writes the reference when the route is applied, so
+    // fixed, Hermes Provider and custom endpoints cannot drift from it here.
+    const hosted = nativeHostedAgentConfig(provider, baseUrl);
+    return hosted ? { endpoint: baseUrl, template: `\${${hosted.credentialEnv}}` } : null;
+  } catch {
+    return null;
+  }
 }

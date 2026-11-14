@@ -65,6 +65,21 @@ describe("complete native-home machine authority", () => {
       baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       template: "${NVIDIA_INFERENCE_API_KEY}",
     },
+    {
+      provider: "compatible-endpoint",
+      baseUrl: "http://203.0.113.10:11541/v1",
+      template: "${COMPATIBLE_API_KEY}",
+    },
+    {
+      provider: "compatible-anthropic-endpoint",
+      baseUrl: "https://llm.example.test/anthropic",
+      template: "${COMPATIBLE_ANTHROPIC_API_KEY}",
+    },
+    {
+      provider: "openai-api",
+      baseUrl: "https://api.openai.com/v1",
+      template: "${OPENAI_API_KEY}",
+    },
   ])("Hermes $provider archive references", ({ provider, baseUrl, template }) => {
     it.each([
       {
@@ -89,7 +104,17 @@ describe("complete native-home machine authority", () => {
       {
         name: "mismatched provider",
         change: (config: ManagedHermesConfig) => {
-          config._nemoclaw_upstream.provider = "openai-api";
+          config._nemoclaw_upstream.provider = "unrecognized-provider";
+        },
+        retained: false,
+      },
+      {
+        name: "credential variable of another provider",
+        change: (config: ManagedHermesConfig) => {
+          const other = "${UNRELATED_API_KEY}";
+          config.model.api_key = other;
+          config.providers[provider]!.api_key = other;
+          config.custom_providers[0]!.api_key = other;
         },
         retained: false,
       },
@@ -215,6 +240,44 @@ describe("complete native-home machine authority", () => {
         fs.rmSync(fixture, { recursive: true, force: true });
       }
     });
+  });
+
+  it("keeps stripping a custom endpoint that does not use the hosted credential (#14300)", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-custom-loopback-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+      const config: Record<string, unknown> = {};
+      applyHermesManagedRoute(config, {
+        model: "m",
+        upstreamProvider: "compatible-endpoint",
+        baseUrl: "http://127.0.0.1:11541/v1",
+        inferenceApi: "openai-completions",
+      });
+      // Pin the other credential shapes: whichever reference this route writes, the
+      // loopback endpoint is outside the hosted native-provider contract.
+      (config.model as Record<string, unknown>).api_key = "${COMPATIBLE_API_KEY}";
+      (config.providers as Record<string, Record<string, unknown>>)[
+        "compatible-endpoint"
+      ]!.api_key = "${COMPATIBLE_API_KEY}";
+      (config.custom_providers as Record<string, unknown>[])[0]!.api_key = "${COMPATIBLE_API_KEY}";
+      fs.writeFileSync(path.join(nativeRoot, ".hermes/config.yaml"), JSON.stringify(config));
+      writeSandboxRegistry("hermes-custom-loopback", "hermes");
+
+      const backup = sandboxState.backupSandboxState("hermes-custom-loopback", {
+        nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+      });
+
+      expect(backup.success, backup.error).toBe(true);
+      sandboxState.inspectNativeSandboxState(backup.manifest!.backupPath, (root: string) => {
+        const restored = parseYaml(fs.readFileSync(path.join(root, ".hermes/config.yaml"), "utf8"));
+        expect(restored.model.api_key).toBe("[STRIPPED_BY_MIGRATION]");
+        expect(restored.providers["compatible-endpoint"].api_key).toBe("[STRIPPED_BY_MIGRATION]");
+        expect(restored.custom_providers[0].api_key).toBe("[STRIPPED_BY_MIGRATION]");
+      });
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it.each([
