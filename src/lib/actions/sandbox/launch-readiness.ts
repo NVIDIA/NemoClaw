@@ -73,11 +73,13 @@ import {
 import {
   formatOpenClawPairingMismatchField,
   OpenClawPairingIncompatibleError,
+  observeOpenClawStartupFailure,
   observeOpenClawPairingQualification,
   observeOpenClawPairingRepairSettlement,
   observeOpenClawPairingSettlement,
   OpenClawPairingObservationRetryableError,
   OpenClawPairingQualificationError,
+  type OpenClawPairingObservationFailureReason,
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
@@ -147,6 +149,7 @@ export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
   observeOpenClawPairingQualification?: typeof observeOpenClawPairingQualification;
   observeOpenClawPairingRepairSettlement?: typeof observeOpenClawPairingRepairSettlement;
   observeOpenClawPairingSettlement?: typeof observeOpenClawPairingSettlement;
+  observeOpenClawStartupFailure?: typeof observeOpenClawStartupFailure;
   runPortablePairingProducer?: typeof runPortableOpenClawPairingRequestProducer;
   runPortablePairingApproval?: typeof runPortableOpenClawPairingApproval;
   classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
@@ -186,6 +189,7 @@ export type LaunchReadinessPublicationResult =
           | "pairing-observation-failed"
           | "pairing-state-incompatible"
           | "runtime-observation-failed";
+        pairingFailureReason?: OpenClawPairingObservationFailureReason;
         pairingMismatchField?: string;
       };
     };
@@ -233,7 +237,9 @@ export type PortableOpenClawPairingSettlementResult =
         | "portable-receipt-invalid"
         | "portable-policy-incomplete"
         | "portable-runtime-identity-invalid"
-        | "portable-pairing-incomplete";
+        | "portable-pairing-incomplete"
+        | "startup-timeout"
+        | "startup-gateway-exited";
     };
 
 export interface OpenClawPairingSettlementTarget {
@@ -833,9 +839,13 @@ async function captureLaunchIdentity(
   }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
+  if (entry.hermesSwitchyard !== undefined && inference.kind !== "configured") {
+    throw new ObservationError("config");
+  }
   const nativeProvider =
     Boolean(getNativeProviderAttachment(entry)) ||
-    entry.nativeLocalProviderAttachment !== undefined;
+    entry.nativeLocalProviderAttachment !== undefined ||
+    entry.hermesSwitchyard !== undefined;
   let liveInference: { provider: string; model: string } | null = null;
   if (!nativeProvider) {
     const inferenceGetStartedAt = performance.now();
@@ -1259,7 +1269,11 @@ export async function settlePortableOpenClawPairing(
         sleep,
       );
       if (initial.kind !== "observed") {
-        return incompletePortablePairing("portable-pairing-incomplete");
+        const startupFailure = (
+          deps.observeOpenClawStartupFailure ?? observeOpenClawStartupFailure
+        )(sandboxName, target.gatewayName);
+        revalidateSandboxIdentity?.(`read the startup diagnosis for sandbox '${sandboxName}'`);
+        return incompletePortablePairing(startupFailure ?? "portable-pairing-incomplete");
       }
       const first = initial.value;
       if (first.state === "settled") {
@@ -1318,6 +1332,13 @@ export function portableOpenClawPairingIncompleteMessage(
   sandboxName: string,
   reason: Extract<PortableOpenClawPairingSettlementResult, { kind: "incomplete" }>["reason"],
 ): string {
+  if (reason === "startup-timeout" || reason === "startup-gateway-exited") {
+    const cause =
+      reason === "startup-timeout"
+        ? "the native gateway startup deadline expired"
+        : "the native gateway exited";
+    return `Portable onboarding for '${sandboxName}' is incomplete because ${cause} before pairing could start. Read the startup log with \`nemoclaw ${shellQuote(sandboxName)} exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log\`. Correct the reported error, then run \`nemoclaw ${shellQuote(sandboxName)} gateway restart\`. After the restart succeeds, resume onboarding.`;
+  }
   const cause =
     reason === "portable-policy-incomplete"
       ? "its policy preset step is not finalized"
@@ -1519,6 +1540,9 @@ export async function publishLaunchReadiness(
                   error.field &&
                   formatOpenClawPairingMismatchField(error.field)
                     ? { pairingMismatchField: error.field }
+                    : {}),
+                  ...(error instanceof OpenClawPairingQualificationError && error.failureReason
+                    ? { pairingFailureReason: error.failureReason }
                     : {}),
                 },
               } as const);

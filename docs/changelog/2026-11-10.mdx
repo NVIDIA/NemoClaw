@@ -1,0 +1,51 @@
+{/*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}
+
+## v0.0.143
+
+NemoClaw v0.0.143 updates OpenClaw to 2026.10.5, retires the deprecated Model Router, and improves startup, installation, and telemetry.
+
+### Inference and Agent Runtime
+
+- Managed OpenClaw and its official plugins use OpenClaw 2026.10.5.
+  Rebuild existing sandboxes after installing this release to update their OpenClaw runtime.
+  Restoration rejects incompatible session or Telegram state and preserves the original backup for recovery.
+  Follow [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes) for upgrade and recovery guidance.
+  Related change: [PR #12382](https://github.com/NVIDIA/NemoClaw/pull/12382).
+- New onboarding no longer offers the deprecated Model Router.
+  Resumed onboarding rejects the retired `routed` and `nvidia-router` selections without automatically migrating the provider.
+  Choose a supported provider for a new onboarding attempt.
+  Legacy router identities remain recognizable for explicit destroy and uninstall.
+  Related change: [PR #14284](https://github.com/NVIDIA/NemoClaw/pull/14284).
+
+### Startup and Installation
+
+- OpenClaw `start` and `recover` wait through unavailable startup observations within the configured gateway recovery deadline.
+  Related change: [PR #14252](https://github.com/NVIDIA/NemoClaw/pull/14252).
+- OpenClaw readiness diagnostics identify rejected pairing fields.
+  Related change: [PR #14275](https://github.com/NVIDIA/NemoClaw/pull/14275).
+- The installer refreshes verified, owned stale `nemoclaw-acp` wrappers after an npm-prefix change.
+  Failed ownership verification leaves the wrapper unchanged.
+  Related change: [PR #12830](https://github.com/NVIDIA/NemoClaw/pull/12830).
+- Managed MCP server addition reports progress during credential binding and agent registration.
+  Related change: [PR #14249](https://github.com/NVIDIA/NemoClaw/pull/14249).
+
+### Telemetry
+
+- For OpenClaw sandboxes with one configured agent, telemetry skips the roster command, which can exceed the telemetry deadline.
+  Related change: [PR #14280](https://github.com/NVIDIA/NemoClaw/pull/14280).
+- Telemetry reports the recorded inference route for native-provider sandboxes.
+  Invalid recorded attachments report a collection error.
+  Related change: [PR #14295](https://github.com/NVIDIA/NemoClaw/pull/14295).
+
+### Documentation and Validation
+
+- Policy-list documentation no longer describes the removed tier tag.
+  Related change: [PR #14138](https://github.com/NVIDIA/NemoClaw/pull/14138).
+- E2E validation recognizes reviewed OpenShell 0.1.7 provenance and admitted SDK upgrades.
+  The vLLM storage fixture supplies its bridge prerequisite.
+  Related changes: [PR #14288](https://github.com/NVIDIA/NemoClaw/pull/14288), [PR #14341](https://github.com/NVIDIA/NemoClaw/pull/14341), and [PR #14283](https://github.com/NVIDIA/NemoClaw/pull/14283).
+- Candidate testing can be authorized through PR reviews, and JavaScript CodeQL completion no longer depends on Python analysis.
+  Related changes: [PR #14168](https://github.com/NVIDIA/NemoClaw/pull/14168) and [PR #14365](https://github.com/NVIDIA/NemoClaw/pull/14365).

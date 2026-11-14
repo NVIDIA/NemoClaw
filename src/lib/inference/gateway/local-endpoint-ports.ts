@@ -15,7 +15,6 @@ export function isProtectedLocalInferencePort(
   options: {
     ownedProxy?: boolean;
     allowLegacyProxyDefault?: boolean;
-    ownedModelRouterPort?: number;
   } = {},
 ): boolean {
   const home = resolveHome();

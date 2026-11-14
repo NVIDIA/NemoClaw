@@ -1,0 +1,1 @@
+N=x.canonicalKey!==`global`&&ue(m,x.canonicalKey);if((x.canonicalKey===`global`||N)&&!M)return te(`Cannot delete the main session (${x.canonicalKey}).`);

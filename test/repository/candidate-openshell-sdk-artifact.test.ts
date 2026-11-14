@@ -57,9 +57,9 @@ describe("candidate SDK artifact provenance", () => {
     );
   });
 
-  it("selects an archive produced after an approval comment on main", () => {
+  it("selects an archive produced after a PR review refresh on main", () => {
     const f = fixture();
-    f.run.event = "issue_comment";
+    f.run.event = "workflow_run";
     f.run.head_branch = "main";
     f.run.head_sha = "d".repeat(40);
     const result = f.execute();

@@ -20,13 +20,18 @@ import {
   runPortableOpenClawPairingApproval,
   runPortableOpenClawPairingRequestProducer,
 } from "../auto-pair-approval";
-import { settlePortableOpenClawPairing } from "../launch-readiness";
+import {
+  settlePortableOpenClawPairing,
+  portableOpenClawPairingIncompleteMessage,
+} from "../launch-readiness";
 import { buildTrustedProxyEnvSourceShell } from "../trusted-proxy-env";
 import {
   OpenClawPairingObservationRetryableError,
   type OpenClawPairingRepairObservation,
   type OpenClawPairingSettlementObservation,
 } from "./openclaw-pairing-qualification";
+
+import { observeAfterNativeStartup } from "../../../../../test/helpers/native-startup-observation";
 
 const AUTHORITY: CheckpointPortableRuntimeAuthority = {
   schemaVersion: 1,
@@ -94,6 +99,7 @@ function settlementDeps(overrides: Parameters<typeof settlePortableOpenClawPairi
       loadAgent: vi.fn(() => AGENT),
       observeOpenClawPairingRepairSettlement: observePairing,
       observeOpenClawPairingSettlement: observeFinalPairing,
+      observeOpenClawStartupFailure: vi.fn(() => null),
       runPortablePairingProducer: runProducer,
       runPortablePairingApproval: runApproval,
       now: () => now,
@@ -379,6 +385,57 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runProducer).not.toHaveBeenCalled();
     expect(scope.runApproval).not.toHaveBeenCalled();
   });
+
+  it("waits through native startup before the Portable canonical device appears (#12382)", async () => {
+    let now = 0;
+    const scope = settlementDeps({
+      getSandbox: () => ({ ...ENTRY, agentVersion: "2026.9.5" }),
+      loadAgent: () => ({ ...AGENT, expected_version: "2026.9.5" }),
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+    });
+    scope.observePairing.mockImplementation(
+      observeAfterNativeStartup(
+        () => now,
+        380_000,
+        () => ({ state: "settled" as const, deviceIdentitySha256: "a".repeat(64) }),
+        new OpenClawPairingObservationRetryableError(),
+      ),
+    );
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(now).toBe(380_000);
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+  });
+
+  it.each(["startup-timeout", "startup-gateway-exited"] as const)(
+    "reports %s when Portable canonical pairing never appears",
+    async (state) => {
+      const scope = settlementDeps({
+        observeOpenClawStartupFailure: vi.fn(() => state),
+      });
+      scope.observePairing.mockImplementation(() => {
+        throw new OpenClawPairingObservationRetryableError();
+      });
+      await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+        kind: "incomplete",
+        reason: state,
+      });
+      expect(scope.runProducer).not.toHaveBeenCalled();
+      expect(scope.runApproval).not.toHaveBeenCalled();
+      expect(portableOpenClawPairingIncompleteMessage("alpha", state)).toContain(
+        "nemoclaw 'alpha' exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log",
+      );
+      expect(portableOpenClawPairingIncompleteMessage("alpha", state)).toContain(
+        "nemoclaw 'alpha' gateway restart",
+      );
+    },
+  );
 
   it("repairs pairing-only state with one producer, one approval, and one final observation (#9207)", async () => {
     const scope = settlementDeps();

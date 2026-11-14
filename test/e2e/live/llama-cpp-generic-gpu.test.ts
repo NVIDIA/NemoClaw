@@ -59,6 +59,12 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     ...extra,
   };
+  // Keep installer and later lifecycle operations on the same command authority.
+  const npmBin = path.join(selected.HOME ?? os.homedir(), ".npm-global", "bin");
+  selected.PATH = [
+    npmBin,
+    ...(selected.PATH ?? "").split(path.delimiter).filter((entry) => entry !== npmBin),
+  ].join(path.delimiter);
   delete selected.NEMOCLAW_MODEL;
   delete selected.NEMOCLAW_CONTEXT_WINDOW;
   return selected;

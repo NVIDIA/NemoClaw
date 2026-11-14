@@ -32,6 +32,27 @@ Use `.github/workflows/e2e.yaml` from trusted `main` for GitHub runs. Do not sub
 E2E unless the maintainer explicitly requests local execution. Do not load a dispatch reference for
 a release inspection unless the maintainer requests a new run.
 
+## Carry execution authorization through the task
+
+When the accepted upgrade or repair task includes live E2E, carry that authorization through
+in-scope repairs and qualification of subsequent candidate commits. A completed, failed, or
+cancelled run, a new candidate SHA, compaction, or a skill handoff does not expire it.
+Do not ask for dispatch approval again solely because one of those events occurred.
+Record the authorized PR, selectors, targets, credential scope, cost bounds, cleanup obligations,
+and any explicit expiry or run limit in the shared task record. Do not invent a one-run limit.
+
+Before each dispatch, recheck candidate identity, execution prerequisites, remaining budgets,
+and active runs. Reuse a matching run; preserve spent retries. Apply the shared bounded retry
+policy to unchanged inputs. Qualification after an in-scope repair evaluates changed inputs;
+it is not permission for repeated unchanged runs or for exceeding a task-wide limit.
+Ask only for a missing initial execution decision or a material expansion of the recorded scope,
+cost, credentials, or resource ownership. A generic PR request alone does not authorize every live target.
+
+Distinguish task authorization from GitHub environment protection, repository access, and trusted
+controller admission. Existing task authorization does not bypass those controls. If one blocks
+execution, name the exact gate, run URL, responsible approver, and required action when known;
+do not replace it with a generic request to approve E2E again. Continue independent authorized work.
+
 ## Staging Brev Launchable Boundary
 
 Read [Staging Launchable](references/staging-launchable.md) before a dispatch that includes
@@ -55,6 +76,12 @@ Return:
 - relevant job URLs.
 
 A focused run supplements the reported full-run status; it does not become a full run.
+
+Report selected, skipped, failed, and unreached scenarios separately, with the selection or prerequisite reason for each relevant gap.
+Use the trusted planner's result and retained receipts; empty selectors do not select every opt-in job.
+For timeouts, report the terminating deadline, last completed phase, first unreached check, and available timing evidence.
+Distinguish the observed failure mechanism from a demonstrated cause of increased runtime.
+Keep run identities, active comparisons, and trial counts in the [task record](../_shared/task-continuation.md).
 
 Do not ask for release confirmation or decide whether a release can proceed. The release-tag skill
 owns the general E2E decision and records any reason for proceeding with an exceptional general E2E

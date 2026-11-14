@@ -21,10 +21,10 @@ describe("Vitest developer feedback", () => {
     });
   });
 
-  it("runs changed and watch feedback on the focused source projects (#6692)", ({ resources }) => {
-    expect(runVitestNpmScript(resources, "test:changed")).toBe(
-      `vitest run --changed ${focusedProjects}`,
-    );
+  it("routes changed feedback through opaque-input selection and retains focused watch projects (#6692)", ({
+    resources,
+  }) => {
+    expect(runVitestNpmScript(resources, "test:changed")).toBe("tsx scripts/tests/changed.mts");
     expect(runVitestNpmScript(resources, "test:watch")).toBe(`vitest watch ${focusedProjects}`);
   });
 

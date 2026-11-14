@@ -130,9 +130,9 @@ function omitLocalIdentity(root: string, _identity: Record<string, unknown>): st
   return path.join(root, "state");
 }
 
-function writePairingStateHelper(root: string): string {
+function writePairingStateHelper(root: string, source = PAIRING_STATE_HELPER_PY): string {
   const helperPath = path.join(root, "openclaw_pairing_state.py");
-  fs.writeFileSync(helperPath, PAIRING_STATE_HELPER_PY);
+  fs.writeFileSync(helperPath, source);
   return helperPath;
 }
 
@@ -140,12 +140,13 @@ function runSelector(
   state: Record<string, unknown>,
   identity: Record<string, unknown> = EXPECTED_IDENTITY,
   prepareIdentity: (root: string, identity: Record<string, unknown>) => string = writeLocalIdentity,
+  pairingHelperSource = PAIRING_STATE_HELPER_PY,
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-selector-"));
   const statePath = path.join(root, "devices.json");
   const requestIdPath = path.join(root, "selected-request-id");
   const stateRoot = prepareIdentity(root, identity);
-  const helperPath = writePairingStateHelper(root);
+  const helperPath = writePairingStateHelper(root, pairingHelperSource);
   fs.writeFileSync(statePath, JSON.stringify(state));
   try {
     const result = spawnSync("python3", ["-", statePath, requestIdPath], {
@@ -1112,6 +1113,66 @@ describe("prepared connect-shell administrative approval", () => {
       expect(output).not.toContain(EXPECTED_PUBLIC_KEY);
       expect(output).not.toContain("test-gateway-token");
       expect(stagedScriptRetained).toBe(false);
+    },
+  );
+
+  it.each([
+    [2, "OpenClawPairingStateRetryableError", 0, 3, EXPECTED_IDENTITY],
+    [99, "OpenClawPairingStateRetryableError", 1, 3, EXPECTED_IDENTITY],
+    [99, "PermissionError", 1, 1, EXPECTED_IDENTITY],
+    [
+      1,
+      "OpenClawPairingStateRetryableError",
+      1,
+      2,
+      { deviceId: "wrong", publicKey: EXPECTED_PUBLIC_KEY },
+    ],
+  ] as const)(
+    "bounds canonical snapshot recovery after %i failures of %s without bypassing identity",
+    (failures, errorType, status, calls, identity) => {
+      const helper = `${PAIRING_STATE_HELPER_PY.replace("def read_openclaw_pairing_state", "def fixture_snapshot")}
+import sys
+class OpenClawPairingStateRetryableError(OSError): pass
+snapshot_calls = 0
+def read_openclaw_pairing_state(state_dir, timeout=1):
+    global snapshot_calls
+    snapshot_calls += 1
+    print("SNAPSHOT_CALL", file=sys.stderr)
+    if snapshot_calls <= ${failures}:
+        raise ${errorType}("canonical pairing-state WAL changed while reading")
+    return fixture_snapshot(state_dir, timeout=timeout)
+`;
+      const result = runSelector(adminState(), identity, writeLocalIdentity, helper);
+      expect(result.status, result.stderr).toBe(status);
+      expect(result.stderr.match(/^SNAPSHOT_CALL$/gm) ?? []).toHaveLength(calls);
+      expect(result.stderr.match(/^ADMIN_SNAPSHOT_RETRY=[12]$/gm) ?? []).toHaveLength(calls - 1);
+      expect(result.stdout).toBe("");
+      expect(result.selectedRequestId).toBe(status === 0 ? EXPECTED_REQUEST_ID : "");
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain(EXPECTED_PUBLIC_KEY);
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain(EXPECTED_DEVICE_ID);
+    },
+  );
+
+  it.each([
+    ["during a rejected read", [0, 0, 1.1]],
+    ["before the next read", [0, 0, 0.1, 1.1]],
+  ] as const)(
+    "refuses another snapshot read when its original budget expires %s",
+    (_phase, ticks) => {
+      const helper = `${PAIRING_STATE_HELPER_PY}
+import sys, time
+clock_ticks = iter(${JSON.stringify(ticks)})
+time.monotonic = lambda: next(clock_ticks)
+class OpenClawPairingStateRetryableError(OSError): pass
+def read_openclaw_pairing_state(state_dir, timeout=1):
+    print("SNAPSHOT_CALL", file=sys.stderr)
+    raise OpenClawPairingStateRetryableError("canonical pairing-state WAL changed while reading")
+`;
+      const result = runSelector(adminState(), EXPECTED_IDENTITY, writeLocalIdentity, helper);
+      expect(result.status).toBe(1);
+      expect(result.stderr.match(/^SNAPSHOT_CALL$/gm) ?? []).toHaveLength(1);
+      expect(result.stderr).toContain("OpenClawPairingStateRetryableError");
+      expect(result.selectedRequestId).toBe("");
     },
   );
 

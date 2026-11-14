@@ -15,77 +15,12 @@ import {
 import { ManifestCompiler } from "./manifest-compiler";
 
 const ALL_CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp", "teams"] as const;
-const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
-  TELEGRAM_BOT_TOKEN: "123456:test-telegram-token",
-  DISCORD_BOT_TOKEN: "test-discord-token",
-  WECHAT_BOT_TOKEN: "test-wechat-token",
-  SLACK_BOT_TOKEN: "xoxb-test-slack-token",
-  SLACK_APP_TOKEN: "xapp-test-slack-token",
-  MSTEAMS_APP_PASSWORD: "test-teams-client-secret",
-};
-const TEST_TEAMS_ENV = {
-  MSTEAMS_APP_ID: "test-teams-app-id",
-  MSTEAMS_TENANT_ID: "test-teams-tenant-id",
-  TEAMS_ALLOWED_USERS: "00000000-0000-0000-0000-000000000001",
-  MSTEAMS_PORT: "3978",
-} as const;
-const TEST_WECHAT_LOGIN = {
-  token: "test-wechat-token",
-  accountId: "test-wechat-account",
-  baseUrl: "https://ilinkai.wechat.com",
-  userId: "test-wechat-user",
-} as const;
+import {
+  compiler,
+  TEST_CREDENTIALS,
+  TEST_TEAMS_ENV,
+} from "../../../../test/support/messaging-compiler-fixture";
 
-function compiler(): ManifestCompiler {
-  return new ManifestCompiler(
-    createBuiltInChannelManifestRegistry(),
-    createBuiltInMessagingHookRegistry({
-      common: {
-        env: {},
-        getCredential: (key) => TEST_CREDENTIALS[key] ?? null,
-        saveCredential: () => {},
-        prompt: async () => "",
-        log: () => {},
-      },
-      discord: {
-        authentication: { fetch: async () => Response.json({ id: "1", bot: true }), log: () => {} },
-      },
-      slack: {
-        validateCredentials: {
-          log: () => {},
-          validateCredentials: () => ({ ok: true }),
-        },
-      },
-      telegram: {
-        fetch: async () => ({
-          ok: true,
-          status: 200,
-          async json() {
-            return { ok: true };
-          },
-          async text() {
-            return "";
-          },
-        }),
-      },
-      wechat: {
-        ilinkLogin: {
-          env: {},
-          log: () => {},
-          saveCredential: () => {},
-          runLogin: async () => ({
-            kind: "ok",
-            credentials: TEST_WECHAT_LOGIN,
-          }),
-        },
-        seedOpenClawAccount: {
-          now: () => "2026-01-01T00:00:00.000Z",
-        },
-      },
-    }),
-    createBuiltInRenderTemplateResolver(),
-  );
-}
 function jsonRoundTrip<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -299,7 +234,7 @@ describe("ManifestCompiler", () => {
           kind: "package-install",
           value: {
             manager: "openclaw-plugin",
-            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
+            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.10",
             pin: true,
           },
         }),
@@ -567,7 +502,15 @@ describe("ManifestCompiler", () => {
         value: "1",
       }),
     );
-    expect(JSON.stringify(plan.agentRender)).toContain('"port":3978');
+    expect(plan.agentRender).toContainEqual(
+      expect.objectContaining({
+        path: "channels.msteams",
+        value: expect.objectContaining({
+          webhook: { path: "/api/messages" },
+          legacyWebhook: { port: 3978 },
+        }),
+      }),
+    );
     expect(JSON.stringify(plan.agentRender)).toContain('"streaming":{"mode":"off"}');
     expect(JSON.stringify(plan.agentRender)).toContain('"groupPolicy":"open"');
     expect(JSON.stringify(plan.agentRender)).not.toContain("groupAllowFrom");
@@ -631,7 +574,15 @@ describe("ManifestCompiler", () => {
       port: 3977,
       label: "Microsoft Teams webhook",
     });
-    expect(JSON.stringify(plan.agentRender)).toContain('"port":3977');
+    expect(plan.agentRender).toContainEqual(
+      expect.objectContaining({
+        path: "channels.msteams",
+        value: expect.objectContaining({
+          webhook: { path: "/api/messages" },
+          legacyWebhook: { port: 3977 },
+        }),
+      }),
+    );
   });
 
   it("rejects invalid Microsoft Teams webhook ports", async () => {

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 
@@ -291,6 +293,25 @@ const PROFILES: Readonly<Record<ManagedStartupAgent, () => ManagedStartupProfile
 };
 
 describe("managed startup agent environment", () => {
+  it("binds the OpenClaw proxy authority to the configured host and port", () => {
+    const profile = openClawProfile();
+    const configured = {
+      ...profile,
+      proxy: { ...profile.proxy, managedHost: "custom.internal", managedPort: 3129 },
+    };
+    const result = mapManagedStartupProfileToAgentEnvironment(configured, {
+      HTTP_PROXY: "http://attacker:9",
+    });
+    expect(result.materials).toContainEqual({
+      kind: "root-owned-file",
+      legacyInput: "NEMOCLAW_PROXY_HOST",
+      path: "/usr/local/share/nemoclaw/openclaw-proxy-url",
+      contents: "http://custom.internal:3129\n",
+      owner: "root",
+      group: "root",
+      mode: 0o444,
+    });
+  });
   it("maps every OpenClaw profile field to the existing generator and entrypoint contracts", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(openClawProfile(), {
       NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: " 30 ",
@@ -398,6 +419,15 @@ describe("managed startup agent environment", () => {
         legacyInput: "NEMOCLAW_CORPORATE_CA_B64",
         expectedSha256: CA_SHA256,
       },
+      {
+        kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_PROXY_HOST",
+        path: "/usr/local/share/nemoclaw/openclaw-proxy-url",
+        contents: "http://10.200.0.1:3128\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
     ]);
     expect(result.actions).toEqual([
       {
@@ -495,6 +525,7 @@ describe("managed startup agent environment", () => {
       CHAT_UI_URL: "https://hermes.example.test:19189",
       NEMOCLAW_CONTEXT_WINDOW: "65536",
       NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64: "",
+      NEMOCLAW_HERMES_SWITCHYARD_BINDINGS_B64: "",
       NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
       NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: expect.any(String),
       NEMOCLAW_INFERENCE_API: "anthropic-messages",
@@ -578,6 +609,7 @@ describe("managed startup agent environment", () => {
         agent: "hermes",
         webSearch: { enabled: true, provider: "tavily" },
         switchyardRouting: routing,
+        switchyardBindings: switchyardBindingFixture(routing),
       },
     };
     const mapped = mapManagedStartupProfileToAgentEnvironment(profile);
@@ -871,7 +903,7 @@ describe("managed startup agent environment", () => {
           timeoutSeconds: 900,
         },
         entries: {
-          main: { default: true },
+          main: { workspace: "/sandbox/.openclaw/workspace" },
           reviewer: {},
         },
       },
@@ -884,6 +916,11 @@ describe("managed startup agent environment", () => {
         },
       },
     });
+
+    expect(openclawConfig.agents).toMatchObject({
+      defaults: { systemAgent: { agentId: "main" }, sessionStore: { agentId: "main" } },
+    });
+    expect(openclawConfig.agents.entries.main).not.toHaveProperty("default");
 
     const hermes = mapManagedStartupProfileToAgentEnvironment(hermesProfile());
     const hermesSettings = readHermesBuildSettings({

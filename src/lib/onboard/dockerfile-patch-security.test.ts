@@ -9,7 +9,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { patchStagedDockerfile } from "./dockerfile-patch";
-import { assertToolDisclosureDockerfileContract } from "./dockerfile-tool-disclosure-contract";
+import {
+  readDockerfilePatchSnapshot,
+  assertToolDisclosureDockerfileContract,
+} from "./dockerfile-tool-disclosure-contract";
 
 const tmpRoots: string[] = [];
 
@@ -21,6 +24,35 @@ afterEach(() => {
 });
 
 describe("dockerfile patch security guards", () => {
+  it("refuses a destination swapped after custom base selection took its snapshot", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-base-snapshot-"));
+    tmpRoots.push(dir);
+    const dockerfilePath = path.join(dir, "Dockerfile");
+    const externalPath = path.join(dir, "external.Dockerfile");
+    fs.writeFileSync(dockerfilePath, "ARG NEMOCLAW_MODEL=old\n", "utf8");
+    fs.writeFileSync(externalPath, "ARG NEMOCLAW_MODEL=external\n", "utf8");
+    const sourceSnapshot = readDockerfilePatchSnapshot(dockerfilePath);
+    fs.unlinkSync(dockerfilePath);
+    fs.symlinkSync(externalPath, dockerfilePath);
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "custom-model",
+        "https://chat.example",
+        "build",
+        null,
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+        { sourceSnapshot },
+      ),
+    ).toThrow(/Refusing to patch Dockerfile because it changed during validation/);
+    expect(fs.readFileSync(externalPath, "utf8")).toBe("ARG NEMOCLAW_MODEL=external\n");
+  });
+
   it("refuses to patch a staged Dockerfile symlink", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-link-test-"));
     tmpRoots.push(dir);

@@ -131,17 +131,7 @@ export function createDeps(
     repair: vi.fn(),
     routeReady: vi.fn((_gatewayName: string, _provider: string, _model: string) => false),
     reconcileRouter: vi.fn(async () => undefined),
-    reupsertRoutedProvider: vi.fn(
-      (
-        _gatewayName: string,
-        _provider: string,
-        _endpointUrl: string | null,
-        _credentialEnv: string | null,
-      ) => ({
-        ok: true as const,
-        endpointUrl: "http://host.openshell.internal:4000/v1",
-      }),
-    ),
+
     reserveRoute: vi.fn(() => true),
     hasSandboxLifecycleAuthority: vi.fn(() => false),
     updateSandbox: vi.fn(),
@@ -213,10 +203,7 @@ export function createDeps(
       needsBedrockRuntimeAdapter: () => false,
       isInferenceRouteReady: calls.routeReady,
       hasNativeLocalProviderAuthority: vi.fn(() => true),
-      isRoutedInferenceProvider: (provider: string) =>
-        ["nvidia-router", "custom-router"].includes(provider),
-      reconcileModelRouter: calls.reconcileRouter,
-      reupsertRoutedProvider: calls.reupsertRoutedProvider,
+
       reserveSandboxInferenceRoute: calls.reserveRoute,
       hasSandboxLifecycleAuthority: calls.hasSandboxLifecycleAuthority,
       registryUpdateSandbox: calls.updateSandbox,

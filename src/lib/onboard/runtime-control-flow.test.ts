@@ -85,7 +85,6 @@ describe("onboard runtime control flow", () => {
       routerPort: 14000,
     });
     const before = structuredClone(session);
-    const stopTrackedModelRouterForAgentChange = vi.fn(async () => undefined);
     const clearAgentScopedResumeState = vi.fn((current) => current);
     const updateSession = vi.fn((mutator) => mutator(session) ?? session);
     const note = vi.fn();
@@ -100,11 +99,9 @@ describe("onboard runtime control flow", () => {
           resume: true,
           session,
           selectedAgentName: "openclaw",
-          routerPort: 4000,
           note,
         },
         {
-          stopTrackedModelRouterForAgentChange,
           clearAgentScopedResumeState,
           updateSession,
           error,
@@ -113,91 +110,52 @@ describe("onboard runtime control flow", () => {
       ),
     ).toThrow("exit 1");
 
-    expect(stopTrackedModelRouterForAgentChange).not.toHaveBeenCalled();
     expect(clearAgentScopedResumeState).not.toHaveBeenCalled();
     expect(updateSession).not.toHaveBeenCalled();
     expect(note).not.toHaveBeenCalled();
     expect(session).toEqual(before);
   });
 
-  it.each(["recorded", "legacy"])(
-    "plans without effects and cleans the %s router port before clearing state (#7411)",
-    async (receipt) => {
-      const session = createSession({
-        agent: "langchain-deepagents-code",
-        provider: "nvidia",
-        routerPid: 1234,
-        ...(receipt === "recorded"
-          ? { routerPort: 14000 }
-          : { endpointUrl: "http://host.openshell.internal:14000" }),
-      });
-      const before = structuredClone(session);
-      const effects: string[] = [];
-      const updateSession = vi.fn((mutator) => {
-        effects.push("update-session");
-        return mutator(session) ?? session;
-      });
-
-      const stopTrackedModelRouterForAgentChange = vi.fn(async () => {
-        effects.push("stop-router");
-      });
-      const plan = planSelectedAgentTransition(
+  it.each([
+    { provider: "nvidia-router" },
+    { provider: "custom-router", routerPid: 1234 },
+    { provider: "nvidia", routerPort: 14000 },
+    { provider: "nvidia", routerCredentialHash: "recorded-hash" },
+  ])("preserves legacy router state on agent change: %j", (routerState) => {
+    const session = createSession({ agent: "hermes", ...routerState });
+    const before = structuredClone(session);
+    const updateSession = vi.fn();
+    expect(() =>
+      planSelectedAgentTransition(
         {
           resume: true,
           session,
           selectedAgentName: "openclaw",
-          routerPort: 15000,
-          note: () => undefined,
+          note: vi.fn(),
         },
-        {
-          stopTrackedModelRouterForAgentChange,
-          updateSession,
-        },
-      );
+        { updateSession },
+      ),
+    ).toThrow("Model Router has been removed");
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(session).toEqual(before);
+  });
 
-      expect(plan.resumeAgentChanged).toBe(true);
-      expect(plan.session.routerPid).toBeNull();
-      expect(plan.session.routerPort).toBeNull();
-      expect(effects).toEqual([]);
-      expect(updateSession).not.toHaveBeenCalled();
-      expect(session).toEqual(before);
-
-      await plan.commit();
-
-      expect(effects).toEqual(["stop-router", "update-session"]);
-      expect(stopTrackedModelRouterForAgentChange).toHaveBeenCalledWith(before, 14000);
-      expect(session.routerPid).toBeNull();
-      expect(session.routerPort).toBeNull();
-    },
-  );
-
-  it("preserves durable session state when the Model Router stop fails", async () => {
-    const session = createSession({
-      agent: "langchain-deepagents-code",
-      provider: "nvidia",
-      routerPid: 1234,
-    });
-    const before = structuredClone(session);
+  it("commits an ordinary agent transition once", async () => {
+    const session = createSession({ agent: "hermes", provider: "nvidia" });
     const updateSession = vi.fn((mutator) => mutator(session) ?? session);
     const plan = planSelectedAgentTransition(
       {
         resume: true,
         session,
         selectedAgentName: "openclaw",
-        routerPort: 4000,
-        note: () => undefined,
+        note: vi.fn(),
       },
-      {
-        stopTrackedModelRouterForAgentChange: async () => {
-          throw new Error("Model Router stop failed");
-        },
-        updateSession,
-      },
+      { updateSession },
     );
-
-    await expect(plan.commit()).rejects.toThrow("Model Router stop failed");
-
-    expect(updateSession).not.toHaveBeenCalled();
-    expect(session).toEqual(before);
+    expect(session.agent).toBe("hermes");
+    await plan.commit();
+    await plan.commit();
+    expect(updateSession).toHaveBeenCalledTimes(1);
+    expect(session.agent).toBe("openclaw");
   });
 });

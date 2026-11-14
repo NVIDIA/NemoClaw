@@ -15,8 +15,19 @@ Do not fall back to unauthenticated HTTP, web search, or a different endpoint.
 Do not request a credential in chat, a prompt, a tracked file, or command arguments.
 Configured access does not authorize a GitHub write.
 
-Stop if a Git or GitHub command has an access error. Access errors include authentication, authorization, credentials, SSO, token scope, SSH keys, remote access, and push permissions.
-Ask the user to correct the access problem.
+Distinguish a client capability limit from a repository access denial.
+A missing tool operation or an explicit integration-scope limitation does not establish the user's repository permissions.
+For that case, a read-only check through another already configured, authenticated client may establish access to the same repository.
+Verify the actor and required permission before resuming an authorized operation through that client.
+After an inconclusive write, reconcile external state before any retry under the owning publication procedure.
+
+Stop the affected operation on an authentication failure, repository permission denial, SSO requirement, or rejected SSH authentication.
+Ask the user to correct that access problem. If the error does not distinguish client scope from repository denial, stop and report the ambiguity.
+Do not try other identities or endpoints to overcome a repository denial.
+Continue independent authorized work that does not require the failed access.
+
+Git transport and GitHub API access are separate capabilities. A working API client does not establish SSH push permission.
+Use SSH for Git operations on `github.com`. Do not request API login to repair an SSH Git operation.
 
 Do not try to bypass an access error. Do not:
 
@@ -27,7 +38,7 @@ Do not try to bypass an access error. Do not:
 
 Before reporting a command, error, or tool output, redact credentials, tokens, authentication
 headers, credential-bearing URLs, credential paths, and other sensitive output.
-Report the redacted failure, state the required user action, and wait.
+For a blocking access failure, report the redacted failure and required user action. Wait before repeating the affected operation.
 
 This rule applies only to access errors.
 Handle merge conflicts, stale branches, dirty worktrees, and rebase conflicts in the related workflow.

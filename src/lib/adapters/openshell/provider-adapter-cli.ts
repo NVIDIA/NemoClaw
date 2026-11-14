@@ -270,7 +270,7 @@ function commandError(
     return { kind: "command", reason: "already_exists", message };
   }
   if (
-    /Failed to detach provider:\s*sandbox was modified by another operation\.\s*Please retry the command\.?/iu.test(
+    /Failed to (?:attach|detach) provider:\s*sandbox was modified by another operation\.\s*Please retry the command\.?/iu.test(
       output,
     )
   ) {

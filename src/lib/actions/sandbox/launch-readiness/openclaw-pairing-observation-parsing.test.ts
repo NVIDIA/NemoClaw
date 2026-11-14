@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import type { spawnSync } from "node:child_process";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildOpenClawPairingObservationScript,
+  observeOpenClawPairingQualification,
   parseOpenClawPairingObservation,
   parseOpenClawPairingRepairObservation,
   parseOpenClawPairingSettlementObservation,
@@ -65,5 +67,51 @@ describe("OpenClaw pairing observation parsing", () => {
 
     expect(script).not.toContain(rawStateDirectory);
     expect(script).toContain(Buffer.from(rawStateDirectory, "utf8").toString("base64"));
+  });
+  it("pins observation to the named gateway and rejects non-terminal output (#9023)", () => {
+    const digest = "a".repeat(64);
+    const spawn = vi.fn(
+      (_binary: string, _args: readonly string[], _options: Parameters<typeof spawnSync>[2]) => ({
+        status: 0,
+        signal: null,
+        stdout: `__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=${JSON.stringify({
+          deviceIdentitySha256: digest,
+          pairingStateSha256: digest,
+          requiredRoles: ["operator"],
+          requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
+        })}\nuntrusted trailing output\n`,
+        stderr: "",
+      }),
+    );
+
+    expect(() =>
+      observeOpenClawPairingQualification(
+        "alpha",
+        "nemoclaw-8080",
+        "2026.7.1",
+        "/sandbox/.openclaw",
+        {
+          getOpenshellBinary: () => "openshell",
+          readApprovalPolicy: () => "# Policy execution is mocked in this transport test",
+          spawnSync: spawn as never,
+        },
+      ),
+    ).toThrow("OpenClaw pairing qualification is unavailable");
+    expect(spawn.mock.calls[0]?.[1]).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "alpha",
+      "-g",
+      "nemoclaw-8080",
+      "--",
+      "sh",
+      "-s",
+    ]);
+    expect(spawn.mock.calls[0]?.[2]).toMatchObject({
+      maxBuffer: 4 * 1_024,
+      stdio: ["pipe", "pipe", "ignore"],
+      timeout: 3_000,
+    });
   });
 });

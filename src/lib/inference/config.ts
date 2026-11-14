@@ -6,6 +6,7 @@
  * All functions are pure.
  */
 
+import { rejectRetiredModelRouter } from "./provider-key/contract";
 import { nativeLocalCredentialReference } from "./native-local/agent-config";
 import {
   usesNativeLocalInference,
@@ -243,6 +244,7 @@ export function getProviderSelectionConfig(
   provider: string,
   model?: string,
 ): ProviderSelectionConfig | null {
+  rejectRetiredModelRouter(provider);
   const base: Omit<ProviderSelectionConfig, "model" | "credentialEnv" | "providerLabel"> = {
     endpointType: "custom",
     endpointUrl: hostedNativeProvider(provider)?.endpoint ?? INFERENCE_ROUTE_URL,
@@ -449,9 +451,7 @@ export function getSandboxInferenceConfig(
       };
       break;
     case "nvidia-router":
-      providerKey = MANAGED_PROVIDER_ID;
-      primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
-      break;
+      throw new Error("Model Router has been removed; choose a supported inference provider.");
     case "nvidia-prod":
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       inferenceBaseUrl = NVIDIA_HOSTED_NATIVE_ENDPOINT;
@@ -567,3 +567,5 @@ export function formatInferenceRouteDriftForDisplay(
     warning: `gateway inference route (${liveProvider}/${liveModel}) differs from the recorded route ${owner} (${recordedRoute}).`,
   };
 }
+
+export { rejectRetiredModelRouter } from "./provider-key/contract";

@@ -220,7 +220,7 @@ function getProviderLabel(provider) {
     case "nvidia-nim":
       return "NVIDIA Endpoints";
     case "nvidia-router":
-      return "Model Router";
+      return "Model Router (removed)";
     case "vllm-local":
       return "Local vLLM";
     case "ollama-local":
@@ -249,7 +249,8 @@ function getEffectiveProviderName(providerKey) {
     case "llama-cpp":
       return "llama-cpp-local";
     case "routed":
-      return "nvidia-router";
+    case "nvidia-router":
+      throw new Error("Model Router has been removed; choose a supported inference provider.");
     default:
       return providerKey;
   }

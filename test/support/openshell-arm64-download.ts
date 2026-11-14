@@ -12,6 +12,8 @@ import {
   PINNED_OPEN_SHELL_SHA256,
 } from "../helpers/openshell-release-fixtures";
 
+import { writeFixtureMktemp } from "./openshell-installed-version";
+
 const REQUIRED_OPENSHELL_VERSION = credentialBoundaryManifest.openshellVersion;
 
 function writeExecutable(target: string, contents: string) {
@@ -26,6 +28,7 @@ export function createLinuxArm64DownloadFixture() {
   const downloadLog = path.join(tmp, "downloads.log");
   const checksumLog = path.join(tmp, "checksums.log");
   fs.mkdirSync(fakeBin);
+  writeFixtureMktemp(fakeBin, tmp);
 
   writeExecutable(
     path.join(fakeBin, "uname"),

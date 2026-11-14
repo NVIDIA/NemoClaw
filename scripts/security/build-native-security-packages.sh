@@ -201,7 +201,7 @@ build_libssh2_package() {
   test -f "${install_root}/usr/lib/libssh2.so.1.0.1"
 
   download \
-    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/libs/libssh2/libssh2-1t64_${LIBSSH2_DEBIAN_VERSION}_${architecture}.deb" \
+    "https://deb.debian.org/debian/pool/main/libs/libssh2/libssh2-1t64_${LIBSSH2_DEBIAN_VERSION}_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   dpkg-deb -R "${original_deb}" "${package_root}"
@@ -256,7 +256,7 @@ build_zlib_package() {
     *) return 64 ;;
   esac
   download \
-    'https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/z/zlib/zlib_1.3.dfsg%2Breally1.3.1.orig.tar.gz' \
+    'https://deb.debian.org/debian/pool/main/z/zlib/zlib_1.3.dfsg%2Breally1.3.1.orig.tar.gz' \
     "${build_root}/zlib.tar.gz"
   verify_sha256 \
     '60dd315c07f616887caa029408308a018ace66e3d142726a97db164b3b8f69fb' \
@@ -281,7 +281,7 @@ build_zlib_package() {
     ./write-error-test
   )
   download \
-    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/z/zlib/zlib1g_1.3.dfsg%2Breally1.3.1-1%2Bb1_${architecture}.deb" \
+    "https://deb.debian.org/debian/pool/main/z/zlib/zlib1g_1.3.dfsg%2Breally1.3.1-1%2Bb1_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   test "$(dpkg-deb -f "${original_deb}" Package)" = zlib1g
@@ -328,7 +328,7 @@ build_python_fix_package() {
   esac
 
   download \
-    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/p/python3.13/libpython3.13-stdlib_${PYTHON_DEBIAN_VERSION}_${architecture}.deb" \
+    "https://deb.debian.org/debian/pool/main/p/python3.13/libpython3.13-stdlib_${PYTHON_DEBIAN_VERSION}_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   dpkg-deb -x "${original_deb}" "${original_root}"

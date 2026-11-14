@@ -207,7 +207,7 @@ describe("native security package remediation", () => {
         });
         const calls = fs.readFileSync(path.join(harnessLog, "calls"), "utf-8");
         expect(calls).toContain(
-          `download https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/p/python3.13/libpython3.13-stdlib_3.13.5-2+deb13u5_${architecture}.deb`,
+          `download https://deb.debian.org/debian/pool/main/p/python3.13/libpython3.13-stdlib_3.13.5-2+deb13u5_${architecture}.deb`,
         );
         expect(calls).toContain(`verify ${hash} python-stdlib-original.deb`);
         expect(calls).toContain(

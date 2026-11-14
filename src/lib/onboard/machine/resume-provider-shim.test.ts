@@ -18,25 +18,22 @@ describe("createResumeProviderShim", () => {
   it("binds the selected gateway and recovery dependencies", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const providerExistsInGateway = vi.fn(() => false);
-    const isRoutedInferenceProvider = vi.fn(() => true);
     const replaceNamedCredential = vi.fn(async () => "fresh-key");
     const shim = createResumeProviderShim({
       isNonInteractive: () => false,
       providerExistsInGateway,
-      isRoutedInferenceProvider,
       replaceNamedCredential,
     });
 
     await expect(
-      shim.ensureResumeProviderReady("gateway-west", "routed-provider", null),
+      shim.ensureResumeProviderReady("gateway-west", "compatible-endpoint", null),
     ).resolves.toEqual({
       forceInferenceSetup: true,
-      credentialEnv: "OPENAI_API_KEY",
+      credentialEnv: "COMPATIBLE_API_KEY",
     });
-    expect(providerExistsInGateway).toHaveBeenCalledWith("routed-provider", "gateway-west");
-    expect(isRoutedInferenceProvider).toHaveBeenCalledWith("routed-provider");
+    expect(providerExistsInGateway).toHaveBeenCalledWith("compatible-endpoint", "gateway-west");
     expect(replaceNamedCredential).toHaveBeenCalledWith(
-      "OPENAI_API_KEY",
+      "COMPATIBLE_API_KEY",
       expect.any(String),
       null,
       expect.any(Function),
@@ -67,7 +64,7 @@ describe("createResumeProviderShim", () => {
         getSandbox,
         isNonInteractive: () => true,
         providerExistsInGateway,
-        isRoutedInferenceProvider: () => true,
+
         replaceNamedCredential,
       });
 
@@ -95,7 +92,7 @@ describe("createResumeProviderShim", () => {
         getSandbox: () => ({ nativeNvidiaProviderAttachment: attachment as never }),
         isNonInteractive: () => true,
         providerExistsInGateway,
-        isRoutedInferenceProvider: () => true,
+
         replaceNamedCredential,
       });
       await expect(
@@ -115,7 +112,7 @@ describe("createResumeProviderShim", () => {
       getSandbox: () => ({}),
       isNonInteractive: () => true,
       providerExistsInGateway,
-      isRoutedInferenceProvider: () => true,
+
       replaceNamedCredential: vi.fn(async () => "unexpected"),
     });
     await expect(
@@ -134,7 +131,7 @@ describe("createResumeProviderShim", () => {
     const shim = createResumeProviderShim({
       isNonInteractive: () => true,
       providerExistsInGateway: () => true,
-      isRoutedInferenceProvider: () => false,
+
       replaceNamedCredential: vi.fn(async () => "unused"),
       resumeManagedLlamaCppRuntime,
     });
@@ -164,7 +161,7 @@ describe("createResumeProviderShim", () => {
     const shim = createResumeProviderShim({
       isNonInteractive: () => true,
       providerExistsInGateway: () => true,
-      isRoutedInferenceProvider: () => false,
+
       replaceNamedCredential: vi.fn(async () => "unused"),
       resumeManagedLlamaCppRuntime: vi.fn(async () => {
         throw ownershipConflict;
@@ -216,7 +213,7 @@ it.each([
       },
       isNonInteractive: () => true,
       providerExistsInGateway,
-      isRoutedInferenceProvider: () => false,
+
       replaceNamedCredential,
     });
     const result = await shim.ensureResumeProviderReady(
@@ -267,7 +264,7 @@ function nativeResumeHarness(provider: "compatible-endpoint" | "compatible-anthr
     getSandbox: () => ({ nativeHostedProviderAttachment: attachment }),
     isNonInteractive: () => true,
     providerExistsInGateway,
-    isRoutedInferenceProvider: () => false,
+
     replaceNamedCredential,
   });
   return { attachment, shim, providerExistsInGateway, replaceNamedCredential };

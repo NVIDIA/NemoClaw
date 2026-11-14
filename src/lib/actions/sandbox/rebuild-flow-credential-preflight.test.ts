@@ -187,6 +187,21 @@ function disabledDiscordRebuildHarness(recorded: ReturnType<typeof makeStagedHer
 describe("rebuildSandbox flow: credential preflight", () => {
   installRebuildFlowTestHooks();
 
+  it.each(["routed", "nvidia-router"])(
+    "rejects retired %s before rebuild backup or deletion",
+    async (provider) => {
+      const harness = createRebuildFlowHarness({ sandboxEntry: { provider } });
+      const before = structuredClone(harness.session);
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+      ).rejects.toThrow("Model Router has been removed");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.session).toEqual(before);
+    },
+  );
+
   it.each(["hermes", "langchain-deepagents-code"] as const)(
     "rebuilds native local %s with only its scoped provider",
     async (agent) => {
@@ -231,6 +246,59 @@ describe("rebuildSandbox flow: credential preflight", () => {
       expect(diagnostics(harness)).not.toContain("private provider diagnostic");
     },
   );
+
+  it.each([
+    { agent: "openclaw", recovery: false },
+    { agent: null, recovery: false },
+    { agent: "openclaw", recovery: true },
+  ])(
+    "refuses an invalid tools/list timeout for agent=$agent recovery=$recovery before mutation (#14435)",
+    async ({ agent, recovery }) => {
+      vi.stubEnv("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", "500");
+      const harness = createRebuildFlowHarness({ sandboxEntry: { agent } });
+      const before = structuredClone(harness.getSandboxEntry());
+      const recoveryManifest = recovery ? makePreparedRecoveryManifest() : undefined;
+      const recoveryBefore = structuredClone(recoveryManifest);
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true, recoveryManifest }),
+      ).rejects.toThrow("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS");
+
+      expect(diagnostics(harness)).toContain("1500 to 10000");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.getSandboxEntry()).toEqual(before);
+      expect(recoveryManifest).toEqual(recoveryBefore);
+    },
+  );
+
+  it.each([undefined, " 3000 "])(
+    "continues rebuild with tools/list timeout %s (#14435)",
+    async (value) => {
+      vi.stubEnv("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", value);
+      const harness = createRebuildFlowHarness();
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.onboardSpy).toHaveBeenCalled();
+    },
+  );
+
+  it("ignores an invalid OpenClaw tools/list timeout when rebuilding Hermes (#14435)", async () => {
+    vi.stubEnv("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", "500");
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: { agent: "hermes" },
+      beforeBackup: () => {
+        throw new Error("reached backup");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("reached backup");
+  });
 
   it("rechecks native Hermes authority after asynchronous policy recapture", async () => {
     const { harness, verify, refresh } = createNativeLocalRebuildHarness("hermes");
@@ -851,7 +919,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
   it("stops before backup when the agent base-image preflight fails", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: { agent: "hermes", provider: "nvidia-prod" },
       baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
     });
 
@@ -881,7 +949,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
   });
 
-  it.each(["ollama-local", "vllm-local", "nvidia-router"])(
+  it.each(["ollama-local", "vllm-local"])(
     "blocks a legacy %s target before backup (#2519)",
     async (provider) => {
       const harness = createRebuildFlowHarness({

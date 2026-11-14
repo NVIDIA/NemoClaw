@@ -1,0 +1,19 @@
+	const uninstallProxySignalHandlers = () => {
+		for (const [signal, handler] of proxySignalHandlers) process$1.off(signal, handler);
+		proxySignalHandlers = [];
+	};
+	const installProxySignalHandlers = () => {
+		if (!proxyHandle || proxySignalHandlers.length > 0) return;
+		unregisterProxySignalExitBarrier = registerSignalExitBarrier(stopStartedProxy);
+		const shutdown = (exitCode) => {
+			waitForSignalExitBarriers().finally(() => {
+				process$1.exit(exitCode);
+			});
+		};
+		proxySignalHandlers = [
+			["SIGTERM", () => shutdown(143)],
+			["SIGINT", () => shutdown(130)],
+			["exit", killStartedProxy]
+		];
+		for (const [signal, handler] of proxySignalHandlers) process$1.once(signal, handler);
+	};

@@ -61,7 +61,7 @@ function runChild(env: NodeJS.ProcessEnv, source = COMPILER_PROBE) {
     ["--import", "tsx", "--input-type=module", "--eval", source],
     {
       cwd: REPO_ROOT,
-      env: resolveLiveE2eWorkloadSourceEnv(env),
+      env: resolveLiveE2eWorkloadSourceEnv({ ...env, TMPDIR: directory }),
       encoding: "utf8",
       timeout: 30_000,
     },
