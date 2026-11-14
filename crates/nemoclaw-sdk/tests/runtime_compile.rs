@@ -818,6 +818,87 @@ fn portable_container_memory_limits_cover_shared_memory_and_recipe_preparation_o
     }
 }
 
+#[test]
+fn recipe_preparation_must_fit_the_effective_docker_container_memory_limit() {
+    let baseline: Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/inline-recipe.yaml")).unwrap();
+    for container in [None, Some(json!({"cpuLimitMillis": 2000}))] {
+        let mut input = baseline.clone();
+        let service = &mut input["spec"]["services"]["qwen"];
+        service.as_object_mut().unwrap().remove("container");
+        if let Some(container) = container {
+            service["container"] = container;
+        }
+        service["recipe"]["resources"]["preparationMemoryGiB"] = json!(128);
+        let error = Document::parse(input.to_string().as_bytes())
+            .expect_err("128 GiB preparation must not fit the default 104 GiB container limit");
+        assert!(
+            error
+                .to_string()
+                .contains("container.memoryLimitGiB must cover recipe preparationMemoryGiB"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("default is 104 GiB"), "{error}");
+        assert!(
+            error.to_string().contains("set container.memoryLimitGiB"),
+            "{error}"
+        );
+
+        input["spec"]["services"]["qwen"]["recipe"]["resources"]["preparationMemoryGiB"] =
+            json!(104);
+        Document::parse(input.to_string().as_bytes())
+            .expect("104 GiB preparation must fit the default container limit");
+    }
+
+    let mut input = baseline;
+    input["spec"]["services"]["qwen"]["recipe"]["resources"]["preparationMemoryGiB"] = json!(128);
+    input["spec"]["services"]["qwen"]["container"] = json!({"memoryLimitGiB": 128});
+    Document::parse(input.to_string().as_bytes())
+        .expect("128 GiB preparation must fit an explicit 128 GiB container limit");
+    input["spec"]["services"]["qwen"]["container"]["memoryLimitGiB"] = json!(127);
+    let error = Document::parse(input.to_string().as_bytes())
+        .expect_err("128 GiB preparation must not fit an explicit 127 GiB container limit");
+    assert!(
+        error
+            .to_string()
+            .contains("container.memoryLimitGiB must cover recipe preparationMemoryGiB"),
+        "{error}"
+    );
+}
+
+#[test]
+fn host_ipc_exempts_shared_memory_but_not_recipe_preparation_from_the_container_limit() {
+    let mut input: Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/inline-recipe.yaml")).unwrap();
+    input["spec"]["services"]["qwen"]["recipe"]["resources"]["preparationMemoryGiB"] = json!(4);
+    input["spec"]["services"]["qwen"]["container"] =
+        json!({"memoryLimitGiB": 4, "sharedMemoryGiB": 8, "ipc": "host"});
+    Document::parse(input.to_string().as_bytes()).expect(
+        "host IPC must not charge the host shared-memory mount against the container limit",
+    );
+
+    input["spec"]["services"]["qwen"]["container"]["ipc"] = json!("private");
+    let error = Document::parse(input.to_string().as_bytes())
+        .expect_err("private shared memory must fit the container memory limit");
+    assert!(
+        error.to_string().contains(
+            "container.memoryLimitGiB must cover container.sharedMemoryGiB for private IPC"
+        ),
+        "{error}"
+    );
+
+    input["spec"]["services"]["qwen"]["container"]["ipc"] = json!("host");
+    input["spec"]["services"]["qwen"]["recipe"]["resources"]["preparationMemoryGiB"] = json!(5);
+    let error = Document::parse(input.to_string().as_bytes())
+        .expect_err("host IPC must not exempt recipe preparation from the container memory limit");
+    assert!(
+        error
+            .to_string()
+            .contains("container.memoryLimitGiB must cover recipe preparationMemoryGiB"),
+        "{error}"
+    );
+}
+
 /// Managed resources, by address, whose configuration differs between two graphs,
 /// including resources only one of them declares.
 fn changed_resources(before: &Value, after: &Value) -> BTreeSet<String> {

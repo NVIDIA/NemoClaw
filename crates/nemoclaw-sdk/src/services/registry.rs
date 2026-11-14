@@ -232,9 +232,7 @@ impl ServiceDefinition {
             Self::Ollama(service) => (service.container.as_ref(), 0),
             Self::OllamaProxy(_) => (None, 0),
         };
-        if let Some(container) = container {
-            container.validate_memory(preparation_memory)?;
-        }
+        installers::container::ServiceContainer::validate_memory(container, preparation_memory)?;
         let gateway = &document.spec.gateway;
         let local_docker = gateway.as_managed().is_some_and(|gateway| {
             gateway.engine.starts_with("unix:///")
