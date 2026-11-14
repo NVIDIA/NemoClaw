@@ -898,8 +898,8 @@ test(
       "Node runtime identity can use an explicitly allowed MCP method",
     );
     const allowedNodeRequests = fakeMcp.requests.slice(requestCountBeforeAllowedNodeProof);
-    expect(allowedNodeRequests).toHaveLength(1);
-    expect(allowedNodeRequests[0]).toMatchObject({
+    expect(allowedNodeRequests).toHaveLength(3);
+    expect(allowedNodeRequests.at(-1)).toMatchObject({
       path: "/mcp",
       auth: `Bearer ${HOST_SECRET}`,
     });

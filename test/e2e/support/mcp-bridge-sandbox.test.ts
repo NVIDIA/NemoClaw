@@ -59,7 +59,12 @@ describe.each(["/bin/sh", "/bin/bash"])("MCP secret absence scan with %s", (shel
     return { root, state, file: path.join(state, "config") };
   }
 
-  function scan(paths: string[], secrets: string[], env: NodeJS.ProcessEnv = process.env) {
+  function scan(
+    paths: string[],
+    secrets: string[],
+    env: NodeJS.ProcessEnv = process.env,
+    expectedDiagnostic = "",
+  ) {
     const result = spawnSync(shell, ["-c", buildMcpSecretAbsenceScript(paths, secrets)], {
       encoding: "utf8",
       env,
@@ -67,7 +72,7 @@ describe.each(["/bin/sh", "/bin/bash"])("MCP secret absence scan with %s", (shel
     });
     expect(result.error).toBeUndefined();
     expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("");
+    expect(result.stderr).toBe(expectedDiagnostic);
     return result.status;
   }
 
@@ -92,13 +97,24 @@ describe.each(["/bin/sh", "/bin/bash"])("MCP secret absence scan with %s", (shel
     expect(scan([state, path.join(root, "optional")], ["fixture-secret"])).toBe(0);
   });
 
-  it("rejects a scan error without printing the diagnostic", () => {
+  it.each([
+    ["sensitive", ""],
+    ["sensitive: Permission denied", "permission-denied"],
+    ["sensitive: No such file or directory", "missing-entry"],
+    ["sensitive: Too many levels of symbolic links", "symlink-loop"],
+  ])("rejects a scan error with only a fixed hint (%s)", (diagnostic, hint) => {
     const { root, state } = fixture();
-    fs.writeFileSync(path.join(root, "grep"), "#!/bin/sh\necho sensitive >&2\nexit 2\n", {
+    fs.writeFileSync(path.join(root, "grep"), `#!/bin/sh\necho '${diagnostic}' >&2\nexit 2\n`, {
       mode: 0o700,
     });
     expect(
-      scan([state], ["fixture-secret"], { ...process.env, PATH: `${root}:${process.env.PATH}` }),
+      scan(
+        [state],
+        ["fixture-secret"],
+        { ...process.env, PATH: `${root}:${process.env.PATH}` },
+        (hint ? `NEMOCLAW_MCP_SECRET_SCAN_HINT=${hint}\n` : "") +
+          "NEMOCLAW_MCP_SECRET_SCAN_ERROR=grep-exit-2\n",
+      ),
     ).toBe(2);
   });
 
@@ -106,12 +122,26 @@ describe.each(["/bin/sh", "/bin/bash"])("MCP secret absence scan with %s", (shel
     const { root } = fixture();
     const link = path.join(root, "dangling");
     fs.symlinkSync(path.join(root, "missing"), link);
-    expect(scan([link], ["fixture-secret"])).toBe(2);
+    expect(
+      scan(
+        [link],
+        ["fixture-secret"],
+        process.env,
+        "NEMOCLAW_MCP_SECRET_SCAN_ERROR=dangling-target\n",
+      ),
+    ).toBe(2);
   });
 
   it("rejects absence when the parent cannot be inspected", () => {
     const { root } = fixture();
-    expect(scan([path.join(root, "missing-parent", "state")], ["fixture-secret"])).toBe(2);
+    expect(
+      scan(
+        [path.join(root, "missing-parent", "state")],
+        ["fixture-secret"],
+        process.env,
+        "NEMOCLAW_MCP_SECRET_SCAN_ERROR=parent-unavailable\n",
+      ),
+    ).toBe(2);
   });
 
   it("treats credential metacharacters as literal text", () => {

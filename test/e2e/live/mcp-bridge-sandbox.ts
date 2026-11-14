@@ -28,21 +28,28 @@ export function buildMcpSecretAbsenceScript(
   }
   return [
     "set -eu",
+    "scan_error() { printf 'NEMOCLAW_MCP_SECRET_SCAN_ERROR=%s\\n' \"$1\" >&2; exit 2; }",
+    "scan_errors=$(mktemp 2>/dev/null) || scan_error diagnostic-unavailable",
+    "trap 'rm -f -- \"$scan_errors\" 2>/dev/null || scan_error diagnostic-cleanup' EXIT",
     `for scan_path in ${paths.map(shellQuote).join(" ")}; do`,
     '  if [ ! -e "$scan_path" ] && [ ! -L "$scan_path" ]; then',
     '    scan_parent=$(dirname -- "$scan_path")',
-    '    [ -d "$scan_parent" ] && [ -r "$scan_parent" ] && [ -x "$scan_parent" ] || exit 2',
+    '    [ -d "$scan_parent" ] && [ -r "$scan_parent" ] && [ -x "$scan_parent" ] || scan_error parent-unavailable',
     "    continue",
     "  fi",
-    '  [ -e "$scan_path" ] || exit 2',
+    '  [ -e "$scan_path" ] || scan_error dangling-target',
     `  for scan_secret in ${secrets.map(shellQuote).join(" ")}; do`,
     // Do not use grep -q: a match must not suppress a read error elsewhere in the tree.
     // Hermes creates Unix sockets in its state tree; scan stored file contents without opening IPC endpoints.
-    '    if grep -RF --devices=skip -- "$scan_secret" "$scan_path" >/dev/null 2>&1; then',
+    '    if LC_ALL=C grep -RF --devices=skip -- "$scan_secret" "$scan_path" >/dev/null 2>"$scan_errors"; then',
     "      exit 1",
     "    else",
     "      scan_status=$?",
-    '      [ "$scan_status" -eq 1 ] || exit 2',
+    '      if [ "$scan_status" -ne 1 ]; then',
+    // Emit only fixed hints: grep errors can include credential-bearing paths.
+    "        LC_ALL=C sed -n -e '/: Permission denied$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=permission-denied/;p;q;}' -e '/: No such file or directory$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=missing-entry/;p;q;}' -e '/: Too many levels of symbolic links$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=symlink-loop/;p;q;}' \"$scan_errors\" >&2 2>/dev/null || :",
+    '        scan_error "grep-exit-$scan_status"',
+    "      fi",
     "    fi",
     "  done",
     "done",

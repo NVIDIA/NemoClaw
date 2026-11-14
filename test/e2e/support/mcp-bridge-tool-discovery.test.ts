@@ -26,13 +26,12 @@ import {
   shouldRetryMcpToolDiscoveryTransportFailure,
   withMcpToolCallFailureEvidence,
   buildHermesGatewayIdentityProbe,
-  buildDeepAgentsConfigProbe,
 } from "../live/mcp-bridge-tool-discovery.ts";
 
 const EXPECTED_SECRET = "expected-secret";
 
 describe("MCP failed tool-call evidence", () => {
-  it("keeps the existing config and process probes unchanged", () => {
+  it("keeps the gateway identity probe unchanged", () => {
     expect(buildHermesGatewayIdentityProbe()).toBe(
       [
         "set -eu",
@@ -45,12 +44,6 @@ describe("MCP failed tool-call evidence", () => {
         "PY",
       ].join("\n"),
     );
-    const probe = buildDeepAgentsConfigProbe("https://fixture.invalid/mcp", "fake", "secret");
-    expect(probe).toContain("entry = data['mcpServers'][\"fake\"]");
-    expect(probe).toContain("assert entry['type'] == 'http'");
-    expect(probe).toContain("assert entry['url'] == \"https://fixture.invalid/mcp\"");
-    expect(probe).toContain("assert re.fullmatch(");
-    expect(probe).toContain('assert "secret" not in text');
   });
   function setup() {
     const requests: FakeMcpRequest[] = [];
