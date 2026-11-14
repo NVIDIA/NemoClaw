@@ -52,9 +52,10 @@ An invalid or uninspectable recognized authority file stops the transfer instead
 For OpenClaw NVIDIA Endpoints, NemoClaw preserves `${NVIDIA_INFERENCE_API_KEY}` only in the generated `inference` provider entry for `https://integrate.api.nvidia.com/v1`. This reference is not a raw credential. A different provider, endpoint, or value stops the transfer.
 
 For Hermes hosted routes, NemoClaw preserves one non-secret credential reference only in a validated managed route in `.hermes/config.yaml`.
-The reference must match the route's provider:
+The archived provider must be the provider registered for the sandbox, and the reference must match that provider:
 
-- NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider use their fixed endpoint and credential variable. For NVIDIA Endpoints the reference is `${NVIDIA_INFERENCE_API_KEY}` and the endpoint is `https://integrate.api.nvidia.com/v1`.
+- NVIDIA Endpoints, OpenAI, Anthropic, Gemini, and OpenRouter use their fixed endpoint and credential variable. For NVIDIA Endpoints the reference is `${NVIDIA_INFERENCE_API_KEY}` and the endpoint is `https://integrate.api.nvidia.com/v1`.
+- Hermes Provider uses `${OPENAI_API_KEY}`. The endpoint is its default endpoint, or the endpoint returned by authenticated login when that is the endpoint registered for the sandbox.
 - Other OpenAI-compatible and Anthropic-compatible endpoints use `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}`. The endpoint must be the one registered for the sandbox, and it must not be a local or `inference.local` address.
 
 The route also needs matching model and provider metadata, and the reference must appear in all three managed fields:

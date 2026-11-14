@@ -248,7 +248,10 @@ export function refreshHermesNativeLocalCredential(
   );
 }
 
-/** Custom endpoint kinds a Hermes route can use. Each reads its credential from the function that writes it. */
+/**
+ * Custom endpoint kinds a Hermes route can use. Only the credential-template
+ * scan reads this list; the route writer decides which providers are custom.
+ */
 export const HERMES_CUSTOM_ENDPOINT_PROVIDERS = [
   "compatible-endpoint",
   "compatible-anthropic-endpoint",
@@ -275,36 +278,34 @@ export type HermesRegisteredRoute = Readonly<{
  * Resolve the endpoint and environment reference NemoClaw generates for a route.
  *
  * A fixed provider has one canonical endpoint, so its reference cannot point at
- * a different destination. A custom endpoint is chosen by the user, so the
- * archived route must also match the registered provider and endpoint. Pass
- * `registered` when sanitizing an archive. Omit it only to inspect an archive
- * whose routes sanitation already verified.
+ * a different destination. A custom endpoint, or the endpoint an authenticated
+ * Hermes Provider login returned, is chosen outside NemoClaw, so the archived
+ * route must match the registered endpoint. When `registered` is given, the
+ * archived provider must also be the registered one. Pass it when sanitizing an
+ * archive. Omit it only to inspect an archive whose routes sanitation already
+ * verified.
  */
 export function hermesManagedRouteReference(
   provider: string,
   baseUrl: unknown,
   registered?: HermesRegisteredRoute,
 ): { endpoint: string; template: string } | null {
+  if (registered !== undefined && registered.provider !== provider) return null;
   if (provider === "nvidia-prod") {
     return { endpoint: NVIDIA_HOSTED_NATIVE_ENDPOINT, template: NVIDIA_INFERENCE_PLACEHOLDER };
   }
   const fixed = HOSTED_NATIVE_PROVIDERS.find((entry) => entry.logicalProvider === provider);
-  if (fixed) return { endpoint: fixed.endpoint, template: `\${${fixed.credentialEnv}}` };
-  if (
-    typeof baseUrl !== "string" ||
-    !(HERMES_CUSTOM_ENDPOINT_PROVIDERS as readonly string[]).includes(provider)
-  ) {
-    return null;
+  const returnedEndpoint =
+    provider === "hermes-provider" && typeof baseUrl === "string" && baseUrl !== fixed?.endpoint;
+  if (fixed && !returnedEndpoint) {
+    return { endpoint: fixed.endpoint, template: `\${${fixed.credentialEnv}}` };
   }
-  if (
-    registered !== undefined &&
-    (registered.provider !== provider || !registered.endpointUrls?.includes(baseUrl))
-  ) {
-    return null;
-  }
+  if (typeof baseUrl !== "string") return null;
+  if (registered !== undefined && !registered.endpointUrls?.includes(baseUrl)) return null;
   try {
-    // The function that writes the reference decides whether this endpoint has
-    // one; loopback and shared-route endpoints do not.
+    // The function that writes the reference decides whether this provider and
+    // endpoint have one: an unknown provider, a loopback endpoint and a
+    // shared-route endpoint do not.
     const hosted = nativeHostedAgentConfig(provider, baseUrl);
     return hosted ? { endpoint: baseUrl, template: `\${${hosted.credentialEnv}}` } : null;
   } catch {
