@@ -3563,6 +3563,12 @@ async function restoreNativeSandboxState(
           'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
           'mkdir -p -- "$stage/.nemoclaw" "$stage/.openclaw/agents/main/sessions" "$stage/.hermes/runtime"',
           'uid="$(id -u)"',
+          "inspect_restore_owner() {",
+          // Bash can prove effective-user ownership without a subprocess. Its
+          // predicate follows links, so links and every negative result retain
+          // the original no-follow stat, including its failure behavior.
+          '  if [ ! -L "$1" ] && [ -O "$1" ]; then owner="$uid"; else owner="$(stat -c %u -- "$1")"; fi',
+          "}",
           "preserve_replacement_path() {",
           '  case "$1" in',
           "    .nemoclaw/config.json|.nemoclaw/blueprints|.openclaw/.nemoclaw-post-upgrade-doctor|.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*|.hermes/gateway.pid|.hermes/runtime/gateway.pid|.hermes/runtime/gateway.lock) return 0 ;;",
@@ -3579,12 +3585,12 @@ async function restoreNativeSandboxState(
           '    relative="${target_item#"$root"/}"',
           '    if { [ ! -e "$source_item" ] && [ ! -L "$source_item" ]; }; then',
           '      preserve_replacement_path "$relative" && continue',
-          '      owner="$(stat -c %u -- "$target_item")"',
+          '      inspect_restore_owner "$target_item"',
           '      if [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then rm -rf -- "$target_item"; continue; fi',
           '      echo "native restore could not remove replacement-only state at: $target_item" >&2',
           "      exit 22",
           "    fi",
-          '    owner="$(stat -c %u -- "$target_item")"',
+          '    inspect_restore_owner "$target_item"',
           '    if [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
           '      restore_dir "$source_item" "$target_item"',
           '      rmdir -- "$source_item"',
