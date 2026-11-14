@@ -439,7 +439,7 @@ Use these details when your first-run path needs more control.
     The dashboard assets are built into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
     Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
     To recover the dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned installation paths.
-    Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` before onboarding only when you want Hermes' optional in-browser TUI tab.
+    Set `NEMOCLAW_HERMES_DASHBOARD=1` and `NEMOCLAW_HERMES_DASHBOARD_TUI=1` before onboarding only when you want Hermes' optional in-browser TUI tab. Leave both unset with the Portable profile, which does not manage the dashboard forward.
 
     ```text
     ──────────────────────────────────────────────────
