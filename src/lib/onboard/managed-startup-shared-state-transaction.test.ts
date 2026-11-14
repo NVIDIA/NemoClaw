@@ -164,6 +164,39 @@ describe("managed startup shared-state transaction", () => {
     expect(fs.existsSync(transactionDirectory)).toBe(false);
   });
 
+  it.each(["geteuid", "getegid"] as const)(
+    "rejects a native capture when its %s cannot restore the file before admission",
+    (identity) => {
+      const original = capturedOpenClaw();
+      vi.spyOn(process, identity).mockReturnValue(process[identity]!() + 1);
+      expect(() =>
+        captureManagedStartupSharedState(original.profile, {
+          sandboxRoot,
+          bootstrapIdentity: original.bootstrapIdentity,
+        }),
+      ).toThrow(/different restoration identity/u);
+      expect(fs.existsSync(transactionDirectory)).toBe(false);
+      expect(fs.readFileSync(original.file, "utf8")).toBe('{"synthetic":"original"}');
+    },
+  );
+
+  it.each(["geteuid", "getegid"] as const)(
+    "rejects a native capture when its %s cannot restore the directory before admission",
+    (identity) => {
+      const original = capturedOpenClaw();
+      fs.unlinkSync(original.file);
+      vi.spyOn(process, identity).mockReturnValue(process[identity]!() + 1);
+      expect(() =>
+        captureManagedStartupSharedState(original.profile, {
+          sandboxRoot,
+          bootstrapIdentity: original.bootstrapIdentity,
+        }),
+      ).toThrow(/different restoration identity/u);
+      expect(fs.existsSync(transactionDirectory)).toBe(false);
+      expect(fs.readdirSync(agentRoot("openclaw"))).toEqual([]);
+    },
+  );
+
   it.each([
     ["openclaw", "openclaw.json"],
     ["hermes", "config.yaml"],
