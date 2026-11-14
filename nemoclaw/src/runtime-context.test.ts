@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   localCodeRelationshipPrompts,
   localFilenamePrompts,
+  longSetupPrompt,
   quotedExternalResearchPrompts,
   suppliedUrlListPrompts,
   webTargetPrompts,
@@ -270,7 +271,7 @@ const admissionCases: {
   ...[
     "Search bug" + " ".repeat(32000) + "outside",
     "Search README.md".padEnd(4097),
-    "Read https://example.org/guide. Search README.md".padEnd(4097),
+    "Read https://example.org/guide. " + "Search README.md".padEnd(4097),
     "Explain " + "x".repeat(8192),
     "\u2003".repeat(4097),
     `Search ${nestedLocalTarget}`,
@@ -279,8 +280,8 @@ const admissionCases: {
     `Search for TODOs in ${nestedLocalTarget}`,
     `Investigate ${"cause of ".repeat(129)}npm install errors`,
     `Search ${"README.md and ".repeat(256)}package.json`,
-    "Read README.md. ".repeat(256),
   ].map((prompt) => ({ prompt, tools: false })),
+  { prompt: longSetupPrompt, tools: true, local: true, urls: [] },
   ...coordinatedLocalRequestPrompts.map((prompt) => ({
     prompt,
     tools: true,

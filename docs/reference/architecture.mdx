@@ -250,8 +250,11 @@ Prompt construction only selects tools and adds context.
 Ordinary local work and retrieval from user-supplied sources retain their tools when the request does not also ask for external research.
 Quoted research topics do not supply local sources.
 For a filename with spaces, quote an explicit path such as `"./my folder/report.md"`.
-The classifier checks a limit of 4,096 UTF-16 code units before parsing and shares one work budget across all clauses and relationships between local resources.
-If either limit is exceeded while search is disabled, the whole turn loses tool access and supplied-source grants.
+The classifier splits a prompt at sentence and line ends and parses it in windows of about 1,024 UTF-16 code units.
+Each window shares one work budget across its clauses and relationships between local resources, so a long setup prompt that only reads and writes files keeps its tools.
+A prompt of up to 4,096 code units may contain a single sentence or line of that length.
+A longer prompt must break into sentences or lines of at most 1,024 code units, and no prompt may exceed 16,384 code units.
+If any limit is exceeded while search is disabled, the whole turn loses tool access and supplied-source grants.
 Split an overly complex request into smaller turns before retrying.
 After a denied search attempt, tool interception permits `web_fetch` only for the recorded URLs, including wrapped calls.
 Local-source turns retain local reads and memory queries, but cannot use a shell, browser, or unrelated URL as a substitute.

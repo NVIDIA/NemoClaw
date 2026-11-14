@@ -127,3 +127,22 @@ export const webTargetPrompts = [
   "Read the official docs from nemoclaw.build",
   ...webLocationPrompts,
 ];
+
+// A long setup prompt: many short steps that read and write local files (#14309).
+const setupStep = [
+  "Step 1. Create these folders if they do not exist:",
+  "- /sandbox/redteam/memory",
+  "- /sandbox/redteam/reports",
+  "Step 2. Read /sandbox/redteam/profile.yaml if present. If it is missing, ask me these setup questions one at a time and write my answers to profile.yaml:",
+  "1. What is the name of the product or project the decks are about?",
+  "2. Who is the audience for the decks (investors, customers, executives)?",
+  "3. Which risks should the review focus on (market, technical, financial, legal)?",
+  "Step 3. For every deck file in /sandbox/redteam/decks, read the slides and list unsupported claims, missing evidence and weak arguments.",
+  "Write the findings to /sandbox/redteam/reports/<deck-name>.md with a severity for each finding.",
+  "Step 4. Save a short note about what you reviewed to /sandbox/redteam/memory/log.md.",
+  "Rules:",
+  "- Never delete my files.",
+  "- Keep each report under 400 words.",
+  "- Use the exec and read tools for all file operations.",
+].join("\n");
+export const longSetupPrompt = `${setupStep}\n`.repeat(8);
