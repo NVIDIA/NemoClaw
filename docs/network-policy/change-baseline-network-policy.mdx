@@ -142,10 +142,49 @@ Use [Apply Policy Presets](apply-policy-presets) when you need to add a preset t
 
 ## Add Blueprint Policy Additions
 
-If you maintain a custom blueprint, add extra policy entries under `components.policy.additions` in `nemoclaw-blueprint/blueprint.yaml`.
-NemoClaw validates those entries with the same policy schema used by preset files.
-During sandbox creation, it fetches the live policy, merges the additions into `network_policies`, and applies the merged policy through OpenShell.
-The run metadata records the applied additions so you can audit the blueprint-level entries that were active.
+Only the experimental direct OpenClaw blueprint runner applies the additions under `components.policy.additions`, and `$$nemoclaw onboard` ignores them.
+To change the policy that `$$nemoclaw onboard` applies, edit the baseline policy file instead.
+
+<Warning>
+Blueprint additions cannot list `binaries`, so an addition cannot limit which executables use its endpoints.
+An addition can also replace a live entry that uses the same policy key, including that entry's `binaries`.
+If a sandbox named by `components.sandbox.name` already exists on the active OpenShell gateway, the direct blueprint runner changes that sandbox's live policy.
+Give each addition a policy key that no live entry uses.
+Do not start a policy key with `_provider_`, because the direct blueprint runner drops that addition without an error.
+Review [Binary-Scoped Endpoint Rules](../../security/best-practices#binary-scoped-endpoint-rules) before you add one.
+</Warning>
+
+If you use the direct blueprint runner with a custom blueprint, define each addition under `components.policy.additions` in the blueprint's `blueprint.yaml`.
+Each addition must match `$defs.policyAddition` in `schemas/blueprint.schema.json`, which accepts fewer fields and values than the baseline entry format:
+
+- An addition must set `name` and a non-empty `endpoints` list, and it accepts no other field.
+- An endpoint must set `host` and a single `port` number, and it can also set only `protocol`, `enforcement`, `tls`, `access`, and `rules`.
+- An endpoint `protocol` value must be `rest`, and a `rest` endpoint must include `rules`.
+- An endpoint `access` value must be `full`.
+- An endpoint must not set both `access` and `rules`, because OpenShell treats them as mutually exclusive.
+- A rule `method` cannot be `*`.
+
+For an HTTP API, set `protocol: rest`, `enforcement: enforce`, and `rules` on each endpoint.
+That combination is the narrowest form that an addition accepts.
+
+The direct blueprint runner also rejects wildcard `host` values such as `*.example.com` and unrestricted values such as `*` or `0.0.0.0`.
+It rejects reserved names such as `localhost` and any `host` that is, or resolves to, a private or reserved IP address.
+It replaces a hostname in `host` with the first IP address from the DNS resolver on the machine that runs the direct blueprint runner.
+The applied entry keeps that IP address after later DNS changes.
+A failed format or `host` check stops the direct blueprint runner before it calls OpenShell.
+
+When the direct blueprint runner applies the blueprint, it reads the live policy, sets each addition in `network_policies`, and applies the result through OpenShell.
+If OpenShell rejects the updated policy, the direct blueprint runner stops and keeps any sandbox that it created.
+Rolling back such a run fails and leaves that sandbox in place.
+The direct blueprint runner never removes an addition, so deleting one from `blueprint.yaml` or rolling back the run leaves it in the live policy.
+The run receipt that the direct blueprint runner saves does not record the additions.
+To confirm the applied additions, run the following command with `<name>` set to `components.sandbox.name`, which defaults to `openclaw`.
+
+```bash
+openshell policy get --full <name>
+```
+
+The `network_policies` section of the output lists each addition under its policy key, with an IP address in `host`.
 
 </AgentOnly>
 
