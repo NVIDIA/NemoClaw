@@ -58,6 +58,9 @@ const {
 } = require("../ollama-model-registry");
 const { formatBytes } = require("./model-size");
 const { isOllamaAuthProxyCommandLine }: typeof import("./process") = require("./process");
+const {
+  probeOllamaAuthProxyHealth: probeSharedOllamaAuthProxyHealth,
+}: typeof import("../local") = require("../local");
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
 const { promptManualModelId } = require("../model-prompts");
@@ -864,28 +867,29 @@ function getOllamaProxyToken(): string | null {
 }
 
 /**
- * Check whether the Ollama auth proxy is healthy: it must answer its
- * authenticated model route with a success status.
+ * Check whether the Ollama auth proxy is healthy: it must answer an
+ * authenticated request with an Ollama model list.
  *
  * This is the check for the setupInference fallback: if the container
  * reachability test fails (Docker bridge issue) but the proxy is confirmed
  * healthy on the host, onboarding can safely continue.
  *
  * A live proxy PID is not enough. The proxy answers 502 when Ollama behind it
- * is down, so its process can outlive the backend it fronts.
+ * is down, so its process can outlive the backend it fronts. The probe is the
+ * one that local provider health reporting already uses, so both agree on what
+ * healthy means.
  *
- * Callers only receive a Boolean, so an unhealthy result prints the checked
- * endpoint and the probe's detail first. The detail carries the recovery
- * action, for example verifying host Ollama after a 502, which the callers'
- * own errors do not.
+ * Callers only receive a Boolean, so an unhealthy result prints the probe's
+ * detail first. It names the endpoint and the recovery action, which the
+ * callers' own errors do not.
  */
 function isProxyHealthy(): boolean {
-  const health = probeOllamaAuthProxyHealth();
-  if (!health.ok) {
-    console.error(`  Ollama auth proxy is not healthy (checked ${health.endpoint}).`);
-    console.error(`  ${health.detail}`);
-  }
-  return health.ok;
+  const health = probeSharedOllamaAuthProxyHealth();
+  if (health?.ok) return true;
+  console.error(
+    `  ${health?.detail ?? "Ollama auth proxy token is missing. Re-run NemoClaw onboarding for the Ollama-local sandbox."}`,
+  );
+  return false;
 }
 
 function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: string } {

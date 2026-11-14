@@ -747,7 +747,7 @@ describe("isProxyHealthy with a live proxy PID", () => {
 
   // The persisted PID matches a running proxy in every case below. Only the
   // curl result differs, so a PID-based fallback would report all of them healthy.
-  function probeHealth(curl: { status: number; stdout: string }) {
+  function probeHealth(curl: { status: number; curlStatus?: number; body?: string }) {
     const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-proxy-health-"));
     tempHomes.push(home);
     vi.stubEnv("HOME", home);
@@ -762,20 +762,33 @@ describe("isProxyHealthy with a live proxy PID", () => {
     const childProcess = require(CHILD_PROCESS_DIST) as typeof import("node:child_process");
     const originalRunCapture = runner.runCapture;
     runner.runCapture = () => "node /opt/nemoclaw/scripts/ollama-auth-proxy.mts";
-    const spawnSync = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      ...curl,
-      signal: null,
-      output: [],
-      pid: 1,
-      stderr: "",
-    });
+    const request: { args: string[]; authConfig: string } = { args: [], authConfig: "" };
+    // Play curl: write the response body where the probe asked for it and read
+    // the auth config now, because the probe deletes it when it returns.
+    const spawnSync = vi.spyOn(childProcess, "spawnSync").mockImplementation(((
+      _command: string,
+      args: string[],
+    ) => {
+      request.args = args;
+      request.authConfig = fs.readFileSync(args[args.indexOf("--config") + 1], "utf8");
+      fs.writeFileSync(args[args.indexOf("-o") + 1], curl.body ?? "");
+      return {
+        status: curl.curlStatus ?? 0,
+        stdout: String(curl.status),
+        stderr: "",
+        signal: null,
+        output: [],
+        pid: 1,
+      };
+    }) as unknown as typeof childProcess.spawnSync);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const proxy = require(PROXY_DIST) as typeof import("./proxy");
       const healthy = proxy.isProxyHealthy();
       return {
         healthy,
-        spawnSync,
+        request,
+        calls: spawnSync.mock.calls.length,
         stderr: errorSpy.mock.calls.map(([message]) => String(message)).join("\n"),
       };
     } finally {
@@ -783,50 +796,50 @@ describe("isProxyHealthy with a live proxy PID", () => {
     }
   }
 
+  const MODEL_LIST = JSON.stringify({ models: [{ name: "llama3.2:latest" }] });
+
   it.each([
-    ["answers 502 because Ollama is down", { status: 0, stdout: "502" }, false],
-    ["refuses the connection", { status: 7, stdout: "000" }, false],
-    ["rejects the token", { status: 0, stdout: "401" }, false],
-    ["serves its model list", { status: 0, stdout: "200" }, true],
+    ["answers 502 because Ollama is down", { status: 502 }, false],
+    ["refuses the connection", { status: 0, curlStatus: 7 }, false],
+    ["rejects the token", { status: 401 }, false],
+    ["answers 200 with something other than a model list", { status: 200, body: "ok" }, false],
+    ["serves its model list", { status: 200, body: MODEL_LIST }, true],
   ] as const)("when the live proxy %s", (_state, curl, healthy) => {
     expect(probeHealth(curl).healthy).toBe(healthy);
   });
 
-  // The status cases above pass for any request. These assertions keep the
-  // decision tied to the authenticated model route, not another endpoint or an
+  // The status cases above pass for any request. This keeps the decision tied
+  // to the authenticated model-list route, not another endpoint or an
   // unauthenticated call.
-  it("asks the proxy's model route with the persisted bearer token", () => {
-    const { spawnSync } = probeHealth({ status: 0, stdout: "200" });
+  it("asks the proxy for its model list with the persisted bearer token", () => {
+    const { request, calls } = probeHealth({ status: 200, body: MODEL_LIST });
 
-    expect(spawnSync).toHaveBeenCalledTimes(1);
-    const [command, args, options] = spawnSync.mock.calls[0] as unknown as [
-      string,
-      string[],
-      { input?: string },
-    ];
-    expect(command).toBe("curl");
-    expect(args.at(-1)).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/v1\/models$/);
-    expect(args).toEqual(expect.arrayContaining(["--config", "-", "-w", "%{http_code}"]));
-    expect(args.join(" ")).not.toContain("/api/tags");
-    expect(options.input).toContain("Authorization: Bearer token");
+    expect(calls).toBe(1);
+    expect(request.args.at(-1)).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/tags$/);
+    expect(request.authConfig).toContain("Authorization: Bearer token");
   });
 
   // Callers only get a Boolean, so the wrapper has to print what the probe
   // learned or the operator never sees which side to fix.
   it.each([
-    ["answers 502 because Ollama is down", { status: 0, stdout: "502" }, "Verify host Ollama"],
-    ["refuses the connection", { status: 7, stdout: "000" }, "is not reachable on"],
-    ["rejects the token", { status: 0, stdout: "401" }, "Re-run NemoClaw onboarding"],
+    ["answers 502 because Ollama is down", { status: 502 }, "Verify host Ollama"],
+    ["refuses the connection", { status: 0, curlStatus: 7 }, "is unreachable on"],
+    ["rejects the token", { status: 401 }, "rotate the proxy token"],
+    [
+      "answers 200 with something other than a model list",
+      { status: 200, body: "ok" },
+      "not a valid",
+    ],
   ] as const)("names the endpoint and next step when the live proxy %s", (_state, curl, hint) => {
     const { healthy, stderr } = probeHealth(curl);
 
     expect(healthy).toBe(false);
-    expect(stderr).toContain("/v1/models");
+    expect(stderr).toContain("/api/tags");
     expect(stderr).toContain(hint);
     expect(stderr).not.toContain("Bearer");
   });
 
   it("prints nothing when the live proxy serves its model list", () => {
-    expect(probeHealth({ status: 0, stdout: "200" }).stderr).toBe("");
+    expect(probeHealth({ status: 200, body: MODEL_LIST }).stderr).toBe("");
   });
 });
