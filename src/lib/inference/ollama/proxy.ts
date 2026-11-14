@@ -873,9 +873,19 @@ function getOllamaProxyToken(): string | null {
  *
  * A live proxy PID is not enough. The proxy answers 502 when Ollama behind it
  * is down, so its process can outlive the backend it fronts.
+ *
+ * Callers only receive a Boolean, so an unhealthy result prints the checked
+ * endpoint and the probe's detail first. The detail carries the recovery
+ * action, for example verifying host Ollama after a 502, which the callers'
+ * own errors do not.
  */
 function isProxyHealthy(): boolean {
-  return probeOllamaAuthProxyHealth().ok;
+  const health = probeOllamaAuthProxyHealth();
+  if (!health.ok) {
+    console.error(`  Ollama auth proxy is not healthy (checked ${health.endpoint}).`);
+    console.error(`  ${health.detail}`);
+  }
+  return health.ok;
 }
 
 function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: string } {
