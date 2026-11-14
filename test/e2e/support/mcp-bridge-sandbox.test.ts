@@ -94,7 +94,50 @@ describe.each(["/bin/sh", "/bin/bash"])("MCP secret absence scan with %s", (shel
   it("accepts a clean tree and a confirmed absent optional file", () => {
     const { root, state, file } = fixture();
     fs.writeFileSync(file, "clean");
+    fs.mkdirSync(path.join(state, "runtime"));
+    fs.symlinkSync("runtime/state.db-wal", path.join(state, "state.db-wal"));
+    fs.symlinkSync("runtime/state.db-shm", path.join(state, "state.db-shm"));
+    fs.symlinkSync("runtime/channel_directory.json", path.join(state, "channel_directory.json"));
     expect(scan([state, path.join(root, "optional")], ["fixture-secret"])).toBe(0);
+  });
+
+  it.each(["file", "directory"])("rejects credentials reached through a %s symlink", (kind) => {
+    const { root, state } = fixture();
+    const target = path.join(root, "outside-selected-tree");
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, "config"), "fixture-secret");
+    fs.symlinkSync(
+      kind === "file" ? path.join(target, "config") : target,
+      path.join(state, "alias"),
+    );
+    expect(scan([state], ["fixture-secret"])).toBe(1);
+  });
+
+  it("rejects a regular file that disappears before its contents can be read", () => {
+    const { root, file } = fixture();
+    fs.writeFileSync(file, "clean");
+    fs.writeFileSync(
+      path.join(root, "grep"),
+      '#!/bin/sh\nfor target do :; done\nrm -f -- "$target"\nexec /usr/bin/grep "$@"\n',
+      { mode: 0o700 },
+    );
+    expect(
+      scan(
+        [file],
+        ["fixture-secret"],
+        { ...process.env, PATH: `${root}:${process.env.PATH}` },
+        "NEMOCLAW_MCP_SECRET_SCAN_HINT=missing-entry\nNEMOCLAW_MCP_SECRET_SCAN_ERROR=find-error\n",
+      ),
+    ).toBe(2);
+  });
+
+  it("rejects a directory symlink loop", () => {
+    const { state, file } = fixture();
+    fs.writeFileSync(file, "clean");
+    fs.symlinkSync(state, path.join(state, "loop"));
+    expect(
+      scan([state], ["fixture-secret"], process.env, "NEMOCLAW_MCP_SECRET_SCAN_ERROR=find-error\n"),
+    ).toBe(2);
   });
 
   it.each([
@@ -103,7 +146,8 @@ describe.each(["/bin/sh", "/bin/bash"])("MCP secret absence scan with %s", (shel
     ["sensitive: No such file or directory", "missing-entry"],
     ["sensitive: Too many levels of symbolic links", "symlink-loop"],
   ])("rejects a scan error with only a fixed hint (%s)", (diagnostic, hint) => {
-    const { root, state } = fixture();
+    const { root, state, file } = fixture();
+    fs.writeFileSync(file, "clean");
     fs.writeFileSync(path.join(root, "grep"), `#!/bin/sh\necho '${diagnostic}' >&2\nexit 2\n`, {
       mode: 0o700,
     });
@@ -113,7 +157,7 @@ describe.each(["/bin/sh", "/bin/bash"])("MCP secret absence scan with %s", (shel
         ["fixture-secret"],
         { ...process.env, PATH: `${root}:${process.env.PATH}` },
         (hint ? `NEMOCLAW_MCP_SECRET_SCAN_HINT=${hint}\n` : "") +
-          "NEMOCLAW_MCP_SECRET_SCAN_ERROR=grep-exit-2\n",
+          "NEMOCLAW_MCP_SECRET_SCAN_ERROR=find-error\n",
       ),
     ).toBe(2);
   });

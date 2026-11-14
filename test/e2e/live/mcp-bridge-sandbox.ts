@@ -26,11 +26,26 @@ export function buildMcpSecretAbsenceScript(
   if (paths.length === 0 || secrets.length === 0 || secrets.some((secret) => secret.length === 0)) {
     throw new Error("MCP secret scan requires paths and nonempty credentials");
   }
+  const scanFiles = [
+    "set -u",
+    "scan_secret=$1",
+    "scan_state=$2",
+    "shift 2",
+    // Preserve grep's three outcomes without suppressing read errors after a match.
+    'LC_ALL=C grep -F -- "$scan_secret" "$@" >/dev/null',
+    "scan_status=$?",
+    'case "$scan_status" in',
+    '  0) : > "$scan_state/match" ;;',
+    "  1) : ;;",
+    '  *) exit "$scan_status" ;;',
+    "esac",
+  ].join("\n");
   return [
     "set -eu",
     "scan_error() { printf 'NEMOCLAW_MCP_SECRET_SCAN_ERROR=%s\\n' \"$1\" >&2; exit 2; }",
-    "scan_errors=$(mktemp 2>/dev/null) || scan_error diagnostic-unavailable",
-    "trap 'rm -f -- \"$scan_errors\" 2>/dev/null || scan_error diagnostic-cleanup' EXIT",
+    "scan_state=$(mktemp -d 2>/dev/null) || scan_error diagnostic-unavailable",
+    'scan_errors="$scan_state/errors"',
+    "trap 'rm -rf -- \"$scan_state\" 2>/dev/null || scan_error diagnostic-cleanup' EXIT",
     `for scan_path in ${paths.map(shellQuote).join(" ")}; do`,
     '  if [ ! -e "$scan_path" ] && [ ! -L "$scan_path" ]; then',
     '    scan_parent=$(dirname -- "$scan_path")',
@@ -39,18 +54,14 @@ export function buildMcpSecretAbsenceScript(
     "  fi",
     '  [ -e "$scan_path" ] || scan_error dangling-target',
     `  for scan_secret in ${secrets.map(shellQuote).join(" ")}; do`,
-    // Do not use grep -q: a match must not suppress a read error elsewhere in the tree.
-    // Hermes creates Unix sockets in its state tree; scan stored file contents without opening IPC endpoints.
-    '    if LC_ALL=C grep -RF --devices=skip -- "$scan_secret" "$scan_path" >/dev/null 2>"$scan_errors"; then',
-    "      exit 1",
-    "    else",
-    "      scan_status=$?",
-    '      if [ "$scan_status" -ne 1 ]; then',
+    // Follow valid file and directory links, but scan only stored file contents.
+    // Hermes deliberately leaves aliases to optional SQLite files absent in DELETE mode.
+    `    if ! LC_ALL=C find -L "$scan_path" -type f -exec sh -c ${shellQuote(scanFiles)} sh "$scan_secret" "$scan_state" {} + 2>"$scan_errors"; then`,
     // Emit only fixed hints: grep errors can include credential-bearing paths.
-    "        LC_ALL=C sed -n -e '/: Permission denied$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=permission-denied/;p;q;}' -e '/: No such file or directory$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=missing-entry/;p;q;}' -e '/: Too many levels of symbolic links$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=symlink-loop/;p;q;}' \"$scan_errors\" >&2 2>/dev/null || :",
-    '        scan_error "grep-exit-$scan_status"',
-    "      fi",
+    "      LC_ALL=C sed -n -e '/: Permission denied$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=permission-denied/;p;q;}' -e '/: No such file or directory$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=missing-entry/;p;q;}' -e '/: Too many levels of symbolic links$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=symlink-loop/;p;q;}' \"$scan_errors\" >&2 2>/dev/null || :",
+    "      scan_error find-error",
     "    fi",
+    '    [ ! -e "$scan_state/match" ] || exit 1',
     "  done",
     "done",
   ].join("\n");

@@ -5,6 +5,35 @@ import {
   isNetworkPolicyDenial,
   NETWORK_POLICY_RESULT_PREFIX,
 } from "../support/network-policy-probe.ts";
+import { isFreshMcpDnsPolicyDenial, type DnsDenialProbe } from "../fixtures/curl-policy-denial.ts";
+
+/** Keep ordinary lookup failures rejected unless the gateway proves policy refusal. */
+export function isMcpProviderDnsPolicyDenial(
+  result: DnsDenialProbe,
+  before: DnsDenialProbe,
+  after: DnsDenialProbe,
+  hostname: string,
+): boolean {
+  if (result.exitCode !== 1 || result.timedOut || result.signal !== null) return false;
+  const records = result.stdout
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(NETWORK_POLICY_RESULT_PREFIX));
+  if (records.length !== 1) return false;
+  try {
+    const record = JSON.parse(records[0]!.slice(NETWORK_POLICY_RESULT_PREFIX.length));
+    return (
+      record !== null &&
+      typeof record === "object" &&
+      !Array.isArray(record) &&
+      Object.keys(record).length === 2 &&
+      record.errorCode === "ENOTFOUND" &&
+      record.syscall === "getaddrinfo" &&
+      isFreshMcpDnsPolicyDenial(before, after, hostname)
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function buildMcpProviderRewriteAuthorization(
   credentialKey: string,

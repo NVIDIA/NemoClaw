@@ -9,8 +9,85 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildMcpProviderRewriteAuthorization,
   buildMcpCredentialHandleAuthorizationPattern,
+  isMcpProviderDnsPolicyDenial,
   MCP_PROVIDER_REWRITE_PROBE_SOURCE,
 } from "../live/mcp-provider-rewrite-probe.ts";
+import type { DnsDenialProbe } from "../fixtures/curl-policy-denial.ts";
+
+describe("MCP provider DNS denial evidence", () => {
+  const hostname = "mcp.example.test";
+  const event = `2026-11-14T09:00:00Z OCSF NET:REFUSE [MED] DENIED ${hostname} [reason:policy_dns_no_valid_address]\n`;
+  const result = (patch: Partial<DnsDenialProbe> = {}): DnsDenialProbe => ({
+    exitCode: 1,
+    stdout: 'NEMOCLAW_NETWORK_RESULT {"errorCode":"ENOTFOUND","syscall":"getaddrinfo"}\n',
+    stderr: "",
+    signal: null,
+    timedOut: false,
+    ...patch,
+  });
+  const audit = (patch: Partial<DnsDenialProbe> = {}) =>
+    result({ exitCode: 0, stdout: "", ...patch });
+
+  it.each(["policy_dns_no_valid_address", "policy_dns_ineligible"])(
+    "accepts a failed lookup only with a fresh exact-host %s audit event",
+    (reason) => {
+      const after = audit({ stdout: event.replace("policy_dns_no_valid_address", reason) });
+      expect(isMcpProviderDnsPolicyDenial(result(), audit(), after, hostname)).toBe(true);
+    },
+  );
+
+  it.each([
+    ["missing audit", {}, {}, { stdout: "" }],
+    ["stale audit", {}, { stdout: event }, {}],
+    ["other host", {}, {}, { stdout: event.replace(hostname, "other.example.test") }],
+    [
+      "upstream DNS failure",
+      {},
+      {},
+      { stdout: event.replace("policy_dns_no_valid_address", "policy_dns_upstream_nxdomain") },
+    ],
+    ["failed prior audit", {}, { exitCode: 1 }, {}],
+    ["failed current audit", {}, {}, { exitCode: 1 }],
+    ["audit timeout", {}, {}, { timedOut: true }],
+    ["audit signal", {}, {}, { signal: "SIGTERM" }],
+    ["probe timeout", { timedOut: true }, {}, {}],
+    ["probe signal", { signal: "SIGTERM" }, {}, {}],
+    ["successful probe", { exitCode: 0 }, {}, {}],
+    ["credential failure", { exitCode: 2 }, {}, {}],
+    [
+      "transient DNS error",
+      { stdout: 'NEMOCLAW_NETWORK_RESULT {"errorCode":"EAI_AGAIN","syscall":"getaddrinfo"}\n' },
+      {},
+      {},
+    ],
+    [
+      "other syscall",
+      { stdout: 'NEMOCLAW_NETWORK_RESULT {"errorCode":"ENOTFOUND","syscall":"connect"}\n' },
+      {},
+      {},
+    ],
+    [
+      "mixed success fields",
+      {
+        stdout:
+          'NEMOCLAW_NETWORK_RESULT {"errorCode":"ENOTFOUND","syscall":"getaddrinfo","status":200}\n',
+      },
+      {},
+      {},
+    ],
+    ["duplicate records", { stdout: result().stdout.repeat(2) }, {}, {}],
+    ["malformed record", { stdout: "NEMOCLAW_NETWORK_RESULT invalid\n" }, {}, {}],
+  ] as const)("rejects %s", (_name, probePatch, beforePatch, afterPatch) => {
+    expect(
+      isMcpProviderDnsPolicyDenial(
+        result(probePatch),
+        audit(beforePatch),
+        audit({ stdout: event, ...afterPatch }),
+        hostname,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("managed MCP provider rewrite probe", () => {
   const stableCredentialId = "a".repeat(64);

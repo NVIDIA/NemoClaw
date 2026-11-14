@@ -59,10 +59,27 @@ export function isExpectedMcpCurlPolicyDenial(
   );
 }
 
-type DnsDenialProbe = Pick<
+export type DnsDenialProbe = Pick<
   ShellProbeResult,
   "exitCode" | "stdout" | "stderr" | "signal" | "timedOut"
 >;
+
+/** A DNS failure is policy evidence only with a new refusal for this exact host. */
+export function isFreshMcpDnsPolicyDenial(
+  before: DnsDenialProbe,
+  after: DnsDenialProbe,
+  hostname: string,
+): boolean {
+  if ([before, after].some((logs) => logs.timedOut || logs.signal !== null || logs.exitCode !== 0))
+    return false;
+  const events = ["policy_dns_no_valid_address", "policy_dns_ineligible"].map(
+    (reason) => `NET:REFUSE [MED] DENIED ${hostname} [reason:${reason}]`,
+  );
+  const previous = new Set(resultText(before).split(/\r?\n/u));
+  return resultText(after)
+    .split(/\r?\n/u)
+    .some((line) => events.some((event) => line.endsWith(event)) && !previous.has(line));
+}
 
 export function isExpectedMcpDnsPolicyDenial(
   result: DnsDenialProbe,
@@ -90,19 +107,12 @@ export function isExpectedMcpDnsPolicyDenial(
     result.signal !== null ||
     result.exitCode !== 6 ||
     !expectedResponse ||
-    !result.stderr.split(/\r?\n/u).includes(`curl: (6) Could not resolve host: ${hostname}`) ||
-    [before, after].some((logs) => logs.timedOut || logs.signal !== null || logs.exitCode !== 0)
+    !result.stderr.split(/\r?\n/u).includes(`curl: (6) Could not resolve host: ${hostname}`)
   )
     return false;
   // OpenShell 0.1.3 filters resolved addresses before issuing a synthetic DNS
   // answer. Curl exit 6 alone cannot distinguish that denial from broken DNS.
-  const events = ["policy_dns_no_valid_address", "policy_dns_ineligible"].map(
-    (reason) => `NET:REFUSE [MED] DENIED ${hostname} [reason:${reason}]`,
-  );
-  const previous = new Set(resultText(before).split(/\r?\n/u));
-  return resultText(after)
-    .split(/\r?\n/u)
-    .some((line) => events.some((event) => line.endsWith(event)) && !previous.has(line));
+  return isFreshMcpDnsPolicyDenial(before, after, hostname);
 }
 
 /** Confirm one request; only repeat audit reads while its DNS refusal reaches the gateway. */
