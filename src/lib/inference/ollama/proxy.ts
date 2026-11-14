@@ -774,7 +774,7 @@ function restorePersistedOllamaAuthProxy(): void {
  * Targets 127.0.0.1 (not `localhost`): the proxy binds IPv4 0.0.0.0, and
  * `localhost` can resolve to ::1 first — on a host where an unrelated IPv6-only
  * service holds the port, that would probe the wrong listener. This matches the
- * other proxy probes (isProxyHealthy, probeOllamaAuthProxyHealth). See #4820.
+ * other proxy probes (isProxyHealthy and the shared health probe). See #4820.
  */
 function probeProxyToken(token: string): "accepted" | "rejected" | "unreachable" {
   const result = runCurlWithAuthConfig(
@@ -890,72 +890,6 @@ function isProxyHealthy(): boolean {
     `  ${health?.detail ?? "Ollama auth proxy token is missing. Re-run NemoClaw onboarding for the Ollama-local sandbox."}`,
   );
   return false;
-}
-
-function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: string } {
-  const endpoint = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/v1/models`;
-  const token = loadPersistedProxyToken();
-  if (!token) {
-    return {
-      ok: false,
-      endpoint,
-      detail:
-        "Ollama auth proxy token is missing. Re-run NemoClaw onboarding for the Ollama-local sandbox.",
-    };
-  }
-
-  const result = runCurlWithAuthConfig(
-    ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "3", "--max-time", "5"],
-    endpoint,
-    token,
-  );
-
-  const status = Number(String(result.stdout || "").trim());
-  if (result.status === 0 && Number.isFinite(status) && status >= 200 && status < 300) {
-    return {
-      ok: true,
-      endpoint,
-      detail: `Ollama auth proxy is reachable on ${endpoint}.`,
-    };
-  }
-
-  if (status === 401) {
-    return {
-      ok: false,
-      endpoint,
-      detail:
-        "Ollama auth proxy rejected the persisted token. Re-run NemoClaw onboarding for the Ollama-local sandbox.",
-    };
-  }
-
-  if (Number.isFinite(status) && status >= 300 && status < 500) {
-    return {
-      ok: false,
-      endpoint,
-      detail:
-        `Ollama auth proxy is reachable on ${endpoint}, but returned HTTP ${status}. ` +
-        "Check auth, route, and proxy configuration.",
-    };
-  }
-
-  if (Number.isFinite(status) && status >= 500) {
-    return {
-      ok: false,
-      endpoint,
-      detail:
-        `Ollama auth proxy is running on ${endpoint}, but its backend returned HTTP ${status}. ` +
-        `Verify host Ollama on localhost:${OLLAMA_PORT} and retry.`,
-    };
-  }
-
-  const failure = String(result.stderr || result.error?.message || "").trim();
-  return {
-    ok: false,
-    endpoint,
-    detail: failure
-      ? `Ollama auth proxy is not reachable on ${endpoint}. (${failure})`
-      : `Ollama auth proxy is not reachable on ${endpoint}.`,
-  };
 }
 
 function formatOllamaMemoryMB(memoryMB: number): string {
@@ -1844,7 +1778,6 @@ export {
   persistProxyToken,
   prepareOllamaModel,
   printOllamaExposureWarning,
-  probeOllamaAuthProxyHealth,
   promptOllamaModel,
   pullOllamaModel,
   startOllamaAuthProxy,

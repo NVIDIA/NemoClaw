@@ -420,13 +420,11 @@ console.log(JSON.stringify({ proxySpawns }));
     assert.equal(payload.proxySpawns.length, 0);
   });
 
-  it("reports reachable non-2xx proxy health responses distinctly", async (context) => {
+  it("reports non-2xx proxy health responses with their HTTP status", async (context) => {
     const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-404-"));
     const scriptPath = path.join(tmpDir, "proxy-health-404-check.js");
-    const proxyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
-    );
+    const proxyPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
 
     const script = String.raw`
 const fs = require("node:fs");
@@ -443,8 +441,8 @@ const stateDir = path.join(process.env.HOME, ".nemoclaw");
 fs.mkdirSync(stateDir, { recursive: true });
 fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "persisted-token\n", { mode: 0o600 });
 
-const proxy = require(${proxyPath});
-console.log(JSON.stringify(proxy.probeOllamaAuthProxyHealth()));
+const local = require(${proxyPath});
+console.log(JSON.stringify(local.probeOllamaAuthProxyHealth()));
 `;
     fs.writeFileSync(scriptPath, script);
 
@@ -461,9 +459,8 @@ console.log(JSON.stringify(proxy.probeOllamaAuthProxyHealth()));
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{ detail: string; ok: boolean }>(result.stdout);
     assert.equal(payload.ok, false);
-    assert.match(payload.detail, /reachable/);
-    assert.match(payload.detail, /HTTP 404/);
-    assert.doesNotMatch(payload.detail, /not reachable/);
+    assert.match(payload.detail, /returned HTTP 404/);
+    assert.doesNotMatch(payload.detail, /unreachable/);
   });
 
   it("restarts the existing proxy when it rejects the persisted token", async (context) => {
