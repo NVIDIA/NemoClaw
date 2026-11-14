@@ -344,6 +344,7 @@ TOKEN_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
 ADMIN_REQUEST_SCOPES = ['operator.admin', 'operator.pairing', 'operator.write']
 ADMIN_PAIRED_TOKEN_SCOPES = ['operator.admin', 'operator.pairing', 'operator.read', 'operator.write']
 ADMIN_AUTH_TOKEN_SCOPES = ['operator.admin', 'operator.read', 'operator.write']
+TUI_SCOPES = ['operator.admin', 'operator.approvals', 'operator.read', 'operator.write']
 ALLOW_CANONICAL_PENDING = ${mode === "ordinary-settlement" || mode === "repair-settlement" ? "True" : "False"}
 ORDINARY_SETTLEMENT = ${mode === "ordinary-settlement" ? "True" : "False"}
 REPORT_CANONICAL_PENDING = ${mode === "repair-settlement" ? "True" : "False"}
@@ -762,12 +763,14 @@ try:
     map_key, paired_device = local_paired[0]
     if not isinstance(paired_device, dict):
         reject('paired.deviceId')
+    cli_client = paired_device.get('clientId') == 'cli'
+    tui_client = paired_device.get('clientId') == 'openclaw-tui'
     paired_checks = (
         ('paired.mapKey', map_key == device_id),
         ('paired.deviceId', paired_device.get('deviceId') == device_id),
         ('paired.publicKey', paired_device.get('publicKey') == device_public_key),
-        ('paired.clientId', paired_device.get('clientId') == 'cli'),
-        ('paired.clientMode', paired_device.get('clientMode') in ('cli', 'probe')),
+        ('paired.clientId', cli_client or tui_client),
+        ('paired.clientMode', paired_device.get('clientMode') in ('cli', 'probe') if cli_client else paired_device.get('clientMode') == 'ui'),
         ('paired.role', paired_device.get('role') == 'operator'),
         ('paired.roles', exact_string_set(paired_device.get('roles'), REQUIRED_ROLES)),
         ('paired.requestedScopes', 'requestedScopes' not in paired_device),
@@ -831,7 +834,7 @@ try:
 
     failure_stage = 'pending-requests'
     incompatible_pairing = False
-    if STRICT_SETTLEMENT and pending:
+    if (STRICT_SETTLEMENT or tui_client) and pending:
         reject()
     canonical_pending_count = 0
     for request_id, request in pending.items():
@@ -897,7 +900,8 @@ try:
         and exact_string_set(paired_device.get('approvedScopes'), TOKEN_SCOPES)
     )
     baseline_settled = (
-        (explicit_read_grant or (
+        cli_client
+        and (explicit_read_grant or (
             exact_string_set(paired_device.get('scopes'), REQUEST_SCOPES)
             and exact_string_set(paired_device.get('approvedScopes'), REQUEST_SCOPES)
         ))
@@ -910,21 +914,32 @@ try:
     # expands scopes; pending admin requests remain rejected by the approval
     # policy above.
     admin_settled = (
-        exact_string_set(paired_device.get('scopes'), ADMIN_REQUEST_SCOPES)
+        cli_client
+        and exact_string_set(paired_device.get('scopes'), ADMIN_REQUEST_SCOPES)
         and exact_string_set(paired_device.get('approvedScopes'), ADMIN_REQUEST_SCOPES)
         and exact_string_set(paired_operator.get('scopes'), ADMIN_PAIRED_TOKEN_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), ADMIN_AUTH_TOKEN_SCOPES)
     )
-    settled = baseline_settled or admin_settled
+    # The native TUI reuses the local device identity and records its own
+    # already-approved grants. Observe that exact settled profile without
+    # approving a pending request or changing either credential view.
+    tui_settled = tui_client and all(
+        exact_string_set(view, TUI_SCOPES) for view in (
+            paired_device.get('scopes'), paired_device.get('approvedScopes'),
+            paired_operator.get('scopes'), auth_operator.get('scopes'),
+        )
+    )
+    settled = baseline_settled or admin_settled or tui_settled
     pairing_only = (
-        exact_string_set(paired_device.get('scopes'), PAIRING_ONLY_SCOPES)
+        cli_client
+        and exact_string_set(paired_device.get('scopes'), PAIRING_ONLY_SCOPES)
         and exact_string_set(paired_device.get('approvedScopes'), PAIRING_ONLY_SCOPES)
         and exact_string_set(paired_operator.get('scopes'), PAIRING_ONLY_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), PAIRING_ONLY_SCOPES)
     )
     # A probe changes connection metadata, not the local device identity. Only
     # verified matching credentials may produce a canonical CLI write request.
-    read_baseline = ORDINARY_SETTLEMENT and all(
+    read_baseline = cli_client and ORDINARY_SETTLEMENT and all(
         exact_string_set(view, PAIRING_READ_SCOPES) for view in (
             paired_device.get('scopes'), paired_device.get('approvedScopes'),
             paired_operator.get('scopes'), auth_operator.get('scopes'),
@@ -966,9 +981,9 @@ try:
         : "if not settled:\n        reject()"
     }
 
-    projected_request_scopes = ADMIN_REQUEST_SCOPES if admin_settled else (TOKEN_SCOPES if explicit_read_grant else REQUEST_SCOPES)
-    projected_paired_token_scopes = ADMIN_PAIRED_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
-    projected_auth_token_scopes = ADMIN_AUTH_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
+    projected_request_scopes = TUI_SCOPES if tui_settled else ADMIN_REQUEST_SCOPES if admin_settled else (TOKEN_SCOPES if explicit_read_grant else REQUEST_SCOPES)
+    projected_paired_token_scopes = TUI_SCOPES if tui_settled else ADMIN_PAIRED_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
+    projected_auth_token_scopes = TUI_SCOPES if tui_settled else ADMIN_AUTH_TOKEN_SCOPES if admin_settled else TOKEN_SCOPES
     projection = {
         'deviceIdentitySha256': device_identity_sha256,
         # Bind only the allowlisted security projection. Token values, unknown
@@ -977,10 +992,10 @@ try:
         'pairingStateSha256': hashlib.sha256(json.dumps({
             'deviceId': device_id,
             'publicKey': device_public_key,
-            'clientId': 'cli',
+            'clientId': 'openclaw-tui' if tui_settled else 'cli',
             # Authenticated probes refresh connection metadata only. Both
             # validated modes represent the same canonical CLI authority.
-            'clientMode': 'cli',
+            'clientMode': 'ui' if tui_settled else 'cli',
             'roles': REQUIRED_ROLES,
             'pairedRequestScopes': projected_request_scopes,
             'approvedRequestScopes': projected_request_scopes,

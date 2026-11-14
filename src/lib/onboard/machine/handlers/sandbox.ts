@@ -374,6 +374,7 @@ export interface SandboxStateOptions<
       nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
       nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
+      hermesSwitchyard?: SandboxEntry["hermesSwitchyard"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
@@ -838,6 +839,7 @@ class SandboxStateFlow<
       env: this.options.env,
       recreate: this.options.recreateSandbox(false),
       sandboxState: sandboxReuseState,
+      reservationSessionId: state.session?.sessionId,
     });
     const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,
@@ -1471,6 +1473,14 @@ class SandboxStateFlow<
     return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
       await this.assertCheckpointBindingsStillLive(state);
       this.assertGatewayRouteCompatible(state.sandboxName);
+      const entry = this.deps.getSandboxRegistryEntry(state.sandboxName);
+      assertHermesSwitchyardRoutingReusable({
+        agentName: (this.options.agent as { name?: string } | null)?.name,
+        entry,
+        env: this.options.env,
+        recreate: false,
+        sandboxState: "ready",
+      });
       if (state.webSearchConfig) {
         const provider = webSearchProviderForConfig(
           state.webSearchConfig as unknown as SharedWebSearchConfig,

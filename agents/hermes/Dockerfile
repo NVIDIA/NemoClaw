@@ -78,6 +78,7 @@ COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemocl
 COPY agents/hermes/generate-config.ts agents/hermes/check-native-credentials.ts /opt/nemoclaw-hermes-config/
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
+COPY agents/hermes/qualify-switchyard-judge.py /opt/nemoclaw-hermes-config/qualify-switchyard-judge.py
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-mcp-http-proxy.py /opt/nemoclaw-hermes-config/patch-mcp-http-proxy.py

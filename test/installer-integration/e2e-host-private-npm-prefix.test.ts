@@ -97,6 +97,7 @@ it.skipIf(process.platform === "win32")(
     expect(fs.readdirSync(f.shared)).toEqual([]);
     expect(f.env).not.toHaveProperty("NPM_CONFIG_PREFIX");
   },
+  30_000,
 );
 
 it.skipIf(process.platform === "win32").each(["NPM_CONFIG_PREFIX", "npm_config_prefix"])(

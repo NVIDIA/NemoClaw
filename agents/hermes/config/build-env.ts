@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import {
+  type SwitchyardProviderBindings,
+  readSwitchyardProviderBindingsEnvironment,
+} from "../../../src/lib/hermes-switchyard-routing.ts";
 import { hasProviderlessInferenceEnvironment } from "../../../src/lib/providerless-inference.ts";
 import {
   type HermesSwitchyardRoutingIntent,
@@ -29,6 +33,7 @@ export type HermesBuildSettings = {
   webSearchProvider: HermesWebSearchProvider | null;
   managedImageCapabilityUnion: boolean;
   switchyardRouting: HermesSwitchyardRoutingIntent | null;
+  switchyardBindings?: SwitchyardProviderBindings | null;
   messagingCredentialPlaceholders: Array<{
     envKey: string;
     placeholder: string;
@@ -69,6 +74,9 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
       "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
     ),
     switchyardRouting,
+    switchyardBindings: switchyardRouting
+      ? readSwitchyardProviderBindingsEnvironment(env, switchyardRouting)
+      : null,
     messagingCredentialPlaceholders: readMessagingCredentialPlaceholders(env),
     managedToolGateways: {
       brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",

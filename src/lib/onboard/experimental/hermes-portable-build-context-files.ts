@@ -46,6 +46,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/patch-session-list-preview.py", mode: "100755" },
   { path: "agents/hermes/plugin/__init__.py", mode: "100644" },
   { path: "agents/hermes/plugin/plugin.yaml", mode: "100644" },
+  { path: "agents/hermes/qualify-switchyard-judge.py", mode: "100644" },
   { path: "agents/hermes/runtime-config-guard.py", mode: "100755" },
   { path: "agents/hermes/sharp-security-probes.mts", mode: "100644" },
   { path: "agents/hermes/start.sh", mode: "100755" },
