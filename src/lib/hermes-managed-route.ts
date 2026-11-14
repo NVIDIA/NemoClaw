@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  CUSTOM_HOSTED_PROVIDERS,
   HOSTED_NATIVE_PROVIDERS,
   nativeHostedAgentConfig,
 } from "./inference/native-provider/agent-config.ts";
@@ -248,31 +249,53 @@ export function refreshHermesNativeLocalCredential(
   );
 }
 
-/** Credential environment of each custom endpoint kind, read from the function that writes it. */
-const CUSTOM_ENDPOINT_PROBE_URL = "https://custom-endpoint.invalid/v1";
-
 /** Environment references that NemoClaw itself writes into a managed Hermes route. */
 export const HERMES_MANAGED_CREDENTIAL_TEMPLATES: readonly string[] = [
   NVIDIA_INFERENCE_PLACEHOLDER,
   ...HOSTED_NATIVE_PROVIDERS.map((definition) => `\${${definition.credentialEnv}}`),
-  ...["compatible-endpoint", "compatible-anthropic-endpoint"].map(
-    (provider) =>
-      `\${${nativeHostedAgentConfig(provider, CUSTOM_ENDPOINT_PROBE_URL)!.credentialEnv}}`,
-  ),
+  ...CUSTOM_HOSTED_PROVIDERS.map((entry) => `\${${entry.credentialEnv}}`),
 ];
 
-/** Resolve the endpoint and environment reference NemoClaw generates for a route. */
+/** The route the sandbox registry records, as seen by the archive sanitizer. */
+export type HermesRegisteredRoute = Readonly<{
+  provider?: string | null;
+  endpointUrls?: readonly (string | null | undefined)[];
+}>;
+
+/**
+ * Resolve the endpoint and environment reference NemoClaw generates for a route.
+ *
+ * A fixed provider has one canonical endpoint, so its reference cannot point at
+ * a different destination. A custom endpoint is chosen by the user, so the
+ * archived route must also match the registered provider and endpoint. Pass
+ * `registered` when sanitizing an archive. Omit it only to inspect an archive
+ * whose routes sanitation already verified.
+ */
 export function hermesManagedRouteReference(
   provider: string,
   baseUrl: unknown,
+  registered?: HermesRegisteredRoute,
 ): { endpoint: string; template: string } | null {
   if (provider === "nvidia-prod") {
     return { endpoint: NVIDIA_HOSTED_NATIVE_ENDPOINT, template: NVIDIA_INFERENCE_PLACEHOLDER };
   }
-  if (typeof baseUrl !== "string") return null;
+  const fixed = HOSTED_NATIVE_PROVIDERS.find((entry) => entry.logicalProvider === provider);
+  if (fixed) return { endpoint: fixed.endpoint, template: `\${${fixed.credentialEnv}}` };
+  if (
+    typeof baseUrl !== "string" ||
+    !CUSTOM_HOSTED_PROVIDERS.some((entry) => entry.logicalProvider === provider)
+  ) {
+    return null;
+  }
+  if (
+    registered !== undefined &&
+    (registered.provider !== provider || !registered.endpointUrls?.includes(baseUrl))
+  ) {
+    return null;
+  }
   try {
-    // The same function writes the reference when the route is applied, so
-    // fixed, Hermes Provider and custom endpoints cannot drift from it here.
+    // The function that writes the reference decides whether this endpoint has
+    // one; loopback and shared-route endpoints do not.
     const hosted = nativeHostedAgentConfig(provider, baseUrl);
     return hosted ? { endpoint: baseUrl, template: `\${${hosted.credentialEnv}}` } : null;
   } catch {

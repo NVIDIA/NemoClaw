@@ -46,6 +46,7 @@ import { GATEWAY_PORT } from "../core/ports.js";
 import {
   HERMES_MANAGED_CREDENTIAL_TEMPLATES,
   hermesManagedRouteReference,
+  type HermesRegisteredRoute,
 } from "../hermes-managed-route.js";
 import { shellQuote } from "../runner.js";
 import {
@@ -1361,7 +1362,11 @@ function nativeStructuredAuthorityKind(
 
 const HERMES_MANAGED_CONFIG = ".hermes/config.yaml";
 /** Preserve the non-secret template only for the route that generated it. */
-function stripNativeStructuredCredentials(config: unknown, normalized: string): unknown {
+function stripNativeStructuredCredentials(
+  config: unknown,
+  normalized: string,
+  registered?: HermesRegisteredRoute,
+): unknown {
   const sanitized = stripCredentials(config);
   if (
     normalized !== HERMES_MANAGED_CONFIG ||
@@ -1377,7 +1382,7 @@ function stripNativeStructuredCredentials(config: unknown, normalized: string): 
   if (!isObjectRecord(upstream)) return sanitized;
   const provider = upstream.provider;
   if (typeof provider !== "string" || !isObjectRecord(model)) return sanitized;
-  const reference = hermesManagedRouteReference(provider, model.base_url);
+  const reference = hermesManagedRouteReference(provider, model.base_url, registered);
   if (!reference) return sanitized;
   const { endpoint, template } = reference;
   const managed = isObjectRecord(providers) ? providers[provider] : null;
@@ -1430,6 +1435,7 @@ function sanitizedStructuredAuthority(
   size: number,
   normalized: string,
   kind: NativeStructuredAuthorityKind,
+  registered: HermesRegisteredRoute,
 ): Buffer | string {
   let config: unknown;
   try {
@@ -1465,7 +1471,7 @@ function sanitizedStructuredAuthority(
     // correctly reject as corrupt legacy state.
     sanitized = { nemoclawSanitizedDeviceIdentity: 1 };
   } else {
-    sanitized = stripNativeStructuredCredentials(config, normalized);
+    sanitized = stripNativeStructuredCredentials(config, normalized, registered);
   }
   if (isDeepStrictEqual(sanitized, config)) return payload;
 
@@ -1543,6 +1549,7 @@ export function sanitizeMachineLocalArchiveConfig(
   archivePath: string,
   maxBytes = NATIVE_STATE_CAPTURE_MAX_BYTES,
   deadlineMs?: number,
+  registered: HermesRegisteredRoute = {},
 ): string | null {
   const hermesTarget = ".hermes/.env";
   const openClawDatabaseTargets = new Set([
@@ -1634,6 +1641,7 @@ export function sanitizeMachineLocalArchiveConfig(
               size,
               normalized,
               structuredKind!,
+              registered,
             );
             if (typeof sanitized === "string") return sanitized;
             replacement = sanitized;
@@ -3089,6 +3097,10 @@ function backupNativeSandboxState(
       archivePath,
       maxBytes,
       options.deadlineMs,
+      {
+        provider: sandbox?.provider,
+        endpointUrls: [sandbox?.endpointUrl, sandbox?.nativeHostedProviderAttachment?.endpointUrl],
+      },
     );
     if (sanitationFailure) {
       rmSync(backupPath, { recursive: true, force: true });

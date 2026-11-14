@@ -14,8 +14,14 @@ import {
   refreshHermesNativeLocalCredential,
   type HermesManagedRouting,
 } from "../../src/lib/hermes-managed-route.ts";
+import { CUSTOM_HOSTED_PROVIDERS } from "../../src/lib/inference/native-provider/agent-config.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../src/lib/inference/native-nvidia/contract.ts";
-import { useOrderedNativeCapture } from "../support/native-snapshot.ts";
+import {
+  useOrderedNativeCapture,
+  writeExecutable,
+  writeFakeOpenshell,
+  writeFakeSsh,
+} from "../support/native-snapshot.ts";
 
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-authority-"));
@@ -32,7 +38,11 @@ afterAll(() => {
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
-function writeSandboxRegistry(sandboxName: string, agent: "hermes" | null = null): void {
+function writeSandboxRegistry(
+  sandboxName: string,
+  agent: "hermes" | null = null,
+  route: { provider: string; endpointUrl: string } = { provider: "p", endpointUrl: "" },
+): void {
   const stateRoot = path.join(TMP_HOME, ".nemoclaw");
   fs.mkdirSync(stateRoot, { recursive: true });
   fs.writeFileSync(
@@ -43,7 +53,8 @@ function writeSandboxRegistry(sandboxName: string, agent: "hermes" | null = null
         [sandboxName]: {
           name: sandboxName,
           model: "m",
-          provider: "p",
+          provider: route.provider,
+          ...(route.endpointUrl ? { endpointUrl: route.endpointUrl } : {}),
           gpuEnabled: false,
           agent,
         },
@@ -51,6 +62,14 @@ function writeSandboxRegistry(sandboxName: string, agent: "hermes" | null = null
     }),
   );
 }
+
+const CUSTOM_ENDPOINTS: Record<
+  (typeof CUSTOM_HOSTED_PROVIDERS)[number]["logicalProvider"],
+  string
+> = {
+  "compatible-endpoint": "http://203.0.113.10:11541/v1",
+  "compatible-anthropic-endpoint": "https://llm.example.test/anthropic",
+};
 
 describe("complete native-home machine authority", () => {
   type ManagedHermesConfig = Record<string, unknown> & HermesManagedRouting;
@@ -65,16 +84,11 @@ describe("complete native-home machine authority", () => {
       baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       template: "${NVIDIA_INFERENCE_API_KEY}",
     },
-    {
-      provider: "compatible-endpoint",
-      baseUrl: "http://203.0.113.10:11541/v1",
-      template: "${COMPATIBLE_API_KEY}",
-    },
-    {
-      provider: "compatible-anthropic-endpoint",
-      baseUrl: "https://llm.example.test/anthropic",
-      template: "${COMPATIBLE_ANTHROPIC_API_KEY}",
-    },
+    ...CUSTOM_HOSTED_PROVIDERS.map(({ logicalProvider, credentialEnv }) => ({
+      provider: logicalProvider,
+      baseUrl: CUSTOM_ENDPOINTS[logicalProvider],
+      template: `\${${credentialEnv}}`,
+    })),
     {
       provider: "openai-api",
       baseUrl: "https://api.openai.com/v1",
@@ -169,7 +183,10 @@ describe("complete native-home machine authority", () => {
           });
           fs.writeFileSync(path.join(nativeRoot, archivedConfigPath), source);
           fs.writeFileSync(path.join(nativeRoot, alternateConfigPath), source);
-          writeSandboxRegistry("hermes-managed-archive", "hermes");
+          writeSandboxRegistry("hermes-managed-archive", "hermes", {
+            provider,
+            endpointUrl: baseUrl,
+          });
 
           const backup = sandboxState.backupSandboxState("hermes-managed-archive", {
             nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
@@ -226,7 +243,7 @@ describe("complete native-home machine authority", () => {
         const configPath = path.join(nativeRoot, ".hermes/config.yaml");
         const source = JSON.stringify(config);
         fs.writeFileSync(configPath, source);
-        writeSandboxRegistry("hermes-archive-secret", "hermes");
+        writeSandboxRegistry("hermes-archive-secret", "hermes", { provider, endpointUrl: baseUrl });
         const backup = sandboxState.backupSandboxState("hermes-archive-secret", {
           nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
         });
@@ -240,6 +257,109 @@ describe("complete native-home machine authority", () => {
         fs.rmSync(fixture, { recursive: true, force: true });
       }
     });
+  });
+
+  it.each(
+    CUSTOM_HOSTED_PROVIDERS.flatMap(({ logicalProvider }) => [
+      {
+        provider: logicalProvider,
+        name: "another endpoint",
+        registered: "https://other.example/v1",
+      },
+      { provider: logicalProvider, name: "another provider", registered: "p" },
+    ]),
+  )(
+    "strips a custom $provider reference when the registered route is $name (#14300)",
+    ({ provider, registered }) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-custom-registry-"));
+      try {
+        const nativeRoot = path.join(fixture, "native-home");
+        fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+        const config: Record<string, unknown> = {};
+        applyHermesManagedRoute(config, {
+          model: "m",
+          upstreamProvider: provider,
+          baseUrl: CUSTOM_ENDPOINTS[provider],
+          inferenceApi: "openai-completions",
+        });
+        fs.writeFileSync(path.join(nativeRoot, ".hermes/config.yaml"), JSON.stringify(config));
+        writeSandboxRegistry("hermes-custom-registry", "hermes", {
+          provider: registered === "p" ? "p" : provider,
+          endpointUrl: registered === "p" ? CUSTOM_ENDPOINTS[provider] : registered,
+        });
+
+        const backup = sandboxState.backupSandboxState("hermes-custom-registry", {
+          nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+        });
+
+        expect(backup.success, backup.error).toBe(true);
+        sandboxState.inspectNativeSandboxState(backup.manifest!.backupPath, (root: string) => {
+          const restored = parseYaml(
+            fs.readFileSync(path.join(root, ".hermes/config.yaml"), "utf8"),
+          );
+          expect(restored.model.api_key).toBe("[STRIPPED_BY_MIGRATION]");
+          expect(restored.providers[provider].api_key).toBe("[STRIPPED_BY_MIGRATION]");
+          expect(restored.custom_providers[0].api_key).toBe("[STRIPPED_BY_MIGRATION]");
+        });
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("restores the custom OpenAI-compatible credential reference after a rebuild (#14300)", async () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-custom-key-"));
+    try {
+      const binDir = path.join(fixture, "bin");
+      const nativeRoot = path.join(fixture, "native-home");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+      const provider = "compatible-endpoint";
+      const baseUrl = CUSTOM_ENDPOINTS[provider];
+      const config: Record<string, unknown> = { settings: { max_turns: 12 } };
+      applyHermesManagedRoute(config, {
+        model: "m",
+        upstreamProvider: provider,
+        baseUrl,
+        inferenceApi: "openai-completions",
+      });
+      const configPath = path.join(nativeRoot, ".hermes/config.yaml");
+      fs.writeFileSync(configPath, JSON.stringify(config));
+      writeFakeOpenshell(binDir);
+      writeFakeSsh(binDir);
+      writeExecutable(
+        path.join(binDir, "stat"),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+if (process.argv[2] !== "-c" || process.argv[3] !== "%u") process.exit(95);
+process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
+`,
+      );
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", path.join(binDir, "openshell"));
+      vi.stubEnv("NEMOCLAW_TEST_NATIVE_ROOT", nativeRoot);
+      vi.stubEnv("NEMOCLAW_TEST_SSH_COMMAND_LOG", path.join(fixture, "ssh-commands.log"));
+      vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+      vi.stubEnv("NEMOCLAW_TEST_NATIVE_HOME", nativeRoot);
+      vi.stubEnv("NEMOCLAW_TEST_NATIVE_WORKSPACE", nativeRoot);
+      vi.stubEnv("NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT", "1");
+      writeSandboxRegistry("alpha", "hermes", { provider, endpointUrl: baseUrl });
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success, backup.error).toBe(true);
+      fs.rmSync(nativeRoot, { recursive: true, force: true });
+      fs.mkdirSync(nativeRoot, { recursive: true });
+      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+
+      expect(restore.success, restore.error).toBe(true);
+      const restored = parseYaml(fs.readFileSync(configPath, "utf8"));
+      expect(restored.model.api_key).toBe("${COMPATIBLE_API_KEY}");
+      expect(restored.providers[provider].api_key).toBe("${COMPATIBLE_API_KEY}");
+      expect(restored.custom_providers[0].api_key).toBe("${COMPATIBLE_API_KEY}");
+      expect(restored.settings).toEqual({ max_turns: 12 });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it("keeps stripping a custom endpoint that does not use the hosted credential (#14300)", () => {

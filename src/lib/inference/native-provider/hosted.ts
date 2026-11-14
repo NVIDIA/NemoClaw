@@ -5,8 +5,17 @@ import { createHash } from "node:crypto";
 
 import { type NativeProviderAttachment, type NativeProviderDefinition } from "./contract.ts";
 
+/** The one owner of which custom endpoint kinds exist and which credential each reads. */
+export const CUSTOM_HOSTED_PROVIDERS = [
+  { logicalProvider: "compatible-endpoint", credentialEnv: "COMPATIBLE_API_KEY" },
+  {
+    logicalProvider: "compatible-anthropic-endpoint",
+    credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+  },
+] as const;
+
 export function isCustomHostedProvider(provider: string | null | undefined): boolean {
-  return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
+  return CUSTOM_HOSTED_PROVIDERS.some((entry) => entry.logicalProvider === provider);
 }
 
 /** Resolve the native binding and agent configuration from the same API selection. */
@@ -23,9 +32,9 @@ export function resolveCustomNativeApi(
 }
 
 export function customNativeCredentialEnv(provider: string): string {
-  if (provider === "compatible-endpoint") return "COMPATIBLE_API_KEY";
-  if (provider === "compatible-anthropic-endpoint") return "COMPATIBLE_ANTHROPIC_API_KEY";
-  throw new Error("Unsupported custom hosted provider");
+  const custom = CUSTOM_HOSTED_PROVIDERS.find((entry) => entry.logicalProvider === provider);
+  if (!custom) throw new Error("Unsupported custom hosted provider");
+  return custom.credentialEnv;
 }
 
 export type HostedProviderDefinition = NativeProviderDefinition &
