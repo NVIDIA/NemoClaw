@@ -4,6 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { longSetupPrompt } from "../test/runtime-context-path-prompts.js";
 
 const classifierUrl = new URL("./runtime-context.ts", import.meta.url).href;
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -46,7 +47,23 @@ it.each([
     { name: "rejects oversized whitespace before trimming", prompt: " ".repeat(4097) },
     {
       name: "revokes earlier URL grants on input length overflow",
-      prompt: "Read https://example.org/guide. Search README.md".padEnd(4097),
+      prompt: "Read https://example.org/guide. " + "Search README.md".padEnd(4097),
+    },
+    {
+      name: "rejects a long prompt whose later paragraph asks for web research",
+      prompt: `${longSetupPrompt}Search the web for today's news.`,
+    },
+    {
+      name: "rejects an unbroken line above the window limit inside a long prompt",
+      prompt: `${longSetupPrompt}${"x".repeat(1025)}`,
+    },
+    {
+      name: "bounds whitespace-heavy windows in a long prompt",
+      prompt: ("Search bug".padEnd(1000) + "outside\n").repeat(16),
+    },
+    {
+      name: "rejects a prompt above the total input length limit",
+      prompt: "Read README.md.\n".repeat(1025),
     },
     {
       name: "bounds the reported deeply nested relationship input",
@@ -73,7 +90,10 @@ it.each([
       name: "shares work across resource operands",
       prompt: `Search ${"README.md and ".repeat(256)}package.json`,
     },
-    { name: "shares work across request clauses", prompt: "Read README.md. ".repeat(256) },
+    {
+      name: "denies a long prompt when one window exhausts parsing",
+      prompt: `${longSetupPrompt}Search ${nestedLocalTarget}`,
+    },
   ].map((row) => ({ ...row, expected: { scope: "external", local: false, urls: [] } })),
   ...[
     {
@@ -97,6 +117,18 @@ it.each([
       prompt: `Search ${"README.md and ".repeat(8)}package.json`,
     },
     { name: "retains ordinary request clauses", prompt: "Read README.md. ".repeat(8) },
+    {
+      name: "retains request clauses that span several windows",
+      prompt: "Read README.md. ".repeat(256),
+    },
+    {
+      name: "retains local work in a prompt past the input length limit (#14309)",
+      prompt: longSetupPrompt,
+    },
+    {
+      name: "retains local work in a prompt near the total input length limit",
+      prompt: "Read README.md.\n".repeat(1024),
+    },
   ].map((row) => ({ ...row, expected: { scope: "supplied", local: true, urls: [] } })),
   {
     name: "retains missing prompt handling at the input length limit",
