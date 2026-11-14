@@ -15,6 +15,51 @@ fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+#[test]
+fn documentation_restores_the_cache_the_bundle_job_writes() {
+    let definitions = definitions(&repository());
+    let bundle = &definitions
+        .iter()
+        .find(|(path, _)| path == ".github/workflows/bundle-platform.yml")
+        .unwrap()
+        .1;
+    let docs = &definitions
+        .iter()
+        .find(|(path, _)| path == ".github/actions/setup-docs/action.yml")
+        .unwrap()
+        .1;
+    let setup = |steps: &Value| {
+        steps
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|step| step["uses"] == "./.github/actions/setup-rust")
+            .unwrap()["with"]
+            .clone()
+    };
+    let writer = setup(&bundle["jobs"]["bundle"]["steps"]);
+    let reader = setup(&docs["runs"]["steps"]);
+    let prefix = writer["cache-prefix"]
+        .as_str()
+        .expect("the bundle must name its cache");
+    assert!(
+        !prefix.is_empty(),
+        "the bundle cache prefix must not be empty"
+    );
+    assert_eq!(
+        reader["cache-prefix"], prefix,
+        "documentation must restore the current bundle cache generation"
+    );
+    assert_eq!(
+        reader["platform"], "linux_amd64",
+        "documentation restores the Linux bundle cache"
+    );
+    assert_eq!(
+        reader["save-cache"], "false",
+        "documentation must not overwrite the bundle's cache"
+    );
+}
+
 /// Each workflow and composite action, by its path in the repository.
 fn definitions(root: &Path) -> Vec<(String, Value)> {
     let mut found = Vec::new();
