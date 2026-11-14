@@ -23,6 +23,7 @@ vi.mock("./dockerfile-tool-disclosure-contract", () => ({
 
 import {
   applyOnboardToolDisclosureRequest,
+  createIntentToolDisclosureRequest,
   prepareHermesPortableToolDisclosure,
   prepareSandboxToolDisclosure,
 } from "./tool-disclosure-flow";
@@ -85,6 +86,59 @@ describe("onboard tool-disclosure flow", () => {
     });
     expect(mocks.updateSession).toHaveBeenCalledOnce();
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ toolDisclosure: "progressive", toolDisclosureSessionDefault: true }, null],
+    [{ toolDisclosure: "progressive" }, "progressive"],
+    [{ toolDisclosure: "direct" }, "direct"],
+    [null, null],
+  ] as const)("reads create intent %j as request %s (#13975)", (intent, expected) => {
+    expect(createIntentToolDisclosureRequest(intent)).toBe(expected);
+  });
+
+  it("keeps a live sandbox's recorded mode when the intent holds only the session default (#13975)", () => {
+    const result = prepareSandboxToolDisclosure(
+      "alpha",
+      null,
+      false,
+      () => ({
+        existingEntry: { name: "alpha", toolDisclosure: "direct" },
+        preservedMcpState: undefined,
+        liveExists: true,
+      }),
+      createIntentToolDisclosureRequest({
+        toolDisclosure: "progressive",
+        toolDisclosureSessionDefault: true,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      effectiveToolDisclosure: "direct",
+      toolDisclosureMigrationNeeded: false,
+    });
+  });
+
+  it("still refuses a selected mode that differs from a live sandbox's recorded mode (#13975)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    interceptExit();
+
+    expect(() =>
+      prepareSandboxToolDisclosure(
+        "alpha",
+        null,
+        false,
+        () => ({
+          existingEntry: { name: "alpha", toolDisclosure: "direct" },
+          preservedMcpState: undefined,
+          liveExists: true,
+        }),
+        createIntentToolDisclosureRequest({ toolDisclosure: "progressive" }),
+      ),
+    ).toThrow("EXIT:1");
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("sandbox records tool disclosure 'direct', but 'progressive'"),
+    );
   });
 
   it("fails before session or registry mutation for invalid recorded state", () => {

@@ -192,6 +192,35 @@ describe("handleSandboxState tool disclosure", () => {
     },
   );
 
+  it.each([
+    ["no selection", {}, true],
+    ["an explicit selection", { NEMOCLAW_TOOL_DISCLOSURE: "progressive" }, undefined],
+  ] as const)(
+    "marks only the session default seed when re-onboarding a recorded sandbox with %s (#13975)",
+    async (_case, env, sessionDefault) => {
+      const session = createSession();
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) => registeredEntry(name, { toolDisclosure: "direct" }),
+        },
+        session,
+      );
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        agent: { name: "hermes" },
+        env,
+      });
+
+      const createIntent = (calls.createSandbox.mock.calls[0] as unknown[])[15] as {
+        toolDisclosure?: string;
+        toolDisclosureSessionDefault?: true;
+      };
+      expect(createIntent.toolDisclosure).toBe("progressive");
+      expect(createIntent.toolDisclosureSessionDefault).toBe(sessionDefault);
+    },
+  );
+
   it.each(["ollama-local", "vllm-local"])(
     "preserves progressive when %s creation targets registered state (#12106)",
     async (provider) => {

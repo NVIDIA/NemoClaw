@@ -64,6 +64,8 @@ export interface SandboxCreateIntent {
   /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
   readonly apfInterceptorRequested?: true;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
+  /** Present only when `toolDisclosure` is the session's default seed, not a selection. */
+  readonly toolDisclosureSessionDefault?: true;
   readonly observabilityEnabled: boolean;
   /** Present only when the operator explicitly selected observability on or off. */
   readonly observabilityRequestedExplicitly?: true;

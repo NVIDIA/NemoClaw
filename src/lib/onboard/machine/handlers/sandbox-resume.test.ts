@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createIntentToolDisclosureFields,
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
@@ -431,6 +432,29 @@ describe("hasCompatibleEndpointReasoningDrift", () => {
       }),
     ).toBe(false);
   });
+});
+
+describe("createIntentToolDisclosureFields", () => {
+  it.each([
+    ["a new session default", null, "progressive", false, {}, true],
+    ["a resumed session mode", null, "progressive", true, {}, undefined],
+    [
+      "a NEMOCLAW_TOOL_DISCLOSURE selection",
+      null,
+      "progressive",
+      false,
+      { NEMOCLAW_TOOL_DISCLOSURE: "progressive" },
+      undefined,
+    ],
+    ["the fresh local OpenClaw default", "direct", "progressive", false, {}, undefined],
+  ] as const)(
+    "sets the session default seed flag for %s (#13975)",
+    (_case, initial, sessionMode, resume, env, sessionDefault) => {
+      const fields = createIntentToolDisclosureFields(initial, sessionMode, resume, env);
+      expect(fields.toolDisclosure).toBe(initial ?? sessionMode);
+      expect(fields.toolDisclosureSessionDefault).toBe(sessionDefault);
+    },
+  );
 });
 
 describe("hasMessagingChannelConfigDrift", () => {

@@ -66,6 +66,23 @@ export function initialOpenClawToolDisclosure(input: {
   return resolveToolDisclosureRequest(null, input.env) ?? (n1xDefault ? "progressive" : "direct");
 }
 
+/**
+ * Build the create-intent tool-disclosure fields. A new session seeds the default
+ * mode, so mark that seed to keep it from overriding a recorded mode (#13975).
+ */
+export function createIntentToolDisclosureFields(
+  initial: ToolDisclosure | null,
+  sessionMode: unknown,
+  resume: boolean,
+  env: NodeJS.ProcessEnv,
+): { toolDisclosure: ToolDisclosure; toolDisclosureSessionDefault?: true } {
+  if (initial) return { toolDisclosure: initial };
+  const toolDisclosure = toolDisclosureOrDefault(sessionMode);
+  return resume || resolveToolDisclosureRequest(null, env) !== null
+    ? { toolDisclosure }
+    : { toolDisclosure, toolDisclosureSessionDefault: true };
+}
+
 export interface SandboxResumeSignals {
   readonly resume: boolean;
   readonly resumeAgentChanged: boolean;

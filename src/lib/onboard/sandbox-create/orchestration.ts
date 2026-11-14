@@ -2073,7 +2073,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     }
     const desiredToolDisclosure = fromImage
       ? requestedExternalToolDisclosure
-      : (createIntent?.toolDisclosure ?? null);
+      : toolDisclosureFlow.createIntentToolDisclosureRequest(createIntent);
 
     const toolDisclosurePlan = agentCreateInput.hermesPortableLifecycle
       ? toolDisclosureFlow.prepareHermesPortableToolDisclosure(createIntent?.toolDisclosure ?? null)

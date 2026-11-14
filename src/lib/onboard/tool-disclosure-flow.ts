@@ -25,6 +25,16 @@ export function applyOnboardToolDisclosureRequest(value: unknown): ToolDisclosur
   return requested;
 }
 
+/** Return the create intent's mode only when it is a selection, not the session's default seed. */
+export function createIntentToolDisclosureRequest(
+  intent:
+    | { toolDisclosure: ToolDisclosure; toolDisclosureSessionDefault?: true }
+    | null
+    | undefined,
+): ToolDisclosure | null {
+  return intent && intent.toolDisclosureSessionDefault !== true ? intent.toolDisclosure : null;
+}
+
 export function prepareSandboxToolDisclosure(
   sandboxName: string,
   fromDockerfile: string | null,
