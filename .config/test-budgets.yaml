@@ -34,10 +34,11 @@ integration:
   wall_seconds: 300
   test_seconds: 90
 
-# live-docker (E2E Docker tests), its four nextest commands together: at most 255 s on
-# linux_amd64 and 210 s on linux_arm64 in 11 v1 runs, which included the
-# runtime rebuild test since removed with the runtime builder; 228 s in one
-# linux_arm64 run without it.
+# The live-docker wall budget covers three nextest commands plus one per
+# selected HCL case, for five commands when both cases are selected.
+# Before the HCL E2E migration, the suite took at most 255 s on linux_amd64
+# and 210 s on linux_arm64 in 11 v1 runs with the runtime rebuild test, and
+# 228 s in one linux_arm64 run without it.
 # After the HCL E2E migration (#14179), the suite's five commands took
 # 118.3 s on linux_amd64 and 92.7 s on linux_arm64; its slowest test, the
 # interface case, 46.0 s and 38.8 s.

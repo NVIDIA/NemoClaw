@@ -103,7 +103,8 @@ enum Action {
     /// install the pinned Protocol Buffers compiler before anything needs it.
     Ci {
         /// One step: tools, fmt, clippy, build, test, schema, bundle, contract,
-        /// or integration; archive, live-docker, and live-kind run only when named.
+        /// or integration. Steps run only when named: archive, live-images,
+        /// live-docker, and live-kind.
         step: Option<String>,
         /// Override the detected PR base (fallback: origin/v1), including local edits.
         #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit", "hcl_cases"])]
