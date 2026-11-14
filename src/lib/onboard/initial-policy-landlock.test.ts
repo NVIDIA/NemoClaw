@@ -21,7 +21,7 @@ it.each(
     [false, true].map((directGpu) => ({ version, directGpu })),
   ),
 )(
-  "allows Hermes DRM discovery without sysfs writes on $version with directGpu=$directGpu",
+  "allows Hermes DRM discovery and the agent-browser runtime on $version with directGpu=$directGpu",
   ({ version, directGpu }) => {
     runtime.version = version;
     const source = path.resolve(
@@ -44,6 +44,7 @@ it.each(
         readWrite.filter((entry) => entry === "/" || entry === "/sys" || entry.startsWith("/sys/")),
       ).toEqual([]);
       expect(effective.landlock.compatibility).toBe("best_effort");
+      expect(readOnly).toContain("/opt/nemoclaw-agent-browser-runtime");
     } finally {
       policy.cleanup?.();
     }
