@@ -248,26 +248,6 @@ export function refreshHermesNativeLocalCredential(
   );
 }
 
-/**
- * Custom endpoint kinds a Hermes route can use. Only the credential-template
- * scan reads this list; the route writer decides which providers are custom.
- */
-export const HERMES_CUSTOM_ENDPOINT_PROVIDERS = [
-  "compatible-endpoint",
-  "compatible-anthropic-endpoint",
-] as const;
-const CUSTOM_ENDPOINT_PROBE_URL = "https://custom-endpoint.invalid/v1";
-
-/** Environment references that NemoClaw itself writes into a managed Hermes route. */
-export const HERMES_MANAGED_CREDENTIAL_TEMPLATES: readonly string[] = [
-  NVIDIA_INFERENCE_PLACEHOLDER,
-  ...HOSTED_NATIVE_PROVIDERS.map((definition) => `\${${definition.credentialEnv}}`),
-  ...HERMES_CUSTOM_ENDPOINT_PROVIDERS.map(
-    (provider) =>
-      `\${${nativeHostedAgentConfig(provider, CUSTOM_ENDPOINT_PROBE_URL)!.credentialEnv}}`,
-  ),
-];
-
 /** The route the sandbox registry records, as seen by the archive sanitizer. */
 export type HermesRegisteredRoute = Readonly<{
   provider?: string | null;

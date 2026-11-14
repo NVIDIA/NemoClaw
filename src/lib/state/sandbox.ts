@@ -44,7 +44,6 @@ import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
 import {
-  HERMES_MANAGED_CREDENTIAL_TEMPLATES,
   hermesManagedRouteReference,
   type HermesRegisteredRoute,
 } from "../hermes-managed-route.js";
@@ -1361,6 +1360,10 @@ function nativeStructuredAuthorityKind(
 }
 
 const HERMES_MANAGED_CONFIG = ".hermes/config.yaml";
+// An environment reference as the value of an api_key field, in YAML or JSON form.
+const HERMES_MANAGED_REFERENCE_PATTERN =
+  /((?:^|[\s{,])["']?api_key["']?[ \t]*:[ \t]*["']?)\$\{[A-Z][A-Z0-9_]*\}/gmu;
+
 /** Preserve the non-secret template only for the route that generated it. */
 function stripNativeStructuredCredentials(
   config: unknown,
@@ -1784,12 +1787,10 @@ function scanNativeTarFilePayload(
       : openclawConfig
         ? raw.replace(/("apiKey"\s*:\s*")\$\{NVIDIA_INFERENCE_API_KEY\}(")/gu, "$1unused$2")
         : hermesManagedConfig
-          ? // The structured scan admits these literals only in the three
-            // validated managed slots; raw scanning still catches other secrets.
-            HERMES_MANAGED_CREDENTIAL_TEMPLATES.reduce(
-              (text, template) => text.replaceAll(template, "unused"),
-              raw,
-            )
+          ? // The structured pass keeps an environment reference only in the three
+            // managed api_key slots and only for the registered route, so mask
+            // that shape there; raw scanning still catches every other secret.
+            raw.replace(HERMES_MANAGED_REFERENCE_PATTERN, "$1unused")
           : raw;
     if (
       textContainsCredential(credentialScanInput, {

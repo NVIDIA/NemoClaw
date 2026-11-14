@@ -11,13 +11,10 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import {
   applyHermesManagedRoute,
-  HERMES_CUSTOM_ENDPOINT_PROVIDERS,
-  HERMES_MANAGED_CREDENTIAL_TEMPLATES,
   refreshHermesNativeLocalCredential,
   type HermesManagedRouting,
 } from "../../src/lib/hermes-managed-route.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../src/lib/inference/native-nvidia/contract.ts";
-import { nativeHostedAgentConfig } from "../../src/lib/inference/native-provider/agent-config.ts";
 import {
   useOrderedNativeCapture,
   writeExecutable,
@@ -65,14 +62,15 @@ function writeSandboxRegistry(
   );
 }
 
-const CUSTOM_ENDPOINTS: Record<(typeof HERMES_CUSTOM_ENDPOINT_PROVIDERS)[number], string> = {
+const CUSTOM_ENDPOINTS = {
   "compatible-endpoint": "http://203.0.113.10:11541/v1",
   "compatible-anthropic-endpoint": "https://llm.example.test/anthropic",
-};
-const CUSTOM_CREDENTIAL_ENVS: Record<(typeof HERMES_CUSTOM_ENDPOINT_PROVIDERS)[number], string> = {
+} as const;
+const CUSTOM_CREDENTIAL_ENVS: Record<keyof typeof CUSTOM_ENDPOINTS, string> = {
   "compatible-endpoint": "COMPATIBLE_API_KEY",
   "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY",
 };
+const CUSTOM_PROVIDERS = Object.keys(CUSTOM_ENDPOINTS) as (keyof typeof CUSTOM_ENDPOINTS)[];
 
 describe("complete native-home machine authority", () => {
   type ManagedHermesConfig = Record<string, unknown> & HermesManagedRouting;
@@ -87,7 +85,7 @@ describe("complete native-home machine authority", () => {
       baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       template: "${NVIDIA_INFERENCE_API_KEY}",
     },
-    ...HERMES_CUSTOM_ENDPOINT_PROVIDERS.map((provider) => ({
+    ...CUSTOM_PROVIDERS.map((provider) => ({
       provider,
       baseUrl: CUSTOM_ENDPOINTS[provider],
       template: `\${${CUSTOM_CREDENTIAL_ENVS[provider]}}`,
@@ -308,17 +306,8 @@ describe("complete native-home machine authority", () => {
     });
   });
 
-  it.each(HERMES_CUSTOM_ENDPOINT_PROVIDERS)(
-    "names %s as the custom hosted provider that writes its credential reference (#14300)",
-    (provider) => {
-      const hosted = nativeHostedAgentConfig(provider, CUSTOM_ENDPOINTS[provider]);
-      expect(hosted).toBeDefined();
-      expect(HERMES_MANAGED_CREDENTIAL_TEMPLATES).toContain(`\${${hosted!.credentialEnv}}`);
-    },
-  );
-
   it.each([
-    ...HERMES_CUSTOM_ENDPOINT_PROVIDERS.map((provider) => ({
+    ...CUSTOM_PROVIDERS.map((provider) => ({
       provider,
       baseUrl: CUSTOM_ENDPOINTS[provider],
     })),
