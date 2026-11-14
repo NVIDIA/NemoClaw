@@ -119,7 +119,7 @@ fn render(report: &Report) -> String {
         report.files
     );
     text.push_str("A revision is a distinct checked head SHA. Round counts require a forward step in the retained PR commit order. Repair rounds count a later commit when the preceding observed revision's latest completed check still failed before that commit was first observed. Retries on the same or older SHAs do not increase round counts. Review follow-ups count the first later commit observed after each changes-requested review, once per revision. Missing review attribution or commit order cannot establish a follow-up.\n\n");
-    text.push_str("Limits: these are observed revision counts, not a complete push history. GitHub does not supply push timestamps here. Intermediate pushes without checks, removed history, deleted checks, and the original state of dismissed reviews may be missing. A new check's creation time is an upper bound on its push time. This report does not decide whether required checks were green or whether a push fixed a failure.\n\n");
+    text.push_str("Limits: these are observed revision counts, not a complete push history. GitHub does not supply push timestamps here. Intermediate pushes without checks, removed history, deleted checks, and the original state of dismissed reviews may be missing. Workflow-run and check-suite creation times bound observation, not individual check creation. This report does not decide whether required checks were green or whether a push fixed a failure.\n\n");
     if !report.unavailable.is_empty() {
         let revisions: Vec<_> = report
             .unavailable
@@ -211,7 +211,7 @@ type Result<T> = std::result::Result<T, String>;
 // so an untrusted check name cannot create additional records or fields.
 const PR_QUERY: &str = r#"[.merged,.base.ref,.head.sha,.head.ref,.created_at,.merged_at,(.merged_at | if . == null then -1 else fromdateiso8601 end),.additions,.deletions,.changed_files,(.created_at|fromdateiso8601),(.head.repo.id // 0)] | @tsv"#;
 const RUN_QUERY: &str = r#"[.id,.head_sha,(.created_at|fromdateiso8601),.workflow_id,(.head_branch // ""),([(.pull_requests // [])[].number]|join(",")),(.head_repository.id // 0)] | @tsv"#;
-const CHECK_QUERY: &str = r#"def stamp: if . == null then -1 else fromdateiso8601 end; .check_runs[] | [.id,.name,.app.id,.app.slug,(.started_at|stamp),(.completed_at|stamp),(.conclusion // "unfinished"),(.details_url // "")] | @tsv"#;
+const CHECK_QUERY: &str = r#"def stamp: if . == null then -1 else fromdateiso8601 end; .check_runs[] | [.id,.name,.app.id,.app.slug,(.started_at|stamp),(.completed_at|stamp),(.conclusion // "unfinished"),(.details_url // ""),(.check_suite.id // 0)] | @tsv"#;
 const REVIEW_QUERY: &str = r#".[] | select(.submitted_at != null) | [.id,.state,.commit_id,(.submitted_at|fromdateiso8601)] | @tsv"#;
 
 struct Api {
@@ -391,6 +391,7 @@ impl Api {
                 runs.insert(id, run);
             }
         }
+        let mut suites = BTreeMap::new();
         for sha in commits {
             let Some(checks) = self.revision_rows(
                 &sha,
@@ -403,14 +404,15 @@ impl Api {
                 continue;
             };
             for row in checks {
-                fields(&row, 8)?;
+                fields(&row, 9)?;
                 let started = number(&row[4])?;
-                if started > merged || (started >= 0 && started < opened) {
+                let started = if started > merged { -1 } else { started };
+                if started >= 0 && started < opened {
                     continue;
                 }
                 let mut completed = number(&row[5])?;
                 let mut conclusion = row[6].clone();
-                if completed > merged {
+                if completed < 0 || completed > merged {
                     completed = -1;
                     conclusion = "unfinished at merge".into();
                 }
@@ -436,7 +438,27 @@ impl Api {
                     }
                     (format!("workflow:{}:{}", run.workflow, row[1]), run.created)
                 } else {
-                    (format!("app:{}:{}", row[2], row[1]), started)
+                    let id = number::<u64>(&row[8])?;
+                    if id == 0 {
+                        return Err("Missing check-suite identity".into());
+                    }
+                    if let std::collections::btree_map::Entry::Vacant(entry) = suites.entry(id) {
+                        let rows = self.rows(
+                            &format!("check-suites/{id}"),
+                            r#"[.head_sha,(.created_at|fromdateiso8601)] | @tsv"#,
+                        )?;
+                        if rows.len() != 1 {
+                            return Err("Incomplete check-suite metadata".into());
+                        }
+                        fields(&rows[0], 2)?;
+                        validate_sha(&rows[0][0])?;
+                        entry.insert((rows[0][0].clone(), number::<i64>(&rows[0][1])?));
+                    }
+                    let (suite_sha, created) = &suites[&id];
+                    if suite_sha != &sha || *created < opened || *created > merged {
+                        continue;
+                    }
+                    (format!("app:{}:{}", row[2], row[1]), *created)
                 };
                 if observed >= 0 {
                     report.observe(&sha, observed);
@@ -478,7 +500,7 @@ impl Api {
                     } else {
                         completed
                     },
-                    conclusion: if completed > merged {
+                    conclusion: if state == "pending" || completed > merged {
                         "unfinished at merge"
                     } else {
                         match state {

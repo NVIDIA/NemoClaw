@@ -33,23 +33,7 @@ jobs:
           "$RUNNER_TEMP/report-tests"
           rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report-workflow.rs -o "$RUNNER_TEMP/adapter-tests"
           "$RUNNER_TEMP/adapter-tests"
-  # GitHub returns the repository's merge-method settings only to a token with
-  # contents: write. Keep that grant in this job, which checks out nothing and
-  # runs no PR code, so the report job can stay read-only.
-  merge-settings:
-    if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Require squash-only merging
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY" --jq '.allow_squash_merge and (.allow_merge_commit | not) and (.allow_rebase_merge | not)' | grep -qx true
   report:
-    needs: merge-settings
     if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -59,17 +43,20 @@ jobs:
       checks: read
       pull-requests: write
     steps:
-      # Only squash merges are enabled (checked by merge-settings). Resolve
-      # their parent without checking out PR code, including when a PR changes
-      # the reporter itself.
+      # Reject a parent introduced by this PR, including a rebased prefix,
+      # before checking out or compiling its reporter.
       - name: Resolve the commit before the merge
         id: base
         env:
           GH_TOKEN: ${{ github.token }}
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          parent="$(gh api "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA" --jq 'if (.parents | length) == 1 then .parents[0].sha else error("Expected a squash merge") end')"
+          parent="$(gh api "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA" --jq 'if (.parents | length) == 1 then .parents[0].sha else error("Expected a single-parent merge") end')"
           [[ "$parent" =~ ^[0-9a-f]{40}$ ]]
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$parent/pulls?per_page=100" \
+            | jq -e --argjson pr "$PR_NUMBER" 'type == "array" and length > 0 and all(.[]; type == "array" and all(.[]; (.number | type) == "number" and .number != $pr))' > /dev/null \
+            || { printf 'Reporter parent association could not be verified; stop before checkout.\n' >&2; exit 1; }
           printf 'sha=%s\n' "$parent" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

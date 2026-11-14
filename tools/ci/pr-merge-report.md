@@ -24,9 +24,9 @@ reporting starts with the next eligible merge into that branch. Each eligible PR
 gets one collapsed bot report. Runs serialize per PR and stop after 20 minutes.
 The workflow attempts to retain generated reports for 90 days. Failures before
 report generation have no report artifact. Existing comments stay intact;
-retries avoid duplicates. A separate job with `contents: write` and no checkout
-confirms that only squash merging is enabled; GitHub withholds those settings
-from a read-only token. `actions/checkout` reads the verified squash parent
+retries avoid duplicates. Before checkout, the workflow rejects a merge parent
+that GitHub associates with the PR being reported, including a rebased prefix.
+Repository merge settings are not consulted. `actions/checkout` reads that parent
 with the workflow token. `persist-credentials: false` prevents Git credential
 persistence. Compile only that parent's reporter and never run PR code. Pass
 `GH_TOKEN` to API steps with the declared job permissions.
@@ -58,6 +58,10 @@ rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report-workflow.rs -o 
 After the commit endpoint confirms a missing historical revision, the report
 lists the history gap and retains available revisions. Reviews without commit
 attribution remain in the report without commit lookups or attributed follow-ups.
+Workflow-run and check-suite creation times determine which checks belong to
+the PR window. They do not prove when each individual check was created.
+Checks queued at merge remain in the report if they start later; their start
+times and durations remain unavailable for that merge.
 Repair and review-follow-up counts require a forward step in the retained PR
 commit order. A retry on an older SHA does not increase either count. Access
 failures, other API failures and missing merged PR revisions stop reporting.
@@ -83,10 +87,10 @@ The name is `merge-outcomes-` followed by the run attempt, such as
 recovery observation below before recording acceptance:
 
 - The run uses the installed workflow revision and the merged fork PR's closed
-  event. The `merge-settings` job's token-permission log shows write access to
-  contents only, and it passes. The `report` job's log shows read access to
+  event. The parent-association check passes before checkout. The `report`
+  job's token-permission log shows read access to
   contents, actions and checks, and write access to pull requests.
-- `Record publication inputs` verifies the checkout against the squash parent
+- `Record publication inputs` verifies the checkout against the merge parent
   and rejects changed reporter source before compilation. The receipt identifies
   that parent as `reporter_revision` and records its `reporter_blob`.
 - The intended PR has one collapsed bot report with its merged head SHA. The
@@ -94,6 +98,9 @@ recovery observation below before recording acceptance:
 - `Verify hosted publication` passes its opening-report comparison and one-report
   check. The receipt has `report_unique: true` and `opening_report_count` of at
   least one. The opening report stays intact.
+- Sample repair and review counts, diff totals, and check durations match the
+  merged PR's GitHub records. Retain the source records and expected and reported
+  values with the acceptance evidence.
 - Summary retention and artifact upload succeed. The artifact contains the full
   report and `merge-outcomes-receipt.json` from that run attempt. The artifact
   name and receipt's `run_attempt` match the selected attempt.
