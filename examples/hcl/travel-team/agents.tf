@@ -130,18 +130,28 @@ locals {
   )
 
   agent_configs = {
-    for role, settings in local.roles : role => merge(local.behavior[role], local.models[settings.model], {
-      instructions = local.instructions[role]
-      # The buyer reaches the booking service over MCP.
-      bookings = role == "buyer"
-      # Researchers read skills from the optional volume.
-      skills = settings.search && var.skills_volume != null ? [local.skills_path] : []
-      # Hermes enables exactly the toolsets listed, and all of its defaults
-      # without a list. Researchers only search, the scheduler only delegates
-      # its feasibility review, and the buyer only uses the booking service's
-      # MCP toolset.
-      tools = settings.search ? ["web"] : role == "scheduler" ? ["delegation"] : ["bookings"]
-    })
+    for role, settings in local.roles : role => merge(
+      local.behavior[role], local.models[settings.model],
+      {
+        instructions = local.instructions[role]
+        # The buyer reaches the booking service over MCP.
+        bookings = role == "buyer"
+        # Researchers read skills from the optional volume.
+        skills = settings.search && var.skills_volume != null ? [local.skills_path] : []
+        # Hermes enables exactly the toolsets listed, and all of its defaults
+        # without a list. Researchers only search, the scheduler only delegates
+        # its feasibility review, and the buyer only uses the booking service's
+        # MCP toolset.
+        tools = settings.search ? ["web"] : role == "scheduler" ? ["delegation"] : ["bookings"]
+      },
+      role == "buyer" ? {
+        booking_mcp = {
+          url     = var.bookings.url
+          headers = { Authorization = "Bearer $${NEMOCLAW_API_BOOKINGS_KEY}" }
+          rules   = local.booking_rules
+        }
+      } : {},
+    )
   }
 }
 
@@ -188,25 +198,14 @@ resource "openshell_sandbox" "agent" {
           }
         }
         endpoints {
-          host        = managed.value.host
-          port        = managed.value.port
-          path        = managed.value.path
-          allowed_ips = managed.value.allowed_ips
-          protocol    = managed.value.protocol
+          host        = managed.value
+          port        = 443
+          protocol    = "rest"
           enforcement = "enforce"
-          dynamic "rules" {
-            for_each = managed.value.rules
-            content {
-              allow {
-                method = rules.value.method
-                path   = rules.value.path
-                dynamic "tool" {
-                  for_each = rules.value.tool == null ? [] : [rules.value.tool]
-                  content {
-                    value = tool.value
-                  }
-                }
-              }
+          rules {
+            allow {
+              method = "GET"
+              path   = "/**"
             }
           }
         }
@@ -254,15 +253,16 @@ resource "fabric_agent" "agent" {
       paths = skills.value
     }
   }
-  # The booking service. Hermes can't filter an MCP server's tools, so the
-  # buyer's OpenShell policy enforces which tools it may call.
+  # The booking registration enforces the MCP rules and replaces the header's
+  # placeholder with the stored key.
   dynamic "mcp" {
-    for_each = each.value.bookings ? [var.bookings] : []
+    for_each = each.value.bookings ? [each.value.booking_mcp] : []
     content {
       servers "bookings" {
-        transport = "streamable-http"
-        url       = mcp.value.url
-        exposure  = "harness_native"
+        transport      = "streamable-http"
+        url            = mcp.value.url
+        exposure       = "harness_native"
+        custom_headers = mcp.value.headers
       }
     }
   }

@@ -355,6 +355,27 @@ impl State {
                 )
             })
             .collect();
+        let profile_mcp_rules: BTreeMap<_, Vec<_>> = self
+            .profiles
+            .values()
+            .map(|profile| {
+                let rules = profile
+                    .endpoints
+                    .iter()
+                    .filter(|endpoint| endpoint.protocol == "mcp")
+                    .flat_map(|endpoint| &endpoint.rules)
+                    .filter_map(|rule| rule.allow.as_ref())
+                    .map(|allow| {
+                        let tool = allow
+                            .params
+                            .get("name")
+                            .map(|name| json!({"glob": name.glob, "any": name.any}));
+                        json!({"method": allow.method, "tool": tool})
+                    })
+                    .collect();
+                (&profile.id, rules)
+            })
+            .collect();
         let exposures: Vec<Vec<_>> = self
             .sandbox_exposures
             .iter()
@@ -431,6 +452,7 @@ impl State {
             // credentials' sources, and provider profiles by ID.
             "sandboxes": live, "services": services, "registrations": registrations,
             "registration_credentials": registration_credentials, "profiles": profiles,
+            "profile_mcp_rules": profile_mcp_rules,
         })
     }
 }

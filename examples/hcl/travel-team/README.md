@@ -5,8 +5,7 @@
 
 A travel planning team of six agents, each in its own OpenShell sandbox, written as plain OpenTofu HCL against NemoClaw's providers.
 For a single agent, see [the travel example](../travel/).
-The same team in NemoClaw's YAML configuration is [`travel-team.yaml`](../../travel-team.yaml), with shorter instructions written out per agent.
-Use the YAML unless you need what only HCL offers here: instructions rendered from templates, the JSON Schemas embedded in them, and iteration over roles.
+[`travel-team.yaml`](../../travel-team.yaml) describes the same roles with shorter instructions. Use this HCL example for authenticated booking with an enforced MCP tool allowlist.
 
 | Role | Harness | Model | Reaches |
 |---|---|---|---|
@@ -26,8 +25,8 @@ The researchers use a fast local model, and the scheduler and buyer use a hosted
 | `versions.tf` | OpenTofu and provider requirements |
 | `variables.tf` | Gateway, images, models, web search, sources, and the booking service |
 | `models.tf` | The local Ollama server, checked by its readiness read, and the hosted model |
-| `registrations.tf` | The workspace, both inference registrations, web search, and the booking service's key |
-| `policies.tf` | Each role's network grants |
+| `registrations.tf` | The workspace, inference and web search registrations, and the booking credential and tool rules |
+| `policies.tf` | Network grants for research sources |
 | `agents.tf` | Each role's sandbox and agent, from one table of roles |
 | `outputs.tf` | What invoking each agent needs |
 | `instructions/` | Each role's instructions, which embed the JSON Schemas of its input and reply |
@@ -36,10 +35,10 @@ The researchers use a fast local model, and the scheduler and buyer use a hosted
 ## Run It
 
 1. Install the NemoClaw bundle's providers as a filesystem mirror, and pin their version in `versions.tf`.
-2. Set the variables in `terraform.tfvars`: at least `docker_host`, `gateway_endpoint`, `images`, `image_engine`, `ollama_image`, and `local_model`.
-3. Export the keys the registrations name, which OpenShell reads during apply: by default `NVIDIA_API_KEY` for the hosted model, `BRAVE_API_KEY` for web search, and `BOOKINGS_API_KEY` for the booking service.
-   Sandboxes see a placeholder in place of each key, and OpenShell puts the key into requests that carry the placeholder, so agents never see the keys.
-   Hermes doesn't send the booking key's placeholder to MCP servers yet, so the booking service receives no key ([#14417](https://github.com/NVIDIA/NemoClaw/issues/14417)).
+2. Set `docker_host`, `gateway_endpoint`, `images`, `image_engine`, `ollama_image`, and `local_model` in `terraform.tfvars`.
+   Set `bookings.url` to a Streamable HTTP MCP endpoint that the buyer's sandbox can reach. The service must expose the tools named in `bookings.tools`, which defaults to `get_quote` and `book_option`.
+3. Export the keys on the host running OpenTofu. NemoClaw's OpenTofu provider reads them during apply. The defaults are `NVIDIA_API_KEY` for the hosted model, `BRAVE_API_KEY` for web search, and `BOOKINGS_API_KEY` for the booking service's bearer key.
+   The buyer sends the booking credential's placeholder in its MCP `Authorization` header. OpenShell replaces the placeholder with the key and enforces the booking profile's tool rules.
 4. Run `tofu init` and `tofu apply`.
 
 Hosted providers retire model names over time. If the scheduler or buyer fails with HTTP 404 or 410 from the hosted model, list the models your endpoint and key can use (`GET /v1/models`, then try one) and set `frontier.model`.
@@ -84,10 +83,18 @@ The team needs a few things NemoClaw and its components don't provide yet:
 
 - Agents don't call one another directly: a person or script passes results between them ([#13311](https://github.com/NVIDIA/NemoClaw/issues/13311), [#13312](https://github.com/NVIDIA/NemoClaw/issues/13312)).
 - The approval step happens outside the agents ([#13314](https://github.com/NVIDIA/NemoClaw/issues/13314)).
-- The booking service receives no key yet ([#14417](https://github.com/NVIDIA/NemoClaw/issues/14417)).
 - Each invocation must finish within `fabric-agent-ctl`'s 320-second deadline, which bounds how much one agent can do per call.
 
 ## Tried Live
+
+### Booking Authentication
+
+In a smaller Docker Desktop deployment with one Hermes agent, a model fixture, and a test MCP booking service, the service received the expected bearer key on both `get_quote` and `book_option`.
+Hermes returned the confirmation issued by the service.
+
+### Earlier DGX Spark Trial
+
+This trial predates booking-key authentication. [Original travel-team PR](https://github.com/NVIDIA/NemoClaw/pull/13393)
 
 On an NVIDIA DGX Spark, with Nemotron 3 Nano on Ollama for the researchers, Nemotron 3 Super on NVIDIA's API for the scheduler and buyer, Brave web search, and a test booking service, one trip took about four minutes: researchers about 1¾ minutes two at a time, the scheduler 46 seconds, and the buyer 63 seconds to quote and book all 18 options.
 Researchers cited real search results, but the small local model still filled in many prices, and search snippets give "from" fares rather than offers for the trip's dates; review prices before approving.
@@ -95,6 +102,6 @@ Researchers cited real search results, but the small local model still filled in
 ## Tested
 
 `crates/nemoclaw-e2e/tests/integration/hcl/tests/travel-team.tftest.hcl` applies this directory unchanged under `tofu test` against the bundle's providers, with the Docker provider mocked and fakes for the image engine, gateway, and model server.
-It checks each sandbox's providers, grants, and agent configuration, and that a plan after applying shows no changes.
+It checks each sandbox's providers, grants, and agent configuration, including the buyer's MCP header and the booking endpoint's profile.
 It also checks that changing the hosted model replaces only the scheduler's and buyer's sandboxes, and that destroying removes everything.
 It reports how long each OpenTofu command takes, as a benchmark of a realistic team.

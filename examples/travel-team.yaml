@@ -4,11 +4,12 @@
 # A travel planning team: four researchers, a scheduler, and a buyer, each an
 # agent in its own isolated sandbox. The researchers use a local Nemotron Nano
 # served by managed Ollama and search the web; the scheduler and buyer use a
-# hosted Nemotron Super. The buyer reaches a booking service over MCP with a
-# gateway-held key and may call only two of its tools.
+# hosted Nemotron Super. This YAML registers the booking key, but it does not
+# configure Hermes to send the key's placeholder.
 #
-# The same team in hand-written HCL, with templated instructions and the JSON
-# Schemas for each hand-off, is in hcl/travel-team. Set NVIDIA_API_KEY,
+# Use hcl/travel-team for authenticated booking with an enforced tool allowlist.
+# The HCL example also includes templated instructions and the JSON Schemas
+# for each hand-off. Set NVIDIA_API_KEY,
 # BRAVE_API_KEY, and BOOKINGS_API_KEY on the applying host.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -242,8 +243,8 @@ spec:
       network:
         tier: isolated
         grants:
-          # Only setup, discovery, and the two booking tools; OpenShell
-          # refuses any other MCP call to the booking service.
+          # The booking API integration also grants full REST access to this
+          # endpoint. Use hcl/travel-team to enforce these tool restrictions.
           bookings:
             endpoints:
               - host: bookings.example.com
