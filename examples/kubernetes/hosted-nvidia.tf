@@ -204,7 +204,7 @@ resource "helm_release" "gateway" {
     pkiInitJob = { enabled = true }
     resources = {
       requests = { cpu = "250m", memory = "256Mi" }
-      limits   = { cpu = "1", memory = "1Gi" }
+      limits   = { cpu = "1", memory = "2Gi" }
     }
   })]
 }
