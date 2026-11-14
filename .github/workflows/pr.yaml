@@ -287,17 +287,45 @@ jobs:
           if [ "$candidate" = "true" ]; then
             bundle_name="$(jq -er '.bundleName | select(test("^candidate-openshell-sdk-[0-9]+-[a-f0-9]{40}-[a-f0-9]{40}-[0-9]+$"))' <<<"$decision")"
           fi
-          if ! artifacts="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$bundle_name&per_page=100" 2>/dev/null)"; then
-            echo "::error::Could not list approved SDK artifacts. Restore Actions access, then rerun this CI job."
+          ready=false
+          # Admission publishes asynchronously. Wait only for the already-approved identity.
+          for attempt in $(seq 1 24); do
+            if ! artifacts="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$bundle_name&per_page=100" 2>/dev/null)"; then
+              echo "::error::Could not list approved SDK artifacts. Restore Actions access, then rerun this CI job."
+              exit 1
+            fi
+            candidates="$(jq -cr --arg name "$bundle_name" --arg candidate "$candidate" --argjson repo "$REPOSITORY_ID" '
+              [.[] | .artifacts[] | select(.name == $name and .expired == false
+                and ($candidate == "true" or .workflow_run.head_branch == "main") and .workflow_run.head_repository_id == $repo)]
+              | sort_by(.id) | reverse | .[]' <<<"$artifacts")"
+            artifact=""
+            while IFS= read -r entry; do
+              if [ -z "$entry" ]; then continue; fi
+              if [ "$candidate" != "true" ]; then artifact="$entry"; ready=true; break; fi
+              producer_id="$(jq -er '.workflow_run.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$entry")"
+              producer="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$producer_id" 2>/dev/null)"
+              producer_status="$(jq -er '.status' <<<"$producer")"
+              case "$producer_status" in
+                completed)
+                  producer_conclusion="$(jq -er '.conclusion' <<<"$producer")"
+                  case "$producer_conclusion" in
+                    success) artifact="$entry"; ready=true; break ;;
+                    failure|cancelled|timed_out|action_required|neutral|skipped|stale|startup_failure) ;;
+                    *) echo "::error::Invalid SDK producer conclusion."; exit 1 ;;
+                  esac
+                  ;;
+                queued|in_progress|waiting|pending|requested) ;;
+                *) echo "::error::Invalid SDK producer status."; exit 1 ;;
+              esac
+            done <<<"$candidates"
+            if [ "$ready" = "true" ]; then break; fi
+            if [ "$candidate" != "true" ] || [ "$attempt" -eq 24 ]; then break; fi
+            sleep 5
+          done
+          if [ "$ready" != "true" ]; then
+            echo "::error::No completed producer has a retained SDK archive matching the approved identity. For a new SDK, wait for Candidate Upgrade Admission to publish its archive after approval, then rerun CI. For a trusted SDK, run gh workflow run main.yaml --ref main to restore its archive."
             exit 1
           fi
-          artifact="$(jq -cer --arg name "$bundle_name" --arg candidate "$candidate" --argjson repo "$REPOSITORY_ID" '
-            [.[] | .artifacts[] | select(.name == $name and .expired == false
-              and ($candidate == "true" or .workflow_run.head_branch == "main") and .workflow_run.head_repository_id == $repo)]
-            | max_by(.id) // error("missing SDK artifact")' <<<"$artifacts")" || {
-            echo "::error::No retained SDK archive matches the approved identity. For a new SDK, wait for Candidate Upgrade Admission to publish its archive after approval, then rerun CI. For a trusted SDK, run gh workflow run main.yaml --ref main to restore its archive."
-            exit 1
-          }
           run_id="$(jq -er '.workflow_run.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$artifact")"
           artifact_id="$(jq -er '.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$artifact")"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" 2>/dev/null | jq -e --arg repo "$GITHUB_REPOSITORY" --arg candidate "$candidate" --arg sha "$CANDIDATE_SHA" --arg base "$UPGRADE_BASE_SHA" --argjson pr "$UPGRADE_PR_NUMBER" '

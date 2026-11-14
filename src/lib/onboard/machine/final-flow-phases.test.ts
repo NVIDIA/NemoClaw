@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import * as initialHermesRoute from "./handlers/initial-hermes-inference-route";
 import {
   context,
   createPhases,
@@ -15,6 +16,28 @@ import {
 import { advanceTo } from "./result";
 
 describe("final onboard flow phases", () => {
+  it.each([
+    { name: "external Hermes", agent: "hermes", fromImage: "image@sha256:abc", calls: 1 },
+    { name: "managed Hermes", agent: "hermes", fromImage: null, calls: 0 },
+    {
+      name: "external Deep Agents",
+      agent: "langchain-deepagents-code",
+      fromImage: "image@sha256:abc",
+      calls: 0,
+    },
+  ])("initializes the Hermes route only for $name", async (selection) => {
+    const initialize = vi
+      .spyOn(initialHermesRoute, "initializeExternalHermesInferenceRoute")
+      .mockResolvedValue();
+    const session = createSession();
+    session.metadata.fromImage = selection.fromImage;
+    const [phase] = createPhases("agent_setup", []);
+    await phase.run(
+      context({ agent: { name: selection.agent }, session, revalidateSandboxIdentity: vi.fn() }),
+    );
+    expect(initialize).toHaveBeenCalledTimes(selection.calls);
+  });
+
   it.each([
     {
       name: "fresh custom image",

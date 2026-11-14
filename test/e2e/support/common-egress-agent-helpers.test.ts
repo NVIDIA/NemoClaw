@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it, vi } from "vitest";
+import { nestedFetchEvidence } from "../../helpers/openclaw-nested-fetch-evidence.ts";
 
 import {
   agentReplyContainsToken,
@@ -492,6 +493,35 @@ describe("common-egress agent parsing and classification helpers", () => {
       qualifyingWebFetchResults: 1,
       unexpectedWebFetchExecutions: 1,
     });
+  });
+
+  it.each([
+    "valid",
+    "wrong run",
+    "wrong parent",
+    "wrong generated ID",
+    "wrong wrapper target",
+    "tool failure",
+    "missing error flag",
+    "missing result",
+    "omitted result",
+    "oversized request",
+    "wrong URL",
+    "wrong role",
+    "context-visible record",
+    "duplicate record",
+    "hidden forbidden tool",
+    "parent outside snapshot",
+  ])("validates nested web_fetch evidence: %s", (variant) => {
+    const fixture = nestedFetchEvidence(variant);
+    const evidence = reduceOpenClawToolEvidence(
+      fixture.session,
+      fixture.trajectory,
+      fixture.expectation,
+    );
+    expect(assessPersonalPublicFetchToolEvidence(evidence).matches).toBe(variant === "valid");
+    expect(JSON.stringify(evidence)).not.toContain("must-not-remain");
+    expect(JSON.stringify(evidence)).not.toContain("United States");
   });
 
   it("accepts a progressive Tool Search wrapper only with projected web_fetch proof", () => {
@@ -1375,91 +1405,4 @@ describe("failed public-fetch evidence", () => {
       );
     },
   );
-
-  it("records HTTP status from tool results without trusting the assistant's explanation", () => {
-    const session = publicFetchSessionJsonLines({
-      isError: true,
-      payload: publicFetchPayload({ status: 503, text: REDUCER_SECRET_SENTINEL }),
-    });
-    const evidence = reduceOpenClawToolEvidence(session, "", PUBLIC_FETCH_EXPECTATION);
-    const artifact = projectPersonalPublicFetchToolEvidenceArtifact(evidence);
-    expect(artifact.webFetchDiagnostics).toEqual([
-      { httpStatus: 503, toolError: true, paired: true },
-    ]);
-    expect(artifact.matches).toBe(false);
-    expect(JSON.stringify(artifact)).not.toContain(REDUCER_SECRET_SENTINEL);
-    const assistantOnly = reduceOpenClawToolEvidence(
-      JSON.stringify({
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "Wikimedia returned HTTP 503" }],
-        },
-      }),
-      "",
-      PUBLIC_FETCH_EXPECTATION,
-    );
-    expect(
-      projectPersonalPublicFetchToolEvidenceArtifact(assistantOnly).webFetchDiagnostics,
-    ).toEqual([]);
-  });
-
-  it("reads the pinned producer's error prefix without retaining its response detail", () => {
-    const evidence = reduceOpenClawToolEvidence(
-      publicFetchSessionJsonLines({
-        payload: {
-          status: "error",
-          tool: "web_fetch",
-          error: `Web fetch failed (503): ${REDUCER_SECRET_SENTINEL}`,
-        },
-      }),
-      "",
-      PUBLIC_FETCH_EXPECTATION,
-    );
-    const artifact = projectPersonalPublicFetchToolEvidenceArtifact(evidence);
-    expect(artifact.webFetchDiagnostics).toEqual([
-      { httpStatus: 503, toolError: true, paired: true },
-    ]);
-    expect(artifact.matches).toBe(false);
-    expect(evidence.webFetchResults[0]?.httpSuccess).toBe(false);
-    expect(JSON.stringify(evidence)).not.toContain(REDUCER_SECRET_SENTINEL);
-  });
-
-  it.each([
-    { status: "error", tool: "web_fetch", error: "Agent said Web fetch failed (503): details" },
-    { status: "error", tool: "web_fetch", error: "Web fetch failed (999): details" },
-    { status: "error", tool: "web_fetch", error: "Web fetch failed (5030): details" },
-    { status: "error", tool: "other", error: "Web fetch failed (503): details" },
-    { status: "ok", tool: "web_fetch", error: "Web fetch failed (503): details" },
-  ])("does not infer HTTP status from unsupported error shapes: %j", (payload) => {
-    const evidence = reduceOpenClawToolEvidence(
-      publicFetchSessionJsonLines({ payload }),
-      "",
-      PUBLIC_FETCH_EXPECTATION,
-    );
-    expect(
-      projectPersonalPublicFetchToolEvidenceArtifact(evidence).webFetchDiagnostics[0]?.httpStatus,
-    ).toBeNull();
-  });
-
-  it("keeps missing tool HTTP status unknown and bounds diagnostic records", () => {
-    const evidence = reduceOpenClawToolEvidence(
-      publicFetchSessionJsonLines({
-        isError: true,
-        payload: { status: "error", error: "private details" },
-      }),
-      "",
-      PUBLIC_FETCH_EXPECTATION,
-    );
-    expect(projectPersonalPublicFetchToolEvidenceArtifact(evidence).webFetchDiagnostics).toEqual([
-      { httpStatus: null, toolError: true, paired: true },
-    ]);
-    evidence.webFetchResults = Array.from({ length: 100 }, () => ({
-      ...evidence.webFetchResults[0]!,
-      httpStatus: 999,
-    }));
-    const artifact = projectPersonalPublicFetchToolEvidenceArtifact(evidence);
-    expect(artifact.webFetchDiagnostics).toHaveLength(64);
-    expect(artifact.webFetchDiagnostics.every((record) => record.httpStatus === null)).toBe(true);
-    expect(JSON.stringify(artifact)).not.toContain("private details");
-  });
 });

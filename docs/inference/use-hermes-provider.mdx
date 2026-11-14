@@ -19,6 +19,16 @@ NemoClaw binds the native provider to the endpoint returned by Hermes authentica
 The agent calls that endpoint while OpenShell retains and injects its credential.
 The sandbox does not receive raw provider credentials.
 
+When recovery or a model change finds a previously recorded Hermes endpoint, NemoClaw registers an attached provider for that exact destination.
+Public destinations retain validated public IP addresses; the reserved `host.openshell.internal` alias uses the runtime-owned host address.
+HTTP endpoints retain HTTP, and the provider allows only model discovery and Chat Completions beneath the recorded path.
+A private destination, protected host port, or conflicting provider identity stops recovery before credentials are registered.
+Authentication-returned replacement endpoints still require HTTPS.
+If no owned native credential remains, resume onboarding and authenticate again before retrying the model change.
+
+The onboarding wizard selects the managed Hermes endpoint.
+To configure a new custom endpoint, use [OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint).
+
 ## Model Choices
 
 The Hermes Provider catalog includes curated models such as these examples.

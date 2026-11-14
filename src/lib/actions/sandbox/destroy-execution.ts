@@ -525,7 +525,10 @@ export async function executeSandboxDestroy({
       try {
         runtimeProvider = requireRuntimeProviderDestructiveCleanupAuthority(
           sandboxName,
-          sandbox,
+          {
+            ...sandbox,
+            openshellDriver: sandbox.openshellDriver ?? expectedRuntimeProviderIdentity?.providerId,
+          },
           runtimeProviders,
         ).provider;
         hostLocalInferenceAuthority = prepareSandboxHostLocalInferenceDestroyAuthority(
@@ -906,7 +909,7 @@ export async function executeSandboxDestroy({
         return {
           ok: false as const,
           deleteOutput:
-            `OpenShell deleted sandbox '${sandboxName}', but its host forward ports did not release. ` +
+            `OpenShell deleted sandbox '${sandboxName}', but release of its host forward ports could not be proved. ` +
             "The local sandbox record was preserved for recovery.",
           exitCode: 1,
           gatewayUnreachable: false,

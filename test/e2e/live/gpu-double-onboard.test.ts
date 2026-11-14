@@ -17,6 +17,7 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import { nativeLocalChatCommand } from "../fixtures/native-local-chat.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -61,7 +62,11 @@ async function nemoclaw(
   });
 }
 
-async function preCleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
+async function preCleanup(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  lifecycle: LifecyclePhaseFixture,
+): Promise<void> {
   await nemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], "pre-cleanup-nemoclaw-destroy").catch(
     () => undefined,
   );
@@ -72,13 +77,17 @@ async function preCleanup(host: HostCliClient, sandbox: SandboxClient): Promise<
       timeoutMs: 60_000,
     })
     .catch(() => undefined);
-  await sandbox
-    .openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "pre-cleanup-openshell-gateway-destroy",
-      env: env(),
-      timeoutMs: 60_000,
-    })
-    .catch(() => undefined);
+  await lifecycle.stopGatewayRuntime({ env: env(), userServiceMode: "permanent" });
+  await cleanupWhenOpenShellAvailable(
+    host,
+    { artifactName: "pre-cleanup-probe-openshell-gateway", env: env(), timeoutMs: 30_000 },
+    () =>
+      host.cleanupGatewayRegistration("nemoclaw", {
+        artifactName: "pre-cleanup-openshell-gateway",
+        env: env(),
+        timeoutMs: 60_000,
+      }),
+  );
   await cleanupOllama(host, "pre-cleanup-ollama-processes").catch(() => undefined);
 }
 
@@ -164,6 +173,7 @@ test(
     artifacts,
     cleanup: cleanupRegistry,
     host,
+    lifecycle,
     progress,
     runtimeProvider,
     sandbox,
@@ -201,26 +211,21 @@ test(
       const stop = await cleanupOllama(host, "cleanup-ollama-processes");
       expect(stop.exitCode, resultText(stop)).toBe(0);
     });
-    const gatewayCleanupOptions = {
-      artifactName: "cleanup-openshell-gateway-destroy",
-      env: env(),
-      timeoutMs: 60_000,
-    };
-    cleanupRegistry.trackGateway(
-      {
-        cleanupGatewayRegistration: (name: string) =>
-          cleanupWhenOpenShellAvailable(
-            host,
-            {
-              artifactName: "cleanup-probe-openshell-gateway",
-              env: gatewayCleanupOptions.env,
-              timeoutMs: 30_000,
-            },
-            () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
-          ),
+    cleanupRegistry.trackDisposable(
+      "stop GPU gateway runtime before removing its state",
+      async () => {
+        await lifecycle.stopGatewayRuntime({ env: env(), userServiceMode: "permanent" });
+        await cleanupWhenOpenShellAvailable(
+          host,
+          { artifactName: "cleanup-probe-openshell-gateway", env: env(), timeoutMs: 30_000 },
+          () =>
+            host.cleanupGatewayRegistration("nemoclaw", {
+              artifactName: "cleanup-openshell-gateway",
+              env: env(),
+              timeoutMs: 60_000,
+            }),
+        );
       },
-      "nemoclaw",
-      gatewayCleanupOptions,
     );
     const openshellSandboxCleanupOptions = {
       artifactName: "cleanup-openshell-sandbox-delete",
@@ -260,7 +265,7 @@ test(
       SANDBOX_NAME,
       nemoclawSandboxCleanupOptions,
     );
-    await preCleanup(host, sandbox);
+    await preCleanup(host, sandbox, lifecycle);
 
     progress.phase("install Ollama runtime");
     const installOllama = await host.command(

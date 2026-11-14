@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
+import { cliOpenShellInstalledVersionObserver } from "../../../../test/helpers/rebuild-flow-harness";
 import type { ServingProfileProvenance } from "../../inference/serving/profile-provenance";
 
 const savedProfileProvenance: ServingProfileProvenance = {
@@ -172,6 +173,107 @@ describe("rebuildSandbox flow: target session", () => {
       restoreEnv();
     }
   });
+
+  it.each([
+    { provider: "ollama-local", version: "0.1.3" },
+    { provider: "vllm-local", version: "0.1.3" },
+    { provider: "ollama-local", version: null },
+    { provider: "vllm-local", version: null },
+  ])(
+    "refuses a retained Pi $provider rebuild before state changes with runtime version=$version",
+    async ({ provider, version }) => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          agent: "pi",
+          provider,
+          model: "local-model",
+          createdAt: "2026-09-01T00:00:00Z",
+          nativeLocalProviderAttachment: undefined,
+        },
+      });
+      const installedVersion = vi
+        .spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion")
+        .mockReturnValue(
+          version === null
+            ? { ok: false, error: { kind: "unavailable", message: "OpenShell binary not found." } }
+            : { ok: true, version },
+        );
+      const before = structuredClone(harness.session);
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Legacy shared local inference cannot be rebuilt safely");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+      expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.session).toEqual(before);
+      expect(installedVersion).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    { provider: "compatible-endpoint", version: "0.1.3" },
+    { provider: "compatible-anthropic-endpoint", version: "0.1.3" },
+    { provider: "compatible-endpoint", version: null },
+  ])(
+    "refuses retained public $provider rebuild before deletion on OpenShell $version",
+    async ({ provider, version }) => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          agent: "openclaw",
+          provider,
+          model: "served-model",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          createdAt: "2026-09-01T00:00:00Z",
+          nativeHostedProviderAttachment: undefined,
+          nativeNvidiaProviderAttachment: undefined,
+        },
+      });
+      vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue(
+        version === null
+          ? { ok: false, error: { kind: "unavailable", message: "OpenShell binary not found." } }
+          : { ok: true, version },
+      );
+      const before = structuredClone(harness.session);
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Legacy shared custom inference cannot be rebuilt safely");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+      expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.session).toEqual(before);
+    },
+  );
+
+  it.each(["0.1.5", "0.1.7", null])(
+    "refuses retained legacy NVIDIA rebuild before mutation on OpenShell %s",
+    async (version) => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          agent: "openclaw",
+          provider: "nvidia-nim",
+          model: "nvidia/model",
+          createdAt: "2026-09-01T00:00:00Z",
+          nativeNvidiaProviderAttachment: undefined,
+        },
+      });
+      vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue(
+        version === null
+          ? { ok: false, error: { kind: "unavailable", message: "OpenShell binary not found." } }
+          : { ok: true, version },
+      );
+      const before = structuredClone(harness.session);
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Legacy shared NVIDIA inference cannot be rebuilt safely");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+      expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.session).toEqual(before);
+    },
+  );
 
   it("uses the exact preflighted agent base image only for the recreate", async () => {
     const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";

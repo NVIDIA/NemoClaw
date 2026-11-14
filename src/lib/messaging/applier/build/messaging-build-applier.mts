@@ -2231,7 +2231,10 @@ export function fatalMessagingBuildDiagnostic(error: unknown): string {
     return `Official OpenClaw plugin '${error.pluginId}' remediation operation '${error.operation}' failed.`;
   }
   if (error instanceof OfficialPluginProvenanceError) {
-    return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}. NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;
+    const diagnostics = error.inspectionDiagnostics
+      ? ` Inspection diagnostics: ${error.inspectionDiagnostics}.`
+      : "";
+    return `Official OpenClaw plugin '${error.pluginId}' ${error.condition}.${diagnostics} NemoClaw manages the package pins and build cache. Report this failure, the plugin name and your NemoClaw version to a maintainer.`;
   }
   if (error instanceof MessagingBuildCommandError) {
     return "Messaging build applier command failed.";

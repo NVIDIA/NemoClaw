@@ -4,7 +4,11 @@
 import { expect, it, vi } from "vitest";
 import { handleOnboardCommandError } from "./error-reporting";
 import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
-import { fixture } from "../../adapters/openshell/provider-policy.test-support";
+// Exercise the retained legacy refusal producer independently of the migrated runtime pin.
+vi.mock("../openshell-version", async (original) => ({
+  ...(await original<typeof import("../openshell-version")>()),
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.0.116",
+}));
 
 it("reports nested onboarding causes without replacing the failure", () => {
   const primary = new Error("Created sandbox identity changed");
@@ -68,12 +72,22 @@ it("keeps cancellation and ordinary failure output unchanged", () => {
   expect(error).toHaveBeenCalledExactlyOnceWith("  Installation cancelled");
 });
 
-it("prints the providers_v2 refusal with the administrator command on its own line (#13811)", async () => {
-  const refusal = await requireNativeProviderPolicy("selected", fixture("false")).catch(
-    (e: unknown) => e,
-  );
+it("prints the legacy providers_v2 refusal with the administrator command on its own line (#13811)", async () => {
+  const command = vi.fn(async () => ({
+    status: 0,
+    stdout: JSON.stringify({ scope: "global", settings: { providers_v2_enabled: "false" } }),
+  }));
+  const refusal = await requireNativeProviderPolicy("selected", command).catch((e: unknown) => e);
   const error = vi.fn();
   expect(handleOnboardCommandError(refusal, { error }, null)).toBe(1);
+  expect(command).toHaveBeenCalledExactlyOnceWith([
+    "settings",
+    "get",
+    "-g",
+    "selected",
+    "--global",
+    "--json",
+  ]);
   const lines = (error.mock.calls.flat() as string[]).join("\n").split("\n");
   expect(lines).toContain(
     "    openshell settings set -g selected --global --key providers_v2_enabled --value true --yes",

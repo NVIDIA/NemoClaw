@@ -8,14 +8,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
-import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import {
   assertPodmanSocketAuthority,
   capturePodmanSocketAuthority,
   hardenPodmanSocketDirectory,
   type PodmanSocketAuthority,
 } from "../../adapters/podman";
-import { ensureConfigDir } from "../../state/config-io";
+import { writePrivateConfig } from "./portable-private-config";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
@@ -414,26 +413,6 @@ function assertSocketInsideRuntime(runtimeDir: string, socketPath: string): void
     relativeSocket.startsWith(`..${path.sep}`)
   ) {
     throw new Error("Portable Podman socket is outside the current user runtime directory.");
-  }
-}
-
-function writePrivateConfig(filePath: string, value: string): void {
-  ensureConfigDir(path.dirname(filePath));
-  let file;
-  try {
-    file = openRegularFileNoFollow(filePath, { writable: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    file = openRegularFileNoFollow(filePath, {
-      create: true,
-      mode: 0o600,
-      writable: true,
-    });
-  }
-  try {
-    file.replaceUtf8(value, 0o600);
-  } finally {
-    file.close();
   }
 }
 

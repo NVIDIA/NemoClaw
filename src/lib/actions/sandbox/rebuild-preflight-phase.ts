@@ -7,10 +7,12 @@ import path from "node:path";
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import {
   hasLegacySharedLocalInferenceRoute,
+  hasLegacySharedCustomInferenceRoute,
   isPersistedPiSharedLocalInferenceRoute,
 } from "../../inference/selection";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
+import { getInstalledOpenshellVersion } from "../../onboard/openshell-version";
 import { resolveOpenClawMcpToolsListTimeout } from "../../onboard/docker-startup-command-env";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
@@ -139,21 +141,26 @@ export function runHermesCronRestoreBackupPreflight({
   }
 }
 
-/** Stop before backup or deletion when an old local route cannot be recreated. */
-export function blockRebuildOnLegacySharedLocalRoute(
+/** Stop before backup or deletion when a shared route cannot be recreated. */
+export function blockRebuildOnLegacySharedRoute(
   sandboxName: string,
   sandboxEntry: RebuildSandboxEntry,
   bail: RebuildBail,
 ): boolean {
+  const local = hasLegacySharedLocalInferenceRoute(sandboxEntry);
+  const custom = hasLegacySharedCustomInferenceRoute(sandboxEntry);
+  const legacyNvidia = sandboxEntry.provider === "nvidia-nim";
+  if (!local && !custom && !legacyNvidia) return false;
   if (
-    !hasLegacySharedLocalInferenceRoute(sandboxEntry) ||
-    isPersistedPiSharedLocalInferenceRoute(sandboxEntry)
+    (local ? isPersistedPiSharedLocalInferenceRoute(sandboxEntry) : custom || legacyNvidia) &&
+    /^0\.0\.\d+$/.test(getInstalledOpenshellVersion() ?? "")
   )
     return false;
+  const route = local ? "local" : legacyNvidia ? "NVIDIA" : "custom";
   printRebuildPreflightFailure(
-    `sandbox '${sandboxName}' uses a legacy shared local inference route without a native provider attachment.`,
-    "Back up the sandbox, then re-onboard it with --fresh --name <name> --recreate-sandbox before upgrading OpenShell.",
-    "Legacy shared local inference cannot be rebuilt safely",
+    `sandbox '${sandboxName}' uses a legacy shared ${route} inference route without a native provider attachment.`,
+    "Back up the sandbox, then re-onboard it with --fresh --name <name> --recreate-sandbox.",
+    `Legacy shared ${route} inference cannot be rebuilt safely`,
     bail,
   );
   return true;
@@ -182,7 +189,7 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   rejectRetiredModelRouterSession(sandboxEntry);
-  if (blockRebuildOnLegacySharedLocalRoute(sandboxName, sandboxEntry, bail)) return null;
+  if (blockRebuildOnLegacySharedRoute(sandboxName, sandboxEntry, bail)) return null;
   restoreRecordedRebuildGatewayStateDir(sandboxEntry);
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);

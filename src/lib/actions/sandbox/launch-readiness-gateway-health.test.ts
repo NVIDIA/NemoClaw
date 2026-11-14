@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+import { createSwitchyardReadinessFixture } from "../../../../test/helpers/native-launch-readiness-switchyard";
+
 import { execFileSync } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
@@ -33,6 +36,42 @@ import {
 } from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
+  it.each(["recorded", "profile-only"])(
+    "rejects a registered route that would bypass %s Switchyard role verification",
+    async (source) => {
+      const f = registeredInferenceFixture(true);
+      const { routedEntry } = await createSwitchyardReadinessFixture(
+        f.binding.gatewayName,
+        f.binding.sandboxName,
+      );
+      const binding = { ...f.binding, providerName: routedEntry.provider };
+      const verifyRegisteredAttachment = vi.fn(async () => {});
+      const inferenceInvocationProbe = vi.fn(async () => ({ ok: true as const }));
+      await expect(
+        requireNativeInferenceHealth({
+          sandboxName: binding.sandboxName,
+          gatewayName: binding.gatewayName,
+          agentName: "hermes",
+          entry: {
+            ...routedEntry,
+            name: binding.sandboxName,
+            gatewayName: binding.gatewayName,
+            agent: "hermes",
+            provider: binding.providerName,
+            endpointUrl: binding.endpointUrl,
+            preferredInferenceApi: binding.inferenceApi,
+            credentialEnv: binding.credentialEnv,
+            registeredInferenceProviderAttachment: binding,
+            hermesSwitchyard: source === "recorded" ? routedEntry.hermesSwitchyard : undefined,
+          },
+          deps: { verifyRegisteredAttachment, inferenceInvocationProbe },
+        }),
+      ).rejects.toThrow("cannot share a recorded native inference attachment");
+      expect(verifyRegisteredAttachment).not.toHaveBeenCalled();
+      expect(inferenceInvocationProbe).not.toHaveBeenCalled();
+    },
+  );
+
   it("bounds bound Switchyard provider reads with the readiness probe timeout", async () => {
     const capture = vi.fn(() => ({
       status: 1,
@@ -695,6 +734,36 @@ describe("OpenClaw native-local readiness identity (#13338)", () => {
       );
     },
   );
+});
+
+it("requires the recorded external identity before invoking its native route", async () => {
+  const f = registeredInferenceFixture(true);
+  const verifyRegisteredAttachment = vi.fn(async () => {});
+  const inferenceInvocationProbe = vi.fn(async () => ({ ok: true }) as const);
+  const input = {
+    sandboxName: f.binding.sandboxName,
+    gatewayName: f.binding.gatewayName,
+    agentName: "openclaw",
+    entry: {
+      name: f.binding.sandboxName,
+      gatewayName: f.binding.gatewayName,
+      provider: f.binding.providerName,
+      model: "model-a",
+      endpointUrl: f.binding.endpointUrl,
+      credentialEnv: f.binding.credentialEnv,
+      preferredInferenceApi: f.binding.inferenceApi,
+      registeredInferenceProviderAttachment: f.binding,
+    },
+    deps: { verifyRegisteredAttachment, inferenceInvocationProbe },
+  };
+  await expect(requireNativeInferenceHealth(input)).resolves.toBe(true);
+  expect(inferenceInvocationProbe).toHaveBeenCalledWith(
+    expect.objectContaining({ registeredInferenceProviderAttachment: f.binding }),
+  );
+  verifyRegisteredAttachment.mockRejectedValue(new Error("replaced"));
+  inferenceInvocationProbe.mockClear();
+  await expect(requireNativeInferenceHealth(input)).rejects.toThrow("replaced");
+  expect(inferenceInvocationProbe).not.toHaveBeenCalled();
 });
 
 describe("inference readiness failure diagnostics (#14066)", () => {

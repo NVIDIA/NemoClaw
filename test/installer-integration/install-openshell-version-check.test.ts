@@ -7,15 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createLinuxArm64DownloadFixture } from "../support/openshell-arm64-download";
+import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.7.json";
 import {
-  createInstalledOpenShellFixture,
-  type InstalledOpenShellOptions,
+  prepareInstallerBin,
+  runCommandWithInstalledVersion,
   writeExecutable,
-  writeFixtureMktemp,
 } from "../support/openshell-installed-version";
-
-import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json";
+import { createLinuxArm64DownloadFixture } from "../support/openshell-arm64-download";
 import {
   BREW_OUTCOMES,
   CANDIDATE_RUNTIME,
@@ -31,20 +29,299 @@ const SCRIPT = path.join(import.meta.dirname, "../..", "scripts", "install-opens
 const REQUIRED_OPENSHELL_VERSION = credentialBoundaryManifest.openshellVersion;
 const LEGACY_OPENSHELL_VERSION = "0.0.44";
 
-function runWithInstalledVersion(
-  version: string,
-  extraEnv: NodeJS.ProcessEnv = {},
-  options: InstalledOpenShellOptions = {},
-) {
-  const fixture = createInstalledOpenShellFixture(version, extraEnv, options);
-  try {
-    return spawnSync("bash", [SCRIPT], { env: fixture.env, encoding: "utf8" });
-  } finally {
-    fs.rmSync(fixture.tmp, { recursive: true, force: true });
-  }
-}
-
 describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
+  it("starts a fresh OpenShell install without Node.js when no gateway state exists", () => {
+    const result = runCommandWithInstalledVersion(
+      "",
+      {},
+      {
+        missingCli: true,
+        missingNode: true,
+        driverBins: false,
+      },
+    );
+    expect(result.downloads, `${result.stdout}\n${result.stderr}`).not.toBe("");
+    expect(result.stderr).not.toContain("Node.js is required");
+  });
+
+  it.each([
+    { missingCli: true },
+    { missingCli: false, legacyGateway: "empty" as const },
+    { missingCli: true, registryGatewayPort: "8990" },
+    { missingCli: false, version: REQUIRED_OPENSHELL_VERSION, legacyGateway: "empty" as const },
+  ])(
+    "preserves retained sandbox records before replacement %#",
+    ({ version = "0.0.116", ...options }) => {
+      const result = runCommandWithInstalledVersion(
+        version,
+        { NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1" },
+        {
+          ...options,
+          driverBins: false,
+          retainedRegistry:
+            '{"sandboxes":{"retained-box":{"name":"retained-box","apiKey":"fixture-secret-do-not-print"}}}',
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("retained NemoClaw sandbox records");
+      const scope =
+        "registryGatewayPort" in options ? `/gateways/${options.registryGatewayPort}` : "";
+      expect(result.stderr).toContain(`/.nemoclaw${scope}/sandboxes.json": "retained-box"`);
+      expect(result.stderr).not.toContain("fixture-secret-do-not-print");
+      expect(result.downloads).toBe("");
+      expect(result.retainedFilesUnchanged).toBe(true);
+    },
+  );
+
+  it("requires Node.js when sandbox records remain without the old CLI", () => {
+    const result = runCommandWithInstalledVersion(
+      "",
+      {},
+      {
+        missingCli: true,
+        missingNode: true,
+        driverBins: false,
+        retainedRegistry: '{"sandboxes":{"retained-box":{"name":"retained-box"}}}',
+      },
+    );
+    expect(result.stderr).toContain("Node.js is required");
+    expect(result.downloads).toBe("");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
+  it.each([
+    "invalid JSON",
+    '{"sandboxes":[]}',
+    '{"sandboxes":{"retained-box":null}}',
+    '{"sandboxes":{"retained-box":{"name":"different-box"}}}',
+    '{"sandboxes":{" ":{"name":" "}}}',
+  ])("preserves unreadable or malformed retained registry %#", (retainedRegistry) => {
+    const result = runCommandWithInstalledVersion(
+      "",
+      {},
+      {
+        missingCli: true,
+        driverBins: false,
+        retainedRegistry,
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.downloads).toBe("");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
+  it("allows a fresh install with a verified empty NemoClaw registry", () => {
+    const result = runCommandWithInstalledVersion(
+      "",
+      {},
+      {
+        missingCli: true,
+        driverBins: false,
+        retainedRegistry: '{"sandboxes":{}}',
+      },
+    );
+    expect(result.downloads, result.stderr).not.toBe("");
+    expect(result.stderr).not.toContain("Cannot replace OpenShell");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
+  it.each([undefined, true, "system"] as const)(
+    "requires Node.js to inspect existing CLI or gateway state %s",
+    (legacyGateway) => {
+      const result = runCommandWithInstalledVersion(
+        "0.0.116",
+        {},
+        {
+          missingCli: legacyGateway !== undefined,
+          missingNode: true,
+          legacyGateway,
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Node.js is required to verify legacy OpenShell state");
+      expect(result.downloads).toBe("");
+      expect(result.retainedFilesUnchanged).toBe(true);
+    },
+  );
+
+  it("requires legacy inspection when the gateway configuration path is relative", () => {
+    const result = runCommandWithInstalledVersion(
+      "",
+      {},
+      {
+        missingCli: true,
+        missingNode: true,
+        driverBins: false,
+        systemGatewayDirectory: "relative",
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Node.js is required");
+    expect(result.downloads).toBe("");
+  });
+
+  it("requires legacy inspection when a gateway parent is a dangling symbolic link", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-parent-"));
+    try {
+      const parent = path.join(root, "linked-config");
+      fs.symlinkSync(path.join(root, "missing"), parent);
+      const result = runCommandWithInstalledVersion(
+        "",
+        {},
+        {
+          missingCli: true,
+          missingNode: true,
+          driverBins: false,
+          systemGatewayDirectory: parent,
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Node.js is required");
+      expect(result.downloads).toBe("");
+      expect(fs.lstatSync(parent).isSymbolicLink()).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["Linux", "Darwin"] as const)(
+    "preserves the legacy gateway before component replacement on %s",
+    (os) => {
+      const result = runCommandWithInstalledVersion(
+        "0.0.116",
+        {},
+        {
+          legacyGateway: true,
+          os,
+          arch: "arm64",
+        },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("legacy gateway");
+      expect(result.stderr).toContain('gateway "nemoclaw" has sandboxes: "retained-box"');
+      expect(result.downloads, `${result.stdout}\n${result.stderr}`).toBe("");
+      expect(result.retainedFilesUnchanged).toBe(true);
+    },
+  );
+
+  it.each([
+    "partial",
+    "invalid",
+    "unreachable",
+    "stderr",
+    "corrupt",
+    "system",
+    "retired",
+    "metadata-link",
+    "metadata-directory",
+  ] as const)("does not replace components with %s legacy state", (legacyGateway) => {
+    const result = runCommandWithInstalledVersion(
+      "0.0.116",
+      {
+        NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1",
+        NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
+      },
+      { legacyGateway },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("legacy gateway");
+    expect(result.downloads).toBe("");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
+  it("allows replacement with a verified empty legacy inventory and preserves user mTLS", () => {
+    const result = runCommandWithInstalledVersion("0.0.116", {}, { legacyGateway: "empty" });
+    expect(result.downloads, result.stderr).not.toBe("");
+    expect(result.stderr).not.toContain("Cannot replace OpenShell");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
+  it.each([false, true])(
+    "preserves default system gateway state with an empty override and missing CLI=%s",
+    (missingCli) => {
+      const result = runCommandWithInstalledVersion(
+        "0.0.116",
+        {},
+        {
+          legacyGateway: "fixed-system",
+          missingCli,
+          missingNode: missingCli,
+          driverBins: false,
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(missingCli ? "Node.js is required" : 'gateway "nemoclaw"');
+      expect(result.downloads).toBe("");
+      expect(result.retainedFilesUnchanged).toBe(true);
+    },
+  );
+
+  it.each([
+    { legacyInventory: [{ name: "alpha" }, { name: "beta" }] },
+    { legacyInventory: { sandboxes: [{ name: "alpha" }, { name: "beta" }], next_page_token: "" } },
+  ])("names all sandboxes in a complete legacy inventory %#", ({ legacyInventory }) => {
+    const result = runCommandWithInstalledVersion(
+      "0.0.116",
+      {},
+      { legacyGateway: true, legacyInventory },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('gateway "nemoclaw" has sandboxes: "alpha", "beta"');
+    expect(result.downloads).toBe("");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
+  it.each([[null], [{}], [{ name: "" }], [{ name: "a".repeat(513) }]])(
+    "refuses malformed sandbox names without replacing legacy state %#",
+    (...rows) => {
+      const result = runCommandWithInstalledVersion(
+        "0.0.116",
+        {},
+        { legacyGateway: true, legacyInventory: rows },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("invalid or incomplete sandbox inventory");
+      expect(result.downloads).toBe("");
+      expect(result.retainedFilesUnchanged).toBe(true);
+    },
+  );
+
+  it.each([
+    ["missing", { missingCli: true }],
+    ["failing", { versionExit: 1 }],
+  ] as const)("preserves registered legacy state with a %s CLI", (_kind, options) => {
+    const result = runCommandWithInstalledVersion(
+      "0.0.116",
+      {},
+      { ...options, legacyGateway: true },
+    );
+    expect(result.status).toBe(1);
+    expect(result.downloads).toBe("");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
+  it("rejects an endpoint override instead of inventorying a different gateway", () => {
+    const result = runCommandWithInstalledVersion(
+      "0.0.116",
+      { OPENSHELL_GATEWAY_ENDPOINT: "https://127.0.0.1:9999" },
+      { legacyGateway: "empty" },
+    );
+    expect(result.status).toBe(1);
+    expect(result.downloads).toBe("");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
+  it.each(["unknown", "0.0.116 could not load installation"])(
+    "does not replace an installed CLI that reports %s",
+    (version) => {
+      const result = runCommandWithInstalledVersion(version);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("installed CLI version is unknown");
+      expect(result.downloads).toBe("");
+      expect(result.retainedFilesUnchanged).toBe(true);
+    },
+  );
+
   it.runIf(CANDIDATE_RUNTIME_ENABLED)(
     "validates the receipt-bound candidate through the installer path (#6691)",
     () => {
@@ -68,13 +345,51 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   );
 
   it("exits cleanly when the required OpenShell and driver binaries are already installed", () => {
-    const result = runWithInstalledVersion(REQUIRED_OPENSHELL_VERSION);
+    const result = runCommandWithInstalledVersion(REQUIRED_OPENSHELL_VERSION);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
   });
 
+  it("preserves registered sandboxes when the selected OpenShell release is already installed", () => {
+    const result = runCommandWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { legacyGateway: true },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
+    expect(result.downloads).toBe("");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
+  it.each(["Linux", "Darwin"] as const)(
+    "refuses component replacement with a current CLI and registered sandboxes on %s",
+    (os) => {
+      const result = runCommandWithInstalledVersion(
+        REQUIRED_OPENSHELL_VERSION,
+        {},
+        { legacyGateway: true, driverBins: false, os, arch: "arm64" },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('legacy gateway "nemoclaw" has sandboxes');
+      expect(result.downloads).toBe("");
+      expect(result.retainedFilesUnchanged).toBe(true);
+    },
+  );
+
+  it("allows current-release component repair after verifying an empty gateway inventory", () => {
+    const result = runCommandWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { legacyGateway: "empty", driverBins: false },
+    );
+    expect(result.downloads, result.stderr).not.toBe("");
+    expect(result.stderr).not.toContain("Cannot replace OpenShell");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
   it("accepts MCP L7 support from the installed gateway sidecar", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       { featurePlacement: "split-mcp-gateway" },
@@ -84,7 +399,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("does not combine the OpenShell CLI with driver binaries from another PATH root", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       { driverLocation: "path" },
@@ -97,7 +412,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("accepts cross-prefix driver binaries only through explicit overrides", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       { driverLocation: "explicit" },
@@ -107,7 +422,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("rejects mixed release components hidden behind one symlink directory", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       { driverLocation: "symlink" },
@@ -117,7 +432,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("rejects stale components copied into the active install root", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       { driverVersion: "0.0.71" },
@@ -127,7 +442,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("rejects a component whose version probe fails after printing a version", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       { driverVersionExit: 42 },
@@ -137,7 +452,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("accepts the exact pinned sandbox when its host-side version probe cannot load", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       {
@@ -150,7 +465,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("rejects a non-runnable sandbox whose digest is not a pinned release artifact", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       { sandboxVersionExit: 127, sandboxBinaryDigest: ZERO_SHA256 },
@@ -160,7 +475,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("rejects a selected component that cannot be scanned", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       { driverReadable: false },
@@ -174,7 +489,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       path.join(os.tmpdir(), "nemoclaw-openshell-component-dir-"),
     );
     try {
-      const result = runWithInstalledVersion(
+      const result = runCommandWithInstalledVersion(
         REQUIRED_OPENSHELL_VERSION,
         {
           NEMOCLAW_OPENSHELL_GATEWAY_BIN: explicitDirectory,
@@ -190,7 +505,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("requests the Darwin Arm64 gateway archive instead of the VM-driver archive when driver binaries are missing", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       {
@@ -206,14 +521,18 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("fails closed when the required OpenShell lacks required messaging rewrite support", () => {
-    const result = runWithInstalledVersion(REQUIRED_OPENSHELL_VERSION, {}, { capability: false });
+    const result = runCommandWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { capability: false },
+    );
     expect(result.status).toBe(1);
     // `fail()` writes to stderr as of #3446; previously stdout.
     expect(result.stderr).toMatch(/missing request-body-credential-rewrite support/);
   });
 
   it("accepts macOS OpenShell when the gateway binary is installed", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       {
@@ -227,7 +546,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("ignores a stale sibling sandbox binary for a macOS VM-driver install", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       { os: "Darwin", arch: "arm64", sandboxVersion: LEGACY_OPENSHELL_VERSION },
@@ -241,7 +560,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     try {
       const state = path.join(tmp, "codesign-state");
       const log = path.join(tmp, "codesign.log");
-      const result = runWithInstalledVersion(
+      const result = runCommandWithInstalledVersion(
         REQUIRED_OPENSHELL_VERSION,
         {
           NEMOCLAW_FAKE_CODESIGN_HAS_ENTITLEMENT: "0",
@@ -267,7 +586,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("reuses the standalone macOS gateway when Homebrew is unavailable", () => {
-    const result = runWithInstalledVersion(
+    const result = runCommandWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       {
@@ -290,7 +609,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-stale-formula-"));
     try {
       const brewLog = path.join(tmp, "brew.log");
-      const result = runWithInstalledVersion(
+      const result = runCommandWithInstalledVersion(
         REQUIRED_OPENSHELL_VERSION,
         { NEMOCLAW_TEST_BREW_INSTALL_STATUS: "1" },
         {
@@ -321,8 +640,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       const fakeBin = path.join(tmp, "bin");
       const downloadLog = path.join(tmp, "downloads.log");
       const brewLog = path.join(tmp, "brew.log");
-      fs.mkdirSync(fakeBin);
-      writeFixtureMktemp(fakeBin, tmp);
+      prepareInstallerBin(fakeBin);
 
       writeExecutable(
         path.join(fakeBin, "uname"),
@@ -365,6 +683,8 @@ exit 0`,
         env: {
           ...process.env,
           HOME: tmp,
+          XDG_CONFIG_HOME: path.join(tmp, "config"),
+          OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmp, "system-openshell"),
           NEMOCLAW_OPENSHELL_CHANNEL: "stable",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
@@ -392,7 +712,7 @@ exit 0`,
       const brewLog = path.join(tmp, "brew.log");
       const formulaTmpDir = path.join(tmp, "formula-tmp");
       const untrustCount = path.join(tmp, "untrust-count");
-      fs.mkdirSync(fakeBin);
+      prepareInstallerBin(fakeBin);
       fs.mkdirSync(path.join(homebrewPrefix, "bin"), { recursive: true });
 
       writeExecutable(
@@ -512,6 +832,8 @@ exit 1`,
           env: {
             ...process.env,
             HOME: tmp,
+            XDG_CONFIG_HOME: path.join(tmp, "config"),
+            OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmp, "system-openshell"),
             XDG_BIN_HOME: path.join(tmp, "local-bin"),
             NEMOCLAW_OPENSHELL_CHANNEL: "stable",
             PATH: `${fakeBin}:/usr/bin:/bin`,
@@ -565,6 +887,8 @@ exit 1`,
         env: {
           ...process.env,
           HOME: tmp,
+          XDG_CONFIG_HOME: path.join(tmp, "config"),
+          OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmp, "system-openshell"),
           XDG_BIN_HOME: path.join(tmp, "local-bin"),
           NEMOCLAW_OPENSHELL_CHANNEL: "stable",
           NEMOCLAW_TEST_BREW_TRUST_STATUS: "1",
@@ -590,6 +914,8 @@ exit 1`,
         env: {
           ...process.env,
           HOME: tmp,
+          XDG_CONFIG_HOME: path.join(tmp, "config"),
+          OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmp, "system-openshell"),
           XDG_BIN_HOME: path.join(tmp, "local-bin"),
           NEMOCLAW_OPENSHELL_CHANNEL: "stable",
           NEMOCLAW_TEST_BREW_TRUST_HELP_STATUS: "1",
@@ -621,6 +947,8 @@ exit 1`,
         env: {
           ...process.env,
           HOME: tmp,
+          XDG_CONFIG_HOME: path.join(tmp, "config"),
+          OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmp, "system-openshell"),
           XDG_BIN_HOME: path.join(tmp, "local-bin"),
           NEMOCLAW_OPENSHELL_CHANNEL: "stable",
           PATH: `${fakeBin}:/usr/bin:/bin`,
@@ -653,384 +981,6 @@ exit 1`,
     }
   });
 
-  it("creates owner-safe user-local directories in a direct install under umask 0002 (#12496)", () => {
-    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
-    try {
-      fs.rmSync(path.join(fakeBin, "openshell"));
-      const bashEnv = path.join(tmp, "force-user-local-install.sh");
-      fs.writeFileSync(
-        bashEnv,
-        `function [ {
-  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then
-    return 1
-  fi
-  builtin [ "$@"
-}
-`,
-      );
-      const previousUmask = process.umask(0o002);
-      let directInstall;
-      try {
-        directInstall = spawnSync("bash", [SCRIPT], {
-          env: {
-            ...process.env,
-            BASH_ENV: bashEnv,
-            HOME: tmp,
-            XDG_BIN_HOME: "",
-            NEMOCLAW_NON_INTERACTIVE: "1",
-            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-            NEMOCLAW_TEST_USER_LOCAL_ONLY: "1",
-            PATH: `${fakeBin}:/usr/bin:/bin`,
-          },
-          encoding: "utf8",
-        });
-      } finally {
-        process.umask(previousUmask);
-      }
-      expect(directInstall.status, `${directInstall.stdout}\n${directInstall.stderr}`).toBe(0);
-      expect({
-        local: fs.statSync(path.join(tmp, ".local")).mode & 0o777,
-        bin: fs.statSync(path.join(tmp, ".local", "bin")).mode & 0o777,
-      }).toEqual({ local: 0o755, bin: 0o755 });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-  it("falls back from a writable unsafe system default in interactive mode (#12496)", () => {
-    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
-    try {
-      fs.rmSync(path.join(fakeBin, "openshell"));
-      const localBin = path.join(tmp, ".local", "bin");
-      const bashEnv = path.join(tmp, "unsafe-system-target.sh");
-      fs.writeFileSync(
-        bashEnv,
-        `function [ {
-  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then return 0; fi
-  if [[ "$#" -eq 4 && "$1" = "!" && "$2" = "-t" && "$3" = "0" && "$4" = "]" ]]; then return 1; fi
-  builtin [ "$@"
-}
-function stat {
-  if [[ " $* " == *" /usr/local/bin "* ]]; then printf "0 775\\n"; return 0; fi
-  command stat "$@"
-}
-`,
-      );
-      const result = spawnSync("bash", [SCRIPT], {
-        env: {
-          ...process.env,
-          BASH_ENV: bashEnv,
-          HOME: tmp,
-          XDG_BIN_HOME: "",
-          NEMOCLAW_NON_INTERACTIVE: "",
-          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-        },
-        encoding: "utf8",
-      });
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(fs.existsSync(path.join(localBin, "openshell"))).toBe(true);
-      expect(fs.existsSync(path.join(localBin, "openshell-gateway"))).toBe(true);
-      expect(fs.statSync(localBin).mode & 0o777).toBe(0o755);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-  it.each(["", "1"])(
-    "replaces an unsafe existing destination through the private directory with noninteractive=%s (#14268)",
-    (nonInteractive) => {
-      const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
-      try {
-        const oldBinary = fs.readFileSync(path.join(fakeBin, "openshell"));
-        fs.chmodSync(fakeBin, 0o775);
-        const privateBin = path.join(tmp, ".local", "bin");
-        const result = spawnSync("bash", [SCRIPT], {
-          env: {
-            ...process.env,
-            HOME: tmp,
-            XDG_BIN_HOME: "",
-            NEMOCLAW_NON_INTERACTIVE: nonInteractive,
-            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-            PATH: `${fakeBin}:/usr/bin:/bin`,
-          },
-          encoding: "utf8",
-        });
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-        expect(fs.readFileSync(path.join(fakeBin, "openshell"))).toEqual(oldBinary);
-        expect(fs.statSync(fakeBin).mode & 0o777).toBe(0o775);
-        const installedVersion = spawnSync(path.join(privateBin, "openshell"), ["--version"], {
-          encoding: "utf8",
-        });
-        expect(installedVersion.status).toBe(0);
-        expect(installedVersion.stdout).toContain(`openshell ${REQUIRED_OPENSHELL_VERSION}`);
-        expect(fs.existsSync(path.join(privateBin, "openshell-gateway"))).toBe(true);
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it("replaces the safe nonwritable active system binary in interactive mode (#14268)", () => {
-    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
-    const systemBin = path.join(tmp, "system-bin");
-    fs.mkdirSync(systemBin);
-    try {
-      fs.renameSync(path.join(fakeBin, "openshell"), path.join(systemBin, "openshell"));
-      const sudoLog = path.join(tmp, "sudo.log");
-      writeExecutable(
-        path.join(fakeBin, "sudo"),
-        `#!/usr/bin/env bash
-[[ "$1" = install && "\${@: -1}" == "$HOME/system-bin/"* ]] || exit 97
-printf '%s\\n' "$*" >> "$HOME/sudo.log"
-chmod u+w "$HOME/system-bin"
-"$@"
-status=$?
-chmod 555 "$HOME/system-bin"
-exit "$status"
-`,
-      );
-      const bashEnv = path.join(tmp, "interactive-safe-system.sh");
-      fs.writeFileSync(
-        bashEnv,
-        `function [ {
-  if [[ "$#" = 3 && "$1" = -t && "$2" = 0 ]]; then return 0; fi
-  if [[ "$#" = 4 && "$1" = '!' && "$2" = -t && "$3" = 0 ]]; then return 1; fi
-  builtin [ "$@"
-}
-function stat {
-  if [[ " $* " == *" $HOME/system-bin "* ]]; then printf '0 755\\n'; return 0; fi
-  command stat "$@"
-}
-`,
-      );
-      fs.chmodSync(systemBin, 0o555);
-      // Confine the system destination to the fixture before executing the real installer.
-      const installer = path.join(tmp, "install-openshell.sh");
-      fs.writeFileSync(
-        installer,
-        fs.readFileSync(SCRIPT, "utf8").replaceAll("/usr/local/bin", systemBin),
-      );
-      const result = spawnSync("bash", [installer], {
-        env: {
-          ...process.env,
-          BASH_ENV: bashEnv,
-          HOME: tmp,
-          XDG_BIN_HOME: "",
-          NEMOCLAW_NON_INTERACTIVE: "",
-          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-          PATH: `${systemBin}:${fakeBin}:/usr/bin:/bin`,
-        },
-        encoding: "utf8",
-      });
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      const active = spawnSync(path.join(systemBin, "openshell"), ["--version"], {
-        encoding: "utf8",
-      });
-      expect(active.status).toBe(0);
-      expect(active.stdout.trim()).toBe(`openshell ${REQUIRED_OPENSHELL_VERSION}`);
-      expect(fs.readFileSync(sudoLog, "utf8")).toContain(` ${path.join(systemBin, "openshell")}`);
-      expect(fs.existsSync(path.join(tmp, ".local", "bin", "openshell"))).toBe(false);
-    } finally {
-      fs.chmodSync(systemBin, 0o755);
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("selects the prepared replacement when its directory already occurs later on PATH (#14268)", () => {
-    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
-    try {
-      const privateBin = path.join(tmp, ".local", "bin");
-      fs.mkdirSync(privateBin, { recursive: true });
-      fs.chmodSync(fakeBin, 0o775);
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          `
-source "$1/scripts/install.sh" >/dev/null 2>&1
-NEMOCLAW_SOURCE_ROOT="$1"
-_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR="$2"
-spin() { shift; "$@"; }
-install_nemoclaw_openshell_gateway_user_service() { :; }
-maybe_install_openshell_during_install force
-[ "$(command -v openshell)" = "$2/openshell" ]
-[ "$NEMOCLAW_OPENSHELL_BIN" = "$2/openshell" ]
-[ "$(resolve_openshell_gateway_bin_for_service)" = "$2/openshell-gateway" ]
-`,
-          "test",
-          path.resolve(import.meta.dirname, "../.."),
-          privateBin,
-        ],
-        {
-          env: {
-            ...process.env,
-            HOME: tmp,
-            XDG_BIN_HOME: "",
-            NEMOCLAW_NON_INTERACTIVE: "1",
-            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-            PATH: `${fakeBin}:${privateBin}:/usr/bin:/bin`,
-          },
-          encoding: "utf8",
-        },
-      );
-      expect(result.status, result.stdout + result.stderr).toBe(0);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rechecks the prepared directory through the installer caller before replacement (#14268)", () => {
-    const { tmp, fakeBin, downloadLog } = createLinuxArm64DownloadFixture();
-    try {
-      const env = {
-        ...process.env,
-        HOME: tmp,
-        XDG_BIN_HOME: "",
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-        PATH: `${fakeBin}:/usr/bin:/bin`,
-      };
-      const preparation = spawnSync("bash", [SCRIPT, "--prepare-install-directory"], {
-        env,
-        encoding: "utf8",
-      });
-      expect(preparation.status, preparation.stdout + preparation.stderr).toBe(0);
-      expect(preparation.stdout.trim()).toBe(fakeBin);
-      expect(fs.existsSync(downloadLog)).toBe(false);
-      const oldBinary = fs.readFileSync(path.join(fakeBin, "openshell"));
-      fs.chmodSync(fakeBin, 0o775);
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          `
-source "$1/scripts/install.sh" >/dev/null 2>&1
-NEMOCLAW_SOURCE_ROOT="$1"
-_NEMOCLAW_PREPARED_OPENSHELL_INSTALL_DIR="$2"
-spin() { shift; "$@"; }
-install_nemoclaw_openshell_gateway_user_service() { :; }
-maybe_install_openshell_during_install force
-`,
-          "test",
-          path.resolve(import.meta.dirname, "../.."),
-          preparation.stdout.trim(),
-        ],
-        { env, encoding: "utf8" },
-      );
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("Unsafe prepared executable directory");
-      expect(fs.readFileSync(path.join(fakeBin, "openshell"))).toEqual(oldBinary);
-      expect(fs.existsSync(path.join(tmp, ".local", "bin"))).toBe(false);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects an unsafe system directory before invoking sudo (#12496)", () => {
-    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
-    try {
-      fs.rmSync(path.join(fakeBin, "openshell"));
-      const sudoLog = path.join(tmp, "sudo.log");
-      writeExecutable(
-        path.join(fakeBin, "sudo"),
-        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$NEMOCLAW_TEST_SUDO_LOG"\nexit 99\n',
-      );
-      const bashEnv = path.join(tmp, "unsafe-privileged-system-target.sh");
-      fs.writeFileSync(
-        bashEnv,
-        `function [ {
-  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then return 1; fi
-  if [[ "$#" -eq 4 && "$1" = "!" && "$2" = "-t" && "$3" = "0" && "$4" = "]" ]]; then return 1; fi
-  if [[ "$#" -eq 3 && "$1" = "-t" && "$2" = "0" && "$3" = "]" ]]; then return 0; fi
-  builtin [ "$@"
-}
-function stat {
-  if [[ " $* " == *" /usr/local/bin "* ]]; then printf "0 775\\n"; return 0; fi
-  command stat "$@"
-}
-`,
-      );
-      const result = spawnSync("bash", [SCRIPT], {
-        env: {
-          ...process.env,
-          BASH_ENV: bashEnv,
-          HOME: tmp,
-          NEMOCLAW_NON_INTERACTIVE: "",
-          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-          NEMOCLAW_TEST_SUDO_LOG: sudoLog,
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-        },
-        encoding: "utf8",
-      });
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
-      expect(result.stderr).toContain("Unsafe executable directory /usr/local/bin");
-      expect(fs.existsSync(sudoLog)).toBe(false);
-      expect(fs.existsSync(path.join(tmp, ".local", "bin", "openshell"))).toBe(false);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-  it.each(["writable ancestor", "symlinked bin"])(
-    "rejects a %s before publishing a direct user-local binary (#12496)",
-    (unsafePath) => {
-      const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
-      try {
-        fs.rmSync(path.join(fakeBin, "openshell"));
-        const local = path.join(tmp, ".local");
-        const bin = path.join(local, "bin");
-        const outside = path.join(tmp, "outside");
-        fs.mkdirSync(local);
-        const makeUnsafe: Record<string, () => void> = {
-          "writable ancestor": () => {
-            fs.mkdirSync(bin);
-            fs.chmodSync(local, 0o775);
-          },
-          "symlinked bin": () => {
-            fs.mkdirSync(outside);
-            fs.symlinkSync(outside, bin);
-          },
-        };
-        makeUnsafe[unsafePath]();
-        const bashEnv = path.join(tmp, "force-user-local-install.sh");
-        fs.writeFileSync(
-          bashEnv,
-          `function [ {
-  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then
-    return 1
-  fi
-  builtin [ "$@"
-}
-`,
-        );
-        const result = spawnSync("bash", [SCRIPT], {
-          env: {
-            ...process.env,
-            BASH_ENV: bashEnv,
-            HOME: tmp,
-            XDG_BIN_HOME: "",
-            NEMOCLAW_NON_INTERACTIVE: "1",
-            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-            NEMOCLAW_TEST_USER_LOCAL_ONLY: "1",
-            PATH: `${fakeBin}:/usr/bin:/bin`,
-          },
-          encoding: "utf8",
-        });
-
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
-        expect(result.stderr).toContain(unsafePath === "writable ancestor" ? local : bin);
-        expect(
-          fs.existsSync(path.join(unsafePath === "writable ancestor" ? bin : outside, "openshell")),
-        ).toBe(false);
-        const assertUnchanged: Record<string, () => void> = {
-          "writable ancestor": () => expect(fs.statSync(local).mode & 0o777).toBe(0o775),
-          "symlinked bin": () => expect(fs.lstatSync(bin).isSymbolicLink()).toBe(true),
-        };
-        assertUnchanged[unsafePath]();
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    },
-  );
-
   it("upgrades into the active writable openshell directory to avoid PATH shadowing", () => {
     const tmp = fs.mkdtempSync(
       path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-openshell-active-dir-"),
@@ -1040,8 +990,7 @@ function stat {
       const fakeBin = path.join(tmp, "fake-bin");
       const installLog = path.join(tmp, "install.log");
       fs.mkdirSync(activeBin);
-      fs.mkdirSync(fakeBin);
-      writeFixtureMktemp(fakeBin, tmp);
+      prepareInstallerBin(fakeBin);
 
       writeExecutable(
         path.join(activeBin, "openshell"),
@@ -1153,6 +1102,8 @@ exit 0`,
         env: {
           ...process.env,
           HOME: tmp,
+          XDG_CONFIG_HOME: path.join(tmp, "config"),
+          OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmp, "system-openshell"),
           NEMOCLAW_OPENSHELL_CHANNEL: "stable",
           PATH: `${fakeBin}:${activeBin}:/usr/bin:/bin`,
         },
@@ -1176,8 +1127,7 @@ exit 0`,
       const fakeBin = path.join(tmp, "bin");
       const tarLog = path.join(tmp, "tar.log");
       const installLog = path.join(tmp, "install.log");
-      fs.mkdirSync(fakeBin);
-      writeFixtureMktemp(fakeBin, tmp);
+      prepareInstallerBin(fakeBin);
 
       writeExecutable(
         path.join(fakeBin, "uname"),
@@ -1249,6 +1199,8 @@ exit 0`,
         env: {
           ...process.env,
           HOME: tmp,
+          XDG_CONFIG_HOME: path.join(tmp, "config"),
+          OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmp, "system-openshell"),
           NEMOCLAW_OPENSHELL_CHANNEL: "stable",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
@@ -1269,7 +1221,7 @@ exit 0`,
   it.each([22, 28])(
     "stops before verification when curl exits with status %i (#11281)",
     (status) => {
-      const result = runWithInstalledVersion("0.0.38", {}, { curlExitCode: status });
+      const result = runCommandWithInstalledVersion("0.0.38", {}, { curlExitCode: status });
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
       expect(result.stderr).toContain("curl stub:");
@@ -1279,32 +1231,32 @@ exit 0`,
   );
 
   it("triggers upgrade when openshell 0.0.38 is installed (below current floor)", () => {
-    const result = runWithInstalledVersion("0.0.38");
+    const result = runCommandWithInstalledVersion("0.0.38");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
 
   it("triggers upgrade when openshell 0.0.28 is installed (below MIN_VERSION)", () => {
-    const result = runWithInstalledVersion("0.0.28");
+    const result = runCommandWithInstalledVersion("0.0.28");
     // Script should warn about upgrade then fail at the download step (curl stub fails)
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
 
   it("triggers upgrade when openshell 0.0.26 is installed (Landlock-vulnerable version)", () => {
-    const result = runWithInstalledVersion("0.0.26");
+    const result = runCommandWithInstalledVersion("0.0.26");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
 
   it("triggers upgrade when openshell 0.0.24 is installed (old minimum)", () => {
-    const result = runWithInstalledVersion("0.0.24");
+    const result = runCommandWithInstalledVersion("0.0.24");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
 
-  it("reinstalls the pinned release when openshell 0.0.117 is above MAX_VERSION", () => {
-    const result = runWithInstalledVersion("0.0.117");
+  it("reinstalls the pinned release when openshell 0.1.8 is above MAX_VERSION", () => {
+    const result = runCommandWithInstalledVersion("0.1.8");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain(
       `above the maximum (${REQUIRED_OPENSHELL_VERSION}) supported by this NemoClaw release`,
@@ -1317,7 +1269,7 @@ exit 0`,
   });
 
   it("reinstalls the pinned release when openshell is at a much newer version", () => {
-    const result = runWithInstalledVersion("0.1.0");
+    const result = runCommandWithInstalledVersion("1.0.0");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain(
       `above the maximum (${REQUIRED_OPENSHELL_VERSION}) supported by this NemoClaw release`,
@@ -1330,13 +1282,13 @@ exit 0`,
   });
 
   it("rejects the OpenShell dev channel even with the former risk-acceptance flag", () => {
-    const result = runWithInstalledVersion("0.0.116.dev84+g6b2180425", {
+    const result = runCommandWithInstalledVersion("0.0.116.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported.",
+      "NemoClaw requires exact stable OpenShell 0.1.7; the dev channel is not supported.",
     );
     expect(result.stdout).not.toContain("Installing OpenShell from release 'dev'");
   });
@@ -1345,8 +1297,8 @@ exit 0`,
     "NEMOCLAW_OPENSHELL_MIN_VERSION",
     "NEMOCLAW_OPENSHELL_MAX_VERSION",
     "NEMOCLAW_OPENSHELL_PIN_VERSION",
-  ] as const)("rejects a non-0.0.116 %s override before installation", (variable) => {
-    const result = runWithInstalledVersion(REQUIRED_OPENSHELL_VERSION, {
+  ] as const)("rejects a non-0.1.2 %s override before installation", (variable) => {
+    const result = runCommandWithInstalledVersion(REQUIRED_OPENSHELL_VERSION, {
       [variable]: "0.0.115",
     });
     expect(result.status).toBe(1);
@@ -1357,7 +1309,7 @@ exit 0`,
   });
 
   it("reconciles an installed development build to the exact stable release", () => {
-    const result = runWithInstalledVersion("0.0.116-dev.8+g7bce1223d");
+    const result = runCommandWithInstalledVersion("0.0.116-dev.8+g7bce1223d");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("OpenShell development builds are unsupported");
     expect(result.stdout).toContain(
@@ -1366,7 +1318,7 @@ exit 0`,
   });
 
   it("keeps auto on the stable release-selection contract", () => {
-    const result = runWithInstalledVersion("0.0.36", {
+    const result = runCommandWithInstalledVersion("0.0.36", {
       NEMOCLAW_OPENSHELL_CHANNEL: "auto",
     });
 
@@ -1378,7 +1330,7 @@ exit 0`,
   });
 
   it("rejects the removed artifact channel", () => {
-    const result = runWithInstalledVersion("0.0.72", {
+    const result = runCommandWithInstalledVersion("0.0.72", {
       NEMOCLAW_OPENSHELL_CHANNEL: "artifact",
     });
 
@@ -1390,7 +1342,7 @@ exit 0`,
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-noop-"));
     try {
       const fakeBin = path.join(tmp, "bin");
-      fs.mkdirSync(fakeBin);
+      prepareInstallerBin(fakeBin);
 
       // No openshell binary — just stub curl/gh to fail fast
       writeExecutable(
@@ -1410,11 +1362,13 @@ exit 1`,
           ...process.env,
           NEMOCLAW_OPENSHELL_CHANNEL: "stable",
           PATH: `${fakeBin}:/usr/bin:/bin`,
+          HOME: tmp,
+          XDG_CONFIG_HOME: path.join(tmp, "config"),
+          OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmp, "system-openshell"),
         },
         encoding: "utf8",
       });
 
-      // Should attempt install (not exit 0 early) and fail at the download step
       expect(result.stdout).toMatch(/Installing OpenShell from release/);
       expect(result.status).not.toBe(0);
     } finally {

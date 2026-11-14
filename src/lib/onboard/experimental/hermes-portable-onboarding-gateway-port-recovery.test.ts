@@ -120,15 +120,16 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
       model: freshPortableInput.model,
       providerBaseUrl: baseUrl,
     });
-    expect(
-      mutation.upsertProvider!(
-        freshPortableInput.provider,
-        "openai",
-        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-        baseUrl,
-        { NEMOCLAW_OLLAMA_PROXY_TOKEN: "ollama" },
-      ),
-    ).toMatchObject({ ok: true });
+    const interruptedAttachment = await mutation.registerNativeProvider!();
+    expect(interruptedAttachment).toMatchObject({
+      provider: "ollama-local",
+      agent: "hermes",
+      gatewayName,
+      sandboxName: freshPortableInput.sandboxName,
+      endpointUrl: baseUrl,
+      authMode: "sentinel",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    });
     await mutation.commit();
     preparedStartup.prepared.commit();
     const transactionRoot = path.join(fixture.resolverOptions.stateDir, "portable-inference");
@@ -215,7 +216,7 @@ describe("Hermes portable onboarding gateway-port recovery", () => {
     const runner = require("../../runner") as typeof import("../../runner");
     vi.spyOn(runner, "run").mockImplementation((command, options) => {
       const args = Array.isArray(command) ? command.map(String) : [String(command)];
-      const providerIndex = args.indexOf("provider");
+      const providerIndex = args.findIndex((arg) => arg === "provider" || arg === "policy");
       expect(
         providerIndex,
         `Unexpected onboarding command: ${args.join(" ")}`,

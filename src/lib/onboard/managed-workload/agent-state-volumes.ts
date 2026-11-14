@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isManagedImageAgent, managedImageRuntimeIdentity } from "../managed-image/agents";
-import { managedStartupStateRoots } from "../managed-startup/state-roots";
+import {
+  managedStartupStateRoots,
+  type ManagedStartupStateRoot,
+} from "../managed-startup/state-roots";
 import type {
   RuntimeProviderBundle,
   RuntimeProviderBundleRegistry,
@@ -62,6 +65,7 @@ export function managedStateVolumeDeps(
   const runtimeProvider =
     deps.runtimeProvider ?? selectedRuntimeProvider(runtimeProviderId, deps.runtimeProviders);
   return {
+    workspace: deps.workspace,
     ...(deps.runDocker && !runtimeProvider ? { runContainerEngine: deps.runDocker } : {}),
     ...(runtimeProvider ? { runtimeProvider } : {}),
     ...(deps.registerExitCleanup ? { registerExitCleanup: deps.registerExitCleanup } : {}),
@@ -86,10 +90,12 @@ function managedAgentStateRoots(context: ManagedAgentStateVolumeContext) {
 
 /** Remove every state root declared for a managed-image agent, gated by exact ownership labels. */
 export function removeManagedAgentStateVolumes(
-  context: ManagedAgentStateVolumeContext,
+  context: ManagedAgentStateVolumeContext & {
+    readonly retainedRoots?: readonly ManagedStartupStateRoot[];
+  },
   deps: Pick<
     ManagedAgentStateVolumeDeps,
-    "runDocker" | "runtimeProvider" | "runtimeProviders"
+    "runDocker" | "workspace" | "runtimeProvider" | "runtimeProviders"
   > = {},
 ): readonly ManagedAgentStateVolumeCleanupResult[] {
   const runtimeProvider = selectedRuntimeProvider(
@@ -103,7 +109,14 @@ export function removeManagedAgentStateVolumes(
       : supportsContainerEngineOperation(runtimeProvider, "workload-cleanup");
   if (!hasCleanupAuthority) return [];
   return removeManagedStateVolumes(
-    { roots: managedAgentStateRoots(context) },
+    {
+      roots: managedAgentStateRoots(context).filter(
+        (source) =>
+          !context.retainedRoots?.some(
+            (target) => target.resourceIdentity === source.resourceIdentity,
+          ),
+      ),
+    },
     managedStateVolumeDeps(deps, context.runtimeProviderId),
   );
 }

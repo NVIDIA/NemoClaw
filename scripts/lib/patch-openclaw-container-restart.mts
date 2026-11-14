@@ -8,9 +8,95 @@
 // reliably reloads changed plugin modules and their dependencies.
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { BROKER_SESSION_PROBE_SOURCE } from "./openclaw-broker-session-probe.mts";
+import {
+  OPENCLAW_COMMAND_SESSION_MODULES,
+  OPENCLAW_COMMAND_TERMINATION_MODULES,
+  patchCommandSessionCaller,
+  patchCommandTerminationSessionCleanup,
+  patchScopedCommandSessionCleanup,
+} from "./openclaw-command-session-cleanup.mts";
 
 const VERSIONS = ["2026.9.2", "2026.9.5", "2026.10.5"];
+const BROKER_SESSION_MARKER =
+  "// nemoclaw: observe owned broker session absence without group signals";
+const BROKER_CLEANUP_SHA256 = "3103d7225a291eaab65003e96bba23a7700d62b00d37e8f30df998f4a64f5c6c";
+const LOST_CHILD_CLEANUP_SHA256 =
+  "6ed780d11dad0b8dd56f1207428f219f6b00bc387e8e32da6632e02f0d3e9a3f";
+const LOST_CHILD_GROUP_PROBE = "isPidDefinitelyDead(pid) && (!detached || groupGone(pid))";
+const LOST_CHILD_SESSION_PROBE =
+  'isPidDefinitelyDead(pid) && (!detached || (process.platform === "linux" && process.env.OPENSHELL_SANDBOX === "1" ? nemoclawPrivateBrokerSessionGone(pid) : groupGone(pid)))';
+const BROKER_CLEANUP_HEADER = "function terminateBrokerProcessGroup(pgid) {\n";
+const BROKER_SESSION_DISPATCH = `\tconst brokerGroupGone = () => {
+\t\tif (process.platform !== "linux" || process.env.OPENSHELL_SANDBOX !== "1") return groupGone(pgid);
+\t\ttry { return nemoclawPrivateBrokerSessionGone(pgid); }
+\t\tcatch (error) {
+\t\t\t// A timer must retain an inventory failure for the native cleanup promise.
+\t\t\tsignalError = error;
+\t\t\treturn false;
+\t\t}
+\t};
+`;
+export const OPENCLAW_BROKER_CLEANUP_MODULES = [
+  "state/openclaw-state-read.worker.js",
+  "infra/sqlite-readonly-location.worker.js",
+  "native-hook-relay/host-C-H3iw2x.mjs",
+  "host-DtzWpmNE.mjs",
+  "managed-handoff-runtime.mjs",
+  "package-update-activation-recovery.mjs",
+] as const;
+
+/** Preserve native signals and deadlines; change only the private-session absence observation. */
+export function patchBrokerPrivateSessionCleanup(source: string): string {
+  const functions = [
+    ...source.matchAll(/function terminateBrokerProcessGroup\(pgid\) \{[\s\S]*?\n\}/gu),
+  ];
+  if (functions.length !== 1) throw new Error("Expected one pinned broker cleanup function");
+  const current = functions[0]![0];
+  const helper = `${BROKER_SESSION_MARKER}\n${BROKER_SESSION_PROBE_SOURCE}\n`;
+  const marked = source.includes(BROKER_SESSION_MARKER);
+  const lostFunctions = [
+    ...source.matchAll(
+      /function terminateLostBrokerChild\(pid, detached, ownerExited\) \{[\s\S]*?\n\}/gu,
+    ),
+  ];
+  if (lostFunctions.length !== 1)
+    throw new Error("Expected one pinned lost-child cleanup function");
+  const lostCurrent = lostFunctions[0]![0];
+  const lostOriginal = marked
+    ? lostCurrent.replace(LOST_CHILD_SESSION_PROBE, LOST_CHILD_GROUP_PROBE)
+    : lostCurrent;
+  if (createHash("sha256").update(lostOriginal).digest("hex") !== LOST_CHILD_CLEANUP_SHA256)
+    throw new Error("Unrecognized pinned lost-child cleanup function");
+  const lostPatched = lostOriginal.replace(LOST_CHILD_GROUP_PROBE, LOST_CHILD_SESSION_PROBE);
+  const original = marked
+    ? current
+        .replace(BROKER_SESSION_DISPATCH, "")
+        .replaceAll("brokerGroupGone()", "groupGone(pgid)")
+    : current;
+  if (createHash("sha256").update(original).digest("hex") !== BROKER_CLEANUP_SHA256)
+    throw new Error("Unrecognized pinned broker cleanup function");
+  const patched = original
+    .replaceAll("groupGone(pgid)", "brokerGroupGone()")
+    .replace(BROKER_CLEANUP_HEADER, BROKER_CLEANUP_HEADER + BROKER_SESSION_DISPATCH);
+  if (marked) {
+    if (
+      source.split(helper).length !== 2 ||
+      source.split(BROKER_SESSION_MARKER).length !== 2 ||
+      source.split("function nemoclawPrivateBrokerSessionGone(").length !== 2 ||
+      lostCurrent !== lostPatched ||
+      current !== patched
+    )
+      throw new Error("Incomplete private broker session patch");
+    return source;
+  }
+  if (source.includes("nemoclawPrivateBrokerSessionGone") || source.includes("brokerGroupGone"))
+    throw new Error("Unexpected private broker session patch residue");
+  return source.replace(current, () => helper + patched).replace(lostCurrent, () => lostPatched);
+}
+
 const MARKER = "// nemoclaw: reload sandbox plugins with a fresh process image";
 const ORIGINAL = `\treturn {
 \t\tmode: "disabled",
@@ -221,7 +307,36 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
       : [];
   if (metadata.version === "2026.10.5" && snapshotFiles.length !== 1)
     throw new Error("Expected one native state snapshot admission module");
+  const waitModule =
+    metadata.version === "2026.10.5"
+      ? fs.readFileSync(path.join(distDir, "exec-spawn-DQCCtyab.mjs"), "utf8")
+      : "";
+  const cleanupModules = [
+    ...new Set<string>([
+      ...OPENCLAW_BROKER_CLEANUP_MODULES,
+      ...OPENCLAW_COMMAND_SESSION_MODULES,
+      ...OPENCLAW_COMMAND_TERMINATION_MODULES,
+      "settings-manager-CKysicKB.mjs",
+    ]),
+  ];
   const patches = [
+    ...(metadata.version === "2026.10.5"
+      ? cleanupModules.map((name) => ({
+          target: path.join(distDir, name),
+          patch: (source: string) => {
+            let patched = source;
+            if (OPENCLAW_BROKER_CLEANUP_MODULES.some((module) => module === name))
+              patched = patchBrokerPrivateSessionCleanup(patched);
+            if (OPENCLAW_COMMAND_SESSION_MODULES.some((module) => module === name))
+              patched = patchScopedCommandSessionCleanup(patched);
+            if (OPENCLAW_COMMAND_TERMINATION_MODULES.some((module) => module === name))
+              patched = patchCommandTerminationSessionCleanup(patched, waitModule);
+            if (name === "settings-manager-CKysicKB.mjs")
+              patched = patchCommandSessionCaller(patched, true);
+            return patched;
+          },
+        }))
+      : []),
     {
       target: path.join(distDir, "cli", "gateway-lifecycle.runtime.js"),
       patch: (source: string) => patchContainerRestart(source, metadata.version),

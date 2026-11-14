@@ -7,12 +7,13 @@ import {
   withoutOpenShellSandboxCreateGpu,
 } from "../adapters/openshell/sandbox-lifecycle";
 import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
-import { hasNemoClawOwnedMessagingProviderProfile } from "../messaging/applier/provider-application";
-import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
+import {
+  filterMessagingProvidersForSandboxCreate,
+  validateSandboxCreateIntentBindings,
+} from "./sandbox-create-intent";
 import type {
   MaterializeSandboxCreatePlanInput,
   SandboxCreateIntent,
-  SandboxCreateMessagingProviderRequest,
 } from "./sandbox-create-intent-types";
 import { containerPathsOverlap } from "./host-mount/path-overlap";
 import { normalizeSandboxGpuDeviceForCdi } from "./sandbox-gpu-create";
@@ -252,80 +253,6 @@ export function prepareSandboxCreatePolicy(
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,
   );
-}
-
-function messagingProviderRequestKey(
-  request: Pick<SandboxCreateMessagingProviderRequest, "name" | "envKey">,
-): string {
-  // Tuple encoding stays collision-free even if either value contains a separator.
-  return JSON.stringify([request.name, request.envKey]);
-}
-
-export function validateSandboxCreateIntentBindings(
-  intent: SandboxCreateIntent,
-  messagingTokenDefs: readonly MessagingTokenDef[],
-): MessagingTokenDef[] {
-  const disabledChannelNames = new Set(intent.disabledChannelNames);
-  const activeChannelNames = new Set(intent.policy.activeMessagingChannels);
-  const enabledRequests = intent.messagingProviderRequests.filter(
-    ({ channel }) =>
-      !channel || (activeChannelNames.has(channel) && !disabledChannelNames.has(channel)),
-  );
-  const intentRequestKeys = new Set(
-    intent.messagingProviderRequests.map(messagingProviderRequestKey),
-  );
-  const tokenDefsByRequest = new Map(
-    messagingTokenDefs.map((tokenDef) => [messagingProviderRequestKey(tokenDef), tokenDef]),
-  );
-
-  if (tokenDefsByRequest.size !== messagingTokenDefs.length) {
-    throw new Error(
-      "Cannot materialize sandbox create intent; duplicate credential bindings found.",
-    );
-  }
-  if (
-    messagingTokenDefs.some(
-      (tokenDef) => !intentRequestKeys.has(messagingProviderRequestKey(tokenDef)),
-    )
-  ) {
-    throw new Error("Cannot materialize sandbox create intent; credential binding set changed.");
-  }
-
-  return enabledRequests.map((request) => {
-    const tokenDef = tokenDefsByRequest.get(messagingProviderRequestKey(request));
-    if (!tokenDef) {
-      throw new Error(
-        `Cannot materialize sandbox create intent; missing credential binding '${request.envKey}' for provider '${request.name}'.`,
-      );
-    }
-    if (hasConfiguredMessagingCredential(tokenDef) !== request.credentialConfigured) {
-      throw new Error(
-        `Cannot materialize sandbox create intent; credential availability changed for provider '${request.name}'.`,
-      );
-    }
-    if (!request.providerType || !tokenDef.providerType) {
-      throw new Error(
-        `Cannot materialize sandbox create intent; provider '${request.name}' has no explicit owned profile type. Re-run channel setup with a supported profile.`,
-      );
-    }
-    if (tokenDef.providerType !== request.providerType) {
-      throw new Error(
-        `Cannot materialize sandbox create intent; provider type changed for '${request.name}'.`,
-      );
-    }
-    if (
-      !hasNemoClawOwnedMessagingProviderProfile(
-        undefined,
-        intent.policy.options.agentName,
-        request.providerType,
-      )
-    ) {
-      throw new Error(
-        `Cannot materialize sandbox create intent; provider '${request.name}' has no NemoClaw-owned profile for type '${request.providerType}'. Re-run channel setup with a supported profile.`,
-      );
-    }
-    return tokenDef;
-  });
 }
 
 function assertCredentialBindingProvidersAttached(

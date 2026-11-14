@@ -7,8 +7,13 @@ import {
   HERMES_TARGET,
   nativeLocalTestReceipt,
 } from "../../../test/helpers/inference-set";
+import { switchingFixture } from "../../../test/helpers/inference-set-openclaw-native-local";
+import { withNativePolicyFixture } from "../../../test/support/native-local-setup-harness";
+import { prepareNativeLocalSwitch } from "./inference/native-local";
+import { verifyNativeLocalProviderAttachment } from "../inference/native-local/profile";
 import { applyHermesManagedRoute } from "../hermes-managed-route";
-import { nativeLocalIdentity } from "../inference/native-local/contract";
+import type { SandboxEntry } from "../state/registry";
+import { nativeLocalIdentity, type NativeLocalBinding } from "../inference/native-local/contract";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import {
@@ -23,15 +28,18 @@ const selection = {
   sandboxName: "alpha",
   noVerify: true,
 };
-function fixture() {
-  const binding = { ...nativeLocalTestReceipt(), agent: "hermes" as const };
+function fixture(
+  bindingOverride: Partial<NativeLocalBinding> = {},
+  entryOverride: Partial<SandboxEntry> = {},
+) {
+  const binding = { ...nativeLocalTestReceipt(), agent: "hermes" as const, ...bindingOverride };
   const receipt = { ...binding, ...nativeLocalIdentity(binding) };
   const config: ConfigObject = { mcp_servers: { example: { command: "example-mcp" } } };
   applyHermesManagedRoute(config, {
     upstreamProvider: receipt.provider,
     baseUrl: receipt.endpointUrl,
     model: "old-local-model",
-    inferenceApi: "openai-completions",
+    inferenceApi: receipt.api ?? "openai-completions",
     nativeCredentialHandle: issued("v6"),
   });
   const deps = createDeps({
@@ -43,6 +51,7 @@ function fixture() {
       model: "old-local-model",
       endpointUrl: receipt.endpointUrl,
       nativeLocalProviderAttachment: receipt,
+      ...entryOverride,
     },
     defaultSandbox: "alpha",
     target: HERMES_TARGET,
@@ -268,4 +277,259 @@ describe("Hermes native local selection", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
+});
+
+it.each(["openai-completions", "openai-responses"] as const)(
+  "switches Hermes to reserved-alias %s with its selected credential",
+  async (api) => {
+    const { deps } = switchingFixture(
+      {
+        agent: "hermes",
+        ...(api === "openai-responses" ? { api } : {}),
+        provider: "compatible-endpoint",
+        authMode: "authenticated",
+        endpointUrl: "http://host.openshell.internal:42103/v1",
+      },
+      [{ agent: "hermes" }],
+    );
+    deps.getSandbox("alpha")!.agent = "hermes";
+    deps.resolveAgentConfig = () => HERMES_TARGET;
+    const config: ConfigObject = {};
+    applyHermesManagedRoute(config, {
+      upstreamProvider: "ollama-local",
+      baseUrl: "http://host.openshell.internal:11435/v1",
+      model: "old-model",
+      inferenceApi: "openai-completions",
+      nativeCredentialHandle: issued("v6"),
+    });
+    deps.calls.readSandboxConfig.mockReturnValue(config);
+    deps.prepareNativeLocalSwitch = prepareNativeLocalSwitch;
+    deps.verifyNativeLocalProviderAttachment = verifyNativeLocalProviderAttachment;
+    deps.calls.resolveCredentialValue.mockReturnValue("fixture-only-host-key");
+    const execute = vi.fn<NonNullable<SandboxInferenceInvocationDeps["execute"]>>(async () => ({
+      status: 0,
+      stdout:
+        '200\n{"choices":[{"message":{"content":"OK"}}],"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}',
+      stderr: "",
+    }));
+    deps.calls.probeSandboxRoute.mockImplementation((input) =>
+      probeSandboxInferenceInvocation(input, { execute }),
+    );
+    const create = vi.spyOn(deps.providerAdapter, "createProvider");
+    await withNativePolicyFixture(() =>
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "served-alias",
+          sandboxName: "alpha",
+          endpointUrl: "http://host.openshell.internal:42103/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: api,
+        },
+        deps,
+      ),
+    );
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentials: [{ name: "NEMOCLAW_LOCAL_INFERENCE_TOKEN", value: "fixture-only-host-key" }],
+      }),
+    );
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        endpointUrl: "http://host.openshell.internal:42103/v1",
+        nativeLocalProviderAttachment: expect.objectContaining({
+          agent: "hermes",
+          provider: "compatible-endpoint",
+        }),
+      }),
+    );
+    expect(execute.mock.calls[0][1]).toContain(
+      api === "openai-responses" ? "/v1/responses" : "/v1/chat/completions",
+    );
+    expect(config.model.api_mode ?? null).toBe(
+      api === "openai-responses" ? "codex_responses" : null,
+    );
+    expect(config.model).toMatchObject({
+      base_url: "http://host.openshell.internal:42103/v1",
+      api_key: issued("v1"),
+    });
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "inference",
+      ),
+    ).toBe(false);
+  },
+);
+
+it.each([
+  "http://127.0.0.1:11434/v1",
+  "http://127.0.0.1:8000/other",
+  "http://host.openshell.internal:42103/v1",
+])(
+  "rejects a Hermes no-auth backend replacement %s before preparing a provider",
+  async (endpointUrl) => {
+    const { deps, receipt } = fixture();
+    const binding = {
+      ...receipt,
+      provider: "compatible-endpoint" as const,
+      authMode: "authenticated" as const,
+    };
+    Object.assign(deps.getSandbox("alpha")!, {
+      provider: "compatible-endpoint",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      nativeLocalProviderAttachment: { ...binding, ...nativeLocalIdentity(binding) },
+    });
+    const prepare = vi.spyOn(deps, "prepareNativeLocalSwitch");
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "served-alias",
+          sandboxName: "alpha",
+          endpointUrl,
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/no-auth proxy is bound to the recorded backend/);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  },
+);
+
+it.each([undefined, "http://127.0.0.1:8000/v1", "http://127.0.0.1:8000/v1/"])(
+  "reuses authenticated recorded loopback %s through its verified native attachment",
+  async (endpointUrl) => {
+    const { deps, receipt, config } = fixture(
+      {
+        provider: "compatible-endpoint",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        authMode: "authenticated",
+        api: "openai-responses",
+      },
+      {
+        endpointUrl: "http://127.0.0.1:8000/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-responses",
+      },
+    );
+    deps.prepareNativeLocalSwitch = prepareNativeLocalSwitch;
+    deps.verifyNativeLocalProviderAttachment = verifyNativeLocalProviderAttachment;
+    const create = vi.spyOn(deps.providerAdapter, "createProvider");
+    await withNativePolicyFixture(() =>
+      runInferenceSet(
+        { provider: "compatible-endpoint", model: "new-model", sandboxName: "alpha", endpointUrl },
+        deps,
+      ),
+    );
+    expect(create).not.toHaveBeenCalled();
+    expect(deps.calls.resolveCredentialValue).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeLocalProviderAttachment: receipt,
+        preferredInferenceApi: "openai-responses",
+      }),
+    );
+    expect(config.model).toMatchObject({
+      base_url: "http://host.openshell.internal:8000/v1",
+      api_key: issued("v1"),
+      api_mode: "codex_responses",
+    });
+  },
+);
+
+it.each([
+  { port: 8000, credentialEnv: "COMPATIBLE_API_KEY" },
+  { port: 11435, credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN" },
+])(
+  "changes a recorded Hermes backend to Responses through native port $port",
+  async ({ port, credentialEnv }) => {
+    const endpointUrl = `http://host.openshell.internal:${port}/v1`;
+    const { deps, next } = switchingFixture(
+      {
+        agent: "hermes",
+        provider: "compatible-endpoint",
+        endpointUrl,
+        authMode: "authenticated",
+        api: "openai-responses",
+      },
+      [
+        {
+          agent: "hermes",
+          provider: "compatible-endpoint",
+          endpointUrl,
+          authMode: "authenticated",
+        },
+        credentialEnv,
+        "http://127.0.0.1:8000/v1",
+      ],
+    );
+    deps.getSandbox("alpha")!.agent = "hermes";
+    deps.resolveAgentConfig = () => HERMES_TARGET;
+    const config: ConfigObject = {};
+    applyHermesManagedRoute(config, {
+      upstreamProvider: "compatible-endpoint",
+      baseUrl: endpointUrl,
+      model: "old-model",
+      inferenceApi: "openai-completions",
+      nativeCredentialHandle: issued("v6"),
+    });
+    deps.calls.readSandboxConfig.mockReturnValue(config);
+    deps.prepareNativeLocalSwitch = prepareNativeLocalSwitch;
+    deps.verifyNativeLocalProviderAttachment = verifyNativeLocalProviderAttachment;
+    deps.calls.resolveCredentialValue.mockReturnValue("fixture-only-selected-token");
+    await withNativePolicyFixture(() =>
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "new-model",
+          sandboxName: "alpha",
+          endpointUrl: "http://127.0.0.1:8000/v1",
+          inferenceApi: "openai-responses",
+        },
+        deps,
+      ),
+    );
+    expect(deps.calls.resolveCredentialValue).toHaveBeenCalledWith(credentialEnv);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeLocalProviderAttachment: next,
+        preferredInferenceApi: "openai-responses",
+        credentialEnv,
+      }),
+    );
+    expect(config.model).toMatchObject({
+      base_url: endpointUrl,
+      api_key: issued("v1"),
+      api_mode: "codex_responses",
+    });
+  },
+);
+
+it("rejects a new Hermes raw loopback route before creating a provider", async () => {
+  const { deps } = fixture();
+  deps.prepareNativeLocalSwitch = prepareNativeLocalSwitch;
+  const create = vi.spyOn(deps.providerAdapter, "createProvider");
+  await withNativePolicyFixture(() =>
+    expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "new-model",
+          sandboxName: "alpha",
+          endpointUrl: "http://127.0.0.1:8000/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-responses",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/Invalid native host-local inference boundary/),
+  );
+  expect(create).not.toHaveBeenCalled();
+  expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
 });

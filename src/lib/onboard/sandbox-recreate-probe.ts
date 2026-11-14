@@ -120,7 +120,7 @@ export function observeSandboxPresenceOnGateway(
 }
 
 export function observeSandboxOnGateway(
-  target: SandboxRecreateTarget,
+  target: SandboxGatewayPresenceTarget & { readonly gatewayPort?: number },
   capture: SandboxRecreateCapture = captureOpenshell,
   runtimeSelection?: OpenShellRuntimeSelection,
   timeoutMs?: number,

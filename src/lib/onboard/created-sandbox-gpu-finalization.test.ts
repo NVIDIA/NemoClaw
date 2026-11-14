@@ -4,9 +4,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
 import type { SandboxEntry } from "../state/registry";
 import { nativeLocalIdentity, type NativeLocalBinding } from "../inference/native-local/contract";
 import { createOnboardCreatedSandboxCompletion } from "./created-sandbox-finalization";
+import * as providerRetirement from "./sandbox-create/provider-retirement";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import * as registration from "./sandbox-registration";
@@ -18,6 +20,10 @@ function createCompletionFixture(
   provider = "ollama-local",
   route: SandboxGpuCreateFlowResult["route"] = "compatibility",
   gpuEnabled = true,
+  createContext: Parameters<typeof createOnboardCreatedSandboxCompletion>[7] = {
+    createIntent: null,
+    resolvedCreateIntent: { policy: { options: {} } },
+  },
   localNim = false,
 ) {
   const order: string[] = [];
@@ -78,15 +84,14 @@ function createCompletionFixture(
     gatewayName: boundary.gatewayName,
     sandboxName: boundary.sandboxName,
   };
-  const nativeLocalProviderAttachment =
-    !localNim && provider.endsWith("-local")
-      ? {
-          ...binding,
-          ...nativeLocalIdentity(binding),
-          schemaVersion: 1 as const,
-          providerId: "provider-1",
-        }
-      : undefined;
+  const nativeLocalProviderAttachment = provider.endsWith("-local")
+    ? {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "provider-1",
+      }
+    : undefined;
   const verifiedCreate = {
     checkpoint: pendingSandboxCreateIdentityForBoundary(boundary),
     reservation: {
@@ -126,7 +131,7 @@ function createCompletionFixture(
     null,
     { customOpenClawImage: false, isManagedDcodeAgent: false },
     selection,
-    { createIntent: null, resolvedCreateIntent: { policy: { options: {} } } },
+    createContext,
     {
       gpuEnabled,
       hostGpuDetected: true,
@@ -279,11 +284,18 @@ describe("GPU inference verification in production finalization", () => {
     },
   );
 
-  it("retains the shared route for Local NIM (#14069)", async () => {
-    const fixture = createCompletionFixture("HTTP_200", "vllm-local", "compatibility", true, true);
+  it("verifies the native route for Local NVIDIA NIM (#14069)", async () => {
+    const fixture = createCompletionFixture(
+      "HTTP_200",
+      "vllm-local",
+      "compatibility",
+      true,
+      undefined,
+      true,
+    );
     await fixture.complete();
     expect(fixture.runBuffered.mock.calls[0][0].command[2]).toContain(
-      "https://inference.local/v1/models",
+      "http://host.openshell.internal:11435/v1/models",
     );
     expect(fixture.order).toEqual(["probe", "commit", "acknowledge", "register"]);
   });
@@ -352,5 +364,74 @@ describe("GPU inference verification in production finalization", () => {
       expect(fixture.order).toEqual(enabled ? ["commit", "acknowledge", "register"] : ["register"]);
       expect(fixture.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
     },
+  );
+});
+
+it.each([true, false])(
+  "publishes the current registered provider attachment receipt (owned=%s)",
+  async (attachedBySelection) => {
+    const f = registeredInferenceFixture();
+    let receipt = f.binding;
+    const onRegistered = vi.fn();
+    const completion = createCompletionFixture(
+      "HTTP_200",
+      f.binding.providerName,
+      "native",
+      false,
+      {
+        createIntent: null,
+        resolvedCreateIntent: {
+          policy: { options: {} },
+          registeredInferenceProviderAttachment: f.binding,
+        },
+        getRegisteredInferenceProviderAttachment: () => receipt,
+        onRegistered,
+      },
+    );
+    receipt = { ...f.binding, attachedBySelection };
+    await completion.complete();
+    expect(completion.register.mock.calls[0]![0].registeredInferenceProviderAttachment).toBe(
+      receipt,
+    );
+    expect(onRegistered).toHaveBeenCalledOnce();
+    expect(completion.register.mock.invocationCallOrder[0]).toBeLessThan(
+      onRegistered.mock.invocationCallOrder[0]!,
+    );
+  },
+);
+
+it("retains attachment rollback authority if registry publication fails", async () => {
+  const onRegistered = vi.fn();
+  const completion = createCompletionFixture("HTTP_200", "nvidia", "native", false, {
+    createIntent: null,
+    resolvedCreateIntent: { policy: { options: {} } },
+    onRegistered,
+  });
+  const failure = new Error("publication failed");
+  completion.register.mockImplementation(() => {
+    throw failure;
+  });
+  await expect(completion.complete()).rejects.toBe(failure);
+  expect(onRegistered).not.toHaveBeenCalled();
+});
+
+it("disarms attachment rollback before post-publication provider retirement", async () => {
+  const onRegistered = vi.fn();
+  const completion = createCompletionFixture("HTTP_200", "nvidia", "native", false, {
+    createIntent: null,
+    resolvedCreateIntent: { policy: { options: {} } },
+    onRegistered,
+  });
+  const failure = new Error("retirement failed");
+  const retire = vi
+    .spyOn(providerRetirement, "retireUnselectedCreatedSandboxProviders")
+    .mockRejectedValueOnce(failure);
+  await expect(completion.complete()).rejects.toBe(failure);
+  expect(onRegistered).toHaveBeenCalledOnce();
+  expect(completion.register.mock.invocationCallOrder[0]).toBeLessThan(
+    onRegistered.mock.invocationCallOrder[0]!,
+  );
+  expect(onRegistered.mock.invocationCallOrder[0]).toBeLessThan(
+    retire.mock.invocationCallOrder[0]!,
   );
 });

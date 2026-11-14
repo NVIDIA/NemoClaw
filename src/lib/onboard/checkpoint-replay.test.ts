@@ -449,29 +449,29 @@ describe("requiredMessagingProviderBindings", () => {
     expect(collectRequiredMessagingProviderBindings("alpha", plan, new Set(["slack"]))).toEqual([
       {
         name: "alpha-slack-bridge",
-        type: "nemoclaw-mcp-v1",
+        type: "nemoclaw-messaging-v1",
         credentialEnv: "SLACK_BOT_TOKEN",
       },
       {
         name: "alpha-slack-bridge",
-        type: "nemoclaw-mcp-v1",
+        type: "nemoclaw-messaging-v1",
         credentialEnv: "SLACK_APP_TOKEN",
       },
     ]);
     expect(requiredMessagingProviderBindings("alpha", plan)).toEqual([
       {
         name: "alpha-telegram-bridge",
-        type: "nemoclaw-mcp-v1",
+        type: "nemoclaw-messaging-v1",
         credentialEnv: "TELEGRAM_BOT_TOKEN",
       },
       {
         name: "alpha-slack-bridge",
-        type: "nemoclaw-mcp-v1",
+        type: "nemoclaw-messaging-v1",
         credentialEnv: "SLACK_BOT_TOKEN",
       },
       {
         name: "alpha-slack-app",
-        type: "nemoclaw-mcp-v1",
+        type: "nemoclaw-messaging-v1",
         credentialEnv: "SLACK_APP_TOKEN",
       },
     ]);

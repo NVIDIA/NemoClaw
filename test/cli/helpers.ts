@@ -297,7 +297,14 @@ async function runWithEnvInternalAsync(
             resolve({ code, out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout });
             return;
           }
-          const errorOutput = error && typeof error.code !== "number" ? String(error) : "";
+          const errorOutput =
+            error && typeof error.code !== "number"
+              ? `${String(error)}\nChild termination: ${JSON.stringify({
+                  code: error.code == null ? null : String(error.code).slice(0, 64),
+                  signal: error.signal == null ? null : String(error.signal).slice(0, 64),
+                  killed: error.killed === true,
+                })}`
+              : "";
           resolve({ code, out: `${stdout}${stderr}${errorOutput}` });
         },
       );

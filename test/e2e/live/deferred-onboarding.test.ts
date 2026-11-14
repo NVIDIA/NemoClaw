@@ -13,6 +13,7 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
+import { cleanupOwnedSandboxAfterOnboard } from "../fixtures/owned-sandbox-cleanup.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 
@@ -71,7 +72,7 @@ test(
     );
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       cleanupWhenOpenShellAvailable(host, commandOptions, () =>
-        sandbox.cleanupSandbox(SANDBOX_NAME, commandOptions),
+        cleanupOwnedSandboxAfterOnboard(sandbox, runtimeProvider, SANDBOX_NAME, commandOptions),
       ),
     );
     cleanup.trackDisposable(`destroy deferred sandbox ${SANDBOX_NAME}`, () =>

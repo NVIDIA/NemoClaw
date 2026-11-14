@@ -80,6 +80,7 @@ describe("ensureResumeProviderReady", () => {
     ["anthropic-prod", "ANTHROPIC_API_KEY"],
     ["gemini-api", "GEMINI_API_KEY"],
     ["openrouter-api", "OPENROUTER_API_KEY"],
+    ["hermes-provider", "OPENAI_API_KEY"],
   ])(
     "revalidates native ownership for %s during resume (#12589)",
     async (provider, credentialEnv) => {

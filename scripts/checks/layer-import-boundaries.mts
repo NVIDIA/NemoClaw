@@ -45,7 +45,7 @@ const PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES = [
   "src/lib/onboard/gateway-sandbox-reachability.ts",
   "src/lib/onboard/host-gateway-process.ts",
   "src/lib/onboard/host-service-reachability.ts",
-  "src/lib/onboard/managed-workload/hermes-state-volume.ts",
+  "src/lib/onboard/managed-workload/agent-state-volumes.ts",
   "src/lib/onboard/sandbox-create/orchestration.ts",
   "src/lib/adapters/sandbox/command-transport.ts",
   "src/lib/sandbox/config.ts",

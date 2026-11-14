@@ -142,7 +142,7 @@ function harness(
     captureOpenShell,
     createTempConfig,
     createSessionStatusNonce: () => SESSION_STATUS_NONCE,
-    openshellVersion: vi.fn(() => "0.0.116"),
+    openshellVersion: vi.fn(() => "0.1.7"),
     platform: "linux",
     resolveOpenshell: () => "/usr/bin/openshell",
     spawnSsh,
@@ -597,6 +597,7 @@ describe("CLI Hermes ACP SSH transport", () => {
   it.each([
     ["native Windows", { platform: "win32" as const }],
     ["a different OpenShell version", { openshellVersion: vi.fn(() => "0.0.105") }],
+    ["the frozen headless API version", { openshellVersion: vi.fn(() => "0.1.5") }],
   ])("rejects %s before preparing SSH", async (_label, overrides) => {
     const fixture = harness([], overrides);
     const io = streams();

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requireValue } from "../core/require-value";
 import * as localModelDocker from "../adapters/docker/run";
 import { resolveVllmModelAlias } from "../inference/vllm-models";
-import { getLegacyHostLocalManagedVllmBridgeHost } from "../inference/serving/vllm-host-local-lifecycle";
+import { getLegacyHostLocalManagedVllmLoopbackHost } from "../inference/serving/vllm-host-local-lifecycle";
 import { bindStationExpressProviderSelection } from "./station-express-resume";
 import type { SetupNimSelectionState } from "./setup-nim-flow";
 import {
@@ -346,9 +346,7 @@ describe("setupNim vLLM route containment", () => {
       deps({
         runCapture,
         getManagedVllmProviderBinding: () => {
-          getLegacyHostLocalManagedVllmBridgeHost(8000, () =>
-            JSON.stringify([{ Gateway: "172.18.0.1" }]),
-          );
+          getLegacyHostLocalManagedVllmLoopbackHost(8000);
           return null;
         },
       }),

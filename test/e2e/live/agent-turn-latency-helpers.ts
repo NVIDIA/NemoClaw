@@ -5,9 +5,19 @@ import {
   openClawAgentResponseRecord,
   parseOpenClawJsonDocuments,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import { parseCliOpenShellProviderMetadata } from "../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
+import { getSandboxInferenceConfig } from "../../../src/lib/inference/config.ts";
+import { hermesApiMode } from "../../../src/lib/hermes-managed-route.ts";
+import { hostedNativeProviderForAttachment } from "../../../src/lib/inference/native-provider/hosted-attachment.ts";
+import { recordedNativeProviderAttachment } from "../../../src/lib/inference/native-provider/recorded-selection.ts";
+import {
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+} from "../../../src/lib/inference/native-nvidia/contract.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText, shellQuote } from "../fixtures/clients/command.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
@@ -406,23 +416,98 @@ export async function cleanupTurnSandbox(
   }
 }
 
-// Hosted custom endpoints attach a native provider to the sandbox, so the
-// gateway-global route stays unconfigured. Sandbox status reports the recorded
-// provider and model and exits nonzero when its live inference probe fails.
+/** Read a live native route, or return null when its sandbox binding cannot be verified. */
 export async function route(
-  host: HostCliClient,
+  sandbox: SandboxClient,
   sandboxName: string,
   agent: "openclaw" | "hermes",
   inference: AgentTurnInference,
   artifactName: string,
   progress?: Pick<TestProgress, "onOutput">,
-): Promise<ShellProbeResult> {
-  return await host.nemoclaw([sandboxName, "status"], {
-    artifactName,
-    env: env(sandboxName, agent, inference),
+): Promise<{ provider: string; model: string } | null> {
+  const entry = getSandbox(sandboxName);
+  const receipt = entry && recordedNativeProviderAttachment(entry);
+  const definition = hostedNativeProviderForAttachment(receipt);
+  if (
+    !entry ||
+    !receipt ||
+    (entry.agent ?? "openclaw") !== agent ||
+    (!definition && entry.provider !== "nvidia-prod")
+  ) {
+    return null;
+  }
+  const gateway = entry.gatewayName || env(sandboxName, agent, inference).OPENSHELL_GATEWAY!;
+  const selected = getSandboxInferenceConfig(
+    inference.model,
+    entry.provider,
+    receipt.custom?.api,
+    true,
+    receipt.endpointUrl,
+  );
+  const options = {
+    env: { ...env(sandboxName, agent, inference), OPENSHELL_GATEWAY: gateway },
     onOutput: progress?.onOutput,
-    timeoutMs: 120_000,
-  });
+    redactionValues: inference.redactionValues(),
+    timeoutMs: 30_000,
+    captureLimitBytes: 16 * 1024,
+  };
+  const provider = await sandbox.openshell(
+    ["provider", "get", "-g", gateway, receipt.providerName],
+    {
+      ...options,
+      artifactName: `${artifactName}-provider`,
+    },
+  );
+  const attached = await sandbox.openshell(
+    ["sandbox", "provider", "list", "-g", gateway, sandboxName],
+    {
+      ...options,
+      artifactName: `${artifactName}-attachment`,
+    },
+  );
+  const config = await sandbox.exec(
+    sandboxName,
+    agent === "openclaw"
+      ? [
+          "node",
+          "-e",
+          'const c=JSON.parse(require("node:fs").readFileSync("/sandbox/.openclaw/openclaw.json","utf8")); const p=c.models.providers[process.argv[1]]; process.stdout.write(JSON.stringify({model:c.agents.defaults.model.primary,endpoint:p.baseUrl,api:p.api}));',
+          selected.providerKey,
+        ]
+      : [
+          "/opt/hermes/.venv/bin/python3",
+          "-c",
+          'import json,yaml; c=yaml.safe_load(open("/sandbox/.hermes/config.yaml")); m=c["model"]; print(json.dumps({"model":m["default"],"endpoint":m["base_url"],"api":m.get("api_mode"),"provider":m["provider"]}))',
+        ],
+    { ...options, artifactName: `${artifactName}-agent-selection` },
+  );
+  const metadata =
+    provider.exitCode === 0 ? parseCliOpenShellProviderMetadata(provider.stdout) : null;
+  const actual = config.exitCode === 0 ? JSON.parse(config.stdout) : null;
+  const prefix = `${selected.providerKey}/`;
+  if (
+    !metadata ||
+    metadata.name !== receipt.providerName ||
+    metadata.type !== receipt.profileId ||
+    metadata.revision?.id !== receipt.providerId ||
+    metadata.configKeys.length !== 0 ||
+    metadata.credentialKeys.length !== 1 ||
+    metadata.credentialKeys[0] !== (definition?.credentialEnv ?? NVIDIA_HOSTED_CREDENTIAL_ENV) ||
+    attached.exitCode !== 0 ||
+    !attached.stdout.split(/\s+/u).includes(receipt.providerName) ||
+    !actual ||
+    typeof actual.model !== "string" ||
+    actual.endpoint !== (definition?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT) ||
+    actual.api !==
+      (agent === "openclaw" ? selected.inferenceApi : hermesApiMode(selected.inferenceApi)) ||
+    (agent === "openclaw" ? !actual.model.startsWith(prefix) : actual.provider !== "custom")
+  ) {
+    return null;
+  }
+  return {
+    provider: definition?.logicalProvider ?? "nvidia-prod",
+    model: agent === "openclaw" ? actual.model.slice(prefix.length) : actual.model,
+  };
 }
 
 export async function openclawTurn(

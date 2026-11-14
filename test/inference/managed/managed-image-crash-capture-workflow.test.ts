@@ -82,6 +82,10 @@ describe("managed-image passive crash capture workflow", () => {
         builtin command "$@"
       }
       sudo() {
+        if test "$1" = timeout; then
+          test "$2 $3 $4" = '--signal=TERM --kill-after=10s 120s' || return 95
+          shift 4
+        fi
         if test "$1" = apt-get; then test "$2" != "$FAIL_PACKAGE"; return; fi
         test "$1" = tee && test "$2" = "$FAKE_KERNEL" || return 92
         test "$FAIL_WRITE" != 1 || return 1
@@ -173,4 +177,112 @@ describe("managed-image passive crash capture workflow", () => {
       fs.rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it.each(["update", "install"])(
+    "returns without enabling capture when apt %s hangs",
+    (hangingPhase) => {
+      const workflow = readWorkflow("managed-images.yaml");
+      const builder = required(workflow.jobs?.["pr-build-and-entrypoint"], "missing PR builder");
+      const prepare = step(builder, "Prepare passive Hermes native crash capture");
+      const qualification = step(builder, "Qualify Hermes root entrypoint and Switchyard package");
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-core-package-hang-"));
+      const bin = path.join(directory, "bin");
+      const trace = path.join(directory, "package-trace");
+      const output = path.join(directory, "step-output");
+      const saved = path.join(directory, "nemoclaw-hermes-original-core-pattern");
+      try {
+        fs.mkdirSync(bin);
+        fs.writeFileSync(output, "");
+        // Replace privileged package commands with a real never-settling process.
+        // The timeout boundary checks production arguments, then shortens only the
+        // fixture's wait so the shell fallback is exercised without package access.
+        fs.writeFileSync(
+          path.join(bin, "apt-get"),
+          `#!${process.execPath}
+const fs = require('node:fs');
+const phase = process.argv[2];
+fs.appendFileSync(process.env.PACKAGE_TRACE, phase + '\\n');
+if (phase === process.env.HANG_PHASE) {
+  fs.writeFileSync(process.env.HANG_PID, String(process.pid));
+  process.on('SIGTERM', () => {});
+  setInterval(() => {}, 1000);
+}
+`,
+          { mode: 0o700 },
+        );
+        fs.writeFileSync(
+          path.join(bin, "timeout"),
+          `#!${process.execPath}
+const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const args = process.argv.slice(2);
+if (args.slice(0, 4).join(' ') !== '--signal=TERM --kill-after=10s 120s apt-get') process.exit(95);
+const result = spawnSync(args[3], args.slice(4), {
+  env: process.env, timeout: 300, killSignal: 'SIGKILL', stdio: 'ignore',
+});
+if (result.error?.code === 'ETIMEDOUT' && result.signal === 'SIGKILL') {
+  fs.appendFileSync(process.env.PACKAGE_TRACE, 'killed-' + args[4] + '\\n');
+  process.exit(124);
+}
+process.exit(result.status ?? 96);
+`,
+          { mode: 0o700 },
+        );
+        const pidFile = path.join(directory, "hang.pid");
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            `
+sudo() { test "$1" = timeout || return 92; "$@"; }
+cp() { return 93; }
+command() { if test "$*" = '-v gdb'; then return 1; fi; builtin command "$@"; }
+${required(prepare.run, "missing capture setup")}
+`,
+          ],
+          {
+            encoding: "utf8",
+            timeout: 10_000,
+            env: {
+              PATH: `${bin}:${process.env.PATH}`,
+              RUNNER_TEMP: directory,
+              GITHUB_OUTPUT: output,
+              PACKAGE_TRACE: trace,
+              HANG_PHASE: hangingPhase,
+              HANG_PID: pidFile,
+            },
+          },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain(
+          "::warning::Debugger installation failed; Hermes qualification will run without crash capture.",
+        );
+        expect(fs.readFileSync(trace, "utf8")).toBe(
+          hangingPhase === "update"
+            ? "update\nkilled-update\n"
+            : "update\ninstall\nkilled-install\n",
+        );
+        const pid = Number(fs.readFileSync(pidFile, "utf8"));
+        expect(Number.isSafeInteger(pid) && pid > 0).toBe(true);
+        let remainingProcessError: string | undefined;
+        try {
+          process.kill(pid, 0);
+        } catch (error) {
+          remainingProcessError = (error as NodeJS.ErrnoException).code;
+        }
+        expect(remainingProcessError).toBe("ESRCH");
+        expect(fs.readFileSync(output, "utf8")).toBe("");
+        expect(fs.existsSync(saved)).toBe(false);
+        expect(prepare).toHaveProperty("timeout-minutes", 5);
+        expect(qualification).toHaveProperty("timeout-minutes", 30);
+        expect(qualification.if).toBe("matrix.agent == 'hermes'");
+        expect(qualification.run).toContain("test/e2e/live/hermes-root-entrypoint-smoke.test.ts");
+        expect(prepare).not.toHaveProperty("continue-on-error");
+        expect(qualification).not.toHaveProperty("continue-on-error");
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });

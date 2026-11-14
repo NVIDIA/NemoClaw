@@ -84,7 +84,7 @@ describe("Docker GPU clone envelope", () => {
     expect(args.some((arg) => arg.startsWith("OPENSHELL_SANDBOX_COMMAND="))).toBe(false);
   });
 
-  it("rejects a malformed OpenShell 0.0.116 main-process transport before recreation", () => {
+  it("rejects malformed OpenShell main-process metadata before recreation", () => {
     const inspect = inspectFixture();
     inspect.Config!.Env = ['OPENSHELL_MAIN_PROCESS_SPEC={"version":2}'];
 
@@ -92,7 +92,7 @@ describe("Docker GPU clone envelope", () => {
       buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
         openshellSandboxCommand: NEMOCLAW_STARTUP_ARGV,
       }),
-    ).toThrow(/does not match the 0\.0\.116 Docker contract/u);
+    ).toThrow(/does not match the supported Docker contract/u);
   });
 
   it("omits only OpenShell's OCI-user marker at the exact NemoClaw workspace boundary (#8662)", () => {

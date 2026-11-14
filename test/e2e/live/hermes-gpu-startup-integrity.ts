@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export interface HermesManagedStartupIntegrityPaths {
+  pythonPath: string;
   configPath: string;
   envPath: string;
   strictHashPath: string;
@@ -12,6 +13,7 @@ export interface HermesManagedStartupIntegrityPaths {
 }
 
 const DEFAULT_PATHS: HermesManagedStartupIntegrityPaths = {
+  pythonPath: "/opt/hermes/.venv/bin/python3",
   configPath: "/sandbox/.hermes/config.yaml",
   envPath: "/sandbox/.hermes/.env",
   strictHashPath: "/etc/nemoclaw/hermes.config-hash",
@@ -34,13 +36,14 @@ export function buildHermesManagedStartupIntegrityScript(
 ): string {
   const paths = { ...DEFAULT_PATHS, ...overrides };
   return `set -eu
-/usr/bin/python3 -I - <<'PY'
+${pythonLiteral(paths.pythonPath)} -I - <<'PY'
 import hashlib
 import os
 from pathlib import Path
 import re
 import secrets
 import stat
+import yaml
 
 config_path = Path(${pythonLiteral(paths.configPath)})
 env_path = Path(${pythonLiteral(paths.envPath)})
@@ -137,7 +140,54 @@ compat_digests = parse_hash(compat_hash_bytes, "Hermes compatibility hash")
 strict_config_digest, strict_env_digest = strict_digests
 compat_config_digest, compat_env_digest = compat_digests
 if not secrets.compare_digest(strict_config_digest, digest(config_bytes)):
-    fail("Hermes config differs from the strict startup base")
+    original, metadata = read_regular(
+        config_path.parent / ".native-local-startup-config", "Hermes startup config witness", 4 * 1024 * 1024
+    )
+    if (
+        stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_uid != _config_metadata.st_uid
+        or metadata.st_gid != _config_metadata.st_gid
+        or not secrets.compare_digest(strict_config_digest, digest(original))
+    ):
+        fail("Hermes startup config witness does not match the strict anchor")
+    # Authenticate the original bytes before interpreting any proposed credential changes.
+    base = yaml.safe_load(original)
+    current = yaml.safe_load(config_bytes)
+    try:
+        provider = base["_nemoclaw_upstream"]["provider"]
+        if provider not in ("ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"):
+            fail("Hermes startup config has no managed native provider")
+        reference = current["model"]["api_key"]
+        if not isinstance(reference, str) or re.fullmatch(
+            r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN", reference
+        ) is None:
+            fail("Hermes startup config has no provider-bound credential")
+        selected = [entry for entry in base["custom_providers"] if entry.get("name") == provider]
+        if len(selected) != 1:
+            fail("Hermes startup config has ambiguous managed providers")
+        model, managed, custom = base["model"], base["providers"][provider], selected[0]
+        prior = model["api_key"]
+        if (
+            base["_nemoclaw_upstream"]["provider_key"] != provider
+            or model["provider"] != "custom"
+            or managed["api_key"] != prior or custom["api_key"] != prior
+            or managed["api"] != model["base_url"] or custom["base_url"] != model["base_url"]
+            or not isinstance(prior, str)
+            or (prior != "\${NEMOCLAW_LOCAL_INFERENCE_TOKEN}" and re.fullmatch(
+                r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN", prior
+            ) is None)
+        ):
+            fail("Hermes startup credential slots are inconsistent")
+        base["model"] = {**model, "api_key": reference}
+        base["providers"] = {**base["providers"], provider: {**managed, "api_key": reference}}
+        base["custom_providers"] = [
+            {**entry, "api_key": reference} if entry is custom else entry
+            for entry in base["custom_providers"]
+        ]
+        if yaml.safe_dump(base, sort_keys=False).encode("utf-8") != config_bytes:
+            fail("Hermes config differs beyond the managed startup credentials")
+    except (KeyError, TypeError, AttributeError):
+        fail("Hermes startup config has invalid managed credential slots")
 if not secrets.compare_digest(strict_env_digest, digest(base_env_bytes)):
     fail("Hermes environment differs from the strict startup base beyond the generated API key")
 if not secrets.compare_digest(compat_config_digest, digest(config_bytes)):

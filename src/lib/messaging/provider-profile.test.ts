@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import fs from "node:fs";
+import YAML from "yaml";
+import { listMessagingCredentialMetadata } from "./channels";
 import { describe, expect, it, vi } from "vitest";
 
 import { REPOSITORY_ROOT } from "../core/repository-root";
@@ -11,10 +14,62 @@ import {
   messagingCredentialProviderProfilePath,
 } from "./provider-profile";
 
+const ownedProfile = YAML.parse(
+  fs.readFileSync(messagingCredentialProviderProfilePath(REPOSITORY_ROOT), "utf8"),
+);
+
 describe("messaging credential provider profile", () => {
+  it("declares exactly the manifest credential keys without endpoint or executable grants", () => {
+    const keys = listMessagingCredentialMetadata()
+      .map(({ providerEnvKey }) => providerEnvKey)
+      .sort();
+    expect(
+      ownedProfile.credentials
+        .map(({ env_vars }: { env_vars: string[] }) => env_vars)
+        .flat()
+        .sort(),
+    ).toEqual(keys);
+    expect(
+      ownedProfile.credentials.map(
+        ({ name, required, auth_style, header_name, query_param }: Record<string, unknown>) => ({
+          name,
+          required,
+          auth_style,
+          header_name,
+          query_param,
+        }),
+      ),
+    ).toEqual(
+      listMessagingCredentialMetadata().map(({ providerEnvKey: name }) => ({
+        name,
+        required: false,
+        auth_style: "",
+        header_name: "",
+        query_param: "",
+      })),
+    );
+    expect(ownedProfile).toMatchObject({ endpoints: [], binaries: [], inference_capable: false });
+    expect(ownedProfile.files).toBeUndefined();
+  });
+
+  it("rejects a catalog profile that still has no credential declarations", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: JSON.stringify({ ...ownedProfile, credentials: [] }) });
+    expect(() =>
+      ensureMessagingCredentialProviderProfile({ root: REPOSITORY_ROOT, runOpenshell }),
+    ).toThrow(/does not match/);
+    expect(runOpenshell).toHaveBeenCalledOnce();
+  });
+
   it("resolves the checked-in profile from the source repository root (#9875)", () => {
     expect(messagingCredentialProviderProfilePath(REPOSITORY_ROOT)).toBe(
-      path.join(REPOSITORY_ROOT, "nemoclaw-blueprint", "provider-profiles", "nemoclaw-mcp-v1.yaml"),
+      path.join(
+        REPOSITORY_ROOT,
+        "nemoclaw-blueprint",
+        "provider-profiles",
+        "nemoclaw-messaging-v1.yaml",
+      ),
     );
   });
 
@@ -25,13 +80,7 @@ describe("messaging credential provider profile", () => {
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({
         status: 0,
-        stdout: JSON.stringify({
-          id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-          credentials: [],
-          endpoints: [],
-          binaries: [],
-          inference_capable: false,
-        }),
+        stdout: JSON.stringify(ownedProfile),
       });
 
     ensureMessagingCredentialProviderProfile({ root: REPOSITORY_ROOT, runOpenshell });
@@ -47,7 +96,7 @@ describe("messaging credential provider profile", () => {
           REPOSITORY_ROOT,
           "nemoclaw-blueprint",
           "provider-profiles",
-          "nemoclaw-mcp-v1.yaml",
+          "nemoclaw-messaging-v1.yaml",
         ),
       ],
       {

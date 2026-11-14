@@ -9,6 +9,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
+import { observeConfiguredGatewayHostRuntime } from "./docker-driver-gateway-env";
 import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
 
 // Mock the docker adapter so the test never loads runner.ts (which requires
@@ -32,6 +33,82 @@ function makeNetwork(partial: { subnet?: string; gatewayIp?: string } = {}): {
 }
 
 describe("probeHostServiceSandboxReachability", () => {
+  it.each([undefined, makeNetwork()])(
+    "probes native llama.cpp loopback without depending on a retained bridge (%j)",
+    async (legacyNetwork) => {
+      const inspectNetworkImpl = vi.fn(() => legacyNetwork);
+      const runImpl = vi.fn((args: readonly string[]) => ({
+        status: args.includes("host.openshell.internal:127.0.0.1") ? 0 : 1,
+      }));
+      const result = await probeHostServiceSandboxReachability({
+        port: 8081,
+        nativeSupervisorNetwork: true,
+        platform: "linux",
+        inspectNetworkImpl,
+        usesHostGatewayRouteImpl: () => false,
+        runImpl,
+      });
+      expect(result).toMatchObject({ ok: true, networkName: "host", gatewayIp: "127.0.0.1" });
+      expect(inspectNetworkImpl).not.toHaveBeenCalled();
+      expect(runImpl).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          "--network",
+          "host",
+          "--cap-drop=ALL",
+          "--security-opt=no-new-privileges",
+          "--read-only",
+          "host.openshell.internal:127.0.0.1",
+          "nc",
+          "-zw5",
+          "8081",
+        ]),
+        15_000,
+      );
+    },
+  );
+
+  it.each([
+    { status: 1, stderr: "nc: connection refused", reason: "tcp_failed" },
+    { status: 125, stderr: "Docker daemon unavailable", reason: "probe_unavailable" },
+    { status: null, stderr: "process timeout", reason: "probe_unavailable" },
+    { status: 1, stderr: "nc: bad address", reason: "probe_unavailable" },
+  ])("classifies native llama.cpp probe failure $stderr", async ({ status, stderr, reason }) => {
+    const result = await probeHostServiceSandboxReachability({
+      port: 8081,
+      nativeSupervisorNetwork: true,
+      platform: "linux",
+      usesHostGatewayRouteImpl: () => false,
+      runImpl: () => ({ status, stderr }),
+    });
+    expect(result).toMatchObject({ ok: false, reason, networkName: "host" });
+  });
+
+  it.each(["linux", "darwin"] as const)(
+    "retains the Desktop host-gateway probe on %s for attached llama.cpp",
+    async (platform) => {
+      const inspectNetworkImpl = vi.fn(() => makeNetwork());
+      const runImpl = vi.fn((_args: readonly string[]) => ({ status: 0 }));
+      const result = await probeHostServiceSandboxReachability({
+        port: 8081,
+        nativeSupervisorNetwork: true,
+        platform,
+        gatewayRuntime: observeConfiguredGatewayHostRuntime({
+          platform,
+          architecture: "arm64",
+          environment: {},
+        }),
+        inspectNetworkImpl,
+        usesHostGatewayRouteImpl: () => true,
+        runImpl,
+      });
+      expect(result).toMatchObject({ ok: true, networkName: DEFAULT_PROBE_NETWORK });
+      expect(inspectNetworkImpl).toHaveBeenCalledWith(DEFAULT_PROBE_NETWORK);
+      expect(runImpl.mock.calls[0]?.[0]).toEqual(
+        expect.arrayContaining([DEFAULT_PROBE_NETWORK, "host.openshell.internal:host-gateway"]),
+      );
+    },
+  );
+
   it("returns ok and echoes the probed port when nc connects", async () => {
     const result = await probeHostServiceSandboxReachability({
       port: 4000,
@@ -119,6 +196,7 @@ describe("probeHostServiceSandboxReachability", () => {
 
     const result = await probeHostServiceSandboxReachability({
       port: 11435,
+      nativeSupervisorNetwork: true,
       inspectNetworkImpl: () => ({ subnet: "10.89.0.0/24" }),
       runImpl: (args) => {
         capturedArgs = args;
@@ -158,6 +236,7 @@ describe("probeHostServiceSandboxReachability", () => {
       gatewayRuntime,
       platform: "linux",
       port: 11435,
+      nativeSupervisorNetwork: true,
     });
 
     expect(result).toMatchObject({ ok: true, reason: "ok" });

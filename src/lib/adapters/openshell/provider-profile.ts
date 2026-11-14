@@ -2,6 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { createHash } from "node:crypto";
+export type InferenceProviderProfileProjection = Readonly<{
+  digest: string;
+  credentials: readonly Readonly<{
+    envVars: readonly string[];
+    authStyle: string;
+    headerName: string;
+  }>[];
+  endpoints: readonly Readonly<{
+    host: string;
+    port: number;
+    ports: readonly number[];
+    enforcesCredentialedRest: boolean;
+  }>[];
+}>;
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
@@ -45,6 +60,14 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
     !Array.isArray(profile.binaries) ||
     profile.binaries.some((binary) => typeof binary !== "string") ||
     typeof profile.inference_capable !== "boolean"
+  ) {
+    return null;
+  }
+  // NemoClaw's owned profiles do not materialize workload files or file-path
+  // environment variables. OpenShell 0.1.3 can, so reject that extra authority.
+  if (
+    profile.files !== undefined &&
+    (!Array.isArray(profile.files) || profile.files.length !== 0)
   ) {
     return null;
   }
@@ -131,4 +154,70 @@ export function isMissingProviderProfile(output: string, profileId: string): boo
 
 export function endpointlessProviderProfilePath(root: string, profileId: string): string {
   return path.join(root, "nemoclaw-blueprint", "provider-profiles", `${profileId}.yaml`);
+}
+
+/** Read declared inference fields without claiming ownership of an operator profile. */
+export function inspectInferenceProviderProfile(
+  source: string,
+): InferenceProviderProfileProjection | undefined {
+  const profile = recordValue(JSON.parse(source) as unknown);
+  if (
+    !profile ||
+    profile.inference_capable !== true ||
+    !Array.isArray(profile.credentials) ||
+    !Array.isArray(profile.endpoints)
+  )
+    return undefined;
+  const credentials: { envVars: string[]; authStyle: string; headerName: string }[] = [];
+  for (const value of profile.credentials) {
+    const credential = recordValue(value);
+    if (
+      !credential ||
+      !Array.isArray(credential.env_vars) ||
+      credential.env_vars.some(
+        (key) => typeof key !== "string" || !/^[A-Z][A-Z0-9_]{0,255}$/u.test(key),
+      ) ||
+      typeof credential.auth_style !== "string" ||
+      typeof credential.header_name !== "string"
+    )
+      return undefined;
+    credentials.push({
+      envVars: credential.env_vars as string[],
+      authStyle: credential.auth_style,
+      headerName: credential.header_name.toLowerCase(),
+    });
+  }
+  const endpoints: InferenceProviderProfileProjection["endpoints"][number][] = [];
+  for (const value of profile.endpoints) {
+    const endpoint = recordValue(value);
+    const ports = endpoint?.ports === undefined ? [] : endpoint.ports;
+    if (
+      !endpoint ||
+      typeof endpoint.host !== "string" ||
+      !Array.isArray(ports) ||
+      ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535) ||
+      (!ports.length &&
+        (!Number.isInteger(endpoint.port) ||
+          Number(endpoint.port) < 1 ||
+          Number(endpoint.port) > 65535))
+    )
+      return undefined;
+    endpoints.push({
+      host: endpoint.host.toLowerCase(),
+      port: Number(endpoint.port ?? 0),
+      ports: ports.length ? ports : [Number(endpoint.port)],
+      enforcesCredentialedRest:
+        typeof endpoint.protocol === "string" &&
+        endpoint.protocol.toLowerCase() === "rest" &&
+        endpoint.enforcement === "enforce" &&
+        (endpoint.tls === undefined || endpoint.tls === "") &&
+        (endpoint.allow_uninspected_credentials === undefined ||
+          endpoint.allow_uninspected_credentials === false),
+    });
+  }
+  return {
+    digest: createHash("sha256").update(JSON.stringify(profile)).digest("hex"),
+    credentials,
+    endpoints,
+  };
 }

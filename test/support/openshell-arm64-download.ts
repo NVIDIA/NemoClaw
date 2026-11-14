@@ -5,14 +5,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json";
+import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.7.json";
 import {
   OPENSHELL_FEATURE_MARKERS,
   OPENSHELL_MCP_FEATURE_MARKER,
   PINNED_OPEN_SHELL_SHA256,
 } from "../helpers/openshell-release-fixtures";
 
-import { writeFixtureMktemp } from "./openshell-installed-version";
+import { prepareInstallerBin } from "./openshell-installed-version";
 
 const REQUIRED_OPENSHELL_VERSION = credentialBoundaryManifest.openshellVersion;
 
@@ -27,8 +27,7 @@ export function createLinuxArm64DownloadFixture() {
   const fakeBin = path.join(tmp, "bin");
   const downloadLog = path.join(tmp, "downloads.log");
   const checksumLog = path.join(tmp, "checksums.log");
-  fs.mkdirSync(fakeBin);
-  writeFixtureMktemp(fakeBin, tmp);
+  prepareInstallerBin(fakeBin);
 
   writeExecutable(
     path.join(fakeBin, "uname"),

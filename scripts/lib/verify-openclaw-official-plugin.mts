@@ -15,12 +15,62 @@ type ProvenanceCondition =
 export class OfficialPluginProvenanceError extends Error {
   readonly pluginId: string;
   readonly condition: ProvenanceCondition;
+  readonly inspectionDiagnostics?: string;
 
-  constructor(pluginId: string, condition: ProvenanceCondition) {
+  constructor(pluginId: string, condition: ProvenanceCondition, inspectionDiagnostics?: string) {
     super(`OpenClaw official npm plugin ${pluginId} ${condition}`);
     this.pluginId = pluginId;
     this.condition = condition;
+    this.inspectionDiagnostics = inspectionDiagnostics;
   }
+}
+
+/** Never forward plugin output: only fixed phase names, numbers and booleans leave this boundary. */
+function inspectionDiagnostics(
+  identity: OfficialPluginIdentity,
+  stdout: string,
+  stderr: string,
+  elapsedMs: number,
+): string {
+  const phases = new Set([
+    "config read",
+    "discovery scan",
+    "plugin metadata load",
+    "plugin registry snapshot",
+  ]);
+  let lastCompletedPhase: string | undefined;
+  let phaseStatus: string | undefined;
+  let phaseMs: number | undefined;
+  for (const line of stderr.split("\n")) {
+    const match =
+      /^\[plugins:lifecycle\] phase="([a-z ]+)" ms=([0-9]+(?:\.[0-9]+)?) status=(ok|error)(?: .*)?$/.exec(
+        line,
+      );
+    if (!match || !phases.has(match[1]!)) continue;
+    const duration = Number(match[2]);
+    if (!Number.isFinite(duration) || duration > 90_000) continue;
+    lastCompletedPhase = match[1];
+    phaseStatus = match[3];
+    phaseMs = duration;
+  }
+  let stdoutJson = false;
+  let provenanceValid = false;
+  try {
+    JSON.parse(stdout);
+    stdoutJson = true;
+    verifyOfficialOpenClawPluginInstall(identity, stdout);
+    provenanceValid = true;
+  } catch {
+    // Diagnostic evidence never changes the command's failure classification.
+  }
+  return JSON.stringify({
+    elapsedMs,
+    lastCompletedPhase,
+    phaseStatus,
+    phaseMs,
+    stdoutJson,
+    provenanceValid,
+  });
 }
 
 type OfficialPluginIdentity = Readonly<{
@@ -74,10 +124,11 @@ export function inspectOfficialOpenClawPluginInstall(
   env: NodeJS.ProcessEnv,
 ): string | undefined {
   const ownsProcessGroup = process.platform !== "win32";
+  const started = performance.now();
   const result = spawnSync("openclaw", ["plugins", "inspect", identity.pluginId, "--json"], {
     encoding: "utf8",
-    env,
-    timeout: 60_000,
+    env: { ...env, OPENCLAW_PLUGIN_LIFECYCLE_TRACE: "1" },
+    timeout: 90_000,
     killSignal: "SIGKILL",
     ...(ownsProcessGroup ? { detached: true } : {}),
     maxBuffer: 64 * 1024 * 1024,
@@ -97,6 +148,12 @@ export function inspectOfficialOpenClawPluginInstall(
     throw new OfficialPluginProvenanceError(
       identity.pluginId,
       timedOut ? "inspection timed out" : "inspection failed",
+      inspectionDiagnostics(
+        identity,
+        result.stdout ?? "",
+        result.stderr ?? "",
+        Math.round(performance.now() - started),
+      ),
     );
   }
   return verifyOfficialOpenClawPluginInstall(identity, result.stdout);
@@ -121,7 +178,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     } catch (error) {
       console.error(
         error instanceof OfficialPluginProvenanceError
-          ? error.message
+          ? `${error.message}${error.inspectionDiagnostics ? ` Inspection diagnostics: ${error.inspectionDiagnostics}.` : ""}`
           : "Official plugin inspection failed",
       );
       process.exitCode = 1;

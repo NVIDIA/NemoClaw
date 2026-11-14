@@ -97,21 +97,6 @@ export async function resolveVerifiedCloudflaredBinary(
   if (actualSha256 !== pin.debSha256) {
     throw new Error(`cloudflared package SHA256 mismatch: expected ${pin.debSha256}`);
   }
-  const packageName = (
-    await commandOutput(host, "dpkg-deb", ["-f", deb, "Package"], "package-name")
-  ).trim();
-  const version = (
-    await commandOutput(host, "dpkg-deb", ["-f", deb, "Version"], "package-version")
-  ).trim();
-  const architecture = (
-    await commandOutput(host, "dpkg-deb", ["-f", deb, "Architecture"], "package-architecture")
-  ).trim();
-  if (packageName !== "cloudflared" || version !== pin.version || architecture !== "amd64") {
-    throw new Error(
-      `unexpected cloudflared package metadata: package=${packageName} version=${version} architecture=${architecture}`,
-    );
-  }
-
   const extracted = path.join(root, "extracted");
   await commandOutput(host, "dpkg-deb", ["-x", deb, extracted], "extract");
   const binary = path.join(extracted, "usr", "bin", "cloudflared");

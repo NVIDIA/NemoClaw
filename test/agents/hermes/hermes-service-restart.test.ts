@@ -15,7 +15,12 @@ function runSupervisor(
   firstExit: number,
   finalExit: number,
   repeatedFirstExits = 1,
-  options: { elapsedPerGateway?: number; cooldownFails?: boolean; prepareFails?: boolean } = {},
+  options: {
+    elapsedPerGateway?: number;
+    cooldownFails?: boolean;
+    prepareFails?: boolean;
+    completionFails?: boolean;
+  } = {},
 ) {
   const script = [
     "set -uo pipefail",
@@ -33,6 +38,7 @@ function runSupervisor(
     "auxiliary_count=0",
     "finalize_count=0",
     "refresh_count=0",
+    "completion_count=0",
     "recovery_count=0",
     "SECONDS=0",
     "sleep_count=0",
@@ -49,6 +55,7 @@ function runSupervisor(
     "ensure_hermes_supervised_auxiliaries() { auxiliary_count=$((auxiliary_count + 1)); }",
     "finalize_tirith_marker_retry() { finalize_count=$((finalize_count + 1)); }",
     "refresh_hermes_supervised_child_pids() { refresh_count=$((refresh_count + 1)); }",
+    `publish_hermes_startup_completion() { [ "$finalize_count" -eq "$launch_count" ] && [ "$auxiliary_count" -eq "$launch_count" ] && [ "$refresh_count" -eq "$launch_count" ] || return 1; completion_count=$((completion_count + 1)); ${options.completionFails ? "return 1" : ":"}; }`,
     "wait_for_hermes_gateway_recovery_request() { recovery_count=$((recovery_count + 1)); }",
     extractShellFunction(source, "relaunch_hermes_gateway_current_user"),
     extractShellFunction(source, "supervise_hermes_service_restarts_current_user"),
@@ -56,6 +63,7 @@ function runSupervisor(
     "supervise_hermes_service_restarts_current_user || status=$?",
     'printf "%s\\n" "status=$status waits=$wait_count launches=$launch_count marks=$mark_count prepares=$prepare_count ready=$ready_count auxiliaries=$auxiliary_count finalize=$finalize_count refresh=$refresh_count recoveries=$recovery_count gateway=$GATEWAY_PID"',
     'printf "cooldown:sleeps=%s seconds=%s\\n" "$sleep_count" "$sleep_seconds" >&2',
+    'printf "completed:%s\\n" "$completion_count" >&2',
   ].join("\n");
   return spawnSync("bash", ["-c", script], {
     encoding: "utf8",
@@ -207,33 +215,36 @@ describe("Hermes native service restart supervision", () => {
     expect(result.stderr).not.toContain("relaunching");
   });
 
-  it("stops when no gated recovery request arrives before the deadline", () => {
-    const script = [
-      "set -uo pipefail",
-      "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
-      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=2",
-      "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
-      "sleep_count=0",
-      'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; }',
-      'hermes_gateway_recovery_request_value() { printf "%s\\n" absent; }',
-      "hermes_recovery_requester_start_time() { return 1; }",
-      "sleep() { sleep_count=$((sleep_count + 1)); }",
-      extractShellFunction(source, "wait_for_hermes_recovery_requester_exit"),
-      extractShellFunction(source, "wait_for_hermes_gateway_recovery_request"),
-      "status=0",
-      "wait_for_hermes_gateway_recovery_request || status=$?",
-      'printf "status=%s sleeps=%s\\n" "$status" "$sleep_count"',
-    ].join("\n");
+  it.each(["absent", `v2 ${"d".repeat(64)} 321 654`])(
+    "stops when a current gated recovery request never arrives (%s)",
+    (request) => {
+      const script = [
+        "set -uo pipefail",
+        "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
+        "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=2",
+        "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
+        "sleep_count=0",
+        'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; }',
+        `hermes_gateway_recovery_request_value() { printf "%s\\n" '${request}'; }`,
+        "hermes_recovery_requester_start_time() { return 1; }",
+        "sleep() { sleep_count=$((sleep_count + 1)); }",
+        extractShellFunction(source, "wait_for_hermes_recovery_requester_exit"),
+        extractShellFunction(source, "wait_for_hermes_gateway_recovery_request"),
+        "status=0",
+        "wait_for_hermes_gateway_recovery_request || status=$?",
+        'printf "status=%s sleeps=%s\\n" "$status" "$sleep_count"',
+      ].join("\n");
 
-    const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("status=1 sleeps=2");
-    expect(result.stderr).toContain("recovery request timed out after 2 seconds");
-    expect(result.stderr).toContain("nemoclaw <name> stop");
-    expect(result.stderr).toContain("nemoclaw <name> start");
-    expect(result.stderr).not.toContain("relaunching");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("status=1 sleeps=2");
+      expect(result.stderr).toContain("recovery request timed out after 2 seconds");
+      expect(result.stderr).toContain("nemoclaw <name> stop");
+      expect(result.stderr).toContain("nemoclaw <name> start");
+      expect(result.stderr).not.toContain("relaunching");
+    },
+  );
 
   it("rejects an untrusted recovery request marker", () => {
     const script = [
@@ -293,6 +304,14 @@ describe("Hermes native service restart supervision", () => {
       "status=9 waits=2 launches=1 marks=1 prepares=1 ready=1 auxiliaries=1 finalize=1 refresh=1 recoveries=0 gateway=101",
     );
     expect(result.stderr).toContain("Hermes requested a service-managed restart");
+    expect(result.stderr).toContain("completed:1");
+  });
+
+  it("stops supervision when startup completion cannot be published", () => {
+    const result = runSupervisor(75, 9, 1, { completionFails: true });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("status=1 waits=1 launches=1");
+    expect(result.stderr).toContain("completed:1");
   });
 
   it("preserves the supervisor and rate limit across repeated bursts of requested restarts", () => {

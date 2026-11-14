@@ -1103,6 +1103,30 @@ function removeBaseline() {
   finish(0);
 }
 
+async function waitForPtyMonitorExit() {
+  const deadline = performance.now() + 5_000;
+  while (true) {
+    let stats;
+    try {
+      stats = fs.lstatSync(ptyMonitorSocketPath);
+    } catch (error) {
+      if (error && error.code === "ENOENT") finish(0);
+      finish(2, "pty_socket_unavailable");
+    }
+    if (
+      !stats.isSocket() ||
+      stats.uid !== process.getuid() ||
+      !exactMode(stats, 0o600) ||
+      stats.nlink !== 1
+    ) {
+      finish(2, "pty_socket_invalid");
+    }
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) finish(2, "pty_monitor_socket_still_present");
+    await new Promise((resolve) => setTimeout(resolve, Math.min(50, remaining)));
+  }
+}
+
 function removePtyMonitorRoot() {
   let before;
   try {
@@ -1388,6 +1412,9 @@ try {
   else if (mode === "input-mode") qualifyTuiInputMode();
   else if (mode === "qualify") qualifyTurns();
   else if (mode === "cleanup-baseline") removeBaseline();
+  else if (mode === "cleanup-pty-wait") {
+    waitForPtyMonitorExit().catch(() => finish(2, "pty_monitor_cleanup_failed"));
+  }
   else if (mode === "cleanup-pty") removePtyMonitorRoot();
   else finish(2, "mode_invalid");
 } catch {
@@ -1433,10 +1460,7 @@ remove_pty_monitor() {
 }
 
 wait_for_pty_monitor_exit() {
-  for _ in {1..100}; do
-    [[ ! -S "$pty_monitor_root/pty-input-mode.sock" ]] && return
-    sleep 0.05
-  done
+  session_evidence cleanup-pty-wait
 }
 
 cleanup() {
@@ -1461,7 +1485,11 @@ cleanup() {
     tail -c 2048 "$evidence_error" >&2 || true
     cleanup_status=1
   fi
-  wait_for_pty_monitor_exit
+  if ! (wait_for_pty_monitor_exit) >/dev/null 2>"$evidence_error"; then
+    echo "launch PTY monitor wait failed" >&2
+    tail -c 2048 "$evidence_error" >&2 || true
+    cleanup_status=1
+  fi
   if ! (remove_pty_monitor) >/dev/null 2>"$evidence_error"; then
     echo "launch PTY monitor cleanup failed" >&2
     tail -c 2048 "$evidence_error" >&2 || true

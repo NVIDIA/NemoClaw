@@ -231,13 +231,16 @@ describe("dependency pin drift check", () => {
     );
   });
 
-  it("accepts 0.1.3 from the registry without an inline release record", () => {
-    withFixture(
-      "nemoclaw-dependency-pins-registry-",
-      { openshellMin: "0.1.3", openshellMax: "0.1.3" },
-      (root) => expect(verifyDependencyPins(root)).toEqual([]),
-    );
-  });
+  it.each(["0.1.5", "0.1.7"])(
+    "accepts %s from the registry without an inline release record",
+    (version) => {
+      withFixture(
+        "nemoclaw-dependency-pins-registry-",
+        { openshellMin: version, openshellMax: version },
+        (root) => expect(verifyDependencyPins(root)).toEqual([]),
+      );
+    },
+  );
 
   it("retains legacy release identities when the registry is empty", () => {
     withFixture(

@@ -223,7 +223,9 @@ Ordinary login and interactive shells use your personal files.
 
 Managed probes use `/etc/profile.d/nemoclaw-dcode.sh`, owned by `root:root` with mode `0444`.
 The hook clears `BASH_ENV` and `ENV` and selects an image-owned home before Bash reads personal files.
-The managed launcher restores `HOME=/sandbox` and reads proxy settings from image-owned files.
+The managed launcher restores `HOME=/sandbox` and clears inherited HTTP proxy and bypass variables.
+OpenShell mediates network requests and applies destination policy.
+Managed `fetch_url` requests, including redirects, use this route and a validated CA bundle.
 
 Existing Deep Agents Code sandboxes retain their previous image until you rebuild them.
 After you update NemoClaw, finish active tasks and follow [Recover and Rebuild Sandboxes](recover-and-rebuild-sandboxes) to replace each image.

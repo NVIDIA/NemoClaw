@@ -5,6 +5,8 @@ import {
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
   OPENSHELL_SANDBOX_WORKSPACE_LABEL,
+  OPENSHELL_SANDBOX_NAMESPACE_LABEL,
+  OPENSHELL_ISOLATION_ROLE_LABEL,
   inspectDockerSandboxNameLabeledContainers,
   resolveOpenShellSandboxOwnershipLabel,
 } from "../../onboard/openshell-docker-sandbox-containers";
@@ -31,6 +33,8 @@ export type SandboxNameLabeledContainer = {
   managedBy: string;
   workspace: string;
   sandboxId: string;
+  namespace?: string;
+  isolationRole?: string;
 };
 
 /** Verdict for whether destroy resolved one complete managed container identity. */
@@ -124,6 +128,40 @@ export function classifyDestroyContainerIdentity(
       managed,
     };
   }
+  if (managed.some((row) => row.isolationRole)) {
+    const workload = managed.find((row) => row.isolationRole === "sandbox");
+    const supervisor = managed.find((row) => row.isolationRole === "supervisor");
+    const workloadComplete = Boolean(
+      workload?.workspace && workload.sandboxId && workload.namespace,
+    );
+    const retainedIdentityMatches =
+      retainedSandboxIdentityFingerprint === undefined ||
+      fingerprintOpenShellSandboxId(workload?.sandboxId ?? "") ===
+        retainedSandboxIdentityFingerprint;
+    if (
+      workloadComplete &&
+      retainedIdentityMatches &&
+      managed.length === 2 &&
+      workload &&
+      supervisor &&
+      supervisor.id !== workload.id &&
+      supervisor.workspace === "" &&
+      supervisor.sandboxId === workload.sandboxId &&
+      supervisor.namespace === workload.namespace
+    ) {
+      // The workload stays first because state-volume cleanup uses its workspace.
+      return { status: "recovery", identities: [workload, supervisor] };
+    }
+    if (!workloadComplete || !retainedIdentityMatches || managed.length !== 1) {
+      return {
+        status: "ambiguous",
+        sandboxName,
+        reason: "container isolation roles do not identify one sandbox and its matching supervisor",
+        foreign,
+        managed,
+      };
+    }
+  }
   if (managed.length > 0 && retainedSandboxIdentityFingerprint !== undefined) {
     const identityMatches = managed.every(
       (row) =>
@@ -189,7 +227,9 @@ export function formatAmbiguousDestroyIdentity(
   const describe = (row: SandboxNameLabeledContainer): string =>
     `${display(row.id).slice(0, 12)} (${ownership.label}=${displayLabel(row.managedBy)}, ` +
     `${OPENSHELL_SANDBOX_WORKSPACE_LABEL}=${displayLabel(row.workspace)}, ` +
-    `${OPENSHELL_SANDBOX_ID_LABEL}=${displayLabel(row.sandboxId)})`;
+    `${OPENSHELL_SANDBOX_ID_LABEL}=${displayLabel(row.sandboxId)}, ` +
+    `${OPENSHELL_SANDBOX_NAMESPACE_LABEL}=${displayLabel(row.namespace ?? "")}, ` +
+    `${OPENSHELL_ISOLATION_ROLE_LABEL}=${displayLabel(row.isolationRole ?? "")})`;
   const sandboxName = display(verdict.sandboxName);
   const lines = [
     `Refusing to destroy sandbox '${sandboxName}': ${sanitizeReadinessText(verdict.reason, IDENTITY_DIAGNOSTIC_MAX_LENGTH)}.`,
@@ -347,7 +387,9 @@ export function isSameDestroyContainerIdentityProof(
       identity.id === candidate.id &&
       identity.managedBy === candidate.managedBy &&
       identity.workspace === candidate.workspace &&
-      identity.sandboxId === candidate.sandboxId
+      identity.sandboxId === candidate.sandboxId &&
+      identity.namespace === candidate.namespace &&
+      identity.isolationRole === candidate.isolationRole
     );
   });
 }

@@ -738,7 +738,7 @@ runner.run = (command, opts = {}) => {
     fs.writeFileSync(path.join(command.at(-1), "config.json"), JSON.stringify({ provider: "nvidia-prod", model: "gpt-5.4" }));
     return { status: 0 };
   }
-	  const profileResult = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+	  const profileResult = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-messaging-v1", false);
   if (profileResult !== null) return profileResult;
   return existingSandbox.run(sandboxCommand(command)) ?? { status: 0 };
 };

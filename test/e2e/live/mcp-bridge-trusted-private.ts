@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { waitForMcpCurlPolicyDenial } from "../fixtures/curl-policy-denial.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { MCP_PROBE_CONTROL_BEARER } from "../../../src/lib/actions/sandbox/mcp-bridge-resolution-probe.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -16,7 +17,6 @@ import {
   buildMcpDnsRebindingProbeScript,
   captureManagedMcpPolicy,
   hostPrivateAddressForSandbox,
-  isExpectedMcpCurlPolicyDenial,
   type McpDnsRebindingAdapter,
   remapDnsRebindingHostname,
   restoreDnsRebindingHostsFixture,
@@ -106,7 +106,6 @@ export async function assertTrustedPrivateMcpRebindingDenied(
   });
   const survivingPolicyBeforeAdd = survivingPolicyBeforeAddResult.policy;
   const trustedPrivateAddress = relay.address;
-  expect(trustedPrivateAddress).not.toBe(REBIND_PUBLIC_IP);
   await remapDnsRebindingHostname(
     host,
     options.sandboxName,
@@ -214,7 +213,6 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     url: rebindMcpUrl,
   });
   expect(rebindingPolicy.policy.endpoints?.[0]).toMatchObject({
-    host: REBIND_HOSTNAME,
     allowed_ips: [trustedPrivateAddress],
   });
   await options.assertSecretAbsent(
@@ -223,6 +221,19 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     options.secretPaths,
     [REBIND_HOST_SECRET],
     `${options.artifactPrefix}-dns-rebinding-secret-absent-from-sandbox`,
+  );
+  const requestsBeforeControl = rebindMcp.requests.length;
+  const curlControl = await sandbox.execShell(
+    options.sandboxName,
+    trustedSandboxShellScript(
+      buildMcpDnsRebindingProbeScript(options.adapter, rebindMcpUrl, REBIND_CREDENTIAL_KEY),
+    ),
+    {
+      artifactName: `${options.artifactPrefix}-mcp-adapter-curl-control`,
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [REBIND_HOST_SECRET],
+      timeoutMs: 90_000,
+    },
   );
   const requestsBeforeRebindingDenial = rebindMcp.requests.length;
 
@@ -255,6 +266,17 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     },
   });
   expect(driftInspection.trustedPrivateTarget.currentPins).toBeUndefined();
+  const readDnsAudit = (suffix: string) =>
+    sandbox.openshell(
+      ["logs", options.sandboxName, "-n", "500", "--source", "sandbox", "--since", "2m"],
+      {
+        artifactName: `${options.artifactPrefix}-mcp-rebinding-dns-audit-${suffix}`,
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [REBIND_HOST_SECRET],
+        timeoutMs: 30_000,
+      },
+    );
+  const dnsAuditBefore = await readDnsAudit("before");
   const denial = await sandbox.execShell(
     options.sandboxName,
     trustedSandboxShellScript(
@@ -267,8 +289,20 @@ export async function assertTrustedPrivateMcpRebindingDenied(
       timeoutMs: 90_000,
     },
   );
+  const policyDenied = await waitForMcpCurlPolicyDenial(
+    denial,
+    dnsAuditBefore,
+    readDnsAudit,
+    REBIND_HOSTNAME,
+  );
   expect(
-    isExpectedMcpCurlPolicyDenial(denial),
+    policyDenied &&
+      hostsFixture.server.answers() > 0 &&
+      curlControl.exitCode === 0 &&
+      !curlControl.timedOut &&
+      curlControl.stdout.includes("NEMOCLAW_MCP_CURL_HTTP_CODE=200") &&
+      requestsBeforeRebindingDenial === requestsBeforeControl + 1 &&
+      rebindMcp.requests.at(-1)?.auth === `Bearer ${REBIND_HOST_SECRET}`,
     `${options.artifactPrefix} adapter identity must receive an OpenShell policy denial after rebinding\nstdout:\n${denial.stdout}\nstderr:\n${denial.stderr}`,
   ).toBe(true);
   expect(

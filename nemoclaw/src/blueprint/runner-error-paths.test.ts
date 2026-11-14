@@ -1,3 +1,4 @@
+import { withNativeInferenceFixture } from "./runner-test-fixtures.js";
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -52,8 +53,14 @@ vi.mock("./ssrf.js", async (importOriginal) => ({
   validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
 }));
 
-const { actionApply, actionReconcile, actionStatus, loadBlueprint, main } =
-  await import("./runner.js");
+const {
+  actionApply: applyWithoutFixture,
+  actionReconcile,
+  actionStatus,
+  loadBlueprint,
+  main,
+} = await import("./runner.js");
+const actionApply = withNativeInferenceFixture(applyWithoutFixture);
 const stdoutCapture = createStdoutCapture();
 
 function captureStdout(): void {
@@ -205,6 +212,51 @@ describe("runner error paths", () => {
     );
 
     await expect(actionReconcile("nc-drifted")).rejects.toThrow(/gateway binding changed/);
+  });
+
+  it("routes native recovery through the host and rechecks the saved gateway", async () => {
+    const rid = "nc-resume";
+    const runDir = `${FAKE_HOME}/.nemoclaw/state/runs/${rid}`;
+    const gateway = { name: "test-gateway", host: "127.0.0.1", port: 8080 };
+    addDir(runDir);
+    addFile(
+      `${runDir}/plan.json`,
+      JSON.stringify({
+        run_id: rid,
+        sandbox_name: "sb",
+        gateway,
+        native_inference: { configPublished: false },
+      }),
+    );
+    captureStdout();
+    const resume = vi.fn(async (input) => {
+      await input.revalidate();
+    });
+    await main(["reconcile", "--run-id", rid], { nativeInferenceResumer: resume });
+    expect(resume).toHaveBeenCalledWith({
+      runId: rid,
+      gateway,
+      sandboxName: "sb",
+      revalidate: expect.any(Function),
+    });
+    expect(stdoutCapture.text()).toContain("native inference configuration is complete");
+    expect(
+      mockExeca.mock.calls.every(([, args]) => args?.join(" ") === "gateway info -g test-gateway"),
+    ).toBe(true);
+  });
+
+  it("refuses native recovery without the host resumer", async () => {
+    const runDir = `${FAKE_HOME}/.nemoclaw/state/runs/nc-resume`;
+    addDir(runDir);
+    addFile(
+      `${runDir}/plan.json`,
+      JSON.stringify({
+        sandbox_name: "sb",
+        gateway: { name: "test-gateway", host: "127.0.0.1", port: 8080 },
+        native_inference: {},
+      }),
+    );
+    await expect(actionReconcile("nc-resume")).rejects.toThrow("host native inference resumer");
   });
 
   it("throws when reconcile has no --run-id", async () => {

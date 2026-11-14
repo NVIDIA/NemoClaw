@@ -47,6 +47,27 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)\.github\/workflows\/pr\.yaml$/,
+    testsToRun: runTests(
+      "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test/automation/pull-requests/pr-sdk-artifact-selection.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/install-openshell\.sh$/,
+    testsToRun: runTests(
+      "test/installer-integration/install-openshell-version-check.test.ts",
+      "test/installer-integration/install-openshell-retained-state-size.test.ts",
+      "test/installer-integration/install-openshell-version-pin.test.ts",
+      "test/installer-integration/install-openshell-directory-safety.test.ts",
+      "test/install/installer-directory-bsd-stat.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/install\.sh$/,
+    testsToRun: runTests("test/install/installer-directory-bsd-stat.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)schemas\/network-policy\.schema\.json$/,
     testsToRun: runTests("test/onboarding/validate-config-schemas.test.ts"),
   },
@@ -326,6 +347,8 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     pattern: /(?:^|\/)agents\/hermes\/runtime-config-guard\.py$/,
     testsToRun: runTests(
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-runtime-config-guard.test.ts",
+      "test/agents/hermes/hermes-capability-free-supervisor.test.ts",
       "test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
       "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
     ),

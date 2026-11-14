@@ -22,6 +22,7 @@ import {
   isAcpResponse,
   isProcessAbsent,
   runHermesAcpLiveScenario,
+  verifyNoRemoteHermesAcpProcess,
 } from "../fixtures/hermes-acp-live.ts";
 
 describe("Hermes ACP live evidence boundary", () => {
@@ -45,6 +46,24 @@ describe("Hermes ACP live evidence boundary", () => {
     stdout,
     stderr,
     artifacts: { stdout: "", stderr: "", result: "" },
+  });
+
+  it.each([
+    ["empty pgrep result", {}, true],
+    [
+      "Provisioning transport refusal",
+      { stderr: "Error: sandbox is not ready (phase: Provisioning)" },
+      false,
+    ],
+    ["timeout", { timedOut: true }, false],
+    ["signal", { signal: "SIGTERM" as const }, false],
+    ["unexpected process output", { stdout: "1234\n" }, false],
+  ])("requires actual remote process absence for %s", async (_label, overrides, expected) => {
+    const run = vi.fn().mockResolvedValue(shellResult({ exitCode: 1, ...overrides }));
+    expect(
+      await verifyNoRemoteHermesAcpProcess(new SandboxClient({ run }), "e2e-hermes", {}, "cleanup"),
+    ).toBe(expected);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
   it("recognizes the OpenShell 0.0.116 stopped-gateway response (#10947)", () => {
@@ -153,7 +172,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
         fs.rmSync(artifactDir, { force: true, recursive: true });
       });
       const sandbox = new SandboxClient({
-        run: vi.fn().mockResolvedValue({ exitCode: 1, stdout: "", stderr: "" }),
+        run: vi.fn().mockResolvedValue(shellResult({ exitCode: 1 })),
       });
 
       await expect(
@@ -294,7 +313,7 @@ setTimeout(() => {
         env: {},
         progress,
         sandbox: new SandboxClient({
-          run: vi.fn().mockResolvedValue({ exitCode: 1, stdout: "", stderr: "" }),
+          run: vi.fn().mockResolvedValue(shellResult({ exitCode: 1 })),
         }),
         sandboxName: "e2e-hermes",
         scenario: "initialize",
@@ -329,7 +348,7 @@ setTimeout(() => {
       progress.stop();
       fs.rmSync(artifactDir, { force: true, recursive: true });
     });
-    const run = vi.fn().mockResolvedValue({ exitCode: 1, stdout: "", stderr: "" });
+    const run = vi.fn().mockResolvedValue(shellResult({ exitCode: 1 }));
     const sandbox = new SandboxClient({ run });
 
     await expect(

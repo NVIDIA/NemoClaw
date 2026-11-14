@@ -2,19 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Sandbox-side reachability probe for a host service exposed on a TCP port.
- *
- * Issue #3340 / #4564: On Brev VMs (and any Linux host with UFW default-deny),
- * a host service — the Ollama auth proxy on 11435, the Model Router on 4000 —
- * is unreachable from the sandbox's Docker bridge network even though
- * host-side `curl 127.0.0.1:<port>` succeeds. Host-side validation cannot
- * detect this because `host.openshell.internal` only resolves inside the
- * sandbox network. This probe runs a short-lived container on the same Docker
- * network OpenShell uses for sandboxes and performs a TCP connect to the host
- * service port, mirroring the exact route the real sandbox takes. A
- * `tcp_failed` result means a host firewall is blocking the port; the caller
- * can then surface an actionable `ufw allow` remediation before declaring
- * onboard successful.
+ * Check host-service TCP reachability from the caller's runtime network.
+ * Attached llama.cpp selects native supervisor networking on Linux Docker.
+ * Existing bridge callers retain their network and firewall diagnostics.
  */
 
 import {
@@ -63,6 +53,8 @@ interface ProbeRunResult {
 
 export interface HostServiceReachabilityOptions {
   port: number;
+  /** Attached llama.cpp uses the native Docker supervisor's host network. */
+  nativeSupervisorNetwork?: boolean;
   networkName?: string;
   timeoutSec?: number;
   probeImage?: string;
@@ -96,7 +88,6 @@ function isNameResolutionFailure(detail: string): boolean {
 export async function probeHostServiceSandboxReachability(
   opts: HostServiceReachabilityOptions,
 ): Promise<HostServiceReachabilityResult> {
-  const networkName = opts.networkName ?? resolveDockerDriverNetworkName();
   const port = opts.port;
   const timeoutSec = opts.timeoutSec ?? PROBE_TIMEOUT_SEC;
   const probeImage = opts.probeImage ?? PROBE_IMAGE;
@@ -110,7 +101,18 @@ export async function probeHostServiceSandboxReachability(
   const usesHostGatewayRoute =
     opts.usesHostGatewayRouteImpl ?? managedGatewayRuntime.network.usesHostGatewayRoute;
   const runImpl = opts.runImpl ?? managedGatewayRuntime.network.run;
-  const network = inspectNetwork(networkName);
+  const supervisorNetwork =
+    opts.nativeSupervisorNetwork === true &&
+    !managedGatewayRuntime.usesHostGatewayRoute &&
+    !usesHostGatewayRoute()
+      ? managedGatewayRuntime.network.supervisorNetwork
+      : undefined;
+  const networkName = supervisorNetwork
+    ? supervisorNetwork.name
+    : (opts.networkName ?? resolveDockerDriverNetworkName());
+  const network = supervisorNetwork
+    ? { gatewayIp: supervisorNetwork.hostAddress, subnet: undefined }
+    : inspectNetwork(networkName);
   if (!network) {
     return {
       ok: false,
@@ -151,6 +153,9 @@ export async function probeHostServiceSandboxReachability(
     "--pull=missing",
     "--network",
     networkName,
+    ...(supervisorNetwork
+      ? ["--cap-drop=ALL", "--security-opt=no-new-privileges", "--read-only"]
+      : []),
     "--add-host",
     `${HOST_INTERNAL_NAME}:${hostInternalTarget}`,
     probeImage,

@@ -82,7 +82,7 @@ describe("DCode native local rebuild authority", () => {
     },
   );
 
-  it("ignores a stale native attachment for an owned Local NIM rebuild", () => {
+  it("retains the native attachment for an owned Local NIM rebuild", () => {
     const result = resolveDcodeRebuildTarget(
       {
         ...entry,
@@ -93,9 +93,9 @@ describe("DCode native local rebuild authority", () => {
       8080,
     );
 
-    expect(result).not.toHaveProperty("nativeLocalProviderAttachment");
-    expect(result).not.toHaveProperty("nativeProvider");
-    expect(result).not.toHaveProperty("nativeEndpointUrl");
+    expect(result.nativeLocalProviderAttachment).toEqual(attachment);
+    expect(result.nativeProvider).toBe(true);
+    expect(result.nativeEndpointUrl).toBe(binding.endpointUrl);
     expect(result.provider).toBe("vllm-local");
   });
 });

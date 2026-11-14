@@ -83,6 +83,7 @@ function runProof(fixture: IntegrityFixture, extraEnv: NodeJS.ProcessEnv = {}) {
     [
       "-c",
       buildHermesManagedStartupIntegrityScript({
+        pythonPath: "python3",
         configPath: fixture.configPath,
         envPath: fixture.envPath,
         strictHashPath: fixture.strictHashPath,
@@ -96,6 +97,7 @@ function runProof(fixture: IntegrityFixture, extraEnv: NodeJS.ProcessEnv = {}) {
       encoding: "utf-8",
       timeout: 5000,
       env: {
+        PATH: process.env.PATH,
         LANG: "C",
         LC_ALL: "C",
         ...extraEnv,
@@ -118,6 +120,71 @@ describe("Hermes managed startup integrity proof", () => {
     const proof = runProof(fixture);
     expect(proof.status, proof.stderr).toBe(0);
     expect(proof.stdout).toBe("OK\n");
+  });
+
+  it.each([
+    { scenario: "valid", accepted: true },
+    { scenario: "changed-model", model: "changed", accepted: false },
+    { scenario: "changed-user-slot", userKey: "changed", accepted: false },
+    { scenario: "invalid-handle", reference: "unscoped-secret", accepted: false },
+    { scenario: "forged-witness", witnessSource: "current", accepted: false },
+    { scenario: "writable-witness", witnessMode: 0o666, accepted: false },
+  ])("checks native startup credential materialization with $scenario", (input) => {
+    const fixture = createFixture();
+    const token = "${NEMOCLAW_LOCAL_INFERENCE_TOKEN}";
+    const provider = "compatible-endpoint";
+    const endpoint = "http://host.openshell.internal:8000/v1";
+    const base = {
+      _nemoclaw_upstream: { provider, provider_key: provider },
+      model: { provider: "custom", base_url: endpoint, api_key: token, default: "test-model" },
+      providers: { [provider]: { api: endpoint, api_key: token }, user: { api_key: token } },
+      custom_providers: [{ name: provider, base_url: endpoint, api_key: token }],
+    };
+    const original = JSON.stringify(base);
+    const current = structuredClone(base);
+    const reference = input.reference ?? "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+    current.model.api_key = reference;
+    current.providers[provider]!.api_key = reference;
+    current.custom_providers[0]!.api_key = reference;
+    current.model.default = input.model ?? base.model.default;
+    current.providers.user.api_key = input.userKey ?? token;
+    const serialized = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        "import sys,yaml; print(yaml.safe_dump(yaml.safe_load(sys.stdin.read()), sort_keys=False), end='')",
+      ],
+      {
+        input: JSON.stringify(current),
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(serialized.status, serialized.stderr).toBe(0);
+    fs.writeFileSync(fixture.configPath, serialized.stdout);
+    const witness = path.join(path.dirname(fixture.configPath), ".native-local-startup-config");
+    const witnessSources: Record<string, string> = { original, current: serialized.stdout };
+    fs.writeFileSync(witness, witnessSources[input.witnessSource ?? "original"]!, { mode: 0o600 });
+    fs.chmodSync(witness, input.witnessMode ?? 0o600);
+    fs.chmodSync(fixture.strictHashPath, 0o644);
+    writeHash(
+      fixture.strictHashPath,
+      fixture.configPath,
+      original,
+      fixture.envPath,
+      fixture.baseEnv,
+    );
+    fs.chmodSync(fixture.strictHashPath, 0o444);
+    writeHash(
+      fixture.compatHashPath,
+      fixture.configPath,
+      serialized.stdout,
+      fixture.envPath,
+      fs.readFileSync(fixture.envPath, "utf8"),
+    );
+    const proof = runProof(fixture);
+    expect(proof.status === 0, proof.stderr).toBe(input.accepted);
   });
 
   it("rejects a missing Hermes environment record", () => {

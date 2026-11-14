@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseOpenShellMainProcessSpecEnvValue } from "./docker-startup-command-env";
 import { redact, redactFull } from "../security/redact";
 import type { DockerContainerInspect } from "./docker-gpu-patch-types";
 
@@ -20,8 +21,12 @@ function inspectEnv(inspect: DockerContainerInspect): Map<string, string> {
 
 function startupCommandEnv(inspect: DockerContainerInspect): Map<string, string> {
   const assignments = new Map<string, string>();
-  const command = inspectEnv(inspect).get("OPENSHELL_SANDBOX_COMMAND") ?? "";
-  const tokens = command.trim().split(/\s+/u);
+  const env = inspectEnv(inspect);
+  const spec = env.get("OPENSHELL_MAIN_PROCESS_SPEC");
+  const tokens =
+    spec === undefined
+      ? (env.get("OPENSHELL_SANDBOX_COMMAND") ?? "").trim().split(/\s+/u)
+      : [...parseOpenShellMainProcessSpecEnvValue(spec).command];
   if (tokens.shift() !== "env") return assignments;
   for (const token of tokens) {
     const separator = token.indexOf("=");
@@ -63,7 +68,10 @@ export function discoverDockerGpuDiagnosticSensitiveValues(
   return [...env, ...startupEnv]
     .filter(
       ([key, value]) =>
-        (SENSITIVE_ENV_KEY.test(key) || extraPlaceholderKeys.has(key)) && value.length > 0,
+        (SENSITIVE_ENV_KEY.test(key) ||
+          key === "OPENSHELL_MAIN_PROCESS_SPEC" ||
+          extraPlaceholderKeys.has(key)) &&
+        value.length > 0,
     )
     .map(([, value]) => value);
 }

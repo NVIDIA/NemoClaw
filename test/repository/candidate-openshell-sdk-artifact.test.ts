@@ -18,6 +18,43 @@ afterEach(() => {
 });
 
 describe("candidate SDK artifact provenance", () => {
+  it("waits for the approved candidate archive and completed producer", () => {
+    const f = fixture();
+    f.availability.missingReads = 2;
+    f.availability.pendingReads = 2;
+    const result = f.execute();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toContain("artifact_id=42");
+    expect(result.state).toEqual({ artifactReads: 5, producerReads: 4, sleeps: 4 });
+  });
+
+  it("fails after the bounded wait without publishing SDK outputs", () => {
+    const f = fixture();
+    f.availability.missingReads = 24;
+    const result = f.execute();
+    expect(result.status).not.toBe(0);
+    expect(result.state).toEqual({ artifactReads: 24, producerReads: 0, sleeps: 23 });
+    expect(result.output).not.toContain("artifact_id=");
+  });
+
+  it("does not wait for a missing trusted archive", () => {
+    const f = fixture("trusted");
+    f.availability.missingReads = 24;
+    const result = f.execute();
+    expect(result.status).not.toBe(0);
+    expect(result.state).toEqual({ artifactReads: 1, producerReads: 0, sleeps: 0 });
+    expect(result.output).not.toContain("artifact_id=");
+  });
+
+  it("stops on an artifact access denial without waiting or publishing SDK outputs", () => {
+    const f = fixture();
+    f.availability.accessDenied = true;
+    const result = f.execute();
+    expect(result.status).not.toBe(0);
+    expect(result.state).toBeUndefined();
+    expect(result.output).not.toContain("artifact_id=");
+  });
+
   it.each(["push", "workflow_dispatch"])(
     "keeps the trusted SDK archive from main event %s",
     (event) => {

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import vm from "node:vm";
+import { EventEmitter } from "node:events";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildMcpProviderRewriteAuthorization,
@@ -34,6 +35,7 @@ describe("managed MCP provider rewrite probe", () => {
   it.each([
     undefined,
     "raw-secret",
+    "openshell:resolve:env:v1_FAKE_MCP_SECRET\n",
     "openshell:resolve:env:FAKE_MCP_SECRET",
     "openshell:resolve:env:v_FAKE_MCP_SECRET",
     "openshell:resolve:env:v144298782728593258901_FAKE_MCP_SECRET",
@@ -86,5 +88,116 @@ describe("managed MCP provider rewrite probe", () => {
     expect(value).not.toMatch(
       new RegExp(buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET"), "u"),
     );
+  });
+});
+
+function startRewriteProbe(expectation: string) {
+  const requests: Array<EventEmitter & { end: ReturnType<typeof vi.fn> }> = [];
+  const send = vi.fn((_options: object, _callback: (response: EventEmitter) => void) => {
+    const request = Object.assign(new EventEmitter(), { end: vi.fn() });
+    requests.push(request);
+    return request;
+  });
+  const exit = vi.fn();
+  const output: string[] = [];
+  vm.runInNewContext(MCP_PROVIDER_REWRITE_PROBE_SOURCE, {
+    require: () => ({ request: send }),
+    URL,
+    Buffer,
+    process: {
+      argv: ["node", "-", "https://mcp.example.test/mcp", "tools/list", expectation],
+      env: { FAKE_MCP_SECRET: "openshell:resolve:env:v1_FAKE_MCP_SECRET" },
+      exit,
+    },
+    console: { log: (line: string) => output.push(line), error: vi.fn() },
+  });
+  function respond(index: number, statusCode: number, body: string, headers = {}) {
+    const response = Object.assign(new EventEmitter(), {
+      statusCode,
+      headers,
+      setEncoding: vi.fn(),
+    });
+    send.mock.calls[index]![1](response);
+    response.emit("data", body);
+    response.emit("end");
+  }
+  return { requests, send, exit, output, respond };
+}
+
+function executeRewriteProbe(expectation: string) {
+  const probe = startRewriteProbe(expectation);
+  probe.respond(0, 200, '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-11-25"}}', {
+    "mcp-session-id": "negotiated-fixture-session",
+  });
+  probe.respond(1, 202, "");
+  return { ...probe, request: probe.requests.at(-1)! };
+}
+
+describe("MCP request denial evidence", () => {
+  it.each([
+    ["deny", "EACCES", "connect", 0],
+    ["deny-strict", "EACCES", "connect", 0],
+    ["allow", "EACCES", "connect", 1],
+    ["deny", "EACCES", "open", 1],
+    ["deny", "ENOTFOUND", "getaddrinfo", 1],
+    ["deny", "ECONNREFUSED", "connect", 1],
+    ["deny", "ECONNRESET", "read", 1],
+    ["deny-strict", "ECONNRESET", "connect", 1],
+  ])("classifies %s with %s/%s as exit %s", (mode, code, syscall, status) => {
+    const probe = executeRewriteProbe(String(mode));
+    probe.request.emit("error", { code, syscall, message: "transport error" });
+    expect(probe.exit).toHaveBeenCalledWith(status);
+    expect(probe.output.join("\n")).toContain(JSON.stringify({ errorCode: code, syscall }));
+  });
+  it.each([
+    ["allow", 200, '{"result":{}}', 0],
+    ["deny", 200, '{"result":{}}', 1],
+    ["deny", 403, '{"error":"policy_denied"}', 0],
+    ["deny-strict", 403, '{"error":"policy_denied"}', 0],
+    ["deny", 403, '{"error":"credential_endpoint_mismatch"}', 1],
+    ["deny", 500, '{"error":"credential_unavailable"}', 1],
+  ])("classifies %s HTTP %s %s as exit %s", (mode, status, body, expected) => {
+    const probe = executeRewriteProbe(String(mode));
+    const response = Object.assign(new EventEmitter(), {
+      statusCode: status,
+      setEncoding: vi.fn(),
+    });
+    probe.send.mock.calls.at(-1)![1](response);
+    response.emit("data", body);
+    response.emit("end");
+    expect(probe.exit).toHaveBeenCalledWith(expected);
+    expect(
+      probe.requests.map((request) => JSON.parse(request.end.mock.calls[0]![0]).method),
+    ).toEqual(["initialize", "notifications/initialized", "tools/list"]);
+    expect(probe.send.mock.calls.at(-1)![0]).toMatchObject({
+      autoSelectFamily: false,
+      hostname: "mcp.example.test",
+      path: "/mcp",
+      headers: {
+        "mcp-session-id": "negotiated-fixture-session",
+        "mcp-protocol-version": "2025-11-25",
+      },
+    });
+  });
+
+  it.each([
+    ["missing session", {}, "2025-11-25"],
+    ["unsafe session", { "mcp-session-id": "unsafe\nsession" }, "2025-11-25"],
+    ["unreviewed revision", { "mcp-session-id": "fixture-session" }, "2025-03-26"],
+  ])("does not send the tested method after %s", (_label, headers, protocolVersion) => {
+    const probe = startRewriteProbe("allow");
+    probe.respond(0, 200, JSON.stringify({ id: 0, result: { protocolVersion } }), headers);
+    expect(probe.exit).toHaveBeenCalledWith(1);
+    expect(probe.send).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['{"error":"policy_denied"}', 0],
+    ['{"error":"mcp_protocol_version_not_allowed"}', 1],
+  ])("classifies initialization refusal %s without sending the tested method", (body, status) => {
+    const probe = startRewriteProbe("deny");
+    probe.respond(0, 403, body);
+    expect(probe.exit).toHaveBeenCalledWith(status);
+    expect(probe.send).toHaveBeenCalledTimes(1);
   });
 });

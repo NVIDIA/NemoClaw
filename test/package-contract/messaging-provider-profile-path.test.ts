@@ -22,7 +22,12 @@ describe("compiled messaging credential profile path", () => {
 
     expect(repositoryRoot.REPOSITORY_ROOT).toBe(REPOSITORY_ROOT);
     expect(profile.messagingCredentialProviderProfilePath(repositoryRoot.REPOSITORY_ROOT)).toBe(
-      path.join(REPOSITORY_ROOT, "nemoclaw-blueprint", "provider-profiles", "nemoclaw-mcp-v1.yaml"),
+      path.join(
+        REPOSITORY_ROOT,
+        "nemoclaw-blueprint",
+        "provider-profiles",
+        "nemoclaw-messaging-v1.yaml",
+      ),
     );
   });
 });

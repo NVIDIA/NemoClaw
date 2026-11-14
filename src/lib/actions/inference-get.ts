@@ -10,6 +10,7 @@ import type {
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import {
+  recordedRegisteredInferenceProviderAttachment,
   getLlamaCppRouteDetails,
   sanitizeRouteValueForDisplay,
   type LlamaCppRouteDetails,
@@ -312,6 +313,9 @@ export async function runInferenceGet(
   const selectedSandbox = selectedSandboxName
     ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
     : null;
+  const registeredAttachment = selectedSandbox
+    ? recordedRegisteredInferenceProviderAttachment(selectedSandbox)
+    : undefined;
   const nativeAttachment =
     selectedSandbox &&
     selectedSandbox.nativeLocalProviderAttachment === undefined &&
@@ -339,7 +343,10 @@ export async function runInferenceGet(
     }
     return payload;
   }
-  if (selectedSandbox?.nativeLocalProviderAttachment !== undefined) {
+  if (
+    selectedSandbox &&
+    (registeredAttachment || selectedSandbox.nativeLocalProviderAttachment !== undefined)
+  ) {
     let recordedGatewayName: string | undefined;
     try {
       recordedGatewayName = getPersistedSandboxTargetGatewayName(selectedSandbox);
@@ -347,12 +354,23 @@ export async function runInferenceGet(
       // A malformed binding must not make the shared gateway appear selected.
     }
     const attachment =
-      selectedSandbox.name === selectedSandboxName
-        ? authorizedNativeLocalAttachment(selectedSandbox, recordedGatewayName)
-        : undefined;
-    if (!attachment) {
+      registeredAttachment ?? authorizedNativeLocalAttachment(selectedSandbox, recordedGatewayName);
+    if (
+      !attachment ||
+      selectedSandbox.nativeHostedProviderAttachment !== undefined ||
+      selectedSandbox.nativeNvidiaProviderAttachment !== undefined ||
+      !isPublishedSandboxRegistration(selectedSandbox) ||
+      selectedSandbox.name !== selectedSandboxName ||
+      attachment.sandboxName !== selectedSandbox.name ||
+      attachment.gatewayName !== recordedGatewayName ||
+      attachment.gatewayName !== selectedSandbox.gatewayName ||
+      typeof selectedSandbox.model !== "string" ||
+      !selectedSandbox.model.trim()
+    ) {
       throw new InferenceGetError(
-        "Invalid native local provider attachment for the recorded inference selection",
+        registeredAttachment
+          ? "Invalid registered provider attachment for the recorded inference selection"
+          : "Invalid native local provider attachment for the recorded inference selection",
       );
     }
     const endpoint =

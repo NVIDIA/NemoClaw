@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { expect, test } from "vitest";
 
+import { PINNED_OPEN_SHELL_SHA256 } from "../helpers/openshell-release-fixtures";
+
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 const TEST_TIMEOUT_MS = 2 * 60_000;
@@ -26,8 +28,8 @@ test(
       `#!/bin/sh
 printf '%s\\n' '${JSON.stringify([
         { tagName: "v0.0.99" },
-        { tagName: "v0.0.117" },
-        { tagName: "v0.0.116" },
+        { tagName: "v0.1.8" },
+        { tagName: "v0.1.7" },
       ])}'`,
     );
 
@@ -42,8 +44,8 @@ printf '%s\\n' '${JSON.stringify([
 const pin = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-pin.ts"))});
 const version = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-version.ts"))});
 const deps = {
-  getBlueprintMinOpenshellVersion: () => "0.0.116",
-  getBlueprintMaxOpenshellVersion: () => "0.0.116",
+  getBlueprintMinOpenshellVersion: () => "0.1.7",
+  getBlueprintMaxOpenshellVersion: () => "0.1.7",
   versionGte: version.versionGte,
 };
 const resolution = pin.resolveOpenshellInstallPin(deps);
@@ -68,12 +70,12 @@ process.stdout.write(JSON.stringify({
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({
         installed: "0.0.99",
-        resolution: { kind: "pin", version: "0.0.116", latest: "0.0.117", reason: "max-cap" },
+        resolution: { kind: "pin", version: "0.1.7", latest: "0.1.8", reason: "max-cap" },
         replacement: {
           INSTALLED_OPENSHELL_VERSION: "0.0.99",
-          NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.116",
-          NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.116",
-          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116",
+          NEMOCLAW_OPENSHELL_MIN_VERSION: "0.1.7",
+          NEMOCLAW_OPENSHELL_MAX_VERSION: "0.1.7",
+          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.1.7",
         },
       });
     } finally {
@@ -82,12 +84,6 @@ process.stdout.write(JSON.stringify({
   },
 );
 
-const PINNED_OPEN_SHELL_SHA256 = {
-  cliLinuxX64: "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e",
-  gatewayLinuxX64: "59c6da724eae7a00c28826f9191efbdf4fbaa5c768afdc8dea6a80a949ebcc89",
-  sandboxLinuxX64: "0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423",
-};
-
 type GhDownloadMode = "success" | "fail";
 
 function writeExecutable(target: string, contents: string): void {
@@ -95,7 +91,7 @@ function writeExecutable(target: string, contents: string): void {
 }
 
 // Bash helpers shared by the gh and curl stubs: write a fake archive and emit
-// the same pinned digest lines the real OpenShell v0.0.116 release uses. A fake
+// the same pinned digest lines the real OpenShell v0.1.7 release uses. A fake
 // sha256sum below keeps this test self-contained even though the tarball bytes are
 // synthetic.
 const SHARED_DOWNLOAD_BASH_HELPERS = `\
@@ -345,6 +341,13 @@ function runVersionPinTarget(options: {
     const fakeBin = path.join(tmp, "bin");
     const downloadLog = path.join(tmp, "downloads.log");
     fs.mkdirSync(fakeBin);
+    fs.symlinkSync(process.execPath, path.join(fakeBin, "node"));
+    writeExecutable(
+      path.join(fakeBin, "mktemp"),
+      `#!/usr/bin/env bash
+if [ "$*" = "-d" ]; then exec /usr/bin/mktemp -d ${JSON.stringify(path.join(tmp, "install.XXXXXX"))}; fi
+exec /usr/bin/mktemp "$@"`,
+    );
     fs.writeFileSync(downloadLog, "");
 
     createFakeUname(fakeBin);
@@ -352,7 +355,7 @@ function runVersionPinTarget(options: {
     createFakeHelperBinaries(fakeBin);
     createFakeGh(fakeBin, downloadLog, options.ghDownloadMode);
     createFakeCurl(fakeBin, downloadLog);
-    createFakeTar(fakeBin, "0.0.116");
+    createFakeTar(fakeBin, "0.1.7");
     createFakeStrings(fakeBin);
     createFakeSha256sum(fakeBin);
     const unsafeDirectory = options.unsafeActiveDirectory?.location === "parent" ? tmp : fakeBin;
@@ -378,6 +381,8 @@ function runVersionPinTarget(options: {
         XDG_BIN_HOME: path.join(tmp, "private-bin"),
         NEMOCLAW_OPENSHELL_CHANNEL: "stable",
         PATH: `${fakeBin}:/usr/bin:/bin`,
+        XDG_CONFIG_HOME: path.join(tmp, "config"),
+        OPENSHELL_SYSTEM_GATEWAY_DIR: path.join(tmp, "system-openshell"),
         ...(unsafeActiveDirectory?.pretendRootOwned
           ? { BASH_ENV: rootStickyEnv, NEMOCLAW_TEST_ROOT_STICKY_DIR: unsafeDirectory }
           : {}),
@@ -406,10 +411,10 @@ function runVersionPinTarget(options: {
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(result.stdout).toMatch(options.expectedDecision);
 
-      // Assertion 2: download-log-contains-v0.0.116 — pinned release tag was
+      // Assertion 2: download-log-contains-v0.1.7 — pinned release tag was
       // requested from the release host.
       const downloads = fs.readFileSync(downloadLog, "utf-8");
-      expect(downloads).toContain("v0.0.116");
+      expect(downloads).toContain("v0.1.7");
 
       // Assertion 3: download-log-excludes-installed-version — the existing
       // release is never re-fetched in place of the pinned replacement.
@@ -418,23 +423,23 @@ function runVersionPinTarget(options: {
       if (options.ghDownloadMode === "fail") {
         // Assertion 3b: curl-fallback-observed — the installer must recover from
         // gh download failure by re-requesting the pinned assets via curl.
-        expect(downloads).toContain("gh download-fail v0.0.116");
+        expect(downloads).toContain("gh download-fail v0.1.7");
         expect(downloads).toContain("curl ");
       } else {
-        expect(downloads).toContain("gh download v0.0.116");
+        expect(downloads).toContain("gh download v0.1.7");
         expect(downloads).not.toContain("curl ");
       }
 
-      // Assertion 4: replaced-openshell-reports-0.0.116 — the binary on disk in
+      // Assertion 4: replaced-openshell-reports-0.1.7 — the binary on disk in
       // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
-      // there and it is writable) was overwritten with the pinned 0.0.116 build.
+      // there and it is writable) was overwritten with the pinned 0.1.7 build.
       const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
         encoding: "utf8",
         killSignal: "SIGKILL",
         timeout: 30_000,
       });
       expect(replacedVersion.status).toBe(0);
-      expect(replacedVersion.stdout).toContain("0.0.116");
+      expect(replacedVersion.stdout).toContain("0.1.7");
       expect(replacedVersion.stdout).not.toContain(options.installedVersion);
     };
     (unsafeActiveDirectory ? assertUnsafe : assertSuccessful)();
@@ -450,9 +455,9 @@ test(
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.116/u,
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.7/u,
       ghDownloadMode: "success",
-      installedVersion: "0.0.117",
+      installedVersion: "0.1.8",
     });
   },
 );
@@ -464,21 +469,21 @@ test(
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.116/u,
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.7/u,
       ghDownloadMode: "fail",
-      installedVersion: "0.0.117",
+      installedVersion: "0.1.8",
     });
   },
 );
 
 test(
-  "replaces an installed OpenShell 0.0.106 with the pinned 0.0.116 release (#11229)",
+  "replaces an installed OpenShell 0.0.106 with the pinned 0.1.7 release (#11229)",
   {
     timeout: TEST_TIMEOUT_MS,
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /below minimum 0\.0\.116.*upgrading/u,
+      expectedDecision: /below minimum 0\.1\.7.*upgrading/u,
       ghDownloadMode: "success",
       installedVersion: "0.0.106",
     });
@@ -506,7 +511,7 @@ test.each([
             timeout: 30_000,
           });
           expect(replacement.status).toBe(0);
-          expect(replacement.stdout).toContain("0.0.116");
+          expect(replacement.stdout).toContain("0.1.7");
         },
       },
     });

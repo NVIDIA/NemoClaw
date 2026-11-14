@@ -50,6 +50,7 @@ RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:"
 CONTROL_ERROR_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_ERROR_V1:"
 CONTROL_ERROR_CODE = "control-failure"
 DRAIN_MARKER_ROLLBACK_FAILED_CODE = "drain-marker-rollback-failed"
+GENERATION_OWNER_READ_REQUIRED_CODE = "gateway-generation-owner-read-required"
 BEGIN_TIMEOUT_SECONDS = 60.0
 RELEASE_TIMEOUT_SECONDS = 15.0
 POLL_SECONDS = 0.1
@@ -404,7 +405,14 @@ def _write_owned_record(
             staged_path.unlink(missing_ok=True)
 
 
-def _read_gateway_recovery_generation() -> str | None:
+def _generation_identity(metadata: os.stat_result) -> list[int]:
+    return [
+        metadata.st_dev, metadata.st_ino, metadata.st_uid, metadata.st_mode,
+        metadata.st_nlink, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns,
+    ]
+
+
+def _read_gateway_recovery_generation() -> dict[str, Any] | None:
     """Read the unprivileged supervisor's opaque, one-use generation."""
     try:
         expected_uid = HERMES_HOME.lstat().st_uid
@@ -417,6 +425,11 @@ def _read_gateway_recovery_generation() -> str | None:
         descriptor = os.open(GATEWAY_RECOVERY_WAITING_PATH, flags)
     except FileNotFoundError:
         return None
+    except PermissionError as error:
+        raise ControlError(
+            "Hermes gateway recovery generation requires its owner to read it",
+            code=GENERATION_OWNER_READ_REQUIRED_CODE,
+        ) from error
     except OSError as error:
         raise ControlError("Hermes gateway recovery generation is unreadable") from error
     try:
@@ -445,10 +458,14 @@ def _read_gateway_recovery_generation() -> str | None:
         or any(character not in "0123456789abcdef" for character in payload[3:-1])
     ):
         raise ControlError("Hermes gateway recovery generation is invalid")
-    return payload[3:-1]
+    return {
+        "version": 1,
+        "generation": payload[3:-1],
+        "identity": _generation_identity(metadata),
+    }
 
 
-def _wait_for_gateway_recovery_generation() -> str | None:
+def _wait_for_gateway_recovery_generation() -> dict[str, Any] | None:
     deadline = time.monotonic() + GATEWAY_RECOVERY_WAIT_SECONDS
     while True:
         generation = _read_gateway_recovery_generation()
@@ -457,6 +474,36 @@ def _wait_for_gateway_recovery_generation() -> str | None:
         if time.monotonic() >= deadline:
             return None
         time.sleep(POLL_SECONDS)
+
+
+def _validate_recovery_observation(raw: str) -> dict[str, Any] | None:
+    """Revalidate the owner's read before the root controller publishes a request."""
+    try:
+        observed = json.loads(raw)
+        metadata = GATEWAY_RECOVERY_WAITING_PATH.lstat()
+    except FileNotFoundError:
+        if observed is None:
+            return None
+        raise ControlError("Hermes gateway recovery generation changed after observation")
+    except (OSError, ValueError) as error:
+        raise ControlError("Hermes gateway recovery observation is invalid") from error
+    if (
+        not isinstance(observed, dict)
+        or set(observed) != {"version", "generation", "identity"}
+        or type(observed["version"]) is not int
+        or observed["version"] != 1
+        or not isinstance(observed["generation"], str)
+        or len(observed["generation"]) != 64
+        or any(c not in "0123456789abcdef" for c in observed["generation"])
+        or observed["identity"] != _generation_identity(metadata)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != HERMES_HOME.lstat().st_uid
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+        or metadata.st_size != 68
+    ):
+        raise ControlError("Hermes gateway recovery generation changed after observation")
+    return observed
 
 
 def _self_process_identity() -> tuple[int, int]:
@@ -1067,15 +1114,19 @@ def _prepare_owned_drain() -> str | None:
     return drain_token
 
 
-def prepare_recovery() -> None:
+def prepare_recovery(observation: str | None = None) -> None:
     """Re-establish any persisted NemoClaw gate before host gateway repair."""
     with _control_lock():
         drain_acquired = _prepare_owned_drain() is not None
-        generation = _wait_for_gateway_recovery_generation()
+        generation = (
+            _wait_for_gateway_recovery_generation()
+            if observation is None
+            else _validate_recovery_observation(observation)
+        )
         if generation is not None:
             requester_pid, requester_start_time = _self_process_identity()
             _publish_gateway_recovery_request(
-                generation, requester_pid, requester_start_time
+                generation["generation"], requester_pid, requester_start_time
             )
         _prepare_recovery_receipt(drain_acquired, generation is not None)
 
@@ -1231,7 +1282,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="action", required=True)
     subparsers.add_parser("begin")
-    subparsers.add_parser("prepare-recover")
+    prepare = subparsers.add_parser("prepare-recover")
+    prepare.add_argument("--generation-observation-stdin", action="store_true")
     subparsers.add_parser("recover")
     for action in ("validate", "observe", "complete"):
         subparser = subparsers.add_parser(action)
@@ -1255,7 +1307,10 @@ def main() -> int:
         if args.action == "begin":
             begin_drain()
         elif args.action == "prepare-recover":
-            prepare_recovery()
+            observation = sys.stdin.read(2049) if args.generation_observation_stdin else None
+            if observation is not None and len(observation) > 2048:
+                raise ControlError("Hermes gateway recovery observation is too large")
+            prepare_recovery(observation)
         elif args.action == "recover":
             recover_drain()
         elif args.action == "validate":

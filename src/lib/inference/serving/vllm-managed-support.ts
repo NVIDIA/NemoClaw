@@ -25,7 +25,3 @@ export {
   persistHostLocalVllmRuntimeReceipt,
   recoverHostLocalManagedVllmEndpoint,
 } from "./vllm-host-local-lifecycle.js";
-export {
-  resolveManagedVllmBridgeHost,
-  validateManagedVllmBridgeHost,
-} from "./vllm-host-local-network.js";

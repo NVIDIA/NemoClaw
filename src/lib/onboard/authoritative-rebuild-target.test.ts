@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
+import * as managedProvider from "../adapters/openshell/managed-provider-adapter";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -599,4 +601,31 @@ describe("authoritative rebuild target preflight", () => {
     expect(targetDeps.assertGatewayReadiness).not.toHaveBeenCalled();
     expect(targetDeps.inferenceRouteState).not.toHaveBeenCalled();
   });
+});
+
+it("checks the immutable external provider instead of the removed shared route during recreate preflight", async () => {
+  const f = registeredInferenceFixture(false);
+  vi.spyOn(managedProvider, "createManagedProviderAdapter").mockReturnValue(f.adapter);
+  const targetDeps = deps({
+    inferenceRouteState: vi.fn(() => {
+      throw new Error("retired route");
+    }),
+  });
+  const registeredTarget = {
+    ...target,
+    sandboxName: f.binding.sandboxName,
+    targetGatewayName: f.binding.gatewayName,
+    controlUiPort: null,
+    provider: f.binding.providerName,
+    registeredInferenceProviderAttachment: f.binding,
+  };
+  await expect(
+    preflightAuthoritativeRebuildTarget(registeredTarget, targetDeps),
+  ).resolves.toBeUndefined();
+  f.state.id = "replacement";
+  await expect(preflightAuthoritativeRebuildTarget(registeredTarget, targetDeps)).rejects.toThrow();
+  expect(targetDeps.inferenceRouteState).not.toHaveBeenCalled();
+  expect(f.adapter.createProvider).not.toHaveBeenCalled();
+  expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+  expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
 });

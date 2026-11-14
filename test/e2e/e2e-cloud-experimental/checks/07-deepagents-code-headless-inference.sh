@@ -311,14 +311,10 @@ SHIM
 )
 
 sandbox_login_proxy_contract() {
-  # Keep the remote login contract in one quoted shell expression so the
-  # fixture can dispatch it atomically. inference.local is intentionally absent from
-  # NO_PROXY: OpenShell does not need to provision inference.local DNS/hosts
-  # into the sandbox because its managed proxy owns this L7 route. Adding
-  # inference.local here would bypass that proxy and force a direct DNS lookup.
+  # Keep one quoted command so the fixture dispatches the login contract atomically.
   local contract_command
   # shellcheck disable=SC2016
-  contract_command='set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_FAIL:$1"; exit 1; }; proxy_file_metadata() { stat -c "%u:%a" "$1" 2>/dev/null || stat -f "%u:%Lp" "$1" 2>/dev/null; }; [ "${HOME:-}" = /sandbox ] || contract_fail home; runtime_uid="$(id -u)" || contract_fail runtime-user; sandbox_uid="$(id -u sandbox)" || contract_fail runtime-user; [ "$runtime_uid" != 0 ] && [ "$runtime_uid" = "$sandbox_uid" ] || contract_fail runtime-user; for file in /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port; do [ -f "$file" ] && [ ! -L "$file" ] && [ "$(proxy_file_metadata "$file")" = "0:444" ] || contract_fail proxy-file-trust; done; trusted_proxy_host="$(cat /usr/local/share/nemoclaw/dcode-proxy-host)" || contract_fail proxy-file-read; trusted_proxy_port="$(cat /usr/local/share/nemoclaw/dcode-proxy-port)" || contract_fail proxy-file-read; proxy_env=/tmp/nemoclaw-proxy-env.sh; [ -f "$proxy_env" ] && [ ! -L "$proxy_env" ] && [ "$(proxy_file_metadata "$proxy_env")" = "${runtime_uid}:444" ] || contract_fail proxy-env-file-metadata; [ -z "${ALL_PROXY+x}" ] || contract_fail all-proxy; [ -z "${all_proxy+x}" ] || contract_fail lower-all-proxy; proxy_url="${HTTP_PROXY:-}"; case "$proxy_url" in http://*:*) ;; *) contract_fail proxy-shape ;; esac; case "$proxy_url" in *"@"*) contract_fail proxy-credentials ;; esac; expected_proxy_url="http://${trusted_proxy_host}:${trusted_proxy_port}"; [ "$proxy_url" = "$expected_proxy_url" ] || contract_fail proxy-source; [ "$proxy_url" = "${HTTPS_PROXY:-}" ] || contract_fail https-proxy; [ "$proxy_url" = "${http_proxy:-}" ] || contract_fail lower-http-proxy; [ "$proxy_url" = "${https_proxy:-}" ] || contract_fail lower-https-proxy; expected_no_proxy="localhost,127.0.0.1,::1,${trusted_proxy_host}"; [ "${NO_PROXY:-}" = "$expected_no_proxy" ] || contract_fail no-proxy; [ "${no_proxy:-}" = "$expected_no_proxy" ] || contract_fail lower-no-proxy; printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_OK"'
+  contract_command='set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_FAIL:$1"; exit 1; }; proxy_file_metadata() { stat -c "%u:%a" "$1" 2>/dev/null || stat -f "%u:%Lp" "$1" 2>/dev/null; }; [ "${HOME:-}" = /sandbox ] || contract_fail home; runtime_uid="$(id -u)" || contract_fail runtime-user; sandbox_uid="$(id -u sandbox)" || contract_fail runtime-user; [ "$runtime_uid" != 0 ] && [ "$runtime_uid" = "$sandbox_uid" ] || contract_fail runtime-user; proxy_env=/tmp/nemoclaw-proxy-env.sh; [ -f "$proxy_env" ] && [ ! -L "$proxy_env" ] && [ "$(proxy_file_metadata "$proxy_env")" = "${runtime_uid}:444" ] || contract_fail proxy-env-file-metadata; for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy OPENAI_PROXY grpc_proxy GRPC_PROXY NODE_USE_ENV_PROXY DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL; do [ -z "${!name+x}" ] || contract_fail ambient-proxy; done; printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_OK"'
   sandbox_login_exec "$contract_command"
 }
 
@@ -711,24 +707,24 @@ main() {
     fi
   fi
 
-  # 3. The login shell loaded the exact normalized proxy contract from .profile.
+  # 3. The login shell cleared ambient proxy routes from .profile.
   proxy_contract_output="$(sandbox_login_proxy_contract || true)"
   if printf '%s\n' "$proxy_contract_output" | grep -Fxq "NEMOCLAW_DCODE_PROXY_ENV_OK"; then
-    pass "login shell loaded the normalized managed proxy environment"
+    pass "login shell loaded the managed environment without ambient proxies"
   else
     proxy_contract_reason="$(printf '%s\n' "$proxy_contract_output" | sed -n 's/^NEMOCLAW_DCODE_PROXY_ENV_FAIL:\([a-z-]*\)$/\1/p' | tail -n1)"
-    fail_test "login shell did not load the normalized managed proxy environment (${proxy_contract_reason:-unknown contract mismatch})"
+    fail_test "login shell did not load the managed environment without ambient proxies (${proxy_contract_reason:-unknown contract mismatch})"
   fi
 
-  # 4. The managed route is reachable through the normalized login-shell proxy.
+  # 4. The selected route is reachable from the managed login shell.
   # Native NVIDIA is proved through the attached-provider dcode PONG below.
   if [ "$route_contract" = "managed" ]; then
-    route_output="$(sandbox_login_exec "curl -sS -o /dev/null -w 'HTTP_CODE:%{http_code}' --proxy \"\${HTTPS_PROXY}\" --noproxy \"\${NO_PROXY}\" --max-time 30 https://inference.local/v1/models" || true)"
+    route_output="$(sandbox_login_exec "curl -sS -o /dev/null -w 'HTTP_CODE:%{http_code}' --proxy '' --noproxy '' --max-time 30 https://inference.local/v1/models" || true)"
     route_code="$(printf '%s' "$route_output" | sed -n 's/.*HTTP_CODE:\([0-9][0-9][0-9]\).*/\1/p' | tail -n1)"
     if [ "$route_code" = "200" ]; then
-      pass "login-shell proxy reached https://inference.local/v1/models"
+      pass "login-shell request reached https://inference.local/v1/models"
     else
-      fail_test "login-shell proxy did not receive HTTP 200 from https://inference.local/v1/models (HTTP ${route_code:-000})"
+      fail_test "login-shell request did not receive HTTP 200 from https://inference.local/v1/models (HTTP ${route_code:-000})"
     fi
   fi
 

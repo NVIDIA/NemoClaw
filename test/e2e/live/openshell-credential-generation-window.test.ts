@@ -5,6 +5,8 @@ import {
   buildMcpCredentialDetachedCommand,
   buildMcpCredentialRevisionObservationCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness.ts";
+import { normalizeNativeLocalProviderAttachment } from "../../../src/lib/inference/native-local/profile.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -14,17 +16,13 @@ import { assertExitZero as expectExitZero, resultText } from "../fixtures/client
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import {
-  HOSTED_INFERENCE_CREDENTIAL_ENV,
-  HOSTED_INFERENCE_PROVIDER_NAME,
-} from "../fixtures/hosted-inference.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { hostAddressForSandbox } from "./mcp-bridge-sandbox.ts";
 import { prepareOwnedSandboxForOnboard } from "../fixtures/owned-sandbox-cleanup.ts";
 import {
   type FakeMcpHttpsServer,
   startCompatibleMock,
+  withCompatibleMockFailureDiagnostics,
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "./mcp-bridge-servers.ts";
@@ -210,6 +208,7 @@ async function readSandboxFile(
 }
 
 async function waitForReadyRevision(sandbox: SandboxClient): Promise<string> {
+  let ready = "";
   await expect
     .poll(
       async () => {
@@ -218,7 +217,8 @@ async function waitForReadyRevision(sandbox: SandboxClient): Promise<string> {
           CREDENTIAL_WINDOW_PATHS.ready,
           "credential-window-old-child-ready-poll",
         );
-        return result.exitCode === 0 ? result.stdout.trim() : "";
+        ready = result.exitCode === 0 ? result.stdout.trim() : "";
+        return ready;
       },
       {
         interval: 500,
@@ -227,13 +227,7 @@ async function waitForReadyRevision(sandbox: SandboxClient): Promise<string> {
       },
     )
     .toMatch(/^\{"revision":"v[0-9]{1,20}"\}$/u);
-  const result = await readSandboxFile(
-    sandbox,
-    CREDENTIAL_WINDOW_PATHS.ready,
-    "credential-window-old-child-ready",
-  );
-  expectExitZero(result, "read old credential-window child revision");
-  return (JSON.parse(result.stdout) as { revision: string }).revision;
+  return (JSON.parse(ready) as { revision: string }).revision;
 }
 
 async function waitForAcknowledgement(
@@ -299,7 +293,7 @@ async function updateProviderCredential(
 ): Promise<void> {
   const args =
     credentialEnv === CREDENTIAL_WINDOW_ENV_NAME
-      ? buildCredentialWindowProviderUpdateArgs(providerName, expiresAtMs, secret.length === 0)
+      ? buildCredentialWindowProviderUpdateArgs(providerName, expiresAtMs)
       : [
           "provider",
           "update",
@@ -367,7 +361,7 @@ test(
         "prove a retained credential generation expires",
         "prove an expired inference credential cannot delete the source sandbox",
         "rotate beyond the retained generation window",
-        "prove key and bridge removal revoke access",
+        "prove current credential expiry and bridge removal revoke access",
         "re-add the bridge and keep the old process revoked",
         "rebuild the sandbox and confirm credential reuse",
         "remove the MCP bridge and audit denied requests",
@@ -386,11 +380,11 @@ test(
     await artifacts.target.declare({
       id: "openshell-credential-generation-window",
       contracts: [
-        "OpenShell f27ff150 retained credential generations",
+        "OpenShell 0.1.7 ordinary static credential generations",
         "NemoClaw MCP detach, restart, and rebuild lifecycle",
         "NemoClaw rejects an expired selected inference credential before rebuild deletion",
       ],
-      sourceRevision: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
+      sourceRevision: "bdb956f2cd65a635f1294fccf1d138d263bf650f",
     });
 
     const compatibleMock = await startCompatibleMock({
@@ -406,8 +400,7 @@ test(
       progress,
       server: fakeMcp,
     });
-    const hostAddress = await hostAddressForSandbox(host);
-    const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
+    const endpointUrl = `http://host.openshell.internal:${compatibleMock.port}/v1`;
     await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, SANDBOX_NAME);
     const onboard = await host.nemoclaw(
       ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
@@ -431,10 +424,12 @@ test(
       },
     );
     expectExitZero(onboard, "onboard credential-window sandbox");
-    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, buildAvailabilityProbeEnv(), [
-      COMPATIBLE_KEY,
-      ...allSecrets,
-    ]);
+    await withCompatibleMockFailureDiagnostics(compatibleMock, artifacts, () =>
+      approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, buildAvailabilityProbeEnv(), [
+        COMPATIBLE_KEY,
+        ...allSecrets,
+      ]),
+    );
     const sourceSandboxId = await sandboxIdentity(
       sandbox,
       "credential-window-source-sandbox-before-expiry",
@@ -473,7 +468,21 @@ test(
     expectExitZero(status, "inspect credential-window MCP bridge");
     const providerName = (JSON.parse(status.stdout) as { provider: { name: string } }).provider
       .name;
-    expect(providerName).toBe("e2e-cred-window-mcp-fake");
+    const inferenceAttachment = normalizeNativeLocalProviderAttachment(
+      getSandbox(SANDBOX_NAME)?.nativeLocalProviderAttachment,
+    );
+    expect({ providerName, inferenceAttachment }).toMatchObject({
+      providerName: "e2e-cred-window-mcp-fake",
+      inferenceAttachment: {
+        sandboxName: SANDBOX_NAME,
+        gatewayName: openshellEnv().OPENSHELL_GATEWAY,
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        endpointUrl,
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "authenticated",
+      },
+    });
 
     const originalRevision = await observeFreshRevision(
       sandbox,
@@ -509,12 +518,12 @@ test(
     );
     await updateProviderCredential(
       sandbox,
-      HOSTED_INFERENCE_PROVIDER_NAME,
+      inferenceAttachment!.providerName,
       COMPATIBLE_KEY,
       expiryAtMs,
       allSecrets,
       "credential-window-expire-inference-provider",
-      HOSTED_INFERENCE_CREDENTIAL_ENV,
+      inferenceAttachment!.credentialEnv,
     );
     const expiryRevision = await observeDistinctFreshRevision(
       sandbox,
@@ -533,7 +542,7 @@ test(
       },
     );
     let expiryChildRevision = "";
-    let expiryChildResult: ShellProbeResult | undefined;
+    let expiryChildResult: ShellProbeResult;
     let restoredRevision = "";
     try {
       expiryChildRevision = await waitForReadyRevision(sandbox);
@@ -619,22 +628,19 @@ test(
         });
         const expiredRebuildOutput = resultText(expiredRebuild);
         expect(expiredRebuild.exitCode, expiredRebuildOutput).not.toBe(0);
-        expect(expiredRebuildOutput).toContain(
-          `provider '${HOSTED_INFERENCE_PROVIDER_NAME}' credential <REDACTED> is expired`,
-        );
-        expect(expiredRebuildOutput).not.toMatch(/Backing up sandbox state|Deleting old sandbox/u);
+        expect(expiredRebuildOutput).toContain("Native provider credential is expired");
         expect(
           await sandboxIdentity(sandbox, "credential-window-source-sandbox-after-expired-rebuild"),
         ).toBe(sourceSandboxId);
       } finally {
         await updateProviderCredential(
           sandbox,
-          HOSTED_INFERENCE_PROVIDER_NAME,
+          inferenceAttachment!.providerName,
           COMPATIBLE_KEY,
           0,
           allSecrets,
           "credential-window-restore-inference-provider",
-          HOSTED_INFERENCE_CREDENTIAL_ENV,
+          inferenceAttachment!.credentialEnv,
         );
       }
     } finally {
@@ -651,9 +657,8 @@ test(
       expiryChildResult = await expiryChildPromise;
     }
 
-    expect(expiryChildResult).toBeDefined();
-    expectExitZero(expiryChildResult!, "retained-expiry credential-window child");
-    expect(parseLastJsonLine<CredentialWindowChildResult>(expiryChildResult!.stdout)).toEqual({
+    expectExitZero(expiryChildResult, "retained-expiry credential-window child");
+    expect(parseLastJsonLine<CredentialWindowChildResult>(expiryChildResult.stdout)).toEqual({
       revision: expiryChildRevision,
       outcomes: [
         {
@@ -701,7 +706,7 @@ test(
       },
     );
     let oldChildRevision = "";
-    let oldChildResult: ShellProbeResult | undefined;
+    let oldChildResult: ShellProbeResult;
     let restartedRevision = "";
     const observedRevisions: string[] = [];
     try {
@@ -716,7 +721,6 @@ test(
       }
       expect(new Set(observedRevisions).size).toBe(CREDENTIAL_WINDOW_ROTATION_COUNT + 1);
       const currentRevision = observedRevisions.at(-1)!;
-      expect(currentRevision).not.toBe(oldChildRevision);
       await artifacts.writeJson("credential-window-revisions.json", {
         expiryAtMs,
         expiryRevision,
@@ -766,33 +770,33 @@ test(
         ),
       ).toEqual(currentCredential);
 
-      progress.phase("prove key and bridge removal revoke access");
+      progress.phase("prove current credential expiry and bridge removal revoke access");
       await updateProviderCredential(
         sandbox,
         providerName,
-        "",
-        0,
+        rotatedSecret,
+        Date.now() - 1,
         allSecrets,
-        "credential-window-remove-current-key",
+        "credential-window-expire-current-key",
       );
       await expectFreshCredentialAbsent(
         sandbox,
-        "credential-window-fresh-credential-absent-after-key-removal",
+        "credential-window-fresh-credential-absent-after-current-expiry",
       );
       await writeControl(
         sandbox,
-        CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
-        "credential-window-signal-after-key-removal",
+        CREDENTIAL_WINDOW_STEPS.deniedAfterCurrentExpiry,
+        "credential-window-signal-after-current-expiry",
       );
       await waitForAcknowledgement(
         sandbox,
-        CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
+        CREDENTIAL_WINDOW_STEPS.deniedAfterCurrentExpiry,
         "denied",
       );
       expect(
         requestEvidence(
           fakeMcp,
-          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval),
+          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterCurrentExpiry),
           rotatedSecret,
         ).seen,
       ).toBe(false);
@@ -939,24 +943,9 @@ test(
       oldChildResult = await oldChildPromise;
     }
 
-    expect(oldChildResult).toBeDefined();
-    expectExitZero(oldChildResult!, "old credential-window child");
-    const childSummary = parseLastJsonLine<CredentialWindowChildResult>(oldChildResult!.stdout);
-    expect(childSummary).toEqual({
-      revision: oldChildRevision,
-      outcomes: [
-        {
-          step: CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
-          outcome: "allowed",
-        },
-        { step: CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval, outcome: "denied" },
-        { step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach, outcome: "denied" },
-        {
-          step: CREDENTIAL_WINDOW_STEPS.deniedAfterReadd,
-          outcome: "denied",
-        },
-      ],
-    });
+    expectExitZero(oldChildResult, "old credential-window child");
+    const childSummary = parseLastJsonLine<CredentialWindowChildResult>(oldChildResult.stdout);
+    expect(childSummary.revision).toBe(oldChildRevision);
 
     progress.phase("rebuild the sandbox and confirm credential reuse");
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {

@@ -26,6 +26,61 @@ function hasSdkArtifact(): boolean {
 }
 
 describe("released OpenShell SDK export reads", () => {
+  it.skipIf(!hasSdkArtifact()).each([
+    [0, 0, 0, {}],
+    [1, 0, 0, { tls: "skip" }],
+    [0, 1, 1, { enforcement: "enforce", access: "read-only" }],
+    [0, 2, 2, { enforcement: "audit", access: "read-write" }],
+    [0, 1, 3, { enforcement: "enforce", access: "full" }],
+  ] as const)(
+    "exports SDK policy modes %i/%i/%i without runtime ownership markers",
+    async (tls, enforcement, access, expected) => {
+      const sdkPackage = "@nvidia/openshell-sdk/raw";
+      const protobufPackage = "@bufbuild/protobuf";
+      const [raw, { create }] = await Promise.all([import(sdkPackage), import(protobufPackage)]);
+      const policy = create(raw.SandboxPolicySchema, {
+        version: 1,
+        networkPolicies: {
+          api: {
+            endpoints: [
+              {
+                host: "api.example",
+                port: 443,
+                tls,
+                enforcement,
+                access,
+                advisorProposed: true,
+                providerCredentialed: true,
+                tokenGrantOwner: "provider-owned-endpoint",
+              },
+            ],
+          },
+        },
+      });
+      const document = YAML.parse(await serializeSdkPolicy(policy));
+      expect(document.network_policies.api.endpoints).toEqual([
+        { host: "api.example", port: 443, ...expected },
+      ]);
+    },
+  );
+
+  it.skipIf(!hasSdkArtifact()).each([
+    ["tls", 2],
+    ["tls", 3],
+    ["tls", 99],
+    ["enforcement", 99],
+    ["access", 99],
+  ] as const)("rejects unsupported SDK policy mode %s=%i", async (field, value) => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [raw, { create }] = await Promise.all([import(sdkPackage), import(protobufPackage)]);
+    const policy = create(raw.SandboxPolicySchema, {
+      version: 1,
+      networkPolicies: { api: { endpoints: [{ host: "api.example", [field]: value }] } },
+    });
+    await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({ kind: "schema" });
+  });
+
   it.skipIf(!hasSdkArtifact()).each(["brave"] as const)(
     "qualifies the checked-in %s profile through generated SDK responses (#10904)",
     async (profileId) => {
@@ -47,7 +102,12 @@ describe("released OpenShell SDK export reads", () => {
         scope: "workspace",
         resourceVersion: "4",
         credentials: checkedIn.credentials,
-        endpoints: checkedIn.endpoints,
+        endpoints: checkedIn.endpoints.map((endpoint: Record<string, unknown>) => ({
+          ...endpoint,
+          access:
+            raw.NetworkAccessPreset[String(endpoint.access).replaceAll("-", "_").toUpperCase()],
+          enforcement: raw.NetworkEnforcementMode[String(endpoint.enforcement).toUpperCase()],
+        })),
         binaries: checkedIn.binaries.map((path: string) => ({ path })),
         inference_capable: checkedIn.inference_capable,
       });
@@ -78,14 +138,16 @@ describe("released OpenShell SDK export reads", () => {
           },
         },
       };
-      const result = await createProviders(async () => client).get({
-        target: { kind: "named", gatewayName: "nemoclaw" },
+      const request = {
+        target: { kind: "named", gatewayName: "nemoclaw" } as const,
         workspace: "default",
         name: "alpha",
         configKeys: [],
         profileContract: profileId,
         signal: new AbortController().signal,
-      });
+      };
+      const providers = createProviders(async () => client);
+      const result = await providers.get(request);
       expect(result?.managedProfile).toEqual({
         id: profileId,
         source: "user",
@@ -93,6 +155,9 @@ describe("released OpenShell SDK export reads", () => {
         resourceVersion: "4",
       });
       expect(result?.profileWorkspace).toBe("default");
+      // Decoding an invalid access preset must not qualify the shipped profile.
+      profile.endpoints[0].access = 0;
+      await expect(providers.get(request)).rejects.toMatchObject({ kind: "schema" });
     },
   );
 
@@ -105,7 +170,7 @@ describe("released OpenShell SDK export reads", () => {
     async (providerType, profileWorkspace) => {
       const sdkPackage = "@nvidia/openshell-sdk/raw";
       const protobufPackage = "@bufbuild/protobuf";
-      const [raw, { create, toBinary, fromBinary }] = await Promise.all([
+      const [raw, { create, toBinary, fromBinary, toJson }] = await Promise.all([
         import(sdkPackage),
         import(protobufPackage),
       ]);
@@ -121,7 +186,17 @@ describe("released OpenShell SDK export reads", () => {
       const client: OpenShellReadClient = {
         raw: {
           getProviderProfile: async (request) => {
-            expect(request).toEqual({ id: "nvidia", workspace: profileWorkspace });
+            expect(
+              toJson(
+                raw.OpenShell.method.getProviderProfile.input,
+                roundTrip(raw.OpenShell.method.getProviderProfile.input, request),
+              ),
+            ).toEqual({
+              id: "nvidia",
+              ...(profileWorkspace === ""
+                ? {}
+                : { workspaceScope: { workspace: profileWorkspace } }),
+            });
             return roundTrip(raw.OpenShell.method.getProviderProfile.output, {
               profile: {
                 id: "nvidia",
@@ -131,8 +206,17 @@ describe("released OpenShell SDK export reads", () => {
               },
             });
           },
-          getProvider: async () =>
-            roundTrip(raw.OpenShell.method.getProvider.output, {
+          getProvider: async (input) => {
+            expect(
+              toJson(
+                raw.OpenShell.method.getProvider.input,
+                roundTrip(raw.OpenShell.method.getProvider.input, input),
+              ),
+            ).toEqual({
+              name: "alpha",
+              workspaceScope: { workspace: "default" },
+            });
+            return roundTrip(raw.OpenShell.method.getProvider.output, {
               provider: {
                 metadata,
                 type: providerType,
@@ -141,17 +225,34 @@ describe("released OpenShell SDK export reads", () => {
                 config:
                   providerType === "nvidia" ? {} : { OPENAI_BASE_URL: "https://api.example/v1" },
               },
-            }),
-          getSandbox: async () =>
-            roundTrip(raw.OpenShell.method.getSandbox.output, {
+            });
+          },
+          getSandbox: async (input) => {
+            expect(
+              toJson(
+                raw.OpenShell.method.getSandbox.input,
+                roundTrip(raw.OpenShell.method.getSandbox.input, input),
+              ),
+            ).toEqual({
+              name: "alpha",
+              workspaceScope: { workspace: "default" },
+            });
+            return roundTrip(raw.OpenShell.method.getSandbox.output, {
               sandbox: {
                 metadata,
                 spec: { template: { image: "image@sha256:" + "a".repeat(64) } },
                 status: { currentPolicyVersion: 3 },
               },
-            }),
-          getSandboxConfig: async () =>
-            roundTrip(raw.GetSandboxConfigResponseSchema, {
+            });
+          },
+          getSandboxConfig: async (input) => {
+            expect(
+              toJson(
+                raw.GetSandboxConfigRequestSchema,
+                roundTrip(raw.GetSandboxConfigRequestSchema, input),
+              ),
+            ).toEqual({ name: "alpha", workspaceScope: { workspace: "default" } });
+            return roundTrip(raw.GetSandboxConfigResponseSchema, {
               policy: {
                 version: 1,
                 filesystem: { readOnly: ["/usr"] },
@@ -169,7 +270,8 @@ describe("released OpenShell SDK export reads", () => {
               policySource: 1,
               configRevision: 9007199254740993n,
               providerEnvRevision: 18446744073709551615n,
-            }),
+            });
+          },
         },
       };
       const connect = async () => client;
@@ -579,7 +681,18 @@ describe.skipIf(!hasSdkArtifact())("released OpenShell policy document conversio
         raw: {
           getProvider: async () => undefined,
           getProviderProfile: async () => undefined,
-          getSandbox: async () => undefined,
+          getSandbox: async () => ({
+            sandbox: {
+              metadata: {
+                id: "verified-id",
+                name: "alpha",
+                workspace: "default",
+                resourceVersion: 1n,
+              },
+              status: { currentPolicyVersion: 3 },
+              spec: { template: { image: "fixture-image" }, providers: [] },
+            },
+          }),
           getSandboxConfig: async () => ({
             policy,
             workspace: "default",
@@ -594,6 +707,7 @@ describe.skipIf(!hasSdkArtifact())("released OpenShell policy document conversio
       }));
       const config = await reader.get({
         sandboxId: "verified-id",
+        name: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw" },
         workspace: "default",
         signal: new AbortController().signal,

@@ -36,7 +36,10 @@ export function createSandboxes(connect: ConnectOpenShellReader = connectOpenShe
         try {
           // sandbox.get() omits workspace, template image, and the active policy version.
           response = await client.raw.getSandbox(
-            { name, workspace: request.workspace },
+            {
+              name,
+              workspaceScope: { selection: { case: "workspace", value: request.workspace } },
+            },
             { signal: request.signal },
           );
         } catch (error) {

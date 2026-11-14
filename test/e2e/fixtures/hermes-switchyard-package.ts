@@ -307,9 +307,12 @@ with TemporaryDirectory() as directory, LocalUpstream('efficient') as efficient,
                 os.environ[name] = value
     assert nemo_relay.plugin.report() is None
     capture_maps('after_shutdown')
+# Record loader state without requiring immediate unmapping after shutdown.
+print('Switchyard library mapped after shutdown:', str(library) in Path('/proc/self/maps').read_text(),
+      file=sys.stderr, flush=True)
 # The separate probe must not change the gateway's routing state.
 assert library.name not in Path(f'/proc/{pid}/maps').read_text()
-print('Switchyard package, disabled gateway, adaptive route, native activation, and cleanup verified')
+print('Switchyard package, disabled gateway, adaptive route, native activation, and cleanup verified', flush=True)
 PY
 `;
 

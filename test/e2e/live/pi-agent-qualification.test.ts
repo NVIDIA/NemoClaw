@@ -31,6 +31,10 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertNoDockerfileBuild, createDockerBuildGuard } from "../fixtures/docker-build-guard.ts";
+import {
+  cleanupOwnedSandboxAfterOnboard,
+  cleanupRegisteredSandbox,
+} from "../fixtures/owned-sandbox-cleanup.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -245,7 +249,7 @@ async function persistentStateInventory(
   const result = await execPiShell(
     sandbox,
     trustedSandboxShellScript(
-      `${stateFixture}{ [ ! -f /sandbox/.pi/agent/settings.json ] || sha256sum /sandbox/.pi/agent/settings.json; find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -exec sha256sum {} +; find /sandbox/.pi/agent -maxdepth 1 -type f -name trust.json -exec grep -F '${PI_TRUST_PRESERVATION_MARKER}' {} +; } | sort`,
+      `set -euo pipefail; ${stateFixture}{ [ ! -f /sandbox/.pi/agent/settings.json ] || sha256sum /sandbox/.pi/agent/settings.json; find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -exec sha256sum {} +; find /sandbox/.pi/agent -maxdepth 1 -type f -name trust.json -exec sed -n '/${PI_TRUST_PRESERVATION_MARKER}/p' {} +; } | sort`,
     ),
     { artifactName: `pi-${phase}-persistent-state-inventory`, env, timeoutMs: 30_000 },
   );
@@ -311,7 +315,16 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, inference, lifecycle, progress, sandbox }) => {
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    inference,
+    lifecycle,
+    progress,
+    runtimeProvider,
+    sandbox,
+  }) => {
     const platform = qualificationPlatform(
       process.arch,
       process.env.NEMOCLAW_PI_QUALIFICATION_PLATFORM,
@@ -339,9 +352,20 @@ test(
     cleanup.trackDisposable("remove Pi Docker build guard", guard.dispose);
     cleanup.trackGateway(host, GATEWAY, { env, timeoutMs: 60_000 });
     cleanup.trackDisposable("remove Pi OpenShell sandbox", () =>
-      sandbox.cleanupSandbox(SANDBOX_NAME, { env, timeoutMs: 60_000 }),
+      cleanupOwnedSandboxAfterOnboard(sandbox, runtimeProvider, SANDBOX_NAME, {
+        env,
+        timeoutMs: 60_000,
+      }),
     );
-    cleanup.trackSandbox(host, SANDBOX_NAME, { env, timeoutMs: 5 * 60_000 });
+    cleanup.trackDisposable(`destroy sandbox ${SANDBOX_NAME}`, () =>
+      cleanupRegisteredSandbox(SANDBOX_NAME, () =>
+        host.cleanupSandbox(SANDBOX_NAME, {
+          env,
+          cleanupGateway: true,
+          timeoutMs: 5 * 60_000,
+        }),
+      ),
+    );
 
     await artifacts.target.declare({
       id: "pi-agent-qualification",

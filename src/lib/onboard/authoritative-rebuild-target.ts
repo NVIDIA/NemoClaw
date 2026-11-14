@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  registeredInferenceProviderRevision,
+  type RegisteredInferenceProviderAttachment,
+} from "../inference/native-provider/registered";
+
+import {
   replaceOpenShellRuntimeSelectionEnv,
   snapshotOpenShellEnv,
   type OpenShellRuntimeSelection,
@@ -107,6 +112,7 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
   /** Internal prepared-backup recovery defers route repair to authoritative onboard. */
   deferInferenceRouteUntilOnboard?: true;
   agent?: string | null;
+  registeredInferenceProviderAttachment?: RegisteredInferenceProviderAttachment;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   nativeHostedProviderAttachment?: NativeProviderAttachment;
@@ -169,6 +175,7 @@ export function resolveAuthoritativeOnboardGatewayBinding(
 export type AuthoritativeRebuildTarget = {
   deferInferenceRouteUntilOnboard?: true;
   agent?: string | null;
+  registeredInferenceProviderAttachment?: RegisteredInferenceProviderAttachment;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   nativeHostedProviderAttachment?: NativeProviderAttachment;
@@ -381,13 +388,28 @@ export async function preflightAuthoritativeRebuildTarget<
     // the route unknown, which onboarding resolves the same way. Only a gateway
     // that answers with a different route contradicts the rebuild target.
     if (
-      target.nativeLocalProviderAttachment !== undefined &&
-      (target.nativeNvidiaProviderAttachment !== undefined ||
-        target.nativeHostedProviderAttachment !== undefined)
+      [
+        target.registeredInferenceProviderAttachment,
+        target.nativeLocalProviderAttachment,
+        target.nativeNvidiaProviderAttachment,
+        target.nativeHostedProviderAttachment,
+      ].filter(Boolean).length > 1
     ) {
       fail("Conflicting recorded native provider attachments.");
     }
-    if (target.nativeLocalProviderAttachment !== undefined) {
+    if (target.registeredInferenceProviderAttachment !== undefined) {
+      const expected = target.registeredInferenceProviderAttachment;
+      if (
+        expected.gatewayName !== target.targetGatewayName ||
+        expected.sandboxName !== target.sandboxName ||
+        expected.providerName !== target.provider
+      )
+        fail("Registered provider binding does not match the rebuild target.");
+      await registeredInferenceProviderRevision({
+        adapter: createManagedProviderAdapter(),
+        expected,
+      });
+    } else if (target.nativeLocalProviderAttachment !== undefined) {
       await verifyRecordedNativeLocalProviderAttachment({
         adapter: createManagedProviderAdapter(),
         expected: target.nativeLocalProviderAttachment,

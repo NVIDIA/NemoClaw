@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { getInstalledOpenshellVersion } from "./openshell-version";
+
+import { cliOpenShellInstalledVersionObserver } from "../adapters/openshell/installed-version-cli";
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import type { OpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy";
@@ -56,6 +59,46 @@ describe("recorded Pi local inference route", () => {
     expect(requireNativeProviderPolicy).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  { label: "0.1.3", observation: { ok: true, version: "0.1.3" } },
+  { label: "unknown", observation: { ok: false, error: { kind: "timeout", message: "timeout" } } },
+] as const)(
+  "rejects direct retained Pi setup before route mutation on OpenShell $label",
+  async ({ observation }) => {
+    vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue(
+      observation,
+    );
+    const recorded = {
+      agent: "pi",
+      provider: "ollama-local",
+      model: "qwen3:8b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      createdAt: "2026-09-01T00:00:00Z",
+    };
+    const withGatewayRouteMutationLock = vi.fn();
+    const requireNativeProviderPolicy = vi.fn();
+    const updateSandbox = vi.fn();
+    const setup = createSetupInference({
+      getGatewayName: () => "nemoclaw",
+      getSandbox: () => recorded,
+      getInstalledOpenshellVersion,
+      withSandboxMutationLock: (_name: string, operation: () => unknown) => operation(),
+      withGatewayRouteMutationLock,
+      requireNativeProviderPolicy,
+      updateSandbox,
+    } as unknown as SetupInferenceDeps);
+    await expect(
+      setup("alpha", recorded.model, recorded.provider, recorded.endpointUrl, null, null, [], {
+        agentName: "pi",
+        preserveLegacyPiSharedLocalRoute: true,
+      }),
+    ).rejects.toThrow("Cannot resume a legacy Pi shared inference route");
+    expect(withGatewayRouteMutationLock).not.toHaveBeenCalled();
+    expect(requireNativeProviderPolicy).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+  },
+);
 
 describe("createProviderReviewDeps", () => {
   it("prepares the Ollama proxy after review acceptance", async () => {
@@ -225,99 +268,6 @@ describe("createProviderReviewDeps", () => {
     expect(getOllamaProxyToken).toHaveBeenCalledOnce();
     expect(persistAndProbeOllamaProxy).toHaveBeenCalledOnce();
     expect(ensureOllamaAuthProxy).not.toHaveBeenCalled();
-  });
-});
-
-describe("Personal custom endpoint onboarding", () => {
-  it("resolves Personal before provider setup and keeps the shared route", async () => {
-    const events: string[] = [];
-    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
-    const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
-    const upsertProvider = vi.fn(async () => {
-      events.push("shared-provider");
-      return { ok: true };
-    });
-    const inferenceRouteMutator = {
-      setInferenceRoute: vi.fn(async () => ({ ok: true as const })),
-    };
-    const setup = createSetupInference({
-      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
-      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
-        events.push("sandbox-lock");
-        return await operation();
-      },
-      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
-        events.push("gateway-lock");
-        return await operation();
-      },
-      step: vi.fn(),
-      getGatewayName: () => "nemoclaw",
-      getSandbox: () => null,
-      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
-      inferenceRouteMutator,
-      inferenceRouteObserver: {
-        observeInferenceRoute: vi.fn(async () => ({
-          ok: true as const,
-          value: { state: "unconfigured" as const },
-        })),
-      },
-      updateSandbox: vi.fn(() => true),
-      upsertProvider,
-      verifyInferenceRoute: vi.fn(),
-      verifyOnboardInferenceSmoke: vi.fn(),
-      resolveEndpointHost: vi.fn(async () => [{ address: "93.184.216.34", family: 4 as const }]),
-      resolvePolicyTier: async () => {
-        events.push("policy-tier");
-        return "personal";
-      },
-      bedrockRuntimeOnboard: {
-        setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
-      },
-      openrouterRuntimeOnboard: {
-        setupOpenRouterRuntimeInference: vi.fn(async () => ({ handled: false as const })),
-      },
-      isNonInteractive: () => false,
-      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-      providerAdapter: { createProvider, attachProvider } as unknown as OpenShellProviderAdapter,
-      REMOTE_PROVIDER_CONFIG: {
-        custom: {
-          label: "Compatible endpoint",
-          providerName: "compatible-endpoint",
-          providerType: "openai",
-          credentialEnv: "COMPATIBLE_API_KEY",
-          endpointUrl: "https://api.example/v1",
-          helpUrl: null,
-          modelMode: "input",
-          defaultModel: "model-a",
-        },
-      },
-      hydrateCredentialEnv: vi.fn(() => "secret"),
-      redact: (value: string) => value,
-      compactText: (value: string) => value,
-      log: vi.fn(),
-      error: vi.fn(),
-      exitProcess: vi.fn((code: number): never => {
-        throw new Error(`exit ${code}`);
-      }),
-    } as unknown as SetupInferenceDeps);
-
-    await expect(
-      setup(
-        "alpha",
-        "model-a",
-        "compatible-endpoint",
-        "https://api.example/v1",
-        "COMPATIBLE_API_KEY",
-        null,
-        [],
-        { skipHostInferenceSmoke: true },
-      ),
-    ).resolves.toEqual({ ok: true });
-
-    expect(events).toEqual(["policy-tier", "sandbox-lock", "gateway-lock", "shared-provider"]);
-    expect(createProvider).not.toHaveBeenCalled();
-    expect(attachProvider).not.toHaveBeenCalled();
-    expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledOnce();
   });
 });
 

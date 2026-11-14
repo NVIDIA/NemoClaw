@@ -36,6 +36,7 @@ export async function runPreinstallUpgradeGuard(
   env: Record<string, string> = {},
   options: {
     activeDirectoryUnsafe?: boolean;
+    ambiguousOpenshellVersionOutput?: boolean;
     privateDirectoryUnsafe?: boolean;
     replacementPreparationUnsupported?: boolean;
     currentBackupSucceeds?: boolean;
@@ -117,7 +118,8 @@ export async function runPreinstallUpgradeGuard(
   const finishPreparedInstallSucceeds = options.finishPreparedInstallSucceeds === false ? "0" : "1";
   const openshellVersionCommandFails = options.openshellVersionCommandFails === true ? "1" : "0";
   const installedOpenshellVersionOverride =
-    options.openshellVersionCommandFails === true
+    options.openshellVersionCommandFails === true ||
+    options.ambiguousOpenshellVersionOutput === true
       ? ""
       : `installed_openshell_version() { printf '${openshellVersion}'; }`;
 
@@ -153,6 +155,10 @@ exit 0
 printf '%s\\n' "$*" >> "${openshellLog}"
 if [ "\${1:-}" = "--version" ] && [ "${openshellVersionCommandFails}" = "1" ]; then
   exit 7
+fi
+if [ "\${1:-}" = "--version" ] && [ "${options.ambiguousOpenshellVersionOutput === true ? "1" : "0"}" = "1" ]; then
+  printf 'openshell 0.1.5\nopenshell 0.0.116\n'
+  exit 0
 fi
 if [ "\${1:-} \${2:-}" = "gateway remove" ] && [ "${gatewayRemoveSucceeds}" != "1" ]; then
   exit 4

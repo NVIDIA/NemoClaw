@@ -71,6 +71,23 @@ function runGenerator(env: Record<string, string | undefined>): string {
 
 describe("LangChain Deep Agents Code config generator", () => {
   it.each([
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "http://10.20.30.40:43123/v1"],
+    [
+      "compatible-anthropic-endpoint",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      "http://10.20.30.40:43123/v1",
+    ],
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://integrate.api.nvidia.com/v1"],
+  ])("keeps %s hosted endpoints on their attached credential", (provider, credential, endpoint) => {
+    const config = runGenerator({
+      NEMOCLAW_UPSTREAM_PROVIDER: provider,
+      NEMOCLAW_INFERENCE_BASE_URL: endpoint,
+    });
+    expect(config).toContain(`api_key_env = "${credential}"`);
+    expect(config).not.toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+  });
+
+  it.each([
     ["compatible-endpoint", "openai", "nvidia/nvidia/nemotron-3-ultra"],
     ["openrouter", "openrouter", "nvidia/nemotron-3-ultra-550b-a55b"],
   ])("routes the Auto classifier through the managed %s identity", (upstream, provider, model) => {

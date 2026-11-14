@@ -4,10 +4,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { captureGpuInstallFailure } from "../fixtures/gpu-install-failure.ts";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
 import type { V1Alpha1OllamaProxyService } from "../../../src/lib/config/v1alpha1-export.ts";
 import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
-import { normalizeNativeLocalProviderAttachment } from "../../../src/lib/inference/native-local/contract.ts";
 import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
 import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
@@ -17,7 +17,6 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { nativeLocalChatCommand } from "../fixtures/native-local-chat.ts";
 import {
   assertAgentExecutionSucceeded,
   assertGpuInstallProofs,
@@ -27,7 +26,6 @@ import {
   cleanupGpu,
   cleanupOllama,
   createGpuPrivateHome,
-  detectOllamaModel,
   ensureOllama,
   env,
   hasExactReadyPhase,
@@ -36,6 +34,8 @@ import {
   proxyStatus,
   REPO_ROOT,
   readTokenFileChecked,
+  readGpuOllamaRoute,
+  gpuOllamaChatCommand,
   restartProxy,
   SANDBOX_NAME,
   startAttachedOllama,
@@ -168,6 +168,8 @@ test(
         "--all",
         "--filter",
         `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+        "--filter",
+        "label=openshell.ai/isolation-role=sandbox",
         "--format",
         "{{.Names}}\t{{.State}}\t{{.Status}}",
       ],
@@ -194,12 +196,10 @@ test(
     expect(retainedSandboxContainer.State).toBe("running");
     expect(retainedSandboxContainer.Status).toMatch(/\(healthy\)/i);
 
-    // OpenClaw local inference uses a sandbox-owned provider behind the auth proxy, not the
-    // shared gateway route (#13293).
-    const nativeEndpoint = normalizeNativeLocalProviderAttachment(
-      getSandbox(SANDBOX_NAME)?.nativeLocalProviderAttachment,
-    )?.endpointUrl;
-    expect(nativeEndpoint).toBe(`http://host.openshell.internal:${PROXY_PORT}/v1`);
+    const route = await readGpuOllamaRoute(sandbox, getSandbox(SANDBOX_NAME), env());
+    expect(route, "native Ollama provider identity and attachment must match").toMatchObject({
+      endpointUrl: `http://host.openshell.internal:${PROXY_PORT}/v1`,
+    });
 
     progress.phase("validate Ollama proxy credential boundary");
     const tokenRecord = readTokenFileChecked(ollamaProxyTokenFile());
@@ -242,24 +242,10 @@ test(
     ).toBe("");
 
     progress.phase("run sandbox native Ollama chat");
-    const model = await detectOllamaModel(host);
+    const model = env().NEMOCLAW_MODEL!;
     const chat = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript(
-        nativeLocalChatCommand(
-          nativeEndpoint ?? "http://missing-native-local-attachment.invalid/v1",
-          JSON.stringify({
-            model,
-            messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-            // Keep this assertion about routed inference, not the model's reasoning-token budget.
-            reasoning_effort: "none",
-            seed: 0,
-            temperature: 0,
-            max_tokens: 32,
-          }),
-          "-sS",
-        ),
-      ),
+      trustedSandboxShellScript(gpuOllamaChatCommand(route!, model)),
       { artifactName: "sandbox-native-ollama-chat", env: env(), timeoutMs: 150_000 },
     );
     expect(chatContent(chat.stdout)).toMatch(/pong/i);
@@ -404,6 +390,7 @@ test(
         timeoutMs: execTimeout(60 * 60_000),
       },
     );
+    await captureGpuInstallFailure(install, sandbox, artifacts, hermesResponseEnv(), SANDBOX_NAME);
     expect(install.exitCode, resultText(install)).toBe(0);
 
     progress.phase("run Hermes initial, resumed, and continued replies");

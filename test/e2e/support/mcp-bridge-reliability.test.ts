@@ -194,6 +194,7 @@ function gatewayResult(status: number, code: string) {
   return {
     exitCode: 0,
     signal: null,
+    timedOut: false,
     stdout: JSON.stringify({ error: { code } }),
     stderr: `${HTTP_STATUS_MARKER}${status}\n`,
   };
@@ -544,6 +545,58 @@ describe("MCP bridge transient classification", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["openclaw-config", { exitCode: 1 }],
+    ["openclaw-config", { exitCode: null }],
+    ["openclaw-config", { signal: "SIGTERM" as const }],
+    ["openclaw-config", { timedOut: true }],
+    ["hermes-config", { exitCode: 1 }],
+    ["hermes-config", { exitCode: null }],
+    ["hermes-config", { signal: "SIGTERM" as const }],
+    ["hermes-config", { timedOut: true }],
+    ["deepagents-config", { exitCode: 1 }],
+    ["deepagents-config", { exitCode: null }],
+    ["deepagents-config", { signal: "SIGTERM" as const }],
+    ["deepagents-config", { timedOut: true }],
+  ])(
+    "requires successful status before accepting %s registration with %j",
+    async (expectedAdapter, failure) => {
+      const status = vi.fn(async () => ({
+        ...HERMES_RESTART_SETTLING_STATUS,
+        stdout: JSON.stringify({
+          ...HERMES_RESTART_SETTLING_PAYLOAD,
+          adapter: { registered: true },
+        }),
+        ...failure,
+      }));
+      const execShell = vi.fn();
+      const sleep = vi.fn(async () => undefined);
+      const outcome = await readConcurrentMcpStatusAndConfirmHermesRegistration({
+        clients: {
+          artifacts: { writeJson: vi.fn(async (relativePath: string) => relativePath) },
+          host: { nemoclaw: status } as unknown as Pick<HostCliClient, "nemoclaw">,
+          sandbox: { execShell },
+        },
+        committedAddResult: HERMES_ADD_POST_PROBE_NOT_READY,
+        credentialEnvName: "FAKE_MCP_SECRET",
+        env: {},
+        redactionValues: [],
+        scenario: {
+          artifactPrefix: "registration",
+          expectedAdapter,
+          mcpUrl: HERMES_RESTART_SETTLING_PAYLOAD.url,
+          sandboxName: "test-sandbox",
+        },
+        server: "concurrent",
+        sleep,
+      });
+      expect(outcome.registered).toBe(false);
+      expect(status).toHaveBeenCalledOnce();
+      expect(execShell).not.toHaveBeenCalled();
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not repeat full status when Hermes registration needs a read-only confirmation (#9485)", async () => {
     const status = vi.fn(async () => HERMES_RESTART_SETTLING_STATUS);
     const execShell = vi
@@ -849,6 +902,21 @@ describe("MCP bridge transient classification", () => {
     ).resolves.toBe(draining);
     expect(retry).toHaveBeenCalledTimes(3);
     expect(wait).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ["times out", { timedOut: true, signal: null }],
+    ["receives SIGTERM", { timedOut: false, signal: "SIGTERM" as const }],
+  ])("does not retry gateway draining when the command %s", async (_label, interruption) => {
+    const failed = { ...gatewayResult(503, "gateway_draining"), ...interruption };
+    const retry = vi.fn(async () => gatewayResult(200, "none"));
+    const wait = vi.fn(async () => undefined);
+
+    await expect(retryHermesGatewayDraining({ initialResult: failed, retry, wait })).resolves.toBe(
+      failed,
+    );
+    expect(retry).not.toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
   });
 
   it("does not retry a different Hermes HTTP failure", async () => {

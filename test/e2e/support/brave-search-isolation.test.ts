@@ -76,6 +76,39 @@ describe("Brave runtime credential boundary probes", () => {
     expect(result.status).toBe(97);
   });
 
+  it.each([false, true])(
+    "reaps its child with group signals denied and raw credential %s",
+    (raw) => {
+      const harness = String.raw`import json, os, pathlib, subprocess, sys
+from unittest.mock import patch
+probe = sys.argv.pop(1)
+raw = sys.argv.pop(1) == "true"
+sys.argv = [sys.argv[0], sys.executable, "-c", "import time; time.sleep(30)"]
+scope = {}
+def read(path):
+    return b"node\0/app/openclaw.mjs\0agent\0" if path.name == "cmdline" else (
+        b"BRAVE_API_KEY=synthetic-raw-key" if raw else b"")
+try:
+    with patch.object(os, "killpg", side_effect=PermissionError()), patch.object(pathlib.Path, "read_bytes", read):
+        try:
+            exec(probe, scope)
+        except SystemExit as result:
+            print(json.dumps({"status": result.code, "reaped": scope["child"].returncode is not None}))
+finally:
+    child = scope.get("child")
+    if child is not None and child.poll() is None:
+        child.kill()
+        child.wait(timeout=5)
+`;
+      const result = spawnSync("python3", ["-c", harness, BRAVE_AGENT_BOUNDARY, String(raw)], {
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ status: raw ? 98 : 0, reaped: true });
+    },
+  );
+
   it.each(["FileNotFoundError", "ProcessLookupError", "PermissionError"])(
     "fails closed without output when the agent environment raises %s",
     (errorType) => {
@@ -104,12 +137,6 @@ with patch.object(pathlib.Path, "read_bytes", read):
 
   it.each([
     ["node\0/app/openclaw/openclaw.mjs\0agent\0", "", 0],
-    [
-      "node\0/app/openclaw/openclaw.mjs\0agent\0",
-      "BRAVE_API_KEY=openshell:resolve:env:v1_BRAVE_API_KEY",
-      0,
-    ],
-    ["node\0/app/openclaw/openclaw.mjs\0agent\0", "BRAVE_API_KEY=synthetic-raw-key", 98],
     ["sh\0-c\0openclaw agent\0", "", 97],
     ["openclaw-gateway\0", "", 97],
   ])("inspects only the selected agent child: %s / %s", (command, environment, status) => {

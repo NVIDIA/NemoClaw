@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { getNemoclawStateRoot } from "../../../src/lib/state/state-root.ts";
 import { resolveSandboxLaunchForwardPorts } from "../../../src/lib/actions/sandbox/process-recovery";
 import { createCliOpenShellForwardAdapter } from "../../../src/lib/adapters/openshell/forward-cli";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
@@ -31,6 +32,7 @@ import {
 } from "./hermes-gpu-startup-fallback.ts";
 import {
   assertHermesGpuStartupProof,
+  buildHermesGpuInferenceCommand,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
 } from "./hermes-gpu-startup-proof.ts";
 
@@ -51,6 +53,8 @@ const { route: GPU_ROUTE, scenario: GPU_STARTUP_SCENARIO } = resolveHermesGpuSta
   process.env.E2E_HERMES_GPU_STARTUP_SCENARIO,
   process.env.NEMOCLAW_DOCKER_GPU_PATCH === "1",
 );
+import { captureGpuInstallFailure } from "../fixtures/gpu-install-failure.ts";
+
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
   (GPU_STARTUP_SCENARIO === "fallback"
@@ -271,27 +275,35 @@ async function captureFailedGpuContainer(
   const script = String.raw`set -eu
 sandbox_filter="$1"
 diagnostics_dir="$2"
-shift 2
+diagnostics_root="$3"
+shift 3
 runtime_command=("$@")
-if [ -n "$diagnostics_dir" ] && [ -d "$diagnostics_dir" ]; then
-  printf '%s\n' "== pre-rollback diagnostics $diagnostics_dir =="
-  for name in summary.txt patched-container-state.json docker-inspect.json docker-network-summary.txt docker-top.txt docker-logs.txt openshell-sandbox-get.txt openshell-sandbox-list.txt openshell-logs.txt; do
-    file="$diagnostics_dir/$name"
-    if [ -f "$file" ]; then
-      printf '%s\n' "available: $name"
-      printf '%s\n' "== redacted $name =="
-      tail -c 8000 "$file" || true
-      printf '\n'
-    fi
-  done
-else
-  printf '%s\n' "pre-rollback diagnostics directory unavailable: $diagnostics_dir"
-fi
+python3 -I - "$diagnostics_dir" "$diagnostics_root" <<'PYDIAGNOSTICS'
+import os, pathlib, stat, sys
+directory = pathlib.Path(sys.argv[1])
+root = pathlib.Path(sys.argv[2]).resolve()
+names = "summary.txt patched-container-state.json docker-inspect.json docker-network-summary.txt docker-top.txt docker-logs.txt openshell-sandbox-get.txt openshell-sandbox-list.txt openshell-logs.txt openshell-gateway-relevant.log openshell-gateway-tail.log sandbox-container.log".split()
+try:
+    info = directory.lstat()
+    if directory.parent.resolve() != root or stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError("untrusted diagnostics directory")
+    for name in names:
+        file = directory / name
+        try:
+            fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except OSError:
+            continue
+        with os.fdopen(fd, "rb") as stream:
+            meta = os.fstat(stream.fileno())
+            if not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.getuid() or meta.st_nlink != 1 or meta.st_mode & 0o077:
+                continue
+            stream.seek(max(0, meta.st_size - 8000))
+            print("== redacted " + name + " ==")
+            print(stream.read(8000).decode("utf-8", "replace"))
+except (OSError, ValueError):
+    print("pre-rollback diagnostics directory unavailable or untrusted")
+PYDIAGNOSTICS
 ids="$("${"${runtime_command[@]}"}" container ps --all --quiet --no-trunc --filter "$sandbox_filter")"
-if [ -z "$ids" ]; then
-  printf '%s\n' "no runtime container found for $sandbox_filter"
-  exit 0
-fi
 for id in $ids; do
   if [[ ! "$id" =~ ^[a-f0-9]{64}$ ]]; then
     printf '%s\n' "ignored non-container identity"
@@ -299,6 +311,41 @@ for id in $ids; do
   fi
   printf '%s\n' "== exact container $id state =="
   "${"${runtime_command[@]}"}" container inspect --format '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}}' "$id" 2>&1 || true
+  role="$("${"${runtime_command[@]}"}" container inspect --format '{{index .Config.Labels "openshell.ai/isolation-role"}}' "$id" 2>/dev/null)" || continue
+  [ "$role" = sandbox ] || continue
+  # Capture numeric guard inputs after startup fails; argv and environment can contain credentials.
+  "${"${runtime_command[@]}"}" exec -i "$id" /usr/bin/python3 -I - <<'PYIDENTITY' || true
+import itertools, json, os, re, stat
+fields = {"Uid", "Gid", "Groups", "PPid", "NSpid", "NoNewPrivs", "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"}
+try:
+    metadata = os.stat("/proc/1/status", follow_symlinks=False)
+    with open("/proc/1/status", "r", encoding="ascii") as stream:
+        status = stream.read(8193)
+    if len(status) > 8192:
+        raise ValueError("oversized status")
+    observed = {}
+    for line in status.splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key in fields and re.fullmatch(r"[0-9a-fA-F \t]*", value):
+            observed[key] = value.split()
+    print(json.dumps({"pid1_status_owner": [metadata.st_uid, metadata.st_gid], "pid1_status": observed}))
+except (OSError, UnicodeError, ValueError):
+    print("PID 1 identity diagnostics unavailable")
+try:
+    with os.scandir("/dev/dri") as entries:
+        recognized = filter(lambda entry: re.fullmatch(r"(?:card|renderD)[0-9]+", entry.name),
+                            itertools.islice(entries, 256))
+        device_paths = {entry.name: entry.path for entry in recognized}
+    paths = {"/dev": "/dev", "/dev/dri": "/dev/dri", **device_paths}
+    devices = {}
+    for name, path in paths.items():
+        info = os.stat(path, follow_symlinks=False)
+        devices[name] = {"uid": info.st_uid, "gid": info.st_gid, "mode": info.st_mode,
+            "device": [os.major(info.st_rdev), os.minor(info.st_rdev)] if stat.S_ISCHR(info.st_mode) else None}
+    print(json.dumps({"drm_devices": devices}))
+except (OSError, ValueError):
+    print("DRM device diagnostics unavailable")
+PYIDENTITY
 done`;
   await captureDiagnosticsBestEffort(() =>
     host.command(
@@ -309,6 +356,7 @@ done`;
         "hermes-gpu-failure-diagnostics",
         sandboxFilter,
         preRollbackDiagnosticsDir,
+        path.join(getNemoclawStateRoot(), "onboard-failures"),
         runtimeInvocation.command,
         ...runtimeInvocation.args,
       ],
@@ -470,6 +518,7 @@ test(
       redactionValues: [FAKE_API_KEY],
       timeoutMs: execTimeout(60 * 60_000),
     });
+    await captureGpuInstallFailure(install, sandbox, artifacts, env, SANDBOX_NAME);
     const gpuDiagnosticsDir = extractHermesGpuDiagnosticsDirectory(resultText(install));
     await (install.exitCode !== 0
       ? captureFailedGpuContainer(host, runtimeProvider, gpuDiagnosticsDir)
@@ -552,15 +601,7 @@ test(
     progress.phase("exercise authenticated GPU inference route");
     const inference = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript(
-        `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
-          {
-            model: FAKE_MODEL,
-            messages: [{ role: "user", content: "reply with OK" }],
-            max_tokens: 8,
-          },
-        )}'`,
-      ),
+      trustedSandboxShellScript(buildHermesGpuInferenceCommand(fake.baseUrl, FAKE_MODEL)),
       {
         artifactName: "phase-5-authenticated-inference-post",
         env: commandEnv(),

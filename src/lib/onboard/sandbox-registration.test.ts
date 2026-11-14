@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+import { createHermesSwitchyardRoutingIntent } from "../hermes-switchyard-routing";
+
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -96,7 +100,7 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
-  it("omits stale Local NIM native attachments while retaining standalone vLLM attachments", () => {
+  it("retains sentinel Local NIM and standalone vLLM attachments", () => {
     const { nativeLocalIdentity } = requireDist(
       "../inference/native-local/contract.ts",
     ) as typeof import("../inference/native-local/contract");
@@ -131,18 +135,59 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     const nim = makeEntry("nemoclaw-nim-owned");
     const standalone = makeEntry(null);
 
-    expect(nim.nativeLocalProviderAttachment).toBeUndefined();
+    expect(nim.nativeLocalProviderAttachment).toEqual(attachment);
     expect(standalone.nativeLocalProviderAttachment).toEqual(attachment);
     expect(
       nativeInferenceCreateIntentFields("vllm-local", nim).nativeLocalProviderAttachment,
-    ).toBeUndefined();
+    ).toEqual(attachment);
     expect(
       nativeInferenceCreateIntentFields("vllm-local", standalone).nativeLocalProviderAttachment,
     ).toEqual(attachment);
     expect(
       nativeInferenceCreateIntentFields("vllm-local", standalone, true)
         .nativeLocalProviderAttachment,
-    ).toBeUndefined();
+    ).toEqual(attachment);
+  });
+
+  it("rejects authenticated vLLM authority for Local NIM registration and creation", () => {
+    const { nativeLocalIdentity } = requireDist(
+      "../inference/native-local/contract.ts",
+    ) as typeof import("../inference/native-local/contract");
+    const binding = {
+      provider: "vllm-local" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      gatewayName: "nemoclaw",
+      sandboxName: "demo",
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "managed-vllm-provider",
+    };
+    const base = createdRegistryEntryInput();
+    const input = {
+      ...base,
+      nativeLocalProviderAttachment: attachment,
+      inferenceSelection: {
+        ...base.inferenceSelection,
+        provider: "vllm-local",
+        nimContainer: "owned-nim",
+        endpointUrl: binding.endpointUrl,
+      },
+    };
+    expect(() => buildCreatedSandboxRegistryEntry(input)).toThrow(
+      "Local NIM cannot reuse authenticated managed vLLM provider authority",
+    );
+    const entry = buildCreatedSandboxRegistryEntry({
+      ...input,
+      inferenceSelection: { ...input.inferenceSelection, nimContainer: null },
+    });
+    expect(() => nativeInferenceCreateIntentFields("vllm-local", entry, true)).toThrow(
+      "Local NIM cannot reuse authenticated managed vLLM provider authority",
+    );
   });
 
   it("records only an exact native NVIDIA provider identity", () => {
@@ -1003,4 +1048,49 @@ describe("Hermes native attachment registration", () => {
       "does not match the selected Hermes sandbox",
     );
   });
+});
+
+it("rejects Switchyard with a registered binding before sandbox recreation", () => {
+  const f = registeredInferenceFixture();
+  const routing = createHermesSwitchyardRoutingIntent({
+    efficient: { provider: "openai-api", model: "efficient-model" },
+    capable: { provider: "nvidia-prod", model: "capable-model" },
+  });
+  expect(() =>
+    nativeInferenceCreateIntentFields(routing.capable.provider, {
+      name: f.binding.sandboxName,
+      provider: routing.capable.provider,
+      model: routing.capable.model,
+      registeredInferenceProviderAttachment: {
+        ...f.binding,
+        providerName: routing.capable.provider,
+      },
+      hermesSwitchyard: { routing, bindings: switchyardBindingFixture(routing) },
+    }),
+  ).toThrow("cannot share a recorded native inference attachment");
+});
+
+it("retains the external binding and namespace through sandbox recreation", () => {
+  const f = registeredInferenceFixture();
+  const defaults = createdRegistryEntryInput();
+  const input = createdRegistryEntryInput({
+    sandboxName: f.binding.sandboxName,
+    gatewayName: f.binding.gatewayName,
+    inferenceSelection: {
+      ...defaults.inferenceSelection,
+      provider: f.binding.providerName,
+      model: "model-a",
+      endpointUrl: f.binding.endpointUrl,
+      credentialEnv: f.binding.credentialEnv,
+      preferredInferenceApi: f.binding.inferenceApi,
+    },
+    registeredInferenceProviderAttachment: f.binding,
+  });
+  const entry = buildCreatedSandboxRegistryEntry(input);
+  expect(nativeInferenceCreateIntentFields(f.binding.providerName, entry)).toMatchObject({
+    inferenceProvider: f.binding.providerName,
+    registeredInferenceProviderAttachment: f.binding,
+  });
+  expect(() => buildCreatedSandboxRegistryEntry({ ...input, gatewayName: "wrong" })).toThrow();
+  expect(() => nativeInferenceCreateIntentFields("other-provider", entry)).toThrow();
 });

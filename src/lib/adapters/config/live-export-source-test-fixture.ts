@@ -314,9 +314,9 @@ function nativeNvidiaEndpoint(): Record<string, unknown> {
     port: 443,
     ports: [],
     protocol: "rest",
-    tls: "",
-    enforcement: "enforce",
-    access: "",
+    tls: 0,
+    enforcement: 1,
+    access: 0,
     rules: [
       { allow: { ...emptyNativeAllow, method: "GET", path: "/v1/models" } },
       {
@@ -368,6 +368,7 @@ export function nativeNvidiaProfile(): Record<string, unknown> {
       "/usr/bin/node",
       "/opt/hermes/.venv/bin/python",
       "/opt/hermes/.venv/bin/python3",
+      "/usr/bin/python3.13",
       "/opt/venv/bin/python3",
       "/usr/local/bin/curl",
       "/usr/bin/curl",

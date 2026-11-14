@@ -291,19 +291,7 @@ export const googlechatManifest = {
         configKeys: ["googlechat"],
         logPatterns: ["googlechat"],
       },
-      // Interim sandbox-DNS workaround: the sandbox netns is DNS-less (all
-      // resolution goes through the L7 proxy), but OpenClaw's Google Chat fetches
-      // default to STRICT SSRF mode, which does a LOCAL getaddrinfo first and
-      // fails with EAI_AGAIN. This boot preload rewrites the plugin's googleapis
-      // fetches (inbound cert verify + all outbound sends) to the guard's
-      // first-class `trusted_env_proxy` mode, so they skip the local resolve and
-      // route by hostname through the L7 proxy (which resolves + enforces policy).
-      // No sentinel IP. It replaces the older googlechat-dns-resolve.ts sentinel
-      // shim, and is exactly the upstream OpenClaw fix (trusted-env-proxy fetch,
-      // like web_fetch openclaw#50650) applied in the plugin bundle; remove once
-      // that lands upstream. See runtime/googlechat-trusted-proxy-fetch.ts.
-      //
-      // Second boot preload: move OUTBOUND auth off the in-sandbox SA key. By
+      // Move outbound auth off the in-sandbox service-account key. By
       // default @openclaw/googlechat signs an auth JWT with the SA private key
       // in-process, which forces the key to live in the sandbox. This preload
       // rewrites the plugin's single token producer to return the OpenShell
@@ -311,15 +299,6 @@ export const googlechatManifest = {
       // L7 proxy injects the real bearer outbound and the key never enters the
       // sandbox. See runtime/googlechat-outbound-auth.ts.
       nodePreloads: [
-        {
-          module: "googlechat-trusted-proxy-fetch",
-          injectInto: ["boot"],
-          optional: false,
-          installMessage:
-            "[channels] Installing Google Chat trusted-proxy-fetch patch (route googleapis via trusted env proxy)",
-          installedMessage:
-            "[channels] Google Chat trusted-proxy-fetch patch installed (NODE_OPTIONS updated)",
-        },
         {
           module: "googlechat-outbound-auth",
           injectInto: ["boot"],

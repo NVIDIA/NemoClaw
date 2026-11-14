@@ -24,6 +24,18 @@ function detectedCaseNames(source: string): string[] {
 }
 
 describe("source-shape scanner", () => {
+  it("excludes private E2E runtime state but retains E2E source tests", () => {
+    const repoRoot = path.resolve(".");
+    expect(isSourceShapePathSkipped(path.join(repoRoot, ".e2e"))).toBe(true);
+    expect(isSourceShapePathSkipped(path.join(repoRoot, ".e2e", "runtime.test.ts"))).toBe(true);
+    expect(isSourceShapePathSkipped(path.join(repoRoot, ".e2e-source", "example.test.ts"))).toBe(
+      false,
+    );
+    expect(isSourceShapePathSkipped(path.join(repoRoot, "test", "e2e", "example.test.ts"))).toBe(
+      false,
+    );
+  });
+
   it("skips the local nested worktree checkout container", () => {
     const repoRoot = path.resolve(".");
 

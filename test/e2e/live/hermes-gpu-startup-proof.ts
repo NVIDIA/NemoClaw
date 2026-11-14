@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-local/agent-config.ts";
 import {
   type ManagedWorkloadAuthority,
   readManagedWorkloadAuthority,
@@ -15,6 +17,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   type HostCliClient,
   resultText,
+  shellQuote,
   type SandboxClient,
   trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
@@ -137,6 +140,66 @@ export function assertHermesContainerImageAuthority(
   ).toBe(true);
 }
 
+/** The fixture owns this host-alias endpoint; OpenShell supplies its scoped credential. */
+export function buildHermesGpuInferenceCommand(endpointUrl: string, model: string): string {
+  const payload = JSON.stringify({
+    model,
+    messages: [{ role: "user", content: "reply with OK" }],
+    max_tokens: 8,
+  });
+  return `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 60 ${shellQuote(`${endpointUrl}/chat/completions`)} -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data ${shellQuote(payload)}`;
+}
+
+interface HermesRuntimeInspection {
+  Id: string;
+  Image?: unknown;
+  ImageName?: unknown;
+  Config: {
+    Cmd?: unknown;
+    Entrypoint?: unknown;
+    Env: string[];
+    Image?: unknown;
+    Labels: Record<string, string>;
+  };
+}
+
+/** Main-process metadata belongs to the supervisor; the managed image belongs to its workload. */
+export function hermesGpuRuntimePair(
+  inspections: readonly HermesRuntimeInspection[],
+  sandboxName: string,
+  sandboxId: string | null,
+): { workload: HermesRuntimeInspection; supervisor: HermesRuntimeInspection } | null {
+  const workload = inspections.find(
+    (row) => row.Config?.Labels?.["openshell.ai/isolation-role"] === "sandbox",
+  );
+  const supervisor = inspections.find(
+    (row) => row.Config?.Labels?.["openshell.ai/isolation-role"] === "supervisor",
+  );
+  const labels = workload?.Config?.Labels ?? {};
+  if (
+    inspections.length !== 2 ||
+    !sandboxId ||
+    !workload ||
+    !supervisor ||
+    workload.Id === supervisor.Id ||
+    !labels["openshell.ai/sandbox-namespace"] ||
+    !labels["openshell.ai/sandbox-workspace"] ||
+    supervisor.Config.Labels["openshell.ai/sandbox-workspace"] !== undefined ||
+    inspections.some(
+      (row) =>
+        !/^[a-f0-9]{64}$/u.test(row.Id) ||
+        !Array.isArray(row.Config?.Env) ||
+        row.Config.Labels["openshell.ai/managed-by"] !== "openshell" ||
+        row.Config.Labels["openshell.ai/sandbox-name"] !== sandboxName ||
+        row.Config.Labels["openshell.ai/sandbox-id"] !== sandboxId ||
+        row.Config.Labels["openshell.ai/sandbox-namespace"] !==
+          labels["openshell.ai/sandbox-namespace"],
+    )
+  )
+    return null;
+  return { workload, supervisor };
+}
+
 export async function assertHermesGpuStartupProof({
   env,
   gpuRoute,
@@ -176,7 +239,7 @@ export async function assertHermesGpuStartupProof({
   );
   expect(pid1Topology.exitCode, resultText(pid1Topology)).toBe(0);
   expect(JSON.parse(pid1Topology.stdout)).toEqual({
-    argv0: "/opt/openshell/bin/openshell-sandbox",
+    argv0: "/.openshell/runtime/openshell-sandbox",
     has_nemoclaw_start: false,
   });
 
@@ -184,10 +247,11 @@ export async function assertHermesGpuStartupProof({
     [
       "container",
       "ps",
+      "--no-trunc",
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
       "--format",
-      "{{.ID}} {{.Names}}",
+      "{{.ID}}",
     ],
     {
       artifactName: "phase-4-gpu-startup-running-containers",
@@ -200,12 +264,7 @@ export async function assertHermesGpuStartupProof({
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  expect(
-    containerRows,
-    `expected one running container, got ${runningContainers.stdout}`,
-  ).toHaveLength(1);
-  const [containerId = ""] = containerRows[0].split(/\s+/, 1);
-  expect(containerId).not.toBe("");
+  expect(containerRows.join("\n")).toMatch(/^[a-f0-9]{64}\n[a-f0-9]{64}$/u);
 
   const registryEntry = loadSandboxRegistry().sandboxes[sandboxName];
   if (!registryEntry) {
@@ -278,32 +337,34 @@ export async function assertHermesGpuStartupProof({
   expect(startupConfig.exitCode, resultText(startupConfig)).toBe(0);
   expect(startupConfig.stdout.trim()).toBe("OK");
 
+  // Inspect remains local to this proof: supervisor argv can carry opaque environment values.
+  // Neither stdout, stderr nor result metadata is persisted by this probe.
   const runtimeCommandBoundary = await runtimeProvider.command(
-    ["container", "inspect", containerId],
+    ["container", "inspect", ...containerRows],
     {
       artifactName: "phase-4-gpu-startup-runtime-command-boundary",
       env: buildAvailabilityProbeEnv(),
+      persistArtifacts: false,
       timeoutMs: 30_000,
     },
   );
-  expect(runtimeCommandBoundary.exitCode, resultText(runtimeCommandBoundary)).toBe(0);
-  const runtimeInspection = (
-    JSON.parse(runtimeCommandBoundary.stdout) as Array<{
-      Image?: unknown;
-      ImageName?: unknown;
-      Config?: {
-        Cmd?: unknown;
-        Entrypoint?: unknown;
-        Env?: string[];
-        Image?: unknown;
-      };
-    }>
-  )[0];
-  const runtimeConfig = runtimeInspection?.Config ?? {};
+  expect(runtimeCommandBoundary.exitCode, "runtime pair inspection must succeed").toBe(0);
+  const pair = hermesGpuRuntimePair(
+    JSON.parse(runtimeCommandBoundary.stdout),
+    sandboxName,
+    parseOpenShellSandboxId(resultText(openshellState)),
+  );
+  expect(
+    pair,
+    "expected the exact workload and supervisor for the selected sandbox",
+  ).not.toBeNull();
+  const { workload: runtimeInspection, supervisor } = pair!;
+  const containerId = runtimeInspection.Id;
+  const runtimeConfig = runtimeInspection.Config;
   const runtimeEnvironment = Object.fromEntries(
-    (runtimeConfig.Env ?? [])
-      .filter((entry) => entry.includes("="))
-      .map((entry) => entry.split(/=(.*)/su).slice(0, 2) as [string, string]),
+    supervisor.Config.Env.filter((entry) => entry.includes("=")).map(
+      (entry) => entry.split(/=(.*)/su).slice(0, 2) as [string, string],
+    ),
   );
   const intendedTokens = hermesRuntimeIntendedCommand(runtimeEnvironment);
   const commandBoundary = {
@@ -320,7 +381,11 @@ export async function assertHermesGpuStartupProof({
       ["nemoclaw-start", "/usr/local/bin/nemoclaw-start"].includes(intendedTokens.at(-1) ?? ""),
   };
   expect(commandBoundary.has_openshell_sandbox_command).toBe(true);
-  expect(runtimeEnvironment.NEMOCLAW_MANAGED_BOOTSTRAP_IDENTITY).toBeUndefined();
+  expect(
+    [...(runtimeConfig.Env ?? []), ...supervisor.Config.Env].filter((entry) =>
+      entry.startsWith("NEMOCLAW_MANAGED_BOOTSTRAP_IDENTITY="),
+    ).length,
+  ).toBe(0);
   assertHermesContainerImageAuthority(
     commandBoundary.image,
     managedImageReference,
@@ -347,6 +412,8 @@ export async function assertHermesGpuStartupProof({
       "--all",
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
       "--format",
       "{{.Names}}",
     ],

@@ -251,6 +251,7 @@ export function candidateSdkLocatorFixture(
     repository: { full_name: "NVIDIA/NemoClaw" },
     head_repository: { full_name: "NVIDIA/NemoClaw" },
   };
+  const availability = { missingReads: 0, pendingReads: 0, accessDenied: false };
   const bin = join(root, "bin");
   const trusted = join(root, ".trusted-sdk-package-decision");
   mkdirSync(bin);
@@ -265,12 +266,37 @@ export function candidateSdkLocatorFixture(
     join(bin, "gh"),
     `#!/usr/bin/env node
 const route = process.argv.find(value => value.startsWith('repos/'));
-if (route?.includes('/actions/artifacts?')) process.stdout.write(process.env.SDK_LOCATOR_ARTIFACTS);
-else if (route?.endsWith('/actions/runs/44')) process.stdout.write(process.env.SDK_LOCATOR_RUN);
+const fs = require('node:fs');
+const stateFile = process.env.SDK_LOCATOR_STATE;
+const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : { artifactReads: 0, producerReads: 0, sleeps: 0 };
+const availability = JSON.parse(process.env.SDK_LOCATOR_AVAILABILITY);
+if (availability.accessDenied) process.exit(13);
+if (route?.includes('/actions/artifacts?')) {
+  state.artifactReads++;
+  process.stdout.write(state.artifactReads <= availability.missingReads ? '[{"artifacts":[]}]' : process.env.SDK_LOCATOR_ARTIFACTS);
+} else if (route?.endsWith('/actions/runs/44')) {
+  state.producerReads++;
+  const run = JSON.parse(process.env.SDK_LOCATOR_RUN);
+  if (state.producerReads <= availability.pendingReads) { run.status = 'in_progress'; run.conclusion = null; }
+  process.stdout.write(JSON.stringify(run));
+}
 else process.exit(97);
+fs.writeFileSync(stateFile, JSON.stringify(state));
 `,
   );
   chmodSync(join(bin, "gh"), 0o700);
+  writeFileSync(
+    join(bin, "sleep"),
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const file = process.env.SDK_LOCATOR_STATE;
+const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+state.sleeps++;
+fs.writeFileSync(file, JSON.stringify(state));
+`,
+    { mode: 0o700 },
+  );
+  const stateFile = join(root, "locator-state.json");
   const workflow = YAML.parse(readFileSync(".github/workflows/pr.yaml", "utf8"));
   const script = workflow.jobs["openshell-sdk-package"].steps.find(
     (step: { id?: string }) => step.id === "locate",
@@ -280,6 +306,7 @@ else process.exit(97);
     artifact,
     run,
     decision,
+    availability,
     execute: () => {
       const result = spawnSync("bash", ["-c", script], {
         cwd: root,
@@ -296,12 +323,15 @@ else process.exit(97);
           CANDIDATE_SHA: sdkCandidateIdentity.candidateSha,
           UPGRADE_BASE_SHA: sdkCandidateIdentity.baseSha,
           UPGRADE_PR_NUMBER: String(sdkCandidateIdentity.prNumber),
+          SDK_LOCATOR_STATE: stateFile,
+          SDK_LOCATOR_AVAILABILITY: JSON.stringify(availability),
           SDK_LOCATOR_DECISION: JSON.stringify(decision),
           SDK_LOCATOR_ARTIFACTS: JSON.stringify([{ artifacts: [artifact] }]),
           SDK_LOCATOR_RUN: JSON.stringify(run),
         },
       });
-      return { ...result, output: existsSync(output) ? readFileSync(output, "utf8") : "" };
+      const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, "utf8")) : undefined;
+      return { ...result, output: existsSync(output) ? readFileSync(output, "utf8") : "", state };
     },
   };
 }

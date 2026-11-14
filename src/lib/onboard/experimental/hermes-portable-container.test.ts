@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -113,7 +114,7 @@ function receipt(): HermesPortablePendingReceipt {
 
 function inspect(
   restartPolicy = "no",
-  labels = LABELS,
+  labels: Record<string, string> = LABELS,
   running = true,
   status = running ? "running" : "exited",
   paused = false,
@@ -155,6 +156,96 @@ function activeReceipt(running = true): HermesPortableConfiguredReceipt {
 }
 
 describe("Hermes portable container authority", () => {
+  it.each([
+    ["200", "matching", "a"],
+    ["401", "incorrect", "b"],
+  ])(
+    "returns %s for the %s API key at the protected health endpoint",
+    (status, _case, serverKey) => {
+      const result = spawnSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          String.raw`
+import http.client, json, pathlib, sys
+from unittest.mock import patch
+
+inputs = json.load(sys.stdin)
+
+class Connection:
+    def __init__(self, host, port, timeout):
+        assert host == "127.0.0.1" and port == 8642 and timeout == 5
+    def request(self, method, target, headers):
+        assert method == "GET"
+        # The pinned Hermes API keeps /health public and protects /health/detailed.
+        if target == "/health":
+            self.status = 200
+        elif target == "/health/detailed":
+            self.status = 200 if headers.get("Authorization") == "Bearer " + inputs["serverKey"] else 401
+        else:
+            self.status = 404
+    def getresponse(self):
+        return self
+    def close(self):
+        pass
+
+with patch.object(pathlib.Path, "read_text", return_value="API_SERVER_KEY=" + "a" * 64):
+    with patch.object(http.client, "HTTPConnection", Connection):
+        exec(inputs["program"], {})
+`,
+        ],
+        {
+          encoding: "utf8",
+          input: JSON.stringify({
+            program: hermesPortableContainerInternals.authenticatedHealthScript,
+            serverKey: serverKey.repeat(64),
+          }),
+          timeout: 10_000,
+        },
+      );
+      expect({
+        status: result.status,
+        stdout: result.stdout.trim(),
+        stderr: result.stderr,
+      }).toEqual({
+        status: 0,
+        stdout: status,
+        stderr: "",
+      });
+    },
+  );
+
+  it("enrolls a labelled workload while excluding its supervisor", () => {
+    const workloadLabels = { ...LABELS, "openshell.ai/isolation-role": "sandbox" };
+    const podman = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: ID + "\n", stderr: "" })
+      .mockReturnValueOnce(inspect("no", workloadLabels));
+    const enrolled = enrollHermesPortableContainer(receipt(), SANDBOX_ID, {
+      podman,
+      assertSocketAuthority: vi.fn(),
+    });
+    expect(enrolled.authority.containerId).toBe(ID);
+    expect(enrolled.labels["openshell.ai/isolation-role"]).toBe("sandbox");
+    expect(podman.mock.calls[0]?.[0]).toContain("label!=openshell.ai/isolation-role=supervisor");
+    expect(podman).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["supervisor", "unknown", ""])("rejects the non-workload role %s", (role) => {
+    const podman = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: ID + "\n", stderr: "" })
+      .mockReturnValueOnce(inspect("no", { ...LABELS, "openshell.ai/isolation-role": role }));
+    expect(() =>
+      enrollHermesPortableContainer(receipt(), SANDBOX_ID, {
+        podman,
+        assertSocketAuthority: vi.fn(),
+      }),
+    ).toThrow("isolation role does not identify a sandbox workload");
+    expect(podman).toHaveBeenCalledTimes(2);
+  });
+
   it("enrolls exactly one running full-ID container with exact OpenShell labels (#9203)", () => {
     const podman = vi
       .fn()
@@ -178,6 +269,7 @@ describe("Hermes portable container authority", () => {
       hermesPortableContainerInternals.labelsDigest(LABELS),
     );
     expect(assertSocketAuthority).toHaveBeenCalledTimes(4);
+    expect(podman.mock.calls[0]?.[0]).toContain("label!=openshell.ai/isolation-role=supervisor");
   });
 
   it.each([

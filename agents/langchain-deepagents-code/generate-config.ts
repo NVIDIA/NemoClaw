@@ -32,6 +32,7 @@ type Settings = {
   providerKey: string;
   upstreamProvider: string;
   upstreamEndpointUrl: string | null;
+  nativeLocalCredentialHandle?: string;
   inferenceApi: string;
   reasoningEffort: ReasoningEffort | null;
 };
@@ -57,6 +58,7 @@ function readSettings(env: NodeJS.ProcessEnv): Settings {
       env.NEMOCLAW_INFERENCE_BASE_URL || "https://inference.local/v1",
     ),
     providerKey,
+    nativeLocalCredentialHandle: env.NEMOCLAW_LOCAL_INFERENCE_TOKEN,
     upstreamProvider: normalizeCommentMetadata(
       env.NEMOCLAW_UPSTREAM_PROVIDER ||
         env.NEMOCLAW_INFERENCE_PROVIDER_ID ||
@@ -165,14 +167,19 @@ function providerConfigLines(
   baseUrl: string,
   reasoningEffort: ReasoningEffort | null,
   upstreamProvider: string,
+  nativeLocalCredentialHandle?: string,
 ): string[] {
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, baseUrl);
-  const apiKeyEnv = nativeLocalCredentialReference(upstreamProvider, baseUrl)
+  const apiKeyEnv = nativeLocalCredentialReference(
+    upstreamProvider,
+    baseUrl,
+    undefined,
+    nativeLocalCredentialHandle,
+  )
     ? NATIVE_LOCAL_CREDENTIAL_ENV
-    : (nativeHosted?.credentialEnv ??
-      (baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
-        ? ATTACHED_PROVIDER_API_KEY_ENV
-        : MANAGED_INFERENCE_API_KEY_ENV));
+    : upstreamProvider === "nvidia-prod" && baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
+      ? ATTACHED_PROVIDER_API_KEY_ENV
+      : (nativeHosted?.credentialEnv ?? MANAGED_INFERENCE_API_KEY_ENV);
   return [
     `[models.providers.${provider}]`,
     `models = ${tomlArray([model])}`,
@@ -221,6 +228,7 @@ function buildConfig(settings: Settings): ManagedDeepAgentsConfig {
       settings.baseUrl,
       settings.reasoningEffort,
       settings.upstreamProvider,
+      settings.nativeLocalCredentialHandle,
     ),
     "",
     "[update]",

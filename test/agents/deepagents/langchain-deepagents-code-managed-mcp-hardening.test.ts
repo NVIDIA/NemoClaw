@@ -5,7 +5,15 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import {
+  cleanupCachedPatchedFixture,
+  cleanupPackageFixtures,
+  createPatchedPackageFixture,
+} from "../../helpers/langchain-deepagents-code-patch-fixture";
+
+afterEach(cleanupPackageFixtures);
+afterAll(cleanupCachedPatchedFixture);
 
 const managedRuntimePath = path.join(
   process.cwd(),
@@ -30,6 +38,43 @@ function runManagedHelper(source: string) {
 }
 
 describe("Deep Agents managed MCP runtime hardening", () => {
+  it("preserves upstream MCP JSON diagnostics around the managed descriptor loader", () => {
+    const tempDir = createPatchedPackageFixture();
+    const invalidConfig = path.join(tempDir, "invalid-mcp.json");
+    fs.writeFileSync(invalidConfig, '{"mcpServers": }\n', "utf8");
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `import json
+from deepagents_code.mcp_tools import load_mcp_config
+
+try:
+    load_mcp_config(${JSON.stringify(invalidConfig)})
+except json.JSONDecodeError as exc:
+    print(str(exc))
+else:
+    raise AssertionError("invalid JSON unexpectedly loaded")
+`,
+      ],
+      {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Invalid JSON in MCP config file");
+    expect(result.stdout).toContain("Check the JSON syntax.");
+    expect(result.stdout).toContain("^");
+    const patchedLoader = fs.readFileSync(
+      path.join(tempDir, "deepagents_code", "mcp_tools.py"),
+      "utf8",
+    );
+    expect(patchedLoader).toContain("return json.loads(managed_payload)");
+    expect(patchedLoader).toContain("return json.load(file_obj)");
+  });
+
   it.runIf(process.platform === "linux")(
     "rejects OpenShell supervisor TLS identity from the managed child runtime",
     () => {

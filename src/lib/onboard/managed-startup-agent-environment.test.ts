@@ -293,7 +293,7 @@ const PROFILES: Readonly<Record<ManagedStartupAgent, () => ManagedStartupProfile
 };
 
 describe("managed startup agent environment", () => {
-  it("binds the OpenClaw proxy authority to the configured host and port", () => {
+  it("omits the retired OpenClaw proxy material for a configured host and port", () => {
     const profile = openClawProfile();
     const configured = {
       ...profile,
@@ -302,15 +302,10 @@ describe("managed startup agent environment", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(configured, {
       HTTP_PROXY: "http://attacker:9",
     });
-    expect(result.materials).toContainEqual({
-      kind: "root-owned-file",
-      legacyInput: "NEMOCLAW_PROXY_HOST",
-      path: "/usr/local/share/nemoclaw/openclaw-proxy-url",
-      contents: "http://custom.internal:3129\n",
-      owner: "root",
-      group: "root",
-      mode: 0o444,
-    });
+    expect(result.materials).not.toContainEqual(
+      expect.objectContaining({ kind: "root-owned-file" }),
+    );
+    expect(result.runtimeEnvironment.HTTP_PROXY).toBe(profile.proxy.hostHttpUrl);
   });
   it("maps every OpenClaw profile field to the existing generator and entrypoint contracts", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(openClawProfile(), {
@@ -344,8 +339,6 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "0.5",
       NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "openclaw-gateway",
       NEMOCLAW_PRIMARY_MODEL_REF: "inference/nvidia/nemotron-3-ultra-550b-a55b",
-      NEMOCLAW_PROXY_HOST: "10.200.0.1",
-      NEMOCLAW_PROXY_PORT: "3128",
       NEMOCLAW_REASONING: "true",
       NEMOCLAW_REASONING_EFFORT: "high",
       NEMOCLAW_SERVING_PRESET: "",
@@ -418,15 +411,6 @@ describe("managed startup agent environment", () => {
         kind: "corporate-ca-handoff",
         legacyInput: "NEMOCLAW_CORPORATE_CA_B64",
         expectedSha256: CA_SHA256,
-      },
-      {
-        kind: "root-owned-file",
-        legacyInput: "NEMOCLAW_PROXY_HOST",
-        path: "/usr/local/share/nemoclaw/openclaw-proxy-url",
-        contents: "http://10.200.0.1:3128\n",
-        owner: "root",
-        group: "root",
-        mode: 0o444,
       },
     ]);
     expect(result.actions).toEqual([
@@ -563,8 +547,6 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_MODEL: "claude-sonnet-4-5",
       HERMES_HOME: "/sandbox/.hermes",
       HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
-      NEMOCLAW_PROXY_HOST: "proxy_name",
-      NEMOCLAW_PROXY_PORT: "43128",
       NEMOCLAW_TOOL_DISCLOSURE: "direct",
       NEMOCLAW_UPSTREAM_PROVIDER: "anthropic-prod",
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",
@@ -729,24 +711,6 @@ describe("managed startup agent environment", () => {
       },
       {
         kind: "root-owned-file",
-        legacyInput: "NEMOCLAW_PROXY_HOST",
-        path: "/usr/local/share/nemoclaw/dcode-proxy-host",
-        contents: "10.200.0.1\n",
-        owner: "root",
-        group: "root",
-        mode: 0o444,
-      },
-      {
-        kind: "root-owned-file",
-        legacyInput: "NEMOCLAW_PROXY_PORT",
-        path: "/usr/local/share/nemoclaw/dcode-proxy-port",
-        contents: "3128\n",
-        owner: "root",
-        group: "root",
-        mode: 0o444,
-      },
-      {
-        kind: "root-owned-file",
         legacyInput: "NEMOCLAW_REASONING_EFFORT",
         path: "/usr/local/share/nemoclaw/dcode-reasoning-effort",
         contents: "high\n",
@@ -768,7 +732,7 @@ describe("managed startup agent environment", () => {
     ]);
   });
 
-  it("keeps the Pi managed route credential-free and confined to root-owned proxy files (#7930)", () => {
+  it("keeps Pi startup configuration credential-free without proxy files (#7930)", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(piProfile());
 
     expect(result.configurationEnvironment).toEqual({
@@ -800,24 +764,6 @@ describe("managed startup agent environment", () => {
         kind: "corporate-ca-handoff",
         legacyInput: "NEMOCLAW_CORPORATE_CA_B64",
         expectedSha256: CA_SHA256,
-      },
-      {
-        kind: "root-owned-file",
-        legacyInput: "NEMOCLAW_PROXY_HOST",
-        path: "/usr/local/share/nemoclaw/pi-proxy-host",
-        contents: "10.200.0.1\n",
-        owner: "root",
-        group: "root",
-        mode: 0o444,
-      },
-      {
-        kind: "root-owned-file",
-        legacyInput: "NEMOCLAW_PROXY_PORT",
-        path: "/usr/local/share/nemoclaw/pi-proxy-port",
-        contents: "3128\n",
-        owner: "root",
-        group: "root",
-        mode: 0o444,
       },
     ]);
     expect(result.actions).toEqual([
@@ -876,11 +822,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_MODEL: "openai/gpt-5.4",
       NEMOCLAW_UPSTREAM_PROVIDER: "openrouter",
     });
-    expect(after.materials).toEqual([
-      before.materials[0],
-      { ...before.materials[1], contents: "10.200.0.9\n" },
-      { ...before.materials[2], contents: "3129\n" },
-    ]);
+    expect(after.materials).toEqual(before.materials);
     const serialized = JSON.stringify(after);
     expect(serialized).not.toContain("https://inference.local/v1");
     expect(serialized).not.toContain("nvidia/nemotron-3-super-120b-a12b");

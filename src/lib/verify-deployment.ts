@@ -25,6 +25,7 @@ import { parseVersionFromText } from "./adapters/openshell/client";
 import {
   runSandboxInferenceInvocationProbe,
   verifyNativeHostedStatusAttachment,
+  verifyRegisteredStatusAttachment,
   type SandboxInferenceRouteHealthContext,
 } from "./actions/sandbox/inference-route-health";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
@@ -35,6 +36,7 @@ import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
 import { retryUntilAsync } from "./core/retry";
 import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import { requireHostedProviderAttachment } from "./inference/native-provider/hosted-attachment";
+import { recordedRegisteredInferenceProviderAttachment } from "./inference/native-provider/registered";
 import {
   isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalBinding,
@@ -293,7 +295,14 @@ export type InferenceRouteContext = {
   nativeLocalExpected?: boolean;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nativeHostedProviderAttachment?: unknown;
+  registeredInferenceProviderAttachment?: unknown;
+  preferredInferenceApi?: string | null;
+  credentialEnv?: string | null;
 };
+
+function registeredVerificationAttachment(context: InferenceRouteContext, sandboxName: string) {
+  return recordedRegisteredInferenceProviderAttachment({ ...context, name: sandboxName });
+}
 
 function toRouteHealthContext(context: InferenceRouteContext): SandboxInferenceRouteHealthContext {
   return { provider: context.provider ?? null };
@@ -457,7 +466,9 @@ async function verifyInferenceRoute(
   const nativeLocal =
     context.nativeLocalExpected || context.nativeLocalProviderAttachment !== undefined;
   let hostedAttachment;
+  let registeredAttachment;
   try {
+    registeredAttachment = registeredVerificationAttachment(context, sandboxName);
     hostedAttachment = requireHostedProviderAttachment(
       context.nativeHostedProviderAttachment,
       context.provider,
@@ -465,9 +476,9 @@ async function verifyInferenceRoute(
   } catch {
     return {
       status: "unhealthy",
-      detail: "Invalid native hosted provider attachment",
+      detail: "Invalid native provider attachment",
       httpCode: 0,
-      hint: "Restore the recorded provider ownership before retrying onboarding.",
+      hint: "Restore the recorded provider binding before retrying onboarding.",
     };
   }
   if (nativeLocal && !matchesNativeLocalVerificationRoute(context, sandboxName)) {
@@ -478,12 +489,19 @@ async function verifyInferenceRoute(
       hint: "Reconcile the recorded native local provider before retrying onboarding.",
     };
   }
-  if (isNativeNvidiaProvider(context.provider) || hostedAttachment || nativeLocal) {
-    const label = nativeLocal
-      ? "local"
-      : hostedAttachment
-        ? (context.provider?.trim() ?? "hosted")
-        : "NVIDIA";
+  if (
+    isNativeNvidiaProvider(context.provider) ||
+    hostedAttachment ||
+    nativeLocal ||
+    registeredAttachment
+  ) {
+    const label = registeredAttachment
+      ? "registered provider"
+      : nativeLocal
+        ? "local"
+        : hostedAttachment
+          ? (context.provider?.trim() ?? "hosted")
+          : "NVIDIA";
     const invocation = await retryUntilAsync(
       async () => (await deps.probeInferenceInvocation?.()) ?? null,
       {
@@ -1006,11 +1024,14 @@ export function onboardInferenceVerificationContext(
   flow: Pick<InferenceInvocationContext, "model" | "provider" | "preferredInferenceApi"> & {
     endpointUrl?: string | null;
     nimContainer?: string | null;
+    credentialEnv?: string | null;
   },
   attachment?:
     | (Pick<
         InferenceRouteContext,
-        "nativeLocalProviderAttachment" | "nativeHostedProviderAttachment"
+        | "nativeLocalProviderAttachment"
+        | "nativeHostedProviderAttachment"
+        | "registeredInferenceProviderAttachment"
       > & {
         nimContainer?: string | null;
         agent?: string | null;
@@ -1020,6 +1041,7 @@ export function onboardInferenceVerificationContext(
         createdAt?: string | null;
         pendingRouteReservation?: boolean;
         hostLocalInferenceReceipt?: string | null;
+        credentialEnv?: string | null;
       })
     | null,
 ): { route: InferenceRouteContext; invocation: InferenceInvocationContext } {
@@ -1031,10 +1053,14 @@ export function onboardInferenceVerificationContext(
       flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
     ) && !isPersistedPiSharedLocalInferenceRoute(attachment, flow);
   const nativeLocalProviderAttachment =
-    flow.provider === "vllm-local" && attachment?.nimContainer
+    flow.provider === "vllm-local" &&
+    (flow.nimContainer || attachment?.nimContainer) &&
+    attachment?.nativeLocalProviderAttachment?.authMode !== "sentinel"
       ? undefined
       : attachment?.nativeLocalProviderAttachment;
   const nativeHostedProviderAttachment = attachment?.nativeHostedProviderAttachment;
+  const registeredInferenceProviderAttachment = attachment?.registeredInferenceProviderAttachment;
+  const credentialEnv = flow.credentialEnv ?? attachment?.credentialEnv;
   const endpointUrl =
     agentName === "hermes" &&
     nativeLocalExpected &&
@@ -1056,6 +1082,9 @@ export function onboardInferenceVerificationContext(
       nativeLocalExpected,
       nativeLocalProviderAttachment,
       nativeHostedProviderAttachment,
+      registeredInferenceProviderAttachment,
+      preferredInferenceApi: flow.preferredInferenceApi,
+      credentialEnv,
     },
     invocation: {
       sandboxName,
@@ -1068,6 +1097,8 @@ export function onboardInferenceVerificationContext(
       nativeLocalExpected,
       nativeLocalProviderAttachment,
       nativeHostedProviderAttachment,
+      registeredInferenceProviderAttachment,
+      credentialEnv,
     },
   };
 }
@@ -1100,7 +1131,15 @@ export async function probeOnboardInferenceInvocation(
     };
   }
   let hostedAttachment;
+  let registeredAttachment;
   try {
+    registeredAttachment = registeredVerificationAttachment(context, context.sandboxName);
+    if (registeredAttachment)
+      await verifyRegisteredStatusAttachment({
+        gatewayName: context.gatewayName,
+        sandboxName: context.sandboxName,
+        expected: registeredAttachment,
+      });
     hostedAttachment = requireHostedProviderAttachment(
       context.nativeHostedProviderAttachment,
       provider,
@@ -1114,7 +1153,7 @@ export async function probeOnboardInferenceInvocation(
   } catch {
     return {
       ok: false,
-      detail: "the recorded native hosted provider attachment could not be verified",
+      detail: "the recorded native provider attachment could not be verified",
     };
   }
   const result = await probe({
@@ -1124,11 +1163,15 @@ export async function probeOnboardInferenceInvocation(
     provider,
     model,
     preferredInferenceApi: context.preferredInferenceApi,
+    ...(registeredAttachment
+      ? { registeredInferenceProviderAttachment: registeredAttachment }
+      : {}),
     ...(context.nativeLocalProviderAttachment
       ? { nativeLocalProviderAttachment: context.nativeLocalProviderAttachment }
       : {}),
     ...(isNativeNvidiaProvider(provider) ||
     hostedAttachment ||
+    registeredAttachment ||
     context.nativeLocalProviderAttachment
       ? { nativeProvider: true }
       : {}),

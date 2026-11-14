@@ -35,13 +35,21 @@ export const HERMES_MCP_RESPONSE_FILE_BYTES = 65_536;
 
 export interface HermesMcpCommandResult {
   exitCode: number | null;
-  signal?: NodeJS.Signals | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
   stdout: string;
   stderr: string;
 }
 
 export function isHermesGatewayDrainingResponse(result: HermesMcpCommandResult): boolean {
-  if (result.exitCode !== 0 || parseHttpStatus(result.stderr) !== 503) return false;
+  if (
+    result.exitCode !== 0 ||
+    result.signal !== null ||
+    result.timedOut ||
+    parseHttpStatus(result.stderr) !== 503
+  ) {
+    return false;
+  }
   try {
     const body = JSON.parse(result.stdout) as { error?: { code?: unknown } };
     return body.error?.code === "gateway_draining";
@@ -67,12 +75,8 @@ export function buildHermesMcpChatProbeScript(payload: string, resultToken: stri
     `set -- -sS --max-time 180 --max-filesize ${HERMES_MCP_RESPONSE_FILE_BYTES} -o "$response_file" -w '%{http_code}' http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json'`,
     'if [ -n "${API_SERVER_KEY:-}" ]; then set -- "$@" -H "Authorization: Bearer ${API_SERVER_KEY}"; fi',
     `emit_failure_body() { /usr/bin/python3 -I -S -c ${shellQuote(FAILURE_BODY_EMITTER)} "$response_file"; }`,
-    "set +e",
     `status="$(curl "$@" --data-binary ${shellQuote(payload)})"`,
-    "curl_rc=$?",
-    "set -e",
     `printf '\\n${HERMES_MCP_HTTP_STATUS_MARKER}%s\\n' "$status" >&2`,
-    'if [ "$curl_rc" -ne 0 ]; then exit "$curl_rc"; fi',
     `case "$status" in 2??) if grep -Fq -- ${shellQuote(resultToken)} "$response_file"; then printf '${HERMES_MCP_RESULT_TOKEN_MARKER}present\\n' >&2; else printf '${HERMES_MCP_RESULT_TOKEN_MARKER}missing\\n' >&2; emit_failure_body; fi ;; *) emit_failure_body ;; esac`,
   ].join("\n");
 }
@@ -126,10 +130,12 @@ export function assertHermesMcpHttpResponse(
   explicitRedactionValues: Iterable<string>,
 ): void {
   const status = parseHttpStatus(result.stderr);
-  if (result.exitCode !== 0) {
-    const transport = result.signal
-      ? `signal=${result.signal}`
-      : `exit=${result.exitCode ?? "unknown"}`;
+  if (result.exitCode !== 0 || result.signal !== null || result.timedOut) {
+    const transport = result.timedOut
+      ? "timeout"
+      : result.signal
+        ? `signal=${result.signal}`
+        : `exit=${result.exitCode ?? "unknown"}`;
     const detail = sanitizedPreview([result.stdout, result.stderr].filter(Boolean).join("\n"), [
       ...explicitRedactionValues,
     ]);

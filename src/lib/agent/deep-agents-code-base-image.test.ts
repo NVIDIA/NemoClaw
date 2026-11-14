@@ -99,12 +99,12 @@ describe("Deep Agents Code base image compatibility", () => {
       makeAgent({
         name: "langchain-deepagents-code",
         displayName: "LangChain Deep Agents Code",
-        expectedVersion: "0.1.34",
+        expectedVersion: "0.1.54",
       }),
       "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
     );
     mocks.dockerCapture
-      .mockReturnValueOnce("0.1.34")
+      .mockReturnValueOnce("0.1.54")
       .mockReturnValueOnce("nemoclaw-dcode-sandbox-identity-ok")
       .mockReturnValueOnce("");
 

@@ -13,13 +13,6 @@ import { loadManagedVllmApiKey, managedVllmApiKeyPath, managedVllmStateDir } fro
 import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
 import { assertNoManagedDistributedVllmRuntimeReceipts } from "./managed-runtime-receipts";
 import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
-import {
-  resolveManagedVllmBridgeHost,
-  validateManagedVllmBridgeHost,
-} from "./vllm-host-local-network";
-
-export { resolveManagedVllmBridgeHost };
-
 export const HOST_LOCAL_VLLM_CONTAINER_NAME = "nemoclaw-vllm" as const;
 export const HOST_LOCAL_VLLM_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm" as const;
 export const HOST_LOCAL_VLLM_AUTH_LABEL = "com.nvidia.nemoclaw.managed-vllm-auth" as const;
@@ -63,7 +56,6 @@ export interface RecoverHostLocalManagedVllmOptions {
   dockerInspect?: () => string;
   loadApiKey?: () => string | null;
   onManagedContainerObserved?: () => void;
-  resolveBridgeHost?: () => string;
   stateDir?: string;
 }
 
@@ -296,11 +288,8 @@ export class ManagedVllmInspectionError extends Error {
   }
 }
 
-/** Reject unsafe owned bearerless bindings and select their private probe address. */
-export function getLegacyHostLocalManagedVllmBridgeHost(
-  servingPort: number,
-  capture: typeof dockerCapture = dockerCapture,
-): string | null {
+/** Reject unsafe owned bearerless bindings and select their loopback probe address. */
+export function getLegacyHostLocalManagedVllmLoopbackHost(servingPort: number): string | null {
   const dockerEnv = buildLocalManagedVllmDockerEnv();
   const inspection = dockerRun(["container", "inspect", HOST_LOCAL_VLLM_CONTAINER_NAME], {
     env: dockerEnv,
@@ -398,11 +387,10 @@ export function getLegacyHostLocalManagedVllmBridgeHost(
     ports && typeof ports === "object" && !Array.isArray(ports)
       ? (ports as Record<string, unknown>)[`${String(HOST_LOCAL_VLLM_CONTAINER_PORT)}/tcp`]
       : null;
-  const bridge = resolveManagedVllmBridgeHost(capture, dockerEnv);
-  const expectedHosts = new Set(["127.0.0.1", bridge]);
+  const expectedHosts = new Set(["127.0.0.1"]);
   if (
     !Array.isArray(bindings) ||
-    bindings.length !== 2 ||
+    bindings.length !== 1 ||
     !bindings.every(
       (binding) =>
         binding &&
@@ -413,7 +401,7 @@ export function getLegacyHostLocalManagedVllmBridgeHost(
   ) {
     throw new UnsafeLegacyVllmBindingsError();
   }
-  return bridge;
+  return "127.0.0.1";
 }
 
 /** Recover only the exact authenticated host-local container with bounded host bindings. */
@@ -465,17 +453,6 @@ export function recoverHostLocalManagedVllmEndpoint(
       typeof binding === "object" &&
       (binding as { HostIp?: unknown }).HostIp === "127.0.0.1",
   );
-  const expectedBridgeHost = validateManagedVllmBridgeHost(
-    options.resolveBridgeHost
-      ? options.resolveBridgeHost()
-      : resolveManagedVllmBridgeHost(capture, dockerEnv),
-  );
-  const bridgeBinding = bindings.find(
-    (binding) =>
-      binding &&
-      typeof binding === "object" &&
-      (binding as { HostIp?: unknown }).HostIp === expectedBridgeHost,
-  );
   const env = Array.isArray(row.Config?.Env) ? row.Config.Env : [];
   const configuredKeyRows = env.filter(
     (value): value is string => typeof value === "string" && value.startsWith("VLLM_API_KEY="),
@@ -486,27 +463,18 @@ export function recoverHostLocalManagedVllmEndpoint(
     /^\d{4,5}$/u.test((loopbackBinding as { HostPort: string }).HostPort)
       ? Number((loopbackBinding as { HostPort: string }).HostPort)
       : Number.NaN;
-  const bridgeHostPort =
-    bridgeBinding &&
-    typeof (bridgeBinding as { HostPort?: unknown }).HostPort === "string" &&
-    /^\d{4,5}$/u.test((bridgeBinding as { HostPort: string }).HostPort)
-      ? Number((bridgeBinding as { HostPort: string }).HostPort)
-      : Number.NaN;
   if (
     row.Id === undefined ||
     typeof row.Id !== "string" ||
     !/^[a-f0-9]{12,64}$/.test(row.Id) ||
     row.Name !== `/${HOST_LOCAL_VLLM_CONTAINER_NAME}` ||
     row.State?.Running !== true ||
-    bindings.length !== 2 ||
+    bindings.length !== 1 ||
     !loopbackBinding ||
-    !bridgeBinding ||
     !Number.isSafeInteger(loopbackHostPort) ||
     loopbackHostPort < 1024 ||
     loopbackHostPort > 65_535 ||
     String(loopbackHostPort) !== (loopbackBinding as { HostPort: string }).HostPort ||
-    bridgeHostPort !== loopbackHostPort ||
-    String(bridgeHostPort) !== (bridgeBinding as { HostPort: string }).HostPort ||
     configuredKeyRows.length !== 1 ||
     typeof authFingerprint !== "string"
   ) {

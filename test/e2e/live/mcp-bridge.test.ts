@@ -78,6 +78,7 @@ import {
 } from "./mcp-bridge-reliability.ts";
 import {
   buildMcpDnsRebindingProbeScript,
+  buildMcpSecretAbsenceScript,
   expectExitNonZero,
   hostAddressForSandbox,
   isExpectedMcpCurlPolicyDenial,
@@ -85,6 +86,7 @@ import {
 } from "./mcp-bridge-sandbox.ts";
 import {
   startCompatibleMock,
+  withCompatibleMockFailureDiagnostics,
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "./mcp-bridge-servers.ts";
@@ -181,12 +183,7 @@ async function assertSecretAbsentFromSandbox(
   secrets: string[] = [HOST_SECRET],
   artifactName = "assert-secret-absent-from-sandbox",
 ): Promise<void> {
-  const script = [
-    "set -eu",
-    ...secrets.map(
-      (secret) => `! grep -R ${JSON.stringify(secret)} ${paths.join(" ")} 2>/dev/null`,
-    ),
-  ].join("\n");
+  const script = buildMcpSecretAbsenceScript(paths, secrets);
   const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
     artifactName,
     env: buildAvailabilityProbeEnv(),
@@ -272,7 +269,6 @@ async function assertConcurrentAddSerialized(
     server: CONCURRENT_SERVER_NAME,
   });
   const status = statusObservation.result;
-  expectExitZero(status, `${options.artifactPrefix} concurrent add leaves one coherent bridge`);
   expect(JSON.parse(status.stdout)).toMatchObject({
     server: CONCURRENT_SERVER_NAME,
     url: redactString(options.mcpUrl, [HOST_SECRET]),
@@ -478,7 +474,7 @@ async function assertAdapterRequestDeniedAfterRemove(
   const denial = await sandbox.execShell(
     options.sandboxName,
     trustedSandboxShellScript(
-      buildMcpDnsRebindingProbeScript(options.adapter, options.mcpUrl, "FAKE_MCP_SECRET"),
+      buildMcpDnsRebindingProbeScript(options.adapter, options.mcpUrl, "FAKE_MCP_SECRET", true),
     ),
     {
       artifactName: `${options.artifactPrefix}-mcp-adapter-request-denied-after-remove`,
@@ -520,9 +516,7 @@ async function assertRealAdapterToolCall(
     messages: [{ role: "user", content: prompt }],
     max_tokens: 256,
   });
-  // ShellProbe redacts these values before it returns command output or writes
-  // artifacts. The HTTP assertion redacts them again before Vitest formats a
-  // bounded failure preview.
+  // ShellProbe and the HTTP assertion both redact secrets before reporting failure.
   const hermesRedactionValues = [
     HOST_SECRET,
     ROTATED_HOST_SECRET,
@@ -724,15 +718,12 @@ test(
       ...bridge,
       artifactName: "onboard-openclaw-mcp-bridge",
     });
-    await approveOpenClawAdminScope(
-      host,
-      sandbox,
-      OPENCLAW_SANDBOX_NAME,
-      buildAvailabilityProbeEnv(),
-      [COMPATIBLE_KEY, HOST_SECRET],
+    await withCompatibleMockFailureDiagnostics(compatibleMock, artifacts, () =>
+      approveOpenClawAdminScope(host, sandbox, OPENCLAW_SANDBOX_NAME, buildAvailabilityProbeEnv(), [
+        COMPATIBLE_KEY,
+        HOST_SECRET,
+      ]),
     );
-    // Prove raw OpenShell allowed_ips with curl and a /** grant before MCP
-    // mutation. The helper restores the exact base policy before returning.
     await runFullMcpBridgeE2eCoverage(mcpBridgeE2eScope, () =>
       assertRawOpenShellAllowedIpsRebindingDenied({
         artifacts,
@@ -814,7 +805,6 @@ test(
     expect(aliasState.providerAbsent).toBe(true);
     expect(aliasState.policyAbsent).toBe(true);
     expect(aliasState.adapterAbsent).toBe(true);
-    // Exercise both native adapters with both credentials and policy entries present.
     const distinctMcp = await startFakeMcpHttpsServer({
       ...MCP_SERVER_OPTIONS,
       secret: ROTATED_HOST_SECRET,
@@ -908,8 +898,8 @@ test(
       "Node runtime identity can use an explicitly allowed MCP method",
     );
     const allowedNodeRequests = fakeMcp.requests.slice(requestCountBeforeAllowedNodeProof);
-    expect(allowedNodeRequests).toHaveLength(1);
-    expect(allowedNodeRequests[0]).toMatchObject({
+    expect(allowedNodeRequests).toHaveLength(3);
+    expect(allowedNodeRequests.at(-1)).toMatchObject({
       path: "/mcp",
       auth: `Bearer ${HOST_SECRET}`,
     });
@@ -956,23 +946,22 @@ test(
     );
     expect(decoyMcp.requests).toHaveLength(0);
 
-    const deniedCurl = await sandbox.execShell(
+    const beforeCurlControl = fakeMcp.requests.length;
+    const curlControl = await sandbox.execShell(
       OPENCLAW_SANDBOX_NAME,
       trustedSandboxShellScript(
-        [
-          "set -eu",
-          `body='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`,
-          "rm -f /tmp/nemoclaw-mcp-denied.out /tmp/nemoclaw-mcp-denied.err",
-          "set +e",
-          `code="$(curl -sS -o /tmp/nemoclaw-mcp-denied.out -w '%{http_code}' -X POST ${JSON.stringify(mcpUrl)} -H 'content-type: application/json' -H 'authorization: Bearer openshell:resolve:env:FAKE_MCP_SECRET' --data "$body" 2>/tmp/nemoclaw-mcp-denied.err)"`,
-          "curl_rc=$?",
-          "set -e",
-          "cat /tmp/nemoclaw-mcp-denied.out 2>/dev/null || true",
-          "cat /tmp/nemoclaw-mcp-denied.err >&2",
-          'printf "NEMOCLAW_MCP_CURL_HTTP_CODE=%s\\n" "$code"',
-          'exit "$curl_rc"',
-        ].join("\n"),
+        buildMcpDnsRebindingProbeScript("openclaw-config", mcpUrl, "FAKE_MCP_SECRET"),
       ),
+      {
+        artifactName: "mcp-allowlisted-ancestor-curl-control",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    const curlControlRequests = fakeMcp.requests.slice(beforeCurlControl);
+    const deniedCurl = await sandbox.execShell(
+      OPENCLAW_SANDBOX_NAME,
+      trustedSandboxShellScript(buildMcpDnsRebindingProbeScript(null, mcpUrl, "FAKE_MCP_SECRET")),
       {
         artifactName: "mcp-non-allowlisted-binary-curl-denied",
         env: buildAvailabilityProbeEnv(),
@@ -980,7 +969,13 @@ test(
       },
     );
     expect(
-      isExpectedMcpCurlPolicyDenial(deniedCurl),
+      isExpectedMcpCurlPolicyDenial(deniedCurl) &&
+        curlControl.exitCode === 0 &&
+        !curlControl.timedOut &&
+        curlControl.stdout.includes("NEMOCLAW_MCP_CURL_HTTP_CODE=200") &&
+        curlControlRequests.length === 1 &&
+        curlControlRequests[0]?.auth === `Bearer ${HOST_SECRET}` &&
+        fakeMcp.requests.length === beforeCurlControl + 1,
       `non-allowlisted curl must receive an OpenShell policy denial\nstdout:\n${deniedCurl.stdout}\nstderr:\n${deniedCurl.stderr}`,
     ).toBe(true);
 

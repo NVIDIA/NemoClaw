@@ -35,6 +35,7 @@ function snapshot(file: string) {
 }
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   dirs.splice(0).forEach((dir) => fs.rmSync(dir, { recursive: true, force: true }));
 });
 
@@ -204,6 +205,8 @@ function runtimeFixture(
     snapshotNonzero?: boolean;
     inspectThrows?: boolean;
     removalNonzero?: boolean;
+    network?: string;
+    hostProbeOutput?: string;
   } = {},
 ) {
   vi.spyOn(RuntimeProviderPrerequisite.prototype, "resolveSandboxResourceHandle").mockResolvedValue(
@@ -228,7 +231,10 @@ function runtimeFixture(
             );
       const effects: Record<string, () => void> = { "container cp": copySummary };
       effects[key]?.();
-      const stdout = args.at(-1) === "sandbox-id" ? '{"owned-network":{}}' : "172.18.0.3";
+      const stdout =
+        args.at(-1) === "sandbox-id"
+          ? JSON.stringify({ [options.network ?? "owned-network"]: {} })
+          : "172.18.0.3";
       return {
         command: [],
         exitCode:
@@ -245,16 +251,19 @@ function runtimeFixture(
       };
     });
   const hostCommand = vi.fn(
-    async (command: string, args: string[], options?: { timeoutMs?: number }) => ({
+    async (command: string, args: string[], runOptions?: { timeoutMs?: number }) => ({
       command: [],
       exitCode: 0,
       signal: null,
       timedOut: false,
-      stdout: execFileSync(command, args, {
-        encoding: "utf8",
-        timeout: options?.timeoutMs ?? 10_000,
-        killSignal: "SIGKILL",
-      }),
+      stdout:
+        command === "bash" && options.hostProbeOutput !== undefined
+          ? options.hostProbeOutput
+          : execFileSync(command, args, {
+              encoding: "utf8",
+              timeout: runOptions?.timeoutMs ?? 10_000,
+              killSignal: "SIGKILL",
+            }),
       stderr: "",
       artifacts: { stdout: "", stderr: "", result: "" },
     }),
@@ -271,6 +280,36 @@ function runtimeFixture(
       }),
   };
 }
+describe("host-network supervisor private endpoint", () => {
+  it.each(["docker", "podman"])(
+    "uses the existing host listener for %s without starting a network-none relay",
+    async (provider) => {
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", provider);
+      vi.stubEnv("OPENSHELL_PODMAN_SOCKET", "/tmp/podman.sock");
+      const f = runtimeFixture({ network: "none", hostProbeOutput: "route 10.20.30.40\n" });
+      const endpoint = await f.start();
+      expect(endpoint).toMatchObject({ address: "10.20.30.40", port: 1234 });
+      await endpoint.close();
+      expect(f.command.mock.calls.map(([args]) => args.slice(0, 2))).toEqual([
+        ["container", "inspect"],
+      ]);
+      expect(f.hostCommand).toHaveBeenCalledExactlyOnceWith("bash", expect.any(Array), {
+        artifactName: "routed-private-host-address",
+        env: expect.any(Object),
+        timeoutMs: 30_000,
+      });
+    },
+  );
+
+  it.each(["1.1.1.1", "127.0.0.1", "169.254.2.2"])(
+    "rejects host address %s without creating or removing containers",
+    async (address) => {
+      const f = runtimeFixture({ network: "none", hostProbeOutput: `route ${address}\n` });
+      await expect(f.start()).rejects.toThrow("operator-trustable private");
+      expect(f.command).toHaveBeenCalledTimes(1);
+    },
+  );
+});
 describe("relay diagnostic cleanup ownership", () => {
   it.each([{ snapshotThrows: true }, { snapshotNonzero: true }, {}])(
     "always removes the exact relay after snapshot outcome %j",

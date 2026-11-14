@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { cliOpenShellInstalledVersionObserver } from "../../../../test/helpers/rebuild-flow-harness";
 import {
   configureDcodeSession,
   expectNoDcodeMutation,
@@ -25,7 +26,7 @@ describe("rebuildSandbox DCode recovered provider", () => {
       const harness = createRebuildFlowHarness({
         agentName: "langchain-deepagents-code",
         sandboxEntry: {
-          ...makeDcodeSandboxEntry(),
+          ...makeDcodeSandboxEntry(false),
           provider: "nvidia-prod",
           nativeNvidiaProviderAttachment,
         },
@@ -42,77 +43,86 @@ describe("rebuildSandbox DCode recovered provider", () => {
     },
   );
 
-  it("rejects incompatible keyless provider reuse after the live DCode route proof", async () => {
-    const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
-    delete process.env.COMPATIBLE_API_KEY;
-
-    try {
-      const harness = createRebuildFlowHarness({
-        agentName: "langchain-deepagents-code",
-        sandboxEntry: makeDcodeSandboxEntry(),
-        dcodeRouteResults: [{ ok: true }, { ok: true }],
+  describe("shared-provider recovery on OpenShell 0.0.116", () => {
+    beforeEach(() => {
+      vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
+        ok: true,
+        version: "0.0.116",
       });
-      configureDcodeSession(harness);
-      setGatewayProviderMetadata(
-        harness,
-        "Name: compatible-endpoint\nType: anthropic\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
-      );
+    });
 
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("Unsafe gateway credential reuse");
+    it("rejects incompatible keyless provider reuse after the live DCode route proof", async () => {
+      const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
+      delete process.env.COMPATIBLE_API_KEY;
 
-      expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(2);
-      expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
-      expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
-        harness.preparedDcodeBuildContext,
-      );
-      expectNoDcodeMutation(harness);
-    } finally {
-      restoreEnv();
-    }
-  });
+      try {
+        const harness = createRebuildFlowHarness({
+          agentName: "langchain-deepagents-code",
+          sandboxEntry: makeDcodeSandboxEntry(false),
+          dcodeRouteResults: [{ ok: true }, { ok: true }],
+        });
+        configureDcodeSession(harness);
+        setGatewayProviderMetadata(
+          harness,
+          "Name: compatible-endpoint\nType: anthropic\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+        );
 
-  it("rejects incomplete keyless provider reuse for backup recovery before deletion", async () => {
-    const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
-    delete process.env.COMPATIBLE_API_KEY;
-    const recoveryManifest = {
-      ...makePreparedRecoveryManifest(),
-      agentType: "langchain-deepagents-code",
-      agentVersion: "0.1.12",
-      dir: "/sandbox/.deepagents",
-    };
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).rejects.toThrow("Unsafe gateway credential reuse");
 
-    try {
-      const harness = createRebuildFlowHarness({
-        agentName: "langchain-deepagents-code",
-        sandboxEntry: makeDcodeSandboxEntry(),
-        sandboxInventory: {
-          sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
-        },
-        preDeleteLatestManifest: recoveryManifest,
-      });
-      configureDcodeSession(harness);
-      setGatewayProviderMetadata(
-        harness,
-        "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: <none>\n",
-      );
+        expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(2);
+        expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+        expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+          harness.preparedDcodeBuildContext,
+        );
+        expectNoDcodeMutation(harness);
+      } finally {
+        restoreEnv();
+      }
+    });
 
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], {
-          throwOnError: true,
-          recoveryManifest,
-        }),
-      ).rejects.toThrow("Unsafe gateway credential reuse");
+    it("rejects incomplete keyless provider reuse for backup recovery before deletion", async () => {
+      const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
+      delete process.env.COMPATIBLE_API_KEY;
+      const recoveryManifest = {
+        ...makePreparedRecoveryManifest(),
+        agentType: "langchain-deepagents-code",
+        agentVersion: "0.1.12",
+        dir: "/sandbox/.deepagents",
+      };
 
-      expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
-      expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
-      expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
-        harness.preparedDcodeBuildContext,
-      );
-      expectNoDcodeMutation(harness);
-    } finally {
-      restoreEnv();
-    }
+      try {
+        const harness = createRebuildFlowHarness({
+          agentName: "langchain-deepagents-code",
+          sandboxEntry: makeDcodeSandboxEntry(false),
+          sandboxInventory: {
+            sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
+          },
+          preDeleteLatestManifest: recoveryManifest,
+        });
+        configureDcodeSession(harness);
+        setGatewayProviderMetadata(
+          harness,
+          "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: <none>\n",
+        );
+
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], {
+            throwOnError: true,
+            recoveryManifest,
+          }),
+        ).rejects.toThrow("Unsafe gateway credential reuse");
+
+        expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
+        expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+        expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+          harness.preparedDcodeBuildContext,
+        );
+        expectNoDcodeMutation(harness);
+      } finally {
+        restoreEnv();
+      }
+    });
   });
 });

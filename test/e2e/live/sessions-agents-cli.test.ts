@@ -28,6 +28,7 @@ import { parseJsonFromText } from "./json-envelope.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-sessions-cli";
 const TEST_AGENT_ID = process.env.NEMOCLAW_E2E_AGENT_ID ?? "work";
+const TEST_SESSION_KEY = `agent:${TEST_AGENT_ID}:e2e-delete`;
 const ONBOARD_TIMEOUT_MS = execTimeout(40 * 60_000);
 const AGENT_TURN_TIMEOUT_MS = 5 * 60_000;
 const GATEWAY_RPC_TIMEOUT_MS = 120_000;
@@ -201,13 +202,6 @@ function agentEntries(envelope: unknown): JsonRecord[] {
   return Array.isArray(agents)
     ? agents.filter((entry): entry is JsonRecord => !!asRecord(entry))
     : [];
-}
-
-function firstSessionKey(envelope: unknown): string | undefined {
-  for (const entry of sessionEntries(envelope)) {
-    if (typeof entry.key === "string" && entry.key.length > 0) return entry.key;
-  }
-  return undefined;
 }
 
 async function expectJsonCommand(
@@ -395,7 +389,19 @@ test(
     progress.phase("seed and delete the secondary-agent session");
     const workSeed = await runNemoclaw(
       host,
-      [SANDBOX_NAME, "exec", "--", "openclaw", "agent", "--agent", TEST_AGENT_ID, "-m", "ping"],
+      [
+        SANDBOX_NAME,
+        "exec",
+        "--",
+        "openclaw",
+        "agent",
+        "--agent",
+        TEST_AGENT_ID,
+        "--session-key",
+        TEST_SESSION_KEY,
+        "-m",
+        "ping",
+      ],
       hosted,
       {
         artifactName: "seed-work-agent-session",
@@ -410,15 +416,16 @@ test(
       hosted,
       "tc-sess-05-work-agent-sessions-json",
     );
-    const sessionKey = firstSessionKey(workSessions);
-    expect(
-      sessionKey,
-      `expected a session key for agent '${TEST_AGENT_ID}' after seed prompt`,
-    ).toBeTruthy();
+    const sessionKey = sessionEntries(workSessions).find(
+      (entry) => entry.key === TEST_SESSION_KEY,
+    )?.key;
+    expect(sessionKey, `expected the seeded session '${TEST_SESSION_KEY}' after seed prompt`).toBe(
+      TEST_SESSION_KEY,
+    );
 
     const deleteSession = await runNemoclaw(
       host,
-      [SANDBOX_NAME, "sessions", "delete", sessionKey!, "--json"],
+      [SANDBOX_NAME, "sessions", "delete", TEST_SESSION_KEY, "--json"],
       hosted,
       { artifactName: "tc-sess-05-sessions-delete-json", timeoutMs: GATEWAY_RPC_TIMEOUT_MS },
     );

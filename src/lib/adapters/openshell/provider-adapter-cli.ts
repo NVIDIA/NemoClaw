@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { inspectInferenceProviderProfile } from "./provider-profile";
+import { requireSandboxPolicyAuthority } from "./provider-policy";
 import {
   SUPPORTED_OPENSHELL_FALLBACK_VERSION,
   usesOpenShellNativeProjection,
@@ -107,6 +109,11 @@ export type CliOpenShellProviderProfileResult =
       error: OpenShellProviderError;
       operation: CliOpenShellProviderProfileOperation;
     }>;
+
+type VerifiedProviderProfile = Readonly<{
+  matches: (exported: string) => boolean;
+  contract?: CheckedInProviderProfileContract;
+}>;
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/u;
 const TERMINAL_OSC_RE = /(?:\x1B\]|\x9D)[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/gu;
@@ -489,17 +496,18 @@ export function createCliOpenShellProviderAdapter(
 ): CliOpenShellProviderAdapter {
   const run = deps.run ?? runOpenshellProviderCommand;
   const environment = deps.environment ?? process.env;
-  const verifiedProfiles = new Map<string, Map<string, (exported: string) => boolean>>();
+  const verifiedProfiles = new Map<string, Map<string, VerifiedProviderProfile>>();
   const targetKey = (target: OpenShellGatewayTarget) =>
     target.kind === "named" ? `named:${target.gatewayName}` : "selected";
   const rememberVerifiedProfile = (
     target: OpenShellGatewayTarget,
     profileId: string,
     matches: (exported: string) => boolean,
+    contract?: CheckedInProviderProfileContract,
   ) => {
     const key = targetKey(target);
     const profiles = verifiedProfiles.get(key) ?? new Map();
-    profiles.set(profileId, matches);
+    profiles.set(profileId, { matches, ...(contract ? { contract } : {}) });
     verifiedProfiles.set(key, profiles);
   };
   const warn = (message: string) => {
@@ -540,7 +548,7 @@ export function createCliOpenShellProviderAdapter(
   };
 
   const warnIfVerifiedProfileChanged = (request: OpenShellProviderRequest, profileId: string) => {
-    const matches = verifiedProfiles.get(targetKey(request.target))?.get(profileId);
+    const matches = verifiedProfiles.get(targetKey(request.target))?.get(profileId)?.matches;
     if (!matches) return;
     const exported = invoke(
       ["provider", "profile", "export", profileId, "--output", "json"],
@@ -578,62 +586,17 @@ export function createCliOpenShellProviderAdapter(
     async (request) => {
       const targetError = namedGatewayEndpointOverrideError(request.target, environment);
       if (targetError) return failure(targetError);
-      const read = () => {
-        const result = invoke(["settings", "get", "--global", "--json"], request);
-        const error = commandError(result);
-        if (error) return failure<string>(error);
-        try {
-          const document = JSON.parse(bufferOrStringToText(result.stdout));
-          const value = document.settings?.providers_v2_enabled;
-          if (document.scope === "global" && ["true", "false", "<unset>"].includes(value)) {
-            return success<string>(value);
-          }
-        } catch {
-          /* Fail closed on incompatible settings output. */
-        }
-        return failure<string>({
-          kind: "schema",
-          message: "OpenShell did not return the global provider policy setting.",
-        });
-      };
-      const before = read();
-      if (!before.ok) return before;
-      if (before.value === "true") return success(undefined);
-      if (before.value === "false") {
+      try {
+        await requireSandboxPolicyAuthority(async (args) => invoke(args, request));
+        return success(undefined);
+      } catch (error) {
         return failure({
           kind: "command",
-          reason: "conflict",
+          reason: "uncertain",
           message:
-            "Native NVIDIA inference requires provider-derived policy, but providers_v2_enabled is explicitly disabled on this gateway. Ask the gateway administrator to enable it.",
+            error instanceof Error ? error.message : "Could not verify sandbox policy authority.",
         });
       }
-      // OpenShell 0.0.116 defaults this gate off. Preserve explicit administrator
-      // choices; enable only its unset default before publishing a native provider.
-      const updated = invoke(
-        [
-          "settings",
-          "set",
-          "--global",
-          "--key",
-          "providers_v2_enabled",
-          "--value",
-          "true",
-          "--yes",
-        ],
-        request,
-      );
-      const error = commandError(updated);
-      if (error) return failure(error);
-      const after = read();
-      if (!after.ok) return after;
-      return after.value === "true"
-        ? success(undefined)
-        : failure({
-            kind: "command",
-            reason: "uncertain",
-            message:
-              "OpenShell did not confirm provider-derived policy activation. Inspect gateway settings before retrying.",
-          });
     };
 
   const listProviders: OpenShellProviderAdapter["listProviders"] = async (request) => {
@@ -662,8 +625,11 @@ export function createCliOpenShellProviderAdapter(
   const createProvider: OpenShellProviderAdapter["createProvider"] = async (request) => {
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);
     if (targetError) return failure(targetError);
+    const verified = verifiedProfiles.get(targetKey(request.target))?.get(request.type);
+    const credentialFree = verified?.contract?.boundary.credentials.length === 0;
     if (
-      (!request.fromExisting && request.credentials.length === 0) ||
+      (!request.fromExisting && request.credentials.length === 0 && !credentialFree) ||
+      (credentialFree && (request.fromExisting || request.credentials.length > 0)) ||
       (request.fromExisting && request.credentials.length > 0) ||
       request.credentials.some(
         (credential) =>
@@ -674,6 +640,27 @@ export function createCliOpenShellProviderAdapter(
         kind: "validation",
         message: "Provider credential input is missing or conflicts with imported credentials.",
       });
+    }
+    if (!request.fromExisting && request.credentials.length === 0) {
+      const exported = invoke(
+        ["provider", "profile", "export", request.type, "--output", "json"],
+        request,
+        undefined,
+        2,
+        true,
+      );
+      const error = commandError(exported);
+      if (error)
+        return failure({
+          ...error,
+          message: "OpenShell credential-free provider profile could not be verified.",
+        });
+      if (!verified?.matches(commandStdout(exported)))
+        return failure({
+          kind: "command",
+          reason: "profile_incompatible",
+          message: "The OpenShell provider profile changed before credential-free creation.",
+        });
     }
     const args = ["provider", "create", "--name", request.name, "--type", request.type];
     if (request.fromExisting) {
@@ -782,6 +769,7 @@ export function createCliOpenShellProviderAdapter(
       const credentialState = parseCliOpenShellProviderCredentialState(
         commandStdout(inventory),
         request.providerName,
+        projectedRuntime,
       );
       if (credentialState && "nextPageToken" in credentialState) {
         if (!projectedRuntime || seenPageTokens.has(credentialState.nextPageToken)) {
@@ -842,8 +830,11 @@ export function createCliOpenShellProviderAdapter(
       request,
       { ...deps, environment, run },
       (target, contract) => {
-        rememberVerifiedProfile(target, contract.profileId, (exported) =>
-          exportedProviderProfileMatchesContract(exported, contract),
+        rememberVerifiedProfile(
+          target,
+          contract.profileId,
+          (exported) => exportedProviderProfileMatchesContract(exported, contract),
+          contract,
         );
       },
     );
@@ -896,8 +887,11 @@ export function createCliOpenShellProviderAdapter(
     }
     const expectedProfile = request.expectedProfile;
     if (expectedProfile) {
-      rememberVerifiedProfile(request.target, request.profileType, (exported) =>
-        exportedProviderProfileMatchesContract(exported, expectedProfile),
+      rememberVerifiedProfile(
+        request.target,
+        request.profileType,
+        (exported) => exportedProviderProfileMatchesContract(exported, expectedProfile),
+        expectedProfile,
       );
     } else if (supplied !== undefined) {
       const snapshot: unknown = JSON.parse(commandStdout(result));
@@ -905,7 +899,10 @@ export function createCliOpenShellProviderAdapter(
         isDeepStrictEqual(JSON.parse(exported) as unknown, snapshot),
       );
     }
-    return success({ credentialKeys });
+    const inference = request.includeInferenceProjection
+      ? inspectInferenceProviderProfile(commandStdout(result))
+      : undefined;
+    return success({ credentialKeys, ...(inference ? { inference } : {}) });
   };
 
   const deleteProvider: OpenShellProviderAdapter["deleteProvider"] = async (

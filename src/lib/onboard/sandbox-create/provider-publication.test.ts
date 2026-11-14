@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { endpointlessProviderProfilePath } from "../../adapters/openshell/provider-profile";
+import { credentialFamilyProfileType } from "../../messaging/applier/credential-family-profile";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { nativeNvidiaProviderProfilePath } from "../../inference/native-nvidia";
 import {
@@ -221,7 +222,18 @@ describe("sandbox provider preparation", () => {
   );
 
   it.each(
-    ["langfuse-hermes-v1", "nemoclaw-nvidia-inference-v1"].flatMap((type) =>
+    [
+      { type: "langfuse-hermes-v1", credentialKeys: ["TOKEN"] },
+      { type: "nemoclaw-nvidia-inference-v1", credentialKeys: ["TOKEN"] },
+      {
+        type: credentialFamilyProfileType(
+          MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+          "TELEGRAM_BOT_TOKEN",
+          ["TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_WORKSPACE"],
+        ),
+        credentialKeys: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_WORKSPACE"],
+      },
+    ].flatMap(({ type, credentialKeys }) =>
       (
         [
           ["profile_incompatible", "Resolve the conflicting same-ID profile"],
@@ -230,18 +242,19 @@ describe("sandbox provider preparation", () => {
         ] as const
       ).map(([reason, recovery]) => ({
         type,
+        credentialKeys,
         reason,
         recovery,
       })),
     ),
   )(
     "blocks $type on $reason and verifies the profile on retry (#13345)",
-    async ({ type, reason, recovery }) => {
+    async ({ type, credentialKeys, reason, recovery }) => {
       const secret = "unrecognized-private-provider-value";
       const adapter = typedProviderAdapter({
         getProvider: vi.fn(async () => ({
           ok: true as const,
-          value: { name: "extra-provider", type, credentialKeys: ["TOKEN"], configKeys: [] },
+          value: { name: "extra-provider", type, credentialKeys, configKeys: [] },
         })),
         importProviderProfile: vi
           .fn<OpenShellProviderAdapter["importProviderProfile"]>()
@@ -604,6 +617,11 @@ describe("sandbox provider preparation", () => {
       value: {
         ...exactMetadata,
         name: request.providerName,
+        type: credentialFamilyProfileType(
+          MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+          "TELEGRAM_BOT_TOKEN",
+          ["TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_WORKSPACE"],
+        ),
         credentialKeys: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_WORKSPACE"],
       },
     }));

@@ -149,9 +149,8 @@ describe("OpenShell policy boundary package contract", () => {
     const globalMetadata = JSON.stringify({
       scope: "global",
       status: "loaded",
-      policy_source: "global",
       hash: "sha256:global",
-      active_version: 1,
+      version: 1,
       policy: { version: 1, network_policies: {} },
     });
     const expectedGlobalMetadata = {
@@ -424,7 +423,7 @@ process.stdout.write("validated");
       "openshell-policy-boundary.cjs",
     );
     expect(auditOpenShellPolicyBoundaryDependencies(fs.readFileSync(boundaryPath, "utf8"))).toEqual(
-      ["node:util", "yaml"],
+      ["node:net", "node:util", "yaml"],
     );
 
     expect(() =>

@@ -35,7 +35,10 @@ import {
 import { runOnboardProcessAsync } from "../../helpers/onboard-child-process-harness";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
-import { expectedWorkflowPlanCiOutput } from "./workflow-plan-test-assertions.ts";
+import {
+  expectedScopePatchExecutionIds,
+  expectedWorkflowPlanCiOutput,
+} from "./workflow-plan-test-assertions.ts";
 
 const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
 const PLANNER_CLI_PREFIX = ["--import", "tsx", PLANNER_CLI];
@@ -102,7 +105,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(79);
+    expect(plan.coverageMatrix).toHaveLength(80);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -155,7 +158,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(48);
+    expect(catalogueIds).toHaveLength(49);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -315,21 +318,7 @@ describe("E2E workflow plan", () => {
         .flat()
         .map((row) => row.execution_id)
         .sort(),
-    ).toEqual([
-      "agent-turn-latency-default-docker",
-      "agent-turn-latency-default-podman",
-      "full-e2e-default-docker",
-      "full-e2e-default-podman",
-      "llama-cpp-generic-gpu-default-docker",
-      "messaging-compatible-endpoint-default-docker",
-      "messaging-compatible-endpoint-default-podman",
-      "openclaw-compatible-anthropic-inference-switch-anthropic-docker",
-      "openclaw-compatible-anthropic-inference-switch-anthropic-podman",
-      "openclaw-inference-switch-default-docker",
-      "openclaw-inference-switch-default-podman",
-      "openclaw-skill-cli-default-docker",
-      "openclaw-skill-cli-default-podman",
-    ]);
+    ).toEqual(expectedScopePatchExecutionIds);
   });
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({

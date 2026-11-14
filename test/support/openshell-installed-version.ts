@@ -1,57 +1,83 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { shellQuote } from "../../src/lib/core/shell-quote";
 import {
   OPENSHELL_FEATURE_MARKERS,
-  OPENSHELL_REWRITE_FEATURE_MARKERS,
   OPENSHELL_MCP_FEATURE_MARKER,
+  OPENSHELL_REWRITE_FEATURE_MARKERS,
   PINNED_OPEN_SHELL_SHA256,
 } from "../helpers/openshell-release-fixtures";
 
+const SCRIPTS = path.join(import.meta.dirname, "../..", "scripts");
 type OpenShellFeaturePlacement = "openshell" | "gateway" | "split-mcp-gateway" | "none";
-
-export type InstalledOpenShellOptions = {
-  capability?: boolean;
-  curlExitCode?: number;
-  featurePlacement?: OpenShellFeaturePlacement;
-  driverBins?: boolean | "gateway" | "gateway-vm";
-  driverLocation?: "path" | "explicit" | "symlink";
-  driverVersion?: string;
-  sandboxVersion?: string;
-  sandboxVersionExit?: number;
-  sandboxBinaryDigest?: string;
-  driverVersionExit?: number;
-  driverReadable?: boolean;
-  homebrewAvailable?: boolean;
-  homebrewFormulaDownload?: boolean;
-  homebrewFormulaDigest?: string;
-  homebrewOperationLog?: string;
-  os?: string;
-  arch?: string;
-};
 
 export function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
-/** Keep real installer downloads inside the fixture on BSD and GNU hosts. */
-export function writeFixtureMktemp(fakeBin: string, fixtureRoot: string): void {
-  const template = path.join(fixtureRoot, "download.XXXXXX").replaceAll("'", "'\\''");
+export function prepareInstallerBin(dir: string) {
+  fs.mkdirSync(dir);
+  fs.symlinkSync(process.execPath, path.join(dir, "node"));
+  writeFixtureMktemp(dir, path.dirname(dir));
+}
+export function writeFixtureMktemp(dir: string, fixtureRoot: string) {
   writeExecutable(
-    path.join(fakeBin, "mktemp"),
+    path.join(dir, "mktemp"),
     `#!/usr/bin/env bash
-if [ "$#" -eq 1 ] && [ "$1" = "-d" ]; then
-  exec /usr/bin/mktemp -d '${template}'
-fi
+if [ "$*" = "-d" ]; then exec /usr/bin/mktemp -d ${shellQuote(path.join(fixtureRoot, "install.XXXXXX"))}; fi
 exec /usr/bin/mktemp "$@"`,
   );
 }
-export function createInstalledOpenShellFixture(
+export function runCommandWithInstalledVersion(
   version: string,
   extraEnv: NodeJS.ProcessEnv = {},
-  options: InstalledOpenShellOptions = {},
+  options: {
+    entrypoint?: "direct" | "feature-check";
+    capability?: boolean;
+    curlExitCode?: number;
+    featurePlacement?: OpenShellFeaturePlacement;
+    driverBins?: boolean | "gateway" | "gateway-vm";
+    driverLocation?: "path" | "explicit" | "symlink";
+    driverVersion?: string;
+    sandboxVersion?: string;
+    sandboxMarkers?: string;
+    sandboxVersionExit?: number;
+    sandboxBinaryDigest?: string;
+    driverVersionExit?: number;
+    driverReadable?: boolean;
+    homebrewAvailable?: boolean;
+    homebrewFormulaDownload?: boolean;
+    homebrewFormulaDigest?: string;
+    homebrewOperationLog?: string;
+    legacyGateway?:
+      | true
+      | "empty"
+      | "partial"
+      | "invalid"
+      | "unreachable"
+      | "stderr"
+      | "retired"
+      | "metadata-link"
+      | "metadata-directory"
+      | "corrupt"
+      | "fixed-system"
+      | "system";
+    legacyInventory?: unknown;
+    legacyMetadata?: string;
+    legacyRegistrationFile?: "user" | "system" | "fixed-system";
+    retainedRegistry?: string;
+    registryGatewayPort?: string;
+    missingCli?: boolean;
+    missingNode?: boolean;
+    systemGatewayDirectory?: string;
+    versionExit?: number;
+    os?: string;
+    arch?: string;
+  } = {},
 ) {
   const capability = options.capability ?? true;
   const featurePlacement: OpenShellFeaturePlacement = capability
@@ -71,12 +97,74 @@ export function createInstalledOpenShellFixture(
         : "";
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-ver-"));
   try {
+    const downloads = path.join(tmp, "downloads");
     const fakeBin = path.join(tmp, "bin");
     const driverBin = options.driverLocation ? path.join(tmp, "driver-bin") : fakeBin;
-    fs.mkdirSync(fakeBin);
+    prepareInstallerBin(fakeBin);
+    if (options.missingNode) {
+      fs.unlinkSync(path.join(fakeBin, "node"));
+      // Exclude system PATH entries that can contain Node.js on CI hosts.
+      for (const name of ["bash", "awk", "cat", "chmod", "dirname", "grep", "mkdir", "rm", "sed"]) {
+        const binary = ["/usr/bin", "/bin"]
+          .map((root) => path.join(root, name))
+          .find(fs.existsSync);
+        if (!binary) throw new Error(`Missing installer fixture tool: ${name}`);
+        fs.symlinkSync(binary, path.join(fakeBin, name));
+      }
+    }
     fs.mkdirSync(driverBin, { recursive: true });
-
-    writeFixtureMktemp(fakeBin, tmp);
+    const configHome = path.join(tmp, "config");
+    const retainedFiles = new Map<string, string>();
+    if (options.legacyRegistrationFile) {
+      const root =
+        options.legacyRegistrationFile === "user"
+          ? path.join(configHome, "openshell")
+          : path.join(tmp, `${options.legacyRegistrationFile}-openshell`);
+      const registration = path.join(root, "gateways", "nemoclaw");
+      fs.mkdirSync(path.dirname(registration), { recursive: true });
+      const contents = "synthetic retained gateway registration";
+      fs.writeFileSync(registration, contents);
+      retainedFiles.set(registration, contents);
+    }
+    if (options.retainedRegistry !== undefined) {
+      const registry = path.join(
+        tmp,
+        ".nemoclaw",
+        ...(options.registryGatewayPort ? ["gateways", options.registryGatewayPort] : []),
+        "sandboxes.json",
+      );
+      fs.mkdirSync(path.dirname(registry), { recursive: true });
+      fs.writeFileSync(registry, options.retainedRegistry);
+      retainedFiles.set(registry, options.retainedRegistry);
+    }
+    if (options.legacyGateway) {
+      const gatewayRoot =
+        options.legacyGateway === "fixed-system"
+          ? path.join(tmp, "fixed-system-openshell")
+          : options.legacyGateway === "system"
+            ? path.join(tmp, "system-openshell")
+            : path.join(configHome, "openshell");
+      const gatewayDir = path.join(gatewayRoot, "gateways", "nemoclaw");
+      fs.mkdirSync(gatewayDir, { recursive: true });
+      if (!["retired", "metadata-directory"].includes(String(options.legacyGateway))) {
+        retainedFiles.set(
+          path.join(
+            gatewayDir,
+            options.legacyGateway === "metadata-link" ? "metadata-target.json" : "metadata.json",
+          ),
+          options.legacyGateway === "corrupt"
+            ? "invalid metadata"
+            : (options.legacyMetadata ??
+                JSON.stringify({ name: "nemoclaw", gateway_endpoint: "https://127.0.0.1:8080" })),
+        );
+      }
+      retainedFiles.set(path.join(gatewayDir, "client.key"), "synthetic retained mTLS sentinel");
+      for (const [file, contents] of retainedFiles) fs.writeFileSync(file, contents);
+      if (options.legacyGateway === "metadata-link")
+        fs.symlinkSync("metadata-target.json", path.join(gatewayDir, "metadata.json"));
+      if (options.legacyGateway === "metadata-directory")
+        fs.mkdirSync(path.join(gatewayDir, "metadata.json"));
+    }
 
     writeExecutable(
       path.join(fakeBin, "uname"),
@@ -88,10 +176,25 @@ if [ "\${1:-}" = "-m" ]; then echo "${options.arch ?? "x86_64"}"; else echo "${o
     writeExecutable(
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then echo "openshell ${version}"; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then echo "openshell ${version}"; exit ${options.versionExit ?? 0}; fi
+if [ "$*" = "gateway list -o json" ]; then
+  printf '%s\\n' ${shellQuote(JSON.stringify(options.legacyGateway ? [{ name: "nemoclaw", endpoint: "https://127.0.0.1:8080", active: true }] : []))}
+  exit 0
+fi
+if [ "$*" = "sandbox list -g nemoclaw -o json" ]; then
+  printf '%s\\n' ${shellQuote(options.legacyInventory !== undefined ? JSON.stringify(options.legacyInventory) : options.legacyGateway === "empty" || options.legacyGateway === "stderr" ? "[]" : options.legacyGateway === "partial" ? '{"sandboxes":[],"next_page_token":"remaining"}' : options.legacyGateway === "invalid" ? "invalid JSON" : '[{"id":"11111111-1111-4111-8111-111111111111","name":"retained-box","phase":"Stopped","labels":{},"resource_version":1,"created_at":"2026-10-13T00:00:00Z","current_policy_version":1}]')}
+  ${options.legacyGateway === "stderr" ? "echo 'inventory unavailable' >&2" : ":"}
+  exit ${options.legacyGateway === "unreachable" ? 1 : 0}
+fi
 ${openshellMarkers ? `# ${openshellMarkers}` : ""}
 exit 99`,
     );
+    if (options.missingCli) fs.unlinkSync(path.join(fakeBin, "openshell"));
+    else
+      retainedFiles.set(
+        path.join(fakeBin, "openshell"),
+        fs.readFileSync(path.join(fakeBin, "openshell"), "utf8"),
+      );
 
     const driverFixtures: Array<{ name: string; markers: string }> =
       options.driverBins === false
@@ -103,7 +206,7 @@ exit 99`,
               : [
                   {
                     name: "openshell-sandbox",
-                    markers: OPENSHELL_MCP_FEATURE_MARKER,
+                    markers: options.sandboxMarkers ?? OPENSHELL_MCP_FEATURE_MARKER,
                   },
                 ]),
             ...(options.driverBins === "gateway-vm"
@@ -159,6 +262,7 @@ done
 printf '%s\n' '# downloaded OpenShell formula' 'class Openshell < Formula' > "$out"
 exit 0`
         : `#!/usr/bin/env bash
+printf 'download\\n' >> ${shellQuote(downloads)}
 echo "curl stub: $*" >&2
 exit ${options.curlExitCode ?? 1}`,
     );
@@ -246,18 +350,48 @@ exit 0`,
             NEMOCLAW_OPENSHELL_SANDBOX_BIN: path.join(driverBin, "openshell-sandbox"),
           }
         : {};
-    return {
-      tmp,
+    // Protected execution projects the installer without adjacent candidate helpers.
+    const isolatedInstaller = path.join(tmp, "install-openshell.sh");
+    // Map the fixed system path into the fixture; never read or mutate host registrations.
+    fs.writeFileSync(
+      isolatedInstaller,
+      fs
+        .readFileSync(path.join(SCRIPTS, "install-openshell.sh"), "utf8")
+        .replaceAll("/etc/openshell", path.join(tmp, "fixed-system-openshell")),
+    );
+    if (options.entrypoint === "feature-check") {
+      // Exercise the feature gate independently of the selected install version.
+      const source = fs.readFileSync(isolatedInstaller, "utf8");
+      const selectionStart = source.indexOf('\nACTIVE_OPENSHELL_BIN=""\n');
+      if (selectionStart === -1) throw new Error("Missing installer selection boundary");
+      fs.writeFileSync(
+        isolatedInstaller,
+        `${source.slice(0, selectionStart)}\nrequire_openshell_messaging_features "$(command -v openshell)"\n`,
+      );
+    }
+    const result = spawnSync("bash", [isolatedInstaller], {
       env: {
         ...process.env,
         NEMOCLAW_OPENSHELL_CHANNEL: "stable",
         ...explicitDriverEnv,
         ...extraEnv,
-        PATH: `${fakeBin}:${driverBin}:/usr/bin:/bin`,
+        HOME: tmp,
+        TMPDIR: tmp,
+        XDG_CONFIG_HOME: configHome,
+        OPENSHELL_SYSTEM_GATEWAY_DIR:
+          options.systemGatewayDirectory ?? path.join(tmp, "system-openshell"),
+        PATH: `${fakeBin}:${driverBin}${options.missingNode ? "" : ":/usr/bin:/bin"}`,
       },
+      encoding: "utf8",
+    });
+    return {
+      ...result,
+      downloads: fs.existsSync(downloads) ? fs.readFileSync(downloads, "utf8") : "",
+      retainedFilesUnchanged: [...retainedFiles].every(
+        ([file, contents]) => fs.readFileSync(file, "utf8") === contents,
+      ),
     };
-  } catch (error) {
+  } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
-    throw error;
   }
 }

@@ -120,7 +120,28 @@ describe("OpenShell sandbox identity parsing", () => {
 });
 
 describe("OpenShell sandbox identity reading", () => {
-  it.each(["0.0.116", "0.1.3", "0.1.5"])(
+  function readIdentityPage(nextPageToken: string) {
+    return resolveCreatedOpenShellSandboxId({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      createAttemptNonce: CREATE_ATTEMPT_NONCE,
+      runCaptureOpenshell: () =>
+        JSON.stringify({
+          sandboxes: JSON.parse(sandboxListJson()),
+          next_page_token: nextPageToken,
+        }),
+    });
+  }
+
+  it("accepts a complete 0.1.2 identity page", () => {
+    expect(readIdentityPage("")).toBe("sandbox-alpha");
+  });
+
+  it("rejects an incomplete 0.1.2 identity page", () => {
+    expect(() => readIdentityPage("more")).toThrow("selector-output-malformed");
+  });
+
+  it.each(["0.0.116", "0.1.3", "0.1.5", "0.1.7"])(
     "binds the first ID to an exact create-attempt label on %s (#9833)",
     (version) => {
       runtime.version = version;

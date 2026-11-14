@@ -9,6 +9,7 @@ import path from "node:path";
 import vm from "node:vm";
 
 import { describe, expect, it, vi } from "vitest";
+import { seedBrokerCleanupModules } from "./support/private-broker-harness.ts";
 
 import {
   patchContainerRestart as patchRestartForVersion,
@@ -481,6 +482,7 @@ describe.each(["2026.9.5", "2026.10.5"])(
           path.join(dist, "openclaw-state-db-readonly-fixture.mjs"),
         );
         const signalsPath = path.join(dist, "cli/run-main.js");
+        seedBrokerCleanupModules(dist, version);
         fs.writeFileSync(signalsPath, "native drift");
         expect(() => patchOpenClawContainerRestart(dist)).toThrow("Expected one");
         expect(fs.readFileSync(restartPath, "utf8")).toBe(restart);

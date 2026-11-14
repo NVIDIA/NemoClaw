@@ -12,6 +12,17 @@ afterEach(() => {
 });
 
 describe("authoritative rebuild resume config", () => {
+  it("matches Local NIM selection to its persisted vLLM provider without changing the model", () => {
+    vi.stubEnv("NEMOCLAW_PROVIDER", "nim-local");
+    vi.stubEnv("NEMOCLAW_MODEL", "local/nim-model");
+    expect(
+      getResumeConfigConflicts(
+        { provider: "vllm-local", model: "local/nim-model" },
+        { nonInteractive: true, authoritativeResumeConfig: true },
+      ),
+    ).toEqual([]);
+  });
+
   it("ignores a hosted credential alias rehydrated after ambient env isolation", () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "legacy-hosted-source-key");
     vi.stubEnv("NEMOCLAW_PROVIDER", "");

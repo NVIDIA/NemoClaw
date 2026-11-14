@@ -25,7 +25,7 @@ describe("Hermes Dockerfile route selection", () => {
     {
       nativeProvider: undefined,
       upstreamEndpointUrl: "https://custom.example/v1",
-      expected: "https://inference.local/v1",
+      expected: "https://custom.example/v1",
     },
     {
       nativeProvider: true,

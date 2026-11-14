@@ -66,7 +66,11 @@ After restore, NemoClaw replaces these references with a current OpenShell provi
 
 <AgentOnly variant="hermes">
 Rebuild also [repairs an already-stripped route](https://github.com/NVIDIA/NemoClaw/pull/14153) when all three fields contain exactly `[STRIPPED_BY_MIGRATION]`.
-Recovery requires a registered Hermes `nvidia-prod` route, matching endpoint and model metadata, and verified sandbox identity and provider binding.
+Recovery requires a registered Hermes `nvidia-prod` route, matching endpoint and model metadata, and verified sandbox identity and native NVIDIA provider attachment.
+The stripped value identifies damage; it does not authorize recovery.
+NemoClaw verifies the source configuration digest before replacing only the three credential fields.
+Other configuration must remain unchanged.
+Ordinary configuration writes and readiness checks continue to reject stripped credentials.
 Partial damage, other providers, missing bindings, and ambiguous routes remain rejected.
 
 Before recovery, update NemoClaw and use its matching managed Hermes image.
@@ -82,7 +86,7 @@ $$nemoclaw <sandbox-name> status --json
 Verify that status reports `provider: "nvidia-prod"` and `inferenceHealth` with both `ok` and `probed` set to `true`.
 Then confirm that Hermes answers an inference request and that your user settings and Discord configuration remain present.
 Retained Discord configuration does not establish successful Discord message delivery.
-Recovery acquires a fresh OpenShell provider-bound handle; do not insert a raw API key or edit the stripped fields manually.
+Recovery acquires a current OpenShell provider-bound credential reference; do not insert a raw API key or edit the stripped fields manually.
 If restore or validation fails, NemoClaw reports failure and retains the backup.
 Preserve that backup and inspect the reported cause before another mutation; repeating a failed rebuild is not a general recovery procedure.
 </AgentOnly>
@@ -134,6 +138,18 @@ Backups created by older NemoClaw versions from a selective per-agent path inven
 ## Destroy
 
 `$$nemoclaw <name> destroy` removes NemoClaw-owned managed state volumes and, for Deep Agents Code, clears the complete retained `/sandbox` root before asking OpenShell to delete the sandbox. Download files you need before destroy. To replace software while preserving the complete native state, use `$$nemoclaw <name> rebuild`.
+
+<AgentOnly variant="openclaw,hermes">
+
+## Legacy Managed State Volumes
+
+Managed OpenClaw and Hermes state volumes require OpenShell attachment approval for the selected workspace before onboarding or recreation.
+Missing, partial, conflicting, or workspace-mismatched approval labels stop the operation before sandbox deletion or changes to the existing volume.
+NemoClaw preserves the volume without copying its data or changing its labels.
+Keep the existing sandbox and volume available until an approved migration path is available.
+Back up required state before using `destroy` or uninstall, which retain their documented data-removal behavior.
+
+</AgentOnly>
 
 ## Related Topics
 

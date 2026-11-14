@@ -86,10 +86,9 @@ import {
   recoverInstalledManagedClusterVllmEndpoint,
 } from "./serving/managed-cluster-runtime-receipt";
 import {
-  getLegacyHostLocalManagedVllmBridgeHost,
+  getLegacyHostLocalManagedVllmLoopbackHost,
   ManagedVllmInspectionError,
   recoverHostLocalManagedVllmEndpoint,
-  resolveManagedVllmBridgeHost,
   UnsafeLegacyVllmBindingsError,
 } from "./serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey } from "./vllm-api-key";
@@ -1210,7 +1209,7 @@ export function getManagedVllmProviderState(
   }
   if (!managedClusterEndpoint) {
     if (stationState.kind === "absent") {
-      getLegacyHostLocalManagedVllmBridgeHost(options.legacyServingPort ?? VLLM_PORT);
+      getLegacyHostLocalManagedVllmLoopbackHost(options.legacyServingPort ?? VLLM_PORT);
     }
     return stationState;
   }
@@ -1681,16 +1680,25 @@ export function getLocalProviderContainerReachabilityCheck(
       const managed = recoveredManagedVllmBinding();
       if (managed.kind === "unavailable") return null;
       const managedBaseUrl = managed.binding?.baseUrl.replace(/\/v1\/?$/, "") ?? null;
-      const bridgeHost = managed.binding?.validationBaseUrl
-        ? resolveManagedVllmBridgeHost()
+      const loopbackHost = managed.binding?.validationBaseUrl
+        ? "127.0.0.1"
         : !managed.binding && !configuredLocalInferenceHostUrl()
-          ? getLegacyHostLocalManagedVllmBridgeHost(VLLM_PORT)
+          ? getLegacyHostLocalManagedVllmLoopbackHost(VLLM_PORT)
           : null;
-      const hostAlias = `host.openshell.internal:${bridgeHost ?? "host-gateway"}`;
+      const hostAlias = `host.openshell.internal:${loopbackHost ?? "host-gateway"}`;
       return [
-        ...(managedBaseUrl || bridgeHost ? ["docker", "--context", "default"] : ["docker"]),
+        ...(managedBaseUrl || loopbackHost ? ["docker", "--context", "default"] : ["docker"]),
         "run",
         "--rm",
+        ...(loopbackHost
+          ? [
+              "--network",
+              "host",
+              "--cap-drop=ALL",
+              "--security-opt=no-new-privileges",
+              "--read-only",
+            ]
+          : []),
         "--add-host",
         hostAlias,
         CONTAINER_REACHABILITY_IMAGE,
@@ -2044,16 +2052,15 @@ function collectContainerDiagnostic(
     );
   }
   const dockerCommand = containerCommand.slice(0, dockerRunIndex);
+  const probeCommand = containerCommand.slice(
+    0,
+    containerCommand.indexOf(CONTAINER_REACHABILITY_IMAGE) + 1,
+  );
   try {
-    // Reuse the exact Docker context, host mapping, and URL from the failed check.
+    // Retain the failed probe's Docker context, network, hardening, and host mapping.
     const httpStatus = capture(
       [
-        ...dockerCommand,
-        "run",
-        "--rm",
-        "--add-host",
-        hostAlias,
-        CONTAINER_REACHABILITY_IMAGE,
+        ...probeCommand,
         "-s",
         "-o",
         "/dev/null",
@@ -2069,19 +2076,7 @@ function collectContainerDiagnostic(
     );
 
     // Confirm that Docker applied the same host mapping used by the failed check.
-    const hostsOutput = capture(
-      [
-        ...dockerCommand,
-        "run",
-        "--rm",
-        "--add-host",
-        hostAlias,
-        CONTAINER_REACHABILITY_IMAGE,
-        "cat",
-        "/etc/hosts",
-      ],
-      { ignoreError: true },
-    );
+    const hostsOutput = capture([...probeCommand, "cat", "/etc/hosts"], { ignoreError: true });
 
     if (!httpStatus && !hostsOutput) {
       return classifyContainerRunFailure(dockerCommand, capture);

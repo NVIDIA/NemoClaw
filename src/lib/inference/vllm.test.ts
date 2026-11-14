@@ -259,11 +259,9 @@ describe("vLLM profile detection", () => {
       resolved.model,
       runtime.dockerRunFlags,
       {} as NodeJS.ProcessEnv,
-      "172.18.0.1",
     );
     expect(args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []))).toEqual([
       "127.0.0.1:8000:8000",
-      "172.18.0.1:8000:8000",
     ]);
     expect(args).toEqual(
       expect.arrayContaining([
@@ -305,16 +303,12 @@ describe("vLLM profile detection", () => {
     expect(runtime.modelDownloadSizeBytes).toBe(25_447_097_878);
 
     const apiKey = "a".repeat(64);
-    const args = buildVllmRunArgs(
-      runtime,
-      resolved.model,
-      runtime.dockerRunFlags,
-      { VLLM_API_KEY: apiKey },
-      "172.18.0.1",
-    );
+    const args = buildVllmRunArgs(runtime, resolved.model, runtime.dockerRunFlags, {
+      VLLM_API_KEY: apiKey,
+    });
     const bindings = args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []));
 
-    expect(bindings).toEqual(["127.0.0.1:8000:8000", "172.18.0.1:8000:8000"]);
+    expect(bindings).toEqual(["127.0.0.1:8000:8000"]);
     expect(args).toEqual(expect.arrayContaining(["--env", "VLLM_API_KEY", runtime.image]));
     expect(args).not.toContain(apiKey);
   });
@@ -420,26 +414,14 @@ describe("vLLM run command", () => {
   it("adds Docker init so restarts can reap the server process (#7219)", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
-    const args = buildVllmRunArgs(
-      profile!,
-      profile!.defaultModel,
-      profile!.dockerRunFlags,
-      {},
-      "172.18.0.1",
-    );
+    const args = buildVllmRunArgs(profile!, profile!.defaultModel, profile!.dockerRunFlags, {});
     expect(args.slice(0, 4)).toEqual(["--pull=never", "--init", "--restart", "unless-stopped"]);
   });
 
   it("adds --restart unless-stopped so the container survives a host reboot (#4886)", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
-    const args = buildVllmRunArgs(
-      profile!,
-      profile!.defaultModel,
-      profile!.dockerRunFlags,
-      {},
-      "172.18.0.1",
-    );
+    const args = buildVllmRunArgs(profile!, profile!.defaultModel, profile!.dockerRunFlags, {});
     expect(args).toEqual(expect.arrayContaining(["--restart", "unless-stopped"]));
     expect(args).toContain("--name");
     expect(args[args.indexOf("--name") + 1]).toBe(profile!.containerName);
@@ -448,8 +430,19 @@ describe("vLLM run command", () => {
     );
     expect(args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []))).toEqual([
       "127.0.0.1:8000:8000",
-      "172.18.0.1:8000:8000",
     ]);
+  });
+
+  it("publishes authenticated managed vLLM only on loopback (#8379)", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const model = { ...profile.defaultModel, managedBearerAuth: true as const };
+    const args = buildVllmRunArgs(profile, model, profile.dockerRunFlags, {
+      VLLM_API_KEY: "a".repeat(64),
+    });
+    const bindings = args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []));
+
+    expect(bindings).toEqual(["127.0.0.1:8000:8000"]);
+    expect(bindings.join(" ")).not.toMatch(/(?:0\.0\.0\.0|\[?::\]?):8000/u);
   });
 
   it("labels catalog-selected host-local containers with immutable recipe provenance (#8246)", () => {
@@ -470,7 +463,6 @@ describe("vLLM run command", () => {
       catalogProfile.defaultModel,
       catalogProfile.dockerRunFlags,
       {},
-      "172.18.0.1",
     );
 
     expect(args).toEqual(
@@ -495,7 +487,6 @@ describe("vLLM run command", () => {
       profile!.defaultModel,
       ["--gpus", '"device=0,1"', "--ipc=host"],
       { VLLM_API_KEY: "a".repeat(64) },
-      "172.18.0.1",
     );
     expect(args).toEqual(expect.arrayContaining(["--gpus", '"device=0,1"', "--ipc=host"]));
     expect(args).toContain(profile!.image);
@@ -507,15 +498,9 @@ describe("vLLM run command", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
     const labelValue = "profile=$(touch /tmp/nemoclaw-vllm-pwn)";
-    const args = buildVllmRunArgs(
-      profile!,
-      profile!.defaultModel,
-      ["--label", labelValue],
-      {
-        HF_TOKEN: "hf_test",
-      } as NodeJS.ProcessEnv,
-      "172.18.0.1",
-    );
+    const args = buildVllmRunArgs(profile!, profile!.defaultModel, ["--label", labelValue], {
+      HF_TOKEN: "hf_test",
+    } as NodeJS.ProcessEnv);
 
     expect(args).toEqual(expect.arrayContaining(["--label", labelValue]));
     expect(args).not.toContain(`--label ${labelValue}`);
@@ -1018,7 +1003,6 @@ describe("installVllm model resolution", () => {
       hasImage: true,
       nonInteractive: true,
       promptFn: vi.fn(),
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
     expect(result).toEqual({ ok: false });
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("unauthenticated model inventory"));
@@ -1129,13 +1113,11 @@ describe("installVllm model resolution", () => {
       recipeId: servingCatalog.recipeId,
     });
     mockSuccessfulVllmInstall(mocks, profile.containerName);
-    const resolveManagedBridgeHost = vi.fn(() => "172.18.0.1");
 
     const result = await installVllm(baseProfile, {
       hasImage: false,
       nonInteractive: true,
       promptFn: vi.fn(),
-      resolveManagedBridgeHost,
     });
 
     expect(result).toEqual({ ok: false });
@@ -1160,12 +1142,7 @@ describe("installVllm model resolution", () => {
       expect(options.env.DOCKER_HOST).toBeUndefined();
       expect(options.env.DOCKER_CONFIG).toBeUndefined();
     });
-    expect(resolveManagedBridgeHost).toHaveBeenCalledWith(
-      expect.objectContaining({
-        DOCKER_CONTEXT: "default",
-        VLLM_API_KEY: "b".repeat(64),
-      }),
-    );
+    expect(mocks.dockerCapture.mock.calls.some(([args]) => args[0] === "network")).toBe(false);
   });
 
   it("fails before image pull when the host Hugging Face cache cannot be created", async () => {

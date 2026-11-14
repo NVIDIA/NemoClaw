@@ -1,15 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { validateNvidiaApiKeyValue } from "../../credentials/api-key-validation";
-import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../../inference/anthropic/openai-surface";
 import {
-  assertEndpointResolvesPublic,
-  parseTrustedPrivateInferenceHostsFromEnv,
-} from "../../inference/endpoint-ssrf-preflight";
-import { usesNvidiaEndpointProbePayload } from "../../inference/openai-probe-models";
-import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
-import { getRemoteProviderConfigForName } from "../../onboard/inference-providers/provider-selection-keys";
+  recordedRegisteredInferenceProviderAttachment,
+  verifyRegisteredInferenceProviderAttachment,
+} from "../../inference/native-provider/registered";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 import {
@@ -58,110 +53,6 @@ const { REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
   >;
 };
 
-type ProbeResult = { ok: boolean; validated?: boolean; failures?: unknown[] };
-
-function transientNvidiaValidationFailure(result: ProbeResult): boolean {
-  return (
-    Array.isArray(result.failures) &&
-    result.failures.length > 0 &&
-    result.failures.every((failure) => {
-      if (typeof failure !== "object" || failure === null) return false;
-      const { httpStatus, curlStatus } = failure as Record<string, unknown>;
-      return (
-        (curlStatus === 0 &&
-          typeof httpStatus === "number" &&
-          RETRIABLE_HTTP_PROBE_STATUSES.has(httpStatus)) ||
-        ((curlStatus === 28 || curlStatus === -110) &&
-          (httpStatus === 0 || httpStatus === null || httpStatus === undefined))
-      );
-    })
-  );
-}
-type Probe = (
-  endpointUrl: string,
-  model: string,
-  apiKey: string,
-  options: Record<string, unknown>,
-) => ProbeResult | Promise<ProbeResult>;
-
-const probes = require("../../inference/onboard-probes") as {
-  probeAnthropicEndpoint: Probe;
-  probeOpenAiLikeEndpointOptimized: Probe;
-  getProbeExtraHeaders(provider: string): string[] | undefined;
-};
-
-export type HostCredentialTarget = Pick<
-  RebuildSandboxEntry,
-  "provider" | "model" | "endpointUrl" | "credentialEnv" | "preferredInferenceApi"
->;
-
-/** Validate the host credential that recreate can submit, without changing the gateway. */
-export async function validateRebuildHostInferenceCredential(
-  target: HostCredentialTarget,
-  credentialValue: string,
-  deps = {
-    assertEndpointResolvesPublic,
-    probeAnthropicEndpoint: probes.probeAnthropicEndpoint,
-    probeOpenAiLikeEndpointOptimized: probes.probeOpenAiLikeEndpointOptimized,
-  },
-  onIndeterminate?: () => void,
-): Promise<boolean> {
-  const config = getRemoteProviderConfigForName(target.provider, REMOTE_PROVIDER_CONFIG);
-  // Local, routed, and Hermes authentication retain their existing preflights.
-  if (!config || config.providerName === "llama-cpp-local" || target.provider === "hermes-provider")
-    return true;
-  if (
-    target.provider === "compatible-anthropic-endpoint" &&
-    isBedrockRuntimeEndpoint(target.endpointUrl)
-  ) {
-    return true;
-  }
-  if (validateNvidiaApiKeyValue(credentialValue, target.credentialEnv ?? "")) return false;
-  let endpointUrl = config.endpointUrl || target.endpointUrl;
-  if (!endpointUrl || !target.model) return false;
-
-  try {
-    const pins = !config.endpointUrl
-      ? await deps.assertEndpointResolvesPublic(endpointUrl, undefined, {
-          trustedPrivateHosts: parseTrustedPrivateInferenceHostsFromEnv(process.env),
-        })
-      : null;
-    if (pins && !pins.ok) return false;
-    const useAnthropic =
-      config.providerType === "anthropic" && target.preferredInferenceApi !== "openai-completions";
-    if (config.providerType === "anthropic" && !useAnthropic) {
-      endpointUrl = getCompatibleAnthropicOpenAiSurfaceBaseUrl(endpointUrl);
-    }
-    const probe = useAnthropic
-      ? deps.probeAnthropicEndpoint
-      : deps.probeOpenAiLikeEndpointOptimized;
-    const result = await probe(endpointUrl, target.model, credentialValue, {
-      skipResponsesProbe: target.preferredInferenceApi !== "openai-responses",
-      probeStreaming: false,
-      provider: target.provider,
-      extraHeaders: probes.getProbeExtraHeaders(target.provider ?? ""),
-      useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(target.provider ?? ""),
-      ...(pins?.ok
-        ? {
-            pinnedAddresses: pins.addresses,
-            trustedPrivateCapability: pins.trustedPrivateCapability,
-          }
-        : {}),
-    });
-    if (
-      !result.ok &&
-      usesNvidiaEndpointProbePayload(target.provider ?? "") &&
-      transientNvidiaValidationFailure(result)
-    ) {
-      onIndeterminate?.();
-    }
-    return result.ok && result.validated !== false;
-  } catch {
-    // Probe errors and response bodies can contain credentials.
-    return false;
-  }
-}
-
 export type RebuildGatewayProviderRegistration =
   | "registered"
   | "expired"
@@ -181,6 +72,45 @@ function rebuildProviderAdapter(
           })) as RunProviderCommand)
       : undefined,
   );
+}
+
+/** Recheck the external provider without acquiring ownership of it. */
+export async function verifyRebuildRegisteredProviderBeforeDelete(
+  sandboxName: string,
+  gatewayName: string,
+  config: RebuildResumeConfig,
+  runtimeSelection?: OpenShellRuntimeSelection,
+  getSandbox: (name: string) => RebuildSandboxEntry | null = registry.getSandbox,
+): Promise<boolean> {
+  try {
+    const expected = recordedRegisteredInferenceProviderAttachment({
+      ...config,
+      name: sandboxName,
+      gatewayName,
+    });
+    const currentMatches = () => {
+      const current = getSandbox(sandboxName);
+      return (
+        current?.agent === config.agent &&
+        current.model === config.model &&
+        JSON.stringify(recordedRegisteredInferenceProviderAttachment(current)) ===
+          JSON.stringify(expected)
+      );
+    };
+    if (
+      !expected ||
+      (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) ||
+      !currentMatches()
+    )
+      return false;
+    await verifyRegisteredInferenceProviderAttachment({
+      adapter: rebuildProviderAdapter(runtimeSelection),
+      expected,
+    });
+    return currentMatches();
+  } catch {
+    return false;
+  }
 }
 
 /** Revalidate the frozen scoped authority immediately before destructive rebuild work. */
@@ -234,6 +164,8 @@ export async function inspectRebuildGatewayProviderRegistration(
   credentialKey?: string | null,
   nativeAttachment?: NativeProviderAttachment,
 ): Promise<RebuildGatewayProviderRegistration> {
+  const safeProvider = providerDiagnosticName(provider);
+  const safeCredential = credentialKey ? credentialDiagnosticName(credentialKey) : null;
   let nativeLifecycle: ReturnType<typeof nativeProviderLifecycle> | undefined;
   if (nativeAttachment) {
     try {
@@ -279,13 +211,13 @@ export async function inspectRebuildGatewayProviderRegistration(
       ? "missing"
       : "indeterminate";
   log(
-    `${phase} gateway provider check: provider '${provider}' ${
+    `${phase} gateway provider check: provider '${safeProvider}' ${
       registration === "registered"
         ? "is registered"
         : registration === "expired"
-          ? `has expired credential ${credentialKey}`
+          ? `has expired credential ${safeCredential}`
           : registration === "credential_missing"
-            ? `does not expose credential ${credentialKey}`
+            ? `does not expose credential ${safeCredential}`
             : registration === "missing"
               ? "is explicitly missing"
               : "could not be verified"
@@ -319,15 +251,30 @@ function rebuildCredentialReuseCondition(condition: RecoveredProviderReuseReject
   }
 }
 
+const PROVIDER_DIAGNOSTIC_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
+const CREDENTIAL_DIAGNOSTIC_NAME = /^[A-Z][A-Z0-9_]{0,127}$/u;
+
+function providerDiagnosticName(value: string): string {
+  return PROVIDER_DIAGNOSTIC_NAME.test(value) ? value : "unavailable";
+}
+
+function credentialDiagnosticName(value: string): string {
+  return CREDENTIAL_DIAGNOSTIC_NAME.test(value) ? value : "unavailable";
+}
+
 function printMissingRebuildGatewayProvider(provider: string, credentialEnv: string | null): void {
+  const safeProvider = providerDiagnosticName(provider);
+  const safeCredential = credentialEnv ? credentialDiagnosticName(credentialEnv) : null;
   console.error("");
   console.error(
-    `  ${_RD}Rebuild preflight failed:${R} provider '${provider}' is not registered in OpenShell.`,
+    `  ${_RD}Rebuild preflight failed:${R} provider '${safeProvider}' is not registered in OpenShell.`, // lgtm[js/clear-text-logging] Strictly allow-listed provider identifier.
   );
   console.error("  The sandbox registry still points at this upstream provider,");
   console.error("  so rebuild will not recreate it before destroying the sandbox.");
-  if (credentialEnv) {
-    console.error(`  Rebuild cannot rely on ${credentialEnv} while that provider is missing.`);
+  if (safeCredential) {
+    console.error(
+      `  Rebuild cannot rely on ${safeCredential} while that provider is missing.`, // lgtm[js/clear-text-logging] Strictly allow-listed environment-variable name.
+    );
   }
   console.error("");
   console.error("  Re-register the provider in OpenShell or rerun onboard, then retry rebuild.");
@@ -335,9 +282,10 @@ function printMissingRebuildGatewayProvider(provider: string, credentialEnv: str
 }
 
 function printIndeterminateRebuildGatewayProvider(provider: string): void {
+  const safeProvider = providerDiagnosticName(provider);
   console.error("");
   console.error(
-    `  ${_RD}Rebuild preflight failed:${R} could not verify provider '${provider}' in OpenShell.`,
+    `  ${_RD}Rebuild preflight failed:${R} could not verify provider '${safeProvider}' in OpenShell.`, // lgtm[js/clear-text-logging] Strictly allow-listed provider identifier.
   );
   console.error("  The provider lookup did not return an explicit not-found response.");
   console.error("  Check gateway connectivity and authentication, then retry rebuild.");
@@ -348,14 +296,18 @@ function printExpiredRebuildGatewayProviderCredential(
   provider: string,
   credentialKey: string,
 ): void {
+  const safeProvider = providerDiagnosticName(provider);
+  const safeCredential = credentialDiagnosticName(credentialKey);
   console.error("");
   console.error(
-    `  ${_RD}Rebuild preflight failed:${R} provider '${provider}' credential ${credentialKey} is expired in OpenShell.`,
+    `  ${_RD}Rebuild preflight failed:${R} provider '${safeProvider}' credential ${safeCredential} is expired in OpenShell.`, // lgtm[js/clear-text-logging] Strictly allow-listed identifiers.
   );
   console.error(
     "  Rebuild will not destroy a sandbox that it cannot restore to working inference.",
   );
-  console.error(`  Refresh ${credentialKey} in OpenShell or rerun onboard, then retry rebuild.`);
+  console.error(
+    `  Refresh ${safeCredential} in OpenShell or rerun onboard, then retry rebuild.`, // lgtm[js/clear-text-logging] Strictly allow-listed environment-variable name.
+  );
   console.error("  Sandbox is untouched — no data was lost.");
 }
 
@@ -363,15 +315,17 @@ function printMissingRebuildGatewayProviderCredential(
   provider: string,
   credentialKey: string,
 ): void {
+  const safeProvider = providerDiagnosticName(provider);
+  const safeCredential = credentialDiagnosticName(credentialKey);
   console.error("");
   console.error(
-    `  ${_RD}Rebuild preflight failed:${R} provider '${provider}' no longer exposes credential ${credentialKey}.`,
+    `  ${_RD}Rebuild preflight failed:${R} provider '${safeProvider}' no longer exposes credential ${safeCredential}.`, // lgtm[js/clear-text-logging] Strictly allow-listed identifiers.
   );
   console.error(
     "  Rebuild will not destroy a sandbox that it cannot restore to working inference.",
   );
   console.error(
-    `  Re-register '${provider}' with ${credentialKey} in OpenShell or rerun onboard, then retry rebuild.`,
+    `  Re-register '${safeProvider}' with ${safeCredential} in OpenShell or rerun onboard, then retry rebuild.`, // lgtm[js/clear-text-logging] Strictly allow-listed identifiers.
   );
   console.error("  Sandbox is untouched — no data was lost.");
 }
@@ -417,6 +371,8 @@ export async function checkRebuildGatewayProviderOrBail(
 ): Promise<boolean> {
   if (!options.nativeAttachment && !shouldVerifyRebuildGatewayProvider(provider)) return true;
   if (!provider) return false;
+  const safeProvider = providerDiagnosticName(provider);
+  const safeCredential = credentialEnv ? credentialDiagnosticName(credentialEnv) : null;
 
   const registration = await inspectRebuildGatewayProviderRegistration(
     provider,
@@ -430,12 +386,12 @@ export async function checkRebuildGatewayProviderOrBail(
   if (registration === "registered") return true;
   if (registration === "expired" && credentialEnv) {
     printExpiredRebuildGatewayProviderCredential(provider, credentialEnv);
-    bail(`Expired gateway provider credential: ${provider}/${credentialEnv}`);
+    bail(`Expired gateway provider credential: ${safeProvider}/${safeCredential}`);
     return false;
   }
   if (registration === "credential_missing" && credentialEnv) {
     printMissingRebuildGatewayProviderCredential(provider, credentialEnv);
-    bail(`Missing gateway provider credential: ${provider}/${credentialEnv}`);
+    bail(`Missing gateway provider credential: ${safeProvider}/${safeCredential}`);
     return false;
   }
   if (
@@ -448,19 +404,19 @@ export async function checkRebuildGatewayProviderOrBail(
   ) {
     options.onProviderReconfigureRequired?.(provider, credentialEnv);
     log(
-      `Preflight gateway provider check: validated prepared recovery will recreate missing provider '${provider}' from ${credentialEnv}`,
+      `Preflight gateway provider check: validated prepared recovery will recreate missing provider '${safeProvider}' from ${safeCredential}`,
     );
     return true;
   }
 
   if (registration === "indeterminate") {
     printIndeterminateRebuildGatewayProvider(provider);
-    bail(`Could not verify gateway provider: ${provider}`);
+    bail(`Could not verify gateway provider: ${safeProvider}`);
     return false;
   }
 
   printMissingRebuildGatewayProvider(provider, credentialEnv);
-  bail(`Missing gateway provider: ${provider}`);
+  bail(`Missing gateway provider: ${safeProvider}`);
   return false;
 }
 
@@ -498,6 +454,15 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
+  if (config.registeredInferenceProviderAttachment !== undefined) {
+    const expected = config.registeredInferenceProviderAttachment;
+    if (
+      await verifyRebuildRegisteredProviderBeforeDelete(sandboxName, expected.gatewayName, config)
+    )
+      return true;
+    bail("Could not verify registered provider credential reuse; sandbox is untouched");
+    return false;
+  }
   if (config.nativeLocalProviderAttachment !== undefined) {
     try {
       await verifyRecordedNativeLocalProviderAttachment({

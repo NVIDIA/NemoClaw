@@ -55,3 +55,25 @@ it("does not record a probe artifact when the route succeeds", async () => {
     fs.rmSync(root, { force: true, recursive: true });
   }
 });
+
+it("records an mTLS Health probe failure without a sandbox bearer token", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mtls-probe-"));
+  try {
+    await recordPortableHermesGatewayProbeFailure(new ArtifactSink(root), "", {
+      status: 2,
+      stdout: '{"error":"connection refused"}',
+      stderr: "Health probe could not reach the gateway",
+    });
+    const evidence = JSON.parse(
+      fs.readFileSync(path.join(root, "portable-hermes-gateway-probe-failure.json"), "utf-8"),
+    );
+    expect(evidence).toEqual({
+      schemaVersion: 1,
+      status: 2,
+      stdoutTail: '{"error":"connection refused"}',
+      stderrTail: "Health probe could not reach the gateway",
+    });
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});

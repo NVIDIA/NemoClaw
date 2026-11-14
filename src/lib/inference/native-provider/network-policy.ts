@@ -10,7 +10,7 @@ import {
   assertOpenShellPolicyEndpointPins,
   parseOpenShellPolicy,
 } from "../../adapters/openshell/policy-boundary";
-import { ROOT } from "../../state/paths";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { nativeProviderLifecycle } from "./index";
 import { boundHermesNativeProfile } from "./hermes-profile";
 import { boundCustomNativeProfile } from "./custom";
@@ -77,7 +77,7 @@ export function buildNativeHostedSandboxPolicy(
   if (usesAttachedCustomNvidiaPolicy(providerName, receipt, agentName)) {
     const bundled = parseOpenShellPolicy(
       fs.readFileSync(
-        path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        path.join(REPOSITORY_ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
         "utf8",
       ),
     ).policy.network_policies?.nvidia;

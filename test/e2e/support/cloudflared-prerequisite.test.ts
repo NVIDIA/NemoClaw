@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { cloudflaredCommandFixture } from "../fixtures/cloudflared-command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   readReviewedCloudflaredPin,
@@ -15,7 +17,64 @@ import {
 } from "../live/cloudflared-prerequisite.ts";
 
 describe("reviewed cloudflared prerequisite (#6141)", () => {
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    { failure: "digest", error: "package SHA256 mismatch", calls: 1 },
+    { failure: "extract", error: "dpkg-deb failed", calls: 2 },
+    { failure: "execute", error: "failed while preparing cloudflared", calls: 3 },
+    { failure: "version", error: "unexpected cloudflared version", calls: 3 },
+    { failure: "none", error: null, calls: 3 },
+  ])("verifies package bytes and executable identity with $failure failure", async (scenario) => {
+    const bytes = Buffer.from("synthetic reviewed package");
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    vi.spyOn(fs, "readFileSync").mockReturnValueOnce(
+      JSON.stringify({
+        jobs: {
+          run: {
+            steps: [
+              {
+                name: "Install reviewed cloudflared",
+                env: { CLOUDFLARED_VERSION: "2026.6.1", CLOUDFLARED_DEB_SHA256: digest },
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const fixture = cloudflaredCommandFixture(scenario.failure, bytes);
+    const command = vi.fn(fixture.command);
+    const cleanup = new CleanupRegistry();
+    try {
+      const result = resolveVerifiedCloudflaredBinary(
+        cleanup,
+        { command } as unknown as HostCliClient,
+        { platform: "linux", arch: "x64" },
+      );
+      await (scenario.error
+        ? expect(result).rejects.toThrow(scenario.error)
+        : result.then((binary) => {
+            expect(binary).toBe(
+              path.join(path.dirname(fixture.packagePath()), "extracted/usr/bin/cloudflared"),
+            );
+            expect(command).toHaveBeenNthCalledWith(
+              3,
+              binary,
+              ["--version"],
+              expect.objectContaining({
+                artifactName: "inference-routing-cloudflared-verify-version",
+              }),
+            );
+          }));
+      expect(command).toHaveBeenCalledTimes(scenario.calls);
+    } finally {
+      await cleanup.runAll();
+    }
+    expect(fs.existsSync(path.dirname(fixture.packagePath()))).toBe(false);
+  });
 
   it("reads the reviewed version and digest from the exact workflow", () => {
     expect(readReviewedCloudflaredPin()).toEqual({

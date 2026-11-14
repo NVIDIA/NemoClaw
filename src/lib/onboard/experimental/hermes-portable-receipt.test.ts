@@ -152,7 +152,7 @@ function socketAuthority(): PodmanSocketAuthority {
 
 function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
   return {
-    version: "0.0.116",
+    version: "0.1.7",
     executable: {
       executablePath: "/usr/bin/openshell",
       device: "1",
@@ -422,20 +422,57 @@ describe("Hermes portable receipt identity", () => {
     expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
   });
 
-  it("rejects an OpenShell 0.0.101 receipt before writing a stage (#9211)", () => {
-    const receipt = pending();
-    const staleVersion = {
-      ...receipt,
-      openshellExecutableAuthority: {
-        ...receipt.openshellExecutableAuthority,
-        version: "0.0.101",
-      },
-    };
-    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+  it.each(["0.0.101", "0.1.5", "0.1.8"])(
+    "rejects an OpenShell %s receipt before writing a stage (#9211)",
+    (version) => {
+      const receipt = pending();
+      const staleVersion = {
+        ...receipt,
+        openshellExecutableAuthority: {
+          ...receipt.openshellExecutableAuthority,
+          version,
+        },
+      };
+      const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
 
-    expect(() => publish(staleVersion as never)).toThrow("invalid OpenShell executable authority");
-    expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
-  });
+      expect(() => publish(staleVersion as never)).toThrow(
+        "invalid OpenShell executable authority",
+      );
+      expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
+    },
+  );
+
+  it.each([
+    {
+      schema: 5,
+      prepare: () => publish(pending()),
+      target: (directory: string) => hermesPortableReceiptInternals.phasePath(directory, "pending"),
+      error: "invalid OpenShell executable authority",
+    },
+    {
+      schema: 8,
+      prepare: () => {
+        publishActiveReceipt();
+        publishSuccessor();
+      },
+      target: (directory: string) => hermesPortableReceiptInternals.successorPath(directory),
+      error: "invalid schema-8 successor authority",
+    },
+  ])(
+    "rejects a retained 0.1.5 schema-$schema receipt without rewriting it",
+    ({ prepare, target: receiptPath, error }) => {
+      const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+      prepare();
+      const target = receiptPath(directory);
+      const stored = JSON.parse(fs.readFileSync(target, "utf8"));
+      stored.openshellExecutableAuthority.version = "0.1.5";
+      const previousBytes = Buffer.from(`${JSON.stringify(stored)}\n`);
+      fs.chmodSync(target, 0o600);
+      fs.writeFileSync(target, previousBytes);
+      expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(error);
+      expect(fs.readFileSync(target)).toEqual(previousBytes);
+    },
+  );
 
   it("keeps the receipt root usable beyond eight independent Hermes sandboxes (#9203)", () => {
     const root = hermesPortableReceiptRoot(stateDir);

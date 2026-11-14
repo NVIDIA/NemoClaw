@@ -40,7 +40,7 @@ describe("connectSandbox wedge diagnostic failures", () => {
       "process.exit(1)",
     );
     expect(harness.errorSpy).toHaveBeenCalledWith(
-      "  Readiness evidence: stage=publication-validation reason=pairing-observation-failed pairing=state-changed",
+      "  Readiness evidence: stage=publication-validation reason=pairing-observation-failed reason=state-changed",
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });

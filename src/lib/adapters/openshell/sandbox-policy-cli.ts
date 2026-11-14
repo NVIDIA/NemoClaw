@@ -185,14 +185,46 @@ function capturedOutput(captured: CapturedOpenShellCommandResult): string {
 
 export const classifyCliOpenShellSandboxPolicySetResult = classifyOpenShellSandboxPolicySetResult;
 
-function safeAmbiguousPolicyDetail(detail: string): string {
+const POLICY_CAPTURE_ERROR_CLASSES = new Map([
+  ["ETIMEDOUT", "timeout"],
+  ["ENOENT", "missing-executable"],
+  ["EACCES", "permission"],
+  ["EPERM", "permission"],
+  ["ENOBUFS", "output-limit"],
+]);
+
+function policySubmissionStatus(captured: CapturedOpenShellCommandResult): string {
+  const status = captured.status;
+  let exit = "unknown";
+  if (status !== null && Number.isInteger(status) && status >= 0 && status <= 255) {
+    exit = status === 0 ? "zero" : "nonzero";
+  }
+  const code = (captured.error as NodeJS.ErrnoException | undefined)?.code;
+  const error = captured.error ? (POLICY_CAPTURE_ERROR_CLASSES.get(code ?? "") ?? "other") : "none";
+  const presence = (stream: unknown) => {
+    if (typeof stream === "string" || Buffer.isBuffer(stream)) {
+      return stream.length > 0 ? "present" : "empty";
+    }
+    return "unavailable";
+  };
+  // Fixed categories only: policy commands can echo credentials and submitted documents.
+  return (
+    `status=${exit}; signal=${captured.signal ? "present" : "none"}; capture=${error}; ` +
+    `stdout=${presence(captured.stdout)}; stderr=${presence(captured.stderr)}`
+  );
+}
+
+function safeAmbiguousPolicyDetail(
+  detail: string,
+  captured: CapturedOpenShellCommandResult,
+): string {
   const diagnostic = stripAnsi(detail).replace(
     /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu,
     " ",
   );
   return /network endpoint ambiguity validation failed/iu.test(diagnostic)
     ? "OpenShell did not confirm the policy submission: network endpoint ambiguity validation failed."
-    : "OpenShell did not confirm the policy submission.";
+    : `OpenShell did not confirm the policy submission (${policySubmissionStatus(captured)})`;
 }
 
 function parsePolicySet(
@@ -202,7 +234,7 @@ function parsePolicySet(
   if (outcome.kind === "rejected") {
     outcome = { ...outcome, message: redactCredentialText(outcome.message) };
   } else if (outcome.kind === "ambiguous") {
-    outcome = { kind: "ambiguous", detail: safeAmbiguousPolicyDetail(outcome.detail) };
+    outcome = { kind: "ambiguous", detail: safeAmbiguousPolicyDetail(outcome.detail, captured) };
   }
   return { status: captured.status, outcome };
 }

@@ -258,7 +258,7 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
           'if [ "${1:-}" = gateway ] && [ "${2:-}" = info ]; then printf "No gateway metadata found\\n"; exit 1; fi',
           'if [ "${1:-}" = gateway ] && [ "${2:-}" = list ]; then printf "[]\\n"; exit 0; fi',
           'case "${1:-}" in',
-          '  -V|--version) printf "%s 0.0.116\\n" "${0##*/}"; exit 0;;',
+          '  -V|--version) printf "%s 0.1.7\\n" "${0##*/}"; exit 0;;',
           "esac",
           "exit 1",
         ].join("\n"),
@@ -326,6 +326,8 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
           NEMOCLAW_TEST_NO_SLEEP: "1",
           NEMOCLAW_STATUS_PROBE_TIMEOUT_MS: "2000",
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          // This fixture tests occupied ports without contacting a public DNS resolver.
+          NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
           NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
           NEMOCLAW_OPENSHELL_BIN: path.join(binDir, "openshell"),
           NEMOCLAW_OPENSHELL_CHANNEL: "stable",

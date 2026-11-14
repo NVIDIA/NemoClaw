@@ -133,7 +133,48 @@ function waitForNativeStartup(containerId: string): void {
     if (probe.status === 0) return;
     spawnSync("sleep", ["1"]);
   }
-  throw new Error("native managed-image startup did not reach its command boundary");
+  const state = docker(["inspect", "--format", "{{json .State}}", containerId], true, 5_000);
+  const logs = docker(["logs", "--tail", "80", containerId], true, 5_000);
+  throw new Error(
+    `native managed-image startup did not reach its command boundary: ${JSON.stringify(
+      managedImageStartupFailureSummary(state, logs),
+    )}`,
+  );
+}
+
+/** Container output can contain runtime handles; emit only classified evidence. */
+export function managedImageStartupFailureSummary(state: CommandResult, logs: CommandResult) {
+  let parsed: Record<string, unknown> = {};
+  try {
+    const value: unknown = JSON.parse(state.stdout);
+    if (
+      state.status === 0 &&
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      parsed = value as Record<string, unknown>;
+    }
+  } catch {
+    // An unreadable state remains unknown; the startup failure still applies.
+  }
+  const statuses = ["created", "running", "paused", "restarting", "removing", "exited", "dead"];
+  const output = `${logs.stdout}\n${logs.stderr}`;
+  return {
+    stateReadSucceeded: state.status === 0,
+    containerStatus:
+      typeof parsed.Status === "string" && statuses.includes(parsed.Status) ? parsed.Status : null,
+    running: typeof parsed.Running === "boolean" ? parsed.Running : null,
+    exitCode: Number.isSafeInteger(parsed.ExitCode) ? parsed.ExitCode : null,
+    oomKilled: typeof parsed.OOMKilled === "boolean" ? parsed.OOMKilled : null,
+    logsReadSucceeded: logs.status === 0,
+    missingProviderFunction: /fixedHostedNativeProvider is not a function/u.test(output),
+    providerRefreshFailed: /fixedHostedNativeProvider[\s\S]*returned non-zero exit status/u.test(
+      output,
+    ),
+    managedStartupFailed: /Managed startup (?:image application|coordination) failed/u.test(output),
+    permissionDenied: /(?:Permission denied|EACCES)/u.test(output),
+  };
 }
 
 export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): void {

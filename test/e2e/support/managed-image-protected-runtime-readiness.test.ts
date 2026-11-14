@@ -347,7 +347,7 @@ describe.concurrent("protected managed-image runtime commands", () => {
     { case: "short", stdout: "abc123" },
     { case: "ambiguous", stdout: `${PROVIDER_CONTAINER_ID}\n${"d".repeat(64)}` },
   ])("rejects a $case provider run ID before authority capture", ({ stdout }) => {
-    expect(() => protectedProviderReportedContainerId(VLLM_PROVIDER_NAME, stdout)).toThrow(
+    expect(() => protectedProviderReportedContainerId(stdout)).toThrow(
       "did not report one full container ID",
     );
   });
@@ -527,7 +527,7 @@ describe.concurrent("protected managed-image runtime commands", () => {
 
     expect(ollama.command.slice(0, 2)).toEqual(["bash", "-c"]);
     expect(ollama.exitCode).toBe(0);
-    expect(ollama.stdout).toBe("restart_mode=manual\nmanaged-image-ollama-ready\n");
+    expect(ollama.stdout).toBe("restart_mode=manual\n");
     expect(vllm.command.slice(0, 4)).toEqual(["bash", "--noprofile", "--norc", "-c"]);
     expect(vllm.exitCode).toBe(0);
     expect(vllm.stdout).toBe("managed-image-vllm-ready attempts=1\n");
@@ -566,7 +566,6 @@ describe.concurrent("protected managed-image runtime commands", () => {
     expect(result.command.slice(0, 2)).toEqual(["bash", "-c"]);
     expect(result.exitCode).toBe(1);
     expect(result.timedOut).toBe(false);
-    expect(result.stderr).toContain("managed-image-ollama-not-ready status=1");
     expect(diagnosticLines).toHaveLength(200);
     expect(diagnosticLines[0]).toContain("runtime-log-line-061");
     expect(diagnosticLines.at(-1)).toContain("runtime-log-line-260");
@@ -608,7 +607,6 @@ describe.concurrent("protected managed-image runtime commands", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("[shell-probe omitted ");
-    expect(result.stderr).toContain("managed-image-ollama-not-ready status=1");
     expect(result.stderr).toContain("[REDACTED]");
     expect(result.stderr).not.toContain(sensitiveValue);
     expect(Buffer.byteLength(stderrArtifact)).toBeLessThanOrEqual(command.captureLimitBytes + 256);

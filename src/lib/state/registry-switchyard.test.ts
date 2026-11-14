@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
 import { createHermesSwitchyardRoutingIntent } from "../hermes-switchyard-routing";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
@@ -63,6 +64,53 @@ function legacyRoutedSandbox(
     },
   } satisfies SandboxEntry;
 }
+
+it("refuses mixed registered and Switchyard authority without writing the registry", async () => {
+  const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-switchyard-mixed-"));
+  vi.stubEnv("HOME", testHome);
+  vi.resetModules();
+  try {
+    const registry = await import("./registry");
+    const persistence = await import("./registry/persistence");
+    const f = registeredInferenceFixture();
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "openai-api", model: "efficient-model" },
+      capable: { provider: "nvidia-prod", model: "capable-model" },
+    });
+    const binding = { ...f.binding, providerName: routing.capable.provider };
+    const mixed = {
+      name: binding.sandboxName,
+      agent: "hermes",
+      provider: binding.providerName,
+      model: routing.capable.model,
+      gatewayName: binding.gatewayName,
+      endpointUrl: binding.endpointUrl,
+      preferredInferenceApi: binding.inferenceApi,
+      credentialEnv: binding.credentialEnv,
+      registeredInferenceProviderAttachment: binding,
+      hermesSwitchyard: { routing, bindings: switchyardBindingFixture(routing) },
+    };
+    persistence.save({ defaultSandbox: null, sandboxes: {} });
+    const before = await fs.readFile(registry.REGISTRY_FILE, "utf8");
+    expect(() => registry.registerSandbox(mixed)).toThrow(
+      "cannot share a recorded native inference attachment",
+    );
+    expect(() =>
+      persistence.save({ defaultSandbox: null, sandboxes: { [mixed.name]: mixed } }),
+    ).toThrow("invalid hermesSwitchyard state");
+    expect(await fs.readFile(registry.REGISTRY_FILE, "utf8")).toBe(before);
+    const injected = JSON.stringify({
+      defaultSandbox: mixed.name,
+      sandboxes: { [mixed.name]: mixed },
+    });
+    await fs.writeFile(registry.REGISTRY_FILE, injected);
+    expect(() => persistence.load()).toThrow("invalid hermesSwitchyard state");
+    expect(await fs.readFile(registry.REGISTRY_FILE, "utf8")).toBe(injected);
+  } finally {
+    await fs.rm(testHome, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+  }
+});
 
 it("preserves pre-binding routed receipts across registry reads and unrelated writes (#13863)", async () => {
   const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-switchyard-legacy-"));

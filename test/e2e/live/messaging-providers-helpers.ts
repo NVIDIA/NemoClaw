@@ -3,7 +3,6 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { isIPv4 } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -46,7 +45,6 @@ export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
 export const FAKE_API_IMAGE =
   "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea";
-const DEFAULT_OPENSHELL_DOCKER_NETWORK = "openshell-docker";
 export const FAKE_API_PROXY_READINESS_PORT = 8079;
 export const FAKE_API_PROXY_SOURCE = String.raw`
 const net = require("node:net");
@@ -298,7 +296,9 @@ export function parseRuntimeProofPort(rawPort: string): number {
 }
 
 export function isUnresolvedPlaceholderRejection(text: string): boolean {
-  return /credential_injection_failed|unresolved credential placeholder/i.test(text);
+  return /credential_unavailable|credential_injection_failed|unresolved credential placeholder/i.test(
+    text,
+  );
 }
 
 export function isNvidiaEndpointRateLimitFailure(text: string): boolean {
@@ -1034,52 +1034,9 @@ export async function startFakeDockerApi(
     await fs.promises.rm(dir, { recursive: true, force: true });
   });
 
-  let proxyPublishAddress = "0.0.0.0";
-  let proxyProbeAddress = "127.0.0.1";
-  if (runtimeProvider.id === "docker") {
-    const openshellNetwork =
-      options.env.OPENSHELL_DOCKER_NETWORK_NAME ??
-      process.env.OPENSHELL_DOCKER_NETWORK_NAME ??
-      DEFAULT_OPENSHELL_DOCKER_NETWORK;
-    const openshellNetworkInspect = await runtimeProvider.command(
-      ["network", "inspect", openshellNetwork],
-      {
-        artifactName: `inspect-fake-${options.kind}-openshell-network`,
-        env: options.env,
-        redactionValues: options.redactionValues,
-        timeoutMs: 30_000,
-      },
-    );
-    expectExitZero(openshellNetworkInspect, "inspect OpenShell Docker network");
-    let openshellNetworkRecords: unknown;
-    try {
-      openshellNetworkRecords = JSON.parse(openshellNetworkInspect.stdout);
-    } catch {
-      throw new Error("OpenShell Docker network inspection returned invalid JSON");
-    }
-    const openshellBridgeAddresses =
-      Array.isArray(openshellNetworkRecords) && openshellNetworkRecords.length === 1
-        ? ((
-            openshellNetworkRecords[0] as {
-              Driver?: unknown;
-              IPAM?: { Config?: Array<{ Gateway?: unknown }> };
-            }
-          ).IPAM?.Config?.flatMap((entry) =>
-            typeof entry.Gateway === "string" && isIPv4(entry.Gateway) ? [entry.Gateway] : [],
-          ) ?? [])
-        : [];
-    const openshellBridgeAddress =
-      openshellBridgeAddresses.length === 1 ? openshellBridgeAddresses[0] : undefined;
-    if (
-      (openshellNetworkRecords as Array<{ Driver?: unknown }> | undefined)?.[0]?.Driver !==
-        "bridge" ||
-      typeof openshellBridgeAddress !== "string"
-    ) {
-      throw new Error("OpenShell Docker network must expose exactly one IPv4 bridge gateway");
-    }
-    proxyPublishAddress = openshellBridgeAddress;
-    proxyProbeAddress = openshellBridgeAddress;
-  }
+  // The Docker supervisor uses host networking and pins its host alias to loopback.
+  const proxyPublishAddress = runtimeProvider.id === "docker" ? "127.0.0.1" : "0.0.0.0";
+  const proxyProbeAddress = "127.0.0.1";
 
   const networkCreate = await runtimeProvider.command(
     ["network", "create", "--internal", network],
@@ -1320,10 +1277,6 @@ export async function applyRestRewritePolicy(
       SANDBOX_NAME,
       "--add-endpoint",
       `host.openshell.internal:${api.port}:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:GET:/**`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:POST:/**`,
       "--binary",
       "/usr/local/bin/node",
       "--binary",
@@ -1366,10 +1319,6 @@ export async function applyWebSocketRewritePolicy(
       SANDBOX_NAME,
       "--add-endpoint",
       `host.openshell.internal:${api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:GET:/**`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:WEBSOCKET_TEXT:/**`,
       "--binary",
       "/usr/local/bin/node",
       "--binary",
@@ -1407,6 +1356,7 @@ async function bindFixturePolicyEndpoint(
   await rebindFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
     artifactName: `bind-${api.kind}-${protocol}-credential`,
     credentialEnv: credentialKey,
+    allowMethods: protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"],
     endpoint: {
       host: "host.openshell.internal",
       port: api.port,

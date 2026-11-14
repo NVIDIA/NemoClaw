@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+import type { SandboxEntry } from "../../state/registry/types";
+import { observeSandboxOnGateway } from "../../onboard/sandbox-recreate-probe";
+import { createRegisteredSandboxIdentityRevalidation } from "../../onboard/sandbox-recreate-transaction";
+import { initializeExternalHermesInferenceRoute } from "../../onboard/machine/handlers/initial-hermes-inference-route";
 import { CLI_NAME } from "../../cli/branding";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import { fingerprintOpenShellSandboxLiveIdentity } from "../../adapters/openshell/sandbox-identity";
@@ -9,8 +14,12 @@ import {
   createInitialHermesInferenceRoute,
   type InitialHermesInferenceRouteDeps,
 } from "../../onboard/hermes/initial-inference-route";
-import { createRegisteredSandboxIdentityRevalidation } from "../../onboard/sandbox-recreate-transaction";
-import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privileged-exec";
+import {
+  isDirectSandboxFallbackUnavailableError,
+  executePrivilegedSandboxCommand as executeProviderCommand,
+  resolvePrivilegedSandboxTarget,
+} from "../../sandbox/privileged-exec";
+import { managedImageRuntimeIdentity } from "../../onboard/managed-image/agents";
 import type { GatewayRestartResult } from "./gateway-restart";
 import {
   checkAndRecoverSandboxProcesses,
@@ -21,6 +30,58 @@ import {
 
 const HERMES_CRON_CONTROL = "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
+// The owner cannot read the root-only cron controller. This fixed observer
+// reads only the supervisor generation; the controller still owns publication.
+export const HERMES_RECOVERY_GENERATION_OBSERVER = String.raw`
+import json, os, stat, time
+from pathlib import Path
+home = Path("/sandbox/.hermes")
+generation_path = Path("/tmp/nemoclaw-hermes-gateway-recovery-waiting")
+owner = home.lstat().st_uid
+if os.geteuid() != owner:
+    raise RuntimeError("Hermes recovery observation requires the home owner")
+deadline = time.monotonic() + 2.0
+observation = None
+while True:
+    try:
+        descriptor = os.open(generation_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
+        continue
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != owner
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_size != 68
+        ):
+            raise RuntimeError("Hermes recovery generation metadata is unsafe")
+        raw = os.read(descriptor, 69)
+    finally:
+        os.close(descriptor)
+    payload = raw.decode("ascii")
+    if (
+        len(payload) != 68
+        or not payload.startswith("v1 ")
+        or not payload.endswith("\n")
+        or any(c not in "0123456789abcdef" for c in payload[3:-1])
+    ):
+        raise RuntimeError("Hermes recovery generation is invalid")
+    observation = {
+        "version": 1,
+        "generation": payload[3:-1],
+        "identity": [
+            metadata.st_dev, metadata.st_ino, metadata.st_uid, metadata.st_mode,
+            metadata.st_nlink, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns,
+        ],
+    }
+    break
+print(json.dumps(observation, separators=(",", ":")))
+`;
 const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
 const CONTROL_ERROR_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_ERROR_V1:";
 export const HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE = "drain-marker-rollback-failed";
@@ -697,6 +758,65 @@ function isAmbiguousPrepareRecoveryTransportFailure(error: unknown): boolean {
   );
 }
 
+function prepareHermesRecoveryWithOwnerObservation(sandboxName: string): string {
+  const expectedResourceHandle = resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
+  const owner = managedImageRuntimeIdentity("hermes");
+  const command = [HERMES_PYTHON, "-I", HERMES_CRON_CONTROL];
+  const options = {
+    expectedResourceHandle,
+    sanitizeEnvironment: true,
+    timeout: CONTROL_TIMEOUT_MS,
+    maxOutputBytes: 2048,
+  } as const;
+  // Container root has no DAC override in the native workload. Keep the read
+  // with the home owner and the drain/request authority with the root controller.
+  const observed = executeProviderCommand(
+    sandboxName,
+    [HERMES_PYTHON, "-I", "-c", HERMES_RECOVERY_GENERATION_OBSERVER],
+    { ...options, sandboxUser: `${owner.uid}:${owner.gid}` },
+  );
+  if (
+    observed.status !== 0 ||
+    observed.error ||
+    observed.signal ||
+    observed.stdout.length === 0 ||
+    observed.stdout.length > 2048 ||
+    observed.stderr.length > 0
+  ) {
+    throw new Error("Hermes gateway recovery generation could not be observed by its owner");
+  }
+  // The opaque observation stays off argv. The controller rechecks the inode
+  // metadata; the supervisor still requires its current nonce and requester PID.
+  let prepared = executeProviderCommand(
+    sandboxName,
+    [...command, "prepare-recover", "--generation-observation-stdin"],
+    { ...options, input: observed.stdout },
+  );
+  if (
+    prepared.status === 1 &&
+    !prepared.error &&
+    !prepared.signal &&
+    prepared.stdout.length === 0 &&
+    prepared.stderr.length === 0
+  ) {
+    // Publication can finish before Docker delivers its receipt. Reconcile once
+    // through the idempotent root action, without replaying an old observation.
+    prepared = executeProviderCommand(sandboxName, [...command, "prepare-recover"], options);
+  }
+  if (prepared.error || prepared.signal) {
+    throw new Error("Hermes cron prepare-recover transport was unavailable");
+  }
+  if (prepared.status !== 0) {
+    throw new HermesCronRestoreControlFailure(
+      "prepare-recover",
+      prepared.status ?? 1,
+      prepared.stdout.toString("utf8"),
+      prepared.stderr.toString("utf8"),
+    );
+  }
+  return prepared.stdout.toString("utf8");
+}
+
 export function prepareHermesCronRestoreRecovery(
   sandboxName: string,
 ): HermesCronRestorePreparationOutcome {
@@ -705,6 +825,14 @@ export function prepareHermesCronRestoreRecovery(
     stdout = executeCronRestoreControl(sandboxName, "prepare-recover");
   } catch (error) {
     if (isLegacyCronRestoreControl(error, "prepare-recover")) return "unsupported";
+    if (
+      error instanceof HermesCronRestoreControlFailure &&
+      error.controlCode === "gateway-generation-owner-read-required"
+    ) {
+      return parseCronRestorePreparationReceipt(
+        prepareHermesRecoveryWithOwnerObservation(sandboxName),
+      );
+    }
     if (!isAmbiguousPrepareRecoveryTransportFailure(error)) throw error;
 
     // The controller publishes its recovery request before it exits. Under
@@ -748,6 +876,39 @@ export async function runHermesCronRestoreTransaction<T extends { restoreSucceed
   }
   validateHermesCronRestore(sandboxName, identity);
   return { result, identity };
+}
+
+export async function restoreExternalHermesInference(
+  entry: SandboxEntry,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  readRegistration: (name: string) => SandboxEntry | null,
+): Promise<void> {
+  const revalidate = createRegisteredSandboxIdentityRevalidation(entry, {
+    readRegistration: readRegistration,
+    observe: (sandboxName, gatewayName) =>
+      observeSandboxOnGateway({ sandboxName, gatewayName }, undefined, runtimeSelection, 15_000),
+  });
+  if (!revalidate || !entry.gatewayName || !entry.provider || !entry.model) {
+    throw new Error(
+      "Restored Hermes inference requires its registered sandbox and route identity.",
+    );
+  }
+  const registered = structuredClone(entry);
+  await initializeExternalHermesInferenceRoute({
+    sandboxName: entry.name,
+    gatewayName: entry.gatewayName,
+    getSandbox: readRegistration,
+    model: entry.model,
+    provider: entry.provider,
+    preferredInferenceApi: entry.preferredInferenceApi ?? null,
+    revalidateSandboxIdentity: (operation) => {
+      revalidate(operation);
+      const current = readRegistration(entry.name);
+      if (!isDeepStrictEqual(current, registered)) {
+        throw new Error("Restored Hermes inference selection changed before configuration write.");
+      }
+    },
+  });
 }
 
 /** Rebind restored native references; the post-restore phase owns the restart. */

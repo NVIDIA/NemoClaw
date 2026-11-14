@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { recordedRegisteredInferenceProviderAttachment } from "../../../inference/config";
+
 import {
   rejectRetiredModelRouter,
   rejectRetiredModelRouterSession,
@@ -9,6 +11,7 @@ import type { ModelSelectionProvenance } from "../../../domain/telemetry/provena
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import {
   hasLegacySharedLocalInferenceRoute,
+  hasLegacySharedCustomInferenceRoute,
   isPersistedPiSharedLocalInferenceRoute,
   resolveAgentProviderInferenceApi,
   usesNativeLocalInference,
@@ -105,15 +108,6 @@ async function resumeProviderReadiness<Gpu, Agent, Host>(
   return switchyard
     ? { forceInferenceSetup: true, credentialEnv }
     : deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv, undefined, selection);
-}
-
-function hydrateResumeProviderCredential<Gpu, Agent, Host>(
-  deps: ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"],
-  switchyard: boolean,
-  credentialEnv: string | null,
-) {
-  // Switchyard setup re-attests owned bindings or acquires fresh credentials itself.
-  return switchyard ? undefined : deps.hydrateCredentialEnv(credentialEnv);
 }
 
 function switchyardReservationResumeOptions(
@@ -335,6 +329,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       forceInferenceSetup: boolean;
       credentialEnv: string | null;
       nativeCustomSetup?: boolean;
+      nativeLocalSetup?: boolean;
+      registeredNativeSetup?: boolean;
     }>;
     ensureManagedLlamaCppResumeReady(
       provider: string | null | undefined,
@@ -375,6 +371,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ): void;
     isNonInteractive(): boolean;
     getOpenshellBinary(): string;
+    getInstalledOpenshellVersion?(): string | null;
     needsBedrockRuntimeAdapter(provider: string, endpointUrl: string | null): boolean;
     isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean;
     hasNativeLocalProviderAuthority?(
@@ -624,6 +621,7 @@ function canResumeInferenceRoute(input: {
   forceProviderSelection: boolean;
   forceInferenceSetup: boolean;
   effectiveResume: boolean;
+  registeredResumeVerified?: boolean;
   selectsNativeLocal: boolean;
   nativeLocalAttached(): boolean;
   routeReady(): boolean;
@@ -637,7 +635,7 @@ function canResumeInferenceRoute(input: {
     !input.forceProviderSelection &&
     !input.forceInferenceSetup &&
     input.effectiveResume &&
-    input.routeReady() &&
+    (input.registeredResumeVerified || input.routeReady()) &&
     (!input.selectsNativeLocal || input.nativeLocalAttached())
   );
 }
@@ -892,13 +890,15 @@ async function ensureAttachedLlamaCppReachable(
 ): Promise<void> {
   if (provider !== "llama-cpp-local" || managed) return;
   const result = await (deps.probeLlamaCppSandboxReachability?.() ??
-    probeHostServiceSandboxReachability({ port: LLAMA_CPP_PORT }));
+    probeHostServiceSandboxReachability({ port: LLAMA_CPP_PORT, nativeSupervisorNetwork: true }));
   if (result.ok || result.reason !== "tcp_failed") return;
   deps.error(
     `  Sandbox containers cannot reach Local llama.cpp at host.openshell.internal:${LLAMA_CPP_PORT}.`,
   );
   deps.error(
-    `  Keep host-loopback access and bind or publish port ${LLAMA_CPP_PORT} on ${result.gatewayIp ?? "the Docker gateway address"} for the sandbox network.`,
+    result.networkName === "host"
+      ? `  Check that the llama.cpp server listens on 127.0.0.1:${LLAMA_CPP_PORT} for the native supervisor.`
+      : `  Keep host-loopback access and bind or publish port ${LLAMA_CPP_PORT} on ${result.gatewayIp ?? "the Docker gateway address"} for the sandbox network.`,
   );
   deps.error("  Retain API-key authentication, check the host firewall, then retry onboarding.");
   deps.exitProcess(1);
@@ -1376,6 +1376,40 @@ async function resolveSelectionSandboxName<Agent>(
   return deps.promptValidatedSandboxName(agent);
 }
 
+function registeredResumeSelection(
+  getSandbox: ((name: string) => Partial<SandboxEntry> | null) | undefined,
+  resume: boolean,
+  sandboxName: string | null,
+  selection: {
+    gatewayName: string;
+    provider: string | null;
+    endpointUrl: string | null;
+    credentialEnv: string | null;
+    preferredInferenceApi: string | null;
+  },
+) {
+  if (!resume || !sandboxName) return undefined;
+  const binding = recordedRegisteredInferenceProviderAttachment(getSandbox?.(sandboxName) ?? {});
+  if (
+    binding &&
+    (binding.gatewayName !== selection.gatewayName ||
+      binding.providerName !== selection.provider ||
+      binding.endpointUrl !== selection.endpointUrl ||
+      binding.credentialEnv !== selection.credentialEnv ||
+      binding.inferenceApi !== selection.preferredInferenceApi)
+  )
+    throw new Error("Registered provider resume selection does not match its recorded binding.");
+  return binding;
+}
+
+function hydrateResumedProviderCredential(
+  registeredResumeVerified: boolean,
+  credentialEnv: string | null,
+  hydrate: (name: string | null) => string | null | undefined,
+): string | null | undefined {
+  return registeredResumeVerified ? null : hydrate(credentialEnv);
+}
+
 function nativeLocalAgentOptions(
   agent: unknown,
   provider: string,
@@ -1391,24 +1425,29 @@ function nativeLocalAgentOptions(
     : {};
 }
 
-function assertNoLegacySharedLocalResume(
+function assertNoLegacySharedResume(
   deps: Pick<
     ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
-    "getSandboxRegistryEntry"
+    "getSandboxRegistryEntry" | "getInstalledOpenshellVersion"
   >,
   effectiveResume: boolean,
   sandboxName: string | null,
 ): void {
   const recorded =
     effectiveResume && sandboxName ? deps.getSandboxRegistryEntry?.(sandboxName) : null;
+  if (!recorded || recorded.pendingRouteReservation === true) return;
+  const local = hasLegacySharedLocalInferenceRoute(recorded);
+  const custom = hasLegacySharedCustomInferenceRoute(recorded);
+  const legacyNvidia = recorded.provider === "nvidia-nim";
+  if (!local && !custom && !legacyNvidia) return;
+  const oldRuntime = /^0\.0\.\d+$/.test(deps.getInstalledOpenshellVersion?.() ?? "");
   if (
-    recorded &&
-    recorded.pendingRouteReservation !== true &&
-    hasLegacySharedLocalInferenceRoute(recorded) &&
-    recorded.agent !== "pi"
+    (local && (recorded.agent !== "pi" || !oldRuntime)) ||
+    ((custom || legacyNvidia) && !oldRuntime)
   ) {
+    const route = local ? "local" : legacyNvidia ? "NVIDIA" : "custom";
     throw new Error(
-      `Sandbox ${sandboxName} uses a legacy shared local inference route. Resume is unavailable for this route. Back up the sandbox, then re-onboard it with --fresh --name ${sandboxName} --recreate-sandbox to attach a native provider before upgrading OpenShell.`,
+      `Sandbox ${sandboxName} uses a legacy shared ${route} inference route. Resume is unavailable for this route. Back up the sandbox, then re-onboard it with --fresh --name ${sandboxName} --recreate-sandbox to attach a native provider.`,
     );
   }
 }
@@ -1431,15 +1470,17 @@ function usesNativeLocalSelection(
   selection: { provider: string | null; endpointUrl: string | null },
   localNimSelected: boolean,
   preserveSharedRoute: boolean,
+  registeredSelection = false,
 ): boolean {
   return (
-    !preserveSharedRoute &&
-    usesNativeLocalInferenceForAgent(
-      agent,
-      selection.provider,
-      selection.endpointUrl,
-      localNimSelected,
-    )
+    registeredSelection ||
+    (!preserveSharedRoute &&
+      usesNativeLocalInferenceForAgent(
+        agent,
+        selection.provider,
+        selection.endpointUrl,
+        localNimSelected,
+      ))
   );
 }
 
@@ -1527,6 +1568,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
+  assertNoLegacySharedResume(deps, effectiveResume, sandboxName);
   const preservesLegacyPiRoute = createPersistedPiRouteSelector(
     deps.getSandboxRegistryEntry,
     effectiveResume,
@@ -1641,6 +1683,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     clearAutoDetectedCompatibleContextWindow(process.env);
     let forceInferenceSetup = initialForceInferenceSetup;
     let recoveredRecordedProvider = false;
+    let registeredResumeVerified = false;
+    const registeredResumeBinding = registeredResumeSelection(
+      deps.getSandboxRegistryEntry,
+      effectiveResume,
+      reusableResumeSandboxName,
+      { gatewayName, provider, endpointUrl, credentialEnv, preferredInferenceApi },
+    );
     const providerRecovery = createRecovery(fresh, sandboxName, session, deps, {
       recoveryReceipt: providerRecoveryReceipt,
       recoveryReceiptLedger: providerRecoveryReceiptLedger,
@@ -1681,7 +1730,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     forceInferenceSetup ||=
       completeRecoveredReviewSelectionAfterInference || reviewRecoveredInteractively;
     let managedLlamaCppRecovered = false;
-    assertNoLegacySharedLocalResume(deps, effectiveResume, sandboxName);
+    assertNoLegacySharedResume(deps, effectiveResume, sandboxName);
     if (resumeProviderSelection) {
       assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(
@@ -1694,6 +1743,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           { provider: provider, endpointUrl },
           Boolean(nimContainer),
           preservesLegacyPiRoute(sandboxName, { provider: provider, model: model, endpointUrl }),
+          Boolean(registeredResumeBinding),
         ),
       );
       // A completed provider-selection checkpoint is not proof that a managed
@@ -1715,6 +1765,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         credentialEnv,
         { sandboxName: reusableResumeSandboxName, endpointUrl },
       );
+      registeredResumeVerified = recovery.registeredNativeSetup === true;
+      reuseGatewayCredentialWithoutLocalKey ||= recovery.nativeLocalSetup === true;
+      skipHostInferenceSmoke ||= recovery.nativeLocalSetup === true;
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -1744,10 +1797,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           "  [resume] Refreshing the gateway provider to match the required inference surface.",
         );
       }
-      const hydratedCredential = hydrateResumeProviderCredential(
-        deps,
-        switchyardConfigured,
+      const hydratedCredential = hydrateResumedProviderCredential(
+        registeredResumeVerified || switchyardConfigured,
         credentialEnv,
+        deps.hydrateCredentialEnv,
       );
       // A retained OpenRouter gateway provider still owns the credential,
       // while the host adapter needs only its persisted authorization hash
@@ -2070,6 +2123,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       forceProviderSelection,
       forceInferenceSetup,
       effectiveResume,
+      registeredResumeVerified,
       selectsNativeLocal: usesNativeLocalSelection(
         agentName(agent),
         { provider: selectedProvider, endpointUrl },
@@ -2207,6 +2261,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                 model: selectedModel,
                 endpointUrl,
               }),
+              registeredResumeVerified,
             ),
           );
           return reserveRecoveredSandboxInferenceRoute(

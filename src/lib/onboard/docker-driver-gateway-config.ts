@@ -11,6 +11,13 @@ import {
 } from "node:crypto";
 import fs from "node:fs";
 import { prepareNativeGatewayCreation } from "./gateway/native-creation";
+import type { ResolvedCorporateCa } from "./corporate-ca-types";
+import {
+  type GatewayNetworkTrust,
+  NEMOCLAW_GATEWAY_NETWORK_TRUST_SHA256_ENV,
+  readGatewayNetworkTrust,
+  stageGatewayNetworkTrust,
+} from "./gateway/network-trust";
 import { DOCKER_DRIVER_GATEWAY_CONFIG_NAME } from "./gateway/config-name";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -138,6 +145,7 @@ interface LegacyGatewayIdentity {
   externalComponent: ExternalComponentGatewayConfiguration | null;
   gatewayId: string;
   jwtProof: LegacyJwtBundleProof;
+  networkTrust: GatewayNetworkTrust | null;
   kind: "legacy";
   sandboxNamespace: "default";
 }
@@ -147,6 +155,7 @@ type DockerDriverGatewayIdentity =
   | {
       configProof: ExistingConfigProof | null;
       externalComponent: ExternalComponentGatewayConfiguration | null;
+      networkTrust: GatewayNetworkTrust | null;
       kind: "scoped";
       gatewayId: string;
       sandboxNamespace: string;
@@ -693,6 +702,11 @@ function existingGatewayIdentityFromConfig(
     if (!parsed || !openshell || !gateway || !gatewayJwt || !drivers || !driverConfig) {
       throw ambiguousGatewayConfig(configPath, "the config does not match NemoClaw's schema");
     }
+    const supervisor = asTomlTable(openshell.supervisor);
+    const networkTrust = readGatewayNetworkTrust(
+      stateDir,
+      asTomlTable(supervisor?.network)?.additional_ca_bundle,
+    );
     const schemaVersion = openshell.version;
     if (schemaVersion !== 1 && schemaVersion !== 2) {
       throw ambiguousGatewayConfig(configPath, "unsupported gateway schema version");
@@ -784,6 +798,7 @@ function existingGatewayIdentityFromConfig(
       externalComponent,
       schemaVersion,
       legacyGuestCredentials,
+      networkTrust?.path,
     );
     if (originalToml !== canonicalToml) {
       throw ambiguousGatewayConfig(
@@ -796,6 +811,7 @@ function existingGatewayIdentityFromConfig(
       const identity: LegacyGatewayIdentity = {
         configProof,
         externalComponent,
+        networkTrust,
         gatewayId: legacyGatewayId,
         jwtProof: asGatewayStateConflict(() => openOwnedLegacyJwtBundle(stateDir, state.uid)),
         kind: "legacy",
@@ -809,6 +825,7 @@ function existingGatewayIdentityFromConfig(
       const identity: DockerDriverGatewayIdentity = {
         configProof,
         externalComponent,
+        networkTrust,
         gatewayId: scopedGatewayId,
         kind: "scoped",
         sandboxNamespace: scopedGatewayId,
@@ -840,6 +857,7 @@ function resolveDockerDriverGatewayIdentity(
   return {
     configProof: null,
     externalComponent: null,
+    networkTrust: null,
     kind: "scoped",
     gatewayId,
     sandboxNamespace: gatewayId,
@@ -898,6 +916,7 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
     ? 2
     : 1,
   legacyGuestCredentials = schemaVersion === 1,
+  additionalCaBundle?: string,
 ): string {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, projectedRuntime);
   const driver = runtime.openShellDriver;
@@ -1038,6 +1057,13 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
     );
   }
 
+  if (additionalCaBundle) {
+    sections.push(
+      "[openshell.supervisor.network]",
+      `additional_ca_bundle = ${tomlString(additionalCaBundle)}`,
+      "",
+    );
+  }
   sections.push(`[openshell.drivers.${driver}]`);
   if (dockerConfig) sections.push(dockerConfig);
   if (schemaVersion === 1) sections.push(...guestTlsConfig);
@@ -1073,61 +1099,65 @@ function writeDockerDriverGatewayConfigWithIdentity(
   identity: DockerDriverGatewayIdentity,
   runtime: RuntimeProviderGatewayHostRuntime,
   requestedExternalComponent?: ExternalComponentGatewayConfiguration | null,
+  corporateCa?: ResolvedCorporateCa | null,
 ): string {
   const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
   const externalComponent =
     requestedExternalComponent === undefined
       ? identity.externalComponent
       : requestedExternalComponent;
-  if (identity.kind === "legacy") {
-    try {
-      assertExistingConfigProof(identity.configProof);
-      assertLegacyJwtBundleProof(identity.jwtProof);
-      writeRestrictedFileAtomic(
-        configPath,
-        buildDockerDriverGatewayConfigTomlForIdentity(
-          gatewayEnv,
-          sandboxBin,
-          identity.jwtProof.bundle,
-          identity.gatewayId,
-          identity.sandboxNamespace,
-          DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
-          runtime,
-          externalComponent,
-        ),
-        0o600,
-        () => {
-          assertExistingConfigProof(identity.configProof);
-          assertLegacyJwtBundleProof(identity.jwtProof);
-        },
-      );
-      // Existing containers and sandbox JWTs embed this namespace and
-      // issuer. Other generated settings still follow the current runtime.
-      return configPath;
-    } finally {
-      closeRegularFileProof(identity.configProof);
-      closeLegacyJwtBundleProof(identity.jwtProof);
-    }
-  }
   try {
-    if (identity.configProof) assertExistingConfigProof(identity.configProof);
-    const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+    const assertIdentity = () => {
+      if (identity.configProof) assertExistingConfigProof(identity.configProof);
+      if (identity.kind === "legacy") assertLegacyJwtBundleProof(identity.jwtProof);
+      if (identity.networkTrust) readGatewayNetworkTrust(stateDir, identity.networkTrust.path);
+    };
+    assertIdentity();
+    const expectedTrust = gatewayEnv[NEMOCLAW_GATEWAY_NETWORK_TRUST_SHA256_ENV];
+    if (
+      corporateCa === undefined &&
+      expectedTrust !== undefined &&
+      expectedTrust !== (identity.networkTrust?.sha256 ?? "none")
+    ) {
+      throw ambiguousGatewayConfig(configPath, "the network trust configuration changed");
+    }
+    const networkTrust =
+      corporateCa === undefined
+        ? identity.networkTrust
+        : corporateCa === null
+          ? null
+          : stageGatewayNetworkTrust(stateDir, corporateCa.pem);
+    const jwtBundle =
+      identity.kind === "legacy"
+        ? identity.jwtProof.bundle
+        : ensureDockerDriverGatewayJwtBundle(stateDir);
     writeRestrictedFileAtomic(
       configPath,
-      buildDockerDriverGatewayConfigToml(
+      buildDockerDriverGatewayConfigTomlForIdentity(
         gatewayEnv,
         sandboxBin,
         jwtBundle,
         identity.gatewayId,
+        identity.sandboxNamespace,
+        DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
         runtime,
         externalComponent,
+        undefined,
+        undefined,
+        networkTrust?.path,
       ),
       0o600,
-      identity.configProof ? () => assertExistingConfigProof(identity.configProof!) : undefined,
+      () => {
+        assertIdentity();
+        if (networkTrust) readGatewayNetworkTrust(stateDir, networkTrust.path);
+      },
     );
+    // Include absence so runtime comparison also detects removal of destination trust.
+    gatewayEnv[NEMOCLAW_GATEWAY_NETWORK_TRUST_SHA256_ENV] = networkTrust?.sha256 ?? "none";
     return configPath;
   } finally {
     if (identity.configProof) closeRegularFileProof(identity.configProof);
+    if (identity.kind === "legacy") closeLegacyJwtBundleProof(identity.jwtProof);
   }
 }
 
@@ -1216,6 +1246,7 @@ export function prepareDockerDriverGatewayConfigEnv(
   stateDir: string,
   sandboxBin?: string | null,
   options: {
+    corporateCa?: ResolvedCorporateCa | null;
     allowOpenShell0044PreAuthDatabase?: boolean;
     gatewayRuntime?: RuntimeProviderGatewayHostRuntime;
     externalComponent?: ExternalComponentGatewayConfiguration | null;
@@ -1231,6 +1262,7 @@ function prepareGatewayConfig(
   stateDir: string,
   sandboxBin: string | null | undefined,
   options: {
+    corporateCa?: ResolvedCorporateCa | null;
     allowOpenShell0044PreAuthDatabase?: boolean;
     gatewayRuntime?: RuntimeProviderGatewayHostRuntime;
     externalComponent?: ExternalComponentGatewayConfiguration | null;
@@ -1270,6 +1302,7 @@ function prepareGatewayConfig(
     identity,
     runtime,
     externalComponent,
+    options.corporateCa,
   );
   // An explicit absence lets the existing runtime comparison detect removal.
   gatewayEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] = observedComponentIdentity;

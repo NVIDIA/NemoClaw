@@ -160,6 +160,8 @@ export function approvedFixture() {
   ) as Record<keyof typeof CANDIDATE_OPENSHELL_SOURCES, string>;
   const selected = validateInstallerSources(candidate);
   const release = structuredClone(selected.installerReleases[0]!);
+  // Revocations belong to the registry; resolved releases carry a derived copy.
+  delete release.revokedTemplateSha256;
   candidate.installerSource += "\n# Reviewed installer fixture change.\n";
   release.installerTemplateSha256 = [
     ...release.installerTemplateSha256,
@@ -220,7 +222,8 @@ export function admittedSdkFixture() {
   const config = JSON.parse(
     fs.readFileSync(join(input.trustedRoot, "ci/reviewed-npm-audit.json"), "utf8"),
   );
-  const baseline = config.sourceRegistryPackageReplacement;
+  // Keep the trusted baseline distinct from the admitted candidate SDK version.
+  const baseline = config.sourceRegistryPackage;
   config.sourceRegistryPackage = baseline;
   delete config.sourceRegistryPackageReplacement;
   fs.writeFileSync(join(input.trustedRoot, "ci/reviewed-npm-audit.json"), JSON.stringify(config));

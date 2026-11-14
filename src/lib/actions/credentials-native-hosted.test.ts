@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HOSTED_NATIVE_PROVIDERS } from "../inference/native-provider/hosted";
+import { HOSTED_NATIVE_PROVIDERS, hostedNativeProvider } from "../inference/native-provider/hosted";
 import { providerAdapter } from "../../../test/helpers/credentials-provider-adapter.ts";
 import { setGlobalCliActionRuntimeHooksForTest } from "./global";
 import { runCredentialsAddAction } from "./credentials-add";
@@ -149,6 +149,61 @@ describe("native hosted credential registration", () => {
     expect(adapter.createProvider).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("host-only-value");
   });
+
+  it.each([
+    { endpointUrl: "http://8.8.8.8/team/v1", allowedIps: ["8.8.8.8"] },
+    { endpointUrl: "http://host.openshell.internal:42103/team/v1", allowedIps: undefined },
+  ])(
+    "rotates the owned Hermes credential at $endpointUrl without changing its identity",
+    async ({ endpointUrl, allowedIps }) => {
+      vi.stubEnv("NOUS_API_KEY", "host-only-value");
+      const definition = hostedNativeProvider("hermes-provider", endpointUrl)!;
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "owned-id",
+        endpointUrl,
+        ...(allowedIps ? { allowedIps } : {}),
+      };
+      const adapter = providerAdapter({
+        getProvider: vi.fn(async () => ({
+          ok: true as const,
+          value: {
+            name: definition.providerName,
+            type: definition.profileId,
+            credentialKeys: ["OPENAI_API_KEY"],
+            configKeys: [],
+            revision: { id: "owned-id", resourceVersion: 1 },
+          },
+        })),
+      });
+      const save = vi.fn();
+      const result = await runCredentialsAddAction(
+        {
+          provider: "hermes-provider",
+          type: "openai",
+          credentials: ["NOUS_API_KEY"],
+          configPairs: [],
+          fromExisting: false,
+        },
+        {
+          providerAdapter: adapter,
+          getNativeHostedProviderAuthority: () => receipt,
+          setNativeHostedProviderAuthority: save,
+        },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(adapter.updateProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerName: definition.providerName,
+          credentials: [{ name: "OPENAI_API_KEY", value: "host-only-value" }],
+        }),
+      );
+      expect(adapter.createProvider).not.toHaveBeenCalled();
+      expect(JSON.stringify([result, save.mock.calls])).not.toContain("host-only-value");
+    },
+  );
 
   it("reports a native registration failure without exposing the supplied credential", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-value");

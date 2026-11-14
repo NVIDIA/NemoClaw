@@ -26,6 +26,7 @@ import {
 } from "../../adapters/openshell/runtime";
 import {
   DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+  executeSandboxMaintenanceCommand,
   executeSandboxExecCommand,
   buildSandboxCommandEnvironment,
   SandboxCommandTransportError,
@@ -311,8 +312,8 @@ interface OpenClawPostRestoreDoctorDeps {
     sandboxName: string,
     runtimeSelection?: OpenShellRuntimeSelection,
   ) => Promise<string[]>;
-  executePrivilegedSandboxCommand?: typeof executePrivilegedSandboxCommand;
   executeSandboxExecCommand: typeof executeSandboxExecCommand;
+  executeMaintenanceCommand?: typeof executeSandboxMaintenanceCommand;
   lookupSandbox?: CliOpenShellSandboxLookup;
   prepareMaintenanceStopProof?: typeof prepareMaintenanceStopProof;
   now: () => number;
@@ -321,8 +322,8 @@ interface OpenClawPostRestoreDoctorDeps {
 
 const OPENCLAW_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
   captureOpenshell,
-  executePrivilegedSandboxCommand,
   executeSandboxExecCommand,
+  executeMaintenanceCommand: executeSandboxMaintenanceCommand,
   prepareMaintenanceStopProof,
   now: Date.now,
   sleep: sleepSeconds,
@@ -353,29 +354,13 @@ async function executeOpenClawDoctorGateCommand(
   timeout: number,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<SandboxCommandResult | null> {
-  if (!deps.executePrivilegedSandboxCommand) {
-    try {
-      return await deps.executeSandboxExecCommand(sandboxName, command, timeout, {
-        ...(runtimeSelection ? { runtimeSelection } : {}),
-      });
-    } catch (error) {
-      if (!(error instanceof SandboxCommandTransportError)) throw error;
-      return null;
-    }
-  }
-  const ownerCommand = [
-    "set -e",
-    "uid=\"$(stat -c '%u' /sandbox/.openclaw)\"",
-    "gid=\"$(stat -c '%g' /sandbox/.openclaw)\"",
-    `exec /usr/bin/setpriv --reuid="$uid" --regid="$gid" --clear-groups -- /bin/sh -lc ${shellQuote(command)}`,
-  ].join("; ");
   try {
-    return deps.executePrivilegedSandboxCommand(
-      sandboxName,
-      ["/bin/sh", "-lc", ownerCommand],
-      timeout,
-    );
-  } catch {
+    const execute = deps.executeMaintenanceCommand ?? deps.executeSandboxExecCommand;
+    return await execute(sandboxName, command, timeout, {
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    });
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
     return null;
   }
 }
@@ -1315,6 +1300,7 @@ export async function finishOpenClawPostRestoreDoctor(
 const OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
   captureOpenshell,
   executeSandboxExecCommand,
+  executeMaintenanceCommand: executeSandboxMaintenanceCommand,
   now: Date.now,
   sleep: sleepSeconds,
 };
@@ -1322,9 +1308,9 @@ const OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorD
 /**
  * Enter the same startup-owned maintenance window before a recreated sandbox
  * has published its replacement registry row. The caller must independently
- * revalidate its prepared-create identity around this operation; every
- * in-sandbox command remains routed through OpenShell without a container
- * fallback.
+ * revalidate its prepared-create identity around this operation. Maintenance
+ * commands use OpenShell SSH as the sandbox owner; health probes use native
+ * exec after release.
  */
 export function beginUnregisteredOpenClawBackupQuiesce(
   sandboxName: string,
@@ -2718,7 +2704,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
         checked: true,
         wasRunning: true,
         recovered: false,
-        forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
+        forwardRecovered: true,
       };
     }
     const dashboardForwardRecovered = await measureAsync("forward", () =>

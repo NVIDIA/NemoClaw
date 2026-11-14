@@ -613,22 +613,30 @@ describe("agents/hermes/start.sh runtime API server key", () => {
   });
 
   it.each([
-    "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n",
-    "DISCORD_BOT_TOKEN=openshell:resolve:env:v111_DISCORD_BOT_TOKEN\n",
+    {
+      envFile: "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n",
+      reference: "openshell:resolve:env:v222_DISCORD_BOT_TOKEN",
+    },
+    {
+      envFile: "DISCORD_BOT_TOKEN=openshell:resolve:env:v111_DISCORD_BOT_TOKEN\n",
+      reference: "openshell:resolve:env:v222_DISCORD_BOT_TOKEN",
+    },
+    {
+      envFile: "DISCORD_BOT_TOKEN=openshell:resolve:env:v111_DISCORD_BOT_TOKEN\n",
+      reference: `openshell:resolve:env:s${"a".repeat(64)}_DISCORD_BOT_TOKEN`,
+    },
   ])(
     "preserves the exact OpenShell provider placeholder generation in Hermes .env [case %#] (#8893)",
-    (envFile) => {
+    ({ envFile, reference }) => {
       const run = runHermesRuntimeProviderPlaceholderRefresh({
         envFile,
         envOverrides: {
-          DISCORD_BOT_TOKEN: "openshell:resolve:env:v222_DISCORD_BOT_TOKEN",
+          DISCORD_BOT_TOKEN: reference,
         },
       });
 
       expect(run.result.status, run.result.stderr).toBe(0);
-      expect(run.envFileContent).toContain(
-        "DISCORD_BOT_TOKEN=openshell:resolve:env:v222_DISCORD_BOT_TOKEN\n",
-      );
+      expect(run.envFileContent).toContain(`DISCORD_BOT_TOKEN=${reference}\n`);
       expect(run.envFileContent).not.toContain("v111_DISCORD_BOT_TOKEN");
       expect(run.strictHashValid).toBe(true);
     },
@@ -778,6 +786,10 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     {
       name: "an overlong credential revision",
       value: `openshell:resolve:env:v${"1".repeat(21)}_DISCORD_BOT_TOKEN`,
+    },
+    {
+      name: "a truncated credential snapshot",
+      value: `openshell:resolve:env:s${"a".repeat(63)}_DISCORD_BOT_TOKEN`,
     },
     {
       name: "a raw credential",

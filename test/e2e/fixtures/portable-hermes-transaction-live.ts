@@ -11,6 +11,7 @@ import {
   assertHermesPortableOpenShellExecutableAuthority,
   captureHermesPortableOpenShellExecutableAuthority,
 } from "../../../src/lib/adapters/openshell/resolve-shared.ts";
+import { parseStrictOpenShellSandboxListJson } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import {
   createHermesPortableBuildContextPlan,
@@ -33,6 +34,26 @@ import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { normalizeSandboxInferenceRouteSelection } from "../../../src/lib/state/registry/route-reservation.ts";
 import { registryEntryGatewayPort } from "../../../src/lib/state/gateway-registry.ts";
 import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
+
+export function portableHermesTransactionSandboxIsPresent(
+  sandboxName: string,
+  result: { status: number | null; stdout?: string | Buffer | null; error?: unknown },
+): boolean {
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      `OpenShell Hermes transaction cleanup observation failed (exit ${String(result.status)})`,
+    );
+  }
+  const sandboxes = parseStrictOpenShellSandboxListJson(String(result.stdout ?? ""));
+  if (!sandboxes) {
+    throw new Error("OpenShell Hermes transaction cleanup observation was malformed");
+  }
+  const matches = sandboxes.filter((sandbox) => sandbox.name === sandboxName);
+  if (matches.length > 1) {
+    throw new Error("OpenShell Hermes transaction cleanup found duplicate sandbox names");
+  }
+  return matches.length === 1;
+}
 
 export async function withAmbientPodmanHost<T>(host: string, action: () => Promise<T>): Promise<T> {
   const previous = process.env.CONTAINER_HOST;
@@ -185,6 +206,7 @@ export async function proveHermesPortableOnboardingTransaction(input: {
             "--policy",
             request.policyPath!,
             "--no-tty",
+            "--detach",
             "--",
             ...request.startupCommand,
           ];
@@ -196,7 +218,7 @@ export async function proveHermesPortableOnboardingTransaction(input: {
               initialPhase: "create",
               readyCheck: () =>
                 observeHermesPortableSandbox(sandboxName, gatewayName, capture).kind === "present",
-              readyCheckOutputPatterns: [/Setting up NemoClaw/u],
+              readyCheckOutputPatterns: [],
               waitForReadyTermination: true,
             },
           );
@@ -271,37 +293,11 @@ export async function proveHermesPortableOnboardingTransaction(input: {
     primaryFailed = true;
     primaryFailure = error;
   }
-  const sandboxIsPresent = (): boolean => {
-    const result = capture(["sandbox", "list", "-g", gatewayName, "-o", "json"]);
-    if (result.error || result.status !== 0) {
-      throw new Error(
-        `OpenShell Hermes transaction cleanup observation failed (exit ${String(result.status)})`,
-      );
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(String(result.stdout));
-    } catch {
-      throw new Error("OpenShell Hermes transaction cleanup observation was malformed");
-    }
-    if (
-      !Array.isArray(parsed) ||
-      !parsed.every(
-        (sandbox) =>
-          sandbox !== null &&
-          typeof sandbox === "object" &&
-          !Array.isArray(sandbox) &&
-          typeof (sandbox as { name?: unknown }).name === "string",
-      )
-    ) {
-      throw new Error("OpenShell Hermes transaction cleanup observation was malformed");
-    }
-    const matches = parsed.filter((sandbox) => sandbox.name === sandboxName);
-    if (matches.length > 1) {
-      throw new Error("OpenShell Hermes transaction cleanup found duplicate sandbox names");
-    }
-    return matches.length === 1;
-  };
+  const sandboxIsPresent = (): boolean =>
+    portableHermesTransactionSandboxIsPresent(
+      sandboxName,
+      capture(["sandbox", "list", "-g", gatewayName, "-o", "json"]),
+    );
   const cleanupFailures: unknown[] = [];
   try {
     if (sandboxIsPresent()) {

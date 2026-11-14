@@ -163,8 +163,10 @@ DENIAL_MARKERS = (
     'tunnel connection failed',
 )
 
-if not os.environ.get('DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL'):
-    print('FETCH_ERROR:managed fetch proxy delegation is absent')
+from deepagents_code._nemoclaw_managed import _managed_fetch_uses_openshell
+
+if not _managed_fetch_uses_openshell():
+    print('FETCH_ERROR:managed image identity is absent')
     raise SystemExit(0)
 
 result = fetch_url(sys.argv[1], timeout=8)
@@ -180,7 +182,7 @@ if (
 else:
     details = str(result.get('error', result))
     lowered = details.lower()
-    if any(marker in lowered for marker in DENIAL_MARKERS):
+    if lowered == 'fetch url error: url destination is blocked' or any(marker in lowered for marker in DENIAL_MARKERS):
         print(f'FETCH_BLOCKED:{details}')
     else:
         print(f'FETCH_ERROR:{details}')
@@ -207,7 +209,7 @@ expect_fetch_reached() {
   local output
   output="$(fetch_url_probe "$url" || true)"
   if echo "$output" | grep -Eq 'FETCH_SUCCESS:2[0-9]{2}:[1-9][0-9]*'; then
-    pass "Deep Agents fetch_url can reach approved ${label} host through the managed proxy"
+    pass "Deep Agents fetch_url can reach approved ${label} host through the mediated network"
   else
     fail_test "Deep Agents fetch_url could not reach approved ${label} host: $output"
   fi
@@ -312,7 +314,7 @@ fi
 expect_reached "arbitrary Python" "GitHub" "https://api.github.com/"
 expect_reached "arbitrary Python" "PyPI" "https://pypi.org/"
 expect_blocked "arbitrary Python" "Tavily" "https://api.tavily.com/"
-# The public helper only reconstructs the trusted proxy environment; OpenShell
+# The public helper clears ambient proxy variables; OpenShell
 # must still enforce Tavily denial on the final managed-Python executable.
 expect_blocked \
   "direct managed-exec Python" \
@@ -326,8 +328,7 @@ expect_blocked "arbitrary Python" "unapproved hosts" "https://example.com/"
 
 # Exercise the actual Deep Agents fetch_url transport. Unlike urllib, upstream
 # fetch_url disables ambient proxies to pin direct DNS results; the managed
-# image patch must instead force the root-owned OpenShell proxy without honoring
-# NO_PROXY. The raw GitHub path covers the separate read-only policy endpoint.
+# image patch uses OpenShell's mediated network without honoring ambient proxies. The raw GitHub path covers the separate read-only policy endpoint.
 expect_fetch_reached \
   "raw GitHub" \
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md"
@@ -340,13 +341,12 @@ import os
 import subprocess
 
 url = 'https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md'
-proxy = os.environ.get('HTTPS_PROXY') or os.environ['HTTP_PROXY']
 ca = os.environ['SSL_CERT_FILE']
 
 def request(method):
     command = [
         '/usr/bin/curl', '--disable', '--silent', '--show-error', '--noproxy', '',
-        '--proxy', proxy, '--cacert', ca, '--connect-timeout', '10',
+        '--proxy', '', '--cacert', ca, '--connect-timeout', '10',
         '--max-time', '30', '--write-out', '\n%{http_code}',
     ]
     command += ['--head'] if method == 'HEAD' else ['--request', method]

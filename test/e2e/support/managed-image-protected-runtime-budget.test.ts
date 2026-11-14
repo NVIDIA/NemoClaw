@@ -11,7 +11,7 @@ import {
   PROTECTED_RUNTIME_JOB_MINUTES,
   PROTECTED_RUNTIME_ROLLBACK_MS,
   PROTECTED_RUNTIME_RUNNER_HEADROOM_MS,
-} from "../live/managed-image-protected-runtime-budget.ts";
+} from "../live/managed-image-protected-runtime-helpers.ts";
 
 const MINUTE = 60_000;
 const START = 1_700_000_000_000;

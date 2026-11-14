@@ -15,6 +15,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { customProviderRebuildEntry } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
@@ -51,6 +52,17 @@ function createFixture(opts: {
     providerRegistered = true,
     inferenceProbeHttpStatus = null,
   } = opts;
+  const nativeSelection =
+    provider === "compatible-endpoint" ? customProviderRebuildEntry() : undefined;
+  const attachment = nativeSelection?.nativeHostedProviderAttachment;
+  const providerName = attachment?.providerName ?? provider;
+  const providerMetadata = [
+    `Name: ${providerName}`,
+    `Type: ${attachment?.profileId ?? "openai"}`,
+    `Credential keys: ${credentialEnv}`,
+    `Config keys: ${attachment ? "<none>" : "OPENAI_BASE_URL"}`,
+    ...(attachment ? [`Id: ${attachment.providerId}`, "Resource version: 1"] : []),
+  ].join("\n");
   const sandboxName = "my-assistant";
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -100,6 +112,7 @@ wait();`,
           dashboardPort: agent === "langchain-deepagents-code" ? 0 : 18789,
           fromDockerfile: null,
           agent,
+          ...nativeSelection,
           ...(agent === "langchain-deepagents-code"
             ? {
                 credentialEnv,
@@ -179,9 +192,20 @@ wait();`,
 const fs = require("fs");
 const a = process.argv.slice(2);
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.116\\n"); process.exit(0); }
+if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.1.7\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
+if (a[0] === "sandbox" && a[1] === "provider" && a[2] === "list") {
+  process.stdout.write(${JSON.stringify(
+    attachment
+      ? `NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS
+${providerName} ${attachment.profileId} 1 0
+`
+      : `No providers attached to sandbox ${sandboxName}.
+`,
+  )});
+  process.exit(0);
+}
 if (a[0] === "sandbox" && a[1] === "get") {
   if (fs.existsSync(${JSON.stringify(deleteMarker)})) {
     process.stderr.write("sandbox ${sandboxName} not found\\n");
@@ -197,7 +221,7 @@ if (a[0] === "sandbox" && a[1] === "exec") {
     process.stdout.write(fs.readFileSync(${JSON.stringify(atomicityMarker)}, "utf-8"));
     process.exit(0);
   }
-  if (command.includes("https://inference.local/")) {
+  if (command.includes(${JSON.stringify(nativeSelection?.endpointUrl ?? "https://inference.local/")})) {
     const probeStatus = ${String(inferenceProbeHttpStatus ?? 200)};
     const isManagedDcodeProbe = command.includes("/usr/local/lib/nemoclaw/dcode-managed-exec");
     process.stdout.write((isManagedDcodeProbe ? "" : "__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n") + probeStatus + "\\n");
@@ -216,16 +240,32 @@ if (a[0] === "gateway" && a[1] === "list") { process.stdout.write(JSON.stringify
 if (a[0] === "gateway" && a[1] === "select") process.exit(0);
 if (a[0] === "inference" && a[1] === "get") { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0] === "inference" && a[1] === "set") process.exit(0);
+if (a[0] === "provider" && a[1] === "profile") {
+  const stored = ${JSON.stringify(path.join(tmpDir, "provider-profile.yaml"))};
+  if (a.includes("import")) {
+    fs.copyFileSync(a[a.indexOf("--file") + 1], stored);
+    process.exit(0);
+  }
+  if (a.includes("export")) {
+    if (!fs.existsSync(stored)) {
+      process.stderr.write("provider profile '" + a[a.indexOf("export") + 1] + "' not found\\n");
+      process.exit(1);
+    }
+    const yaml = require(${JSON.stringify(path.join(REPO_ROOT, "node_modules/yaml"))});
+    process.stdout.write(JSON.stringify(yaml.parse(fs.readFileSync(stored, "utf8"))));
+    process.exit(0);
+  }
+}
 if (a[0] === "provider" && a[1] === "get") {
   if (!${providerRegistered ? "true" : "false"}) {
     process.stderr.write("Error: provider '${provider}' not found\\n");
     process.exit(1);
   }
-  process.stdout.write("Name: ${provider}\\nType: openai\\nCredential keys: ${credentialEnv}\\nConfig keys: OPENAI_BASE_URL\\n");
+  process.stdout.write(${JSON.stringify(providerMetadata + "\n")});
   process.exit(0);
 }
 if (a[0] === "provider" && a[1] === "list") {
-  process.stdout.write(${JSON.stringify(JSON.stringify(providerRegistered ? [{ name: provider, credential_keys: [credentialEnv], credential_expires_at_ms: { [credentialEnv]: opts.credentialExpiresAtMs } }] : []) + "\n")});
+  process.stdout.write(${JSON.stringify(JSON.stringify({ providers: providerRegistered ? [{ name: providerName, credential_keys: [credentialEnv], credential_expires_at_ms: { [credentialEnv]: opts.credentialExpiresAtMs } }] : [], next_page_token: "" }) + "\n")});
   process.exit(0);
 }
 if (a[0] === "provider") process.exit(0);
@@ -241,7 +281,7 @@ process.exit(0);
       path.join(tmpDir, component),
       `#!/usr/bin/env node
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.116\\n");
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.1.7\\n");
 process.exit(0);
 `,
       { mode: 0o755 },
@@ -310,7 +350,7 @@ if (a[0] === "inspect") {
   const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
   if (format === "{{.State.Running}}") process.stdout.write("true\\n");
   if (format === "{{json .NetworkSettings.Ports}}") process.stdout.write(JSON.stringify({"${gatewayPort}/tcp":[{HostPort:"${gatewayPort}"}]}) + "\\n");
-  if (format === "{{.Config.Image}}") process.stdout.write("nvcr.io/nvidia/openshell/cluster:0.0.116\\n");
+  if (format === "{{.Config.Image}}") process.stdout.write("nvcr.io/nvidia/openshell/cluster:0.1.7\\n");
   process.exit(0);
 }
 if (a[0] === "ps") process.exit(0);
@@ -352,6 +392,7 @@ function runCli(
     input,
     env: {
       HOME: fixture.tmpDir,
+      TMPDIR: fixture.tmpDir,
       NEMOCLAW_GATEWAY_PORT: String(fixture.gatewayPort),
       PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",

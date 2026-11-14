@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../../test/helpers/registered-inference";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
@@ -1318,4 +1320,44 @@ describe("handleProviderInferenceState", () => {
       }),
     );
   });
+});
+
+it("resumes a verified external selection without reading or rewriting the shared route", async () => {
+  const f = registeredInferenceFixture();
+  const binding = { ...f.binding, gatewayName: "nemoclaw", sandboxName: "my-assistant" };
+  const selection = {
+    provider: binding.providerName,
+    model: "model-a",
+    endpointUrl: binding.endpointUrl,
+    credentialEnv: binding.credentialEnv,
+    preferredInferenceApi: binding.inferenceApi,
+  };
+  const session = createSession({ sandboxName: binding.sandboxName, ...selection });
+  session.steps.provider_selection.status = "complete";
+  const isInferenceRouteReady = vi.fn(() => {
+    throw new Error("retired shared route");
+  });
+  const { deps, calls } = createDeps({
+    isInferenceRouteReady,
+    getSandboxRegistryEntry: () => ({
+      name: binding.sandboxName,
+      gatewayName: binding.gatewayName,
+      ...selection,
+      registeredInferenceProviderAttachment: binding,
+    }),
+    ensureResumeProviderReady: vi.fn(async () => ({
+      forceInferenceSetup: false,
+      credentialEnv: binding.credentialEnv,
+      registeredNativeSetup: true,
+    })),
+  });
+  await handleProviderInferenceState({
+    ...baseOptions(deps, session),
+    resume: true,
+    authoritativeResumeConfig: true,
+    sandboxName: binding.sandboxName,
+  });
+  expect(isInferenceRouteReady).not.toHaveBeenCalled();
+  expect(calls.setupInference).not.toHaveBeenCalled();
+  expect(calls.hydrate).not.toHaveBeenCalled();
 });

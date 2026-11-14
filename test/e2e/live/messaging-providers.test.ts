@@ -542,16 +542,10 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       !Object.prototype.hasOwnProperty.call(discordAccount, "token"),
       "M8: Discord token is omitted from openclaw.json",
     );
-    const expectedManagedProxyHost = nonEmpty(state.env.NEMOCLAW_PROXY_HOST) ?? "10.200.0.1";
-    const expectedManagedProxyPort = nonEmpty(state.env.NEMOCLAW_PROXY_PORT) ?? "3128";
-    const expectedManagedProxy = `http://${expectedManagedProxyHost}:${expectedManagedProxyPort}`;
-    const discordAccountProxy = accountString(discordAccount, "proxy");
-    const managedProxyUrl = typeof config.proxy?.proxyUrl === "string" ? config.proxy.proxyUrl : "";
     check(
-      discordAccountProxy === "" &&
-        config.proxy?.enabled === true &&
-        managedProxyUrl === expectedManagedProxy,
-      `M9b: Discord relies on OpenClaw managed proxy config, with no per-account loopback proxy (account.proxy='${discordAccountProxy}', proxy.proxyUrl='${managedProxyUrl}')`,
+      !Object.prototype.hasOwnProperty.call(discordAccount, "proxy") &&
+        !Object.prototype.hasOwnProperty.call(config, "proxy"),
+      "M9b: Discord configuration omits account and global proxies",
     );
     check(accountBool(telegramAccount, "enabled") === true, "M10: Telegram account is enabled");
     check(accountBool(discordAccount, "enabled") === true, "M11: Discord account is enabled");
@@ -729,17 +723,6 @@ req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
       "M13-policy: live policy contains Discord endpoints and Node binaries",
     );
 
-    const proxyEnv = await sandboxOutput(
-      sandbox,
-      'printf "HTTPS_PROXY=%s\\nhttps_proxy=%s\\nNO_PROXY=%s\\nno_proxy=%s\\n" "$HTTPS_PROXY" "$https_proxy" "$NO_PROXY" "$no_proxy"',
-      "proxy-env-messaging-providers",
-      redactionValues,
-    );
-    check(
-      /10\.200\.0\.1:3128/.test(proxyEnv),
-      "M13-proxy: sandbox uses the OpenShell gateway proxy",
-    );
-
     const discordReach = await sandboxOutput(
       sandbox,
       `node - <<'NODE'
@@ -777,7 +760,7 @@ NODE`,
       redactionValues,
     );
     if (discordReach.includes("api:HTTP_") && discordReach.includes("cdn:HTTP_")) {
-      check(true, "M13: Node.js reached Discord API and CDN through proxy");
+      check(true, "M13: Node.js reached Discord API and CDN");
     } else if (
       /TIMEOUT|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNRESET|socket hang up|network/i.test(
         discordReach,

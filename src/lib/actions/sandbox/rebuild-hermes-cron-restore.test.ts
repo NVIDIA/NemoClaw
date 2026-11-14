@@ -9,6 +9,14 @@ import { validateHermesCronRestoreBackup } from "../../state/rebuild/hermes-cron
 
 const processMocks = vi.hoisted(() => ({
   executePrivilegedSandboxCommand: vi.fn(),
+  executeProviderCommand: vi.fn(),
+  resolveTarget: vi.fn(),
+}));
+
+vi.mock("../../sandbox/privileged-exec", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox/privileged-exec")>()),
+  executePrivilegedSandboxCommand: processMocks.executeProviderCommand,
+  resolvePrivilegedSandboxTarget: processMocks.resolveTarget,
 }));
 
 vi.mock("./process-recovery", async (importOriginal) => ({
@@ -20,6 +28,7 @@ import {
   beginHermesCronRestore,
   completeHermesCronRestoreAfterGatewayReplacement,
   HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE,
+  HERMES_RECOVERY_GENERATION_OBSERVER,
   isHermesCronRestoreDrainMarkerRollbackFailure,
   observeHermesCronReplacement,
   prepareHermesCronRestoreRecovery,
@@ -149,6 +158,8 @@ describe("Hermes cron rebuild restore contract", () => {
 
   beforeEach(() => {
     processMocks.executePrivilegedSandboxCommand.mockReset();
+    processMocks.executeProviderCommand.mockReset();
+    processMocks.resolveTarget.mockReset().mockReturnValue({ resourceHandle: "a".repeat(64) });
     backupPath = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-cron-"));
   });
 
@@ -441,6 +452,59 @@ describe("Hermes cron rebuild restore contract", () => {
     ).toThrow("receipt failed validation");
   });
 
+  it("reconciles an empty owner-assisted publication once against the same pinned container", () => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: `${CONTROL_ERROR_PREFIX}{"code":"gateway-generation-owner-read-required","message":"owner read required"}`,
+    });
+    processMocks.executeProviderCommand
+      .mockReturnValueOnce({ status: 0, stdout: Buffer.from("null"), stderr: Buffer.alloc(0) })
+      .mockReturnValueOnce({ status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: Buffer.from(
+          preparationReceipt("not-required", { gateway_recovery_requested: false }),
+        ),
+        stderr: Buffer.alloc(0),
+      });
+    expect(prepareHermesCronRestoreRecovery("alpha")).toEqual({
+      disposition: "not-required",
+      gatewayRecoveryRequested: false,
+    });
+    expect(processMocks.executeProviderCommand).toHaveBeenCalledTimes(3);
+    expect(processMocks.executeProviderCommand.mock.calls[2]).toEqual([
+      "alpha",
+      [
+        "/opt/hermes/.venv/bin/python",
+        "-I",
+        "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+        "prepare-recover",
+      ],
+      {
+        expectedResourceHandle: "a".repeat(64),
+        sanitizeEnvironment: true,
+        timeout: 25_000,
+        maxOutputBytes: 2048,
+      },
+    ]);
+  });
+
+  it("refuses a repeated empty owner-assisted publication without retrying the owner read", () => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: `${CONTROL_ERROR_PREFIX}{"code":"gateway-generation-owner-read-required","message":"owner read required"}`,
+    });
+    processMocks.executeProviderCommand
+      .mockReturnValueOnce({ status: 0, stdout: Buffer.from("null"), stderr: Buffer.alloc(0) })
+      .mockReturnValue({ status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "Hermes cron prepare-recover failed",
+    );
+    expect(processMocks.executeProviderCommand).toHaveBeenCalledTimes(3);
+  });
+
   it.each([
     ["missing", undefined],
     ["negative", -1],
@@ -597,6 +661,81 @@ describe("Hermes cron rebuild restore contract", () => {
     expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
       "Hermes cron prepare-recover failed: NemoClaw cron restore release recovery record metadata is unsafe",
     );
+  });
+
+  it("pins the owner observation and root publication to the same container without argv secrets", () => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: `${CONTROL_ERROR_PREFIX}{"code":"gateway-generation-owner-read-required","message":"owner read required"}`,
+    });
+    const observation = Buffer.from('{"version":1,"generation":"opaque","identity":[]}');
+    processMocks.executeProviderCommand
+      .mockReturnValueOnce({ status: 0, stdout: observation, stderr: Buffer.alloc(0) })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: Buffer.from(
+          preparationReceipt("not-required", { gateway_recovery_requested: true }),
+        ),
+        stderr: Buffer.alloc(0),
+      });
+    expect(prepareHermesCronRestoreRecovery("alpha")).toEqual({
+      disposition: "not-required",
+      gatewayRecoveryRequested: true,
+    });
+    expect(processMocks.executeProviderCommand.mock.calls).toEqual([
+      [
+        "alpha",
+        ["/opt/hermes/.venv/bin/python", "-I", "-c", HERMES_RECOVERY_GENERATION_OBSERVER],
+        {
+          expectedResourceHandle: "a".repeat(64),
+          sanitizeEnvironment: true,
+          timeout: 25_000,
+          maxOutputBytes: 2048,
+          sandboxUser: "998:999",
+        },
+      ],
+      [
+        "alpha",
+        [
+          "/opt/hermes/.venv/bin/python",
+          "-I",
+          "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+          "prepare-recover",
+          "--generation-observation-stdin",
+        ],
+        {
+          expectedResourceHandle: "a".repeat(64),
+          sanitizeEnvironment: true,
+          timeout: 25_000,
+          maxOutputBytes: 2048,
+          input: observation,
+        },
+      ],
+    ]);
+  });
+
+  it.each([
+    {
+      status: 2,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("owner observer failed"),
+    },
+    { status: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) },
+    { status: 0, stdout: Buffer.alloc(2049), stderr: Buffer.alloc(0) },
+    { status: 0, stdout: Buffer.from("null"), stderr: Buffer.from("untrusted diagnostic") },
+    { status: 0, stdout: Buffer.from("null"), stderr: Buffer.alloc(0), signal: "SIGTERM" },
+  ])("refuses an unsuccessful owner observation before root publication (%j)", (result) => {
+    processMocks.executePrivilegedSandboxCommand.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: `${CONTROL_ERROR_PREFIX}{"code":"gateway-generation-owner-read-required","message":"owner read required"}`,
+    });
+    processMocks.executeProviderCommand.mockReturnValue(result);
+    expect(() => prepareHermesCronRestoreRecovery("alpha")).toThrow(
+      "could not be observed by its owner",
+    );
+    expect(processMocks.executeProviderCommand).toHaveBeenCalledTimes(1);
   });
 
   it("reconciles one empty prepare-recover transport failure through its idempotent receipt", () => {

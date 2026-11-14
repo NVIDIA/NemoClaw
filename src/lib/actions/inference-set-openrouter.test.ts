@@ -156,7 +156,7 @@ describe("OpenRouter model switch verification", () => {
 
   it.each([
     { model: SUPER, delays: [[6_000]] },
-    { model: ULTRA, delays: [] },
+    { model: ULTRA, delays: [[6_000]] },
   ])(
     "verifies $model through the sandbox before committing (#12628)",
     async ({ model, delays }) => {

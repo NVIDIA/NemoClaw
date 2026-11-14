@@ -605,6 +605,13 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
         [SANDBOX_NAME, "gateway", "restart"],
         "phase-4-restart-after-native-model-restore",
       );
+      await captureNativePluginFailureReadiness(
+        input.sandbox,
+        restartAfterNativeModelRestore,
+        SANDBOX_NAME,
+        "phase-4-restart-after-native-model-restore",
+        env(),
+      );
     },
   );
   const nativeReply = parseOpenClawGatewayModelRun(nativeTurn.stdout);
@@ -1173,11 +1180,14 @@ test(
       },
     );
 
-    const nativeEndpointUrl = getSandbox(SANDBOX_NAME)?.nativeHostedProviderAttachment?.endpointUrl;
+    const selectedEntry = getSandbox(SANDBOX_NAME);
+    const nativeEndpointUrl =
+      selectedEntry?.nativeLocalProviderAttachment?.endpointUrl ??
+      selectedEntry?.nativeHostedProviderAttachment?.endpointUrl;
     const inferenceRoute = await readFullE2eInferenceRoute({
       sandbox,
       sandboxName: SANDBOX_NAME,
-      entry: getSandbox(SANDBOX_NAME),
+      entry: selectedEntry,
       logicalProvider: hosted.providerName,
       model: hosted.model,
       env: env(),

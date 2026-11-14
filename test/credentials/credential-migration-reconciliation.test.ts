@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { mockManagedEndpointlessProviderProfileRun } from "../helpers/onboard-script-mocks.cjs";
 import {
   removeLegacyCredentialsFile,
   resolveProviderCredential,
@@ -23,13 +24,6 @@ import type { Session } from "../../src/lib/state/onboard-session.js";
 import { withProcessEnv } from "../support/setup-inference-test-harness.js";
 
 const LEGACY_SECRET = "sk-TEST-NOT-A-REAL-STORED-KEY";
-const MESSAGING_PROFILE = {
-  id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-  credentials: [],
-  endpoints: [],
-  binaries: [],
-  inference_capable: false,
-};
 
 type RegistrationAttempt = ReturnType<
   ReturnType<typeof createCredentialProviderRegistration>["stageSandboxCredentialProviders"]
@@ -192,7 +186,7 @@ describe("legacy credential reconciliation", () => {
             const isCreate = args[0] === "provider" && args[1] === "create";
             const result =
               args.includes("profile") && args.includes("export")
-                ? { ...success, stdout: JSON.stringify(MESSAGING_PROFILE) }
+                ? mockManagedEndpointlessProviderProfileRun(args.join(" "))!
                 : args.join(" ") === providerGetArgs.join(" ")
                   ? providerCreated
                     ? {
@@ -351,7 +345,7 @@ describe("legacy credential reconciliation", () => {
           const runOpenshell = vi.fn((args: string[]) => {
             const result =
               args.includes("profile") && args.includes("export")
-                ? { status: 0, stdout: JSON.stringify(MESSAGING_PROFILE), stderr: "" }
+                ? mockManagedEndpointlessProviderProfileRun(args.join(" "))!
                 : args[1] === "get"
                   ? providerExists
                     ? metadata
