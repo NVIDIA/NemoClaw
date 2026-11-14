@@ -142,11 +142,13 @@ impl Launch {
                 return Err(ObservationError::BindingMismatch);
             }
             let mut rule = rule.clone();
-            rule.binaries = self
-                .binaries
-                .iter()
-                .map(|path| PolicyBinary { path: path.clone() })
-                .collect();
+            if rule.binaries.is_empty() {
+                rule.binaries = self
+                    .binaries
+                    .iter()
+                    .map(|path| PolicyBinary { path: path.clone() })
+                    .collect();
+            }
             policy.network_policies.insert(name.clone(), rule);
         }
         policy.to_proto().map_err(|_| ObservationError::Incomplete)
@@ -284,6 +286,53 @@ impl RuntimeBinding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn managed_grants_keep_authored_binaries_instead_of_launch_defaults() {
+        let launch = Launch::from_json(&serde_json::json!({
+            "command":["/srv/agent"], "environment":{}, "metadata":{},
+            "binaries":["/srv/python"],
+            "policy":{"version":1,"filesystem_policy":{"read_only":["/srv"],"read_write":["/work"]},"process":{"run_as_user":"1000","run_as_group":"1000"},"network_policies":{}}
+        }).to_string()).unwrap();
+        let input: PolicyInput = serde_json::from_value(serde_json::json!({
+            "explicit":null,"managed":[
+                {"name":"packages","endpoints":[{"host":"pypi.org","port":443}],"binaries":[{"path":"/usr/bin/pip"}]},
+                {"name":"default","endpoints":[{"host":"api.example.com","port":443}],"binaries":[]}
+            ]
+        })).unwrap();
+        let policy = launch.policy(&input).unwrap();
+        assert_eq!(
+            policy.network_policies["packages"]
+                .binaries
+                .iter()
+                .map(|binary| binary.path.as_str())
+                .collect::<Vec<_>>(),
+            ["/usr/bin/pip"],
+            "an authored grant must not authorize the launch interpreter instead"
+        );
+        assert_eq!(
+            policy.network_policies["default"]
+                .binaries
+                .iter()
+                .map(|binary| binary.path.as_str())
+                .collect::<Vec<_>>(),
+            ["/srv/python"],
+            "an empty grant still defaults to launch executables"
+        );
+        let mut conflicting = input;
+        let mut explicit = launch.policy.clone();
+        explicit
+            .network_policies
+            .insert("packages".into(), conflicting.managed[0].clone());
+        conflicting.explicit = Some(explicit);
+        assert!(
+            matches!(
+                launch.policy(&conflicting),
+                Err(ObservationError::BindingMismatch)
+            ),
+            "authored binaries must not bypass a conflicting explicit policy"
+        );
+    }
+
     #[test]
     fn sandbox_paths_use_linux_grant_components_on_every_client_platform() {
         for (path, grant, expected) in [
