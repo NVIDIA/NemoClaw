@@ -26,9 +26,10 @@ The workflow attempts to retain generated reports for 90 days. Failures before
 report generation have no report artifact. Existing comments stay intact;
 retries avoid duplicates. A separate job with `contents: write` and no checkout
 confirms that only squash merging is enabled; GitHub withholds those settings
-from a read-only token. Compile only the verified squash-parent reporter,
-disable persisted checkout credentials, and expose the short-lived token only
-to API steps with the declared job permissions.
+from a read-only token. `actions/checkout` reads the verified squash parent
+with the workflow token. `persist-credentials: false` prevents Git credential
+persistence. Compile only that parent's reporter and never run PR code. Pass
+`GH_TOKEN` to API steps with the declared job permissions.
 
 Validation covers metadata, rejected parents and events, API refusal,
 publication readback, failure retention, and recovery. Hosted acceptance follows
