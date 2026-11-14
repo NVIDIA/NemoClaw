@@ -864,36 +864,18 @@ function getOllamaProxyToken(): string | null {
 }
 
 /**
- * Check whether the Ollama auth proxy is actually healthy — not just that
- * the PID exists, but that the proxy endpoint responds to HTTP requests.
+ * Check whether the Ollama auth proxy is healthy: it must answer its
+ * authenticated model route with a success status.
  *
- * This is the correct check for the setupInference fallback: if the
- * container reachability test fails (Docker bridge issue) but the proxy
- * is confirmed healthy on the host, onboarding can safely continue.
+ * This is the check for the setupInference fallback: if the container
+ * reachability test fails (Docker bridge issue) but the proxy is confirmed
+ * healthy on the host, onboarding can safely continue.
+ *
+ * A live proxy PID is not enough. The proxy answers 502 when Ollama behind it
+ * is down, so its process can outlive the backend it fronts.
  */
 function isProxyHealthy(): boolean {
-  // 1. PID check — informational, but don't early-return on failure.
-  //    The proxy may have been restarted with a new PID that isn't in our
-  //    PID file, so the HTTP probe is the authoritative signal.
-  const pid = loadPersistedProxyPid();
-  const hasValidPid = isOllamaProxyProcess(pid);
-
-  // 2. HTTP probe — confirm the proxy actually responds. This is the
-  //    authoritative check: a successful probe wins even if the PID file
-  //    is missing or stale (e.g., after a manual restart).
-  const proxyUrl = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
-  const token = loadPersistedProxyToken();
-  const output = runCurlCaptureWithAuthConfig(
-    ["-sf", "--connect-timeout", "3", "--max-time", "5"],
-    proxyUrl,
-    token,
-  );
-  if (output) return true;
-
-  // HTTP probe failed — fall back to PID as a weaker signal.
-  // This covers edge cases where the probe transiently fails but the
-  // process is confirmed alive.
-  return hasValidPid;
+  return probeOllamaAuthProxyHealth().ok;
 }
 
 function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: string } {
