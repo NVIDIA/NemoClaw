@@ -197,6 +197,37 @@ describe.each(["/bin/sh", "/bin/bash"])("MCP secret absence scan with %s", (shel
     expect(scan([state], [secret])).toBe(0);
   });
 
+  it("reads a file once for both credentials and emits only fixed progress fields", () => {
+    const { root, state, file } = fixture();
+    const reads = path.join(root, "reads");
+    fs.writeFileSync(file, "clean");
+    fs.writeFileSync(
+      path.join(root, "grep"),
+      '#!/bin/sh\nprintf "read\\n" >> "$SCAN_READ_COUNT"\nexec /usr/bin/grep "$@"\n',
+      { mode: 0o700 },
+    );
+    const result = spawnSync(
+      shell,
+      ["-c", buildMcpSecretAbsenceScript([state], ["first-secret", "rotated-secret"], true)],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${root}:${process.env.PATH}`, SCAN_READ_COUNT: reads },
+        timeout: 5_000,
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(fs.readFileSync(reads, "utf8")).toBe("read\n");
+    expect(result.stdout).toBe(
+      "NEMOCLAW_MCP_SECRET_SCAN_STAGE=started\n" +
+        "NEMOCLAW_MCP_SECRET_SCAN_STAGE=path-1\n" +
+        "NEMOCLAW_MCP_SECRET_SCAN_STAGE=batch-start files=1\n" +
+        "NEMOCLAW_MCP_SECRET_SCAN_STAGE=batch-finished status=1\n" +
+        "NEMOCLAW_MCP_SECRET_SCAN_STAGE=complete\n",
+    );
+  });
+
   it("rejects a scan without paths or credentials", () => {
     expect(() => buildMcpSecretAbsenceScript([], ["fixture-secret"])).toThrow();
     expect(() => buildMcpSecretAbsenceScript(["/sandbox"], [])).toThrow();

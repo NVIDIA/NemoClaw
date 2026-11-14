@@ -183,7 +183,7 @@ async function assertSecretAbsentFromSandbox(
   secrets: string[] = [HOST_SECRET],
   artifactName = "assert-secret-absent-from-sandbox",
 ): Promise<void> {
-  const script = buildMcpSecretAbsenceScript(paths, secrets);
+  const script = buildMcpSecretAbsenceScript(paths, secrets, true);
   const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
     artifactName,
     env: buildAvailabilityProbeEnv(),

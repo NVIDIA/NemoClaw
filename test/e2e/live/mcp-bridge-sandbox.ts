@@ -22,18 +22,22 @@ const MCP_CURL_HTTP_CODE_MARKER = "NEMOCLAW_MCP_CURL_HTTP_CODE=";
 export function buildMcpSecretAbsenceScript(
   paths: readonly string[],
   secrets: readonly string[],
+  progress = false,
 ): string {
   if (paths.length === 0 || secrets.length === 0 || secrets.some((secret) => secret.length === 0)) {
     throw new Error("MCP secret scan requires paths and nonempty credentials");
   }
   const scanFiles = [
     "set -u",
-    "scan_secret=$1",
-    "scan_state=$2",
-    "shift 2",
+    "scan_state=$1",
+    "shift",
+    ...(progress ? ['printf "NEMOCLAW_MCP_SECRET_SCAN_STAGE=batch-start files=%s\\n" "$#"'] : []),
     // Preserve grep's three outcomes without suppressing read errors after a match.
-    'LC_ALL=C grep -F -- "$scan_secret" "$@" >/dev/null',
+    `LC_ALL=C grep -F ${secrets.map((secret) => `-e ${shellQuote(secret)}`).join(" ")} -- "$@" >/dev/null`,
     "scan_status=$?",
+    ...(progress
+      ? ['printf "NEMOCLAW_MCP_SECRET_SCAN_STAGE=batch-finished status=%s\\n" "$scan_status"']
+      : []),
     'case "$scan_status" in',
     '  0) : > "$scan_state/match" ;;',
     "  1) : ;;",
@@ -42,28 +46,37 @@ export function buildMcpSecretAbsenceScript(
   ].join("\n");
   return [
     "set -eu",
+    ...(progress
+      ? ["printf 'NEMOCLAW_MCP_SECRET_SCAN_STAGE=started\\n'", "scan_path_index=0"]
+      : []),
     "scan_error() { printf 'NEMOCLAW_MCP_SECRET_SCAN_ERROR=%s\\n' \"$1\" >&2; exit 2; }",
     "scan_state=$(mktemp -d 2>/dev/null) || scan_error diagnostic-unavailable",
     'scan_errors="$scan_state/errors"',
     "trap 'rm -rf -- \"$scan_state\" 2>/dev/null || scan_error diagnostic-cleanup' EXIT",
     `for scan_path in ${paths.map(shellQuote).join(" ")}; do`,
+    ...(progress
+      ? [
+          "  scan_path_index=$((scan_path_index + 1))",
+          '  printf "NEMOCLAW_MCP_SECRET_SCAN_STAGE=path-%s\\n" "$scan_path_index"',
+        ]
+      : []),
     '  if [ ! -e "$scan_path" ] && [ ! -L "$scan_path" ]; then',
     '    scan_parent=$(dirname -- "$scan_path")',
     '    [ -d "$scan_parent" ] && [ -r "$scan_parent" ] && [ -x "$scan_parent" ] || scan_error parent-unavailable',
     "    continue",
     "  fi",
     '  [ -e "$scan_path" ] || scan_error dangling-target',
-    `  for scan_secret in ${secrets.map(shellQuote).join(" ")}; do`,
     // Follow valid file and directory links, but scan only stored file contents.
     // Hermes deliberately leaves aliases to optional SQLite files absent in DELETE mode.
-    `    if ! LC_ALL=C find -L "$scan_path" -type f -exec sh -c ${shellQuote(scanFiles)} sh "$scan_secret" "$scan_state" {} + 2>"$scan_errors"; then`,
+    // Match all credentials together so each file is read once per selected path.
+    `    if ! LC_ALL=C find -L "$scan_path" -type f -exec sh -c ${shellQuote(scanFiles)} sh "$scan_state" {} + 2>"$scan_errors"; then`,
     // Emit only fixed hints: grep errors can include credential-bearing paths.
     "      LC_ALL=C sed -n -e '/: Permission denied$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=permission-denied/;p;q;}' -e '/: No such file or directory$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=missing-entry/;p;q;}' -e '/: Too many levels of symbolic links$/{s/.*/NEMOCLAW_MCP_SECRET_SCAN_HINT=symlink-loop/;p;q;}' \"$scan_errors\" >&2 2>/dev/null || :",
     "      scan_error find-error",
     "    fi",
     '    [ ! -e "$scan_state/match" ] || exit 1',
-    "  done",
     "done",
+    ...(progress ? ["printf 'NEMOCLAW_MCP_SECRET_SCAN_STAGE=complete\\n'"] : []),
   ].join("\n");
 }
 

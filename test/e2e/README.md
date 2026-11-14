@@ -645,6 +645,9 @@ serialization or the provider-update success message.
 MCP credential scans check each supplied host credential against every selected sandbox state path.
 A credential match or scan error fails the check.
 The scan follows valid file and directory symlinks and reads regular file contents.
+It matches all supplied credentials in one file-reading pass per selected path.
+Live scans emit only fixed stage names, path indexes, batch sizes and grep statuses.
+These markers distinguish command entry and scan progress without exposing paths or credentials.
 Nested dangling aliases, including Hermes's optional SQLite aliases, have no file contents to scan.
 Explicitly selected dangling paths, directory traversal errors, and regular file read errors still fail.
 An absent path is accepted only when its parent directory is readable and searchable.
