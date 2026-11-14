@@ -4,6 +4,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+import {
+  encodeSwitchyardProviderBindings,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+} from "../hermes-switchyard-routing";
 
 const childProcessMock = vi.hoisted(() => ({
   spawnSync: vi.fn(),
@@ -434,7 +439,18 @@ describe("managed startup image runtime", () => {
     const fingerprint = fingerprintManagedStartupProfile(profile);
     const bootstrapIdentity = "b".repeat(64);
     const runtimeWrites: string[] = [];
-    const filesystem = mockRootReplayFilesystem(runtimeWrites);
+    const filesystem = mockRootReplayFilesystem(
+      runtimeWrites,
+      new Map([
+        [
+          "/usr/local/share/nemoclaw/openclaw-proxy-url",
+          {
+            contents: `http://${profile.proxy.managedHost}:${profile.proxy.managedPort}\n`,
+            mode: 0o444,
+          },
+        ],
+      ]),
+    );
     coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
       adapterApplied: false,
       application: {
@@ -632,6 +648,10 @@ describe("managed startup image runtime", () => {
     return {
       environment: {
         [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+        [HERMES_SWITCHYARD_BINDINGS_ENV]: encodeSwitchyardProviderBindings(
+          switchyardBindingFixture(routing),
+          routing,
+        ),
       },
       paths: {
         relayPluginStateSource: "/sandbox/hermes-relay-plugin-state.json",
@@ -641,7 +661,7 @@ describe("managed startup image runtime", () => {
         switchyardDeploymentSource: "/sandbox/hermes-switchyard-v1.toml",
         switchyardDeploymentTarget: "/usr/local/share/hermes-switchyard-v1.toml",
       },
-      serialized: serializeHermesSwitchyardRouting(routing),
+      serialized: serializeHermesSwitchyardRouting(routing, switchyardBindingFixture(routing)),
     };
   }
 
@@ -855,7 +875,18 @@ describe("managed startup image runtime", () => {
     const encodedProfile = encodeManagedStartupProfile(profile);
     const fingerprint = fingerprintManagedStartupProfile(profile);
     const runtimeWrites: string[] = [];
-    mockRootReplayFilesystem(runtimeWrites);
+    mockRootReplayFilesystem(
+      runtimeWrites,
+      new Map([
+        [
+          "/usr/local/share/nemoclaw/openclaw-proxy-url",
+          {
+            contents: `http://${profile.proxy.managedHost}:${profile.proxy.managedPort}\n`,
+            mode: 0o444,
+          },
+        ],
+      ]),
+    );
     coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
       adapterApplied: false,
       application: {
@@ -895,5 +926,47 @@ describe("managed startup image runtime", () => {
     expect(runtimeWrites[0]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
     expect(runtimeWrites[1]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='5'");
     expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
+  });
+
+  it("applies a routed root request without transporting workload credential references (#13863)", async () => {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
+      capable: { provider: "openai-api", model: "gpt-5" },
+    });
+    const base = managedStartupE2eProfile("hermes");
+    const profile = {
+      ...base,
+      agentConfig: {
+        agent: "hermes" as const,
+        webSearch: { enabled: false, provider: "tavily" as const },
+        switchyardRouting: routing,
+        switchyardBindings: switchyardBindingFixture(routing),
+      },
+    };
+    const request = createManagedStartupRootApplyRequest({
+      agent: "hermes",
+      encodedProfile: encodeManagedStartupProfile(profile),
+    });
+    mockRootReplayFilesystem([]);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
+      true,
+    );
+    const coordinatorFailure = new Error("coordinator boundary reached");
+    coordinatorMock.coordinateManagedStartupApplication.mockRejectedValue(coordinatorFailure);
+
+    await expect(
+      applyManagedStartupRootRequest(request, {
+        NVIDIA_INFERENCE_API_KEY: "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
+        OPENAI_API_KEY: `openshell:resolve:env:s${"a".repeat(64)}_OPENAI_API_KEY`,
+      }),
+    ).rejects.toBe(coordinatorFailure);
+    expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(1);
+    const applicationInput = coordinatorMock.coordinateManagedStartupApplication.mock.calls[0][0];
+    expect(applicationInput).toMatchObject({
+      encodedProfile: request.encodedProfile,
+      expectedAgent: "hermes",
+    });
+    expect(JSON.stringify(applicationInput)).not.toContain("openshell:resolve:env:");
   });
 });

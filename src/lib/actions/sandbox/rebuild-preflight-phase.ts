@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouterSession } from "../../inference/provider-key/contract";
 import path from "node:path";
 
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
@@ -10,6 +11,7 @@ import {
 } from "../../inference/selection";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
+import { resolveOpenClawMcpToolsListTimeout } from "../../onboard/docker-startup-command-env";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
 import {
@@ -179,6 +181,7 @@ export async function runRebuildPreflightPhase(
   } = createRebuildCommandContext(options, opts);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
+  rejectRetiredModelRouterSession(sandboxEntry);
   if (blockRebuildOnLegacySharedLocalRoute(sandboxName, sandboxEntry, bail)) return null;
   restoreRecordedRebuildGatewayStateDir(sandboxEntry);
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
@@ -195,6 +198,20 @@ export async function runRebuildPreflightPhase(
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
 
   const rebuildAgent = sandboxEntry.agent || null;
+  if (rebuildAgent === null || rebuildAgent === "openclaw") {
+    try {
+      resolveOpenClawMcpToolsListTimeout(process.env);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      printRebuildPreflightFailure(
+        "the OpenClaw tools/list timeout is invalid.",
+        detail,
+        detail,
+        bail,
+      );
+      return null;
+    }
+  }
   const dcodeAutoApprovalIssue = managedSandboxFeatureIssue(DCODE_AUTO_APPROVAL_FEATURE, {
     agent: rebuildAgent,
     requested: requestedDcodeAutoApprovalMode,

@@ -206,7 +206,27 @@ describe("changed live E2E mock parity", () => {
       fastTest: "test/e2e/support/hermes-nvidia-recovery.test.ts",
       owner: "test/e2e/live/hermes-inference-switch.test.ts",
     },
-  ])("requires mapped fast evidence when $shared changes", ({ shared, fastTest, owner }) => {
+    {
+      shared: "test/e2e/fixtures/openclaw-restore-fixture.ts",
+      fastTest: "test/e2e/support/openclaw-restore-fixture.test.ts",
+      owner: "test/e2e/live/state-backup-restore.test.ts",
+    },
+    {
+      shared: "test/e2e/fixtures/openclaw-restore-fixture.ts",
+      fastTest: "test/e2e/support/openclaw-restore-backup.test.ts",
+      owner: "test/e2e/live/state-backup-restore.test.ts",
+    },
+    {
+      shared: "test/e2e/fixtures/stopped-container-startup-log.ts",
+      fastTest: "test/e2e/support/stopped-container-startup-log.test.ts",
+      owner: "test/e2e/live/state-backup-restore.test.ts",
+    },
+    {
+      shared: "test/e2e/fixtures/gateway-upgrade-executable-directory.ts",
+      fastTest: "test/e2e/support/gateway-upgrade-executable-directory.test.ts",
+      owner: "test/e2e/live/openshell-gateway-upgrade.test.ts",
+    },
+  ])("requires $fastTest when $shared changes", ({ shared, fastTest, owner }) => {
     const checkedIn = JSON.parse(
       fs.readFileSync(new URL("../../e2e/mock-parity.json", import.meta.url), "utf8"),
     ) as MockParityManifest;

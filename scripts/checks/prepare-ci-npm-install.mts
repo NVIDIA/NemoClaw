@@ -40,6 +40,7 @@ function requestFromEnvironment(): PreparationRequest {
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  /** Select trusted or admitted SDK preparation before dependency installation. */
   const main = async () => {
     const candidate = process.env.NEMOCLAW_OPEN_SHELL_SDK_CANDIDATE;
     if (candidate !== undefined && candidate !== "1") {
@@ -51,9 +52,16 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
       join(TRUSTED_REPOSITORY_ROOT, "ci/reviewed-npm-audit.json"),
       "utf8",
     );
+    const candidateEvent =
+      process.env.GITHUB_EVENT_NAME === "pull_request" ||
+      (process.env.GITHUB_EVENT_NAME === "workflow_dispatch" &&
+        Boolean(process.env.UPGRADE_PR_NUMBER) &&
+        Boolean(process.env.CANDIDATE_SHA) &&
+        Boolean(process.env.UPGRADE_BASE_SHA) &&
+        process.env.CANDIDATE_SHA !== process.env.UPGRADE_BASE_SHA);
     const candidateRequired =
       candidate === "1" ||
-      (process.env.GITHUB_EVENT_NAME === "pull_request" &&
+      (candidateEvent &&
         targetRoot !== undefined &&
         requiresCandidateSdkAdmission(
           ["package-lock.json", "nemoclaw/package-lock.json"].map((path) =>
@@ -67,6 +75,9 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
       const token = process.env.GITHUB_TOKEN ?? "";
       delete process.env.GITHUB_TOKEN;
       delete process.env.GH_TOKEN;
+      if (!token || token.includes("\r") || token.includes("\n")) {
+        throw new Error("Candidate SDK admission requires a GitHub API token");
+      }
       const { prepareApprovedCandidateOpenShellSdk, inspectApprovedCandidateOpenShellSdk } =
         await import("./candidate-openshell-sdk.mts");
       const { githubRequest } = await import("../../tools/e2e/base-image-publication.mts");
@@ -78,6 +89,19 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
           process.env.GITHUB_EVENT_NAME === "pull_request" ? process.env.GITHUB_SHA : undefined,
       };
       const request = (path: string) => githubRequest(path, token);
+      const protectedWorkflowSha = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA;
+      if (protectedWorkflowSha && process.env.NEMOCLAW_E2E_TESTED_ROOT) {
+        const { prepareProtectedOpenShellSdk } =
+          await import("../../tools/e2e/protected-openshell-workspace.mts");
+        await prepareProtectedOpenShellSdk(requestFromEnvironment(), {
+          trustedRoot: TRUSTED_REPOSITORY_ROOT,
+          candidateRoot: process.env.NEMOCLAW_E2E_TESTED_ROOT ?? "",
+          workflowSha: protectedWorkflowSha,
+          candidateSha: identity.candidateSha,
+          admission: { prNumber: identity.prNumber, baseSha: identity.baseSha, request },
+        });
+        return;
+      }
       if (mode === "inspect" && targetRoot) {
         process.stdout.write(
           `${JSON.stringify(await inspectApprovedCandidateOpenShellSdk(targetRoot, identity, request, trustedSource))}\n`,

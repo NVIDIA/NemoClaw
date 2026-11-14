@@ -208,8 +208,21 @@ function requireCompatibilityLifecycleCommand(
     timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
   });
   if (Number(result.status ?? 1) !== 0 || result.error || ("signal" in result && result.signal)) {
+    // Keep native output private while retaining the reason needed to diagnose
+    // a failed cutover. In particular, a timed-out mutation is not a rejection.
+    let outcome = "missing exit status";
+    if (result.error) {
+      outcome =
+        "code" in result.error && result.error.code === "ETIMEDOUT"
+          ? "command timed out"
+          : "process error";
+    } else if ("signal" in result && result.signal) {
+      outcome = "terminated by signal";
+    } else if (Number.isSafeInteger(result.status)) {
+      outcome = `exit status ${result.status}`;
+    }
     throw new Error(
-      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover.`,
+      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover (${outcome}).`,
     );
   }
 }

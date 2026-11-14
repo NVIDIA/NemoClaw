@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { validateSwitchyardBindingState } from "../hermes-switchyard-routing";
+
 import {
   listMessagingCredentialMetadata,
   type MessagingCredentialMetadata,
@@ -143,6 +145,7 @@ export function resolveSandboxCreateIntent({
   nativeLocalProviderAttachment,
   nativeNvidiaProviderAttachment,
   nativeHostedProviderAttachment,
+  hermesSwitchyard: requestedSwitchyard,
   hostLocalInferenceRouteOnly = false,
   channels,
   enabledChannels,
@@ -186,17 +189,26 @@ export function resolveSandboxCreateIntent({
   );
 
   const normalizedInferenceProvider = inferenceProvider?.trim() || null;
+  const hermesSwitchyard = requestedSwitchyard
+    ? validateSwitchyardBindingState(requestedSwitchyard)
+    : undefined;
 
   return {
     sandboxName,
-    inferenceProvider: normalizedInferenceProvider,
+    inferenceProvider: hermesSwitchyard ? null : normalizedInferenceProvider,
+    ...(hermesSwitchyard ? { hermesSwitchyard } : {}),
     ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     activeMessagingChannels,
     messagingProviderRequests: messagingProviderRequests.map((request) => ({ ...request })),
     reusableMessagingProviders: enabledReusableMessagingProviders,
-    extraProviders: [...new Set(extraProviders ?? [])].filter(Boolean),
+    extraProviders: [
+      ...new Set([
+        ...(extraProviders ?? []),
+        ...(hermesSwitchyard?.bindings.providers.map((p) => p.providerName) ?? []),
+      ]),
+    ].filter(Boolean),
     staleExtraProviders: [...new Set(staleExtraProviders ?? [])].filter(Boolean),
     hermesToolGateways: [...hermesToolGateways],
     policy: {

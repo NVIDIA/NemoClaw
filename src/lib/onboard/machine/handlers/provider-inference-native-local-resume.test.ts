@@ -70,70 +70,23 @@ describe("native local provider inference resume (#13540)", () => {
     for (const receipt of recorded.splice(0)) clearNativeLocalProviderAuthority(receipt);
   });
 
-  it("reverifies the native Model Router through setup even when the shared route is ready (#13560)", async () => {
-    const session = createSession({
-      agent: "openclaw",
-      sandboxName: "router-probe",
-      provider: "nvidia-router",
-      model: "nvidia-routed",
-      endpointUrl: "http://host.openshell.internal:4000/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    });
-    session.steps.provider_selection.status = "complete";
-    const { deps, calls } = createDeps({
-      isInferenceRouteReady: vi.fn(() => true),
-      hasNativeLocalProviderAuthority: () => true,
-    });
-    calls.complete.mockResolvedValue(session);
-    await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "router-probe",
-      agent: { name: "openclaw" },
-    });
-    expect(calls.setupInference).toHaveBeenCalledWith(
-      "router-probe",
-      "nvidia-routed",
-      "nvidia-router",
-      "http://host.openshell.internal:4000/v1",
-      "NVIDIA_INFERENCE_API_KEY",
-      null,
-      [],
-      expect.objectContaining({ agentName: "openclaw", gatewayName: "nemoclaw" }),
-    );
-    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
-    expect(calls.skipped).not.toHaveBeenCalledWith("inference", "nvidia-router / nvidia-routed");
-  });
-
-  it("requires explicit recreation for an existing shared Model Router sandbox (#13560)", async () => {
-    const session = createSession({
-      agent: "openclaw",
-      sandboxName: "router-probe",
-      provider: "nvidia-router",
-      model: "nvidia-routed",
-      endpointUrl: "http://localhost:4000/v1",
-    });
-    session.steps.provider_selection.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxRegistryEntry: () => ({
-        name: "router-probe",
-        agent: "openclaw",
-        provider: "nvidia-router",
-        model: "nvidia-routed",
-        endpointUrl: session.endpointUrl,
-      }),
-    });
-    await expect(
-      handleProviderInferenceState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "router-probe",
-        agent: { name: "openclaw" },
-      }),
-    ).rejects.toThrow("--recreate-sandbox");
-    expect(calls.setupInference).not.toHaveBeenCalled();
-    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
-  });
+  it.each(["routed", "nvidia-router"])(
+    "rejects retired %s resume before route or credential work",
+    async (provider) => {
+      const session = createSession({ provider, sandboxName: "old-router" });
+      const before = structuredClone(session);
+      const { deps, calls } = createDeps();
+      await expect(
+        handleProviderInferenceState({
+          ...baseOptions(deps, session),
+          resume: true,
+        }),
+      ).rejects.toThrow("Model Router has been removed");
+      expect(calls.setupInference).not.toHaveBeenCalled();
+      expect(calls.reserveRoute).not.toHaveBeenCalled();
+      expect(session).toEqual(before);
+    },
+  );
 
   it("reruns inference setup when no native authority is recorded", async () => {
     const calls = await resumeNativeLocal();

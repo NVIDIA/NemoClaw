@@ -187,7 +187,7 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     }),
     detectInferenceProviderHostState: () => makeSetupNimHostState(),
     getAgentInferenceProviderOptions: () => [],
-    loadRoutedProfile: () => null,
+
     readRecordedProvider: () => null,
     readRecordedNimContainer: () => null,
     readRecordedModel: () => null,
@@ -210,7 +210,7 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     handleInstallOllamaSelection: async () => unexpected("Ollama install selection"),
     installVllm: async () => unexpected("vLLM install"),
     handleVllmSelection: async () => unexpected("vLLM selection"),
-    handleRoutedSelection: async () => unexpected("routed selection"),
+
     coerceAgentInferenceApi: (_agent, preferredInferenceApi) => preferredInferenceApi,
     resolveAgentInferenceApi: (_agentName, _provider, preferredInferenceApi) =>
       preferredInferenceApi,
@@ -402,7 +402,7 @@ function buildProviderMenu(overrides: ProviderMenuOverrides = {}) {
     winOllamaLoopbackOnly: false,
     ollamaInstallEntry: null,
     vllmEntries: [],
-    routedEnabled: false,
+
     ...overrides,
   });
 }
@@ -629,13 +629,6 @@ const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[
     answers: ["https://proxy.example.com", "back", ""],
     menuSelections: ["^Other Anthropic-compatible endpoint$", "^NVIDIA Endpoints$"],
     credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-  },
-  {
-    name: "Model Router",
-    label: "Model Router API key",
-    answers: ["back", ""],
-    menuSelections: ["Model Router", "NVIDIA Endpoints"],
-    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
   },
   {
     name: "Hermes Provider Nous API key",

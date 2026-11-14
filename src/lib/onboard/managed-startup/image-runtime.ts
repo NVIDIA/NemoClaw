@@ -15,7 +15,9 @@ import {
   HERMES_RELAY_PLUGINS_STAGING_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
+  assertSwitchyardRootApplyEnvironment,
   readHermesSwitchyardRoutingEnvironment,
+  readSwitchyardProviderBindingsEnvironment,
   serializeHermesSwitchyardRouting,
 } from "../../hermes-switchyard-routing";
 import {
@@ -990,7 +992,10 @@ export function installHermesSwitchyardRoutingFiles(
     removeSafeRootFile(paths.switchyardDeploymentTarget);
     return;
   }
-  const serialized = serializeHermesSwitchyardRouting(routing);
+  const serialized = serializeHermesSwitchyardRouting(
+    routing,
+    readSwitchyardProviderBindingsEnvironment(configurationEnvironment, routing),
+  );
   const expectedRelay = Buffer.from(serialized.relayPluginsToml, "utf8");
   const expectedRelayState = Buffer.from(serialized.relayPluginStateJson, "utf8");
   const expectedDeployment = Buffer.from(serialized.switchyardDeploymentToml, "utf8");
@@ -1040,7 +1045,10 @@ export function verifyHermesSwitchyardRoutingFiles(
     assertRoutingFileAbsent(paths.switchyardDeploymentTarget);
     return;
   }
-  const serialized = serializeHermesSwitchyardRouting(routing);
+  const serialized = serializeHermesSwitchyardRouting(
+    routing,
+    readSwitchyardProviderBindingsEnvironment(configurationEnvironment, routing),
+  );
   verifyCommittedRoutingFile(
     paths.relayPluginsTarget,
     Buffer.from(serialized.relayPluginsToml, "utf8"),
@@ -1662,6 +1670,22 @@ function applyAdapter(
   if (mapped.agent !== context.agent) {
     fail(`mapped ${mapped.agent} environment for ${context.agent}`);
   }
+  if (context.agent === "openclaw") {
+    // A replacement can retain a fresh native owner from another PID namespace.
+    // Prove it has ended before the generator or validator opens restored state.
+    execute(
+      [
+        "/usr/local/bin/node",
+        "/usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts",
+        "--wait-gateway-executable",
+        "/usr/local/bin/openclaw",
+        "2026.10.5",
+      ],
+      "sandbox",
+      mapped.configurationEnvironment,
+      mapped.applicationRuntime,
+    );
+  }
   const commandPlan = buildManagedStartupImageActionPlan({
     agent: mapped.agent,
     actions: mapped.actions,
@@ -1747,6 +1771,13 @@ export async function applyManagedStartupImageProfile(
   }
   if (profile.agent !== expectedAgent) {
     fail(`managed startup profile targets ${profile.agent}, expected ${expectedAgent}`);
+  }
+  if (profile.agentConfig.agent === "hermes" && profile.agentConfig.switchyardRouting) {
+    if (!profile.agentConfig.switchyardBindings) fail("Switchyard provider bindings are missing");
+    assertSwitchyardRootApplyEnvironment(env, {
+      routing: profile.agentConfig.switchyardRouting,
+      bindings: profile.agentConfig.switchyardBindings,
+    });
   }
   requireManagedStartupExchangeDirectory();
   const mapped = mapManagedStartupProfileToAgentEnvironment(profile, env);

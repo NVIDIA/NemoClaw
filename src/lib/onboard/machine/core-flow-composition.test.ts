@@ -38,7 +38,7 @@ describe("createCoreOnboardFlowPhases", () => {
     const existingSandboxDependency = vi.fn();
     const resumeProvider = {
       isNonInteractive: vi.fn(),
-      isRoutedInferenceProvider: vi.fn(),
+
       providerExistsInGateway: vi.fn(),
       replaceNamedCredential: vi.fn(),
     };

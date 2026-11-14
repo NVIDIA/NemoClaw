@@ -564,7 +564,6 @@ describe("pull request and main workflow contracts", () => {
       ["static-checks", "read"],
     ]);
   });
-
   // source-shape-contract: security -- The shared action must pass a package token only on trusted main pushes
   it("provides the package token only to trusted main dependency installation", () => {
     const actions = [
@@ -587,7 +586,10 @@ describe("pull request and main workflow contracts", () => {
           action === sharedActions.compileArtifacts
             ? "${{ github.event_name == 'push' && inputs.package-mode != 'artifact' && github.token || '' }}"
             : "${{ github.event_name == 'push' && github.token || '' }}",
-        GITHUB_TOKEN: "${{ github.event_name == 'pull_request' && github.token || '' }}",
+        GITHUB_TOKEN:
+          action === sharedActions.compileArtifacts
+            ? "${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && env.UPGRADE_PR_NUMBER != '' && env.CANDIDATE_SHA != '' && env.UPGRADE_BASE_SHA != '' && env.CANDIDATE_SHA != env.UPGRADE_BASE_SHA)) && github.token || '' }}"
+            : "${{ github.event_name == 'pull_request' && github.token || '' }}",
       })),
     );
     expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual([
@@ -599,7 +601,6 @@ describe("pull request and main workflow contracts", () => {
       'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
     ]);
   });
-
   it.each([
     [
       "docs-only checks",

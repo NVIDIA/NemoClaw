@@ -130,7 +130,8 @@ describe("native gateway startup budget", () => {
   });
 
   it.each([
-    { fallback: undefined, override: undefined, seconds: 30 },
+    { fallback: undefined, override: undefined, seconds: 330 },
+    { fallback: 30, override: undefined, seconds: 30 },
     { fallback: OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS, override: undefined, seconds: 120 },
     { fallback: OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS, override: "invalid", seconds: 120 },
     { fallback: OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS, override: "4.5", seconds: 4.5 },

@@ -62,7 +62,7 @@ export async function runCandidateOpenShellCli(options: {
     candidate ? identity : undefined,
   );
   if (options.approved === false) {
-    responses["/repos/NVIDIA/NemoClaw/issues/123/comments?per_page=100&page=1"] = [];
+    responses["/repos/NVIDIA/NemoClaw/pulls/123/reviews?per_page=100&page=1"] = [];
   }
 
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-candidate-mcp-cli-"));

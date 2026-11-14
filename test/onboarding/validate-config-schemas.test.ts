@@ -449,59 +449,6 @@ describe("blueprint.schema.json", () => {
 
 // ── Model Router pool config ────────────────────────────────────────────────
 
-describe("router-pool-config.schema.json", () => {
-  const validate = compileSchema("schemas/router-pool-config.schema.json");
-  const validRouterPoolConfig = {
-    routing: {
-      method: "fixture",
-      checkpoint: "fixture",
-      tolerance: 0.5,
-      encoder: "fixture",
-      encoder_backend: "fixture",
-    },
-    models: [
-      {
-        name: "fixture",
-        display_name: "Fixture",
-        litellm_model: "openai/fixture",
-        cost_per_m_input_tokens: 0,
-        cost_per_m_output_tokens: 0,
-        api_base: "https://api.example.com/v1",
-      },
-    ],
-  };
-
-  it("accepts a minimal router pool config", () => {
-    expectValid(validate, validRouterPoolConfig, "minimal router pool config");
-  });
-
-  it("rejects router pool config without routing settings", () => {
-    const bad = cloneObject(validRouterPoolConfig);
-    delete bad.routing;
-    expect(validate(bad)).toBe(false);
-  });
-
-  it("rejects router pool config models without LiteLLM model IDs", () => {
-    const root = asRecord(validRouterPoolConfig);
-    const firstModel = asRecord(Array.isArray(root.models) ? root.models[0] : undefined);
-    const { litellm_model: _litellmModel, ...modelWithoutId } = firstModel;
-    const bad = { ...root, models: [modelWithoutId] };
-    expect(validate(bad)).toBe(false);
-  });
-
-  it("rejects router pool config api_base without HTTPS", () => {
-    const root = asRecord(validRouterPoolConfig);
-    const firstModel = asRecord(Array.isArray(root.models) ? root.models[0] : undefined);
-    const bad = {
-      ...root,
-      models: [{ ...firstModel, api_base: "http://integrate.api.nvidia.com/v1" }],
-    };
-    expect(validate(bad)).toBe(false);
-  });
-});
-
-// ── Base sandbox policy ──────────────────────────────────────────────────────
-
 describe("sandbox-policy.schema.json", () => {
   const validate = compileSchema("schemas/sandbox-policy.schema.json");
   registerOpenShellJsonRpcMcpMatcherTests("sandbox", validate);

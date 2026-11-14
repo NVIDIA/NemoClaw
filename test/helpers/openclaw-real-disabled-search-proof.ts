@@ -4,8 +4,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { buildConfig } from "../../scripts/generate-openclaw-config.mts";
+import { nativeFunction } from "../../scripts/lib/openclaw-gateway-owner.mts";
 import { baseOpenClawGenerationEnv } from "./openclaw-env-fixture";
 import { SEARCH_DENIAL_IDENTITY_LIMIT } from "../../nemoclaw/src/denied-search-state.js";
 import register, { type OpenClawPluginApi } from "../../nemoclaw/src/index.js";
@@ -21,19 +21,26 @@ type Registry = {
 };
 
 /** Exercise the pinned caller and hook runner, without inference or real tool effects. */
-export async function runRealOpenClawDisabledSearchProof(options: { dist: string }): Promise<void> {
+export async function runRealOpenClawDisabledSearchProof(options: {
+  dist: string;
+  compatibilityMinimum?: boolean;
+}): Promise<void> {
   const dist = options.dist;
   const runtime = JSON.parse(fs.readFileSync(path.join(dist, "../package.json"), "utf8"));
   const plugin = JSON.parse(
     fs.readFileSync(path.join(import.meta.dirname, "../../nemoclaw/package.json"), "utf8"),
   );
-  assert.deepEqual(
-    plugin.openclaw.compat,
-    {
-      pluginApi: `>=${runtime.version}`,
-      minGatewayVersion: runtime.version,
-    },
-    "the real-runtime proof must exercise the advertised compatibility minimum",
+  assert.equal(
+    plugin.openclaw.compat.pluginApi,
+    `>=${plugin.openclaw.compat.minGatewayVersion}`,
+    "the plugin API and gateway compatibility minimum must agree",
+  );
+  assert.equal(
+    runtime.version,
+    options.compatibilityMinimum
+      ? plugin.openclaw.compat.minGatewayVersion
+      : plugin.openclaw.build.openclawVersion,
+    "the real-runtime proof must exercise its declared minimum or pinned runtime",
   );
   const root = fs.mkdtempSync(path.join(path.dirname(dist), ".disabled-search-proof-"));
   const previousState = process.env.OPENCLAW_STATE_DIR;
@@ -42,18 +49,11 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
   process.env.OPENCLAW_CONFIG_PATH = path.join(root, "openclaw.json");
   try {
     async function load(prefix: string, name: string): Promise<unknown> {
-      const file = fs
-        .readdirSync(dist)
-        .find((file) => file.startsWith(prefix) && file.endsWith(".js"));
-      assert(file, "pinned runtime module exists: " + prefix);
-      const exports = (await import(
-        /* @vite-ignore */ pathToFileURL(path.join(dist, file)).href
-      )) as Record<string, unknown>;
-      const value = Object.values(exports).find(
-        (value) => typeof value === "function" && value.name === name,
-      );
-      assert.equal(typeof value, "function", "pinned export exists: " + name);
-      return value;
+      const family =
+        runtime.version === "2026.10.5" && prefix === "tool-surface-plan-"
+          ? "tool-surface-bridge-"
+          : prefix;
+      return nativeFunction(path.dirname(dist), family, name);
     }
     const conversationAccessAllowed = (await load(
       "hook-policy-decisions-",

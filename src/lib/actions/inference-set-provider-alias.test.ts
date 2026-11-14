@@ -47,6 +47,15 @@ function expectNoInferenceMutation(calls: ReturnType<typeof createDeps>["calls"]
 }
 
 describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)", () => {
+  it.each(["routed", "nvidia-router", "NVIDIA_ROUTER"])(
+    "rejects retired selection %s",
+    (provider) => {
+      expect(() => normalizeInferenceSetProvider(provider)).toThrow(
+        "Model Router has been removed",
+      );
+    },
+  );
+
   it("maps the installer name onboard uses to its OpenShell provider name", () => {
     expect(normalizeInferenceSetProvider("anthropicCompatible")).toBe(
       "compatible-anthropic-endpoint",

@@ -32,7 +32,7 @@ describe("deferred onboarding installer plan", () => {
     });
   });
 
-  it.each(["build", "cloud", "routed"])("accepts hosted provider selector %s", (provider) => {
+  it.each(["build", "cloud"])("accepts hosted provider selector %s", (provider) => {
     expect(
       buildDeferredOnboardingPlan(
         { NEMOCLAW_AGENT: "langchain-deepagents-code", NEMOCLAW_PROVIDER: provider },
@@ -98,6 +98,15 @@ describe("deferred onboarding installer plan", () => {
     expect(
       buildDeferredOnboardingPlan(
         { NEMOCLAW_AGENT: "hermes", NEMOCLAW_PROVIDER: "openai" },
+        supported,
+      ).decision,
+    ).toBe("unsupported-provider");
+  });
+
+  it.each(["routed", "nvidia-router"])("rejects the retired %s installer provider", (provider) => {
+    expect(
+      buildDeferredOnboardingPlan(
+        { NEMOCLAW_AGENT: "hermes", NEMOCLAW_PROVIDER: provider },
         supported,
       ).decision,
     ).toBe("unsupported-provider");

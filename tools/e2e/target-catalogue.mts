@@ -1157,28 +1157,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e",
     },
   }),
-  managedRuntimeTarget("model-router-provider-routed-inference", {
-    displayName: "Inference: Model Router returns a provider-routed response",
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA API and Model Router",
-    profile: "nvidia-api",
-    prAdvisorSelectable: true,
-    timeoutMinutes: 45,
-    installMode: "none",
-    restoreCli: true,
-    exposeCliBin: true,
-    // ubuntu-latest (26.04) ships only Python 3.14, which Model Router does not
-    // yet support (src/lib/onboard/model-router-python.ts). Pin until 3.14 is qualified.
-    runner: "ubuntu-24.04",
-    owningPaths: [
-      "nemoclaw-blueprint/router/pool-config.yaml",
-      "src/lib/actions/sandbox/destroy-preflight.ts",
-      "src/lib/onboard/model-router-process.ts",
-      "src/lib/onboard/model-router.ts",
-      "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
-    ],
-    environment: { OPENSHELL_GATEWAY: "nemoclaw" },
-  }),
   managedRuntimeTarget("network-policy", {
     displayName: "Network policy: enforces restricted allow and deny rules",
     agentRuntime: "openclaw",

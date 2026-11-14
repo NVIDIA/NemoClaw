@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouter } from "../inference/provider-key/contract";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
 import { providerNameToOptionKey } from "./provider-recovery";
@@ -167,6 +168,7 @@ export function prepareProviderDiscovery(options: {
     nonInteractive && !requestedProvider
       ? recordedProviderReaders.readRecordedProvider(sandboxName)
       : null;
+  rejectRetiredModelRouter(recoveredProbeProvider);
   const recoveredProbeKey = providerNameToOptionKey(
     deps.remoteProviderConfig,
     recoveredProbeProvider,

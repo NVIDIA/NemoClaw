@@ -84,9 +84,9 @@ export function fixture(selectedVersion = version) {
     {
       id: 50,
       user: { type: "User", login: "reviewer" },
-      created_at: "2026-10-14T00:00:00Z",
-      updated_at: "2026-10-14T00:00:00Z",
-      body: `NemoClaw-Upgrade-E2E: approve ${identity.candidateSha} ${identity.baseSha}`,
+      submitted_at: "2026-10-14T00:00:00Z",
+      state: "APPROVED",
+      commit_id: identity.candidateSha,
     },
   ];
   const routes: Record<string, unknown> = {
@@ -97,10 +97,20 @@ export function fixture(selectedVersion = version) {
       head: { sha: identity.candidateSha, repo: repository },
       base: { sha: identity.baseSha, ref: "main", repo: repository },
     },
-    "/repos/NVIDIA/NemoClaw/issues/123/comments?per_page=100&page=1": approvals,
+    "/repos/NVIDIA/NemoClaw/pulls/123/reviews?per_page=100&page=1": approvals,
     "/repos/NVIDIA/NemoClaw/collaborators/reviewer/permission": { role_name: "maintain" },
   };
   const request = vi.fn(async (path: string): Promise<unknown> => {
+    if (
+      path ===
+      `/repos/NVIDIA/NemoClaw/compare/${identity.baseSha}...${identity.candidateSha}?per_page=1`
+    )
+      return {
+        status: "ahead",
+        base_commit: { sha: identity.baseSha },
+        merge_base_commit: { sha: identity.baseSha },
+        files: [],
+      };
     const sourcePath = new URL(path, "https://api.github.com").pathname.replace(
       "/repos/NVIDIA/NemoClaw/contents/",
       "",

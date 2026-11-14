@@ -673,6 +673,57 @@ EOF
   });
 
   describe("cleanup_on_signal", () => {
+    it("forwards shutdown and waits for release after the logging pipe closes", () => {
+      const result = execFileSync(
+        "python3",
+        [
+          "-c",
+          String.raw`
+from pathlib import Path
+import os, signal, subprocess, sys, tempfile
+with tempfile.TemporaryDirectory(prefix="sandbox-cleanup-pipe-") as directory:
+    root = Path(directory)
+    (root / "child.sh").write_text("trap 'printf released > \"$1/released\"; exit 0' TERM\nprintf ready > \"$1/ready\"\nwhile :; do sleep .1; done\n")
+    script = '''set -eu
+source "$1"
+bash "$2/child.sh" "$2" &
+child=$!
+SANDBOX_CHILD_PIDS=("$child")
+SANDBOX_WAIT_PID="$child"
+trap cleanup_on_signal TERM
+while [ ! -f "$2/ready" ]; do sleep .01; done
+printf 'READY %s\\n' "$child"
+wait "$child"
+'''
+    process = subprocess.Popen(["bash", "-c", script, "cleanup-test", sys.argv[1], directory], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    child = None
+    try:
+        line = process.stdout.readline()
+        assert line.startswith("READY "), line
+        child = int(line.split()[1])
+        process.stderr.close()
+        process.send_signal(signal.SIGTERM)
+        status = process.wait(timeout=5)
+        assert status == 0, status
+        assert (root / "released").read_text() == "released"
+        print("RELEASED_AND_REAPED")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        if child is not None:
+            try:
+                os.kill(child, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+`,
+          SANDBOX_INIT,
+        ],
+        { encoding: "utf-8", timeout: 10_000 },
+      );
+      expect(result.trim()).toBe("RELEASED_AND_REAPED");
+    });
+
     it("function is defined and uses SANDBOX_CHILD_PIDS", () => {
       // Verify the function exists and handles empty PID list gracefully
       const { stdout } = runWithLib(`
