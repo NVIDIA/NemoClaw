@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: PR merge outcomes
+on:
+  pull_request:
+    paths:
+      - tools/ci/pr-merge-report*.rs
+      - .github/workflows/pr-merge-report.yml
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: merge-outcomes-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test the reporter without GitHub access
+        run: |
+          rustfmt --edition 2024 --check tools/ci/pr-merge-report*.rs
+          rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report.rs -o "$RUNNER_TEMP/report-tests"
+          "$RUNNER_TEMP/report-tests"
+          rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report-workflow.rs -o "$RUNNER_TEMP/adapter-tests"
+          "$RUNNER_TEMP/adapter-tests"
