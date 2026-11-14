@@ -285,8 +285,8 @@ impl Api {
             return Err("Incomplete PR metadata".into());
         }
         let row = rows.remove(0);
-        if row[0] != "true" || !matches!(row[1].as_str(), "main" | "v1") {
-            return Err("Report requires a PR merged into main or v1".into());
+        if row[0] != "true" {
+            return Err("Report requires a merged PR".into());
         }
         validate_sha(&row[2])?;
         Ok(row)

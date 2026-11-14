@@ -15,6 +15,9 @@ Revision counts are observed because complete push history is unavailable.
 The default-branch workflow and helper under `tools/ci/` serve merged PRs into
 `main` and `v1`, including forks, without session access or PR-code execution.
 
+The workflow trigger selects target branches. The reporter validates merged PR
+metadata without a separate branch allowlist.
+
 Install the workflow on the default branch and the reporter on each target
 branch (`main` and `v1`). A merge whose parent lacks the reporter is skipped, so
 reporting starts with the next eligible merge into that branch. Each eligible PR

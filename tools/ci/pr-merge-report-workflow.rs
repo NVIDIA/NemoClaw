@@ -481,20 +481,24 @@ raise 'Receipt is not revision-bound' unless receipt.values_at('workflow_revisio
 raise 'Fork-modified reporter scenario was not covered' unless receipt['fork_modified_reporter']
 raise 'Opening report was absent' unless receipt['opening_report_count'] == 1
 raise 'Receipt did not verify one report' unless receipt['report_unique']
-v1 = exercise(workflow, "#{ARGV[0]}/v1", 'valid', parent, head, base: 'v1', reporter: reporter_source)
-raise File.read("#{v1[:root]}/errors") if v1[:failed]
-raise 'v1 merge did not compile the trusted reporter' unless File.exist?("#{v1[:root]}/compilations") && File.read("#{v1[:root]}/compilations") == "compile\n"
-raise 'v1 merge did not publish exactly once' unless File.read("#{v1[:root]}/posts") == "POST\n"
-v1_comments = JSON.parse(File.read("#{v1[:root]}/comments.json"))
-v1_reports = v1_comments.select { |comment| comment.dig('user', 'login') == 'github-actions[bot]' && comment['body'].include?('<!-- nemoclaw-merge-report:v1 -->') }
-raise 'v1 merge lost or duplicated its report' unless v1_reports.length == 1
-v1_report = v1_reports.first.fetch('body')
-raise 'v1 report lost merged metadata' unless v1_report.start_with?('<details>') && v1_report.include?(head) && v1_report.include?('+209 / -10 lines across 5 files')
-raise 'v1 merge changed existing comments' unless v1_comments.reject { |comment| comment['id'] == 123 } == JSON.parse(v1[:original_comments])
-raise 'v1 artifact lost the report' unless File.read("#{v1[:artifact]}/merge-outcomes.md").strip == v1_report.strip
-raise 'v1 summary lost the report' unless File.read("#{v1[:root]}/summary").include?(v1_report)
-v1_receipt = JSON.parse(File.read("#{v1[:artifact]}/merge-outcomes-receipt.json"))
-raise 'v1 receipt lost trusted provenance' unless v1_receipt.values_at('reporter_revision', 'publication_readback', 'opening_preserved', 'report_unique') == [parent, true, true, true]
+extended_workflow = Marshal.load(Marshal.dump(workflow))
+(extended_workflow['on'] || extended_workflow[true]).fetch('pull_request_target').fetch('branches') << 'release'
+[[workflow, 'v1'], [extended_workflow, 'release']].each do |selected_workflow, base|
+  result = exercise(selected_workflow, "#{ARGV[0]}/#{base}", 'valid', parent, head, base: base, reporter: reporter_source)
+  raise File.read("#{result[:root]}/errors") if result[:failed]
+  raise "#{base} merge did not compile the trusted reporter" unless File.exist?("#{result[:root]}/compilations") && File.read("#{result[:root]}/compilations") == "compile\n"
+  raise "#{base} merge did not publish exactly once" unless File.read("#{result[:root]}/posts") == "POST\n"
+  comments = JSON.parse(File.read("#{result[:root]}/comments.json"))
+  reports = comments.select { |comment| comment.dig('user', 'login') == 'github-actions[bot]' && comment['body'].include?('<!-- nemoclaw-merge-report:v1 -->') }
+  raise "#{base} merge lost or duplicated its report" unless reports.length == 1
+  report = reports.first.fetch('body')
+  raise "#{base} report lost merged metadata" unless report.start_with?('<details>') && report.include?(head) && report.include?('+209 / -10 lines across 5 files')
+  raise "#{base} merge changed existing comments" unless comments.reject { |comment| comment['id'] == 123 } == JSON.parse(result[:original_comments])
+  raise "#{base} artifact lost the report" unless File.read("#{result[:artifact]}/merge-outcomes.md").strip == report.strip
+  raise "#{base} summary lost the report" unless File.read("#{result[:root]}/summary").include?(report)
+  receipt = JSON.parse(File.read("#{result[:artifact]}/merge-outcomes-receipt.json"))
+  raise "#{base} receipt lost trusted provenance" unless receipt.values_at('reporter_revision', 'publication_readback', 'opening_preserved', 'report_unique') == [parent, true, true, true]
+end
 raise 'Settings job must hold only contents: write' unless workflow.dig('jobs', 'merge-settings', 'permissions') == {'contents' => 'write'}
 raise 'Report job must stay read-only for contents' unless workflow.dig('jobs', 'report', 'permissions', 'contents') == 'read'
 raise 'Settings job must not check out code' if workflow.dig('jobs', 'merge-settings', 'steps').any? { |step| step['uses'] }
