@@ -64,10 +64,6 @@ function discoverTargets(): ConfigTarget[] {
       files: ["nemoclaw/openclaw.plugin.json"],
     },
     {
-      schema: "schemas/router-pool-config.schema.json",
-      files: ["nemoclaw-blueprint/router/pool-config.yaml"],
-    },
-    {
       schema: "schemas/onboard-config.schema.json",
       files: ["ci/onboard-performance-budget.json"],
     },

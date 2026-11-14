@@ -457,6 +457,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
       getSandboxStatusPreflightImpl: async () => ({
         failure: null,
         failureLayer: null,
+        intentionalStopConfirmed: false,
         suppressInferenceProbe: false,
         exitCode: 0,
       }),

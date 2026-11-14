@@ -349,6 +349,7 @@ describe("managed Podman runtime provider", () => {
     async (agent) => {
       const runtime = providerHarness(agent);
       const verifyGateway = vi.fn(async () => undefined);
+      const probeGatewayProcess = vi.fn(async () => true);
       const stopSandboxChannels = vi.fn();
       const updateSandbox = vi.fn(() => true);
 
@@ -359,7 +360,7 @@ describe("managed Podman runtime provider", () => {
           observer: readyObserver(runtime.sandboxName),
           updateSandbox,
           runtimeProviders: runtime.providers,
-          probeGatewayProcess: vi.fn(async () => true),
+          probeGatewayProcess,
           verifyGateway,
           log: vi.fn(),
         }),
@@ -379,6 +380,15 @@ describe("managed Podman runtime provider", () => {
       ).resolves.toEqual({ exitCode: 0 });
 
       expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
+      expect(probeGatewayProcess.mock.calls).toEqual(
+        {
+          openclaw: [
+            [runtime.sandboxName, "nemoclaw", { startup: { timeoutMs: expect.any(Number) } }],
+          ],
+          hermes: [],
+          "langchain-deepagents-code": [],
+        }[agent],
+      );
       expect(stopSandboxChannels).toHaveBeenCalledWith(
         runtime.sandboxName,
         expect.objectContaining({ channelStopTransport: "openshell" }),
@@ -393,6 +403,7 @@ describe("managed Podman runtime provider", () => {
     const runtime = providerHarness("openclaw");
     const gatewayFailure = new Error("independent gateway probe failed");
     const verifyGateway = vi.fn(async () => Promise.reject(gatewayFailure));
+    const probeGatewayProcess = vi.fn(async () => true);
 
     await expect(
       startSandbox(runtime.sandboxName, {
@@ -400,12 +411,15 @@ describe("managed Podman runtime provider", () => {
         openShellLifecycle: runtime.openShellLifecycle,
         observer: readyObserver(runtime.sandboxName),
         runtimeProviders: runtime.providers,
-        probeGatewayProcess: vi.fn(async () => true),
+        probeGatewayProcess,
         verifyGateway,
         log: vi.fn(),
       }),
     ).rejects.toBe(gatewayFailure);
     expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
+    expect(probeGatewayProcess).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName, "nemoclaw", {
+      startup: { timeoutMs: expect.any(Number) },
+    });
     expect(runtime.startOpenShellSandbox).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxName: runtime.sandboxName }),
     );

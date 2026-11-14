@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { performance } from "node:perf_hooks";
+
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -80,6 +82,10 @@ export async function runRawCommand(
   args: readonly string[],
   options: RawRunOptions,
 ): Promise<RawRunResult> {
+  const startedAtMs = performance.now();
+  let lastStdoutAtMs: number | null = null;
+  let lastStderrAtMs: number | null = null;
+  let timeoutAtMs: number | null = null;
   const timeoutMs = options.timeoutMs ?? 60_000;
   const redactionValues = [...(options.redactionValues ?? [])];
   const progressName = progressCommandName(options.artifactName);
@@ -130,6 +136,7 @@ export async function runRawCommand(
 
   const timeout = setTimeout(() => {
     timedOut = true;
+    timeoutAtMs = performance.now() - startedAtMs;
     emitProgressEvent(
       options.progress,
       `command ${progressName} timeout fired after ${timeoutMs}ms`,
@@ -140,9 +147,11 @@ export async function runRawCommand(
   timeout.unref();
 
   child.stdout?.on("data", (chunk: Buffer) => {
+    lastStdoutAtMs = performance.now() - startedAtMs;
     captureOutput(stdoutCapture, chunk);
   });
   child.stderr?.on("data", (chunk: Buffer) => {
+    lastStderrAtMs = performance.now() - startedAtMs;
     captureOutput(stderrCapture, chunk);
   });
   child.on("error", (error) => {
@@ -161,6 +170,7 @@ export async function runRawCommand(
   }>((resolve) => {
     child.on("close", (code, closeSignal) => resolve({ exitCode: code, signal: closeSignal }));
   });
+  const durationMs = performance.now() - startedAtMs;
   clearTimeout(timeout);
   emitProgressEvent(
     options.progress,
@@ -190,6 +200,7 @@ export async function runRawCommand(
     signal,
     timedOut,
     captureLimitExceeded,
+    timing: { durationMs, lastStdoutAtMs, lastStderrAtMs, timeoutAtMs },
     stdout: artifactStdout,
     stderr: artifactStderr,
   });

@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createManagedProviderAdapter } from "../../../adapters/openshell/managed-provider-adapter";
-import { runOpenshellProviderCommand } from "../../../adapters/openshell/provider-command";
-import { ensureNativeLocalProviderAttached } from "../../../inference/native-local/profile";
-
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { isN1xManagedVllmProviderModel } from "../../../domain/sandbox/n1x-managed-vllm-rebuild";
@@ -26,22 +22,6 @@ export {
   assertHermesSwitchyardRoutingReusable,
   hermesSwitchyardRoutingCreateIntentFields,
 } from "../../sandbox-reuse";
-
-/** Reuse the native attachment lifecycle while fencing each CLI command against sandbox replacement. */
-export async function ensureResumedNativeLocalProviderAttached(
-  input: Omit<Parameters<typeof ensureNativeLocalProviderAttached>[0], "adapter"> & {
-    adapter?: Parameters<typeof ensureNativeLocalProviderAttached>[0]["adapter"];
-    revalidateSandboxIdentity(operation: string): void;
-  },
-) {
-  const adapter =
-    input.adapter ??
-    createManagedProviderAdapter((args, options) => {
-      input.revalidateSandboxIdentity("restore native Model Router attachment");
-      return runOpenshellProviderCommand(args, options);
-    });
-  return ensureNativeLocalProviderAttached({ ...input, adapter });
-}
 
 /** Return true when a saved resource profile is null or has valid CPU and memory values. */
 export function isValidSavedResourceProfile(
@@ -472,3 +452,5 @@ export function reserveSandboxResumeRoute(
     );
   }
 }
+
+export { rejectRetiredModelRouter } from "../../../inference/provider-key/contract";

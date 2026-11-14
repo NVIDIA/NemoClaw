@@ -110,12 +110,12 @@ describe("locked npm cache seed materialization", () => {
     ).toEqual(["alpha archive", "beta archive"]);
   });
 
-  it("materializes the reviewed OpenClaw 2026.9.1 archive size", async () => {
-    const bytes = Buffer.alloc(55_564_082, 0x61);
+  it("materializes and verifies the reviewed OpenClaw 2026.10.5 archive size", async () => {
+    const bytes = Buffer.alloc(103_343_430, 0x61);
     const locked: LockedArchive = {
-      archive: "openclaw-2026.9.1.tgz",
+      archive: "openclaw-2026.10.5.tgz",
       integrity: `sha512-${crypto.createHash("sha512").update(bytes).digest("base64")}`,
-      resolved: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
+      resolved: "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz",
     };
     const lockfile = writeLock(testRoot, [locked]);
     const seed = path.join(testRoot, "seed");
@@ -128,6 +128,27 @@ describe("locked npm cache seed materialization", () => {
     });
 
     expect(statSync(path.join(seed, locked.archive)).size).toBe(bytes.byteLength);
+    const output = path.join(testRoot, "verified");
+    await verifyAndCopyLockedNpmCacheSeed({ lockfile, output, seed, target: TARGET });
+    expect(
+      `sha512-${crypto
+        .createHash("sha512")
+        .update(readFileSync(path.join(output, locked.archive)))
+        .digest("base64")}`,
+    ).toBe(locked.integrity);
+  });
+
+  it("rejects an archive larger than the reviewed download allowance", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const lockfile = writeLock(testRoot, [alpha.locked]);
+    await expect(
+      materializeLockedNpmCacheSeed({
+        downloadArchive: async () => new Uint8Array(120 * 1024 * 1024),
+        lockfile,
+        output: path.join(testRoot, "seed"),
+        target: TARGET,
+      }),
+    ).rejects.toThrow("downloaded archive size is invalid");
   });
 
   it("materializes and copies every reachable lock-pinned registry archive for the selected npm platform", async () => {

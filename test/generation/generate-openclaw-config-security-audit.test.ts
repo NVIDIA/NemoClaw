@@ -18,6 +18,15 @@ function buildSecurityAuditConfig(chatUiUrl: string, overrides: Record<string, s
 }
 
 describe("generate-openclaw-config.mts: managed security audit findings", () => {
+  it.each(["nvidia-router", "routed", "NVIDIA_ROUTER", " Routed "])(
+    "rejects retired provider %s before generating sandbox configuration",
+    (provider) => {
+      expect(() => buildConfig({ ...BASE_ENV, NEMOCLAW_UPSTREAM_PROVIDER: provider })).toThrow(
+        "Model Router has been removed",
+      );
+    },
+  );
+
   it("does not suppress findings for the retired insecure-auth flag (#6024)", () => {
     const config = buildSecurityAuditConfig("http://127.0.0.1:18789");
     expect(config.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback).toBeUndefined();

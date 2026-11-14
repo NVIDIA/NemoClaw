@@ -88,18 +88,53 @@ function lease(identity: LaunchReadinessIdentity): LaunchReadinessLease {
   };
 }
 
-it.each(
-  [OPENCLAW_PAIRING_REQUEST_SCOPES, OPENCLAW_PAIRING_REQUIRED_SCOPES].map((scopes) => [scopes]),
-)(
-  "keeps a published lease accepted through real cli/probe/cli observations with %j grants (#13100)",
-  async (scopes) => {
+const TUI_SCOPES = ["operator.admin", "operator.approvals", "operator.read", "operator.write"];
+
+it.each([
+  {
+    profile: "CLI pairing/write",
+    clientId: "cli",
+    initialMode: "cli",
+    scopes: OPENCLAW_PAIRING_REQUEST_SCOPES,
+    tokenScopes: OPENCLAW_PAIRING_REQUIRED_SCOPES,
+    nextMode: "probe",
+    finalMode: "cli",
+  },
+  {
+    profile: "CLI explicit read",
+    clientId: "cli",
+    initialMode: "cli",
+    scopes: OPENCLAW_PAIRING_REQUIRED_SCOPES,
+    tokenScopes: OPENCLAW_PAIRING_REQUIRED_SCOPES,
+    nextMode: "probe",
+    finalMode: "cli",
+  },
+  {
+    profile: "native TUI",
+    clientId: "openclaw-tui",
+    initialMode: "ui",
+    scopes: TUI_SCOPES,
+    tokenScopes: TUI_SCOPES,
+    nextMode: "ui",
+    finalMode: "ui",
+  },
+])(
+  "keeps a published $profile lease accepted until its pairing state changes (#13100, #13668)",
+  async ({ clientId, initialMode, scopes, tokenScopes, nextMode, finalMode }) => {
     const fixture = createOpenClawPairingFixture();
     try {
       const pairedPath = path.join(fixture.stateDirectory, "devices", "paired.json");
       const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8"));
+      paired[fixture.deviceId].clientId = clientId;
+      paired[fixture.deviceId].clientMode = initialMode;
       paired[fixture.deviceId].scopes = [...scopes];
       paired[fixture.deviceId].approvedScopes = [...scopes];
+      paired[fixture.deviceId].tokens.operator.scopes = [...tokenScopes];
       fs.writeFileSync(pairedPath, JSON.stringify(paired));
+      const authPath = path.join(fixture.stateDirectory, "identity", "device-auth.json");
+      const auth = JSON.parse(fs.readFileSync(authPath, "utf8"));
+      auth.tokens.operator.scopes = [...tokenScopes];
+      fs.writeFileSync(authPath, JSON.stringify(auth));
       let published: LaunchReadinessLease | null = null;
       const deps: LaunchReadinessDeps = {
         getSandbox: () => entry(),
@@ -141,10 +176,10 @@ it.each(
       expect(await publishLaunchReadiness(publicationFromDecision(SANDBOX, initial), deps)).toEqual(
         { kind: "published" },
       );
-      paired[fixture.deviceId].clientMode = "probe";
+      paired[fixture.deviceId].clientMode = nextMode;
       fs.writeFileSync(pairedPath, JSON.stringify(paired));
       expect(await inspectLaunchReadiness(SANDBOX, deps)).toMatchObject({ kind: "accepted" });
-      paired[fixture.deviceId].clientMode = "cli";
+      paired[fixture.deviceId].clientMode = finalMode;
       fs.writeFileSync(pairedPath, JSON.stringify(paired));
       expect(await inspectLaunchReadiness(SANDBOX, deps)).toMatchObject({ kind: "accepted" });
       paired[fixture.deviceId].tokens.operator.revokedAtMs = 1;

@@ -429,7 +429,7 @@ function listJsFiles(dir: string): string[] {
   for (const entry of entries) {
     const entryPath = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...listJsFiles(entryPath));
-    else if (entry.isFile() && entry.name.endsWith(".js")) files.push(entryPath);
+    else if (entry.isFile() && /\.m?js$/u.test(entry.name)) files.push(entryPath);
   }
   return files.sort();
 }

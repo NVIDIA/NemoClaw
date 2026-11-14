@@ -68,10 +68,10 @@ function metadata(
 }
 
 describe("E2E recommendation normalizer", () => {
-  it("allows the opted-in credentialed Model Router target", () => {
+  it("excludes the retired Model Router target", () => {
     const inventory = trustedE2eRecommendationInventory();
 
-    expect(inventory.allowedJobIds).toContain("model-router-provider-routed-inference");
+    expect(inventory.allowedJobIds).not.toContain("model-router-provider-routed-inference");
     expect(inventory.manualOnlyJobIds).not.toContain("model-router-provider-routed-inference");
   });
 

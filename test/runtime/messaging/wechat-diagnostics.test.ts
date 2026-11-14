@@ -122,7 +122,7 @@ describe("wechat-diagnostics: provider-ready signal", () => {
     `;
     const result = runDriver(driver, { WECHAT_ACCOUNT_ID: "ilink-bot-42" });
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain("[wechat] [ilink-bot-42] provider ready");
+    expect(result.stderr.trim()).toBe("[wechat] [ilink-bot-42] provider ready (iLink reachable)");
   });
 
   it("does NOT emit provider ready when path is outside /ilink/bot", async () => {

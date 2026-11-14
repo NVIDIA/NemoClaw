@@ -115,7 +115,10 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS !== "1")(
         const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-zod-runtime-"));
         try {
           const config = JSON.parse(
-            fs.readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
+            fs.readFileSync(
+              path.join(REPO_ROOT, "test/fixtures/openclaw/reviewed-legacy-plugin-archives.json"),
+              "utf8",
+            ),
           ) as {
             archivePackages: Array<{
               integrity: string;
@@ -224,7 +227,10 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS !== "1")(
         const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-zod-retry-"));
         try {
           const config = JSON.parse(
-            fs.readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
+            fs.readFileSync(
+              path.join(REPO_ROOT, "test/fixtures/openclaw/reviewed-legacy-plugin-archives.json"),
+              "utf8",
+            ),
           ) as {
             archivePackages: Array<{
               integrity: string;

@@ -47,7 +47,10 @@ function writePackage(
   );
 }
 
-function fixture(sdkPath = "channel-message"): {
+function fixture(
+  sdkPath = "channel-message",
+  typingSdkPath = "channel-message",
+): {
   lockFile: string;
   projectsRoot: string;
   installedLock: string;
@@ -80,6 +83,10 @@ function fixture(sdkPath = "channel-message"): {
     path.join(handlerDir, "process-message.js"),
     `import { createTypingCallbacks } from "openclaw/plugin-sdk/${sdkPath}";\nexport { createTypingCallbacks };\n`,
   );
+  fs.writeFileSync(
+    path.join(handlerDir, "typing.js"),
+    `export async function loadTypingCallbacksFactory() { return (await import("openclaw/plugin-sdk/${typingSdkPath}")).createTypingCallbacks; }\n`,
+  );
   const lockFile = path.join(root, "reviewed-lock.json");
   const installedLock = path.join(installedRoot, "package-lock.json");
   fs.writeFileSync(lockFile, JSON.stringify({ packages }));
@@ -103,6 +110,13 @@ describe("WeChat runtime dependency lock", () => {
     const { lockFile, projectsRoot } = fixture("channel-runtime");
     await expect(verifyWechatRuntimeLock(lockFile, projectsRoot, "2026.9.1")).rejects.toThrow(
       /channel-runtime/,
+    );
+  });
+
+  it("rejects a removed SDK import deferred until typing starts", async () => {
+    const { lockFile, projectsRoot } = fixture("channel-message", "retired-typing");
+    await expect(verifyWechatRuntimeLock(lockFile, projectsRoot, "2026.10.5")).rejects.toThrow(
+      /retired-typing/,
     );
   });
 

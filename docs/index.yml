@@ -86,7 +86,7 @@ navigation:
                   - page: "Use Google Gemini"
                     path: _build/agent-variants/inference/use-google-gemini.openclaw.generated.mdx
                     slug: use-google-gemini
-                  - page: "Set Up Model Router"
+                  - page: "Retired Model Router"
                     path: _build/agent-variants/inference/set-up-model-router.openclaw.generated.mdx
                     slug: set-up-model-router
               - section: "Local Inference"
@@ -558,7 +558,7 @@ navigation:
                   - page: "Use Google Gemini"
                     path: _build/agent-variants/inference/use-google-gemini.deepagents.generated.mdx
                     slug: use-google-gemini
-                  - page: "Set Up Model Router"
+                  - page: "Retired Model Router"
                     path: _build/agent-variants/inference/set-up-model-router.deepagents.generated.mdx
                     slug: set-up-model-router
               - section: "Local Inference"
@@ -904,7 +904,7 @@ navigation:
                   - page: "Use Hermes Provider"
                     path: inference/use-hermes-provider.mdx
                     slug: use-hermes-provider
-                  - page: "Set Up Model Router"
+                  - page: "Retired Model Router"
                     path: _build/agent-variants/inference/set-up-model-router.hermes.generated.mdx
                     slug: set-up-model-router
               - section: "Local Inference"

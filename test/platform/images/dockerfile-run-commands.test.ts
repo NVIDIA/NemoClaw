@@ -12,6 +12,16 @@ const corporateCaPath = "/usr/local/share/nemoclaw/corporate-ca.pem";
 const requiredArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const invocation = [command, ...requiredArguments].join(" ");
 const splicedCommand = command.replace("bundled-npm", "bundled-\\\nnpm");
+const finalNpmRepairCommands = [
+  command,
+  "node /scripts/patch-bundled-npm-brace-expansion.mts",
+  "node /scripts/lib/patch-bundled-npm-ip-address.mts",
+  "node /scripts/lib/patch-bundled-npm-undici.mts",
+];
+const finalNpmRepairRun =
+  `RUN if [ -f ${corporateCaPath} ]; then export CURL_CA_BUNDLE=${corporateCaPath}; ` +
+  `export NODE_EXTRA_CA_CERTS=${corporateCaPath}; fi; ` +
+  finalNpmRepairCommands.map((repair) => `${repair} ${requiredArguments.join(" ")}`).join(" && ");
 
 describe("Dockerfile RUN command discovery", () => {
   it("finds only executable unquoted npm command words in RUN instructions (#9933)", () => {
@@ -120,6 +130,35 @@ describe("Dockerfile RUN command discovery", () => {
       requireSingleReviewedDockerfileRunCommand(source, command, requiredArguments),
     ).toThrow("found 2");
   });
+
+  it.each(finalNpmRepairCommands)(
+    "accepts %s in the complete final-image repair chain",
+    (repair) => {
+      const match = requireSingleReviewedDockerfileRunCommand(
+        finalNpmRepairRun,
+        repair,
+        requiredArguments,
+      );
+      expect(match.commandStart).toBe(finalNpmRepairRun.indexOf(repair));
+    },
+  );
+
+  it.each([
+    finalNpmRepairRun.replace(" && ", "; "),
+    finalNpmRepairRun.replace(" && ", " || "),
+    `${finalNpmRepairRun} || true`,
+    finalNpmRepairRun.replace(
+      " && node /scripts/lib/patch-bundled-npm-undici.mts --npm-root /usr/local/lib/node_modules/npm",
+      "",
+    ),
+  ])(
+    "rejects a repair chain that loses required execution or failure propagation: %s",
+    (source) => {
+      expect(() =>
+        requireSingleReviewedDockerfileRunCommand(source, command, requiredArguments),
+      ).toThrow("unreviewed RUN instruction");
+    },
+  );
 
   it.each([
     ["inside a command substitution", `RUN printf '%s\\n' "$(${invocation})"\n`],

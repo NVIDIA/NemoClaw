@@ -113,10 +113,10 @@ ENV AWS_EC2_METADATA_DISABLED=true
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Trixie has not published fixes for the reviewed libevent, libexpat, jq, or Vim
-# advisories. Install fixed Expat packages from the 20260811T082421Z snapshot
-# and fixed libevent, jq, and Vim packages from the 20260703T143212Z,
-# 20260724T000000Z, and 20260727T143429Z snapshots, respectively, with
-# architecture-specific hashes, until Trixie carries them.
+# advisories. Install fixed Expat from the 20260811T082421Z Debian Snapshot
+# archive and fixed libevent, jq, and Vim from the official Debian pool.
+# Exact versions and architecture-specific hashes bind the reviewed bytes
+# until Trixie carries the fixes.
 # The checksum and runtime probes put the validating command last in each pipe.
 # The runtime Vim probe verifies the package that this layer installs.
 # hadolint ignore=DL3001,DL4006
@@ -176,10 +176,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     esac \
     && perl_version_before="$(dpkg-query -W -f='${Version}' perl)" \
     && security_deb_dir="/tmp/nemoclaw-debian-security" \
-    && snapshot_url="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main" \
-    && expat_snapshot_url="https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main" \
-    && libevent_snapshot_url="https://snapshot.debian.org/archive/debian/20260703T143212Z/pool/main" \
-    && vim_snapshot_url="https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main" \
+    && debian_pool_url="https://deb.debian.org/debian/pool/main" \
+    && expat_snapshot_url="https://snapshot-cloudflare.debian.org/archive/debian/20260811T082421Z/pool/main" \
     && vim_common_sha256="c21aad77632ef790d2352f1c38e688069980bbd530034248dd5e1158da9c9fe3" \
     && mkdir -p "$security_deb_dir" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
@@ -189,27 +187,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libevent-core-2.1-7t64.deb" \
-        "$libevent_snapshot_url/libe/libevent/libevent-core-2.1-7t64_2.1.13-stable-1_${arch}.deb" \
+        "$debian_pool_url/libe/libevent/libevent-core-2.1-7t64_2.1.13-stable-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libonig5.deb" \
-        "$snapshot_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
+        "$debian_pool_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libjq1.deb" \
-        "$snapshot_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
+        "$debian_pool_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/jq.deb" \
-        "$snapshot_url/j/jq/jq_1.8.2-1_${arch}.deb" \
+        "$debian_pool_url/j/jq/jq_1.8.2-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-common.deb" \
-        "$vim_snapshot_url/v/vim/vim-common_9.2.0858-1_all.deb" \
+        "$debian_pool_url/v/vim/vim-common_9.2.0858-1_all.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-tiny.deb" \
-        "$vim_snapshot_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
+        "$debian_pool_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
     && printf '%s  %s\n' \
         "$libexpat_sha256" "$security_deb_dir/libexpat1.deb" \
         "$libevent_core_sha256" "$security_deb_dir/libevent-core-2.1-7t64.deb" \
@@ -393,9 +391,9 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
 # the base image on push to main, or use workflow_dispatch on base-image.yaml
 # with the openclaw_version input for a one-off build without editing this file.
-ARG OPENCLAW_VERSION=2026.9.2
-ARG OPENCLAW_2026_9_2_INTEGRITY=sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==
-ARG OPENCLAW_2026_9_2_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz
+ARG OPENCLAW_VERSION=2026.10.5
+ARG OPENCLAW_2026_10_5_INTEGRITY=sha512-9rCuXMweqVKZIK3KBtGcLzesz9G6+FmQ30lvwomRhmcNWDcOtlBoqdLbPditoJMuTP55jPqXpt1AA0L8tSzFHg==
+ARG OPENCLAW_2026_10_5_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz
 # Keep the mcporter version, integrity, runtime lock, license, and advisory baseline
 # synchronized with agents/openclaw/dependency-review.md.
 ARG MCPORTER_VERSION=0.7.3
@@ -403,7 +401,7 @@ ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImu
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
 ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=
 ARG NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=
-# Keep paired runtime manifests and reviewed helpers in grouped layers so
+# Keep paired runtime manifests and remediation helpers in grouped layers so
 # the published base retains its established image layout.
 COPY agents/openclaw/openclaw-runtime/package.json \
     agents/openclaw/openclaw-runtime/package-lock.json \
@@ -416,11 +414,14 @@ COPY scripts/lib/patch-openclaw-dependency-overrides.mts /scripts/lib/patch-open
 COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/bundled-npm-package.mts \
     scripts/lib/reviewed-npm-audit.mts \
+    scripts/lib/openclaw-npm-remediation.mts \
     /scripts/lib/
 COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
 COPY --chmod=0444 scripts/openclaw-cli-wrapper.sh /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
-COPY scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/patch-bundled-npm-undici.mts /scripts/lib/
+COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
+COPY scripts/lib/patch-bundled-npm-undici.mts /scripts/lib/patch-bundled-npm-undici.mts
+COPY scripts/lib/remediate-openclaw-runtime-dependencies.mts /scripts/lib/remediate-openclaw-runtime-dependencies.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
@@ -454,6 +455,8 @@ RUN node /scripts/patch-bundled-npm-brace-expansion.mts \
 # hadolint ignore=DL3059
 RUN node /scripts/lib/patch-bundled-npm-ip-address.mts \
     --npm-root /usr/local/lib/node_modules/npm
+
+# Bound response decompression in npm's private HTTP client before npm consumers run.
 # hadolint ignore=DL3059
 RUN node /scripts/lib/patch-bundled-npm-undici.mts \
     --npm-root /usr/local/lib/node_modules/npm
@@ -474,8 +477,9 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-policy-result,required=false \
+    set -eu; \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
-    || { echo "Error: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.9.2)."; exit 1; }; \
+    || { echo "Error: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.10.5)."; exit 1; }; \
     OPENCLAW_MIN_VERSION=$(grep -m 1 'min_openclaw_version' /tmp/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
     [ -n "$OPENCLAW_MIN_VERSION" ] \
     || { echo "Error: Could not parse min_openclaw_version from nemoclaw-blueprint/blueprint.yaml"; exit 1; }; \
@@ -489,11 +493,11 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     fi; \
     EXPECTED_INTEGRITY=""; \
     EXPECTED_TARBALL=""; \
-    if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_9_2_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_9_2_TARBALL"; fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.10.5" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_10_5_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_10_5_TARBALL"; fi; \
     if [ -z "$EXPECTED_INTEGRITY" ]; then \
         echo "Error: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin"; exit 1; \
     fi; \
-    OPENCLAW_LOCK_SHA256=9ab6ce3358a1f3858d7c64aa6156a9e22df498107a7727d945a1efcb99a69869; \
+    OPENCLAW_LOCK_SHA256=16b8c902f7760658e54ccc697a6ec7dbe38768e3fcd78876e1b8a1fd018c6a21; \
     ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
     [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
         || { echo "Error: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)"; exit 1; }; \
@@ -507,6 +511,8 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     npm --prefix /usr/local/lib/nemoclaw/openclaw-runtime ci \
         --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
         --userconfig /dev/null --registry https://registry.npmjs.org/; \
+    node /scripts/lib/remediate-openclaw-runtime-dependencies.mts \
+        --prefix /usr/local/lib/nemoclaw/openclaw-runtime; \
     node /scripts/lib/reviewed-npm-archive.mts \
         --verify-installed-lock --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
         --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
@@ -582,10 +588,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD node -e "process.exit(0)"
 
 # Keep future official plugin installs on the reviewed security versions.
-RUN if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-      node /scripts/lib/patch-openclaw-dependency-overrides.mts \
-        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw; \
-    fi
+RUN case "$OPENCLAW_VERSION" in \
+      2026.9.2|2026.10.5) node /scripts/lib/patch-openclaw-dependency-overrides.mts \
+        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw ;; \
+    esac
 
 # Keep /usr/local/bin/openclaw as the symlink into this .bin directory so its
 # real path remains a valid package-resolution anchor. The wrapper satisfies

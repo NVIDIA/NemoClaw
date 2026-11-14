@@ -581,7 +581,7 @@ export async function stopModelRouterForDestroyedSandbox(
         if (lookup.status === "unavailable") {
           warn(
             `Could not inspect the host process inventory for the Model Router on port ${port}. ` +
-              "Keeping its session recovery identity; inspect the port listener before the next Model Router onboarding.",
+              "Keeping its session recovery identity; inspect the port listener before retrying cleanup.",
           );
           return;
         }
@@ -590,7 +590,7 @@ export async function stopModelRouterForDestroyedSandbox(
         } else if (await isResponsive(port, 1000)) {
           warn(
             `No Model Router process could be confirmed for responsive port ${port}. ` +
-              "Keeping its session recovery identity; inspect the port listener before the next Model Router onboarding.",
+              "Keeping its session recovery identity; inspect the port listener before retrying cleanup.",
           );
           return;
         }

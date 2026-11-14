@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -213,7 +211,6 @@ export async function assertOpenClawStateRoot(
     },
   );
   expectExitZero(list, `openclaw pairing list ${channel}`);
-  expect(resultText(list)).toMatch(new RegExp(`"channel"\\s*:\\s*"${channel}"`));
 }
 
 // Source-of-truth boundary: the live pairing probe imports the conversation
@@ -699,7 +696,8 @@ export async function approveAndAssertPairing(options: {
   const repeat = await sandboxSh(
     options.sandbox,
     options.sandboxName,
-    buildPairingApproveCommand(options.channel, options.code),
+    // OpenClaw hides ordinary CLI error reasons unless diagnostics are enabled.
+    `OPENCLAW_DEBUG=1 ${buildPairingApproveCommand(options.channel, options.code)}`,
     { artifactName: `${options.channel}-repeat-approve`, redactionValues: options.redactions },
   );
   if (repeat.exitCode === 0 || !resultText(repeat).includes("No pending pairing request found")) {

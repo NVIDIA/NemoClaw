@@ -4,12 +4,25 @@
 import type { SandboxClient } from "./clients/sandbox.ts";
 import type { ShellProbeResult } from "./shell-probe.ts";
 import { captureOpenClawContainerFailure } from "./openclaw-container-diagnostics.ts";
+import type { HostCliClient } from "./clients/host.ts";
 
-const LOG_PATHS = ["/tmp/nemoclaw-start.log", "/tmp/gateway.log", "/tmp/auto-pair.log"];
+const LOG_PATHS = [
+  "/tmp/nemoclaw-start.log",
+  "/tmp/gateway.log",
+  "/tmp/auto-pair.log",
+  "/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor",
+  "/tmp/nemoclaw-post-upgrade-doctor-ready",
+  "/tmp/nemoclaw-gateway-local",
+  "/tmp/nemoclaw-gateway.pid",
+];
 
 export function buildOpenClawOnboardDiagnosticsCommand(
   paths: readonly string[] = LOG_PATHS,
+  logLimitBytes: 16_384 | 131_072 = 16_384,
 ): string[] {
+  if (logLimitBytes !== 16_384 && logLimitBytes !== 131_072) {
+    throw new Error("Unsupported diagnostic log bound");
+  }
   return [
     "node",
     "-e",
@@ -22,7 +35,7 @@ for (const file of process.argv.slice(1)) {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || stat.nlink !== 1) throw new Error("unsafe log");
     // Do not split a credential before the host applies value redaction.
-    if (stat.size > 16384) {
+    if (stat.size > ${logLimitBytes}) {
       console.log(JSON.stringify({ file, uid: stat.uid, gid: stat.gid, mode: stat.mode & 511,
         size: stat.size, logOmitted: "size-limit" }));
       continue;
@@ -64,9 +77,13 @@ export async function captureOpenClawOnboardFailure(
     env: NodeJS.ProcessEnv;
     redactionValues: readonly string[];
     runtime?: Parameters<typeof captureOpenClawContainerFailure>[0];
+    host?: Pick<HostCliClient, "command">;
+    logLimitBytes?: 16_384 | 131_072;
   },
 ): Promise<void> {
   if (install.exitCode === 0) return;
+  const logLimitBytes = options.logLimitBytes ?? 16_384;
+  const logReader = buildOpenClawOnboardDiagnosticsCommand(LOG_PATHS, logLimitBytes);
   const probeOptions = {
     env: options.env,
     // The log reader serializes text as JSON; protect both representations.
@@ -77,7 +94,8 @@ export async function captureOpenClawOnboardFailure(
     ],
     timeoutMs: 15_000,
     killGraceMs: 1_000,
-    captureLimitBytes: 64 * 1024,
+    // Keep complete JSON values from every bounded file for credential redaction.
+    captureLimitBytes: logLimitBytes === 131_072 ? 8 * 1024 * 1024 : 1024 * 1024,
   };
   await Promise.allSettled([
     ...(options.runtime
@@ -87,7 +105,8 @@ export async function captureOpenClawOnboardFailure(
             options.sandboxName,
             options.artifactPrefix,
             probeOptions,
-            buildOpenClawOnboardDiagnosticsCommand(),
+            logReader,
+            options.host,
           ),
         ]
       : []),
@@ -104,7 +123,7 @@ export async function captureOpenClawOnboardFailure(
       }),
     ),
     Promise.resolve().then(() =>
-      sandbox.exec(options.sandboxName, buildOpenClawOnboardDiagnosticsCommand(), {
+      sandbox.exec(options.sandboxName, logReader, {
         ...probeOptions,
         artifactName: `${options.artifactPrefix}-failure-startup-logs`,
       }),

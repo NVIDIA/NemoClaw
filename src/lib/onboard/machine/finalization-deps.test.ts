@@ -31,6 +31,8 @@ import {
   settleOrdinaryOpenClawPairing,
 } from "./finalization-deps";
 
+import { observeAfterNativeStartup } from "../../../../test/helpers/native-startup-observation";
+
 const PAIRING_TARGET = {
   gatewayName: "nemoclaw",
   lifecycleGeneration: "generation-1",
@@ -226,6 +228,58 @@ describe("ordinary OpenClaw pairing settlement", () => {
 
     expect(scope.calls).toEqual(["warmup"]);
     expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+  });
+
+  it("waits for native startup before consuming the canonical pairing window (#12382)", async () => {
+    let now = 0;
+    let requested = false;
+    const scope = ordinaryPairingDeps({
+      getTarget: vi.fn(() => ({ ...PAIRING_TARGET, version: "2026.9.5" })),
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+      observePairing: vi.fn(
+        observeAfterNativeStartup(
+          () => now,
+          380_000,
+          () => (requested ? SETTLED : PAIRING_ONLY),
+          new Error("canonical device not published"),
+        ),
+      ),
+      runWarmup: vi.fn(() => {
+        requested = true;
+        now += WARMUP_TIMEOUT_MS;
+        return "request-issued" as const;
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(now).toBe(410_000);
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+  });
+
+  it("bounds missing canonical state after native startup without requesting pairing (#12382)", async () => {
+    let now = 0;
+    const scope = ordinaryPairingDeps({
+      getTarget: vi.fn(() => ({ ...PAIRING_TARGET, version: "2026.9.5" })),
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+      observePairing: vi.fn(() => {
+        throw new Error("startup never completed");
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "pairing-unavailable",
+    });
+    expect(now).toBe(390_000);
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
   });
 
   it("holds lifecycle then gateway-route ownership across the full settlement (#9844)", async () => {
@@ -578,6 +632,33 @@ describe("ordinary OpenClaw pairing settlement", () => {
 
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
   });
+
+  it.each(["startup-timeout", "startup-gateway-exited"] as const)(
+    "reports %s before treating missing canonical pairing as a pairing failure",
+    async (state) => {
+      const scope = ordinaryPairingDeps({
+        observePairing: vi.fn(() => {
+          throw new Error("not published");
+        }),
+        readWatcherStatus: vi.fn(() => ({
+          schemaVersion: 1 as const,
+          state,
+          watcherActive: false,
+        })),
+      });
+      await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+        kind: "incomplete",
+        reason: state,
+      });
+      expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+      expect(ordinaryOpenClawPairingIncompleteMessage("alpha", state)).toContain(
+        "nemoclaw alpha exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log",
+      );
+      expect(ordinaryOpenClawPairingIncompleteMessage("alpha", state)).toContain(
+        "nemoclaw alpha gateway restart",
+      );
+    },
+  );
 
   it("reports when the request producer never creates the exact upgrade (#10269)", async () => {
     const scope = ordinaryPairingDeps({ observePairing: vi.fn(() => PAIRING_ONLY) });
@@ -1149,24 +1230,27 @@ describe("finalization process-recovery refusal propagation", () => {
     );
   });
 
-  it("pauses before recovery when initial OpenClaw startup does not settle", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const recover = vi.fn();
-    vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
-      resolveOrdinaryOpenClawPairingTarget: () => ({ gatewayName: "nemoclaw" }),
-    } as never);
-    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
-      checkAndRecoverSandboxProcesses: recover,
-      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
-      waitForStartedNativeGatewayProcess: vi.fn(async () => false),
-    });
+  it.each([false, null])(
+    "pauses before recovery when initial OpenClaw startup is %s",
+    async (startup) => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const recover = vi.fn();
+      vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+        resolveOrdinaryOpenClawPairingTarget: () => ({ gatewayName: "nemoclaw" }),
+      } as never);
+      vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+        checkAndRecoverSandboxProcesses: recover,
+        waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+        waitForStartedNativeGatewayProcess: vi.fn(async () => startup),
+      });
 
-    await expect(
-      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
-    ).resolves.toBe(false);
-    expect(recover).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("startup did not settle"));
-  });
+      await expect(
+        finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+      ).resolves.toBe(false);
+      expect(recover).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("startup did not settle"));
+    },
+  );
 
   it("reports bounded redacted recovery failure details even in quiet onboarding", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});

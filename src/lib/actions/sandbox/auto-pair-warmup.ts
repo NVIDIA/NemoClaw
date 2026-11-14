@@ -47,6 +47,8 @@ export const WATCHER_STATUS_TIMEOUT_MS = 10_000;
 
 export type AutoPairWatcherState =
   | "running"
+  | "startup-timeout"
+  | "startup-gateway-exited"
   | "request-not-produced"
   | "request-observed"
   | "request-rejected"
@@ -128,7 +130,8 @@ import os
 import stat
 
 allowed_states = {
-    'running', 'request-not-produced', 'request-observed', 'request-rejected',
+    'running', 'startup-timeout', 'startup-gateway-exited',
+    'request-not-produced', 'request-observed', 'request-rejected',
     'approval-timeout', 'approval-failed', 'approval-completed',
     'canonical-settled', 'stopped',
 }
@@ -312,6 +315,8 @@ export function parseAutoPairWatcherStatus(output: string): AutoPairWatcherStatu
   const status = value as Record<string, unknown>;
   const states: readonly AutoPairWatcherState[] = [
     "running",
+    "startup-timeout",
+    "startup-gateway-exited",
     "request-not-produced",
     "request-observed",
     "request-rejected",

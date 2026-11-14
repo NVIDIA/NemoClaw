@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  rejectRetiredModelRouter,
+  rejectRetiredModelRouterSession,
+} from "../../../inference/provider-key/contract";
 import type { ModelSelectionProvenance } from "../../../domain/telemetry/provenance";
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import {
@@ -18,7 +22,6 @@ import {
   gatewayRouteIdentityConflictReasons,
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
-import { withModelRouterPortLifecycleLock } from "../../../inference/gateway-route-mutation-lock";
 import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-runtime-context";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../../inference/ollama/contract";
 import { OPENROUTER_PROVIDER_NAME } from "../../../inference/openrouter";
@@ -35,7 +38,6 @@ import {
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
-import { resolveModelRouterPort } from "../../model-router";
 import { promptOnboardConfigurationReview } from "../../prompt-helpers";
 import {
   describeIgnoredReasoningEffortEnv,
@@ -92,6 +94,38 @@ function selectedNativeInference(
   return nativeInference ?? { endpointUrl, credentialEnv };
 }
 
+async function resumeProviderReadiness<Gpu, Agent, Host>(
+  deps: ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"],
+  switchyard: boolean,
+  gatewayName: string,
+  provider: string | null,
+  credentialEnv: string | null,
+  selection: { sandboxName: string | null; endpointUrl: string | null },
+): ReturnType<typeof deps.ensureResumeProviderReady> {
+  return switchyard
+    ? { forceInferenceSetup: true, credentialEnv }
+    : deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv, undefined, selection);
+}
+
+function hydrateResumeProviderCredential<Gpu, Agent, Host>(
+  deps: ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"],
+  switchyard: boolean,
+  credentialEnv: string | null,
+) {
+  // Switchyard setup re-attests owned bindings or acquires fresh credentials itself.
+  return switchyard ? undefined : deps.hydrateCredentialEnv(credentialEnv);
+}
+
+function switchyardReservationResumeOptions(
+  configured: boolean,
+  resume: boolean,
+  session: Session | null,
+): Pick<ProviderInferenceSetupOptions, "resumeSwitchyardReservation"> {
+  return configured && resume && session?.steps?.sandbox?.status !== "complete"
+    ? { resumeSwitchyardReservation: true }
+    : {};
+}
+
 export interface ProviderInferenceSetupOptions {
   /** Validated policy retained before an authoritative rebuild deletes the source sandbox. */
   rebuildSandboxPolicyDocument?: string;
@@ -126,6 +160,8 @@ export interface ProviderInferenceSetupOptions {
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
   /** Onboard session that owns the route reservation this setup creates. */
   reservationSessionId?: string;
+  /** Recover only this session's unpublished Switchyard reservation after interruption. */
+  resumeSwitchyardReservation?: boolean;
   /** Keep a published source row intact until the sandbox create phase passes backup. */
   deferPublishedRouteReservation?: boolean;
   /** Explicit fresh recreation, with publication owned by the sandbox backup transaction. */
@@ -245,8 +281,6 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       gatewayName: string,
       operation: () => Promise<T> | T,
     ): Promise<T>;
-    withModelRouterPortLifecycleLock?<T>(port: number, operation: () => Promise<T> | T): Promise<T>;
-    getModelRouterPort?(): number;
     normalizeHermesAuthMethod(value: string | null | undefined): HermesAuthMethod | null;
     setupNim(
       gpu: Gpu,
@@ -349,21 +383,6 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       selection: NativeLocalResumeSelection,
     ): boolean;
     getSandboxRegistryEntry?(sandboxName: string): Partial<SandboxEntry> | null;
-    isRoutedInferenceProvider(provider: string): boolean;
-    reconcileModelRouter(): Promise<void>;
-    reupsertRoutedProvider(
-      gatewayName: string,
-      provider: string,
-      endpointUrl: string | null,
-      credentialEnv: string | null,
-    ):
-      | { ok: boolean; endpointUrl: string; message?: string; status?: number }
-      | Promise<{
-          ok: boolean;
-          endpointUrl: string;
-          message?: string;
-          status?: number;
-        }>;
     reserveSandboxInferenceRoute(
       sandboxName: string,
       route: {
@@ -613,8 +632,6 @@ function canResumeInferenceRoute(input: {
   // another sandbox on a reused gateway can own the same shared route.
   return (
     !input.needsBedrockRuntimeAdapter &&
-    // Reconcile the managed router and reverify its native profile on resume.
-    !(input.provider === "nvidia-router" && input.selectsNativeLocal) &&
     input.provider !== OPENROUTER_PROVIDER_NAME &&
     !input.hasHostLocalInference &&
     !input.forceProviderSelection &&
@@ -1453,11 +1470,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   constants,
   deps,
 }: ProviderInferenceStateOptions<Gpu, Agent, Host>): Promise<ProviderInferenceStateResult> {
+  rejectRetiredModelRouter(initial.provider);
+  if (resume) rejectRetiredModelRouterSession(session);
   // Parse the ambient request before provider selection, recovery, or route
   // mutation. Every provider must reject malformed input even though only a
   // compatible OpenAI Completions route can apply it.
   const reasoningEffortRequest = resolveReasoningEffortRequest(null, env);
   let model = initial.model;
+  // This can only force setup. The setup owner validates the routing transport before mutation.
+  const switchyardConfigured = Boolean(env.NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64);
   let modelSelectionProvenance = readModelSelectionProvenance(session?.modelSelectionProvenance);
   const provenanceUpdate = () =>
     providerModelProvenanceUpdate(modelSelectionProvenance, {
@@ -1686,11 +1707,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
       );
-      const recovery = await deps.ensureResumeProviderReady(
+      const recovery = await resumeProviderReadiness(
+        deps,
+        switchyardConfigured,
         gatewayName,
         provider,
         credentialEnv,
-        undefined,
         { sandboxName: reusableResumeSandboxName, endpointUrl },
       );
       forceInferenceSetup ||= recovery.forceInferenceSetup;
@@ -1722,7 +1744,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           "  [resume] Refreshing the gateway provider to match the required inference surface.",
         );
       }
-      const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
+      const hydratedCredential = hydrateResumeProviderCredential(
+        deps,
+        switchyardConfigured,
+        credentialEnv,
+      );
       // A retained OpenRouter gateway provider still owns the credential,
       // while the host adapter needs only its persisted authorization hash
       // to recover a stopped process. Do not export the gateway credential
@@ -2159,93 +2185,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           ? (reusableResumeSandboxName ?? (await deps.promptValidatedSandboxName(agent)))
           : null;
       if (resumeReservationName) sandboxName = resumeReservationName;
-      const routedInferenceProvider = deps.isRoutedInferenceProvider(provider);
-      if (routedInferenceProvider) {
-        // #4564: re-upsert the gateway provider with the sandbox-facing
-        // endpoint so a stale localhost base URL recorded by an earlier run is
-        // repaired on resume instead of surviving and breaking inference.local.
-        const withRouterPortLifecycleLock =
-          deps.withModelRouterPortLifecycleLock ?? withModelRouterPortLifecycleLock;
-        const getRouterPort = deps.getModelRouterPort ?? resolveModelRouterPort;
-        const routedRepair = await deps.withGatewayRouteMutationLock(gatewayName, () =>
-          withRouterPortLifecycleLock(getRouterPort(), async () => {
-            assertProviderInferenceRouteCompatible(
-              deps,
-              gatewayName,
-              sandboxName,
-              {
-                provider: selectedProvider,
-                model: selectedModel,
-                endpointUrl,
-                credentialEnv,
-                preferredInferenceApi,
-              },
-              usesNativeLocalSelection(
-                agentName(agent),
-                { provider: selectedProvider, endpointUrl },
-                Boolean(nimContainer),
-                preservesLegacyPiRoute(sandboxName, {
-                  provider: selectedProvider,
-                  model: selectedModel,
-                  endpointUrl,
-                }),
-              ),
-            );
-            try {
-              await deps.reconcileModelRouter();
-            } catch (err) {
-              deps.error(
-                `  ✗ Failed to reconcile model router: ${err instanceof Error ? err.message : String(err)}`,
-              );
-              deps.exitProcess(1);
-            }
-            const reupserted = await deps.reupsertRoutedProvider(
-              gatewayName,
-              selectedProvider,
-              endpointUrl,
-              credentialEnv,
-            );
-            const reservationEndpointSource = endpointSourceForCurrentUrl(
-              endpointSource,
-              reupserted.endpointUrl,
-              onboardEndpointUrl,
-            );
-            const reserved =
-              reupserted.ok && resumeReservationName
-                ? reserveRecoveredSandboxInferenceRoute(
-                    deps.reserveSandboxInferenceRoute,
-                    resumeReservationName,
-                    {
-                      provider: selectedProvider,
-                      model: selectedModel,
-                      endpointUrl: reupserted.endpointUrl,
-                      endpointSource: reservationEndpointSource,
-                      credentialEnv,
-                      preferredInferenceApi,
-                      gatewayName,
-                      reservationSessionId: session?.sessionId,
-                    },
-                  )
-                : null;
-            return { reupserted, reservationEndpointSource, reserved };
-          }),
-        );
-        const { reupserted, reservationEndpointSource, reserved } = routedRepair;
-        if (!reupserted.ok) {
-          deps.error(
-            `  ${reupserted.message ?? "Failed to update the routed inference provider."}`,
-          );
-          deps.exitProcess(reupserted.status ?? 1);
-        }
-        if (reserved === false) {
-          deps.error(`  Failed to reserve inference route for sandbox '${resumeReservationName}'.`);
-          deps.exitProcess(1);
-        }
-        endpointUrl = reupserted.endpointUrl;
-        endpointSource = reservationEndpointSource;
-        if (endpointSource !== "onboard") onboardEndpointUrl = null;
-      }
-      if (resumeReservationName && !routedInferenceProvider) {
+      if (resumeReservationName) {
         const reserved = await deps.withGatewayRouteMutationLock(gatewayName, () => {
           assertProviderInferenceRouteCompatible(
             deps,
@@ -2441,7 +2381,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
-        ...(freshManagedOllama ? { reservationSessionId: session?.sessionId } : {}),
+        ...(freshManagedOllama || switchyardConfigured
+          ? { reservationSessionId: session?.sessionId }
+          : {}),
+        ...switchyardReservationResumeOptions(switchyardConfigured, effectiveResume, session),
         ...(fresh && !effectiveResume && recreateSandbox
           ? { recreatePublishedSandbox: true, reservationSessionId: session?.sessionId }
           : {}),

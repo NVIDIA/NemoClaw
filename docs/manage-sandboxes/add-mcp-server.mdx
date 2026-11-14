@@ -59,6 +59,8 @@ Load real values from an approved secret manager or masked prompt so the credent
 NemoClaw writes only the variable name as an OpenShell resolver placeholder in agent-native MCP configuration.
 OpenShell resolves the placeholder at egress.
 
+During `mcp add`, NemoClaw reports when it opens the route policy, binds the credential, waits for credential synchronization, and registers the server with the agent.
+Credential synchronization is required even with `--no-probe`.
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.
 

@@ -1,0 +1,11 @@
+// Exact published OpenClaw 2026.10.5 excerpts; source commit 1b58cb9a1b4f4353e1add63c8506db4d890962e8.
+async function agentViaGatewayCommand(opts, runtime, signalBridge, runContext) {
+const { modelOverride, body, remoteGateway } = opts;
+	const needsAdminGatewayIdentity = Boolean(modelOverride) || isSessionResetCommand(body);
+	const gatewayIdentity = {
+		clientName: needsAdminGatewayIdentity ? GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT : GATEWAY_CLIENT_NAMES.CLI,
+		mode: needsAdminGatewayIdentity ? GATEWAY_CLIENT_MODES.BACKEND : GATEWAY_CLIENT_MODES.CLI,
+		...needsAdminGatewayIdentity || !remoteGateway ? { scopes: [ADMIN_SCOPE] } : {}
+	};
+return gatewayIdentity;
+}
