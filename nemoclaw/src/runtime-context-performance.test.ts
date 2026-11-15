@@ -91,8 +91,13 @@ it.each([
       prompt: `Search ${"README.md and ".repeat(256)}package.json`,
     },
     {
-      name: "denies a long prompt when one window exhausts parsing",
+      name: "rejects a long prompt with a nested target above the window limit",
       prompt: `${longSetupPrompt}Search ${nestedLocalTarget}`,
+    },
+    {
+      // About 800 characters: it fits one window, so only the work budget can stop it.
+      name: "denies a long prompt when one window exhausts parsing",
+      prompt: `${longSetupPrompt}Search ${"a.md, ".repeat(160)}README.md`,
     },
   ].map((row) => ({ ...row, expected: { scope: "external", local: false, urls: [] } })),
   ...[
@@ -126,6 +131,10 @@ it.each([
       prompt: longSetupPrompt,
     },
     {
+      name: "retains lines at the window limit without counting their line breaks",
+      prompt: ("Read README.md".padEnd(1024) + "\n").repeat(5),
+    },
+    {
       name: "retains local work in a prompt near the total input length limit",
       prompt: "Read README.md.\n".repeat(1024),
     },
@@ -134,6 +143,19 @@ it.each([
     name: "retains missing prompt handling at the input length limit",
     prompt: " ".repeat(4096),
     expected: { scope: "missing", local: false, urls: [] },
+  },
+  {
+    // The window boundary falls between the instruction and its indented URL.
+    name: "keeps an indented URL with its instruction in a long prompt",
+    prompt:
+      "Read README.md.\n".repeat(60) +
+      "Browse the web using web_fetch at this URL:\n  HTTPS://example.org/guide",
+    expected: { scope: "supplied", local: true, urls: ["HTTPS://example.org/guide"] },
+  },
+  {
+    name: "rejects a long line break run that would form its own window",
+    prompt: `${longSetupPrompt}Read README.md.${"\n".repeat(1025)}Read README.md.`,
+    expected: { scope: "external", local: false, urls: [] },
   },
   {
     name: "retains shallow diagnostic causes",

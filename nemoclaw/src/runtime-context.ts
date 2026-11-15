@@ -130,9 +130,11 @@ const LOCAL_TARGET_WORK_LIMIT = 128;
 const SEARCH_PROMPT_LENGTH_LIMIT = 4096;
 const SEARCH_PROMPT_TOTAL_LIMIT = 16384;
 const SEARCH_PROMPT_WINDOW_TARGET = 1024;
-// Sentence and line ends are already request boundaries. Keep a colon-newline
-// before a URL together, because the classifier joins that pair into one request.
-const PROMPT_BOUNDARY = /(?:(?<=[.!?])\s+|\n+)(?!https?:\/\/)/gu;
+// Sentence and line ends are already request boundaries. A boundary whose
+// whitespace leads straight to a URL stays inside its window, because the
+// classifier joins a colon, line break and indented URL into one request.
+const PROMPT_BOUNDARY = /(?<=[.!?])\s+|\n+/gu;
+const URL_AFTER_WHITESPACE = /\s*https?:\/\//iuy;
 const LOCAL_TARGET_BUDGET_EXHAUSTED = new Error("Local target parsing budget exhausted");
 const TARGET_PREFIX =
   /^(?:(?:for|through|out|which|what|why|how|many|of|all|any|some|each|every|both|the|this|that|these|those|our|my|your|a|an|top|current|latest|recent|last|active|today['’]s|largest|biggest|smallest|oldest|newest|duplicate|empty|hidden|temporary|recently|modified|unused|dead|unreachable|missing|unresolved|undefined|deprecated|broken|failing|failed|existing|TODO|FIXME|HACK|XXX|and|or|\d+)\s+)+/iu;
@@ -560,18 +562,24 @@ function searchPromptWindows(prompt: string): string[] | undefined {
     if (current) windows.push(current);
     current = "";
   };
-  const add = (end: number): boolean => {
+  // The limit applies to a sentence or line without its boundary separator, and
+  // separately to the separator, so one long whitespace run cannot form a window.
+  const add = (contentEnd: number, end: number): boolean => {
     const piece = prompt.slice(start, end);
+    const contentLength = contentEnd - start;
     start = end;
-    if (piece.length > pieceLimit) return false;
+    if (contentLength > pieceLimit || piece.length - contentLength > pieceLimit) return false;
     if (current && current.length + piece.length > SEARCH_PROMPT_WINDOW_TARGET) flush();
     current += piece;
     return true;
   };
   for (const { index, 0: separator } of prompt.matchAll(PROMPT_BOUNDARY)) {
-    if (!add(index + separator.length)) return undefined;
+    const end = index + separator.length;
+    URL_AFTER_WHITESPACE.lastIndex = end;
+    if (URL_AFTER_WHITESPACE.test(prompt)) continue;
+    if (!add(index, end)) return undefined;
   }
-  if (!add(prompt.length)) return undefined;
+  if (!add(prompt.length, prompt.length)) return undefined;
   flush();
   return windows;
 }

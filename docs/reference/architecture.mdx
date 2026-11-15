@@ -253,7 +253,7 @@ For a filename with spaces, quote an explicit path such as `"./my folder/report.
 The classifier splits a prompt at sentence and line ends and parses it in windows of about 1,024 UTF-16 code units.
 Each window shares one work budget across its clauses and relationships between local resources, so a long setup prompt that only reads and writes files keeps its tools.
 A prompt of up to 4,096 code units may contain a single sentence or line of that length.
-A longer prompt must break into sentences or lines of at most 1,024 code units, and no prompt may exceed 16,384 code units.
+A longer prompt must break into sentences or lines of at most 1,024 code units, not counting the line break or space that ends each one, and no prompt may exceed 16,384 code units.
 If any limit is exceeded while search is disabled, the whole turn loses tool access and supplied-source grants.
 Split an overly complex request into smaller turns before retrying.
 After a denied search attempt, tool interception permits `web_fetch` only for the recorded URLs, including wrapped calls.
