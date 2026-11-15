@@ -139,14 +139,16 @@ describe("Portable managed registry recovery", () => {
         stderr: `docker: Error response from daemon: IPAM error: requested ip address ${ip} is already allocated to container ID ${staleId}`,
       }) as SpawnResult;
 
-    // The probes must reach the verified socket and stay on the short host timeout.
-    const expectBoundedProbes = (probes: ProbeCall[], expected: string[]): void => {
-      const recovery = probes.filter(({ command }) => command === "holder" || command === "ps");
-      expect(recovery.map(({ command }) => command)).toEqual(expected);
-      expect(recovery.map(({ dockerHost }) => dockerHost)).toEqual(
-        expected.map(() => "unix:///run/user/1001/podman/podman.sock"),
-      );
-      expect(recovery.map(({ timeoutMs }) => timeoutMs)).toEqual(expected.map(() => 30_000));
+    // The probe must reach the verified socket and stay on the short host timeout.
+    const expectBoundedProbe = (probes: ProbeCall[]): void => {
+      const holderProbes = probes.filter(({ command }) => command === "holder");
+      expect(holderProbes).toEqual([
+        {
+          command: "holder",
+          dockerHost: "unix:///run/user/1001/podman/podman.sock",
+          timeoutMs: 30_000,
+        },
+      ]);
     };
 
     // Commands shown to the user must reach the verified socket, not their ambient Docker.
@@ -157,10 +159,9 @@ describe("Portable managed registry recovery", () => {
 
     function startRegistry(
       holder: SpawnResult,
-      containers: SpawnResult = result(0, ""),
       refusal: SpawnResult = ipamRefusal(),
       registry: SpawnResult = result(1),
-      driftAt = "",
+      socketChangesDuringProbe = false,
     ): { message: string; commands: string[][]; probes: ProbeCall[] } {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
       tempDirs.push(home);
@@ -172,20 +173,19 @@ describe("Portable managed registry recovery", () => {
           commands.push([...args]);
           const command = args[0] === "inspect" && args.includes(staleId) ? "holder" : args[0]!;
           probes.push({ command, dockerHost: env.DOCKER_HOST, timeoutMs });
-          socketChanged = socketChanged || command === driftAt;
+          socketChanged = socketChanged || (command === "holder" && socketChangesDuringProbe);
           const responses: Record<string, SpawnResult> = {
             run: refusal,
             // A registry that is connected to no address yet needs `network connect`.
             network: refusal,
             holder,
             inspect: registry,
-            ps: containers,
           };
           return responses[command] ?? result();
         },
       );
       try {
-        // Fails once a probe has run against a replaced socket.
+        // Fails once the probe has run against a replaced socket.
         prepare(home, docker, () => expect(socketChanged).toBe(false));
       } catch (error) {
         return { message: (error as Error).message, commands, probes };
@@ -193,65 +193,27 @@ describe("Portable managed registry recovery", () => {
       throw new Error("expected the registry start to fail");
     }
 
-    const names = (...containerNames: string[]): SpawnResult =>
-      result(0, containerNames.map((name) => `${name}\n`).join(""));
-
-    it("names the orphaned record and the file that holds it", () => {
+    it("names the orphaned record and points to a reboot, not a file deletion", () => {
       const { message, commands, probes } = startRegistry(noSuchObject());
 
-      expectBoundedProbes(probes, ["holder", "ps"]);
+      expectBoundedProbe(probes);
       expect(message).toContain("Starting the managed portable registry failed");
       expect(message).toContain(
         `requested ip address ${PORTABLE_REGISTRY_IP} is already allocated`,
       );
       expect(message).toContain(`${staleId}, but that container no longer exists`);
-      expect(message).toContain("rm '/run/user/1001/containers/networks/ipam.db'");
-      expect(message).toContain("none other exists now");
+      expect(message).toContain("Reboot the host to clear it");
       expect(message).toContain("nemoclaw onboard --experimental-profile portable");
-      expect(commands.find(([command]) => command === "ps")).toEqual([
-        "ps",
-        "--all",
-        "--format",
-        "{{.Names}}",
-      ]);
+      expect(message).not.toContain("ipam.db");
+      expect(message).not.toMatch(/`(?:podman[^`]*)? ?rm /u);
       expect(commands.filter(([command]) => command === "run")).toHaveLength(1);
-      expect(commands.some(([command]) => command === "rm" || command === "network")).toBe(false);
-    });
-
-    it("offers the file removal when only the managed registry exists", () => {
-      const { message } = startRegistry(noSuchObject(), names("nemoclaw-portable-registry"));
-
-      expect(message).toContain("rm '/run/user/1001/containers/networks/ipam.db'");
-    });
-
-    it("does not offer the file removal while a container on another network exists", () => {
-      const { message, commands, probes } = startRegistry(
-        noSuchObject(),
-        names("unrelated-service"),
-      );
-
-      expectBoundedProbes(probes, ["holder", "ps"]);
-
-      expect(commands.find(([command]) => command === "ps")).not.toContain("--filter");
-      expect(message).toContain("Stop or remove all of them");
-      expect(message).toContain(`\`${podmanCommand} ps --all\``);
-      expect(message).not.toContain("`docker ");
-      expect(message).toContain("shared by every container of this user's Podman runtime");
-      expect(message).not.toContain("ipam.db");
-    });
-
-    it("does not offer the file removal when it cannot list the runtime's containers", () => {
-      const { message } = startRegistry(noSuchObject(), result(125));
-
-      expect(message).toContain("Stop or remove all of them");
-      expect(message).not.toContain("ipam.db");
+      expect(commands.some(([command]) => ["ps", "rm", "network"].includes(command))).toBe(false);
     });
 
     it("points at the live container when one still holds the address", () => {
       const { message, probes } = startRegistry(result(0, staleId));
 
-      expectBoundedProbes(probes, ["holder"]);
-
+      expectBoundedProbe(probes);
       expect(message).toContain(`held by container ${staleId}, which still exists`);
       expect(message).toContain(`\`${podmanCommand} inspect ${staleId}\``);
       expect(message).toContain(`\`${podmanCommand} rm -f ${staleId}\``);
@@ -259,65 +221,39 @@ describe("Portable managed registry recovery", () => {
       expect(message).not.toContain("ipam.db");
     });
 
-    it.each([
-      ["inspecting the holder", "holder"],
-      ["listing the runtime's containers", "ps"],
-    ])(
-      "reports a changed Podman socket and gives no recovery commands while %s",
-      (_case, driftAt) => {
-        const { message, commands, probes } = startRegistry(
-          noSuchObject(),
-          result(0, ""),
-          ipamRefusal(),
-          result(1),
-          driftAt,
-        );
+    it("reports a changed Podman socket and gives no recovery commands", () => {
+      const { message, probes } = startRegistry(noSuchObject(), ipamRefusal(), result(1), true);
 
-        expectBoundedProbes(probes, driftAt === "ps" ? ["holder", "ps"] : ["holder"]);
+      expectBoundedProbe(probes);
+      expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
+      expect(message).toContain("The verified Podman socket changed");
+      expect(message).toContain("Make sure the Podman runtime is stable, then rerun");
+      expect(message).toContain("nemoclaw onboard --experimental-profile portable");
+      expect(message).not.toContain("Reboot the host");
+      expect(message).not.toContain("`podman ");
+    });
 
-        expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
-        expect(message).toContain("The verified Podman socket changed");
-        expect(message).toContain("Make sure the Podman runtime is stable, then rerun");
-        expect(message).toContain("nemoclaw onboard --experimental-profile portable");
-        expect(message).not.toContain("ipam.db");
-        expect(message).not.toContain("`podman ");
-        expect(commands.some(([command]) => command === "ps")).toBe(driftAt === "ps");
-      },
-    );
-
-    const timedOut = (): SpawnResult =>
-      ({
+    it("keeps the raw error when the holder probe times out", () => {
+      const timedOut = {
         status: null,
         stdout: "",
         stderr: "",
         error: Object.assign(new Error("spawnSync docker ETIMEDOUT"), { code: "ETIMEDOUT" }),
-      }) as unknown as SpawnResult;
+      } as unknown as SpawnResult;
+      const { message, probes } = startRegistry(timedOut);
 
-    it("keeps the raw error and skips the inventory when the holder probe times out", () => {
-      const { message, probes } = startRegistry(timedOut());
-
-      expectBoundedProbes(probes, ["holder"]);
+      expectBoundedProbe(probes);
       expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
-      expect(message).not.toContain("ipam.db");
       expect(message).not.toContain("\n");
-    });
-
-    it("does not offer the file removal when the inventory probe times out", () => {
-      const { message, probes } = startRegistry(noSuchObject(), timedOut());
-
-      expectBoundedProbes(probes, ["holder", "ps"]);
-      expect(message).toContain("Stop or remove all of them");
-      expect(message).not.toContain("ipam.db");
     });
 
     it.each([
       ["a different address", ipamRefusal("10.87.0.9"), noSuchObject()],
       ["an inspection that cannot show the container is gone", ipamRefusal(), result(125)],
     ])("keeps the raw error for %s", (_case, refusal, holder) => {
-      const { message } = startRegistry(holder as SpawnResult, result(0, ""), refusal);
+      const { message } = startRegistry(holder as SpawnResult, refusal);
 
       expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
-      expect(message).not.toContain("ipam.db");
       expect(message).not.toContain("\n");
     });
 
@@ -327,7 +263,6 @@ describe("Portable managed registry recovery", () => {
       it("explains the stale address from the network connect refusal", () => {
         const { message, commands } = startRegistry(
           noSuchObject(),
-          result(0, ""),
           ipamRefusal(),
           connectedToNothing,
         );
@@ -336,7 +271,8 @@ describe("Portable managed registry recovery", () => {
           "Connecting the managed portable registry to the sandbox network failed",
         );
         expect(message).toContain(`${staleId}, but that container no longer exists`);
-        expect(message).toContain("rm '/run/user/1001/containers/networks/ipam.db'");
+        expect(message).toContain("Reboot the host to clear it");
+        expect(message).not.toContain("ipam.db");
         expect(commands.filter(([command]) => command === "network")).toEqual([
           [
             "network",
@@ -350,30 +286,12 @@ describe("Portable managed registry recovery", () => {
         expect(commands.some(([command]) => command === "rm" || command === "run")).toBe(false);
       });
 
-      it("does not offer the file removal while that registry is still running", () => {
-        const { message } = startRegistry(
-          noSuchObject(),
-          names("nemoclaw-portable-registry"),
-          ipamRefusal(),
-          connectedToNothing,
-        );
-
-        expect(message).toContain("Stop or remove all of them");
-        expect(message).not.toContain("ipam.db");
-      });
-
       it("keeps the raw error when the holder cannot be inspected", () => {
-        const { message } = startRegistry(
-          result(125),
-          result(0, ""),
-          ipamRefusal(),
-          connectedToNothing,
-        );
+        const { message } = startRegistry(result(125), ipamRefusal(), connectedToNothing);
 
         expect(message).toMatch(
           /^Connecting the managed portable registry to the sandbox network failed: docker: /u,
         );
-        expect(message).not.toContain("ipam.db");
       });
     });
   });

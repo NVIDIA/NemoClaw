@@ -719,9 +719,10 @@ function registryInspectionArgs(networkName: string): readonly string[] {
  * Podman's netavark backend records each address it hands out in a database
  * under the user runtime directory. An interrupted run can leave a record
  * behind for a container that no longer exists, and the fixed registry address
- * then stays unavailable until the record is cleared (#11409). NemoClaw does
- * not edit Podman's state, so it confirms the record is orphaned and names the
- * step the user can take.
+ * then stays unavailable until the record is cleared (#11409). Podman owns
+ * that shared state and NemoClaw cannot lock it, so the message only confirms
+ * that the holder is gone and points to a reboot; it never offers to delete
+ * the database.
  */
 function staleRegistryAddressError(
   detail: string,
@@ -729,8 +730,6 @@ function staleRegistryAddressError(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
   networkName: string,
-  runtimeDir: string,
-  registryMayRun: boolean,
   assertSocketAuthority: () => void,
   dockerHost: string,
 ): Error | null {
@@ -742,10 +741,10 @@ function staleRegistryAddressError(
   const podmanCommand = `podman --url ${quoteRecoveryArgument(dockerHost)}`;
   const raw = `${description} failed: ${detail}`;
 
-  // Both probes need the verified Podman socket. If it changed, their output
-  // is untrusted: say so and give no recovery commands. They run after a
-  // registry command already failed, so they use the short host timeout and
-  // cannot hold the error back for the registry's five minutes each.
+  // The probe needs the verified Podman socket. If it changed, its output is
+  // untrusted: say so and give no recovery commands. It runs after a registry
+  // command already failed, so it uses the short host timeout and cannot hold
+  // the error back for the registry's five minutes.
   const socketChanged = (): Error =>
     new Error(
       `${raw}\nThe verified Podman socket changed while NemoClaw was checking address ${PORTABLE_REGISTRY_IP}, so it cannot say how to recover. ` +
@@ -775,25 +774,11 @@ function staleRegistryAddressError(
   }
   if (holder.error || !NO_SUCH_CONTAINER_PATTERN.test(commandDetail(holder))) return null;
 
-  // The record file is shared by every network of this user's Podman runtime,
-  // so the whole runtime must be idle before the message offers to remove it.
-  // After a failed start, the managed registry is a stopped container that the
-  // next run recreates, so it does not count. While connecting an existing
-  // registry it may be running, so it does.
-  const inventory = probe(["ps", "--all", "--format", "{{.Names}}"]);
-  if (!inventory) return socketChanged();
-  const otherContainers = String(inventory.stdout ?? "")
-    .split(/\r?\n/u)
-    .filter((name) => name && (registryMayRun || name !== REGISTRY_CONTAINER));
-  const runtimeIdle = inventory.status === 0 && !inventory.error && otherContainers.length === 0;
-  const allocationRecord = path.join(runtimeDir, "containers", "networks", "ipam.db");
-  const recovery = runtimeIdle
-    ? `The record file is shared by every container of this user's Podman runtime, and none other exists now. Remove it with \`rm ${quoteRecoveryArgument(allocationRecord)}\`, or reboot the host.`
-    : `The record file is shared by every container of this user's Podman runtime, so it is not safe to clear while other containers exist or while they cannot be listed. Stop or remove all of them (\`${podmanCommand} ps --all\` lists them), or reboot the host, then rerun.`;
   return new Error(
     `${raw}\nAddress ${PORTABLE_REGISTRY_IP} on network '${networkName}' is still reserved for container ${containerId}, but that container no longer exists. ` +
       `An interrupted earlier run likely left Podman's address record behind, and restarting the container service does not clear it. ` +
-      `${recovery} Then rerun ${rerun}.`,
+      `Podman keeps that record in state shared by every container of this user, so NemoClaw does not suggest deleting it. ` +
+      `Reboot the host to clear it, then rerun ${rerun}.`,
   );
 }
 
@@ -801,15 +786,10 @@ function ensureRegistryContainer(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
   networkName: string,
-  runtimeDir: string,
   assertSocketAuthority: () => void,
   dockerHost: string,
 ): void {
-  const requireRegistryCommand = (
-    result: SpawnResult,
-    description: string,
-    registryMayRun: boolean,
-  ): void => {
+  const requireRegistryCommand = (result: SpawnResult, description: string): void => {
     if (result.status === 0 && !result.error) return;
     throw (
       staleRegistryAddressError(
@@ -818,8 +798,6 @@ function ensureRegistryContainer(
         env,
         docker,
         networkName,
-        runtimeDir,
-        registryMayRun,
         assertSocketAuthority,
         dockerHost,
       ) ?? new Error(`${description} failed: ${commandDetail(result)}`)
@@ -852,7 +830,6 @@ function ensureRegistryContainer(
         env,
       ),
       "Connecting the managed portable registry to the sandbox network",
-      true,
     );
     return;
   }
@@ -883,7 +860,6 @@ function ensureRegistryContainer(
       env,
     ),
     "Starting the managed portable registry",
-    false,
   );
 }
 
@@ -1115,7 +1091,6 @@ export function preparePortableExperimentalHost(
     podmanEnv,
     docker,
     dockerNetworkName,
-    runtimeDir,
     assertVerifiedSocketAuthority,
     dockerHost,
   );
