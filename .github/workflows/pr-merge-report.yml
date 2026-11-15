@@ -6,7 +6,6 @@ on:
     paths:
       - tools/ci/pr-merge-report*.rs
       - .github/workflows/pr-merge-report.yml
-  # GitHub reads this file from the PR's base branch. Keep it identical on each branch listed here.
   pull_request_target:
     branches: [main, v1]
     types: [closed]
