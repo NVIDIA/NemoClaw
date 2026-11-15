@@ -40,9 +40,10 @@ persistence. Compile only that revision's reporter and never run PR code. Pass
 `GH_TOKEN` to API steps with the declared job permissions.
 
 Validation covers metadata, rejected parents and events, API refusal,
-publication readback, failure retention, and recovery. Hosted acceptance follows
-installation; fixtures cannot establish GitHub event delivery, effective token
-permissions, or the real checkout action.
+publication readback, failure retention, and recovery. The
+[post-installation observation](#post-installation-observation) closes #14163
+after this change merges. It is not validation of the change that installs the
+workflow.
 
 ## Local evidence
 
@@ -89,25 +90,28 @@ Repair and review-follow-up counts require a forward step in the retained PR
 commit order. A retry on an older SHA does not increase either count. Access
 failures, other API failures and missing merged PR revisions stop reporting.
 
-These tests cannot prove GitHub event selection, effective token permissions or
-the real checkout action. The `report` job owns that live boundary. It runs on
+These tests do not run GitHub event selection, effective token permissions or
+the real checkout action. The `report` job runs on
 a merged `pull_request_target` closed event, verifies the trusted checkout,
 posts with the workflow token, compares the opening report before and after,
 and verifies one bot report for the merged head. Each attempt invokes the
 reporter once. A posting failure remains a job failure while summary and
 artifact retention still run.
 
-## Hosted acceptance
+## Post-installation observation
 
-After installation, the covering scenario is an approved contribution from a
-fork that changes `tools/ci/pr-merge-report.rs` and merges through normal review.
-This document does not authorize creating or merging a qualification PR.
-The installation merge itself skips reporting when its selected revision lacks the helper.
+This procedure closes #14163 after the workflow is on the default branch. It
+cannot run before that merge, so it does not validate this change, and the
+runtime E2E inventory has no selector for it. The scenario is an approved
+contribution from a fork that changes `tools/ci/pr-merge-report.rs` and merges
+through normal review. This document does not authorize creating or merging a
+qualification PR. The installation merge itself skips reporting when its selected
+revision lacks the helper.
 
-For the covering scenario, inspect the real workflow run and its artifact.
+Inspect the real workflow run and its artifact.
 The name is `merge-outcomes-` followed by the run attempt, such as
-`merge-outcomes-1`. Require all of the following and the permitted-rerun
-recovery observation below before recording acceptance:
+`merge-outcomes-1`. Record all of the following and the permitted-rerun
+recovery observation below when closing #14163:
 
 - The run uses the installed workflow revision and the merged fork PR's closed
   event. The parent-association check passes before checkout. The checked-in
@@ -139,9 +143,9 @@ recovery observation below before recording acceptance:
 
 Record the workflow run URL, attempt, installed `workflow_revision`,
 `reporter_revision`, `reporter_blob`, PR head SHA, comment URL and artifact URL.
-These fields bind the evidence to the installed implementation. Keep a failed
-or missing observation pending; a checked-in scenario or fixture pass is not a
-hosted acceptance receipt. A changed workflow or reporter needs fresh evidence.
+These fields bind the evidence to the installed implementation. Leave #14163
+open while an observation is failed or missing. A fixture pass is not a hosted
+receipt. A changed workflow or reporter needs a fresh observation.
 
 Keep readback API failure injection in fixtures. For a live publication failure,
 retain the run and any generated report. Then inspect the bot comment. If
@@ -153,10 +157,10 @@ An allowed retry regenerates the report. For an existing bot report, recovery
 requires exactly one copy matching the intended published body, including
 truncation. A mismatch or duplicate stops recovery without posting or editing.
 
-Verify hosted duplicate recovery through one separately authorized report-job
+Observe duplicate recovery through one separately authorized report-job
 rerun. Record the bot report's ID and body, the opening comments, and the prior
 artifact before the rerun. Require unchanged comments afterward, one merge
 report, and an unchanged prior artifact. The rerun's artifact must contain its
-report and revision-bound receipt. If no rerun is permitted or observed, keep
-this recovery observation pending. The ordinary report job does not invoke the
+report and revision-bound receipt. If no rerun is permitted or observed, this
+recovery observation stays pending. The ordinary report job does not invoke the
 reporter a second time to produce this evidence.
