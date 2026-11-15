@@ -25,8 +25,12 @@ Agents and interfaces:
   See [service exposure](../agents-inference/interfaces.md#expose-a-service-through-the-gateway).
 - Plan and apply list each agent's runtime ID and `fabric-agent-ctl invoke` command under **Agents**, and as `agents` in JSON results.
   See [invoking an agent](../agents-inference/interfaces.md#invoke-an-agent).
-- OpenClaw and Hermes keep their native state in `/sandbox/artifacts/.fabric/state/<adapter id>/<agent name>`, which every runtime of the agent uses, so their interface tokens moved there.
+- Hermes keeps its native state in `/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/<agent name>`, which every runtime of the agent uses, so its interface tokens moved there.
+  OpenClaw's native state stays in a temporary directory that its runtime removes at stop.
   See [agent files](../build-deploy/state.md#agent-files).
+- `skills.directories` lists a folder of skills or one skill per entry for OpenClaw and Hermes, `skills.duplicates: reject` stops the agent's start when two of those skills share a name, and `skills.bundled` selects the harness's own skills.
+  In hand-written HCL, `fabric_agent`'s `skills` block takes them as `directories` blocks, `duplicates`, and a `bundled` block.
+  See [skills on a mounted volume](../agents-inference/agents.md#skills-on-a-mounted-volume).
 - The Hermes image includes the API server, dashboard, and browser chat dependencies, and the Switchyard Relay plugin.
 - Apply restarts an agent runtime that stopped in an unchanged sandbox.
 - OpenClaw's startup has one 60-second deadline, instead of 30 seconds for each step.
@@ -114,9 +118,9 @@ Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents
 - A vLLM recipe whose `compatibility.gpu` belongs to no hardware profile's GPU family no longer parses.
 - Plan rejects `maxTokens`, `temperature`, and `topP` when the image's adapter doesn't accept them; see [OpenClaw route tuning](../agents-inference/inference.md#tune-openclaws-primary-route).
 - Hermes's `max_tokens` setting no longer defaults to 512, so Hermes uses its own response-token limit.
-- In `skills.paths` for OpenClaw and Hermes, a folder with a `SKILL.md` is one skill, and otherwise each direct subfolder with one is a skill.
-  A folder without skills adds none, and a missing path or a duplicate skill name fails the agent's start.
-  Hermes no longer loads skills more than one folder deep, and no longer skips a missing path.
+- `skills.paths` works as in `v0.1.0-rc9`: OpenClaw requires each path to hold `SKILL.md`, and Hermes passes each path to its `skills.external_dirs` unchecked.
+  Earlier v1 development builds also read an OpenClaw or Hermes path as a folder of skills and refused duplicate names; list such a folder as a `folder` entry in `skills.directories`, with `duplicates: reject` to keep refusing duplicate names.
+  OpenClaw agents in those builds also kept their native state in `/sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/<agent name>`; that folder is no longer used, and the dashboard token is again under the runtime's own folder.
   See [skills on a mounted volume](../agents-inference/agents.md#skills-on-a-mounted-volume).
 - An endpoint must begin with its scheme and `://`.
   Endpoints and service addresses can't name a cloud metadata host, such as `metadata` or `fd00:ec2::254`, or an IPv6 address that embeds an IPv4 address.

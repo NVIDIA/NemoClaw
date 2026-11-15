@@ -30,7 +30,9 @@ spec:
         kind: nvidia.fabric.hermes
         config:
           skills:
-            paths: [/sandbox/skills]
+            directories:
+              - folder: /sandbox/skills
+            duplicates: reject
       network:
         tier: isolated
       driverConfig:
