@@ -138,6 +138,9 @@ describe("Portable managed registry recovery", () => {
         stderr: `docker: Error response from daemon: IPAM error: requested ip address ${ip} is already allocated to container ID ${staleId}`,
       }) as SpawnResult;
 
+    // Commands shown to the user must reach the verified socket, not their ambient Docker.
+    const podmanCommand = "podman --url 'unix:///run/user/1001/podman/podman.sock'";
+
     const noSuchObject = (): SpawnResult =>
       ({ status: 1, stdout: "", stderr: `Error: No such object: ${staleId}` }) as SpawnResult;
 
@@ -210,6 +213,8 @@ describe("Portable managed registry recovery", () => {
 
       expect(commands.find(([command]) => command === "ps")).not.toContain("--filter");
       expect(message).toContain("Stop or remove all of them");
+      expect(message).toContain(`\`${podmanCommand} ps --all\``);
+      expect(message).not.toContain("`docker ");
       expect(message).toContain("shared by every container of this user's Podman runtime");
       expect(message).not.toContain("ipam.db");
     });
@@ -225,7 +230,9 @@ describe("Portable managed registry recovery", () => {
       const { message } = startRegistry(result(0, staleId));
 
       expect(message).toContain(`held by container ${staleId}, which still exists`);
-      expect(message).toContain(`docker rm -f ${staleId}`);
+      expect(message).toContain(`\`${podmanCommand} inspect ${staleId}\``);
+      expect(message).toContain(`\`${podmanCommand} rm -f ${staleId}\``);
+      expect(message).not.toContain("`docker ");
       expect(message).not.toContain("ipam.db");
     });
 

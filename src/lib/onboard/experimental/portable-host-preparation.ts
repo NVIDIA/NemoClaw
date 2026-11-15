@@ -732,11 +732,14 @@ function staleRegistryAddressError(
   runtimeDir: string,
   registryMayRun: boolean,
   assertSocketAuthority: () => void,
+  dockerHost: string,
 ): Error | null {
   const match = STALE_ADDRESS_PATTERN.exec(detail);
   if (!match || match[1] !== PORTABLE_REGISTRY_IP) return null;
   const containerId = match[2]!;
   const rerun = "`nemoclaw onboard --experimental-profile portable`";
+  // Commands for the user target the verified socket, not their ambient Docker.
+  const podmanCommand = `podman --url ${quoteRecoveryArgument(dockerHost)}`;
   const raw = `${description} failed: ${detail}`;
 
   // Both probes need the verified Podman socket. If it changed, their output
@@ -756,7 +759,7 @@ function staleRegistryAddressError(
   if (holder.status === 0 && !holder.error) {
     return new Error(
       `${raw}\nAddress ${PORTABLE_REGISTRY_IP} on network '${networkName}' is held by container ${containerId}, which still exists. ` +
-        `Inspect it with \`docker inspect ${containerId}\`. If it is not needed, remove it with \`docker rm -f ${containerId}\`. Then rerun ${rerun}.`,
+        `Inspect it with \`${podmanCommand} inspect ${containerId}\`. If it is not needed, remove it with \`${podmanCommand} rm -f ${containerId}\`. Then rerun ${rerun}.`,
     );
   }
   if (holder.error || !NO_SUCH_CONTAINER_PATTERN.test(commandDetail(holder))) return null;
@@ -775,7 +778,7 @@ function staleRegistryAddressError(
   const allocationRecord = path.join(runtimeDir, "containers", "networks", "ipam.db");
   const recovery = runtimeIdle
     ? `The record file is shared by every container of this user's Podman runtime, and none other exists now. Remove it with \`rm ${quoteRecoveryArgument(allocationRecord)}\`, or reboot the host.`
-    : `The record file is shared by every container of this user's Podman runtime, so it is not safe to clear while other containers exist or while they cannot be listed. Stop or remove all of them (\`docker ps --all\` lists them), or reboot the host, then rerun.`;
+    : `The record file is shared by every container of this user's Podman runtime, so it is not safe to clear while other containers exist or while they cannot be listed. Stop or remove all of them (\`${podmanCommand} ps --all\` lists them), or reboot the host, then rerun.`;
   return new Error(
     `${raw}\nAddress ${PORTABLE_REGISTRY_IP} on network '${networkName}' is still reserved for container ${containerId}, but that container no longer exists. ` +
       `An interrupted earlier run likely left Podman's address record behind, and restarting the container service does not clear it. ` +
@@ -789,6 +792,7 @@ function ensureRegistryContainer(
   networkName: string,
   runtimeDir: string,
   assertSocketAuthority: () => void,
+  dockerHost: string,
 ): void {
   const requireRegistryCommand = (
     result: SpawnResult,
@@ -806,6 +810,7 @@ function ensureRegistryContainer(
         runtimeDir,
         registryMayRun,
         assertSocketAuthority,
+        dockerHost,
       ) ?? new Error(`${description} failed: ${commandDetail(result)}`)
     );
   };
@@ -1101,6 +1106,7 @@ export function preparePortableExperimentalHost(
     dockerNetworkName,
     runtimeDir,
     assertVerifiedSocketAuthority,
+    dockerHost,
   );
   assertVerifiedSocketAuthority();
   return {
