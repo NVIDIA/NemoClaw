@@ -240,6 +240,23 @@ describe("launch readiness observation timing", () => {
     });
   });
 
+  it("names an unknown recorded agent when final validation refuses it (#12208)", async () => {
+    const currentDeps = publicationDeps(vi.fn(), (_name, _gateway, _port, _epoch, identity) =>
+      lease(identity),
+    );
+    const publication = publicationFromDecision(
+      SANDBOX,
+      await inspectLaunchReadiness(SANDBOX, currentDeps),
+    );
+    currentDeps.getSandbox = () => ({ ...entry(), agent: "missing-launch-agent" });
+
+    expect(await publishLaunchReadiness(publication, currentDeps)).toMatchObject({
+      kind: "validation-failed",
+      category: "config",
+      unknownAgent: "missing-launch-agent",
+    });
+  });
+
   it("never validates or publishes evidence without a fenced epoch (#8942)", async () => {
     const currentDeps = publicationDeps(vi.fn(), (_name, _gateway, _port, _epoch, identity) =>
       lease(identity),
