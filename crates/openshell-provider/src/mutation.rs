@@ -98,6 +98,11 @@ impl OpenShell {
     /// rejected, which never load one; the agent reports why. A sandbox loading
     /// its policy reads as incomplete only while it was just created, so a
     /// policy that differs from the declared one fails at once on an update.
+    ///
+    /// A failure to ask OpenShell for the phase (transport or authentication)
+    /// says nothing about the sandbox, so the wait goes on. If the phase is
+    /// still unavailable at the deadline, the readback fails, and the caller
+    /// records the sandbox as partial rather than complete without a hash.
     pub(super) async fn read_back_sandbox(
         &self,
         bound: &Row,
@@ -106,6 +111,7 @@ impl OpenShell {
         patience: Duration,
     ) -> Result<Option<Row>, ObservationError> {
         let deadline = tokio::time::Instant::now() + patience;
+        let mut unavailable = None;
         let observed = loop {
             let observed = self
                 .observe(
@@ -120,11 +126,26 @@ impl OpenShell {
                 Err(ObservationError::Incomplete) => created,
                 _ => false,
             };
-            if !loading
-                || tokio::time::Instant::now() >= deadline
-                || self.gateway.sandbox_phase(bound, true).await.is_err()
-            {
+            if !loading {
                 break observed;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                if let Some(error) = unavailable {
+                    return Err(nemoclaw_backend::Error::into_observation(error));
+                }
+                break observed;
+            }
+            match self.gateway.sandbox_phase(bound, true).await {
+                Ok(_) => unavailable = None,
+                // A sandbox that exited or whose configuration was rejected
+                // never loads a policy.
+                Err(
+                    nemoclaw_backend::Error::SandboxStartup { .. }
+                    | nemoclaw_backend::Error::Observation(
+                        ObservationError::SandboxConfigurationRejected { .. },
+                    ),
+                ) => break observed,
+                Err(error) => unavailable = Some(error),
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         };
