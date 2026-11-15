@@ -261,6 +261,18 @@ describe("Portable managed registry recovery", () => {
         expect(commands.some(([command]) => command === "rm" || command === "run")).toBe(false);
       });
 
+      it("does not offer the file removal while that registry is still running", () => {
+        const { message } = startRegistry(
+          noSuchObject(),
+          names("nemoclaw-portable-registry"),
+          ipamRefusal(),
+          connectedToNothing,
+        );
+
+        expect(message).toContain("Stop or remove all of them");
+        expect(message).not.toContain("ipam.db");
+      });
+
       it("keeps the raw error when the holder cannot be inspected", () => {
         const { message } = startRegistry(
           result(125),

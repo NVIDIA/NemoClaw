@@ -730,6 +730,7 @@ function staleRegistryAddressError(
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
   networkName: string,
   runtimeDir: string,
+  registryMayRun: boolean,
 ): Error | null {
   const match = STALE_ADDRESS_PATTERN.exec(detail);
   if (!match || match[1] !== PORTABLE_REGISTRY_IP) return null;
@@ -751,11 +752,13 @@ function staleRegistryAddressError(
 
   // The record file is shared by every network of this user's Podman runtime,
   // so the whole runtime must be idle before the message offers to remove it.
-  // The managed registry is NemoClaw's own and is recreated on the next run.
+  // After a failed start, the managed registry is a stopped container that the
+  // next run recreates, so it does not count. While connecting an existing
+  // registry it may be running, so it does.
   const inventory = docker(["ps", "--all", "--format", "{{.Names}}"], env);
   const otherContainers = String(inventory.stdout ?? "")
     .split(/\r?\n/u)
-    .filter((name) => name && name !== REGISTRY_CONTAINER);
+    .filter((name) => name && (registryMayRun || name !== REGISTRY_CONTAINER));
   const runtimeIdle = inventory.status === 0 && !inventory.error && otherContainers.length === 0;
   const allocationRecord = path.join(runtimeDir, "containers", "networks", "ipam.db");
   const recovery = runtimeIdle
@@ -774,7 +777,11 @@ function ensureRegistryContainer(
   networkName: string,
   runtimeDir: string,
 ): void {
-  const requireRegistryCommand = (result: SpawnResult, description: string): void => {
+  const requireRegistryCommand = (
+    result: SpawnResult,
+    description: string,
+    registryMayRun: boolean,
+  ): void => {
     if (result.status === 0 && !result.error) return;
     throw (
       staleRegistryAddressError(
@@ -784,6 +791,7 @@ function ensureRegistryContainer(
         docker,
         networkName,
         runtimeDir,
+        registryMayRun,
       ) ?? new Error(`${description} failed: ${commandDetail(result)}`)
     );
   };
@@ -814,6 +822,7 @@ function ensureRegistryContainer(
         env,
       ),
       "Connecting the managed portable registry to the sandbox network",
+      true,
     );
     return;
   }
@@ -844,6 +853,7 @@ function ensureRegistryContainer(
       env,
     ),
     "Starting the managed portable registry",
+    false,
   );
 }
 
