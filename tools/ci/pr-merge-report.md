@@ -12,14 +12,17 @@ failures and recovery.
 
 Maintainers need GitHub-derived outcomes beside the opening session report.
 Revision counts are observed because complete push history is unavailable.
-The default-branch workflow and helper under `tools/ci/` serve merged PRs into
-`main` and `v1`, including forks, without session access or PR-code execution.
+The workflow and helper under `tools/ci/` report merged PRs into `main` and
+`v1`, including forks, without session access or PR-code execution.
 
-The workflow trigger selects target branches. The reporter validates merged PR
-metadata without a separate branch allowlist.
+GitHub runs a `pull_request_target` workflow from the PR's base branch, so each
+target branch needs its own copy of the workflow and of the reporter. Keep the
+workflow file identical on both lines. Its trigger selects the target branches;
+the reporter validates merged PR metadata without a separate branch allowlist.
+This change installs both on `main`; `v1` reports start only after the same
+workflow file and reporter are installed there.
 
-Install the workflow on the default branch and the reporter on each target
-branch (`main` and `v1`). A merge whose selected revision lacks the reporter is skipped, so
+A merge whose selected revision lacks the reporter is skipped, so
 reporting starts with the next eligible merge into that branch. Each eligible PR
 gets one collapsed bot report. Runs serialize per PR and stop after 20 minutes.
 The workflow attempts to retain generated reports for 90 days. Failures before
