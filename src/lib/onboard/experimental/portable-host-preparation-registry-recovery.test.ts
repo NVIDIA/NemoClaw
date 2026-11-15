@@ -239,20 +239,26 @@ describe("Portable managed registry recovery", () => {
     it.each([
       ["inspecting the holder", "holder"],
       ["listing the runtime's containers", "ps"],
-    ])("keeps the raw error when the Podman socket changes while %s", (_case, driftAt) => {
-      const { message, commands } = startRegistry(
-        noSuchObject(),
-        result(0, ""),
-        ipamRefusal(),
-        result(1),
-        driftAt,
-      );
+    ])(
+      "reports a changed Podman socket and gives no recovery commands while %s",
+      (_case, driftAt) => {
+        const { message, commands } = startRegistry(
+          noSuchObject(),
+          result(0, ""),
+          ipamRefusal(),
+          result(1),
+          driftAt,
+        );
 
-      expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
-      expect(message).not.toContain("ipam.db");
-      expect(message).not.toContain("\n");
-      expect(commands.some(([command]) => command === "ps")).toBe(driftAt === "ps");
-    });
+        expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
+        expect(message).toContain("The verified Podman socket changed");
+        expect(message).toContain("Make sure the Podman runtime is stable, then rerun");
+        expect(message).toContain("nemoclaw onboard --experimental-profile portable");
+        expect(message).not.toContain("ipam.db");
+        expect(message).not.toContain("`podman ");
+        expect(commands.some(([command]) => command === "ps")).toBe(driftAt === "ps");
+      },
+    );
 
     it.each([
       ["a different address", ipamRefusal("10.87.0.9"), noSuchObject()],

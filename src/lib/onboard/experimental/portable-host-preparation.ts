@@ -743,19 +743,28 @@ function staleRegistryAddressError(
   const raw = `${description} failed: ${detail}`;
 
   // Both probes need the verified Podman socket. If it changed, their output
-  // is untrusted, so the caller keeps the raw error and no guidance is given.
+  // is untrusted: say so and give no recovery commands.
+  const socketChanged = (): Error =>
+    new Error(
+      `${raw}\nThe verified Podman socket changed while NemoClaw was checking address ${PORTABLE_REGISTRY_IP}, so it cannot say how to recover. ` +
+        `Make sure the Podman runtime is stable, then rerun ${rerun}.`,
+    );
   const probe = (args: readonly string[]): SpawnResult | null => {
     try {
       assertSocketAuthority();
-      const probed = docker(args, env);
-      assertSocketAuthority();
-      return probed;
     } catch {
       return null;
     }
+    const probed = docker(args, env);
+    try {
+      assertSocketAuthority();
+    } catch {
+      return null;
+    }
+    return probed;
   };
   const holder = probe(["inspect", "--type", "container", "--format", "{{.Id}}", containerId]);
-  if (!holder) return null;
+  if (!holder) return socketChanged();
   if (holder.status === 0 && !holder.error) {
     return new Error(
       `${raw}\nAddress ${PORTABLE_REGISTRY_IP} on network '${networkName}' is held by container ${containerId}, which still exists. ` +
@@ -770,7 +779,7 @@ function staleRegistryAddressError(
   // next run recreates, so it does not count. While connecting an existing
   // registry it may be running, so it does.
   const inventory = probe(["ps", "--all", "--format", "{{.Names}}"]);
-  if (!inventory) return null;
+  if (!inventory) return socketChanged();
   const otherContainers = String(inventory.stdout ?? "")
     .split(/\r?\n/u)
     .filter((name) => name && (registryMayRun || name !== REGISTRY_CONTAINER));
