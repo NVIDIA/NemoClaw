@@ -77,11 +77,11 @@ a queued check's suite supplies the available observation bound; GitHub exposes
 no individual creation timestamp. Checks already started after merge cannot
 establish membership without the snapshot.
 
-Actions searches split into disjoint time windows before paginating any window
-with more than 1,000 results. This preserves discovery of removed revisions
-without accepting another PR's or fork's runs. If one second exceeds the cap,
-an unfiltered paginated listing supplies that second's runs. Both paths apply
-the same PR, fork and merge-window filters. The reporter requires `gh` and `jq`.
+Actions searches split windows with more than 1,000 runs before pagination.
+Disjoint windows preserve discovery of removed revisions while retaining the
+PR, fork and merge-window filters. If one second exceeds the cap, collection
+stops before publication. The job log records the affected window; no report
+is generated from incomplete history. The reporter requires `gh` and `jq`.
 Repair and review-follow-up counts require a forward step in the retained PR
 commit order. A retry on an older SHA does not increase either count. Access
 failures, other API failures and missing merged PR revisions stop reporting.

@@ -372,13 +372,20 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
             total="$(jq -nr --arg range "$range" '$range | split("..") | map(gsub("%3A"; ":") | fromdateiso8601) | if .[0] <= 1767225900 and .[1] >= 1767225900 then 1001 else 0 end')"
             printf '{"total_count":%s,"workflow_runs":[]}' "$total"
           else
-            printf '{"total_count":1001,"workflow_runs":[{"id":11,"head_sha":"cccccccccccccccccccccccccccccccccccccccc","created_at":"2026-01-01T00:05:00Z","workflow_id":9,"head_branch":"fork-feature","pull_requests":[{"number":1}]}]}'
+            # Only newer runs fit in this bounded listing; the PR run is outside it.
+            printf '{"total_count":1500,"workflow_runs":[{"id":99,"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","created_at":"2026-01-01T00:11:00Z","workflow_id":9,"head_branch":"other-feature","pull_requests":[{"number":2}]}]}'
           fi
         elif [ "$SCENARIO" = large_history ]; then
           case "$endpoint" in
             *'00%3A00%3A00Z..2026-01-01T00%3A10%3A00Z'*) printf '{"total_count":1001,"workflow_runs":[]}' ;;
             *'00%3A00%3A00Z..2026-01-01T00%3A05%3A00Z'*)
-              printf '{"total_count":1,"workflow_runs":[{"id":11,"head_sha":"cccccccccccccccccccccccccccccccccccccccc","created_at":"2026-01-01T00:05:00Z","workflow_id":9,"head_branch":"fork-feature","pull_requests":[{"number":1}]}]}' ;;
+              printf '{"total_count":1000,"workflow_runs":'
+              if $paginate; then
+                printf '[{"id":11,"head_sha":"cccccccccccccccccccccccccccccccccccccccc","created_at":"2026-01-01T00:05:00Z","workflow_id":9,"head_branch":"fork-feature","pull_requests":[{"number":1}]}]'
+              else
+                printf '[]'
+              fi
+              printf '}' ;;
             *'00%3A05%3A01Z..2026-01-01T00%3A10%3A00Z'*) printf '{"total_count":0,"workflow_runs":[]}' ;;
             *) printf 'Unexpected search window: %s\n' "$endpoint" >&2; exit 43 ;;
           esac
@@ -630,10 +637,13 @@ large_report = File.read("#{large[:root]}/temp/merge-outcomes.md")
 raise 'Partitioning lost a removed revision at the window boundary' unless large_report.include?('[Removed revision check]') && large_report.include?('cccccccccccc')
 raise 'Partitioning did not collect both windows' unless File.read("#{large[:root]}/requests").include?('00%3A05%3A01Z..2026-01-01T00%3A10%3A00Z')
 dense = exercise(workflow, "#{ARGV[0]}/dense-history", 'dense_history', parent, head, reporter: reporter_source)
-raise File.read("#{dense[:root]}/errors") if dense[:failed]
-raise 'Single-second history did not publish once' unless File.read("#{dense[:root]}/posts") == "POST\n"
-raise 'Single-second history lost its revision' unless File.read("#{dense[:root]}/temp/merge-outcomes.md").include?('[Removed revision check]')
-raise 'Single-second saturation did not use uncapped listing' unless File.readlines("#{dense[:root]}/requests").include?("repos/example/repo/actions/runs?per_page=100\n")
+raise 'Saturated single-second history was accepted' unless dense[:failed]
+raise 'Saturation did not reach the real reporter' unless File.read("#{dense[:root]}/compilations") == "compile\n"
+%w[posts edits].each { |effect| raise "Saturation reached #{effect}" if File.exist?("#{dense[:root]}/#{effect}") }
+raise 'Saturation changed existing comments' unless File.read("#{dense[:root]}/comments.json") == dense[:original_comments]
+raise 'Saturation lost its window diagnostic' unless File.read("#{dense[:root]}/errors").include?('Actions search exceeds 1,000 runs in one second (2026-01-01T00:05:00Z..2026-01-01T00:05:00Z)')
+raise 'Saturation rendered an incomplete report' unless File.zero?("#{dense[:root]}/temp/merge-outcomes.md")
+raise 'Saturation used the repository-wide fallback' if File.readlines("#{dense[:root]}/requests").include?("repos/example/repo/actions/runs?per_page=100\n")
 raise 'Report job must stay read-only for contents' unless workflow.dig('jobs', 'report', 'permissions', 'contents') == 'read'
 valid_merges = %w[rebase_enabled merge_enabled settings_unreadable paged_trusted_parent merge_commit unassociated_parent empty_pages merge_commit_unassociated_parent merge_commit_empty_pages rebase_merge rebase_merge_empty_pages rebase_merge_paged]
   .map { |scenario| [workflow, 'main', scenario] } + [[workflow, 'v1', 'valid'], [extended_workflow, 'release', 'valid']]

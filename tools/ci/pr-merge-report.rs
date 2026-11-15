@@ -335,9 +335,10 @@ impl Api {
                     windows.push((middle + 1, end));
                     windows.push((start, middle));
                 } else {
-                    // An unfiltered listing has no search cap. Use it only
-                    // when even a single second cannot be split further.
-                    runs.extend(self.rows("actions/runs?per_page=100", &format!(".workflow_runs[] | select((.created_at | fromdateiso8601) == {start}) | {RUN_QUERY}"))?);
+                    return Err(format!(
+                        "Actions search exceeds 1,000 runs in one second ({}); cannot verify complete history, stop before publication",
+                        range.trim()
+                    ));
                 }
                 continue;
             }
