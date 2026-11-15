@@ -42,7 +42,7 @@ persistence. Compile only that revision's reporter and never run PR code. Pass
 Validation covers metadata, rejected parents and events, API refusal,
 publication readback, failure retention, and recovery. The
 [post-installation observation](#post-installation-observation) closes #14163
-after this change merges. It is not validation of the change that installs the
+once reports publish on both lines. It is not validation of the change that installs the
 workflow.
 
 ## Local evidence
@@ -100,13 +100,16 @@ artifact retention still run.
 
 ## Post-installation observation
 
-This procedure closes #14163 after the workflow is on the default branch. It
-cannot run before that merge, so it does not validate this change, and the
-runtime E2E inventory has no selector for it. The scenario is an approved
-contribution from a fork that changes `tools/ci/pr-merge-report.rs` and merges
-through normal review. This document does not authorize creating or merging a
-qualification PR. The installation merge itself skips reporting when its selected
-revision lacks the helper.
+This procedure closes #14163 only after a report has published on each target
+branch, `main` and `v1`. The `v1` branch also needs its reporter from #14254. The
+procedure cannot run before this change merges, so it does not validate this
+change, and the runtime E2E inventory has no selector for it. The scenario is an
+approved contribution from a fork that changes `tools/ci/pr-merge-report.rs` and
+merges through normal review. Record it once. For the other branch, record the
+run URL, bot comment URL and artifact URL of its first published report. This
+document does not authorize creating or merging a qualification PR. The
+installation merge itself skips reporting when its selected revision lacks the
+helper.
 
 Inspect the real workflow run and its artifact.
 The name is `merge-outcomes-` followed by the run attempt, such as
