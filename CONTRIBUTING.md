@@ -160,7 +160,8 @@ A new SDK version must be approved in the base policy before a PR can install it
 ## Submit the Pull Request
 
 Every pull request requires maintainer review. The applicable open-PR limit is defined in
-[`.github/pr-limits.json`](.github/pr-limits.json); automation closes a pull request that exceeds it.
+[`.github/pr-limits.json`](.github/pr-limits.json) and counts open pull requests against the same base branch;
+automation closes a pull request that exceeds it.
 
 Do not add links to unofficial repositories, community collections, wrappers, or templates. The
 NVIDIA NemoClaw Community repository is the designated destination for independent solutions; it is

@@ -62,26 +62,28 @@ jobs:
               return;
             }
             const limit = Number(allowance);
-            const issues = await github.paginate(github.rest.issues.listForRepo, {
+            // The limit applies per base branch, so work on main and on a release line such as v1 is counted separately.
+            const base = pull.base.ref;
+            const pulls = await github.paginate(github.rest.pulls.list, {
               ...context.repo,
               state: "open",
-              creator: author,
+              base,
               sort: "created",
               direction: "asc",
               per_page: 100,
             });
-            const openCount = issues.filter(
-              (issue) =>
-                issue.pull_request &&
-                (context.payload.action === "reopened" || issue.number <= pull.number),
+            const openCount = pulls.filter(
+              (open) =>
+                open.user?.login?.toLowerCase() === normalizedAuthor &&
+                (context.payload.action === "reopened" || open.number <= pull.number),
             ).length;
 
-            core.info(`Author ${author} has ${openCount} open PR(s); limit is ${limit}`);
+            core.info(`Author ${author} has ${openCount} open PR(s) against ${base}; limit is ${limit}`);
             if (openCount <= limit) return;
 
             const body = limit === 0
               ? "This account cannot have open pull requests under the repository policy."
-              : `This repository limits you to ${limit} open pull requests. Please close or merge an existing PR before opening another one.`;
+              : `This repository limits you to ${limit} open pull requests against ${base}. Please close or merge an existing PR before opening another one.`;
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pull.number,
@@ -92,4 +94,4 @@ jobs:
               pull_number: pull.number,
               state: "closed",
             });
-            core.setFailed(`PR closed because ${author} exceeds the ${limit}-open-PR limit`);
+            core.setFailed(`PR closed because ${author} exceeds the ${limit}-open-PR limit on ${base}`);

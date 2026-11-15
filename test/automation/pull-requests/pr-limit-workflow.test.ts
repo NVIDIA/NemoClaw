@@ -11,7 +11,12 @@ const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor a
   ...parameters: string[]
 ) => (...args: unknown[]) => Promise<unknown>;
 
-function createHarness(policy: unknown, author = "contributor", openCount = 6) {
+function createHarness(
+  policy: unknown,
+  author = "contributor",
+  openCount = 6,
+  others: { number: number; login: string }[] = [],
+) {
   const getContent = vi.fn().mockResolvedValue({
     data: {
       type: "file",
@@ -20,17 +25,22 @@ function createHarness(policy: unknown, author = "contributor", openCount = 6) {
   });
   const createComment = vi.fn().mockResolvedValue({});
   const update = vi.fn().mockResolvedValue({});
-  const paginate = vi.fn().mockResolvedValue(
-    Array.from({ length: openCount }, (_, index) => ({
+  const paginate = vi.fn().mockResolvedValue([
+    ...Array.from({ length: openCount }, (_, index) => ({
       number: index + 1,
-      pull_request: {},
+      user: { login: author },
     })),
-  );
+    ...others.map(({ number, login }) => ({ number, user: { login } })),
+  ]);
   const context = {
     repo: { owner: "NVIDIA", repo: "NemoClaw" },
     payload: {
       action: "opened",
-      pull_request: { user: { login: author }, number: 100, base: { sha: "a".repeat(40) } },
+      pull_request: {
+        user: { login: author },
+        number: 100,
+        base: { ref: "main", sha: "a".repeat(40) },
+      },
     },
   };
   const core = { info: vi.fn(), setFailed: vi.fn() };
@@ -38,8 +48,8 @@ function createHarness(policy: unknown, author = "contributor", openCount = 6) {
     paginate,
     rest: {
       repos: { getContent },
-      issues: { createComment, listForRepo: vi.fn() },
-      pulls: { update },
+      issues: { createComment },
+      pulls: { list: vi.fn(), update },
     },
   };
   return { context, core, createComment, getContent, github, paginate, update };
@@ -99,6 +109,26 @@ describe("open PR limit workflow", () => {
     expect(harness.createComment).not.toHaveBeenCalled();
     expect(harness.core.setFailed).not.toHaveBeenCalled();
     expect(harness.update).not.toHaveBeenCalled();
+  });
+
+  it("counts only the author's open PRs against the new PR's base branch", async () => {
+    const harness = createHarness({ maintainer: "10", "*": "5" }, "maintainer", 10, [
+      { number: 11, login: "someone-else" },
+      { number: 12, login: "another" },
+    ]);
+
+    await runScript(harness);
+
+    expect(harness.paginate).toHaveBeenCalledWith(harness.github.rest.pulls.list, {
+      ...harness.context.repo,
+      state: "open",
+      base: "main",
+      sort: "created",
+      direction: "asc",
+      per_page: 100,
+    });
+    expect(harness.update).not.toHaveBeenCalled();
+    expect(harness.core.setFailed).not.toHaveBeenCalled();
   });
 
   it.each([
