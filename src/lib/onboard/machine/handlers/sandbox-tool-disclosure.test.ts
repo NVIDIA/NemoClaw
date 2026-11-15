@@ -9,6 +9,7 @@ import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
 vi.mock("../../sandbox-registration", async (importOriginal) => ({
@@ -267,7 +268,7 @@ describe("handleSandboxState tool disclosure", () => {
     ],
     [
       "a changed selection",
-      createSession({ toolDisclosure: "direct" }),
+      createSession({ toolDisclosure: "direct", toolDisclosureRequestedExplicitly: true }),
       "progressive" as const,
       "  [resume] Tool disclosure configuration changed; recreating sandbox.",
     ],
@@ -302,7 +303,11 @@ describe("handleSandboxState tool disclosure", () => {
   ] as const)(
     "passes resumed %s-to-%s tool-disclosure drift into the downstream create intent",
     async (recordedMode, requestedMode) => {
-      const session = createSession({ sandboxName: "saved", toolDisclosure: requestedMode });
+      const session = createSession({
+        sandboxName: "saved",
+        toolDisclosure: requestedMode,
+        toolDisclosureRequestedExplicitly: true,
+      });
       session.steps.sandbox.status = "complete";
       const { deps, calls } = createDeps({
         getSandboxReuseState: () => "ready",
@@ -350,6 +355,47 @@ describe("handleSandboxState tool disclosure", () => {
       });
     },
   );
+
+  it("keeps a recorded direct sandbox when a resumed session only holds the seeded default (#13975)", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name) =>
+        registeredEntry(name, { nemoclawVersion: "0.1.0", toolDisclosure: "direct" }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      endpointSource: "inference-set",
+      sandboxName: "saved",
+    });
+
+    expect(calls.note).not.toHaveBeenCalledWith(expect.stringContaining("Tool disclosure"));
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("omits the seeded default from the create intent when an interrupted session resumes (#13975)", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name) =>
+        registeredEntry(name, { nemoclawVersion: "0.1.0", toolDisclosure: "direct" }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      endpointSource: "inference-set",
+      sandboxName: "saved",
+    });
+
+    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+    expect(toolDisclosureRequest(createSandboxCall[15])).toBeUndefined();
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+  });
 
   it("recreates a legacy custom image so its tool-disclosure contract is validated", async () => {
     const session = createSession({ sandboxName: "saved", toolDisclosure: "progressive" });

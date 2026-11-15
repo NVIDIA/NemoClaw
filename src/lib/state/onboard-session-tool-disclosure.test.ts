@@ -61,6 +61,21 @@ describe("onboard session tool disclosure", () => {
     expect(requireLoadedSession(normalized).toolDisclosure).toBe("progressive");
   });
 
+  it("keeps the selected-mode marker only when it is set (#13975)", () => {
+    session.saveSession(
+      session.createSession({ toolDisclosure: "direct", toolDisclosureRequestedExplicitly: true }),
+    );
+    expect(requireLoadedSession(session.loadSession()).toolDisclosureRequestedExplicitly).toBe(
+      true,
+    );
+
+    // Sessions saved before the marker existed, and seeded defaults, carry none.
+    session.saveSession(session.createSession({ toolDisclosure: "direct" }));
+    expect(requireLoadedSession(session.loadSession())).not.toHaveProperty(
+      "toolDisclosureRequestedExplicitly",
+    );
+  });
+
   it("marks corrupt persisted tool-disclosure state instead of treating it as legacy missing", () => {
     const corrupt = session.createSession() as unknown as Record<string, unknown>;
     corrupt.toolDisclosure = "everything";

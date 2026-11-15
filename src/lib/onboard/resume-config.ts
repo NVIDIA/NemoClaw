@@ -26,6 +26,7 @@ export interface ResumeSessionLike {
   stationExpressIntent?: unknown;
   agent?: string | null;
   toolDisclosure?: ToolDisclosure;
+  toolDisclosureRequestedExplicitly?: boolean;
   observabilityEnabled?: boolean;
   metadata?: {
     fromDockerfile?: string | null;
@@ -273,6 +274,8 @@ export function getResumeConfigConflicts(
       recorded: "invalid",
     });
   } else if (
+    // A session that only holds the seeded default has no selection to conflict with (#13975).
+    session?.toolDisclosureRequestedExplicitly === true &&
     requestedToolDisclosure &&
     recordedToolDisclosure &&
     requestedToolDisclosure !== recordedToolDisclosure

@@ -160,11 +160,9 @@ describe("sandbox create intent machine boundary", () => {
       { fresh: true, resume: false, env: {} },
       { fresh: false, resume: true, env: { NEMOCLAW_NON_INTERACTIVE: "1" } },
     ];
-    // Only the resumed session's mode is a request; a fresh session's default is not.
-    const requestedModes = [undefined, undefined, "progressive"];
     const resolvedIntents: unknown[] = [];
 
-    for (const [index, variant] of variants.entries()) {
+    for (const variant of variants) {
       const session = createSession({ sandboxName: "same-sandbox" });
       const { deps, calls } = createDeps();
       calls.setupMessaging.mockResolvedValue(["telegram"]);
@@ -207,9 +205,8 @@ describe("sandbox create intent machine boundary", () => {
         observabilityEnabled: false,
         extraProviders: [],
       });
-      expect((createIntent as { toolDisclosure?: string }).toolDisclosure).toBe(
-        requestedModes[index],
-      );
+      // Nothing selected a mode in any variant, so the seeded default is not a request.
+      expect(createIntent).not.toHaveProperty("toolDisclosure");
       const {
         reservePublishedRouteAfterBackup,
         recreateJournalTargetIntentFingerprint,

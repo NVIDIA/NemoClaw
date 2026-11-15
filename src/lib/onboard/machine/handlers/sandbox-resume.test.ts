@@ -3,12 +3,15 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { Session } from "../../../state/onboard-session";
+import type { SandboxEntry } from "../../../state/registry";
 import {
   createIntentToolDisclosureFields,
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasMessagingChannelConfigDrift,
+  resolveToolDisclosureResumeSignals,
   type SandboxResumeSignals,
 } from "./sandbox-resume";
 
@@ -435,31 +438,54 @@ describe("hasCompatibleEndpointReasoningDrift", () => {
 });
 
 describe("createIntentToolDisclosureFields", () => {
+  const seeded = { toolDisclosure: "progressive" } as const;
+  const selected = { toolDisclosure: "direct", toolDisclosureRequestedExplicitly: true } as const;
   it.each([
-    ["a new session default", null, "progressive", false, {}, {}],
-    ["a resumed session mode", null, "progressive", true, {}, { toolDisclosure: "progressive" }],
+    ["a new session default", null, seeded, {}, {}],
+    ["a resumed session saved before the selection was recorded", null, seeded, {}, {}],
     [
-      "a NEMOCLAW_TOOL_DISCLOSURE selection",
+      "a resumed session that recorded its selection",
       null,
-      "progressive",
-      false,
-      { NEMOCLAW_TOOL_DISCLOSURE: "progressive" },
-      { toolDisclosure: "progressive" },
-    ],
-    [
-      "the fresh local OpenClaw default",
-      "direct",
-      "progressive",
-      false,
+      selected,
       {},
       { toolDisclosure: "direct" },
     ],
+    [
+      "a NEMOCLAW_TOOL_DISCLOSURE selection",
+      null,
+      seeded,
+      { NEMOCLAW_TOOL_DISCLOSURE: "progressive" },
+      { toolDisclosure: "progressive" },
+    ],
+    ["the fresh local OpenClaw default", "direct", seeded, {}, { toolDisclosure: "direct" }],
   ] as const)(
     "requests a mode only when something selected it: %s (#13975)",
-    (_case, initial, sessionMode, resume, env, expected) => {
-      expect(createIntentToolDisclosureFields(initial, sessionMode, resume, env)).toEqual(expected);
+    (_case, initial, session, env, expected) => {
+      expect(createIntentToolDisclosureFields(initial, session, env)).toEqual(expected);
     },
   );
+});
+
+describe("resolveToolDisclosureResumeSignals", () => {
+  const entry = { name: "saved", toolDisclosure: "direct" } as SandboxEntry;
+  const sessionWith = (extra: Record<string, unknown>) =>
+    ({ toolDisclosure: "progressive", ...extra }) as unknown as Session;
+
+  it("does not count a seeded session default as drift from the recorded mode (#13975)", () => {
+    expect(resolveToolDisclosureResumeSignals(entry, sessionWith({}))).toEqual({
+      toolDisclosureMigrationNeeded: false,
+      toolDisclosureChanged: false,
+    });
+  });
+
+  it("counts a recorded selection that differs from the sandbox as drift", () => {
+    expect(
+      resolveToolDisclosureResumeSignals(
+        entry,
+        sessionWith({ toolDisclosureRequestedExplicitly: true }),
+      ),
+    ).toEqual({ toolDisclosureMigrationNeeded: false, toolDisclosureChanged: true });
+  });
 });
 
 describe("hasMessagingChannelConfigDrift", () => {

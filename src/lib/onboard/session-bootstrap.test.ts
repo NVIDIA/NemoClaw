@@ -392,6 +392,7 @@ describe("prepareOnboardSession", () => {
       { source: "/srv/project", target: "/sandbox/project", readOnly: true },
     ]);
     expect(result.session?.toolDisclosure).toBe("direct");
+    expect(result.session?.toolDisclosureRequestedExplicitly).toBe(true);
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(result.session?.apfInterceptorRequested).toBe(true);
@@ -548,6 +549,7 @@ describe("prepareOnboardSession", () => {
       deps,
     );
     expect(result.session?.toolDisclosure).toBe("progressive");
+    expect(result.session).not.toHaveProperty("toolDisclosureRequestedExplicitly");
     expect(result.session?.observabilityEnabled).toBe(false);
     expect(result.session?.observabilityRequestedExplicitly).toBe(false);
   });

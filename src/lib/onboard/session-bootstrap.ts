@@ -829,6 +829,7 @@ function prepareFreshSession(
   const session = deps.createSession({
     mode: mode(input.nonInteractive),
     toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
+    ...(input.requestedToolDisclosure ? { toolDisclosureRequestedExplicitly: true as const } : {}),
     observabilityEnabled: input.requestedObservabilityEnabled === true,
     observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
     dcodeAutoApprovalMode: input.requestedDcodeAutoApprovalMode ?? null,

@@ -881,7 +881,6 @@ describe("handleSandboxState", () => {
         resolved: expect.any(Object),
         recreate: true,
         reservePublishedRouteAfterBackup: expect.any(Function),
-        toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
@@ -1050,7 +1049,6 @@ describe("handleSandboxState", () => {
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
-        toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
@@ -1140,7 +1138,6 @@ describe("handleSandboxState", () => {
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
-        toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
