@@ -270,12 +270,13 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
   File.write("#{root}/bin/gh", <<~'SH')
     #!/bin/bash
     set -euo pipefail
-    endpoint=''; query='.'; slurp=false; filtered=false; post=false; body=''
+    endpoint=''; query='.'; slurp=false; paginate=false; filtered=false; post=false; body=''
     while [ "$#" -gt 0 ]; do
       case "$1" in
         repos/*) endpoint="$1" ;;
         --jq) query="$2"; filtered=true; shift ;;
         --slurp) slurp=true ;;
+        --paginate) paginate=true ;;
         --method) if [ "$2" = POST ]; then post=true; elif [ "$2" != GET ]; then printf "%s\n" "$2" >> "$FIXTURE/edits"; exit 45; fi; shift ;;
         -f) body="${2#body=}"; shift ;;
       esac
@@ -302,16 +303,21 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
           *) printf '{"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":false}' ;;
         esac ;;
       repos/example/repo/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pulls*)
-        if [ "$SCENARIO" = parent_api_failure ]; then exit 42; fi
+        association_scenario="${SCENARIO#merge_commit_}"
+        if [ "$association_scenario" = parent_api_failure ]; then exit 42; fi
         if $slurp; then printf '['; fi
-        case "$SCENARIO" in
+        case "$association_scenario" in
           rebased_parent) printf '[{"number":1}]' ;;
-          paged_parent) printf '[{"number":2}],[{"number":1}]' ;;
+          paged_parent) printf '[{"number":2}]'; if $paginate; then printf ',[{"number":1}]'; fi ;;
           invalid_parent_association) printf '[{}]' ;;
           unassociated_parent) printf '[]' ;;
           empty_pages) printf '[],[]' ;;
-          paged_trusted_parent) printf '[{"number":2}],[{"number":3}]' ;;
+          no_pages) : ;;
+          malformed_pages) printf '{}' ;;
+          paged_trusted_parent) printf '[{"number":2}]'; if $paginate; then printf ',[{"number":3}]'; fi ;;
           invalid_parent_number) printf '[{"number":0}]' ;;
+          fractional_parent_number) printf '[{"number":1.5}]' ;;
+          string_parent_number) printf '[{"number":"2"}]' ;;
           *) printf '[{"number":2}]' ;;
         esac
         if $slurp; then printf ']'; fi ;;
@@ -319,7 +325,11 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
         case "$SCENARIO" in
           api_failure) exit 42 ;;
           malformed) printf '{"parents":[{"sha":"bad;touch forbidden"}]}' ;;
-          multiple) printf '{"parents":[{"sha":"a"},{"sha":"b"}]}' ;;
+          multiple) printf '{"parents":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}' ;;
+          no_parents) printf '{"parents":[]}' ;;
+          malformed_parents) printf '{"parents":{}}' ;;
+          invalid_second_parent) printf '{"parents":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"sha":"bad;touch forbidden"}]}' ;;
+          merge_commit*) printf '{"parents":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}' ;;
           *) printf '{"parents":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}' ;;
         esac ;;
       repos/example/repo/issues/1/comments*)
@@ -594,22 +604,6 @@ raise 'Opening report was absent' unless receipt['opening_report_count'] == 1
 raise 'Receipt did not verify one report' unless receipt['report_unique']
 extended_workflow = Marshal.load(Marshal.dump(workflow))
 (extended_workflow['on'] || extended_workflow[true]).fetch('pull_request_target').fetch('branches') << 'release'
-[[workflow, 'v1'], [extended_workflow, 'release']].each do |selected_workflow, base|
-  result = exercise(selected_workflow, "#{ARGV[0]}/#{base}", 'valid', parent, head, base: base, reporter: reporter_source)
-  raise File.read("#{result[:root]}/errors") if result[:failed]
-  raise "#{base} merge did not compile the trusted reporter" unless File.exist?("#{result[:root]}/compilations") && File.read("#{result[:root]}/compilations") == "compile\n"
-  raise "#{base} merge did not publish exactly once" unless File.read("#{result[:root]}/posts") == "POST\n"
-  comments = JSON.parse(File.read("#{result[:root]}/comments.json"))
-  reports = comments.select { |comment| comment.dig('user', 'login') == 'github-actions[bot]' && comment['body'].include?('<!-- nemoclaw-merge-report:v1 -->') }
-  raise "#{base} merge lost or duplicated its report" unless reports.length == 1
-  report = reports.first.fetch('body')
-  raise "#{base} report lost merged metadata" unless report.start_with?('<details>') && report.include?(head) && report.include?('+209 / -10 lines across 5 files')
-  raise "#{base} merge changed existing comments" unless comments.reject { |comment| comment['id'] == 123 } == JSON.parse(result[:original_comments])
-  raise "#{base} artifact lost the report" unless File.read("#{result[:artifact]}/merge-outcomes.md").strip == report.strip
-  raise "#{base} summary lost the report" unless File.read("#{result[:root]}/summary").include?(report)
-  receipt = JSON.parse(File.read("#{result[:artifact]}/merge-outcomes-receipt.json"))
-  raise "#{base} receipt lost trusted provenance" unless receipt.values_at('reporter_revision', 'publication_readback', 'opening_preserved', 'report_unique') == [parent, true, true, true]
-end
 large = exercise(workflow, "#{ARGV[0]}/large-history", 'large_history', parent, head, reporter: reporter_source)
 raise File.read("#{large[:root]}/errors") if large[:failed]
 raise 'Large Actions history did not publish once' unless File.read("#{large[:root]}/posts") == "POST\n"
@@ -622,16 +616,36 @@ raise 'Single-second history did not publish once' unless File.read("#{dense[:ro
 raise 'Single-second history lost its revision' unless File.read("#{dense[:root]}/temp/merge-outcomes.md").include?('[Removed revision check]')
 raise 'Single-second saturation did not use uncapped listing' unless File.readlines("#{dense[:root]}/requests").include?("repos/example/repo/actions/runs?per_page=100\n")
 raise 'Report job must stay read-only for contents' unless workflow.dig('jobs', 'report', 'permissions', 'contents') == 'read'
-%w[rebase_enabled merge_enabled settings_unreadable paged_trusted_parent].each do |scenario|
-  result = exercise(workflow, "#{ARGV[0]}/#{scenario}", scenario, parent, head, reporter: reporter_source)
-  raise "Valid squash merge blocked by later repository settings: #{scenario}" if result[:failed]
-  raise "Valid squash merge did not publish once: #{scenario}" unless File.read("#{result[:root]}/posts") == "POST\n"
+valid_merges = %w[rebase_enabled merge_enabled settings_unreadable paged_trusted_parent merge_commit unassociated_parent empty_pages merge_commit_unassociated_parent merge_commit_empty_pages]
+  .map { |scenario| [workflow, 'main', scenario] } + [[workflow, 'v1', 'valid'], [extended_workflow, 'release', 'valid']]
+merge_failures = []
+valid_merges.each do |selected_workflow, base, scenario|
+  label = "#{base}/#{scenario}"
+  result = exercise(selected_workflow, "#{ARGV[0]}/#{base}-#{scenario}", scenario, parent, head, base: base, reporter: reporter_source)
+  if result[:failed]
+    merge_failures << "#{label}: #{File.read("#{result[:root]}/errors")}"
+    next
+  end
+  raise "Valid merge checked out PR code: #{label}" unless File.read("#{result[:root]}/checkout") == parent
+  raise "Valid merge compiled the wrong reporter: #{label}" unless File.read("#{result[:root]}/checkout-source") == reporter_source
+  raise "Valid merge did not compile once without a token: #{label}" unless File.read("#{result[:root]}/compilations") == "compile\n"
+  raise "Valid merge persisted credentials: #{label}" if File.exist?("#{result[:root]}/credentials")
+  raise "Valid merge did not publish once: #{label}" unless File.read("#{result[:root]}/posts") == "POST\n"
   comments = JSON.parse(File.read("#{result[:root]}/comments.json"))
   reports = comments.select { |comment| comment.dig('user', 'login') == 'github-actions[bot]' && comment['body'].include?('<!-- nemoclaw-merge-report:v1 -->') }
-  raise "Valid squash merge lost or duplicated its report: #{scenario}" unless reports.length == 1
-  raise "Report still reads mutable settings: #{scenario}" if File.readlines("#{result[:root]}/requests").any? { |line| line.strip == 'repos/example/repo' }
+  raise "Valid merge lost or duplicated its report: #{label}" unless reports.length == 1
+  report = reports.first.fetch('body')
+  raise "Valid merge lost reported metadata: #{label}" unless report.include?(head) && report.include?('+209 / -10 lines across 5 files')
+  raise "Valid merge changed existing comments: #{label}" unless comments.reject { |comment| comment['id'] == 123 } == JSON.parse(result[:original_comments])
+  raise "Valid merge lost its full artifact: #{label}" unless File.read("#{result[:artifact]}/merge-outcomes.md").strip == report.strip
+  raise "Valid merge lost its summary: #{label}" unless File.read("#{result[:root]}/summary").include?(report)
+  receipt = JSON.parse(File.read("#{result[:artifact]}/merge-outcomes-receipt.json"))
+  raise "Valid merge lost trusted publication evidence: #{label}" unless receipt.values_at('reporter_revision', 'publication_readback', 'opening_preserved', 'report_unique') == [parent, true, true, true]
+  raise "Report still reads mutable settings: #{label}" if File.readlines("#{result[:root]}/requests").any? { |line| line.strip == 'repos/example/repo' }
 end
-%w[malformed multiple api_failure wrong_checkout modified_reporter rebased_parent paged_parent unassociated_parent empty_pages invalid_parent_number invalid_parent_association parent_api_failure].each do |scenario|
+raise merge_failures.join("\n") unless merge_failures.empty?
+invalid_associations = %w[rebased_parent paged_parent no_pages malformed_pages invalid_parent_number fractional_parent_number string_parent_number invalid_parent_association parent_api_failure]
+(%w[malformed multiple no_parents malformed_parents invalid_second_parent api_failure wrong_checkout modified_reporter] + invalid_associations + invalid_associations.map { |scenario| "merge_commit_#{scenario}" }).each do |scenario|
   result = exercise(workflow, "#{ARGV[0]}/#{scenario}", scenario, parent, head)
   raise "Invalid parent or checkout accepted: #{scenario}" unless result[:failed]
   unless %w[wrong_checkout modified_reporter].include?(scenario)

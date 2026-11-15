@@ -24,10 +24,11 @@ reporting starts with the next eligible merge into that branch. Each eligible PR
 gets one collapsed bot report. Runs serialize per PR and stop after 20 minutes.
 The workflow attempts to retain generated reports for 90 days. Failures before
 report generation have no report artifact. Existing comments stay intact;
-retries avoid duplicates. Before checkout, the workflow rejects a merge parent
-that GitHub associates with the PR being reported, including a rebased prefix.
-Empty or malformed association results stop before checkout. At least one
-valid association with another PR is required across the paginated response.
+retries avoid duplicates. The workflow accepts one- and two-parent merge results
+and checks out their first parent, the target branch's pre-merge commit. A parent
+with no associated PR is valid, including a direct target-branch commit. Before
+checkout, malformed association responses or any association with the PR being
+reported stop the job, including a rebased prefix or a match on a later page.
 Repository merge settings are not consulted. `actions/checkout` reads that parent
 with the workflow token. `persist-credentials: false` prevents Git credential
 persistence. Compile only that parent's reporter and never run PR code. Pass
