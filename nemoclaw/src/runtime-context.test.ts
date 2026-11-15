@@ -237,6 +237,8 @@ const coordinatedLocalRequestPrompts = [
   "Search and also inspect README.md",
   "Find and additionally fix the bug",
   "Find and then also remove unused imports",
+  "Read README.md.\n".repeat(63) + "Search and\nread README.md.",
+  "Read README.md.\n".repeat(63) + "Search\nand read README.md.",
 ];
 
 const requestCoordinators = [

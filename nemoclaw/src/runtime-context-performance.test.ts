@@ -153,6 +153,30 @@ it.each([
     expected: { scope: "supplied", local: true, urls: ["HTTPS://example.org/guide"] },
   },
   {
+    // The window boundary falls between "Search and" and the verb it coordinates.
+    name: "keeps coordinated verbs with their target in a long prompt",
+    prompt: "Read README.md.\n".repeat(63) + "Search and\nread README.md.",
+    expected: { scope: "supplied", local: true, urls: [] },
+  },
+  {
+    name: "keeps a coordinator that starts the next line with its verb in a long prompt",
+    prompt: "Read README.md.\n".repeat(63) + "Search\nand read README.md.",
+    expected: { scope: "supplied", local: true, urls: [] },
+  },
+  {
+    // Each window edge falls at the line break, as in a whole-prompt parse.
+    name: "rejects external research that continues after a line break in a long prompt",
+    prompt: "Read README.md.\n".repeat(63) + "Search\n the web for current news",
+    expected: { scope: "external", local: false, urls: [] },
+  },
+  {
+    name: "rejects a local request continued by external research on the next line",
+    prompt:
+      "Read README.md.\n".repeat(62) +
+      "Search README.md\nfor the latest installation documentation online.",
+    expected: { scope: "external", local: false, urls: [] },
+  },
+  {
     name: "rejects a long line break run that would form its own window",
     prompt: `${longSetupPrompt}Read README.md.${"\n".repeat(1025)}Read README.md.`,
     expected: { scope: "external", local: false, urls: [] },

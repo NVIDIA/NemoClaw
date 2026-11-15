@@ -132,9 +132,22 @@ const SEARCH_PROMPT_TOTAL_LIMIT = 16384;
 const SEARCH_PROMPT_WINDOW_TARGET = 1024;
 // Sentence and line ends are already request boundaries. A boundary whose
 // whitespace leads straight to a URL stays inside its window, because the
-// classifier joins a colon, line break and indented URL into one request.
+// classifier joins a colon, line break and indented URL into one request. A
+// line that ends in a coordinator or comma ("Search and"), or a research verb
+// followed by a coordinated verb on the next line, also stays with its
+// continuation, because the classifier joins coordinated verbs across the break.
 const PROMPT_BOUNDARY = /(?<=[.!?])\s+|\n+/gu;
 const URL_AFTER_WHITESPACE = /\s*https?:\/\//iuy;
+const RESEARCH_VERB =
+  "(?:search|research|investigate|look\\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query|read|summarize)";
+const VERB_CHAIN_TAIL = new RegExp(
+  `\\b${RESEARCH_VERB}(?:\\s+(?:and|or|then)\\s+[a-z]+)*\\s*$`,
+  "iu",
+);
+const COORDINATOR_TAIL = /(?:,|\b(?:and|or|then|but|instead))\s*$/iu;
+const COORDINATED_VERB_AFTER_WHITESPACE = /\s*(?:and|or|then)\s+[a-z]+/iuy;
+// Bounds the text inspected before a boundary, so the check stays linear.
+const VERB_CHAIN_TAIL_SPAN = 256;
 const LOCAL_TARGET_BUDGET_EXHAUSTED = new Error("Local target parsing budget exhausted");
 const TARGET_PREFIX =
   /^(?:(?:for|through|out|which|what|why|how|many|of|all|any|some|each|every|both|the|this|that|these|those|our|my|your|a|an|top|current|latest|recent|last|active|today['’]s|largest|biggest|smallest|oldest|newest|duplicate|empty|hidden|temporary|recently|modified|unused|dead|unreachable|missing|unresolved|undefined|deprecated|broken|failing|failed|existing|TODO|FIXME|HACK|XXX|and|or|\d+)\s+)+/iu;
@@ -577,6 +590,14 @@ function searchPromptWindows(prompt: string): string[] | undefined {
     const end = index + separator.length;
     URL_AFTER_WHITESPACE.lastIndex = end;
     if (URL_AFTER_WHITESPACE.test(prompt)) continue;
+    const tail = prompt.slice(Math.max(start, index - VERB_CHAIN_TAIL_SPAN), index);
+    COORDINATED_VERB_AFTER_WHITESPACE.lastIndex = end;
+    if (
+      COORDINATOR_TAIL.test(tail) ||
+      (VERB_CHAIN_TAIL.test(tail) && COORDINATED_VERB_AFTER_WHITESPACE.test(prompt))
+    ) {
+      continue;
+    }
     if (!add(index, end)) return undefined;
   }
   if (!add(prompt.length, prompt.length)) return undefined;
