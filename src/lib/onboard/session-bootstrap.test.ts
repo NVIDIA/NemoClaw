@@ -725,6 +725,49 @@ describe("prepareOnboardSession", () => {
     },
   );
 
+  it("records a tool disclosure selection made while resuming a session saved before the marker (#13975)", async () => {
+    const { deps } = createDeps(
+      createSession({ sandboxName: "demo", toolDisclosure: "progressive", status: "failed" }),
+    );
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: false,
+        nonInteractive: false,
+        requestedToolDisclosure: "direct",
+      },
+      deps,
+    );
+
+    expect(result.session?.toolDisclosure).toBe("direct");
+    expect(result.session?.toolDisclosureRequestedExplicitly).toBe(true);
+  });
+
+  it("leaves a resumed session's tool disclosure unmarked when nothing selected one (#13975)", async () => {
+    const { deps } = createDeps(
+      createSession({ sandboxName: "demo", toolDisclosure: "progressive", status: "failed" }),
+    );
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: false,
+        nonInteractive: false,
+      },
+      deps,
+    );
+
+    expect(result.session?.toolDisclosure).toBe("progressive");
+    expect(result.session).not.toHaveProperty("toolDisclosureRequestedExplicitly");
+  });
+
   it("records and reports resume conflicts before exiting", async () => {
     const conflict: ResumeConfigConflict = {
       field: "fromDockerfile",
