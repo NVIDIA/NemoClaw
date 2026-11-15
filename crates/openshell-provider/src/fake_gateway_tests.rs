@@ -811,6 +811,106 @@ async fn explicit_policy_reaches_the_gateway_and_detects_drift() {
     assert!(!fixture.state.lock().unwrap().sandboxes.contains_key(&key));
 }
 
+/// A sandbox that is still starting when it is created records its loaded
+/// policy's hash before the apply returns, so a path added to the policy after
+/// the first apply is drift, as it is after the second.
+#[tokio::test]
+async fn a_new_sandbox_records_its_loaded_policy_before_the_first_apply_returns() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    fixture.state.lock().unwrap().sandbox_phase = Some(proto::SandboxPhase::Starting);
+    let state = fixture.state.clone();
+    let ready = tokio::spawn(async move {
+        while state.lock().unwrap().sandboxes.is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        for sandbox in state.lock().unwrap().sandboxes.values_mut() {
+            sandbox.status.as_mut().unwrap().phase = proto::SandboxPhase::Ready as i32;
+        }
+    });
+    let bound = create_sandbox(&client, "explicit-policy").await;
+    ready.await.unwrap();
+    assert!(!bound["policy_hash"].is_empty(), "{bound:?}");
+    // The first plan finds nothing changed.
+    let observed = client
+        .read("sandbox", &bound, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed, bound);
+    // OpenShell loads a policy with one more read-only path.
+    let mut widened = fixture.state.lock().unwrap().sandboxes[&key(&bound)]
+        .spec
+        .clone()
+        .unwrap()
+        .policy
+        .unwrap();
+    widened
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/var/tmp".into());
+    fixture.state.lock().unwrap().active_policy = Some(widened);
+    assert!(matches!(
+        client.read("sandbox", &bound, false).await,
+        Err(ObservationError::BindingMismatch)
+    ));
+}
+
+/// A sandbox that exited, or whose configuration OpenShell rejected, never
+/// loads a policy, so creating it doesn't wait; the agent reports why.
+#[tokio::test]
+async fn a_new_sandbox_that_exits_while_starting_is_not_waited_for() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.sandbox_phase = Some(proto::SandboxPhase::Error);
+        state.sandbox_conditions = vec![proto::SandboxCondition {
+            r#type: "Ready".into(),
+            status: "False".into(),
+            reason: "ContainerExited".into(),
+            ..Default::default()
+        }];
+    }
+    let started = std::time::Instant::now();
+    let bound = create_sandbox(&client, "explicit-policy").await;
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert!(bound["policy_hash"].is_empty());
+}
+
+/// A sandbox that has not loaded its policy by the deadline is observed as it
+/// is, as before, rather than failing an apply that the agent's own startup
+/// wait would still complete.
+#[tokio::test]
+async fn a_sandbox_that_is_slow_to_start_is_observed_unrecorded_after_the_deadline() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let bound = create_sandbox(&client, "explicit-policy").await;
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key(&bound))
+        .unwrap()
+        .status
+        .as_mut()
+        .unwrap()
+        .phase = proto::SandboxPhase::Starting as i32;
+    let patience = std::time::Duration::from_millis(600);
+    let started = std::time::Instant::now();
+    let observed = client
+        .read_back_sandbox(&bound, &bound, false, patience)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(started.elapsed() >= patience);
+    assert!(observed["policy_hash"].is_empty());
+}
+
 #[tokio::test]
 async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
     let fixture = Fixture::start().await;
