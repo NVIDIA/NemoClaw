@@ -34,7 +34,11 @@ function socketAuthority(socketPath: string): PodmanSocketAuthority {
   };
 }
 
-function prepare(home: string, docker: NonNullable<PreparationDeps["docker"]>): void {
+function prepare(
+  home: string,
+  docker: NonNullable<PreparationDeps["docker"]>,
+  assertSocketAuthority: () => void = vi.fn(),
+): void {
   const socketPath = "/run/user/1001/podman/podman.sock";
   preparePortableExperimentalHost(
     { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
@@ -68,7 +72,7 @@ function prepare(home: string, docker: NonNullable<PreparationDeps["docker"]>): 
         home,
         hardenSocketDirectory: vi.fn(),
         captureSocketAuthority: () => socketAuthority(socketPath),
-        assertSocketAuthority: vi.fn(),
+        assertSocketAuthority,
         podmanCapture: () => ({
           status: 0,
           stdout: JSON.stringify({ Server: { Version: "5.6.1" } }),
@@ -142,13 +146,16 @@ describe("Portable managed registry recovery", () => {
       containers: SpawnResult = result(0, ""),
       refusal: SpawnResult = ipamRefusal(),
       registry: SpawnResult = result(1),
+      driftAt = "",
     ): { message: string; commands: string[][] } {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
       tempDirs.push(home);
       const commands: string[][] = [];
+      let socketChanged = false;
       const docker = vi.fn((args: readonly string[]): SpawnResult => {
         commands.push([...args]);
         const command = args[0] === "inspect" && args.includes(staleId) ? "holder" : args[0]!;
+        socketChanged = socketChanged || command === driftAt;
         const responses: Record<string, SpawnResult> = {
           run: refusal,
           // A registry that is connected to no address yet needs `network connect`.
@@ -160,7 +167,8 @@ describe("Portable managed registry recovery", () => {
         return responses[command] ?? result();
       });
       try {
-        prepare(home, docker);
+        // Fails once a probe has run against a replaced socket.
+        prepare(home, docker, () => expect(socketChanged).toBe(false));
       } catch (error) {
         return { message: (error as Error).message, commands };
       }
@@ -219,6 +227,24 @@ describe("Portable managed registry recovery", () => {
       expect(message).toContain(`held by container ${staleId}, which still exists`);
       expect(message).toContain(`docker rm -f ${staleId}`);
       expect(message).not.toContain("ipam.db");
+    });
+
+    it.each([
+      ["inspecting the holder", "holder"],
+      ["listing the runtime's containers", "ps"],
+    ])("keeps the raw error when the Podman socket changes while %s", (_case, driftAt) => {
+      const { message, commands } = startRegistry(
+        noSuchObject(),
+        result(0, ""),
+        ipamRefusal(),
+        result(1),
+        driftAt,
+      );
+
+      expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
+      expect(message).not.toContain("ipam.db");
+      expect(message).not.toContain("\n");
+      expect(commands.some(([command]) => command === "ps")).toBe(driftAt === "ps");
     });
 
     it.each([

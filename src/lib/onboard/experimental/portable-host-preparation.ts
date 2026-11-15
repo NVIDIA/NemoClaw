@@ -731,6 +731,7 @@ function staleRegistryAddressError(
   networkName: string,
   runtimeDir: string,
   registryMayRun: boolean,
+  assertSocketAuthority: () => void,
 ): Error | null {
   const match = STALE_ADDRESS_PATTERN.exec(detail);
   if (!match || match[1] !== PORTABLE_REGISTRY_IP) return null;
@@ -738,10 +739,20 @@ function staleRegistryAddressError(
   const rerun = "`nemoclaw onboard --experimental-profile portable`";
   const raw = `${description} failed: ${detail}`;
 
-  const holder = docker(
-    ["inspect", "--type", "container", "--format", "{{.Id}}", containerId],
-    env,
-  );
+  // Both probes need the verified Podman socket. If it changed, their output
+  // is untrusted, so the caller keeps the raw error and no guidance is given.
+  const probe = (args: readonly string[]): SpawnResult | null => {
+    try {
+      assertSocketAuthority();
+      const probed = docker(args, env);
+      assertSocketAuthority();
+      return probed;
+    } catch {
+      return null;
+    }
+  };
+  const holder = probe(["inspect", "--type", "container", "--format", "{{.Id}}", containerId]);
+  if (!holder) return null;
   if (holder.status === 0 && !holder.error) {
     return new Error(
       `${raw}\nAddress ${PORTABLE_REGISTRY_IP} on network '${networkName}' is held by container ${containerId}, which still exists. ` +
@@ -755,7 +766,8 @@ function staleRegistryAddressError(
   // After a failed start, the managed registry is a stopped container that the
   // next run recreates, so it does not count. While connecting an existing
   // registry it may be running, so it does.
-  const inventory = docker(["ps", "--all", "--format", "{{.Names}}"], env);
+  const inventory = probe(["ps", "--all", "--format", "{{.Names}}"]);
+  if (!inventory) return null;
   const otherContainers = String(inventory.stdout ?? "")
     .split(/\r?\n/u)
     .filter((name) => name && (registryMayRun || name !== REGISTRY_CONTAINER));
@@ -776,6 +788,7 @@ function ensureRegistryContainer(
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
   networkName: string,
   runtimeDir: string,
+  assertSocketAuthority: () => void,
 ): void {
   const requireRegistryCommand = (
     result: SpawnResult,
@@ -792,6 +805,7 @@ function ensureRegistryContainer(
         networkName,
         runtimeDir,
         registryMayRun,
+        assertSocketAuthority,
       ) ?? new Error(`${description} failed: ${commandDetail(result)}`)
     );
   };
@@ -1081,7 +1095,13 @@ export function preparePortableExperimentalHost(
     assertVerifiedSocketAuthority,
   );
   ensurePortableHostGatewayAlias(podmanEnv, ip, sudo);
-  ensureRegistryContainer(podmanEnv, docker, dockerNetworkName, runtimeDir);
+  ensureRegistryContainer(
+    podmanEnv,
+    docker,
+    dockerNetworkName,
+    runtimeDir,
+    assertVerifiedSocketAuthority,
+  );
   assertVerifiedSocketAuthority();
   return {
     authority: runtimeAuthority,
