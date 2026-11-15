@@ -43,21 +43,32 @@ jobs:
       checks: read
       pull-requests: write
     steps:
-      # Reject a parent introduced by this PR, including a rebased prefix,
-      # before checking out or compiling its reporter.
+      # Walk past rebased PR commits before checking out or compiling a reporter.
       - name: Resolve the commit before the merge
         id: base
         env:
           GH_TOKEN: ${{ github.token }}
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_COMMIT_COUNT: ${{ github.event.pull_request.commits }}
         run: |
-          parent="$(gh api "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA" --jq 'if (.parents | type == "array" and (length == 1 or length == 2) and all(.[]; (.sha | type == "string" and test("^[0-9a-f]{40}$")))) then .parents[0].sha else error("Expected one or two valid merge parents") end')"
-          [[ "$parent" =~ ^[0-9a-f]{40}$ ]]
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$parent/pulls?per_page=100" \
-            | jq -e --argjson pr "$PR_NUMBER" 'type == "array" and length > 0 and all(.[]; type == "array" and all(.[]; (.number | type) == "number" and .number > 0 and .number == (.number | floor) and .number != $pr))' > /dev/null \
-            || { printf 'Reporter parent association could not be verified; stop before checkout.\n' >&2; exit 1; }
-          printf 'sha=%s\n' "$parent" >> "$GITHUB_OUTPUT"
+          [[ "$PR_COMMIT_COUNT" =~ ^[1-9][0-9]{0,8}$ ]]
+          parents="$(gh api "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA" --jq 'if (.parents | type == "array" and (length == 1 or length == 2) and all(.[]; (.sha | type == "string" and test("^[0-9a-f]{40}$")))) then .parents | map(.sha) | @tsv else error("Expected one or two valid merge parents") end')"
+          read -r parent other <<< "$parents"
+          for ((remaining = PR_COMMIT_COUNT; remaining > 0; remaining--)); do
+            associated="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$parent/pulls?per_page=100" \
+              | jq -r --argjson pr "$PR_NUMBER" 'if type == "array" and length > 0 and all(.[]; type == "array" and all(.[]; (.number | type) == "number" and .number > 0 and .number == (.number | floor))) then any(.[][]; .number == $pr) else error("Invalid reporter parent associations") end')"
+            if [ "$associated" = false ]; then
+              printf 'sha=%s\n' "$parent" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            [ -z "$other" ] || { printf 'Merge first parent belongs to the reported PR; stop before checkout.\n' >&2; exit 1; }
+            if [ "$remaining" -gt 1 ]; then
+              parent="$(gh api "repos/$GITHUB_REPOSITORY/commits/$parent" --jq 'if (.parents | type == "array" and length == 1 and all(.[]; (.sha | type == "string" and test("^[0-9a-f]{40}$")))) then .parents[0].sha else error("Expected one valid rebase parent") end')"
+            fi
+          done
+          printf 'Reporter ancestry exceeds the PR commit count; stop before checkout.\n' >&2
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository }}

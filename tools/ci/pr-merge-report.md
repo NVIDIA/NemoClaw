@@ -19,19 +19,21 @@ The workflow trigger selects target branches. The reporter validates merged PR
 metadata without a separate branch allowlist.
 
 Install the workflow on the default branch and the reporter on each target
-branch (`main` and `v1`). A merge whose parent lacks the reporter is skipped, so
+branch (`main` and `v1`). A merge whose selected revision lacks the reporter is skipped, so
 reporting starts with the next eligible merge into that branch. Each eligible PR
 gets one collapsed bot report. Runs serialize per PR and stop after 20 minutes.
 The workflow attempts to retain generated reports for 90 days. Failures before
 report generation have no report artifact. Existing comments stay intact;
-retries avoid duplicates. The workflow accepts one- and two-parent merge results
-and checks out their first parent, the target branch's pre-merge commit. A parent
-with no associated PR is valid, including a direct target-branch commit. Before
-checkout, malformed association responses or any association with the PR being
-reported stop the job, including a rebased prefix or a match on a later page.
-Repository merge settings are not consulted. `actions/checkout` reads that parent
-with the workflow token. `persist-credentials: false` prevents Git credential
-persistence. Compile only that parent's reporter and never run PR code. Pass
+retries avoid duplicates. For a two-parent merge, the workflow selects the first
+parent. For a one-parent result, it walks past commits associated with the
+reported PR. The PR's recorded commit count bounds this walk. Each skipped
+commit must have one valid parent. Checkout starts only when no association
+page links the selected revision to the PR. Empty association pages are valid,
+including after a direct target-branch commit. Malformed responses, API failures,
+a PR-associated first parent of a two-parent merge, or an exhausted walk stop
+the job before checkout. Repository merge settings are not consulted.
+`actions/checkout` reads that revision with the workflow token. `persist-credentials: false` prevents Git credential
+persistence. Compile only that revision's reporter and never run PR code. Pass
 `GH_TOKEN` to API steps with the declared job permissions.
 
 Validation covers metadata, rejected parents and events, API refusal,
@@ -97,7 +99,7 @@ artifact retention still run.
 After installation, the covering scenario is an approved contribution from a
 fork that changes `tools/ci/pr-merge-report.rs` and merges through normal review.
 This document does not authorize creating or merging a qualification PR.
-The installation merge itself skips reporting when its parent lacks the helper.
+The installation merge itself skips reporting when its selected revision lacks the helper.
 
 For the covering scenario, inspect the real workflow run and its artifact.
 The name is `merge-outcomes-` followed by the run attempt, such as
@@ -108,9 +110,9 @@ recovery observation below before recording acceptance:
   event. The parent-association check passes before checkout. The `report`
   job's token-permission log shows read access to
   contents, actions and checks, and write access to pull requests.
-- `Record publication inputs` verifies the checkout against the merge parent
+- `Record publication inputs` verifies the checkout against the selected revision
   and rejects changed reporter source before compilation. The receipt identifies
-  that parent as `reporter_revision` and records its `reporter_blob`.
+  that revision as `reporter_revision` and records its `reporter_blob`.
 - The intended PR has one collapsed bot report with its merged head SHA. The
   reporter's successful publication step includes an identical API readback.
 - `Verify hosted publication` passes its opening-report comparison and one-report

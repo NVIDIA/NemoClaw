@@ -257,7 +257,7 @@ def selected(expression, context, failed)
   end
 end
 
-def exercise(workflow, root, scenario, parent, head, merged: true, action: 'closed', base: 'main', reporter: nil, retrying: false, padding: 0)
+def exercise(workflow, root, scenario, parent, head, merged: true, action: 'closed', base: 'main', reporter: nil, retrying: false, padding: 0, commits: 3)
   FileUtils.rm_rf(["#{root}/workspace", "#{root}/temp"]) if retrying
   FileUtils.rm_f(Dir["#{root}/output-*"]) if retrying
   FileUtils.mkdir_p(["#{root}/bin", "#{root}/workspace", "#{root}/temp", "#{root}/artifacts"])
@@ -307,10 +307,10 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
         if [ "$association_scenario" = parent_api_failure ]; then exit 42; fi
         if $slurp; then printf '['; fi
         case "$association_scenario" in
-          rebased_parent) printf '[{"number":1}]' ;;
+          rebase_merge_untrusted_boundary|rebased_parent) printf '[{"number":1}]' ;;
           paged_parent) printf '[{"number":2}]'; if $paginate; then printf ',[{"number":1}]'; fi ;;
           invalid_parent_association) printf '[{}]' ;;
-          unassociated_parent) printf '[]' ;;
+          rebase_merge_empty_pages|unassociated_parent) printf '[]' ;;
           empty_pages) printf '[],[]' ;;
           no_pages) : ;;
           malformed_pages) printf '{}' ;;
@@ -321,6 +321,24 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
           *) printf '[{"number":2}]' ;;
         esac
         if $slurp; then printf ']'; fi ;;
+      repos/example/repo/commits/cccccccccccccccccccccccccccccccccccccccc/pulls*|repos/example/repo/commits/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/pulls*)
+        case "$SCENARIO" in
+          rebase_merge_association_failure) exit 42 ;;
+          rebase_merge_malformed_association) printf '[{}]' ;;
+          rebase_merge_paged) printf '[[{"number":2}]'; if $paginate; then printf ',[{"number":1}]'; fi; printf ']' ;;
+          *) printf '[[{"number":1}]]' ;;
+        esac ;;
+      repos/example/repo/commits/cccccccccccccccccccccccccccccccccccccccc|repos/example/repo/commits/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee)
+        case "$SCENARIO" in
+          rebase_merge_api_failure) exit 42 ;;
+          rebase_merge_malformed_ancestor) printf '{"parents":[]}' ;;
+          rebase_merge_two_parent_ancestor) printf '{"parents":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}' ;;
+          rebase_merge_invalid_ancestor) printf '{"parents":[{"sha":"bad;touch forbidden"}]}' ;;
+          *)
+            next=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            if [[ "$endpoint" = */cccccccc* ]]; then next=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee; fi
+            jq -n --arg next "$next" '{parents:[{sha:$next}]}' ;;
+        esac ;;
       repos/example/repo/commits/dddddddddddddddddddddddddddddddddddddddd)
         case "$SCENARIO" in
           api_failure) exit 42 ;;
@@ -329,6 +347,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
           no_parents) printf '{"parents":[]}' ;;
           malformed_parents) printf '{"parents":{}}' ;;
           invalid_second_parent) printf '{"parents":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"sha":"bad;touch forbidden"}]}' ;;
+          rebase_merge*) printf '{"parents":[{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}' ;;
           merge_commit*) printf '{"parents":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}' ;;
           *) printf '{"parents":[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}' ;;
         esac ;;
@@ -437,7 +456,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     test "$SCENARIO" != readback_failure
   SH
   context = {'github' => {'event_name' => 'pull_request_target', 'repository' => 'example/repo', 'token' => 'fixture-token', 'run_attempt' => retrying ? '2' : '1',
-    'event' => {'pull_request' => {'merged' => merged, 'number' => 1, 'base' => {'ref' => base}, 'merge_commit_sha' => 'd' * 40,
+    'event' => {'pull_request' => {'merged' => merged, 'number' => 1, 'commits' => commits, 'base' => {'ref' => base}, 'merge_commit_sha' => 'd' * 40,
       'head' => {'sha' => head, 'repo' => {'full_name' => 'example/fork'}}}}},
     'runner' => {'temp' => "#{root}/temp"}, 'steps' => {}}
   settings_job = workflow.fetch('jobs')['merge-settings']
@@ -469,7 +488,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
       # An incorrect revision can contain the same reporter bytes.
       File.write("#{root}/checkout", scenario == 'wrong_checkout' ? head : ref)
       FileUtils.mkdir_p("#{root}/workspace/tools/ci")
-      content = {parent => reporter || trusted, head => "#!/bin/bash\nprintf 'PR code' >> \"$FIXTURE/executions\"\nexit 90\n"}.fetch(ref)
+      content = {parent => reporter || trusted, ('c' * 40) => "#!/bin/bash\nexit 90\n", ('e' * 40) => "#!/bin/bash\nexit 90\n", head => "#!/bin/bash\nprintf 'PR code' >> \"$FIXTURE/executions\"\nexit 90\n"}.fetch(ref)
       File.write("#{root}/checkout-source", content)
       File.write("#{root}/workspace/tools/ci/pr-merge-report.rs", content) unless scenario == 'installation'
       if scenario == 'modified_reporter'
@@ -616,7 +635,7 @@ raise 'Single-second history did not publish once' unless File.read("#{dense[:ro
 raise 'Single-second history lost its revision' unless File.read("#{dense[:root]}/temp/merge-outcomes.md").include?('[Removed revision check]')
 raise 'Single-second saturation did not use uncapped listing' unless File.readlines("#{dense[:root]}/requests").include?("repos/example/repo/actions/runs?per_page=100\n")
 raise 'Report job must stay read-only for contents' unless workflow.dig('jobs', 'report', 'permissions', 'contents') == 'read'
-valid_merges = %w[rebase_enabled merge_enabled settings_unreadable paged_trusted_parent merge_commit unassociated_parent empty_pages merge_commit_unassociated_parent merge_commit_empty_pages]
+valid_merges = %w[rebase_enabled merge_enabled settings_unreadable paged_trusted_parent merge_commit unassociated_parent empty_pages merge_commit_unassociated_parent merge_commit_empty_pages rebase_merge rebase_merge_empty_pages rebase_merge_paged]
   .map { |scenario| [workflow, 'main', scenario] } + [[workflow, 'v1', 'valid'], [extended_workflow, 'release', 'valid']]
 merge_failures = []
 valid_merges.each do |selected_workflow, base, scenario|
@@ -645,8 +664,9 @@ valid_merges.each do |selected_workflow, base, scenario|
 end
 raise merge_failures.join("\n") unless merge_failures.empty?
 invalid_associations = %w[rebased_parent paged_parent no_pages malformed_pages invalid_parent_number fractional_parent_number string_parent_number invalid_parent_association parent_api_failure]
-(%w[malformed multiple no_parents malformed_parents invalid_second_parent api_failure wrong_checkout modified_reporter] + invalid_associations + invalid_associations.map { |scenario| "merge_commit_#{scenario}" }).each do |scenario|
-  result = exercise(workflow, "#{ARGV[0]}/#{scenario}", scenario, parent, head)
+(%w[malformed multiple no_parents malformed_parents invalid_second_parent api_failure wrong_checkout modified_reporter rebase_merge_limit rebase_merge_zero_count rebase_merge_invalid_count rebase_merge_malformed_ancestor rebase_merge_two_parent_ancestor rebase_merge_invalid_ancestor rebase_merge_api_failure rebase_merge_association_failure rebase_merge_malformed_association rebase_merge_untrusted_boundary] + invalid_associations + invalid_associations.map { |scenario| "merge_commit_#{scenario}" }).each do |scenario|
+  commits = {'rebase_merge_limit' => 2, 'rebase_merge_zero_count' => 0, 'rebase_merge_invalid_count' => 'bad'}.fetch(scenario, 3)
+  result = exercise(workflow, "#{ARGV[0]}/#{scenario}", scenario, parent, head, commits: commits)
   raise "Invalid parent or checkout accepted: #{scenario}" unless result[:failed]
   unless %w[wrong_checkout modified_reporter].include?(scenario)
     raise "Rejected parent reached checkout: #{scenario}" if File.exist?("#{result[:root]}/checkout")
