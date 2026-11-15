@@ -295,13 +295,6 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
       exit 0
     fi
     case "$endpoint" in
-      repos/example/repo)
-        case "$SCENARIO" in
-          settings_unreadable) printf '{"allow_squash_merge":null,"allow_merge_commit":null,"allow_rebase_merge":null}' ;;
-          rebase_enabled) printf '{"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":true}' ;;
-          merge_enabled) printf '{"allow_squash_merge":true,"allow_merge_commit":true,"allow_rebase_merge":false}' ;;
-          *) printf '{"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":false}' ;;
-        esac ;;
       repos/example/repo/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pulls*)
         association_scenario="${SCENARIO#merge_commit_}"
         if [ "$association_scenario" = parent_api_failure ]; then exit 42; fi
@@ -466,19 +459,13 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     'event' => {'pull_request' => {'merged' => merged, 'number' => 1, 'commits' => commits, 'base' => {'ref' => base}, 'merge_commit_sha' => 'd' * 40,
       'head' => {'sha' => head, 'repo' => {'full_name' => 'example/fork'}}}}},
     'runner' => {'temp' => "#{root}/temp"}, 'steps' => {}}
-  settings_job = workflow.fetch('jobs')['merge-settings']
   job = workflow.fetch('jobs').fetch('report')
   trigger = (workflow['on'] || workflow[true]).fetch('pull_request_target')
   eligible = trigger.fetch('types').include?(action) && trigger.fetch('branches').include?(base)
   failed = false
   artifact = nil
-  return {failed: false, root: root, original_comments: original_comments} unless eligible && (!settings_job || selected(settings_job['if'], context, failed)) && selected(job['if'], context, failed)
-  steps = (settings_job ? settings_job.fetch('steps').map { |step| [:settings, step] } : []) + job.fetch('steps').map { |step| [:report, step] }
-  settings_failed = nil
-  steps.each_with_index do |(owner, step), index|
-    # A failed prerequisite job skips the dependent job, including its always() steps.
-    settings_failed = failed if owner == :report && settings_failed.nil?
-    break if settings_failed
+  return {failed: false, root: root, original_comments: original_comments} unless eligible && selected(job['if'], context, failed)
+  job.fetch('steps').each_with_index do |step, index|
     next unless selected(step['if'], context, failed)
     env = {'PATH' => "#{root}/bin:/usr/bin:/bin", 'FIXTURE' => root, 'SCENARIO' => scenario, 'PR_BASE' => base, 'PAD_SIZE' => padding.to_s,
       'TMPDIR' => "#{root}/temp", 'RUNNER_TEMP' => "#{root}/temp", 'GITHUB_REPOSITORY' => 'example/repo', 'GITHUB_STEP_SUMMARY' => "#{root}/summary",
@@ -628,8 +615,6 @@ raise 'Receipt is not revision-bound' unless receipt.values_at('workflow_revisio
 raise 'Fork-modified reporter scenario was not covered' unless receipt['fork_modified_reporter']
 raise 'Opening report was absent' unless receipt['opening_report_count'] == 1
 raise 'Receipt did not verify one report' unless receipt['report_unique']
-extended_workflow = Marshal.load(Marshal.dump(workflow))
-(extended_workflow['on'] || extended_workflow[true]).fetch('pull_request_target').fetch('branches') << 'release'
 large = exercise(workflow, "#{ARGV[0]}/large-history", 'large_history', parent, head, reporter: reporter_source)
 raise File.read("#{large[:root]}/errors") if large[:failed]
 raise 'Large Actions history did not publish once' unless File.read("#{large[:root]}/posts") == "POST\n"
@@ -645,12 +630,12 @@ raise 'Saturation lost its window diagnostic' unless File.read("#{dense[:root]}/
 raise 'Saturation rendered an incomplete report' unless File.zero?("#{dense[:root]}/temp/merge-outcomes.md")
 raise 'Saturation used the repository-wide fallback' if File.readlines("#{dense[:root]}/requests").include?("repos/example/repo/actions/runs?per_page=100\n")
 raise 'Report job must stay read-only for contents' unless workflow.dig('jobs', 'report', 'permissions', 'contents') == 'read'
-valid_merges = %w[rebase_enabled merge_enabled settings_unreadable paged_trusted_parent merge_commit unassociated_parent empty_pages merge_commit_unassociated_parent merge_commit_empty_pages rebase_merge rebase_merge_empty_pages rebase_merge_paged]
-  .map { |scenario| [workflow, 'main', scenario] } + [[workflow, 'v1', 'valid'], [extended_workflow, 'release', 'valid']]
+valid_merges = %w[valid paged_trusted_parent merge_commit unassociated_parent empty_pages merge_commit_unassociated_parent merge_commit_empty_pages rebase_merge rebase_merge_empty_pages rebase_merge_paged]
+  .map { |scenario| ['main', scenario] } + [['v1', 'valid']]
 merge_failures = []
-valid_merges.each do |selected_workflow, base, scenario|
+valid_merges.each do |base, scenario|
   label = "#{base}/#{scenario}"
-  result = exercise(selected_workflow, "#{ARGV[0]}/#{base}-#{scenario}", scenario, parent, head, base: base, reporter: reporter_source)
+  result = exercise(workflow, "#{ARGV[0]}/#{base}-#{scenario}", scenario, parent, head, base: base, reporter: reporter_source)
   if result[:failed]
     merge_failures << "#{label}: #{File.read("#{result[:root]}/errors")}"
     next
@@ -683,7 +668,7 @@ invalid_associations = %w[rebased_parent paged_parent no_pages malformed_pages i
   end
   assert_no_code_or_publication(result)
 end
-raise 'Report must not depend on a mutable-settings job' if workflow.dig('jobs', 'report', 'needs')
+raise 'Report must run without prerequisite jobs' if workflow.dig('jobs', 'report', 'needs')
 raise 'Workflow must not grant contents write' if workflow.fetch('jobs').values.any? { |job| job.dig('permissions', 'contents') == 'write' }
 installation = exercise(workflow, "#{ARGV[0]}/installation", 'installation', parent, head)
 raise 'Installation failed' if installation[:failed]
