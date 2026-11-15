@@ -426,7 +426,12 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
       ]!.api_key = "${COMPATIBLE_API_KEY}";
       (config.custom_providers as Record<string, unknown>[])[0]!.api_key = "${COMPATIBLE_API_KEY}";
       fs.writeFileSync(path.join(nativeRoot, ".hermes/config.yaml"), JSON.stringify(config));
-      writeSandboxRegistry("hermes-custom-loopback", "hermes");
+      // Register the archived provider and endpoint so only the loopback rejection
+      // can strip the references, not a provider or endpoint mismatch.
+      writeSandboxRegistry("hermes-custom-loopback", "hermes", {
+        provider: "compatible-endpoint",
+        endpointUrl: "http://127.0.0.1:11541/v1",
+      });
 
       const backup = sandboxState.backupSandboxState("hermes-custom-loopback", {
         nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
