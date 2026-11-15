@@ -64,6 +64,11 @@ const PODMAN_NETWORK_IPAM_INSPECT_FORMAT = "{{json .Subnets}}";
 const RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET = "169.254.1.0/24";
 const RETIRED_PORTABLE_DOCKER_NETWORK_GATEWAY = "169.254.1.1";
 const RETIRED_PORTABLE_REGISTRY_IP = "169.254.1.3";
+// Podman's refusal when a recorded address has no live owner, as the Docker
+// client relays it.
+const STALE_ADDRESS_PATTERN =
+  /IPAM error: requested ip address (\d{1,3}(?:\.\d{1,3}){3}) is already allocated to container ID ([a-f0-9]{12,64})/u;
+const NO_SUCH_CONTAINER_PATTERN = /no such (?:object|container)/iu;
 const FULL_PODMAN_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const AUTO_PODMAN_BRIDGE_INTERFACE_PATTERN = /^podman(?:0|[1-9][0-9]{0,8})$/u;
 const REGISTRY_IMAGE =
@@ -708,11 +713,80 @@ function registryInspectionArgs(networkName: string): readonly string[] {
   ];
 }
 
+/**
+ * Turn Podman's raw "address already allocated" refusal into recovery guidance.
+ *
+ * Podman's netavark backend records each address it hands out in a database
+ * under the user runtime directory. An interrupted run can leave a record
+ * behind for a container that no longer exists, and the fixed registry address
+ * then stays unavailable until the record is cleared (#11409). NemoClaw does
+ * not edit Podman's state, so it confirms the record is orphaned and names the
+ * step the user can take.
+ */
+function staleRegistryAddressError(
+  detail: string,
+  description: string,
+  env: NodeJS.ProcessEnv,
+  docker: NonNullable<PortableHostPreparationDeps["docker"]>,
+  networkName: string,
+  runtimeDir: string,
+): Error | null {
+  const match = STALE_ADDRESS_PATTERN.exec(detail);
+  if (!match || match[1] !== PORTABLE_REGISTRY_IP) return null;
+  const containerId = match[2]!;
+  const rerun = "`nemoclaw onboard --experimental-profile portable`";
+  const raw = `${description} failed: ${detail}`;
+
+  const holder = docker(
+    ["inspect", "--type", "container", "--format", "{{.Id}}", containerId],
+    env,
+  );
+  if (holder.status === 0 && !holder.error) {
+    return new Error(
+      `${raw}\nAddress ${PORTABLE_REGISTRY_IP} on network '${networkName}' is held by container ${containerId}, which still exists. ` +
+        `Inspect it with \`docker inspect ${containerId}\`. If it is not needed, remove it with \`docker rm -f ${containerId}\`. Then rerun ${rerun}.`,
+    );
+  }
+  if (holder.error || !NO_SUCH_CONTAINER_PATTERN.test(commandDetail(holder))) return null;
+
+  const attached = docker(
+    ["ps", "--all", "--no-trunc", "--filter", `network=${networkName}`, "--format", "{{.ID}}"],
+    env,
+  );
+  const attachedIds = String(attached.stdout ?? "")
+    .split(/\r?\n/u)
+    .filter(Boolean);
+  const allocationRecord = path.join(runtimeDir, "containers", "networks", "ipam.db");
+  const recovery =
+    attached.status !== 0 || attached.error || attachedIds.length > 0
+      ? `Other containers may still use network '${networkName}'. Stop or remove them first, because clearing the record also forgets their addresses. After that, remove it with \`rm ${quoteRecoveryArgument(allocationRecord)}\``
+      : `Remove it with \`rm ${quoteRecoveryArgument(allocationRecord)}\``;
+  return new Error(
+    `${raw}\nAddress ${PORTABLE_REGISTRY_IP} on network '${networkName}' is still reserved for container ${containerId}, but that container no longer exists. ` +
+      `An interrupted earlier run likely left Podman's address record behind, and restarting the container service does not clear it. ` +
+      `${recovery}, or reboot the host. Then rerun ${rerun}.`,
+  );
+}
+
 function ensureRegistryContainer(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
   networkName: string,
+  runtimeDir: string,
 ): void {
+  const requireRegistryCommand = (result: SpawnResult, description: string): void => {
+    if (result.status === 0 && !result.error) return;
+    throw (
+      staleRegistryAddressError(
+        commandDetail(result),
+        description,
+        env,
+        docker,
+        networkName,
+        runtimeDir,
+      ) ?? new Error(`${description} failed: ${commandDetail(result)}`)
+    );
+  };
   const inspection = docker(registryInspectionArgs(networkName), env);
   if (inspection.error) {
     requireCommand(inspection, "Inspecting the managed portable registry");
@@ -734,7 +808,7 @@ function ensureRegistryContainer(
   }
   if (exists && running === "true" && networkIp === PORTABLE_REGISTRY_IP) return;
   if (exists && running === "true") {
-    requireCommand(
+    requireRegistryCommand(
       docker(
         ["network", "connect", "--ip", PORTABLE_REGISTRY_IP, networkName, REGISTRY_CONTAINER],
         env,
@@ -749,7 +823,7 @@ function ensureRegistryContainer(
       "Removing the previous managed portable registry",
     );
   }
-  requireCommand(
+  requireRegistryCommand(
     docker(
       [
         "run",
@@ -997,7 +1071,7 @@ export function preparePortableExperimentalHost(
     assertVerifiedSocketAuthority,
   );
   ensurePortableHostGatewayAlias(podmanEnv, ip, sudo);
-  ensureRegistryContainer(podmanEnv, docker, dockerNetworkName);
+  ensureRegistryContainer(podmanEnv, docker, dockerNetworkName, runtimeDir);
   assertVerifiedSocketAuthority();
   return {
     authority: runtimeAuthority,

@@ -9,7 +9,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PodmanSocketAuthority } from "../../adapters/podman";
 import { preparePortableExperimentalHost } from "./portable-host-preparation";
-import { PORTABLE_DOCKER_NETWORK_SUBNET, PORTABLE_HOST_GATEWAY_IP } from "./portable-profile";
+import {
+  PORTABLE_DOCKER_NETWORK_NAME,
+  PORTABLE_DOCKER_NETWORK_SUBNET,
+  PORTABLE_HOST_GATEWAY_IP,
+  PORTABLE_REGISTRY_IP,
+} from "./portable-profile";
 
 type SpawnResult = ReturnType<typeof spawnSync>;
 type PreparationDeps = NonNullable<Parameters<typeof preparePortableExperimentalHost>[1]>;
@@ -118,5 +123,103 @@ describe("Portable managed registry recovery", () => {
 
     expect(() => prepare(home, docker)).toThrow(/unexpected network address/u);
     expect(docker).toHaveBeenCalledTimes(2);
+  });
+
+  describe("when Podman still reserves the registry address (#11409)", () => {
+    const staleId = "49f6af196bc7cf81b292b3275984727db24c35c2ed53adf35851f680d19c18d8";
+    const ipamRefusal = (ip = PORTABLE_REGISTRY_IP): SpawnResult =>
+      ({
+        status: 125,
+        stdout: "",
+        stderr: `docker: Error response from daemon: IPAM error: requested ip address ${ip} is already allocated to container ID ${staleId}`,
+      }) as SpawnResult;
+
+    function startRegistry(
+      holder: SpawnResult,
+      attached: SpawnResult = result(0, ""),
+      refusal: SpawnResult = ipamRefusal(),
+    ): { message: string; commands: string[][] } {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+      tempDirs.push(home);
+      const commands: string[][] = [];
+      const docker = vi.fn((args: readonly string[]): SpawnResult => {
+        commands.push([...args]);
+        const command = args[0] === "inspect" && args.includes(staleId) ? "holder" : args[0]!;
+        const responses: Record<string, SpawnResult> = {
+          run: refusal,
+          holder,
+          inspect: result(1),
+          ps: attached,
+        };
+        return responses[command] ?? result();
+      });
+      try {
+        prepare(home, docker);
+      } catch (error) {
+        return { message: (error as Error).message, commands };
+      }
+      throw new Error("expected the registry start to fail");
+    }
+
+    const noSuchObject = (): SpawnResult =>
+      ({ status: 1, stdout: "", stderr: `Error: No such object: ${staleId}` }) as SpawnResult;
+
+    it("names the orphaned record and the file that holds it", () => {
+      const { message, commands } = startRegistry(noSuchObject());
+
+      expect(message).toContain("Starting the managed portable registry failed");
+      expect(message).toContain(
+        `requested ip address ${PORTABLE_REGISTRY_IP} is already allocated`,
+      );
+      expect(message).toContain(`${staleId}, but that container no longer exists`);
+      expect(message).toContain("rm '/run/user/1001/containers/networks/ipam.db'");
+      expect(message).not.toContain("Stop or remove them first");
+      expect(message).toContain("nemoclaw onboard --experimental-profile portable");
+      expect(commands.find(([command]) => command === "ps")).toEqual([
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `network=${PORTABLE_DOCKER_NETWORK_NAME}`,
+        "--format",
+        "{{.ID}}",
+      ]);
+      expect(commands.filter(([command]) => command === "run")).toHaveLength(1);
+      expect(commands.some(([command]) => command === "rm" || command === "network")).toBe(false);
+    });
+
+    it("tells the user to stop other containers on the network first", () => {
+      const { message } = startRegistry(noSuchObject(), result(0, `${"a".repeat(64)}\n`));
+
+      expect(message).toContain(
+        `Other containers may still use network '${PORTABLE_DOCKER_NETWORK_NAME}'`,
+      );
+      expect(message).toContain("rm '/run/user/1001/containers/networks/ipam.db'");
+    });
+
+    it("does not offer a file removal when it cannot list the network's containers", () => {
+      const { message } = startRegistry(noSuchObject(), result(125));
+
+      expect(message).toContain("Stop or remove them first");
+    });
+
+    it("points at the live container when one still holds the address", () => {
+      const { message } = startRegistry(result(0, staleId));
+
+      expect(message).toContain(`held by container ${staleId}, which still exists`);
+      expect(message).toContain(`docker rm -f ${staleId}`);
+      expect(message).not.toContain("ipam.db");
+    });
+
+    it.each([
+      ["a different address", ipamRefusal("10.87.0.9"), noSuchObject()],
+      ["an inspection that cannot show the container is gone", ipamRefusal(), result(125)],
+    ])("keeps the raw error for %s", (_case, refusal, holder) => {
+      const { message } = startRegistry(holder as SpawnResult, result(0, ""), refusal);
+
+      expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
+      expect(message).not.toContain("ipam.db");
+      expect(message).not.toContain("\n");
+    });
   });
 });
