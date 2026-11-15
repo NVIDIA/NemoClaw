@@ -749,22 +749,22 @@ function staleRegistryAddressError(
   }
   if (holder.error || !NO_SUCH_CONTAINER_PATTERN.test(commandDetail(holder))) return null;
 
-  const attached = docker(
-    ["ps", "--all", "--no-trunc", "--filter", `network=${networkName}`, "--format", "{{.ID}}"],
-    env,
-  );
-  const attachedIds = String(attached.stdout ?? "")
+  // The record file is shared by every network of this user's Podman runtime,
+  // so the whole runtime must be idle before the message offers to remove it.
+  // The managed registry is NemoClaw's own and is recreated on the next run.
+  const inventory = docker(["ps", "--all", "--format", "{{.Names}}"], env);
+  const otherContainers = String(inventory.stdout ?? "")
     .split(/\r?\n/u)
-    .filter(Boolean);
+    .filter((name) => name && name !== REGISTRY_CONTAINER);
+  const runtimeIdle = inventory.status === 0 && !inventory.error && otherContainers.length === 0;
   const allocationRecord = path.join(runtimeDir, "containers", "networks", "ipam.db");
-  const recovery =
-    attached.status !== 0 || attached.error || attachedIds.length > 0
-      ? `Other containers may still use network '${networkName}'. Stop or remove them first, because clearing the record also forgets their addresses. After that, remove it with \`rm ${quoteRecoveryArgument(allocationRecord)}\``
-      : `Remove it with \`rm ${quoteRecoveryArgument(allocationRecord)}\``;
+  const recovery = runtimeIdle
+    ? `The record file is shared by every container of this user's Podman runtime, and none other exists now. Remove it with \`rm ${quoteRecoveryArgument(allocationRecord)}\`, or reboot the host.`
+    : `The record file is shared by every container of this user's Podman runtime, so it is not safe to clear while other containers exist or while they cannot be listed. Stop or remove all of them (\`docker ps --all\` lists them), or reboot the host, then rerun.`;
   return new Error(
     `${raw}\nAddress ${PORTABLE_REGISTRY_IP} on network '${networkName}' is still reserved for container ${containerId}, but that container no longer exists. ` +
       `An interrupted earlier run likely left Podman's address record behind, and restarting the container service does not clear it. ` +
-      `${recovery}, or reboot the host. Then rerun ${rerun}.`,
+      `${recovery} Then rerun ${rerun}.`,
   );
 }
 

@@ -134,10 +134,14 @@ describe("Portable managed registry recovery", () => {
         stderr: `docker: Error response from daemon: IPAM error: requested ip address ${ip} is already allocated to container ID ${staleId}`,
       }) as SpawnResult;
 
+    const noSuchObject = (): SpawnResult =>
+      ({ status: 1, stdout: "", stderr: `Error: No such object: ${staleId}` }) as SpawnResult;
+
     function startRegistry(
       holder: SpawnResult,
-      attached: SpawnResult = result(0, ""),
+      containers: SpawnResult = result(0, ""),
       refusal: SpawnResult = ipamRefusal(),
+      registry: SpawnResult = result(1),
     ): { message: string; commands: string[][] } {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
       tempDirs.push(home);
@@ -147,9 +151,11 @@ describe("Portable managed registry recovery", () => {
         const command = args[0] === "inspect" && args.includes(staleId) ? "holder" : args[0]!;
         const responses: Record<string, SpawnResult> = {
           run: refusal,
+          // A registry that is connected to no address yet needs `network connect`.
+          network: refusal,
           holder,
-          inspect: result(1),
-          ps: attached,
+          inspect: registry,
+          ps: containers,
         };
         return responses[command] ?? result();
       });
@@ -161,8 +167,8 @@ describe("Portable managed registry recovery", () => {
       throw new Error("expected the registry start to fail");
     }
 
-    const noSuchObject = (): SpawnResult =>
-      ({ status: 1, stdout: "", stderr: `Error: No such object: ${staleId}` }) as SpawnResult;
+    const names = (...containerNames: string[]): SpawnResult =>
+      result(0, containerNames.map((name) => `${name}\n`).join(""));
 
     it("names the orphaned record and the file that holds it", () => {
       const { message, commands } = startRegistry(noSuchObject());
@@ -173,34 +179,38 @@ describe("Portable managed registry recovery", () => {
       );
       expect(message).toContain(`${staleId}, but that container no longer exists`);
       expect(message).toContain("rm '/run/user/1001/containers/networks/ipam.db'");
-      expect(message).not.toContain("Stop or remove them first");
+      expect(message).toContain("none other exists now");
       expect(message).toContain("nemoclaw onboard --experimental-profile portable");
       expect(commands.find(([command]) => command === "ps")).toEqual([
         "ps",
         "--all",
-        "--no-trunc",
-        "--filter",
-        `network=${PORTABLE_DOCKER_NETWORK_NAME}`,
         "--format",
-        "{{.ID}}",
+        "{{.Names}}",
       ]);
       expect(commands.filter(([command]) => command === "run")).toHaveLength(1);
       expect(commands.some(([command]) => command === "rm" || command === "network")).toBe(false);
     });
 
-    it("tells the user to stop other containers on the network first", () => {
-      const { message } = startRegistry(noSuchObject(), result(0, `${"a".repeat(64)}\n`));
+    it("offers the file removal when only the managed registry exists", () => {
+      const { message } = startRegistry(noSuchObject(), names("nemoclaw-portable-registry"));
 
-      expect(message).toContain(
-        `Other containers may still use network '${PORTABLE_DOCKER_NETWORK_NAME}'`,
-      );
       expect(message).toContain("rm '/run/user/1001/containers/networks/ipam.db'");
     });
 
-    it("does not offer a file removal when it cannot list the network's containers", () => {
+    it("does not offer the file removal while a container on another network exists", () => {
+      const { message, commands } = startRegistry(noSuchObject(), names("unrelated-service"));
+
+      expect(commands.find(([command]) => command === "ps")).not.toContain("--filter");
+      expect(message).toContain("Stop or remove all of them");
+      expect(message).toContain("shared by every container of this user's Podman runtime");
+      expect(message).not.toContain("ipam.db");
+    });
+
+    it("does not offer the file removal when it cannot list the runtime's containers", () => {
       const { message } = startRegistry(noSuchObject(), result(125));
 
-      expect(message).toContain("Stop or remove them first");
+      expect(message).toContain("Stop or remove all of them");
+      expect(message).not.toContain("ipam.db");
     });
 
     it("points at the live container when one still holds the address", () => {
@@ -220,6 +230,50 @@ describe("Portable managed registry recovery", () => {
       expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
       expect(message).not.toContain("ipam.db");
       expect(message).not.toContain("\n");
+    });
+
+    describe("when the running managed registry must join the network", () => {
+      const connectedToNothing = result(0, "1|true|");
+
+      it("explains the stale address from the network connect refusal", () => {
+        const { message, commands } = startRegistry(
+          noSuchObject(),
+          result(0, ""),
+          ipamRefusal(),
+          connectedToNothing,
+        );
+
+        expect(message).toContain(
+          "Connecting the managed portable registry to the sandbox network failed",
+        );
+        expect(message).toContain(`${staleId}, but that container no longer exists`);
+        expect(message).toContain("rm '/run/user/1001/containers/networks/ipam.db'");
+        expect(commands.filter(([command]) => command === "network")).toEqual([
+          [
+            "network",
+            "connect",
+            "--ip",
+            PORTABLE_REGISTRY_IP,
+            PORTABLE_DOCKER_NETWORK_NAME,
+            "nemoclaw-portable-registry",
+          ],
+        ]);
+        expect(commands.some(([command]) => command === "rm" || command === "run")).toBe(false);
+      });
+
+      it("keeps the raw error when the holder cannot be inspected", () => {
+        const { message } = startRegistry(
+          result(125),
+          result(0, ""),
+          ipamRefusal(),
+          connectedToNothing,
+        );
+
+        expect(message).toMatch(
+          /^Connecting the managed portable registry to the sandbox network failed: docker: /u,
+        );
+        expect(message).not.toContain("ipam.db");
+      });
     });
   });
 });
