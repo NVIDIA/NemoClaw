@@ -107,9 +107,11 @@ The name is `merge-outcomes-` followed by the run attempt, such as
 recovery observation below before recording acceptance:
 
 - The run uses the installed workflow revision and the merged fork PR's closed
-  event. The parent-association check passes before checkout. The `report`
-  job's token-permission log shows read access to
-  contents, actions and checks, and write access to pull requests.
+  event. The parent-association check passes before checkout. The checked-in
+  `report.permissions` block grants read access to contents, actions and checks,
+  and write access to pull requests. The run does not print token scopes, so the
+  successful association, check and Actions reads and the comment publication
+  in the run are the evidence that those operations worked.
 - `Record publication inputs` verifies the checkout against the selected revision
   and rejects changed reporter source before compilation. The receipt identifies
   that revision as `reporter_revision` and records its `reporter_blob`.
@@ -118,6 +120,11 @@ recovery observation below before recording acceptance:
 - `Verify hosted publication` passes its opening-report comparison and one-report
   check. The receipt has `report_unique: true` and `opening_report_count` of at
   least one. The opening report stays intact.
+- For a rebase merge, query `repos/<repository>/commits/<sha>/pulls` for each
+  rewritten commit and retain the paginated responses. Every commit that the
+  merge introduced must list the merged PR, and the selected reporter revision
+  must be the first ancestor that does not. An empty response for an
+  introduced commit is a defect to report, not an accepted result.
 - Sample repair and review counts, diff totals, and check durations match the
   merged PR's GitHub records. Retain the source records and expected and reported
   values with the acceptance evidence.
