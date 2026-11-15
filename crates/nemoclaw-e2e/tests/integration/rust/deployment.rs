@@ -213,6 +213,157 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     assert!(fixture.state.lock().unwrap().workspaces.is_empty());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn shell_restriction_and_restore_replace_only_the_target_sandbox() {
+    let mut document =
+        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
+            .unwrap();
+    // Tool names belong to the adapter, not the SDK or the gateway fixture.
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .agent
+        .tools = Some(nemoclaw_sdk::config::AgentTools {
+        allow: vec![
+            "fixture.file-read".into(),
+            "fixture.shell-launch".into(),
+            "fixture.lookup".into(),
+        ],
+    });
+    let mut reader = document.spec.sandboxes["assistant"].clone();
+    reader.agent.name = "reader".into();
+    // An exposure on the unrelated sandbox gives the gateway a service endpoint
+    // that neither transition may touch.
+    reader.service_exposures =
+        serde_json::from_value(serde_json::json!({"dashboard": {"targetPort": 18800}})).unwrap();
+    document.spec.sandboxes.insert("reader".into(), reader);
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    lifecycle.apply().await;
+    let mut restricted = lifecycle.document.clone();
+    restricted
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .agent
+        .tools
+        .as_mut()
+        .unwrap()
+        .allow
+        .retain(|tool| tool != "fixture.shell-launch");
+    let target = format!("{}/assistant", lifecycle.document.workspace());
+
+    for (phase, document) in [("restrict", &restricted), ("restore", &lifecycle.document)] {
+        let (mut sandboxes, workspaces, providers, profiles, services, creates, effects) = {
+            let state = lifecycle.fixture.state.lock().unwrap();
+            (
+                state.sandboxes.clone(),
+                state.workspaces.clone(),
+                state.providers.clone(),
+                state.profiles.clone(),
+                state.services.clone(),
+                state.created_sandboxes.len(),
+                state.effects,
+            )
+        };
+        let previous = sandboxes.remove(&target).unwrap().metadata.unwrap().id;
+        for (kind, empty) in [
+            ("sandboxes", sandboxes.is_empty()),
+            ("workspaces", workspaces.is_empty()),
+            ("inference registrations", providers.is_empty()),
+            ("provider profiles", profiles.is_empty()),
+            ("service endpoints", services.is_empty()),
+        ] {
+            assert!(!empty, "{phase}: no unrelated {kind} to compare");
+        }
+        let planned = lifecycle
+            .deployment
+            .plan(document, &lifecycle.cancel)
+            .await
+            .unwrap();
+        assert_eq!(
+            lifecycle.fixture.state.lock().unwrap().effects,
+            effects,
+            "{phase}: planning must not mutate the gateway"
+        );
+        let changes = |result: &nemoclaw_sdk::OperationResult| -> BTreeMap<String, Vec<String>> {
+            result
+                .changes
+                .iter()
+                .map(|change| (change.resource.clone(), change.actions.clone()))
+                .collect()
+        };
+        let expected = BTreeMap::from([
+            (
+                "fabric_agent.assistant".into(),
+                vec!["delete".into(), "create".into()],
+            ),
+            (
+                "openshell_sandbox.assistant".into(),
+                vec!["delete".into(), "create".into()],
+            ),
+            (
+                "terraform_data.agent_assistant".into(),
+                vec!["update".into()],
+            ),
+        ]);
+        assert_eq!(
+            changes(&planned),
+            expected,
+            "{phase}: only the target agent, sandbox, and configuration trigger change"
+        );
+        let applied = lifecycle
+            .deployment
+            .apply(document, &lifecycle.cancel)
+            .await
+            .unwrap();
+        assert_eq!(
+            applied.changes, planned.changes,
+            "{phase}: apply must match the plan"
+        );
+        let state = lifecycle.fixture.state.lock().unwrap();
+        assert_eq!(
+            state.created_sandboxes.len(),
+            creates + 1,
+            "{phase}: exactly one sandbox created"
+        );
+        let mut current = state.sandboxes.clone();
+        let replacement = current.remove(&target).unwrap().metadata.unwrap().id;
+        assert_ne!(
+            replacement, previous,
+            "{phase}: target sandbox must be replaced"
+        );
+        assert_eq!(
+            current, sandboxes,
+            "{phase}: unrelated sandboxes must stay unchanged"
+        );
+        assert_eq!(
+            state.workspaces, workspaces,
+            "{phase}: workspaces must stay unchanged"
+        );
+        assert_eq!(
+            state.providers, providers,
+            "{phase}: inference registrations must stay unchanged"
+        );
+        assert_eq!(
+            state.profiles, profiles,
+            "{phase}: provider profiles must stay unchanged"
+        );
+        assert_eq!(
+            state.services, services,
+            "{phase}: service endpoints must stay unchanged"
+        );
+    }
+    lifecycle
+        .deployment
+        .destroy(&lifecycle.cancel)
+        .await
+        .unwrap();
+}
+
 /// One document carries the authored settings that export must reproduce:
 /// web search and API integrations, an authored inference API, native harness
 /// settings, network grants, service exposures, and a second sandbox's tool
@@ -316,6 +467,73 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
     let unchanged = lifecycle.export_and_reapply_unchanged(effects).await;
     assert_eq!(unchanged.service_urls, expected);
     lifecycle.assert_drift_stops_plan_and_export(effects).await;
+    lifecycle.destroy();
+}
+
+/// A changed, added, or removed service exposure updates the sandbox in
+/// place: the sandbox and its agent keep running, and apply reports the URLs
+/// of the declared endpoints. The provider's sandbox contract scenario checks
+/// the endpoints the gateway holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn changed_service_exposures_keep_the_sandbox_and_its_agent() {
+    let mut document =
+        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
+            .unwrap();
+    let exposures = |value| serde_json::from_value(value).unwrap();
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .service_exposures = exposures(serde_json::json!({
+        "dashboard": {"targetPort": 18800},
+        "api": {"targetPort": 8642}
+    }));
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    lifecycle.apply().await;
+    let (created, starts) = {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        (state.created_sandboxes.len(), state.fabric_starts.clone())
+    };
+    let mut changed = lifecycle.document.clone();
+    changed
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .service_exposures = exposures(serde_json::json!({
+        "dashboard": {"targetPort": 18801},
+        "web": {"targetPort": 3000, "authorizationMode": "BEARER_PASSTHROUGH"}
+    }));
+    let applied = lifecycle
+        .deployment
+        .apply(&changed, &lifecycle.cancel)
+        .await
+        .unwrap();
+    {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        assert_eq!(
+            state.created_sandboxes.len(),
+            created,
+            "the change replaced the sandbox"
+        );
+        assert_eq!(
+            state.fabric_starts, starts,
+            "the change restarted the agent"
+        );
+    }
+    let workspace = lifecycle.document.workspace();
+    let url =
+        |service: &str| format!("http://{workspace}--assistant--{service}.services.fixture.test/");
+    let expected: BTreeMap<_, _> = [(
+        "assistant".to_owned(),
+        [("dashboard", url("dashboard")), ("web", url("web"))]
+            .map(|(service, url)| (service.to_owned(), url))
+            .into(),
+    )]
+    .into();
+    assert_eq!(applied.service_urls, expected);
     lifecycle.destroy();
 }
 

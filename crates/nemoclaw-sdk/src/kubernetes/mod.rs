@@ -210,6 +210,9 @@ impl Spec {
                     // Pull Secrets configure the Helm release, not these
                     // platform resources; their values stay in Kubernetes.
                     image_pull_secrets: Vec::new(),
+                    // Exposure configures the Helm release, not these
+                    // platform resources; they keep only its endpoint.
+                    expose: None,
                 })),
                 ..Default::default()
             },

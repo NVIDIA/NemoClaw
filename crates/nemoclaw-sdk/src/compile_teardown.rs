@@ -272,6 +272,147 @@ mod tests {
         assert_eq!(repeated.graph, compiled.graph);
     }
 
+    /// The `label=KEY=VALUE` filter of Remove Retained Resources' Docker
+    /// steps, with the deployment's UID in place of `$deployment_uid`.
+    fn documented_owner_filter(uid: &str) -> (String, String) {
+        let usage = include_str!("../../../docs/build-deploy/usage.md");
+        let (_, cleanup) = usage
+            .split_once("### Remove Retained Resources")
+            .expect("usage.md has Remove Retained Resources");
+        let docker = cleanup
+            .split_once("#### On Docker")
+            .and_then(|(_, rest)| rest.split_once("#### On Podman"))
+            .expect("Remove Retained Resources has Docker steps, then Podman's")
+            .0;
+        let assignment = |name: &str| {
+            docker
+                .lines()
+                .find_map(|line| line.strip_prefix(&format!("{name}=")))
+                .unwrap_or_else(|| panic!("the Docker steps set {name}"))
+                .trim_matches('"')
+        };
+        assert_eq!(
+            assignment("deployment_uid"),
+            "REPLACE_WITH_METADATA_UID",
+            "the Docker steps select by metadata.uid"
+        );
+        for object in ["container", "volume", "network"] {
+            let filtered = docker
+                .lines()
+                .filter(|line| {
+                    line.contains(&format!("\"$deployment_engine\" {object} ls"))
+                        && line.contains("--filter \"$owner_label\"")
+                })
+                .count();
+            assert_eq!(
+                filtered, 2,
+                "{object} list and removal filter on $owner_label"
+            );
+        }
+        let filter = assignment("owner_label");
+        assert!(filter.ends_with("=$deployment_uid"), "{filter}");
+        let (key, value) = filter
+            .replace("$deployment_uid", uid)
+            .strip_prefix("label=")
+            .and_then(|selector| selector.split_once('='))
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .unwrap_or_else(|| panic!("{filter} is a label=KEY=VALUE filter"));
+        (key, value)
+    }
+
+    /// Labels Docker objects of a retained resource carry: the volume,
+    /// network, and initializer container of gateway storage, or the volume of
+    /// a model cache or credential storage.
+    fn docker_labels(address: &str, attrs: &Value) -> std::collections::HashMap<String, String> {
+        let row: crate::backend::Row = attrs
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+            .collect();
+        match address.split_once('.').unwrap().0 {
+            "openshell_gateway_storage" => {
+                crate::managed::Spec::from_values(crate::managed::GATEWAY_STORAGE_KIND, &row)
+                    .unwrap()
+                    .labels()
+                    .unwrap()
+            }
+            "vllm_credential_storage" | "ollama_proxy_credential_storage" => {
+                nemoclaw_docker::Storage::from_row(&row).unwrap().labels()
+            }
+            "docker_volume" => attrs["labels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|label| {
+                    (
+                        label["label"].as_str().unwrap().to_owned(),
+                        label["value"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect(),
+            kind => panic!("{address}: no Docker cleanup is documented for retained {kind}"),
+        }
+    }
+
+    #[test]
+    fn documented_cleanup_filter_selects_every_retained_docker_object() {
+        // QA 016: Remove Retained Resources must find what destroy retains.
+        let mut spark: Value =
+            serde_saphyr::from_str(include_str!("../tests/fixtures/config/spark.yaml")).unwrap();
+        spark["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
+        let mut podman: Value =
+            serde_saphyr::from_str(include_str!("../tests/fixtures/config/local.yaml")).unwrap();
+        podman["spec"]["gateway"] = spark["spec"]["gateway"].clone();
+        podman["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
+        let ollama: Value =
+            serde_saphyr::from_str(include_str!("../tests/fixtures/config/managed-ollama.yaml"))
+                .unwrap();
+        let mut proxy = ollama.clone();
+        proxy["spec"]["inferenceProviders"]["local"]["serviceRef"] = json!("ollama-auth");
+        proxy["spec"]["services"] = json!({"ollama-auth": {
+            "kind": "ollamaProxy",
+            "image": format!("nc-ollama-proxy@sha256:{}", "a".repeat(64)),
+            "endpoint": "http://172.20.0.1:11435/v1",
+            "upstream": {"endpoint": "http://127.0.0.1:11434/v1",
+                "model": {"name": "qwen3:0.6b", "digest": "a".repeat(64)}}
+        }});
+        let mut kinds = BTreeSet::new();
+        for value in [spark, podman, ollama, proxy] {
+            let document = Document::parse(value.to_string().as_bytes()).unwrap();
+            let generations = crate::state::Record::new(document.clone())
+                .unwrap()
+                .generations;
+            let established = addresses(&compile(&document, &generations, "0.1.0").unwrap());
+            let compiled =
+                compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
+            let (key, uid) = documented_owner_filter(&document.metadata.uid);
+            for address in &compiled.retained {
+                let (kind, name) = address.split_once('.').unwrap();
+                let labels = docker_labels(address, &compiled.graph["resource"][kind][name]);
+                assert_eq!(
+                    labels.get(&key),
+                    Some(&uid),
+                    "the documented filter label={key}={uid} misses {address}: {labels:?}"
+                );
+                kinds.insert(kind.to_owned());
+            }
+        }
+        assert_eq!(
+            kinds,
+            BTreeSet::from(
+                [
+                    "docker_volume",
+                    "ollama_proxy_credential_storage",
+                    "openshell_gateway_storage",
+                    "vllm_credential_storage",
+                ]
+                .map(String::from)
+            ),
+            "the fixtures retain each documented kind of Docker storage"
+        );
+    }
+
     #[test]
     fn teardown_deletes_the_workspace() {
         // The workspace lives in the gateway, which teardown removes; keeping

@@ -37,9 +37,11 @@ Start with the failed phase; apply readiness, endpoint reachability, and a nativ
 
 | Symptom | Next action |
 |---|---|
-| Unknown field, duplicate key, or rejected combination | Use the [document path and source position](#correct-a-document-validation-error), then compare the input with the matching [configuration reference](../references/v1-configuration.md) |
+| Unknown field, duplicate key, or rejected combination | Use the [document path and source position](#correct-a-document-validation-error), then compare the input with the matching [configuration reference](../reference/configuration.md) |
 | Bundle or schema hash failure | Follow [bundle rebuilding](../build-deploy/build.md#build-a-native-bundle) and keep the selected bundle unchanged during operations |
 | `state is bound to a different deployment UID or gateway` | Restore the original UID and gateway endpoint; a new target needs separate state and resources |
+| A gateway volume, network, or initializer container `belongs to another state directory or deployment` | Destroy kept that deployment's gateway storage. Apply with the state directory that created it, or [remove the retained resources](../build-deploy/usage.md#remove-retained-resources) and apply with a new `metadata.uid`; nothing is adopted |
+| `the kubeconfig has no context named NAME` | `spec.gateway.kubernetes.context` names a context that the kubeconfig lacks; correct the context or the kubeconfig, then plan again. Nothing changed |
 | Plan says the gateway endpoint's port is in use, or the gateway subnet overlaps an existing Docker network | Another deployment or process holds it. Before the deployment's first successful plan, set `spec.gateway.endpoint` to a free port or `spec.gateway.networkCIDR` to a free private `/24` and plan again; a failed plan binds nothing. After that, the endpoint is bound: free the port instead |
 | `unfinished apply has different intent` | Reapply the exact YAML from the unfinished operation before trying another configuration |
 | Deployment lock error | Check for another operation using the same state directory; a lock failure does not authorize state deletion |
@@ -78,7 +80,7 @@ YAML syntax and duplicate-key errors also include source positions without copyi
 Later semantic checks, such as unresolved references, retain their existing named-field diagnostics and may lack source positions.
 
 For `kvCacheGiB`, use `0` or an integer from `4` through `12` when `gpuMemoryUtilization` is absent.
-With `gpuMemoryUtilization`, `kvCacheGiB` must be omitted or zero; see the [Memory reference](../references/v1-configuration.md#memory) for defaults and related settings.
+With `gpuMemoryUtilization`, `kvCacheGiB` must be omitted or zero; see the [Memory reference](../reference/configuration.md#memory) for defaults and related settings.
 An `empty document` error means no configuration content was supplied.
 All explicit YAML tags, including `!!binary`, `!!str`, `!!map`, and `!!seq`, are rejected; write the intended value directly and quote strings when needed.
 Tag-like text inside a quoted or block string is preserved.

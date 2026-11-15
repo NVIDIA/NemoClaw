@@ -78,10 +78,11 @@ futures-util = "0.3"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 bollard = { version = "0.21.1", default-features = false, features = ["pipe"] }
 tar = "0.4"
+object = { version = "0.40", default-features = false, features = ["std", "read_core", "elf"] }
 rustix = { version = "1", features = ["fs", "termios"] }
 zip = { version = "9.0", default-features = false, features = ["deflate"] }
 flate2 = "1.1"
-schemars = "=1.2.2"
+schemars = "=1.2.3"
 jsonschema = { version = "=0.56.0", default-features = false }
 pulldown-cmark = { version = "=0.13.6", default-features = false }
 pulldown-cmark-to-cmark = "=22.0.1"

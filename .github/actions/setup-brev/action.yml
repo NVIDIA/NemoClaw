@@ -13,8 +13,8 @@ runs:
       shell: bash
       env:
         BREV_API_KEY: ${{ inputs.api-key }}
-        BREV_CLI_VERSION: 0.6.335
-        BREV_CLI_SHA256: 89d778e6f1e5e52495f3e0f10393f1666a1b16d180001b13faec6f906955e6f8
+        BREV_CLI_VERSION: 0.6.337
+        BREV_CLI_SHA256: 99bf8383618903ab411a91605a43b2e2f5a333781860bd6743ba44bfc4920d4f
       run: |
         set -euo pipefail
         test -n "${BREV_API_KEY}"

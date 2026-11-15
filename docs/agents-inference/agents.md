@@ -21,7 +21,7 @@ Deployment-owned fields, including metadata, adapter identity, and resolved mode
 See [the SDK configuration projection](../../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
 
 Plan checks that the selected image provides the harness at NemoClaw's Fabric revision; a mismatched revision leaves compatibility unknown.
-Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)).
+Fabric validates the configuration through its installed API when the agent is configured, so a configuration the harness rejects fails during apply; [#14148](https://github.com/NVIDIA/NemoClaw/issues/14148) tracks checking it at plan time.
 Neither check establishes successful model inference.
 
 ## Choose Native Access
@@ -38,8 +38,9 @@ Use several sandbox definitions to isolate agents, credentials, and lifecycles.
 The [multiple-agent example](../../examples/multiple-models.yaml) demonstrates shared inference definitions with independent sandbox selections.
 An agent's model choices do not restrict other processes within its sandbox beyond the sandbox's provider and network policy.
 
-### Run One Deep Agents or Pi Request
+### Run One Agent Request
 
+Every harness takes a request through the same Fabric command; the [headless OpenClaw request](#run-one-headless-openclaw-request) shows a complete example.
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
@@ -54,20 +55,20 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/ddf59e875d50d925991cd40c44dc63facf391bac/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/f33fa19a1aff584625e02af9007d8113e7b95dd8/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
-With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID and send a request:
+With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID from a plan, as the [tutorial](../get-started/first-deployment.md#send-a-verification-request) does, and send a request:
 
 ```sh
-RUNTIME_ID=$(jq -er '.resources[] | select(.mode == "managed" and .type == "fabric_agent" and .name == "assistant") | .instances[].attributes.runtime_id | select(type == "string" and length > 0)' .local/first-deployment/state/terraform.tfstate) || exit 1
+RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml | jq -er '.agents.assistant.runtimeId') || exit 1
 openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id "$RUNTIME_ID" --input - <<'JSON'
 "Reply with exactly READY."
 JSON
 ```
 
 The command's `--agent` selects the deployment's YAML `agent.name`; the input is one JSON value, here the prompt string.
-Stop if the ID lookup fails; inspect state and the apply result rather than invoking with an empty ID. On success, check `result.status: succeeded` and inspect `result.output` for the adapter's reply. Do not assume every adapter uses the same output fields or that one reply establishes general model compatibility.
+Stop if the ID lookup fails; inspect the apply result rather than invoking with an empty ID. On success, check `result.status: succeeded` and inspect `result.output` for the adapter's reply. Do not assume every adapter uses the same output fields or that one reply establishes general model compatibility.
 If later invocations fail with `runtime_unavailable`, plan and apply again: apply starts a new runtime in the same sandbox. If the plan shows no change, replace the sandbox using the [CLI replacement procedure](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).
 
@@ -145,10 +146,12 @@ agent:
 ```
 
 NemoClaw registers the API with OpenShell for each image and harness that attaches it, as `openshell_api` does in HCL.
-OpenShell injects the key into requests to the endpoint's host, port and path subtree, from the harness's executables only, and the sandbox never sees the value.
+The profile grants access to the harness's executables. OpenShell replaces the placeholder on requests to the bound host, port and path subtree, and the sandbox never sees the key.
 The key goes in `Authorization` as a bearer token by default; set `authStyle: header` and `headerName` to send the raw value in another header.
 Set the referenced variable on the applying host; exported YAML and OpenTofu state retain only the reference.
-Whether the harness sends the placeholder depends on the harness; Hermes doesn't yet send it to MCP servers ([#13313](https://github.com/NVIDIA/NemoClaw/issues/13313)).
+Registering a key does not configure the harness to send it. The HCL travel team configures Hermes to send the placeholder in its MCP `Authorization` header and gives the credential profile an enforced MCP tool allowlist.
+A smaller Docker deployment verified that the MCP service received the key on both the quote and booking requests. [HCL travel-team test result](../../examples/hcl/travel-team/README.md#booking-authentication)
+The YAML `kind: api` integration creates a full-access REST rule for the endpoint's path subtree. An additional sandbox MCP allowlist does not restrict that rule. Use the HCL example when OpenShell must enforce which tools the agent can call on a key-authenticated endpoint.
 
 For OAuth-refresh credentials, use an [operator-managed OpenShell provider](oauth-refresh.md).
 NemoClaw does not wrap its refresh contract, and manual sandbox attachments affect drift checks.
@@ -156,9 +159,31 @@ NemoClaw does not wrap its refresh contract, and manual sandbox attachments affe
 ## Skills on a Mounted Volume
 
 Fabric reads skills from the paths in `fabric_agent`'s `skills` block.
+For OpenClaw and Hermes, each path is a skill or a folder of skills:
+
+- A folder that contains `SKILL.md` is one skill.
+- Otherwise, each folder directly inside it that contains `SKILL.md` is a skill; Fabric ignores the folder's other files and folders, including folders it can't read, such as a volume's `lost+found`.
+- A folder that holds no skills, such as a new, empty volume, adds none.
+
+The agent doesn't start when a path doesn't exist or isn't a folder, when Fabric can't list a path that has no `SKILL.md` of its own, when a skill's `SKILL.md` can't be read, or when two skills have the same name; Fabric's error names the path or both skills' folders.
+For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/f33fa19a1aff584625e02af9007d8113e7b95dd8/adapters) say what a path must hold.
+
 To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
 The gateway must allow driver configuration: for a managed gateway, set `allow_driver_config: true` in the driver's table of `spec.gateway.config` when you create the deployment (see [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes)); for an external gateway, its administrator enables OpenShell's `allow_driver_config`.
-In YAML, set the sandbox's `driverConfig` and list the mount in the harness configuration's `skills`:
+
+Mix the two forms to share a folder of skills between agents and give one agent a skill of its own, with its own mount settings.
+In this example, the `team-skills` volume holds a folder per skill, and the `review-skill` volume holds one skill at its root:
+
+```text
+team-skills            review-skill
+├── summarize/         └── SKILL.md
+│   └── SKILL.md
+└── translate/
+    └── SKILL.md
+```
+
+Both agents mount `team-skills` read-only; only the OpenClaw agent mounts `review-skill`, and it can write there.
+In YAML, set each sandbox's `driverConfig` and list its mounts in the harness configuration's `skills`:
 
 ```yaml
 sandboxes:
@@ -167,14 +192,34 @@ sandboxes:
       docker:
         mounts:
           - type: volume
-            source: assistant-skills
+            source: team-skills
             target: /sandbox/skills
+            read_only: true
+          - type: volume
+            source: review-skill
+            target: /sandbox/review-skill
+            read_only: false
     harness:
       kind: nvidia.fabric.openclaw
       config:
         skills:
+          paths: [/sandbox/skills, /sandbox/review-skill]
+  researcher:
+    driverConfig:
+      docker:
+        mounts:
+          - type: volume
+            source: team-skills
+            target: /sandbox/skills
+            read_only: true
+    harness:
+      kind: nvidia.fabric.hermes
+      config:
+        skills:
           paths: [/sandbox/skills]
 ```
+
+The `assistant` agent loads `summarize`, `translate`, and the skill in `review-skill`; `researcher` loads `summarize` and `translate`.
 
 In HCL, use `openshell_sandbox`'s [`driver_config`](../references/provider.md#openshell-resources-and-data-sources) and `fabric_agent`'s `skills` block:
 
@@ -183,7 +228,10 @@ resource "openshell_sandbox" "assistant" {
   # ...
   driver_config = jsonencode({
     docker = {
-      mounts = [{ type = "volume", source = "assistant-skills", target = "/sandbox/skills" }]
+      mounts = [
+        { type = "volume", source = "team-skills", target = "/sandbox/skills", read_only = true },
+        { type = "volume", source = "review-skill", target = "/sandbox/review-skill", read_only = false },
+      ]
     }
   })
 }
@@ -191,7 +239,7 @@ resource "openshell_sandbox" "assistant" {
 resource "fabric_agent" "assistant" {
   # ...
   skills {
-    paths = ["/sandbox/skills"]
+    paths = ["/sandbox/skills", "/sandbox/review-skill"]
   }
 }
 ```
@@ -199,6 +247,20 @@ resource "fabric_agent" "assistant" {
 OpenShell's mount settings decide whether the agent can write to the volume, and the sandbox's filesystem policy decides which paths its process may read or write.
 The volume's contents persist when the sandbox is replaced, including anything the agent writes there.
 How the volume gets its contents is up to the platform; OpenShell's documentation describes the volume labels it requires.
+
+Fabric decides which folders are skills, but the harness loads them, and Hermes can load more than Fabric resolves or name skills differently:
+
+| Volume layout | What happens |
+| --- | --- |
+| A skill folder contains other skill folders | Hermes also loads the nested skills; it searches every folder below a skill except `references`, `templates`, `assets`, and `scripts`. OpenClaw loads only the skill folder. |
+| Two skills have the same name | Fabric's check covers only the skills it resolves from `skills.paths`, not nested skills that Hermes loads or skills a harness finds elsewhere. |
+| A skill's name matches another skill's folder name | Hermes looks a skill up by its name, its folder name, and its path, so it treats the skill as ambiguous and doesn't load it. OpenClaw loads both. |
+| A skill's name is longer than 64 characters | Hermes cuts it to 64 characters, so two names that share their first 64 characters collide. |
+| A folder of skills holds a hidden folder, such as `.archive` | Fabric loads it as a skill if it contains `SKILL.md`, although Hermes's own scans skip folders such as `.archive` and `.git`. |
+| A Hermes path uses `~` or `${VAR}` | Fabric doesn't expand them, unlike Hermes's own `skills.external_dirs`; use absolute sandbox paths. |
+
+To avoid these differences, keep one skill per folder, don't nest skill folders, and give each skill a name that differs from every skill folder name.
+The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/f33fa19a1aff584625e02af9007d8113e7b95dd8/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
 
 ## Web Search
 

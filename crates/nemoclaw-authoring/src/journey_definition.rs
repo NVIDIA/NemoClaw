@@ -105,6 +105,9 @@ pub struct JourneyDefinition {
     pub(crate) ask_scopes: BTreeSet<JourneyScope>,
     pub(crate) omit: BTreeSet<String>,
     pub(crate) omit_scopes: BTreeSet<JourneyScope>,
+    /// The harnesses the harness question offers, in order. None offers every
+    /// harness the catalog advertises.
+    pub(crate) offered_harnesses: Option<Vec<String>>,
     pub(crate) target_prerequisites: BTreeSet<TargetPrerequisite>,
 }
 
@@ -118,6 +121,7 @@ impl JourneyDefinition {
             ask_scopes: BTreeSet::new(),
             omit: BTreeSet::new(),
             omit_scopes: BTreeSet::new(),
+            offered_harnesses: None,
             target_prerequisites: BTreeSet::new(),
         }
     }
@@ -150,6 +154,24 @@ impl JourneyDefinition {
                 JourneySelector::Scope(scope) => {
                     self.omit_scopes.insert(scope);
                 }
+            }
+        }
+        self
+    }
+
+    /// Offer only these harnesses, in this order, instead of every harness the
+    /// catalog advertises. This is guidance for the question, not a filter on
+    /// the catalog: a template that names another harness keeps it as the
+    /// suggestion, and the menu adds it for that run.
+    pub fn offer_harnesses(
+        mut self,
+        harnesses: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        let offered = self.offered_harnesses.get_or_insert_with(Vec::new);
+        for harness in harnesses {
+            let harness = harness.into();
+            if !offered.contains(&harness) {
+                offered.push(harness);
             }
         }
         self
@@ -206,6 +228,16 @@ impl JourneyDefinition {
             return Err(diagnostic(
                 "journey",
                 &format!("scope {scope:?} cannot be omitted in this preview"),
+            ));
+        }
+        if self
+            .offered_harnesses
+            .as_ref()
+            .is_some_and(|offered| offered.is_empty())
+        {
+            return Err(diagnostic(
+                "journey",
+                "offered harnesses must name at least one harness",
             ));
         }
         // A journey edits its one sandbox; an answer must not create another.

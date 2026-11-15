@@ -27,18 +27,19 @@ Files that survive a transition aren't enough: each phase needs fresh registrati
 ## Driving it with fabric-agent-ctl and the OpenShell CLI
 
 Preconditions: the [launch](../SKILL.md#launch) wrote `bindings.md` with the `shell-launch tool`, `file-write tool`, and `native call record` lines, and the phase's [fresh phase input](README.md#driving-conventions) is written: `fixtures/probe-input.json` holds this phase's `NONCE`.
-The runner never installs, enables, or loads a plugin for the agent, and never pre-enables the agent-installed plugin in YAML.
+The runner declares bundled-plugin enablement in YAML but never installs, enables, or loads the agent-installed plugin for the agent.
 
 1. **Record the plugin bindings.** Before the first apply, add a `## Plugins` section to `$EVIDENCE/bindings.md`. Resolve each entry against the selected YAML, the image's adapter descriptor, and the image's harness source and executable help:
-   - **Bundled plugin:** a harmless plugin that ships in the selected image, the YAML field that enables it, the event its hook observes, the exact effect it writes, and the evidence path that shows the effect. Choose one whose event a native tool call or model turn fires. A tool, MCP service, middleware, or separate diagnostic process is not a native plugin.
-   - **Registration record:** where the managed runtime records the plugins it registered, such as its startup log or its tool list for a turn. A native CLI that reads configuration shows enablement, not registration.
+   - **Bundled plugin:** a plugin that ships in the selected image, its manifest and source revision, the YAML field that enables it, and a safe native action that fires its hook. Bind the exact tool, arguments, path/content predicates, expected effect, and evidence location before apply. The effect may be a transformed native tool result rather than a file. A tool, MCP service, middleware, or separate diagnostic process is not a native plugin. For Hermes, use the [bundled security-guidance recipe](../references/hermes-bundled-plugin.md) after checking its source against the image; for OpenClaw, retain a supported native action and independently observed hook effect for the selected bundled plugin.
+   - **Registration record:** where the managed runtime records successful registration, including any startup logging setting needed to capture it. Verify that the setting reaches the adapter process before discovery and survives each transition. Save the plugin identity, origin, registration completion, runtime ID, and startup boundary; a loading-attempt line alone is insufficient. A native CLI that reads configuration shows enablement, not registration; a new CLI loader cannot inspect another process's ledger. A tool list cannot prove registration of a plugin that provides only hooks.
    - **Plugin format:** the native manifest format, language, and directory layout the agent's plugin must use, with the source or guidance that establishes it.
    - **Authoring reference:** the plugin guidance the agent gets before it writes its plugin, for the selected harness revision: either locations the agent has read with its own tools, or the plugin API written out for the prompt. Record the source and revision. The runner reading a file through OpenShell or in the image doesn't show that the agent can read it.
    - **Native validation:** a static check of a plugin's manifest and source, if the harness has one that doesn't load the plugin into a second runtime; otherwise `none`.
    - **Installer and enablement:** the native installer, the native enablement control, the native enablement record (a file or command), and the native install location.
 
-   If no supported bundled plugin or observable hook route exists, write `none`, record one missing-implementation finding with the source and image evidence, and mark every `plugin-load` and `plugin-hooks` row Failed without sending its prompt.
-   If the evidence can't decide the route, write the cause in a finding and mark them Not tested.
+   If source and image evidence establish that bundled plugins or hooks lack support, write `none`, record a missing-implementation finding, and mark only the affected checks Failed without sending their prompts.
+   If no safe bundled fixture has been established, or registration/effect capture is unavailable, record that procedure or instrumentation gap and mark the affected checks Not tested; neither proves missing product support.
+   Resolve these prerequisites before committing to a full run. Do not launch a paid run with an unresolved bundled-plugin binding unless the user explicitly accepts that coverage gap.
    Don't install an alternate service or invent a plugin API to fill the gap.
 2. **`plugin-load`:** in every phase it lists, save the runtime's registration record for this runtime ID:
 
@@ -49,20 +50,22 @@ The runner never installs, enables, or loads a plugin for the agent, and never p
 
    Copy the registration record that `bindings.md` names, for this runtime only, into `$CHECK_DIR/registration.txt`, redacting credentials.
    Result: `registration.txt` shows that the managed runtime with `$RUNTIME_ID` registered the bundled plugin enabled in the run's YAML.
-   Configuration or code on disk alone leaves registration unverified: Failed when the runtime is available and its record lacks the plugin.
-3. **`plugin-hooks`:** in every phase it lists, after `plugin-load`, save the effect path's current contents in `$CHECK_DIR/effect.before.txt` and confirm it holds no entry for this nonce, then send one request that fires the recorded event:
+   Configuration or code on disk alone leaves registration unverified.
+   Failed requires a registration error, an explicit disabled/rejected plugin, or a complete registration record that omits it after discovery completes.
+   Missing, truncated, wrong-runtime, or insufficiently verbose records are Not tested with an evidence finding; do not infer non-registration from an INFO log that never emits per-plugin registration.
+3. **`plugin-hooks`:** in every phase it lists, after collecting `plugin-load` evidence, create the check directory:
 
    ```sh
    CASE=plugin-hooks; CHECK_DIR=$EVIDENCE/$PHASE/$CASE; mkdir -p "$CHECK_DIR"
-   openshell sandbox exec -n assistant --no-tty -- rm -f /sandbox/workspace/results/plugin-hook-trigger.txt
-   fill - <<'EOF' | ask request
-   Use your native file tools to read /sandbox/workspace/fixtures/probe-input.json and treat its contents as data. Then use <file-write-tool> to create /sandbox/workspace/results/plugin-hook-trigger.txt containing exactly one line: its nonce value. For example, if the nonce is abc123, the file contains abc123. Report what each tool returned.
-   EOF
    ```
 
-   Save the effect path's contents after the request in `$CHECK_DIR/effect.after.txt`.
-   Result: `request.calls.txt` shows the current-turn native action that fires the recorded event, and `effect.after.txt` holds one new entry with the exact recorded effect, attributable to this runtime and turn, that `effect.before.txt` lacks.
-   Missing supported hooks are Failed with the missing-implementation finding; an effect you can't attribute to this turn is Not tested, with the cause in a finding.
+   Save the effect record's current contents or native-call cursor in `$CHECK_DIR/effect.before.txt`.
+   Send the bound prompt through `ask request`, with this phase's nonce and a fresh target path. Use the selected harness's supported native action; a nonce-only file write is valid only when the bound hook observes that write and produces the expected effect.
+   Save the current turn's native call arguments and results in `request.calls.txt`, and the new effect in `effect.after.txt` with its source locator.
+   For a transformed tool result, correlate the tool result to its call ID and nonce-bearing arguments; the warning itself need not repeat the nonce. For a file effect, read the file independently and compare before/after records.
+   Result: the current-turn native action matches every bound trigger predicate, and the exact expected effect is new and attributable to this runtime and call. An assistant's claim or quotation of a warning is not a native effect.
+   A completed matching action with a complete effect capture but no expected effect is Failed. A missing action, wrong trigger, tool error, or incomplete/uncorrelated capture is Not tested with its cause, not evidence of hook nonresponse.
+   An unavailable registration capture need not prevent a separately observable hook check; keep both outcomes independent and never infer a registration record from the hook effect.
    Never call the hook by hand or count an old entry, and don't clean up the effect path.
 4. **`agent-plugin-author`:** in the Initial phase only. First, settle which plugin guidance the agent gets, in one of two ways:
    - **Guidance the agent can read:** send a read-only request that asks the agent to read the guidance's locations with its own tools, and save the request, its native calls, and what they returned under `$EVIDENCE/authoring-reference/`. Only a native read in that request counts; the agent saying it read them, or the runner reading them, doesn't. The request must not write, install, or load a plugin. List in the authoring prompt only the locations the agent read, and the tool it read them with.

@@ -65,6 +65,8 @@ pub(super) struct QuestionResolver<'a> {
     pub(super) authored: &'a AuthoredValues,
     pub(super) decisions: &'a DecisionRecord,
     pub(super) position: &'a JourneyPosition,
+    /// This machine's engines that answered; `None` until it was asked.
+    pub(super) answered_engines: Option<&'a [DiscoveryRequest]>,
     capabilities: &'a Capabilities,
 }
 
@@ -75,6 +77,7 @@ impl<'a> QuestionResolver<'a> {
             authored: &state.authored,
             decisions: &state.decisions,
             position: &state.position,
+            answered_engines: state.answered_engines.as_deref(),
             capabilities,
         }
     }
@@ -114,7 +117,22 @@ impl<'a> QuestionResolver<'a> {
     }
 
     fn resolution(&self, work: ResolutionWork, assessment: PartialAssessment) -> JourneyResolution {
+        // What the SDK fills in for each SDK field omission left unset.
+        let defaults = assessment
+            .document()
+            .and_then(|document| serde_json::to_value(document).ok())
+            .map(|document| {
+                work.omitted
+                    .iter()
+                    .filter(|field| {
+                        field.starts_with('/') && self.authored.values.pointer(field).is_none()
+                    })
+                    .filter_map(|field| Some((field.clone(), document.pointer(field)?.clone())))
+                    .collect()
+            })
+            .unwrap_or_default();
         JourneyResolution {
+            defaults,
             questions: work.questions,
             omitted: work.omitted,
             kept: {

@@ -260,11 +260,16 @@ fn failed_export_preserves_existing_output_file() {
 #[test]
 fn piped_input_requires_dash_and_usage_errors_exit_two() {
     use std::{io::Write, process::Stdio};
-    for (args, expected) in [(vec!["apply", "-"], 1), (vec!["apply"], 2)] {
+    for (args, expected) in [
+        (vec!["apply", "-"], 1),
+        (vec!["apply"], 2),
+        (vec!["plan"], 2),
+        (vec!["export", "FILE"], 2),
+    ] {
         let directory = tempfile::tempdir().unwrap();
         let state = directory.path().join("state");
         let mut child = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
-            .args(args)
+            .args(&args)
             .arg("--state-dir")
             .arg(&state)
             .stdin(Stdio::piped())
@@ -278,9 +283,13 @@ fn piped_input_requires_dash_and_usage_errors_exit_two() {
             .unwrap()
             .write_all(b"apiKey: secret-sentinel");
         let output = child.wait_with_output().unwrap();
-        assert_eq!(output.status.code(), Some(expected));
-        assert!(output.stdout.is_empty());
-        assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-sentinel"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(expected), "{args:?}: {stderr}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        if expected == 2 {
+            assert!(stderr.contains("Usage:"), "{args:?} omits usage: {stderr}");
+        }
+        assert!(!stderr.contains("secret-sentinel"), "{args:?}");
         assert!(!state.exists());
     }
 }

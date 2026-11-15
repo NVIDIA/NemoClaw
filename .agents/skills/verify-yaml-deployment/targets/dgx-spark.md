@@ -13,11 +13,9 @@ The [GTC DC README](../../../../examples/gtc-dc/README.md) owns its prerequisite
 | `openclaw` | [`examples/gtc-dc/openclaw-dgx-spark.yaml`](../../../../examples/gtc-dc/openclaw-dgx-spark.yaml) |
 | `hermes` | [`examples/gtc-dc/hermes-dgx-spark.yaml`](../../../../examples/gtc-dc/hermes-dgx-spark.yaml) |
 | `deepagents` | [`examples/gtc-dc/deepagents-dgx-spark.yaml`](../../../../examples/gtc-dc/deepagents-dgx-spark.yaml) |
-| `deepagents-code` | The `deepagents` example, changed as [the agent file](../agents/deepagents-code.md#yaml-edits) says |
 
 ```sh
 EXAMPLE=examples/gtc-dc/$AGENT-dgx-spark.yaml
-# deepagents-code has no example of its own; its agent file sets EXAMPLE.
 ```
 
 Each declares a managed vLLM service, `super`, serving Nemotron 3 Super NVFP4.

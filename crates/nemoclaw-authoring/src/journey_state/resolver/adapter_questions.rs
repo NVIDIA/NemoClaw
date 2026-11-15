@@ -4,6 +4,38 @@
 use super::*;
 
 impl QuestionResolver<'_> {
+    /// The harnesses the harness question offers. Without an offering, every
+    /// advertised harness. With one, the advertised offered harnesses in the
+    /// offered order, then the base's own harness when it is advertised but not
+    /// offered, so a template's choice stays selectable.
+    fn harness_menu<'a>(&'a self, capabilities: &'a Capabilities) -> Vec<&'a str> {
+        let advertised = |harness: &str| {
+            capabilities
+                .harnesses()
+                .iter()
+                .any(|kind| kind.as_str() == harness)
+        };
+        let Some(offered) = &self.definition.offered_harnesses else {
+            return capabilities
+                .harnesses()
+                .iter()
+                .map(|h| h.as_str())
+                .collect();
+        };
+        let mut menu: Vec<&str> = offered
+            .iter()
+            .map(String::as_str)
+            .filter(|harness| advertised(harness))
+            .collect();
+        if let Some(template) = harness_kind(self.definition.base.supplied())
+            && !menu.contains(&template)
+            && advertised(template)
+        {
+            menu.push(template);
+        }
+        menu
+    }
+
     pub(super) fn collect_adapter_questions(
         &self,
         capabilities: &Capabilities,
@@ -33,12 +65,19 @@ impl QuestionResolver<'_> {
                 || harness_id.as_ref().is_some_and(|id| {
                     self.definition.ask.contains(id) && !self.decisions.accepted.contains(id)
                 }));
-        let reachable: Vec<&str> = if harness_open {
-            capabilities
-                .harnesses()
+        let menu = self.harness_menu(capabilities);
+        if let Some(offered) = &self.definition.offered_harnesses {
+            for harness in offered
                 .iter()
-                .map(|harness| harness.as_str())
-                .collect()
+                .filter(|harness| !menu.contains(&harness.as_str()))
+            {
+                warnings.push(format!(
+                    "offered harness '{harness}' is not advertised by the Fabric catalog"
+                ));
+            }
+        }
+        let reachable: Vec<&str> = if harness_open {
+            menu.clone()
         } else {
             chosen.into_iter().collect()
         };
@@ -66,7 +105,7 @@ impl QuestionResolver<'_> {
             {
                 unverified.push(format!("adapter schema unverified for '{harness}'"));
             }
-            if capabilities.harnesses().is_empty() {
+            if menu.is_empty() {
                 unverified
                     .push("no harness choices are advertised by the current Fabric catalog".into());
             }
@@ -82,11 +121,7 @@ impl QuestionResolver<'_> {
                     JourneyQuestionReason::ExplicitAsk
                 },
                 required: true,
-                choices: capabilities
-                    .harnesses()
-                    .iter()
-                    .map(|harness| Value::String(harness.as_str().into()))
-                    .collect(),
+                choices: menu.iter().map(|harness| Value::from(*harness)).collect(),
                 suggestion: chosen.map(|kind| Value::String(kind.into())),
                 schema: serde_json::json!({"type":"string"}),
                 title: None,

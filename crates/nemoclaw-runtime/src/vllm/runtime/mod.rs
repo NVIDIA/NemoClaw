@@ -92,7 +92,7 @@ async fn run_owned(
         ));
     }
     let capacity = hardware::before_start(spec, cancel).await?;
-    let (mut command, readiness) = process::launch(
+    let (mut command, readiness, output) = process::launch(
         spec,
         &prepared,
         crate::vllm::hardware_capacity::serving_memory(spec, &capacity)?,
@@ -113,6 +113,9 @@ async fn run_owned(
     let mut child = command
         .spawn()
         .map_err(|_| Error::State("inference process could not start"))?;
+    // The command holds the runtime's copy of the output pipe's write end,
+    // which would keep the pipe open after vLLM exits.
+    drop(command);
     if let Err(error) = report(
         "loading",
         "waiting for inference readiness",
@@ -157,5 +160,5 @@ async fn run_owned(
     };
     sampler.abort();
     health.abort();
-    result
+    output.explain(result).await
 }

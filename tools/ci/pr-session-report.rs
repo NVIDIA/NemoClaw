@@ -7,6 +7,7 @@ const START: &str = "<!-- agent-session-report:v1 -->";
 const END: &str = "<!-- /agent-session-report -->";
 const OPENING: &str = "<summary>Authoring session — opening</summary>";
 
+/// Check report structure and token-count syntax without auditing source evidence.
 fn validate(body: &str) -> Result<(), &'static str> {
     let body = body.replace("\r\n", "\n");
     let body = body.trim();
@@ -51,6 +52,7 @@ fn validate(body: &str) -> Result<(), &'static str> {
         "Skills",
         "Instruction files",
         "Tool calls",
+        "Tokens",
         "Session window",
         "Compactions",
         "Models",
@@ -75,9 +77,26 @@ fn validate(body: &str) -> Result<(), &'static str> {
         if (status == "unavailable") != (value == "-") {
             return Err("use '-' only for unavailable values");
         }
+        if field == "Tokens" && status != "unavailable" {
+            let mut counts = value.split(';');
+            let valid = ["input:", "cached input:", "output:"].iter().all(|label| {
+                counts
+                    .next()
+                    .and_then(|cell| cell.trim().strip_prefix(label))
+                    .is_some_and(|count| {
+                        let count = count.trim();
+                        !count.is_empty() && count.bytes().all(|digit| digit.is_ascii_digit())
+                    })
+            });
+            if !valid || counts.next().is_some() {
+                return Err(
+                    "Tokens must use input: N; cached input: N; output: N with nonnegative integer counts",
+                );
+            }
+        }
     }
     if seen.len() != fields.len() {
-        return Err("include all eight report fields, even when unavailable");
+        return Err("include all report fields, even when unavailable");
     }
     Ok(())
 }
@@ -179,6 +198,7 @@ mod tests {
         assert!(validate("## Changes\nRead skills and ran tests.").is_err());
     }
 
+    /// A complete opening report shared by the validation cases.
     fn report() -> String {
         format!(
             "<details>\n<summary>Authoring session — opening</summary>\n\n{START}\n| Field | Status | Value | Evidence or limit |\n| --- | --- | --- | --- |\n\
@@ -186,6 +206,7 @@ mod tests {
 | Skills | partial | test-driven-development (complete read) | Earlier context unavailable |\n\
 | Instruction files | partial | AGENTS.md (complete read); WRITING.md (injected) | Full contents retained; earlier injection coverage unavailable |\n\
 | Tool calls | recorded | read: 2; shell: 1 | Recorded invocations, including failed attempts |\n\
+| Tokens | recorded | input: 120; cached input: 80; output: 25 | Last cumulative usage at cutoff |\n\
 | Session window | recorded | 2026-10-27T12:00Z to 2026-10-27T12:10Z; 10 min | First event through report cutoff |\n\
 | Compactions | recorded | 0 | Complete session record through cutoff |\n\
 | Models | unavailable | - | Model metadata absent |\n\
@@ -264,6 +285,59 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(validate(&body).is_err());
+    }
+
+    #[test]
+    /// Require Tokens even when every other report field is present.
+    fn tokens_are_required_even_when_other_fields_are_complete() {
+        let body = report()
+            .lines()
+            .filter(|line| !line.starts_with("| Tokens |"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(validate(&body).is_err());
+    }
+
+    #[test]
+    /// Keep lower bounds and unavailable counters valid alongside complete reports.
+    fn tokens_accept_recorded_partial_and_unavailable_evidence() {
+        let row = "| Tokens | recorded | input: 120; cached input: 80; output: 25 | Last cumulative usage at cutoff |";
+        for replacement in [
+            row,
+            "| Tokens | partial | input: 120; cached input: 80; output: 25 | Earlier usage is missing; counts are lower bounds |",
+            "| Tokens | unavailable | - | Inspected authoring record has no usage counters |",
+        ] {
+            assert!(validate(&report().replace(row, replacement)).is_ok());
+        }
+    }
+
+    #[test]
+    /// Reject scalar or malformed Tokens values without rejecting recorded zeros.
+    fn recorded_and_partial_tokens_require_three_nonnegative_counts() {
+        let row = "| Tokens | recorded | input: 120; cached input: 80; output: 25 | Last cumulative usage at cutoff |";
+        for status in ["recorded", "partial"] {
+            for value in [
+                "0",
+                "input: 120; output: 25",
+                "input: 120; cached input: 80; output: -1",
+                "input: 120; cached input: 80; output: 1.5",
+                "input: 120; cached input: 80; output: unknown",
+                "input: 120; input: 80; output: 25",
+                "input: 120; cached input: 80; output: 25; total: 145",
+                "input: ; cached input: 80; output: 25",
+            ] {
+                let replacement =
+                    format!("| Tokens | {status} | {value} | Last cumulative usage at cutoff |");
+                assert!(
+                    validate(&report().replace(row, &replacement)).is_err(),
+                    "accepted malformed {status} Tokens value: {value}"
+                );
+            }
+            let zeros = format!(
+                "| Tokens | {status} | input: 0; cached input: 0; output: 0 | Recorded zero usage |"
+            );
+            assert!(validate(&report().replace(row, &zeros)).is_ok());
+        }
     }
 
     #[test]

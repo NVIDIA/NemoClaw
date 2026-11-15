@@ -68,7 +68,21 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
         shape,
     };
     match kind {
-        "web_search" | "inference" | "api" => {
+        "api" => {
+            let mcp = schemars::schema_for!(crate::api::McpPolicy).to_value();
+            vec![
+                input("binaries", "binaries_json", strings()),
+                input(
+                    "mcp",
+                    crate::api::MCP_POLICY,
+                    Shape::Object(
+                        nemoclaw_tofu::shape::fields(&mcp, &[])
+                            .expect("the API's MCP policy maps to OpenTofu"),
+                    ),
+                ),
+            ]
+        }
+        "web_search" | "inference" => {
             vec![input("binaries", "binaries_json", strings())]
         }
         "sandbox" => vec![

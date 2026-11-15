@@ -70,7 +70,7 @@ async fn changed_connection_cannot_adopt_an_identical_volume_on_a_different_daem
         generation: "b".repeat(32),
         engine: "unix:///unused".into(),
     };
-    let volume = json!({"Name":storage.name,"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/shared/_data","CreatedAt":"same-time","Labels":labels(&storage),"Options":{}});
+    let volume = json!({"Name":storage.name,"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/shared/_data","CreatedAt":"same-time","Labels":storage.labels(),"Options":{}});
     let start = |id: &'static str, volume: Value| async move {
         let identity = Arc::new(Mutex::new((id, 200)));
         let current = identity.clone();

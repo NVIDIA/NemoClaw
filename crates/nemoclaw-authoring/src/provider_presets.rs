@@ -60,6 +60,8 @@ pub(crate) struct ProviderProfile {
     pub credential: &'static str,
     pub custom_endpoint: bool,
     pub default_model: Option<&'static str>,
+    /// Page where the provider issues API keys. Compatible endpoints have none.
+    pub key_url: Option<&'static str>,
 }
 
 impl ProviderPreset {
@@ -76,6 +78,19 @@ impl ProviderPreset {
 
     pub(crate) fn profile(self) -> ProviderProfile {
         provider_profile(self)
+    }
+
+    /// Page where a user gets an API key for this preset, if the provider has one.
+    pub fn key_url(self) -> Option<&'static str> {
+        self.profile().key_url
+    }
+
+    /// The hosted preset whose API key lives in `credential`.
+    pub fn for_credential_reference(credential: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|preset| {
+            let profile = preset.profile();
+            profile.credential == credential && profile.key_url.is_some()
+        })
     }
 
     pub fn apis(self) -> &'static [InferenceApi] {
@@ -127,6 +142,12 @@ impl ProviderPreset {
     }
 }
 
+// Key URLs are adapted from classic NemoClaw main at
+// 32c42bbad69dca3bb3f4e11ea439c8ce4898d4ff: the `helpUrl` of each
+// `REMOTE_PROVIDER_CONFIG` entry in src/lib/onboard/providers.ts,
+// OPENROUTER_HELP_URL in src/lib/inference/openrouter.ts, and
+// HERMES_NOUS_API_KEY_HELP_URL in src/lib/onboard/hermes-auth.ts. Only the
+// URLs are taken; the compatible-endpoint presets have none upstream either.
 fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
     match inference {
         ProviderPreset::NvidiaEndpoints => ProviderProfile {
@@ -135,6 +156,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
             credential: "NVIDIA_API_KEY",
             custom_endpoint: false,
             default_model: Some(NVIDIA_MODEL),
+            key_url: Some("https://build.nvidia.com/settings/api-keys"),
         },
         ProviderPreset::OpenRouter => ProviderProfile {
             kind: InferenceProviderKind::Openai,
@@ -142,6 +164,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
             credential: "OPENROUTER_API_KEY",
             custom_endpoint: false,
             default_model: Some(NVIDIA_MODEL),
+            key_url: Some("https://openrouter.ai/workspaces/default/keys"),
         },
         ProviderPreset::OpenAi => ProviderProfile {
             kind: InferenceProviderKind::Openai,
@@ -149,6 +172,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
             credential: "OPENAI_API_KEY",
             custom_endpoint: false,
             default_model: Some("gpt-5.4"),
+            key_url: Some("https://platform.openai.com/api-keys"),
         },
         ProviderPreset::OpenAiCompatible => ProviderProfile {
             kind: InferenceProviderKind::Openai,
@@ -156,6 +180,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
             credential: "COMPATIBLE_API_KEY",
             custom_endpoint: true,
             default_model: None,
+            key_url: None,
         },
         ProviderPreset::Anthropic => ProviderProfile {
             kind: InferenceProviderKind::Anthropic,
@@ -163,6 +188,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
             credential: "ANTHROPIC_API_KEY",
             custom_endpoint: false,
             default_model: Some("claude-sonnet-4-6"),
+            key_url: Some("https://console.anthropic.com/settings/keys"),
         },
         ProviderPreset::AnthropicCompatible => ProviderProfile {
             kind: InferenceProviderKind::Anthropic,
@@ -170,6 +196,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
             credential: "COMPATIBLE_ANTHROPIC_API_KEY",
             custom_endpoint: true,
             default_model: None,
+            key_url: None,
         },
         ProviderPreset::Gemini => ProviderProfile {
             kind: InferenceProviderKind::Openai,
@@ -177,6 +204,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
             credential: "GEMINI_API_KEY",
             custom_endpoint: false,
             default_model: Some("gemini-3.6-flash"),
+            key_url: Some("https://aistudio.google.com/app/apikey"),
         },
         ProviderPreset::Nous => ProviderProfile {
             kind: InferenceProviderKind::Openai,
@@ -184,6 +212,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
             credential: "NOUS_API_KEY",
             custom_endpoint: false,
             default_model: Some("moonshotai/kimi-k2.6"),
+            key_url: Some("https://portal.nousresearch.com/manage-subscription"),
         },
     }
 }

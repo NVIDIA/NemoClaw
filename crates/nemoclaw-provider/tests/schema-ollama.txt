@@ -20,6 +20,7 @@ data ollama_capacity (version 0)
   compatible: bool, computed
   contracts: list(string), required
   engine: string, required
+  gpu_devices: list(string), optional
   observed_bytes: number, computed
   required_bytes: number, computed
 
@@ -68,10 +69,12 @@ data ollama_readiness (version 0)
 
 data ollama_runtime (version 0)
   > Computes a runtime contract from typed settings without contacting any host.
+  gpu_count: number, optional
+    > The number of GPUs the service uses, which requirements.gpu_count reports; spec doesn't change. It must be 1, because serving one model across several GPUs isn't implemented yet. Without it, gpu_count is 1, because the runtime requires exactly one visible GPU.
   launch: object({ command = list(string), data_path = string, entrypoint = list(string), environment = map(string), key_env = string, port = number }), computed
     > What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, the path for its data, and key_env, the variable an authenticated server reads a supplied API key from (empty without authentication). Place it with any container platform.
-  requirements: object({ gpu = bool, shared_memory_bytes = number, ulimits = map(number) }), computed
-    > What the runtime needs from its platform: a GPU, shared memory (a recommended minimum), and process limits by name, where -1 is unlimited. Platforms that cannot set process limits leave them to the node.
+  requirements: object({ gpu = bool, gpu_count = number, shared_memory_bytes = number, ulimits = map(number) }), computed
+    > What the runtime needs from its platform: a GPU and how many to give it (gpu_count), shared memory (a recommended minimum), and process limits by name, where -1 is unlimited. Platforms that cannot set process limits leave them to the node.
   spec: string, computed
     > Validated runtime specification for the container's NEMOCLAW_RUNTIME_SPEC environment variable.
   block hardware: optional
@@ -83,7 +86,7 @@ data ollama_runtime (version 0)
     min_driver_major: number, optional
       > Minimum installed NVIDIA driver major version.
     min_gpu_memory_bytes: number, optional
-      > Minimum total dedicated GPU memory in bytes. Host RAM is measured separately.
+      > Minimum total dedicated memory of each selected GPU in bytes. Host RAM is measured separately.
     profile: string, optional
       > GPU family and memory architecture. Every profile requires observed compute capability and driver major 580 or newer. Unified-memory profiles budget host RAM; dedicated-memory profiles require GPU total/free counters.
   block memory: optional
@@ -93,9 +96,9 @@ data ollama_runtime (version 0)
     free_gate_gib: number, optional
       > Available-memory gate for the free-memory threshold.
     gpu_memory_gib: number, optional
-      > Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB.
+      > Fixed serving budget in GiB for each selected GPU when utilization is omitted. Omission or zero selects 16 GiB.
     gpu_memory_utilization: number, optional
-      > Optional fraction of observed dedicated GPU memory.
+      > Optional fraction of observed dedicated GPU memory, taken of the smallest selected GPU; the resulting budget applies to each selected GPU.
     host_reserve_gib: number, optional
       > Host memory reserve excluded from serving. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile.
     min_available_gib: number, optional

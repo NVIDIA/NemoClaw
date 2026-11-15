@@ -3,14 +3,14 @@
 
 # Managed Ollama Runtime Sources
 
-This artifact extends the upstream Ollama 0.40.11 image, pinned by the multi-platform manifest digest in its Dockerfile.
+This artifact extends the upstream Ollama 0.40.14 image, pinned by the multi-platform manifest digest in its Dockerfile.
 The overlay retains the unmodified Ollama MIT license at `/opt/nemoclaw/source/ollama-LICENSE`, downloaded with the pinned SHA-256 in its Dockerfile.
 It preserves the base image filesystem and does not replace existing upstream notices.
-[Ollama 0.40.11](https://github.com/ollama/ollama/tree/v0.40.11) is distributed under its [MIT license](https://github.com/ollama/ollama/blob/v0.40.11/LICENSE).
+[Ollama 0.40.14](https://github.com/ollama/ollama/tree/v0.40.14) is distributed under its [MIT license](https://github.com/ollama/ollama/blob/v0.40.14/LICENSE).
 
 The NemoClaw integration added on 2026-09-18 supplies the shared supervisor and selects it as the entrypoint.
 It does not patch Ollama source.
-The upstream source revision is `f52b9e742d8c9a308f7b23cd1f0ab52c7ddb694d`.
+The upstream source revision is `9a3e8177767245acc62b735eba7d5d8a553606d0`.
 The runtime uses the upstream pull, show, and inventory APIs, environment configuration, the load-only generate API, and the process inventory API.
 The process inventory reports GPU residency using the same total/VRAM comparison as the upstream `ollama ps` command.
 

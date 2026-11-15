@@ -22,6 +22,8 @@ fn journey(values: Value, capabilities: &Capabilities) -> nemoclaw_authoring::Jo
         "/metadata/name",
         "/spec/sandboxes/assistant/harness/kind",
         "inference:preset",
+        // Exact guidance asks the API even where the vendor's preset decides it.
+        "/spec/inferenceProviders/nvidia-prod/api",
     ])
     .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
     .start(capabilities)

@@ -15,10 +15,10 @@ variable "context" {
     openshell        = string
     work_dir         = string
     evidence_dir     = string
+    versions         = string
   })
 }
 
-# A kind case's cluster, which cargo ci live-kind sets as TF_VAR_kubeconfig.
 variable "model_key" {
   description = "The key a Docker case's stub model requires; cargo ci live-docker sets it."
   type        = string
@@ -26,6 +26,7 @@ variable "model_key" {
   sensitive   = true
 }
 
+# A kind case's cluster, which cargo ci live-kind sets as TF_VAR_kubeconfig.
 variable "kubeconfig" {
   type    = string
   default = ""

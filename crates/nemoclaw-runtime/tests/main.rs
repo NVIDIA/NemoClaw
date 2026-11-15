@@ -9,5 +9,7 @@ mod contract;
 mod dependencies;
 #[path = "entrypoint.rs"]
 mod entrypoint;
+#[path = "per_gpu_memory.rs"]
+mod per_gpu_memory;
 #[path = "rtx_spark.rs"]
 mod rtx_spark;

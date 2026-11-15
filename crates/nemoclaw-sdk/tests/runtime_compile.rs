@@ -107,6 +107,63 @@ fn docker_model_limits_reach_opentofu_and_native_container_configuration() {
 }
 
 #[test]
+fn a_named_gpu_reaches_opentofu_and_the_native_device_request() {
+    for input in [
+        include_str!("fixtures/config/spark.yaml"),
+        include_str!("fixtures/config/managed-ollama.yaml"),
+    ] {
+        let baseline = Document::parse(input.as_bytes()).unwrap();
+        let generations = ["managed_gateway", "inference_service", "ollama_service"]
+            .map(|kind| (kind.into(), "b".repeat(32)))
+            .into();
+        for gpu in ["GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3", "1"] {
+            let mut value = serde_json::to_value(&baseline).unwrap();
+            for service in value["spec"]["services"]
+                .as_object_mut()
+                .unwrap()
+                .values_mut()
+            {
+                service["container"] = json!({"gpuDevices": [gpu]});
+            }
+            let document = Document::parse(value.to_string().as_bytes()).unwrap();
+            let exported = serde_json::to_value(&document).unwrap();
+            assert!(
+                exported["spec"]["services"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .all(|service| service["container"]["gpuDevices"] == json!([gpu]))
+            );
+            let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+            for target in runtime_targets(&document, &generations)
+                .unwrap()
+                .iter()
+                .filter(|target| {
+                    matches!(target.kind.as_str(), "inference_service" | "ollama_service")
+                })
+            {
+                let (_, name) = target.address.split_once('.').unwrap();
+                let container = &graph["resource"]["docker_container"][name];
+                assert_eq!(
+                    container["gpus"],
+                    format!("device={gpu}"),
+                    "{}",
+                    target.kind
+                );
+                let spec: nemoclaw_sdk::managed::Spec =
+                    serde_json::from_str(&target.values["spec"]).unwrap();
+                let host = spec.container("/data").unwrap().host_config.unwrap();
+                let requests = host.device_requests.unwrap();
+                assert_eq!(requests.len(), 1);
+                assert_eq!(requests[0].device_ids, Some(vec![gpu.to_owned()]));
+                assert_eq!(requests[0].count, None);
+                assert_eq!(requests[0].capabilities, Some(vec![vec!["gpu".to_owned()]]));
+            }
+        }
+    }
+}
+
+#[test]
 fn omitted_docker_model_limits_keep_independent_legacy_defaults() {
     for input in [
         include_str!("fixtures/config/spark.yaml"),
@@ -383,6 +440,90 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
             .is_none(),
         "Docker gateway storage does not depend on the listen port"
     );
+}
+
+#[test]
+fn caller_volumes_remain_external_through_changes_restore_and_recreation() {
+    let baseline =
+        Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
+    let mounts = json!({"docker": {"mounts": [
+        {"type": "volume", "source": "caller-workspace", "target": "/sandbox/workspace", "read_only": false},
+        {"type": "volume", "source": "caller-artifacts", "target": "/sandbox/artifacts", "read_only": false}
+    ]}});
+    let mut value = serde_json::to_value(baseline).unwrap();
+    value["spec"]["sandboxes"]["assistant"]["driverConfig"] = mounts.clone();
+    let baseline = Document::parse(value.to_string().as_bytes()).unwrap();
+    value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = json!({"allow": ["fixture-shell"]});
+    let changed = Document::parse(value.to_string().as_bytes()).unwrap();
+
+    for (phase, document, generation) in [
+        ("baseline", &baseline, "a"),
+        ("configuration change", &changed, "a"),
+        ("restore", &baseline, "a"),
+        ("recreation", &baseline, "b"),
+    ] {
+        let generations: Generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "managed_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), generation.repeat(32)))
+        .into();
+        let mut graph = nemoclaw_sdk::compile::compile(document, &generations, "0.1.0").unwrap();
+        let established = graph["resource"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .flat_map(|(kind, instances)| {
+                instances
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(move |name| format!("{kind}.{name}"))
+            })
+            .collect();
+        let teardown =
+            nemoclaw_sdk::compile::compile_teardown(document, &generations, "0.1.0", &established)
+                .unwrap();
+        let driver_config = graph["resource"]["openshell_sandbox"]["assistant"]
+            .as_object_mut()
+            .unwrap()
+            .remove("driver_config")
+            .unwrap();
+        let decoded: Value = match driver_config.as_str() {
+            Some(text) => serde_json::from_str(text).unwrap(),
+            None => driver_config,
+        };
+        assert_eq!(
+            decoded, mounts,
+            "{phase}: caller mounts reach only the sandbox driver"
+        );
+        for volume in ["caller-workspace", "caller-artifacts"] {
+            assert!(
+                !graph["resource"].to_string().contains(volume),
+                "{phase}: {volume} entered another graph binding"
+            );
+            assert!(
+                !serde_json::to_string(&runtime_targets(document, &generations).unwrap())
+                    .unwrap()
+                    .contains(volume),
+                "{phase}: {volume} became managed runtime storage"
+            );
+            assert!(
+                !teardown.graph.to_string().contains(volume),
+                "{phase}: {volume} entered teardown"
+            );
+            assert!(
+                teardown
+                    .retained
+                    .iter()
+                    .all(|address| !address.contains(volume)),
+                "{phase}: {volume} became retained managed storage"
+            );
+        }
+    }
 }
 
 #[test]

@@ -44,7 +44,7 @@
     },
     "/spec/sandboxes/*/harness/kind": {
       "title": "Choose your agent harness",
-      "description": "The harness is the agent environment NemoClaw installs and isolates."
+      "description": "The harness is the agent environment NemoClaw installs and isolates. More harnesses will be offered later."
     },
     "/spec/sandboxes/*/image/ref": {
       "title": "Sandbox image"
@@ -53,7 +53,8 @@
       "title": "Network policy"
     },
     "/spec/sandboxes/*/network/tier": {
-      "title": "Network tier"
+      "title": "Network tier",
+      "description": "The agent reaches its inference endpoint and nothing else on the network."
     },
     "/spec/gateway/runtime/provider": {
       "title": "Where should the sandbox run?",
@@ -249,7 +250,6 @@
       "nvidia.fabric.codex": "Codex",
       "nvidia.fabric.hermes": "Hermes",
       "nvidia.fabric.langchain.deepagents": "LangChain Deep Agents",
-      "nvidia.fabric.langchain.deepagents-code": "LangChain Deep Agents Code",
       "nvidia.fabric.mini-swe-agent": "mini-SWE-agent",
       "nvidia.fabric.nooa": "NOOA",
       "nvidia.fabric.nooa.bench-agent": "NOOA bench agent",
@@ -263,7 +263,9 @@
     },
     "/spec/gateway/runtime/provider": {
       "docker": "Docker",
-      "podman": "Podman"
+      "podman": "Podman",
+      "kubernetes": "Kubernetes",
+      "openshift": "OpenShift"
     },
     "/spec/services/*/authentication": {
       "bearer": "Bearer token"

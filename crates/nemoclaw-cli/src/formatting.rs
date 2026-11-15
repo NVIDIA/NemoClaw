@@ -130,13 +130,15 @@ pub(crate) fn render(
 ) -> Result<String, Box<dyn std::error::Error>> {
     match result {
         CommandResult::Export(document) => Ok(document.yaml()?),
-        CommandResult::Authored(path) => Ok(path.map(|path| format!("Authored desired state: {}\nRun nemoclaw plan with this file when you are ready to check deployment.\n", terminal_text(&path.display().to_string()))).unwrap_or_default()),
+        CommandResult::Authored(path) => Ok(path
+            .map(|path| authored(&path, context.output_palette))
+            .unwrap_or_default()),
         CommandResult::Operation(result) => match format {
             OutputFormat::Text => {
                 let mut output = operation(&result, context);
                 context.append_warnings(&mut output);
                 Ok(output)
-            },
+            }
             OutputFormat::Json => {
                 let mut value = serde_json::to_value(&result)?;
                 context.add_warnings(&mut value);
@@ -146,6 +148,40 @@ pub(crate) fn render(
                 Ok(format!("{}\n", serde_json::to_string_pretty(&value)?))
             }
         },
+    }
+}
+
+/// The save confirmation, with commands that run as printed.
+fn authored(path: &std::path::Path, palette: Palette) -> String {
+    let file = terminal_text(&shell_word(&path.display().to_string()));
+    let heading = format!(
+        "{} {}",
+        "Authored desired state:",
+        palette.paint(&terminal_text(&path.display().to_string()), Tone::Success)
+    );
+    let plan = palette.paint(&format!("nemoclaw plan {file}"), Tone::Accent);
+    let apply = palette.paint(&format!("nemoclaw apply {file}"), Tone::Accent);
+    let note = palette.paint("Apply pulls images and starts containers.", Tone::Muted);
+    format!(
+        "{heading}\n\nPreview the changes with plan, then apply them:\n\n  {plan}\n  {apply}\n\n{note}\n"
+    )
+}
+
+/// One shell word that reads back as `value`; a leading `-` gets `./` so it is not a flag.
+fn shell_word(value: &str) -> String {
+    let value = if value.starts_with('-') {
+        format!("./{value}")
+    } else {
+        value.to_string()
+    };
+    let plain = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+    if plain {
+        value
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }
 
@@ -280,7 +316,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     let mut output = if planned {
         if !result.deferred.is_empty() {
             format!(
-                "{} incomplete · {} known resource changes\n",
+                "{}: {} known resource changes; some checks wait for apply\n",
                 context.operation,
                 result.changes.len()
             )
@@ -515,6 +551,15 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
+        if context.operation == "Plan"
+            && !result.deferred.is_empty()
+            && let Some(input) = &context.input
+        {
+            output.push_str(&format!(
+                "Next: nemoclaw apply {}\n",
+                terminal_text(&shell_word(&input.display().to_string()))
+            ));
+        }
     }
     if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
         output.push_str(&interface_access(result, selected));
@@ -587,9 +632,7 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
 
 /// How to reach each enabled interface: the commands a person runs, under the
 /// gateway and workspace selection, unless the agents' section printed it.
-/// Only the person's own retrieval command discloses a token. A terminal
-/// interface is opened by running its launcher in the sandbox; it has no
-/// forward or token.
+/// Only the person's own retrieval command discloses a token.
 fn interface_access(result: &OperationResult, selected: bool) -> String {
     use nemoclaw_sdk::SignIn;
     let mut output = String::from("\nAgent interfaces:\n");
@@ -607,19 +650,6 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
                 ));
             }
             None => output.push_str(&format!("  {sandbox}/{interface}\n")),
-        }
-        if access.sign_in == SignIn::SandboxExec {
-            match &access.launcher {
-                Some(launcher) => {
-                    let launcher = terminal_text(launcher);
-                    output.push_str(&format!(
-                        "    Open:     openshell sandbox exec -n {sandbox} --tty -- {launcher}\n              (on a noexec mount: openshell sandbox exec -n {sandbox} --tty -- sh {launcher})\n"
-                    ));
-                }
-                None => output.push_str(
-                    "    Open:     unavailable; the deployment state records no runtime ID for this agent\n",
-                ),
-            }
         }
         let token = matches!(
             access.sign_in,
@@ -644,22 +674,18 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
             ),
             SignIn::BearerToken => "    Sign in:  send the header Authorization: Bearer TOKEN, replacing TOKEN with the token\n".into(),
             SignIn::None => "    Sign in:  none; anyone who can reach the forward can use it\n".into(),
-            SignIn::SandboxExec => "    Sign in:  none; anyone who can run openshell sandbox exec in this workspace can open it\n".into(),
             SignIn::AdapterDocumented => "    Sign in:  see the adapter's documentation\n".into(),
         });
+        if let Some(command) = &access.terminal {
+            output.push_str(&format!(
+                "    Terminal: openshell sandbox exec -n {sandbox} --tty -- {}, replacing TOKEN with the token\n",
+                terminal_text(command)
+            ));
+        }
     }
-    let (launchers, others): (Vec<_>, Vec<_>) = result
-        .interfaces
-        .iter()
-        .partition(|access| access.sign_in == SignIn::SandboxExec);
-    if !others.is_empty() {
+    if !result.interfaces.is_empty() {
         output.push_str(
             "  The agent's own tools can read these tokens and reach these ports; see docs/agents-inference/interfaces.md.\n",
-        );
-    }
-    if !launchers.is_empty() {
-        output.push_str(
-            "  The agent's own tools can change a terminal launcher, and a terminal session's agent server listens in the sandbox without authentication; see docs/agents-inference/interfaces.md.\n",
         );
     }
     output
@@ -812,6 +838,74 @@ mod tests {
         .unwrap()
     }
 
+    fn authored(path: &str) -> String {
+        let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
+        super::render(
+            CommandResult::Authored(Some(path.into())),
+            OutputFormat::Text,
+            &RenderContext::new(&cli),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn saving_names_the_exact_plan_and_apply_commands() {
+        let text = authored("deployment.yaml");
+        assert!(
+            text.contains("\n  nemoclaw plan deployment.yaml\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\n  nemoclaw apply deployment.yaml\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("pulls images and starts containers"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_terminal_gets_a_styled_save_message_with_the_same_words() {
+        let cli = Cli::try_parse_from(["nemoclaw", "onboard"]).unwrap();
+        let mut context = RenderContext::new(&cli);
+        let plain = authored("deployment.yaml");
+        context.output_palette = Palette { enabled: true };
+        let styled = super::render(
+            CommandResult::Authored(Some("deployment.yaml".into())),
+            OutputFormat::Text,
+            &context,
+        )
+        .unwrap();
+        assert!(styled.contains('\x1b'), "{styled:?}");
+        assert!(
+            styled.contains("Authored desired state: \x1b[38;2;118;185;0mdeployment.yaml\x1b[0m\n")
+        );
+        assert!(styled.contains("\x1b[38;2;118;185;0mnemoclaw plan deployment.yaml\x1b[0m"));
+        assert!(styled.contains("\x1b[2mApply pulls images"));
+        let stripped = styled
+            .replace("\x1b[38;2;118;185;0m", "")
+            .replace("\x1b[2m", "")
+            .replace("\x1b[0m", "");
+        assert_eq!(stripped, plain);
+    }
+
+    #[test]
+    fn saved_paths_are_quoted_so_the_commands_run_as_printed() {
+        let text = authored("my dir/it's.yaml");
+        assert!(
+            text.contains("nemoclaw plan 'my dir/it'\\''s.yaml'\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("nemoclaw apply 'my dir/it'\\''s.yaml'\n"),
+            "{text}"
+        );
+        let text = authored("-odd.yaml");
+        assert!(text.contains("nemoclaw plan ./-odd.yaml\n"), "{text}");
+        assert!(!authored("a\u{1b}[2J.yaml").contains('\u{1b}'));
+    }
+
     #[test]
     fn warnings_survive_hidden_progress_and_successful_or_failed_json_output() {
         let message = "Service qwen relies on NetworkPolicy enforcement.\u{1b}[2J";
@@ -859,7 +953,8 @@ mod tests {
         json!([
             {"sandbox": "assistant", "interface": "dashboard", "port": 18789,
              "tokenPath": "/sandbox/artifacts/.fabric/openclaw/runtimes/rt-1/interfaces/dashboard.token",
-             "signIn": "token_in_url_fragment"},
+             "signIn": "token_in_url_fragment",
+             "terminal": "openclaw tui --url ws://127.0.0.1:18789 --token TOKEN"},
             {"sandbox": "reviewer", "interface": "api", "port": 8642,
              "tokenPath": "/sandbox/artifacts/.fabric/hermes/runtimes/rt-2/interfaces/api.token",
              "signIn": "bearer_token"},
@@ -868,8 +963,9 @@ mod tests {
     }
 
     /// After apply, each enabled interface gets its forward, the command that
-    /// reads its token, and its sign-in, under this deployment's gateway and
-    /// workspace selection. The output names where the token is, never a token.
+    /// reads its token, its sign-in, and the command that opens its terminal UI
+    /// if it has one, under this deployment's gateway and workspace selection.
+    /// The output names where the token is, never a token.
     #[test]
     fn apply_output_tells_how_to_reach_each_interface() {
         let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
@@ -883,6 +979,7 @@ mod tests {
             "Forward: openshell forward service assistant --target-port 18789 --local 127.0.0.1:18789",
             "Token: openshell sandbox exec -n assistant --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/rt-1/interfaces/dashboard.token",
             "Sign in: open http://127.0.0.1:18789/#token=TOKEN, replacing TOKEN with the token",
+            "Terminal: openshell sandbox exec -n assistant --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token",
             "Forward: openshell forward service reviewer --target-port 8642 --local 127.0.0.1:8642",
             "Token: openshell sandbox exec -n reviewer --no-tty -- cat /sandbox/artifacts/.fabric/hermes/runtimes/rt-2/interfaces/api.token",
             "Sign in: send the header Authorization: Bearer TOKEN, replacing TOKEN with the token",
@@ -896,8 +993,10 @@ mod tests {
                 "missing {expected:?}:\n{text}"
             );
         }
-        // Only the two interfaces with a token get a command that reads one.
-        assert_eq!(text.matches("sandbox exec").count(), 2, "{text}");
+        // Only the two interfaces with a token get a command that reads one,
+        // and only OpenClaw's dashboard a terminal command.
+        assert_eq!(text.matches("--no-tty -- cat").count(), 2, "{text}");
+        assert_eq!(text.matches("Terminal:").count(), 1, "{text}");
         assert!(
             text.contains("reach these ports; see docs/agents-inference/interfaces.md."),
             "{text}"
@@ -930,60 +1029,6 @@ mod tests {
             !text.contains("export OPENSHELL_GATEWAY_ENDPOINT"),
             "{text}"
         );
-    }
-
-    /// A terminal interface gets the command that opens it with the current
-    /// runtime's launcher, and its `sh` form for a `noexec` mount, under the
-    /// same gateway selection; it has no forward and no token.
-    #[test]
-    fn apply_output_tells_how_to_open_a_terminal_interface() {
-        let launcher =
-            "/sandbox/artifacts/.fabric/deepagents-code/runtimes/rt-3/interfaces/terminal";
-        let interfaces = json!([{"sandbox": "assistant", "interface": "terminal",
-            "launcher": launcher, "signIn": "sandbox_exec"}]);
-        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
-        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "interfaces": interfaces});
-        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result.clone());
-        let lines: Vec<String> = text
-            .lines()
-            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
-            .collect();
-        for expected in [
-            "unset OPENSHELL_GATEWAY".to_owned(),
-            "export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671".to_owned(),
-            "export OPENSHELL_WORKSPACE=nc-1234567890abcdef".to_owned(),
-            "assistant/terminal".to_owned(),
-            format!("Open: openshell sandbox exec -n assistant --tty -- {launcher}"),
-            format!("(on a noexec mount: openshell sandbox exec -n assistant --tty -- sh {launcher})"),
-            "Sign in: none; anyone who can run openshell sandbox exec in this workspace can open it"
-                .to_owned(),
-        ] {
-            assert!(lines.contains(&expected), "missing {expected:?}:\n{text}");
-        }
-        for absent in ["openshell forward", "Token:", "--no-tty", "these tokens"] {
-            assert!(!text.contains(absent), "unexpected {absent:?}:\n{text}");
-        }
-        assert!(text.contains("change a terminal launcher"), "{text}");
-        assert!(
-            text.contains("without authentication; see docs/agents-inference/interfaces.md."),
-            "{text}"
-        );
-        let machine: Value = serde_json::from_str(&render(
-            &["nemoclaw", "apply", "deployment.yaml", "-o", "json"],
-            result,
-        ))
-        .unwrap();
-        assert_eq!(machine["interfaces"], interfaces);
-
-        // Without the runtime's ID, there is no launcher path to run.
-        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection,
-            "interfaces": [{"sandbox": "assistant", "interface": "terminal", "signIn": "sandbox_exec"}]});
-        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
-        assert!(
-            text.contains("Open:     unavailable; the deployment state records no runtime ID"),
-            "{text}"
-        );
-        assert!(!text.contains("--tty"), "{text}");
     }
 
     fn agents() -> Value {
@@ -1277,7 +1322,7 @@ mod tests {
         assert!(text.contains("No resource changes planned."), "{text}");
         assert!(text.contains("Unverified checks:"), "{text}");
         assert!(text.contains("Service readiness is checked during apply."));
-        assert!(!text.contains("Plan incomplete"));
+        assert!(!text.contains("some checks wait for apply"));
         assert!(!text.contains('\u{1b}'));
         let output: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "model.yaml", "-o", "json"],
@@ -1289,7 +1334,7 @@ mod tests {
         let mut blocked = result;
         blocked["deferred"] = json!(["Gateway inventory unavailable"]);
         let text = render(&["nemoclaw", "plan", "model.yaml"], blocked.clone());
-        assert!(text.contains("Plan incomplete"));
+        assert!(text.contains("some checks wait for apply"));
         assert!(text.contains("Unverified checks:"));
         let output: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "model.yaml", "-o", "json"],
@@ -1304,9 +1349,10 @@ mod tests {
         let result =
             json!({"outcome":"planned","changes":[],"deferred":["Gateway inventory unavailable"]});
         let text = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
-        assert!(text.contains("Plan incomplete"));
+        assert!(text.contains("some checks wait for apply"));
         assert!(!text.contains("No resource changes planned"));
         assert!(text.contains("Gateway inventory unavailable"));
+        assert!(text.contains("Next: nemoclaw apply spark.yaml"), "{text}");
         let json: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "spark.yaml", "-o", "json"],
             result,

@@ -175,7 +175,8 @@ fn asked_inference_api_precedes_route_model_in_question_order() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("api-before-model", base)
-        .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
+        .ask([JourneyScope::RouteModels])
+        .ask(["/spec/inferenceProviders/nvidia-prod/api"])
         .start(&capabilities)
         .unwrap();
     let api_path = "/spec/inferenceProviders/nvidia-prod/api";
@@ -2260,13 +2261,25 @@ fn credential_availability_names_each_observed_state_without_blocking_delegation
             .resolve_with_observations(&capabilities, &facts.observations())
             .unwrap();
         let reference = &facts.credentials[0].reference;
-        let note = resolution.credentials().join(" ");
+        let notes = resolution.credentials();
+        assert_eq!(notes.iter().any(|note| note.is_missing()), plan_guidance);
+        let note = notes
+            .iter()
+            .map(|note| note.text())
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(note.contains(&format!("{reference} {says}")), "{note}");
         assert_eq!(
-            note.contains("plan") && note.contains("non-interactive"),
+            note.contains(&format!("export {reference}=...")),
             plan_guidance,
             "{note}"
         );
+        assert_eq!(
+            note.contains("https://build.nvidia.com/settings/api-keys"),
+            plan_guidance,
+            "{note}"
+        );
+        assert!(!note.contains("non-interactive"), "{note}");
         assert!(!note.contains("PRIVATE_SENTINEL"));
         assert!(
             !resolution.information().join(" ").contains(reference),
@@ -3376,8 +3389,9 @@ fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
         .ask([
             "/metadata/name",
             "/spec/inferenceProviders/nvidia-prod/endpoint",
+            "/spec/inferenceProviders/nvidia-prod/api",
         ])
-        .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
+        .ask([JourneyScope::RouteModels])
         .start(&capabilities)
         .unwrap();
     let name = "/metadata/name";
@@ -4438,4 +4452,24 @@ fn an_authored_engine_clears_the_engine_question_note() {
             .and_then(|question| question.note()),
         None
     );
+}
+
+#[test]
+fn key_urls_belong_to_hosted_presets_and_not_to_compatible_endpoints() {
+    use nemoclaw_authoring::ProviderPreset;
+    for preset in ProviderPreset::ALL {
+        let url = preset.key_url();
+        assert_eq!(
+            url.is_none(),
+            matches!(
+                preset,
+                ProviderPreset::OpenAiCompatible | ProviderPreset::AnthropicCompatible
+            ),
+            "{}",
+            preset.id()
+        );
+        if let Some(url) = url {
+            assert!(url.starts_with("https://"), "{}", preset.id());
+        }
+    }
 }

@@ -3,9 +3,10 @@
 
 # One agent with the default kubernetes runtime and development
 # authentication profiles on a managed gateway in kind: apply, a reply from
-# the agent's recorded runtime, destroy that keeps only the gateway's
-# storage, an install that an admission policy refuses, and a redeploy that
-# reuses that storage and answers again.
+# the agent's recorded runtime, the sandbox's explicit network policy
+# enforced, destroy that keeps only the gateway's storage, an install that an
+# admission policy refuses, and a redeploy that reuses that storage and
+# answers again.
 # cargo ci live-kind runs it. The CLI runs with an empty PATH, so neither
 # install needs a helm program. The stub's reply shows each request reached
 # it; no model runs. The deployment is left in place after the second reply;
@@ -52,6 +53,55 @@ run "reply" {
         request          = "Reply to this NemoClaw live test."
         response_pointer = "/output/response"
         answer           = "nemoclaw-stub-reply"
+      }
+    }
+  }
+
+  assert {
+    condition     = length(output.failed) == 0
+    error_message = "failed: ${join(", ", output.failed)}"
+  }
+}
+
+# The managed inference grant gives the image's executables, python3 among
+# them, the stub's /v1/** paths; only the document's explicit policy gives
+# python3 the stub's /health, where the stub answers 404, and OpenShell's
+# proxy answers 403 to a request that no entry allows. The API server's
+# Service, at the first address of kind's Service network, answers a plain
+# HTTP request from any pod with 400, but no entry names it, so OpenShell
+# refuses the connection with EACCES. A literal address keeps DNS out of the
+# refusal.
+run "policy" {
+  module {
+    source = "./command"
+  }
+
+  variables {
+    targets = {
+      allowed_endpoint = {
+        sandbox = "assistant"
+        command = ["python3", "-c", <<-EOT
+          import errno, sys, urllib.error, urllib.request
+          try: print(urllib.request.urlopen(sys.argv[1], timeout=10).status)
+          except urllib.error.HTTPError as error: print(error.status)
+          except urllib.error.URLError as error: print(errno.errorcode.get(error.reason.errno, error.reason))
+        EOT
+        , one([
+          for endpoint in run.cluster.document.spec.sandboxes.assistant.network.policy.explicit.network_policies["stub-health"].endpoints :
+          "http://${endpoint.host}:${endpoint.port}${endpoint.path}"
+        ])]
+        contains = "404\n"
+      }
+      undeclared_host = {
+        sandbox = "assistant"
+        command = ["python3", "-c", <<-EOT
+          import errno, sys, urllib.error, urllib.request
+          try: print(urllib.request.urlopen(sys.argv[1], timeout=10).status)
+          except urllib.error.HTTPError as error: print(error.status)
+          except urllib.error.URLError as error: print(errno.errorcode.get(error.reason.errno, error.reason))
+        EOT
+        , "http://10.96.0.1:443/"]
+        contains = "EACCES\n"
       }
     }
   }

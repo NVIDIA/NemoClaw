@@ -151,6 +151,26 @@ fn cargo_steps_do_not_inherit_the_package_description_from_cargo_run() {
 }
 
 #[test]
+fn free_subnets_exclude_overlapping_networks_and_exhaustion() {
+    use ci::live::free_subnet;
+    for (occupied, expected) in [
+        ("172.30.200.0/23", Some("172.30.202.0/24")),
+        ("172.30.200.128/25", Some("172.30.201.0/24")),
+        ("172.30.0.0/16", None),
+        ("172.31.0.0/16", Some("172.30.200.0/24")),
+        ("fd00::/64", Some("172.30.200.0/24")),
+    ] {
+        assert_eq!(
+            free_subnet(&[occupied.into()], &[]).ok().as_deref(),
+            expected,
+            "{occupied}"
+        );
+    }
+    let full: Vec<_> = (200..=254).map(|n| format!("172.30.{n}.0/24")).collect();
+    assert!(free_subnet(&full, &[]).is_err());
+}
+
+#[test]
 fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
     use ci::live::{GatewayInputs, free_subnet, gateway_document, uuid};
     let first = uuid().unwrap();
@@ -244,10 +264,9 @@ fn gateway_documents_parse_as_current_configuration() {
     );
 }
 
-/// The interface live test's document: OpenClaw's dashboard, Hermes's API
-/// server and dashboard, and Deep Agents Code's terminal on one gateway, with a
-/// model endpoint on the gateway network's host address and a key the test
-/// supplies. Every sandbox takes its image's default policy, which lets
+/// The interface live test's document: OpenClaw's dashboard and Hermes's API
+/// server and dashboard on one gateway, with a model endpoint on the gateway
+/// network's host address and a key the test supplies. Every sandbox takes its image's default policy, which lets
 /// Hermes's browser chat open a terminal.
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));

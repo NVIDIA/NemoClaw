@@ -11,6 +11,11 @@ pub enum Error {
     State(&'static str),
     #[error("{0}")]
     Bundle(&'static str),
+    /// Saved deployment state whose intent record has another format.
+    #[error(
+        "deployment state was written by a different NemoClaw release (intent record version {recorded}; this release reads {supported}); keep using the CLI bundle that created the deployment, or destroy it with that bundle and create a new deployment; state retained"
+    )]
+    StateFromOtherRelease { recorded: u64, supported: u32 },
     #[error("{0}")]
     Conflict(&'static str),
     #[error(
@@ -51,6 +56,9 @@ pub enum Error {
     ServiceStarting,
     #[error("managed container is absent but owned persistent resources remain")]
     PartialRuntime,
+    /// A managed service runtime stopped and recorded why.
+    #[error("service runtime stopped: {0}")]
+    ServiceStopped(String),
 }
 
 impl Error {
@@ -87,6 +95,7 @@ impl From<nemoclaw_runtime::Error> for Error {
             },
             nemoclaw_runtime::Error::Cancelled => Self::Cancelled,
             nemoclaw_runtime::Error::ServiceStarting => Self::ServiceStarting,
+            error @ nemoclaw_runtime::Error::Exited(_) => Self::ServiceStopped(error.to_string()),
             nemoclaw_runtime::Error::Observation(e) => Self::Observation(match e {
                 nemoclaw_runtime::ObservationError::Authentication => {
                     crate::ObservationError::Authentication

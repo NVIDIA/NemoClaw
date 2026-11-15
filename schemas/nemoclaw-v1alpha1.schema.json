@@ -360,7 +360,7 @@
     },
     "DedicatedHardware": {
       "additionalProperties": false,
-      "description": "Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.",
+      "description": "Requirements each selected NVIDIA GPU with dedicated memory on Linux AMD64 must meet. Declaring requirements does not qualify a model or host.",
       "properties": {
         "architecture": {
           "const": "amd64",
@@ -382,7 +382,7 @@
           "type": "integer"
         },
         "minGpuMemoryBytes": {
-          "description": "Minimum total dedicated GPU memory in bytes. Host RAM is measured separately.",
+          "description": "Minimum total dedicated memory of each selected GPU in bytes. Host RAM is measured separately.",
           "format": "uint64",
           "maximum": 4398046511104,
           "minimum": 4294967296,
@@ -408,6 +408,13 @@
         "landlock": {
           "$ref": "#/$defs/PolicyLandlock",
           "description": "Kernel filesystem enforcement compatibility."
+        },
+        "network_middlewares": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PolicyMiddleware"
+          },
+          "description": "Supervisor middleware attachments keyed by policy-local names, which OpenShell's logs report. Each names a built-in middleware or a service registered in the gateway's `openshell.supervisor.middleware` configuration, and selects the admitted destination hosts it runs for.",
+          "type": "object"
         },
         "network_policies": {
           "additionalProperties": {
@@ -445,6 +452,26 @@
       },
       "required": [
         "explicit"
+      ],
+      "type": "object"
+    },
+    "ExposureService": {
+      "additionalProperties": false,
+      "description": "The Service that publishes a managed Kubernetes gateway.",
+      "properties": {
+        "type": {
+          "description": "`NodePort` listens on the endpoint's port on every node; the port must be in the cluster's node-port range, 30000 through 32767 by default.",
+          "oneOf": [
+            {
+              "const": "NodePort",
+              "description": "A port on every node.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
       ],
       "type": "object"
     },
@@ -646,9 +673,9 @@
             },
             "endpoint": {
               "default": "http://127.0.0.1:17681",
-              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://127.0.0.1:PORT` with an explicit nonzero port and no trailing slash; providers forward free local ports of their own to the owned gateway, so this port is not bound.",
+              "description": "Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Providers forward free local ports of their own to the owned gateway. Without `kubernetes.expose`, the host is `127.0.0.1` and this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port other clients dial, and the gateway certificate names its host.",
               "type": "string",
-              "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
+              "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS endpoint and port: 127.0.0.1 without kubernetes.expose, or the address clients dial with it."
             },
             "engine": {
               "default": "unix:///var/run/docker.sock",
@@ -708,13 +735,13 @@
             ],
             "properties": {
               "endpoint": {
-                "pattern": "^https://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
+                "pattern": "^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
               }
             },
             "required": [
               "endpoint"
             ],
-            "x-nemoclaw-error": "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings"
+            "x-nemoclaw-error": "managed Kubernetes requires an explicit HTTPS endpoint with a lowercase host and a nonzero port and excludes local engine settings"
           },
           "title": "Managed gateway",
           "type": "object"
@@ -1435,6 +1462,20 @@
       ],
       "type": "object"
     },
+    "KubernetesExpose": {
+      "additionalProperties": false,
+      "description": "Publication of a managed Kubernetes gateway's endpoint.",
+      "properties": {
+        "service": {
+          "$ref": "#/$defs/ExposureService",
+          "description": "The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged."
+        }
+      },
+      "required": [
+        "service"
+      ],
+      "type": "object"
+    },
     "ManagedKubernetes": {
       "additionalProperties": false,
       "dependentRequired": {
@@ -1519,6 +1560,10 @@
           "type": "array",
           "uniqueItems": true,
           "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
+        },
+        "expose": {
+          "$ref": "#/$defs/KubernetesExpose",
+          "description": "How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host. NemoClaw's own commands still forward a free local port to the gateway pod. Its Service type is fixed after the first successful plan."
         },
         "imagePullSecrets": {
           "description": "Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them in the namespace before the first apply, or after the SDK creates it, before its pods need to pull images.",
@@ -1696,7 +1741,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         },
         "gpuMemoryGiB": {
-          "description": "Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.",
+          "description": "GPU budget in GiB for each selected GPU without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget.",
           "format": "int64",
           "maximum": 96,
           "minimum": 0,
@@ -1704,7 +1749,7 @@
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
+          "description": "Optional fraction of each selected GPU's observed dedicated memory, from 0.05 through 0.95, which vLLM's --gpu-memory-utilization applies to each GPU's own total. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,
@@ -1728,7 +1773,7 @@
         },
         "kvCacheGiB": {
           "default": 8,
-          "description": "KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.",
+          "description": "KV cache allocation in GiB on each selected GPU for ordinary vLLM, passed as --kv-cache-memory-bytes. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.",
           "format": "int64",
           "minimum": 0,
           "type": "integer",
@@ -1903,13 +1948,13 @@
             }
           ],
           "default": 0,
-          "description": "Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB.",
+          "description": "Fixed serving budget in GiB for each selected GPU when utilization is omitted. Omission or zero selects 16 GiB.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB."
         },
         "gpuMemoryUtilization": {
-          "description": "Optional fraction of observed dedicated GPU memory.",
+          "description": "Optional fraction of observed dedicated GPU memory, taken of the smallest selected GPU; the resulting budget applies to each selected GPU.",
           "format": "double",
           "maximum": 0.95,
           "minimum": 0.05,
@@ -2079,7 +2124,7 @@
           "type": "integer"
         },
         "model": {
-          "description": "Model identifier. For a managed service, match its recipe serving.modelName or, without a recipe, model.repository.",
+          "description": "Model identifier. For a managed service, match its served model: vLLM's recipe serving.modelName, serving.modelName, or model.repository; Ollama's model.name; an Ollama proxy's upstream.model.name.",
           "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$",
           "type": "string"
         },
@@ -2428,6 +2473,71 @@
       },
       "type": "object"
     },
+    "PolicyMiddleware": {
+      "additionalProperties": false,
+      "description": "One supervisor middleware attachment. OpenShell validates the attachment, including unique orders and selectors that avoid `tls: skip` endpoints, and the named middleware validates `config`.",
+      "properties": {
+        "config": {
+          "additionalProperties": true,
+          "description": "Settings passed to the middleware, which defines and validates their format.",
+          "type": "object"
+        },
+        "endpoints": {
+          "$ref": "#/$defs/PolicyMiddlewareEndpoints",
+          "description": "Admitted destination hosts the middleware runs for."
+        },
+        "middleware": {
+          "description": "A built-in middleware, such as `openshell/regex`, or the `name` of a service registered with the gateway.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Display name; omission uses the attachment's key.",
+          "type": "string"
+        },
+        "on_error": {
+          "description": "fail_closed blocks the affected traffic when the middleware fails; fail_open lets it continue. Omission selects fail_closed. A middleware denial blocks traffic either way.",
+          "enum": [
+            "fail_closed",
+            "fail_open"
+          ],
+          "type": "string"
+        },
+        "order": {
+          "description": "Position among attachments that select the same host; lower values run first. Orders must be unique within the policy; omission means 0.",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "middleware",
+        "endpoints"
+      ],
+      "type": "object"
+    },
+    "PolicyMiddlewareEndpoints": {
+      "additionalProperties": false,
+      "description": "Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax.",
+      "properties": {
+        "exclude": {
+          "description": "Hosts to skip; exclusions take precedence over inclusions.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "include": {
+          "description": "Hosts to run the middleware for; OpenShell requires at least one.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "include"
+      ],
+      "type": "object"
+    },
     "PolicyProcess": {
       "additionalProperties": false,
       "description": "Process identity resolved inside the sandbox image.",
@@ -2513,7 +2623,7 @@
       "description": "Resource declarations checked against host observations and produced data.",
       "properties": {
         "gpuMemoryBytes": {
-          "description": "Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.",
+          "description": "Serving GPU budget in bytes for each selected GPU, including its share of the model, caches, and other allocations. Checked against each selected GPU's memory on dedicated-memory GPUs, and against host memory with the host reserve on unified memory.",
           "format": "uint64",
           "maximum": 4398046511104,
           "minimum": 4294967296,
@@ -2740,7 +2850,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/ServiceExposure"
           },
-          "description": "OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names when it creates the sandbox. Exposures belong to the sandbox's creation: changing them replaces the sandbox.",
+          "description": "OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks each name when it exposes the service. Changing them updates the running sandbox's endpoints in place.",
           "maxProperties": 32,
           "type": "object"
         }
@@ -2793,7 +2903,7 @@
     },
     "ServiceContainer": {
       "additionalProperties": false,
-      "description": "Managed inference CPU and memory limits, IPC, and shared-memory settings.",
+      "description": "Managed inference CPU and memory limits, GPU selection, IPC, and shared-memory settings.",
       "properties": {
         "cpuLimitMillis": {
           "description": "CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container.",
@@ -2802,12 +2912,25 @@
           "minimum": 1,
           "type": "integer"
         },
+        "gpuDevices": {
+          "description": "The GPUs the model container gets on a host with several, as `docker run --gpus device=` names them: each a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index as a string, such as \"1\", which can change when the host boots. List exactly one: serving one model across several GPUs isn't implemented yet. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing the list replaces the model container.",
+          "items": {
+            "pattern": "^(?:GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|0|[1-9][0-9]{0,2})$",
+            "type": "string",
+            "x-nemoclaw-error": "each container.gpuDevices entry must be a lowercase GPU UUID or an index from \"0\" to \"999\""
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+          "x-nemoclaw-error": "container.gpuDevices must list exactly one GPU: serving one model across several GPUs isn't implemented yet"
+        },
         "ipc": {
           "$ref": "#/$defs/ServiceIpc",
           "description": "IPC namespace. Omission uses private; host shares the execution host's IPC namespace."
         },
         "memoryLimitGiB": {
-          "description": "Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container.",
+          "description": "Container memory limit in GiB, independent of the model's GPU budget. Omission sets a 104 GiB limit. Changing the limit replaces the model container.",
           "format": "uint64",
           "maximum": 8589934591,
           "minimum": 1,
@@ -2946,7 +3069,7 @@
           "properties": {
             "container": {
               "$ref": "#/$defs/ServiceContainer",
-              "description": "Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+              "description": "Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
             },
             "hardware": {
               "$ref": "#/$defs/ServiceHardware",
@@ -3215,6 +3338,16 @@
                               "required": [
                                 "enforceEager"
                               ]
+                            },
+                            {
+                              "required": [
+                                "tensorParallelSize"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "pipelineParallelSize"
+                              ]
                             }
                           ]
                         }
@@ -3307,7 +3440,7 @@
             },
             "container": {
               "$ref": "#/$defs/ServiceContainer",
-              "description": "Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+              "description": "Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
             },
             "hardware": {
               "$ref": "#/$defs/ServiceHardware",
@@ -3486,7 +3619,7 @@
       "anyOf": [
         {
           "$ref": "#/$defs/DedicatedHardware",
-          "description": "One NVIDIA GPU with dedicated memory on Linux AMD64."
+          "description": "NVIDIA GPUs with dedicated memory on Linux AMD64; each selected GPU must meet the requirements."
         },
         {
           "additionalProperties": false,
@@ -3560,7 +3693,7 @@
               "type": "string"
             },
             "minGpuMemoryBytes": {
-              "description": "Minimum dedicated GPU memory in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity.",
+              "description": "Minimum dedicated memory of each selected GPU in bytes, from 4 GiB through 4 TiB. Required with gpuMemoryUtilization; forbidden for unified-memory profiles. Fixed budgets otherwise use observed capacity.",
               "format": "uint64",
               "maximum": 4398046511104,
               "minimum": 4294967296,
@@ -3721,6 +3854,14 @@
           "description": "Optional advertised model name without a recipe. Omission uses the model repository; routes must match the advertised name.",
           "type": "string"
         },
+        "pipelineParallelSize": {
+          "description": "vLLM's --pipeline-parallel-size without a recipe: how many GPU stages each hold a range of layers. vLLM uses tensor × pipeline parallel size GPUs; selected GPUs the layout doesn't use stay reserved but idle.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission gives vLLM's default of 1. Must be omitted with a recipe, which sets its own."
+        },
         "port": {
           "anyOf": [
             {
@@ -3766,6 +3907,14 @@
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
+        },
+        "tensorParallelSize": {
+          "description": "vLLM's --tensor-parallel-size without a recipe: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts, and fails startup if they don't support it.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission gives vLLM the number of container.gpuDevices entries, or 1 without them, when pipelineParallelSize is also omitted, and vLLM's default of 1 when it's set. Must be omitted with a recipe, which sets its own."
         },
         "toolParser": {
           "default": "",
@@ -3847,6 +3996,14 @@
           "pattern": "^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$",
           "type": "string"
         },
+        "pipelineParallelSize": {
+          "description": "vLLM's --pipeline-parallel-size: how many GPU stages each hold a range of layers.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission selects vLLM's default of 1."
+        },
         "preparedEnvironment": {
           "additionalProperties": {
             "type": "string"
@@ -3878,6 +4035,14 @@
           "maxLength": 256,
           "type": "string"
         },
+        "tensorParallelSize": {
+          "description": "vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "x-nemoclaw-default-rule": "Omission selects vLLM's default of 1."
+        },
         "toolParser": {
           "anyOf": [
             {
@@ -3900,7 +4065,7 @@
     },
     "Spec": {
       "additionalProperties": false,
-      "description": "The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.",
+      "description": "The configuration requires at least one named sandbox and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.",
       "properties": {
         "gateway": {
           "$ref": "#/$defs/Gateway",
@@ -3958,8 +4123,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/Sandbox"
           },
-          "description": "One to 32 named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent.",
-          "maxProperties": 32,
+          "description": "Named sandboxes: one to 256 with a kubernetes or openshift gateway runtime, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent.",
           "minProperties": 1,
           "propertyNames": {
             "pattern": "^[a-z][a-z0-9-]{0,39}$"
@@ -4197,6 +4361,61 @@
       }
     },
     {
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "kubernetes": {
+                    "not": {
+                      "required": [
+                        "expose"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "kubernetes"
+                ]
+              }
+            },
+            "required": [
+              "gateway"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "endpoint": {
+                    "pattern": "^https://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
+                  }
+                },
+                "required": [
+                  "endpoint"
+                ]
+              }
+            },
+            "required": [
+              "gateway"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "x-nemoclaw-error": "managed Kubernetes without kubernetes.expose requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port"
+    },
+    {
       "else": {
         "properties": {
           "spec": {
@@ -4395,6 +4614,66 @@
         ],
         "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
       }
+    },
+    {
+      "else": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "maxProperties": 32,
+                "x-nemoclaw-error": "a document holds at most 32 sandboxes with a Docker or Podman gateway, which runs every sandbox on one host; Kubernetes and OpenShift allow 256"
+              }
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "runtime": {
+                    "properties": {
+                      "provider": {
+                        "enum": [
+                          "kubernetes",
+                          "openshift"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "provider"
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime"
+                ]
+              }
+            },
+            "required": [
+              "gateway"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "sandboxes": {
+                "maxProperties": 256,
+                "x-nemoclaw-error": "a document holds at most 256 sandboxes with a Kubernetes or OpenShift gateway, which bounds what one gateway and state affect; split a larger fleet across documents"
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "description": "Desired configuration for one deployment. Fields describe authored input before SDK normalization.",
@@ -4429,7 +4708,7 @@
   "x-nemoclaw-parser-checks": [
     "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
     "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-    "Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
+    "Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without kubernetes.expose, its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path; with it, the endpoint names a lowercase DNS name or IPv4 address and an explicit port, which the chart's NodePort Service publishes; Kubernetes checks that the port is in the cluster's node-port range. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
     "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
@@ -4437,7 +4716,7 @@
     "The schema requires exactly one sandbox harness or harnessRef and rejects agent-level harness selection. Rust resolves visible harnesses without shadowing. Each sandbox requires one agent and hosts one Fabric runtime using the sandbox-selected implementation. Shared definitions reuse configuration across sandboxes.",
     "Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.",
     "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
-    "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
+    "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 providers attached to one sandbox (its inference providers, web search, and api integrations, OpenShell's limit per sandbox), incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
     "The parser checks memory threshold ordering and GPU/KV budget relationships; that a recipe's GPU belongs to a hardware profile's GPU family; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
   ]

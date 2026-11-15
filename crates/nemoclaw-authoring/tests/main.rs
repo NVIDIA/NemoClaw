@@ -22,6 +22,10 @@ mod journey_decision_status;
 mod journey_edits;
 #[path = "journey_guidance.rs"]
 mod journey_guidance;
+#[path = "journey_harness_offering.rs"]
+mod journey_harness_offering;
+#[path = "journey_known_answers.rs"]
+mod journey_known_answers;
 #[path = "journey_resolution.rs"]
 mod journey_resolution;
 #[path = "journey_tree_preview.rs"]

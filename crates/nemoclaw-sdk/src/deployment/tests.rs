@@ -1141,8 +1141,9 @@ fn removed_disposable_compute_accepts_confirmed_absence() {
     );
 }
 
-#[tokio::test]
-async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state() {
+/// A bundle whose hashes are valid, so a request reaches the state guard.
+/// Its files cannot execute, so a regression cannot start a deployment.
+fn guard_bundle() -> tempfile::TempDir {
     let bundle_directory = tempfile::tempdir().unwrap();
     let mut manifest = crate::bundle::Manifest {
         version: "0.1.0".into(),
@@ -1150,8 +1151,6 @@ async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state(
         opentofu: crate::compile::OPENTOFU_VERSION.into(),
         files: Default::default(),
     };
-    // Valid bundle hashes let the request reach the state guard. These bytes
-    // cannot execute, so a regression cannot start an actual deployment.
     for name in crate::bundle::required_files(&manifest.version).unwrap() {
         let path = bundle_directory.path().join(&name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1165,6 +1164,50 @@ async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state(
         serde_json::to_vec(&manifest).unwrap(),
     )
     .unwrap();
+    bundle_directory
+}
+
+/// A gateway's exposure selects the address its endpoint names, so, like the
+/// endpoint, it stays as first planned.
+#[tokio::test]
+async fn changing_a_gateway_exposure_preserves_saved_state() {
+    let bundle_directory = guard_bundle();
+    let (document, _) = kubernetes_context();
+    let exposed = |expose: bool| {
+        let mut value = serde_json::to_value(&document).unwrap();
+        value["spec"]["gateway"]["endpoint"] = json!("https://127.0.0.1:30851");
+        if expose {
+            value["spec"]["gateway"]["kubernetes"]["expose"] =
+                json!({"service": {"type": "NodePort"}});
+        }
+        Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+    };
+    for (original, changed) in [
+        (exposed(true), exposed(false)),
+        (exposed(false), exposed(true)),
+    ] {
+        let state_directory = tempfile::tempdir().unwrap();
+        let store = Store::open(state_directory.path()).unwrap();
+        store.save(&Record::new(original.clone()).unwrap()).unwrap();
+        drop(store);
+        let intent = state_directory.path().join("intent.json");
+        let before = fs::read(&intent).unwrap();
+        let deployment = Deployment::new(state_directory.path(), bundle_directory.path());
+        let error = deployment
+            .run(&changed, &CancellationToken::new(), false)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, Error::Conflict(message) if message.contains("exposure")),
+            "{error:?}"
+        );
+        assert_eq!(fs::read(&intent).unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn changing_gateway_management_at_the_same_endpoint_preserves_saved_state() {
+    let bundle_directory = guard_bundle();
     let external =
         Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
     let mut managed = external.clone();

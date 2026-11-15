@@ -34,18 +34,9 @@ pub(super) fn agent() -> (&'static str, &'static str) {
     nemoclaw_build::ci::LIVE_AGENT
 }
 
-/// The platform's agent image, Hermes, Deep Agents Code, then the reference
-/// dummy.
-pub(super) fn names() -> [&'static str; 4] {
-    [agent().0, HERMES, DEEPAGENTS_CODE, DUMMY]
-}
-
-/// The Deep Agents Code agent image, whose terminal the interface test opens.
-pub(super) const DEEPAGENTS_CODE: &str = nemoclaw_build::ci::LIVE_DEEPAGENTS_CODE;
-
-/// Build the platform's Deep Agents Code image as `PREFIX:deepagents-code`.
-pub(super) fn build_deepagents_code(platform: &str, prefix: &str) -> Result<()> {
-    build_image(platform, prefix, DEEPAGENTS_CODE)
+/// The platform's agent image, Hermes, then the reference dummy.
+pub(super) fn names() -> [&'static str; 3] {
+    [agent().0, HERMES, DUMMY]
 }
 
 /// The Hermes agent image, which the Docker live suite's interface test runs.
@@ -78,10 +69,17 @@ pub(super) fn build_dummy(platform: &str, prefix: &str) -> Result<()> {
 }
 
 fn build_image(platform: &str, prefix: &str, target: &str) -> Result<()> {
+    build_cached(platform, prefix, target, &[])
+}
+
+/// Build `PREFIX:TARGET` with `images build`, passing it `cache` options.
+fn build_cached(platform: &str, prefix: &str, target: &str, cache: &[&str]) -> Result<()> {
     timed_build(&format!("{prefix}:{target}"), || {
         let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
         let status = Command::new(std::env::current_exe()?)
-            .args(["images", "build", "--platform", &docker_platform, target])
+            .args(["images", "build", "--platform", &docker_platform])
+            .args(cache)
+            .arg(target)
             .env("IMAGE_PREFIX", prefix)
             .stdin(Stdio::null())
             .status()?;
@@ -110,10 +108,15 @@ pub(super) fn build(platform: &str) -> Result<()> {
     if !platform.starts_with("linux_") {
         return Err("the live images are built on Linux only".into());
     }
-    build_agent(platform, SHARED)?;
-    build_hermes(platform, SHARED)?;
-    build_deepagents_code(platform, SHARED)?;
-    build_dummy(platform, SHARED)?;
+    // On GitHub Actions, the images reuse the layers an earlier run saved,
+    // which CI saves on v1 only, by setting NEMOCLAW_SAVE_GHA_CACHE=true.
+    let mut cache = vec!["--gha-cache", "live-images"];
+    if std::env::var("NEMOCLAW_SAVE_GHA_CACHE").is_ok_and(|save| save == "true") {
+        cache.push("--save-gha-cache");
+    }
+    for name in names() {
+        build_cached(platform, SHARED, name, &cache)?;
+    }
     let tags = names().map(|name| format!("{SHARED}:{name}"));
     fs::create_dir_all(".build/ci")?;
     let start = Instant::now();
@@ -355,7 +358,7 @@ mod tests {
     #[test]
     fn a_step_drops_only_the_platform_archive_images_it_does_not_name() {
         let target = agent().0;
-        assert_eq!(unused(&[target]), [HERMES, DEEPAGENTS_CODE, DUMMY]);
+        assert_eq!(unused(&[target]), [HERMES, DUMMY]);
         assert!(unused(&names()).is_empty());
     }
 }
