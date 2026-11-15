@@ -286,7 +286,7 @@ export function parseAuditConfig(contents: string): AuditConfig {
   return { ...parsed, ...reviewedNpmIdentity };
 }
 
-function readConfig(): AuditConfig {
+export function readTrustedAuditConfig(): AuditConfig {
   return parseAuditConfig(
     fs.readFileSync(resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT), "utf-8"),
   );
@@ -993,8 +993,7 @@ export function assertReviewedAuditReportsPass(
   if (failures.length > 0) throw new Error(`npm audit threshold failed\n${failures.join("\n")}`);
 }
 
-function main(): void {
-  const config = readConfig();
+export function auditReviewedNpmGraphs(config: AuditConfig): void {
   auditStage = "node-version";
   const expectedNode = `v${config.nodeVersion}`;
   if (process.version !== expectedNode) {
@@ -1153,19 +1152,23 @@ function fatalAuditDiagnostic(error: unknown): string {
   return "Reviewed npm audit failed.";
 }
 
+export function reportReviewedAuditFailure(error: unknown, stage = auditStage): never {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  const category =
+    typeof code === "string" &&
+    ["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EEXIST", "EROFS", "ENOSPC"].includes(code)
+      ? code
+      : error instanceof SyntaxError
+        ? "invalid-json"
+        : "rejected";
+  console.error(`${fatalAuditDiagnostic(error)} [stage=${stage}; category=${category}]`);
+  process.exit(1);
+}
+
 if (isMainModule()) {
   try {
-    main();
+    auditReviewedNpmGraphs(readTrustedAuditConfig());
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException | null)?.code;
-    const category =
-      typeof code === "string" &&
-      ["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EEXIST", "EROFS", "ENOSPC"].includes(code)
-        ? code
-        : error instanceof SyntaxError
-          ? "invalid-json"
-          : "rejected";
-    console.error(`${fatalAuditDiagnostic(error)} [stage=${auditStage}; category=${category}]`);
-    process.exit(1);
+    reportReviewedAuditFailure(error);
   }
 }
