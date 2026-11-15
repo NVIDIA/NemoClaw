@@ -55,7 +55,7 @@ jobs:
           parent="$(gh api "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA" --jq 'if (.parents | length) == 1 then .parents[0].sha else error("Expected a single-parent merge") end')"
           [[ "$parent" =~ ^[0-9a-f]{40}$ ]]
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$parent/pulls?per_page=100" \
-            | jq -e --argjson pr "$PR_NUMBER" 'type == "array" and length > 0 and all(.[]; type == "array" and all(.[]; (.number | type) == "number" and .number != $pr))' > /dev/null \
+            | jq -e --argjson pr "$PR_NUMBER" 'type == "array" and length > 0 and all(.[]; type == "array") and (add | length > 0 and all(.[]; (.number | type) == "number" and .number > 0 and .number == (.number | floor) and .number != $pr))' > /dev/null \
             || { printf 'Reporter parent association could not be verified; stop before checkout.\n' >&2; exit 1; }
           printf 'sha=%s\n' "$parent" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

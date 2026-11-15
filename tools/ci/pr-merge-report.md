@@ -26,6 +26,8 @@ The workflow attempts to retain generated reports for 90 days. Failures before
 report generation have no report artifact. Existing comments stay intact;
 retries avoid duplicates. Before checkout, the workflow rejects a merge parent
 that GitHub associates with the PR being reported, including a rebased prefix.
+Empty or malformed association results stop before checkout. At least one
+valid association with another PR is required across the paginated response.
 Repository merge settings are not consulted. `actions/checkout` reads that parent
 with the workflow token. `persist-credentials: false` prevents Git credential
 persistence. Compile only that parent's reporter and never run PR code. Pass
@@ -60,8 +62,23 @@ lists the history gap and retains available revisions. Reviews without commit
 attribution remain in the report without commit lookups or attributed follow-ups.
 Workflow-run and check-suite creation times determine which checks belong to
 the PR window. They do not prove when each individual check was created.
-Checks queued at merge remain in the report if they start later; their start
-times and durations remain unavailable for that merge.
+On recovery, a complete queued-check snapshot identifies previously queued
+checks even if they start later. The bot comment retains this snapshot before
+the display table, bound to the repository, PR number and merged revision.
+Display truncation never removes snapshot entries. If the snapshot cannot fit,
+publication stops and retains the full report. Missing, malformed or mismatched
+snapshots stop recovery without another post. Previously queued checks keep
+unavailable start times and durations for that merge. New checks with a post-merge start are excluded. Newly seen checks with
+no start time are also excluded during recovery. Before the first publication,
+a queued check's suite supplies the available observation bound; GitHub exposes
+no individual creation timestamp. Checks already started after merge cannot
+establish membership without the snapshot.
+
+Actions searches split into disjoint time windows before paginating any window
+with more than 1,000 results. This preserves discovery of removed revisions
+without accepting another PR's or fork's runs. If one second exceeds the cap,
+an unfiltered paginated listing supplies that second's runs. Both paths apply
+the same PR, fork and merge-window filters. The reporter requires `gh` and `jq`.
 Repair and review-follow-up counts require a forward step in the retained PR
 commit order. A retry on an older SHA does not increase either count. Access
 failures, other API failures and missing merged PR revisions stop reporting.

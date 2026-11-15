@@ -15,9 +15,10 @@ rustc --edition=2024 tools/ci/pr-merge-report.rs -o "$FIXTURE/reporter"
 cat > "$FIXTURE/gh" <<'MOCK'
 #!/bin/bash
 set -euo pipefail
-endpoint=''; query='.'; post=false
+endpoint=''; query='.'; post=false; paginate=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --paginate) paginate=true ;;
     --jq) query="$2"; shift ;;
     --method) if [ "$2" = POST ]; then post=true; elif [ "$2" != GET ]; then printf "%s\n" "$2" >> "$FIXTURE/edits"; exit 45; fi; shift ;;
     -f) if [[ "$2" = body=* ]]; then printf '%s' "${2#body=}" > "$FIXTURE/posted-body"; fi; shift ;;
@@ -39,8 +40,13 @@ case "$endpoint" in
   repos/example/repo/pulls/1/reviews*)
     jq -n --arg scenario "$SCENARIO" '[{id:7,state:"CHANGES_REQUESTED",commit_id:(if $scenario == "null_review" then null elif $scenario == "invalid_review" then "not-a-sha" else "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" end),submitted_at:"2026-01-01T00:03:00Z"}]' ;;
   repos/example/repo/actions/runs\?*)
-    printf '{"total_count":1,"workflow_runs":[{"id":11,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-01-01T00:01:00Z","workflow_id":9,"event":"pull_request","head_branch":"fork-feature","pull_requests":[{"number":1}]}]}\n'
-    printf '{"total_count":2,"workflow_runs":[{"id":12,"head_repository":{"id":99},"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","created_at":"2026-01-01T00:04:00Z","workflow_id":9,"event":"pull_request","head_branch":"fork-feature","pull_requests":[]},{"id":13,"head_repository":{"id":100},"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","created_at":"2026-01-01T00:04:00Z","workflow_id":9,"head_branch":"fork-feature","pull_requests":[]}]}\n' ;;
+    if [ "$SCENARIO" = large_history ] && [[ "$endpoint" = *'00%3A00%3A00Z..2026-01-01T00%3A10%3A00Z'* ]]; then
+      if $paginate; then printf 'Saturated query was paginated\n' >&2; exit 43; fi
+      printf '{"total_count":1001,"workflow_runs":[]}\n'
+      exit 0
+    fi
+    printf '{"total_count":101,"workflow_runs":[{"id":11,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-01-01T00:01:00Z","workflow_id":9,"event":"pull_request","head_branch":"fork-feature","pull_requests":[{"number":1}]}]}\n'
+    if $paginate; then printf '{"total_count":101,"workflow_runs":[{"id":12,"head_repository":{"id":99},"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","created_at":"2026-01-01T00:04:00Z","workflow_id":9,"event":"pull_request","head_branch":"fork-feature","pull_requests":[]},{"id":13,"head_repository":{"id":100},"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","created_at":"2026-01-01T00:04:00Z","workflow_id":9,"head_branch":"fork-feature","pull_requests":[]}]}\n'; fi ;;
   repos/example/repo/commits/*/check-runs*)
     if [ "$SCENARIO" = api_failure ]; then exit 42; fi
     if [[ "$endpoint" = */aaaaaaaa*/check-runs* ]]; then
@@ -113,7 +119,7 @@ esac | jq -r "$query"
 MOCK
 chmod +x "$FIXTURE/gh"
 export PATH="$FIXTURE:$PATH"
-for SCENARIO in valid null_review; do
+for SCENARIO in large_history valid null_review; do
   export SCENARIO
   : > "$FIXTURE/requests"
   "$FIXTURE/reporter" example/repo 1 > "$FIXTURE/preview"
@@ -251,7 +257,7 @@ def selected(expression, context, failed)
   end
 end
 
-def exercise(workflow, root, scenario, parent, head, merged: true, action: 'closed', base: 'main', reporter: nil, retrying: false)
+def exercise(workflow, root, scenario, parent, head, merged: true, action: 'closed', base: 'main', reporter: nil, retrying: false, padding: 0)
   FileUtils.rm_rf(["#{root}/workspace", "#{root}/temp"]) if retrying
   FileUtils.rm_f(Dir["#{root}/output-*"]) if retrying
   FileUtils.mkdir_p(["#{root}/bin", "#{root}/workspace", "#{root}/temp", "#{root}/artifacts"])
@@ -303,6 +309,9 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
           paged_parent) printf '[{"number":2}],[{"number":1}]' ;;
           invalid_parent_association) printf '[{}]' ;;
           unassociated_parent) printf '[]' ;;
+          empty_pages) printf '[],[]' ;;
+          paged_trusted_parent) printf '[{"number":2}],[{"number":3}]' ;;
+          invalid_parent_number) printf '[{"number":0}]' ;;
           *) printf '[{"number":2}]' ;;
         esac
         if $slurp; then printf ']'; fi ;;
@@ -324,32 +333,62 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
       repos/example/repo/commits/*/statuses*)
         case "$SCENARIO" in
           recovery*)
-            jq -n --arg scenario "$SCENARIO" '[{id:202,context:"Pending status",state:(if $scenario == "recovery_failure" then "pending" else "success" end),created_at:"2026-01-01T00:02:00Z",updated_at:(if $scenario == "recovery_failure" then "2026-01-01T00:02:00Z" else "2026-01-01T00:11:00Z" end)}]' ;;
+            jq -n --arg scenario "$SCENARIO" '[{id:202,context:"Pending status",state:(if ($scenario == "recovery_failure" or $scenario == "recovery_truncated_failure") then "pending" else "success" end),created_at:"2026-01-01T00:02:00Z",updated_at:(if ($scenario == "recovery_failure" or $scenario == "recovery_truncated_failure") then "2026-01-01T00:02:00Z" else "2026-01-01T00:11:00Z" end)}]' ;;
           *) printf '[]' ;;
         esac ;;
-      repos/example/repo/actions/runs\?*) printf '{"total_count":0,"workflow_runs":[]}' ;;
+      repos/example/repo/actions/runs\?*)
+        if [ "$SCENARIO" = dense_history ]; then
+          if [[ "$endpoint" = *created=* ]]; then
+            range="${endpoint#*created=}"; range="${range%%&*}"
+            total="$(jq -nr --arg range "$range" '$range | split("..") | map(gsub("%3A"; ":") | fromdateiso8601) | if .[0] <= 1767225900 and .[1] >= 1767225900 then 1001 else 0 end')"
+            printf '{"total_count":%s,"workflow_runs":[]}' "$total"
+          else
+            printf '{"total_count":1001,"workflow_runs":[{"id":11,"head_sha":"cccccccccccccccccccccccccccccccccccccccc","created_at":"2026-01-01T00:05:00Z","workflow_id":9,"head_branch":"fork-feature","pull_requests":[{"number":1}]}]}'
+          fi
+        elif [ "$SCENARIO" = large_history ]; then
+          case "$endpoint" in
+            *'00%3A00%3A00Z..2026-01-01T00%3A10%3A00Z'*) printf '{"total_count":1001,"workflow_runs":[]}' ;;
+            *'00%3A00%3A00Z..2026-01-01T00%3A05%3A00Z'*)
+              printf '{"total_count":1,"workflow_runs":[{"id":11,"head_sha":"cccccccccccccccccccccccccccccccccccccccc","created_at":"2026-01-01T00:05:00Z","workflow_id":9,"head_branch":"fork-feature","pull_requests":[{"number":1}]}]}' ;;
+            *'00%3A05%3A01Z..2026-01-01T00%3A10%3A00Z'*) printf '{"total_count":0,"workflow_runs":[]}' ;;
+            *) printf 'Unexpected search window: %s\n' "$endpoint" >&2; exit 43 ;;
+          esac
+        else
+          printf '{"total_count":0,"workflow_runs":[]}'
+        fi ;;
+
       repos/example/repo/actions/runs/11|repos/example/repo/actions/runs/12)
-        jq -n --argjson id "${endpoint##*/}" '{id:$id,head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",created_at:(if $id == 11 then "2026-01-01T00:04:00Z" else "2026-01-01T00:11:00Z" end),workflow_id:9,head_branch:"fork-feature",pull_requests:[{number:1}]}' ;;
+        jq -n --arg scenario "$SCENARIO" --argjson id "${endpoint##*/}" '{id:$id,head_sha:(if ($scenario == "large_history" or $scenario == "dense_history") then "cccccccccccccccccccccccccccccccccccccccc" else "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" end),created_at:(if $id == 11 then "2026-01-01T00:04:00Z" else "2026-01-01T00:11:00Z" end),workflow_id:9,head_branch:"fork-feature",pull_requests:[{number:1}]}' ;;
       repos/example/repo/check-suites/*)
         test "$SCENARIO" != recovery_suite_failure
         jq -n --argjson id "${endpoint##*/}" '{head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",created_at:(if $id == 301 then "2026-01-01T00:01:00Z" elif $id == 303 then "2026-01-01T00:03:00Z" elif $id == 305 then "2026-01-01T00:11:00Z" else "2025-12-31T23:59:00Z" end)}' ;;
       repos/example/repo/commits/*/check-runs*)
         case "$SCENARIO" in
+          large_history|dense_history)
+            if [[ "$endpoint" = */cccccccc*/check-runs* ]]; then
+              printf '{"check_runs":[{"id":210,"name":"Removed revision check","app":{"id":1},"started_at":"2026-01-01T00:05:00Z","completed_at":"2026-01-01T00:06:00Z","conclusion":"success","details_url":"https://github.com/example/repo/actions/runs/11/job/210"}]}'
+            else
+              printf '{"check_runs":[]}'
+            fi ;;
+
           recovery*)
-            jq -n --arg scenario "$SCENARIO" '($scenario == "recovery_failure") as $first |
+            jq -n --argjson padding "$PAD_SIZE" --arg scenario "$SCENARIO" '(($scenario == "recovery_failure" or $scenario == "recovery_truncated_failure") or $scenario == "recovery_boundaries") as $first |
               {check_runs:([
                 {id:201,name:"Unfinished check",check_suite:{id:301},started_at:"2026-01-01T00:01:00Z"},
                 {id:203,name:"Queued app check",check_suite:{id:303}},
                 {id:204,name:"Queued Actions check",details_url:"https://github.com/example/repo/actions/runs/11/job/204"}
-              ] + (if $scenario == "recovery_boundaries" then [
+              ] + (if ($scenario == "recovery" or $scenario == "recovery_truncated") then [
+                {id:208,name:"New check in old suite",check_suite:{id:301}},
+                {id:209,name:"New queued check in old suite",check_suite:{id:301}}
+              ] else [] end) + (if $scenario == "recovery_boundaries" then [
                 {id:205,name:"Late app check",check_suite:{id:305}},
                 {id:206,name:"Late Actions check",details_url:"https://github.com/example/repo/actions/runs/12/job/206"},
                 {id:207,name:"Prior app check",check_suite:{id:307}}
-              ] else [] end) | map(. + {app:{id:1,slug:"external"},started_at:(.started_at // (if $first then null else "2026-01-01T00:11:00Z" end)),completed_at:(if $first then null else "2026-01-01T00:12:00Z" end),conclusion:(if $first then null else "success" end)}))}' ;;
+              ] else [] end) | map((if .id == 201 and $padding > 0 then .name = ("x" * $padding) else . end) + {app:{id:1,slug:"external"},started_at:(.started_at // (if $first or .id == 209 then null else "2026-01-01T00:11:00Z" end)),completed_at:(if $first then null else "2026-01-01T00:12:00Z" end),conclusion:(if $first then null else "success" end)}))}' ;;
           *) printf '{"check_runs":[]}' ;;
         esac ;;
       repos/example/repo/issues/comments/123)
-        test "$SCENARIO" != recovery_failure
+        if [[ "$SCENARIO" = recovery_failure || "$SCENARIO" = recovery_truncated_failure ]]; then exit 42; fi
         jq '.[] | select(.id == 123)' "$FIXTURE/comments.json" ;;
       *) printf 'Unexpected API: %s\n' "$endpoint" >&2; exit 43 ;;
     esac | jq -r "$query"
@@ -405,7 +444,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     settings_failed = failed if owner == :report && settings_failed.nil?
     break if settings_failed
     next unless selected(step['if'], context, failed)
-    env = {'PATH' => "#{root}/bin:/usr/bin:/bin", 'FIXTURE' => root, 'SCENARIO' => scenario, 'PR_BASE' => base,
+    env = {'PATH' => "#{root}/bin:/usr/bin:/bin", 'FIXTURE' => root, 'SCENARIO' => scenario, 'PR_BASE' => base, 'PAD_SIZE' => padding.to_s,
       'TMPDIR' => "#{root}/temp", 'RUNNER_TEMP' => "#{root}/temp", 'GITHUB_REPOSITORY' => 'example/repo', 'GITHUB_STEP_SUMMARY' => "#{root}/summary",
       'GITHUB_WORKFLOW_SHA' => 'e' * 40, 'GITHUB_RUN_ID' => '1234', 'GITHUB_RUN_ATTEMPT' => context['github']['run_attempt'], 'GITHUB_OUTPUT' => "#{root}/output-#{index}"}
     env['REAL_REPORTER'] = reporter ? 'true' : ''
@@ -498,6 +537,7 @@ raise File.read("#{recovered[:root]}/errors") if recovered[:failed]
 raise 'Recovery published another comment' unless File.read("#{recovered[:root]}/posts") == "POST\n"
 raise 'Recovery changed published comments' unless JSON.parse(File.read("#{recovered[:root]}/comments.json")) == published
 recovered_report = File.read("#{recovered[:root]}/temp/merge-outcomes.md")
+raise 'Recovery added a check created after publication' if recovered_report.include?('[New check in old suite]') || recovered_report.include?('[New queued check in old suite]')
 raise 'Post-merge start or completion changed merge-time results' unless recovered_report == first_report
 raise 'Recovery did not freeze unfinished merge-time outcomes' unless recovered_report.scan('| unfinished at merge | unavailable |').length == 4
 raise 'Recovered attempt lost full report' unless recovered_report.include?('+209 / -10 lines across 5 files')
@@ -509,6 +549,25 @@ raise 'Attempts did not retain distinct artifact identities' unless Dir.children
 raise 'First attempt artifact identity changed' unless File.basename(first[:artifact]) == 'merge-outcomes-1'
 raise 'Recovered artifact identity lost its attempt' unless File.basename(recovered[:artifact]) == 'merge-outcomes-2'
 raise 'Recovery changed the first artifact' unless Dir["#{first[:artifact]}/*"].to_h { |path| [File.basename(path), File.binread(path)] } == first_artifact
+# Keep the original full report just above the display limit; queued rows
+# follow a large earlier row and disappear from the shortened comment.
+padding = 60_010 - first_report.bytesize + 'Unfinished check'.bytesize
+truncated = exercise(workflow, "#{ARGV[0]}/truncated-recovery", 'recovery_truncated_failure', parent, head, reporter: reporter_source, padding: padding)
+raise 'Truncated publication did not reach readback failure' unless truncated[:failed] && File.read("#{truncated[:root]}/posts") == "POST\n"
+truncated_report = File.read("#{truncated[:root]}/temp/merge-outcomes.md")
+raise 'Truncated fixture lost the display boundary' unless truncated_report.bytesize == 60_010
+truncated_comments = JSON.parse(File.read("#{truncated[:root]}/comments.json"))
+truncated_body = truncated_comments.find { |comment| comment['id'] == 123 }.fetch('body')
+raise 'Queued rows were not beyond the display cutoff' unless truncated_body.include?('Timing rows truncated') && !truncated_body.include?('[Queued app check]') && !truncated_body.include?('[Queued Actions check]')
+truncated_artifact = Dir["#{truncated[:artifact]}/*"].to_h { |path| [File.basename(path), File.binread(path)] }
+truncated_retry = exercise(workflow, truncated[:root], 'recovery_truncated', parent, head, reporter: reporter_source, retrying: true, padding: padding)
+raise "Truncated queued-check recovery failed: #{File.read("#{truncated_retry[:root]}/errors")}" if truncated_retry[:failed]
+raise 'Truncated recovery published twice' unless File.read("#{truncated_retry[:root]}/posts") == "POST\n"
+raise 'Truncated recovery changed comments' unless JSON.parse(File.read("#{truncated_retry[:root]}/comments.json")) == truncated_comments
+raise 'Truncated recovery lost full-report rows' unless File.read("#{truncated_retry[:root]}/temp/merge-outcomes.md") == truncated_report && File.read("#{truncated_retry[:artifact]}/merge-outcomes.md") == truncated_report
+raise 'Truncated recovery changed the prior artifact' unless Dir["#{truncated[:artifact]}/*"].to_h { |path| [File.basename(path), File.binread(path)] } == truncated_artifact
+truncated_receipt = JSON.parse(File.read("#{truncated_retry[:artifact]}/merge-outcomes-receipt.json"))
+raise 'Truncated recovery lost attempt identity' unless truncated_receipt.values_at('reporter_revision', 'run_attempt', 'report_unique') == [parent, '2', true]
 boundaries = exercise(workflow, "#{ARGV[0]}/boundaries", 'recovery_boundaries', parent, head, reporter: reporter_source)
 raise File.read("#{boundaries[:root]}/errors") if boundaries[:failed]
 boundary_report = File.read("#{boundaries[:root]}/temp/merge-outcomes.md")
@@ -551,8 +610,19 @@ extended_workflow = Marshal.load(Marshal.dump(workflow))
   receipt = JSON.parse(File.read("#{result[:artifact]}/merge-outcomes-receipt.json"))
   raise "#{base} receipt lost trusted provenance" unless receipt.values_at('reporter_revision', 'publication_readback', 'opening_preserved', 'report_unique') == [parent, true, true, true]
 end
+large = exercise(workflow, "#{ARGV[0]}/large-history", 'large_history', parent, head, reporter: reporter_source)
+raise File.read("#{large[:root]}/errors") if large[:failed]
+raise 'Large Actions history did not publish once' unless File.read("#{large[:root]}/posts") == "POST\n"
+large_report = File.read("#{large[:root]}/temp/merge-outcomes.md")
+raise 'Partitioning lost a removed revision at the window boundary' unless large_report.include?('[Removed revision check]') && large_report.include?('cccccccccccc')
+raise 'Partitioning did not collect both windows' unless File.read("#{large[:root]}/requests").include?('00%3A05%3A01Z..2026-01-01T00%3A10%3A00Z')
+dense = exercise(workflow, "#{ARGV[0]}/dense-history", 'dense_history', parent, head, reporter: reporter_source)
+raise File.read("#{dense[:root]}/errors") if dense[:failed]
+raise 'Single-second history did not publish once' unless File.read("#{dense[:root]}/posts") == "POST\n"
+raise 'Single-second history lost its revision' unless File.read("#{dense[:root]}/temp/merge-outcomes.md").include?('[Removed revision check]')
+raise 'Single-second saturation did not use uncapped listing' unless File.readlines("#{dense[:root]}/requests").include?("repos/example/repo/actions/runs?per_page=100\n")
 raise 'Report job must stay read-only for contents' unless workflow.dig('jobs', 'report', 'permissions', 'contents') == 'read'
-%w[rebase_enabled merge_enabled settings_unreadable unassociated_parent].each do |scenario|
+%w[rebase_enabled merge_enabled settings_unreadable paged_trusted_parent].each do |scenario|
   result = exercise(workflow, "#{ARGV[0]}/#{scenario}", scenario, parent, head, reporter: reporter_source)
   raise "Valid squash merge blocked by later repository settings: #{scenario}" if result[:failed]
   raise "Valid squash merge did not publish once: #{scenario}" unless File.read("#{result[:root]}/posts") == "POST\n"
@@ -561,7 +631,7 @@ raise 'Report job must stay read-only for contents' unless workflow.dig('jobs', 
   raise "Valid squash merge lost or duplicated its report: #{scenario}" unless reports.length == 1
   raise "Report still reads mutable settings: #{scenario}" if File.readlines("#{result[:root]}/requests").any? { |line| line.strip == 'repos/example/repo' }
 end
-%w[malformed multiple api_failure wrong_checkout modified_reporter rebased_parent paged_parent invalid_parent_association parent_api_failure].each do |scenario|
+%w[malformed multiple api_failure wrong_checkout modified_reporter rebased_parent paged_parent unassociated_parent empty_pages invalid_parent_number invalid_parent_association parent_api_failure].each do |scenario|
   result = exercise(workflow, "#{ARGV[0]}/#{scenario}", scenario, parent, head)
   raise "Invalid parent or checkout accepted: #{scenario}" unless result[:failed]
   unless %w[wrong_checkout modified_reporter].include?(scenario)

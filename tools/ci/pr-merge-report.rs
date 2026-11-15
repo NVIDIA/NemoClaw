@@ -11,6 +11,8 @@ use std::{
 };
 
 const MARKER: &str = "<!-- nemoclaw-merge-report:v1 -->";
+const QUEUED_PREFIX: &str = "<!-- nemoclaw-merge-queued:v1 ";
+const INTEGRITY_ERROR: &str = "Existing merge report did not match the expected single report; stop and investigate, do not retry";
 
 #[derive(Default)]
 struct Report {
@@ -46,6 +48,18 @@ enum CheckSource {
     #[default]
     App,
     Status,
+}
+
+impl CheckSource {
+    fn link(self, repo: &str, number: u64, sha: &str, id: u64) -> String {
+        match self {
+            Self::Actions(run) => format!("https://github.com/{repo}/actions/runs/{run}/job/{id}"),
+            Self::Status => format!("https://github.com/{repo}/commit/{sha}"),
+            Self::App => {
+                format!("https://github.com/{repo}/pull/{number}/checks?check_run_id={id}")
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -108,8 +122,23 @@ fn render(report: &Report) -> String {
                 .map(|(sha, _)| *sha)
         })
         .collect();
+    let queued: BTreeSet<_> = report
+        .checks
+        .iter()
+        .filter(|check| check.started < 0 && !matches!(check.source, CheckSource::Status))
+        .map(|check| format!("{}:{}", check.sha, check.id))
+        .collect();
+    let queued = if queued.is_empty() {
+        "-".into()
+    } else {
+        queued.into_iter().collect::<Vec<_>>().join(",")
+    };
+    let snapshot = format!(
+        "{QUEUED_PREFIX}{} {} {} {queued} -->",
+        report.repo, report.number, report.head
+    );
     let mut text = format!(
-        "<details>\n<summary>Merge outcomes</summary>\n\n{MARKER}\n\nGitHub data for #{} at merge, head `{}`.\n\n| Measure | Result |\n| --- | --- |\n| Repair rounds | {repairs} (observed revisions after failed checks) |\n| Review rounds | {} changes-requested reviews; {} observed follow-up revisions |\n| Diff size | +{} / -{} lines across {} files |\n\n",
+        "<details>\n<summary>Merge outcomes</summary>\n\n{MARKER}\n\n{snapshot}\n\nGitHub data for #{} at merge, head `{}`.\n\n| Measure | Result |\n| --- | --- |\n| Repair rounds | {repairs} (observed revisions after failed checks) |\n| Review rounds | {} changes-requested reviews; {} observed follow-up revisions |\n| Diff size | +{} / -{} lines across {} files |\n\n",
         report.number,
         report.head,
         requests.len(),
@@ -149,19 +178,9 @@ fn render(report: &Report) -> String {
         } else {
             (check.completed - check.started).to_string()
         };
-        let link = match check.source {
-            CheckSource::Actions(run) => format!(
-                "https://github.com/{}/actions/runs/{run}/job/{}",
-                report.repo, check.id
-            ),
-            CheckSource::Status => {
-                format!("https://github.com/{}/commit/{}", report.repo, check.sha)
-            }
-            CheckSource::App => format!(
-                "https://github.com/{}/pull/{}/checks?check_run_id={}",
-                report.repo, report.number, check.id
-            ),
-        };
+        let link = check
+            .source
+            .link(&report.repo, report.number, &check.sha, check.id);
         writeln!(
             text,
             "| {round} (`{}`) | [{}]({link}) | {} | {duration} |",
@@ -221,14 +240,14 @@ struct Api {
 
 impl Api {
     fn read(&self, path: &str, query: &str) -> Result<std::process::Output> {
+        self.read_pages(path, query, true)
+    }
+
+    fn read_pages(&self, path: &str, query: &str, paginate: bool) -> Result<std::process::Output> {
         Command::new("gh")
-            .args([
-                "api",
-                "--paginate",
-                &format!("repos/{}/{path}", self.repo),
-                "--jq",
-                query,
-            ])
+            .arg("api")
+            .args(if paginate { &["--paginate"][..] } else { &[] })
+            .args([&format!("repos/{}/{path}", self.repo), "--jq", query])
             .output()
             .map_err(|e| format!("Cannot run gh: {e}"))
     }
@@ -279,6 +298,62 @@ impl Api {
             .collect()
     }
 
+    fn workflow_runs(&self, branch: &str, opened: i64, merged: i64) -> Result<Vec<Vec<String>>> {
+        let query = format!(r#"(["total",.total_count] | @tsv), (.workflow_runs[] | {RUN_QUERY})"#);
+        let mut windows = vec![(opened, merged)];
+        let mut runs = Vec::new();
+        while let Some((start, end)) = windows.pop() {
+            let range = Command::new("jq")
+                .args([
+                    "-nr",
+                    &format!("[{start},{end}] | map(todateiso8601) | join(\"..\")"),
+                ])
+                .output()
+                .map_err(|e| format!("Cannot format Actions search window: {e}"))?;
+            if !range.status.success() {
+                return Err("Invalid Actions search window".into());
+            }
+            let range = String::from_utf8(range.stdout)
+                .map_err(|e| format!("Invalid search window: {e}"))?;
+            let path = format!(
+                "actions/runs?branch={}&created={}&per_page=100",
+                encode(branch),
+                encode(range.trim())
+            );
+            // Inspect one page before pagination: GitHub rejects pages beyond
+            // the 1,000-result cap, so saturated windows must first be split.
+            let first = Self::parse_rows(&path, self.read_pages(&path, &query, false)?)?;
+            let total = first.first().ok_or("Missing Actions search total")?;
+            fields(total, 2)?;
+            if total[0] != "total" {
+                return Err("Missing Actions search total".into());
+            }
+            let total = number::<u64>(&total[1])?;
+            if total > 1000 {
+                if start < end {
+                    let middle = start + (end - start) / 2;
+                    windows.push((middle + 1, end));
+                    windows.push((start, middle));
+                } else {
+                    // An unfiltered listing has no search cap. Use it only
+                    // when even a single second cannot be split further.
+                    runs.extend(self.rows("actions/runs?per_page=100", &format!(".workflow_runs[] | select((.created_at | fromdateiso8601) == {start}) | {RUN_QUERY}"))?);
+                }
+                continue;
+            }
+            let rows = if total > 100 {
+                self.rows(&path, &query)?
+            } else {
+                first
+            };
+            runs.extend(
+                rows.into_iter()
+                    .filter(|row| row.first().is_none_or(|v| v != "total")),
+            );
+        }
+        Ok(runs)
+    }
+
     fn pr(&self) -> Result<Vec<String>> {
         let mut rows = self.rows(&format!("pulls/{}", self.number), PR_QUERY)?;
         if rows.len() != 1 || rows[0].len() != 12 {
@@ -292,7 +367,7 @@ impl Api {
         Ok(row)
     }
 
-    fn existing(&self, expected: &str) -> Result<bool> {
+    fn published(&self) -> Result<Option<String>> {
         let rows = self.rows(
             &format!("issues/{}/comments?per_page=100", self.number),
             r#".[] | select(.user.login == "github-actions[bot]") | [.body] | @tsv"#,
@@ -302,13 +377,21 @@ impl Api {
             .filter_map(|row| row.first().filter(|body| body.contains(MARKER)))
             .collect();
         match reports.as_slice() {
-            [] => Ok(false),
-            [body] if body.as_str() == expected => Ok(true),
-            _ => Err("Existing merge report did not match the expected single report; stop and investigate, do not retry".into()),
+            [] => Ok(None),
+            [body] => Ok(Some((*body).clone())),
+            _ => Err(INTEGRITY_ERROR.into()),
         }
     }
 
-    fn collect(&self, pr: &[String]) -> Result<Report> {
+    fn existing(&self, expected: &str) -> Result<bool> {
+        match self.published()?.as_deref() {
+            None => Ok(false),
+            Some(body) if body == expected => Ok(true),
+            _ => Err(INTEGRITY_ERROR.into()),
+        }
+    }
+
+    fn collect(&self, pr: &[String], queued: Option<&BTreeSet<String>>) -> Result<Report> {
         let merged: i64 = number(&pr[6])?;
         let opened: i64 = number(&pr[10])?;
         let head_repository: u64 = number(&pr[11])?;
@@ -354,26 +437,8 @@ impl Api {
                 });
             }
         }
-        let runs_path = format!(
-            "actions/runs?branch={}&created={}&per_page=100",
-            encode(&pr[3]),
-            encode(&format!("{}..{}", pr[4], pr[5]))
-        );
-        // Actions caps filtered searches at 1,000 runs. Fail visibly rather than
-        // interpreting a truncated history as a complete search.
-        let run_rows = self.rows(
-            &runs_path,
-            &format!(r#"(["total",.total_count] | @tsv), (.workflow_runs[] | {RUN_QUERY})"#),
-        )?;
         let mut runs = BTreeMap::new();
-        for row in run_rows {
-            if row.first().is_some_and(|v| v == "total") {
-                fields(&row, 2)?;
-                if number::<u64>(&row[1])? > 1000 {
-                    return Err("Actions search exceeds 1,000 retained runs; narrow collection before reporting".into());
-                }
-                continue;
-            }
+        for row in self.workflow_runs(&pr[3], opened, merged)? {
             fields(&row, 7)?;
             let id = number(&row[0])?;
             let run = Run::parse(&row)?;
@@ -406,7 +471,6 @@ impl Api {
             for row in checks {
                 fields(&row, 9)?;
                 let started = number(&row[4])?;
-                let started = if started > merged { -1 } else { started };
                 if started >= 0 && started < opened {
                     continue;
                 }
@@ -460,11 +524,21 @@ impl Api {
                     }
                     (format!("app:{}:{}", row[2], row[1]), *created)
                 };
+                let id = number(&row[0])?;
+                let source = run_id.map_or(CheckSource::App, CheckSource::Actions);
+                // Suite creation cannot establish when a new check was added.
+                // The complete snapshot survives truncation of displayed rows.
+                if (started > merged || (started < 0 && queued.is_some()))
+                    && !queued.is_some_and(|ids| ids.contains(&format!("{sha}:{id}")))
+                {
+                    continue;
+                }
+                let started = if started > merged { -1 } else { started };
                 if observed >= 0 {
                     report.observe(&sha, observed);
                 }
                 report.checks.push(Check {
-                    id: number(&row[0])?,
+                    id,
                     name: row[1].clone(),
                     sha: sha.clone(),
                     key,
@@ -472,7 +546,7 @@ impl Api {
                     completed,
                     conclusion,
                     started,
-                    source: run_id.map_or(CheckSource::App, CheckSource::Actions),
+                    source,
                 });
             }
             let Some(statuses) = self.revision_rows(&sha, &report.head, "statuses?per_page=100", r#".[] | [.id,.context,.state,(.created_at|fromdateiso8601),(.updated_at|fromdateiso8601)] | @tsv"#)? else {
@@ -524,7 +598,7 @@ impl Api {
         {
             return Err("PR identity changed during collection".into());
         }
-        let body = comment_body(body);
+        let body = comment_body(body)?;
         if self.existing(&body)? {
             return Ok(());
         }
@@ -654,19 +728,56 @@ fn unescape_tsv(value: &str) -> Result<String> {
     }
     Ok(result)
 }
-fn comment_body(body: &str) -> String {
+fn queued_membership(body: &str, repo: &str, pr: u64, head: &str) -> Result<BTreeSet<String>> {
+    let mut snapshots = body
+        .lines()
+        .filter_map(|line| line.strip_prefix(QUEUED_PREFIX));
+    let record = snapshots.next().ok_or(INTEGRITY_ERROR)?;
+    if snapshots.next().is_some() {
+        return Err(INTEGRITY_ERROR.into());
+    }
+    let fields: Vec<_> = record
+        .strip_suffix(" -->")
+        .ok_or(INTEGRITY_ERROR)?
+        .split_whitespace()
+        .collect();
+    if fields.len() != 4 || fields[0] != repo || fields[1] != pr.to_string() || fields[2] != head {
+        return Err(INTEGRITY_ERROR.into());
+    }
+    let mut ids = BTreeSet::new();
+    if fields[3] != "-" {
+        for key in fields[3].split(',') {
+            let (sha, id) = key.split_once(':').ok_or(INTEGRITY_ERROR)?;
+            validate_sha(sha)?;
+            let id = number::<u64>(id)?;
+            if id == 0 || key != format!("{sha}:{id}") || !ids.insert(key.to_owned()) {
+                return Err(INTEGRITY_ERROR.into());
+            }
+        }
+    }
+    Ok(ids)
+}
+
+fn comment_body(body: &str) -> Result<String> {
     if body.len() <= 60_000 {
-        return body.into();
+        return Ok(body.into());
     }
     let mut end = 58_000;
     while !body.is_char_boundary(end) {
         end -= 1;
     }
     let end = body[..end].rfind('\n').unwrap_or(end);
-    format!(
+    if body
+        .lines()
+        .find(|line| line.starts_with(QUEUED_PREFIX))
+        .is_some_and(|snapshot| !body[..end].contains(snapshot))
+    {
+        return Err("Complete queued-check snapshot exceeds GitHub's comment limit; retain the full report and stop before publication".into());
+    }
+    Ok(format!(
         "{}\n\nTiming rows truncated to fit GitHub's comment limit. The workflow attempts to retain the full report in its summary and the artifact for that run attempt; check the workflow result if either is unavailable.\n\n</details>\n",
         &body[..end]
-    )
+    ))
 }
 fn execute() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -693,7 +804,12 @@ fn execute() -> Result<()> {
         return Err("PR number must be positive".into());
     }
     let pr = api.pr()?;
-    let report = api.collect(&pr)?;
+    let published = api.published()?;
+    let queued = published
+        .as_deref()
+        .map(|body| queued_membership(body, &api.repo, api.number, &pr[2]))
+        .transpose()?;
+    let report = api.collect(&pr, queued.as_ref())?;
     let body = render(&report);
     print!("{body}");
     if args.len() == 3 {
@@ -799,10 +915,46 @@ mod tests {
     #[test]
     fn a_long_comment_with_unicode_stays_within_the_limit_without_panicking() {
         let text = format!("{}{}", "a".repeat(57_999), "💻".repeat(2_000));
-        let comment = comment_body(&text);
+        let comment = comment_body(&text).unwrap();
         assert!(comment.len() < 60_000);
         assert!(comment.contains("truncated"));
         assert!(comment.ends_with("</details>\n"));
+    }
+
+    #[test]
+    fn queued_snapshot_rejects_changed_identity_and_incomplete_evidence() {
+        let head = "a".repeat(40);
+        let snapshot = format!("{QUEUED_PREFIX}example/repo 1 {head} {head}:203,{head}:204 -->\n");
+        assert_eq!(
+            queued_membership(&snapshot, "example/repo", 1, &head)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(queued_membership(&snapshot, "other/repo", 1, &head).is_err());
+        assert!(queued_membership(&snapshot, "example/repo", 2, &head).is_err());
+        assert!(queued_membership(&snapshot, "example/repo", 1, &"b".repeat(40)).is_err());
+        for invalid in [
+            String::new(),
+            format!("{snapshot}{snapshot}"),
+            snapshot.replace(":204", ":203"),
+            snapshot.replace(":204", ":0"),
+            snapshot.replace(" -->", ""),
+        ] {
+            assert!(queued_membership(&invalid, "example/repo", 1, &head).is_err());
+        }
+        let entries = (1..=1_500)
+            .map(|id| format!("{head}:{id}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let oversized = format!("<details>\n{QUEUED_PREFIX}example/repo 1 {head} {entries} -->\n");
+        assert_eq!(
+            queued_membership(&oversized, "example/repo", 1, &head)
+                .unwrap()
+                .len(),
+            1_500
+        );
+        assert!(comment_body(&oversized).is_err());
     }
 
     #[test]
