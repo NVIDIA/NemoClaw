@@ -17,7 +17,7 @@ describe("managed host-local vLLM bridge", () => {
     expect(resolveManagedVllmBridgeHost(run, dockerEnv)).toBe("172.18.0.1");
     expect(run).toHaveBeenCalledWith(
       ["network", "inspect", "--format", "{{json .IPAM.Config}}", "openshell-docker"],
-      { env: dockerEnv, ignoreError: true, timeout: 10_000 },
+      { env: dockerEnv, replaceEnv: true, ignoreError: true, timeout: 10_000 },
     );
   });
 

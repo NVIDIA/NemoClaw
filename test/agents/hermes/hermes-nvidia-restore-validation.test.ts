@@ -25,10 +25,21 @@ with tempfile.TemporaryDirectory() as root:
  old='openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY';fresh='openshell:resolve:env:v8_NVIDIA_INFERENCE_API_KEY'
  base={'_nemoclaw_upstream':{'provider':'nvidia-prod','provider_key':'nvidia-prod','model':'m'},'model':{'provider':'custom','default':'m','base_url':'https://integrate.api.nvidia.com/v1','api_key':old},'providers':{'nvidia-prod':{'api':'https://integrate.api.nvidia.com/v1','default_model':'m','api_key':old}},'custom_providers':[{'name':'nvidia-prod','base_url':'https://integrate.api.nvidia.com/v1','api_key':old}],'discord':{'require_mention':True}}
  results={}
- for case in ['valid','template','missing','malformed','wrong-provider','slot-disagreement','model-drift','endpoint-drift','settings-drift']:
+ for case in ['valid','template','stripped','missing','malformed','wrong-provider','slot-disagreement','model-drift','endpoint-drift','settings-drift','stripped-partial-model','stripped-partial-provider','stripped-partial-custom','stripped-duplicate','stripped-endpoint','stripped-metadata','stripped-local','stripped-raw','stripped-whitespace','stripped-stale-read']:
   source=copy.deepcopy(base)
   if case=='template':
    source['model']['api_key']='$'+'{NVIDIA_INFERENCE_API_KEY}';source['providers']['nvidia-prod']['api_key']='$'+'{NVIDIA_INFERENCE_API_KEY}';source['custom_providers'][0]['api_key']='$'+'{NVIDIA_INFERENCE_API_KEY}'
+  if case.startswith('stripped'):
+   source['model']['api_key']=source['providers']['nvidia-prod']['api_key']=source['custom_providers'][0]['api_key']='[STRIPPED_BY_MIGRATION]'
+  if case=='stripped-partial-model':source['model']['api_key']=old
+  if case=='stripped-partial-provider':source['providers']['nvidia-prod']['api_key']=old
+  if case=='stripped-partial-custom':source['custom_providers'][0]['api_key']=old
+  if case=='stripped-duplicate':source['custom_providers'].append(copy.deepcopy(source['custom_providers'][0]))
+  if case=='stripped-endpoint':source['model']['base_url']='https://other.example/v1'
+  if case=='stripped-metadata':source.pop('_nemoclaw_upstream')
+  if case in ['stripped-raw','stripped-whitespace']:
+   value='synthetic-raw-key' if case=='stripped-raw' else '[STRIPPED_BY_MIGRATION] '
+   source['model']['api_key']=source['providers']['nvidia-prod']['api_key']=source['custom_providers'][0]['api_key']=value
   candidate=copy.deepcopy(source)
   candidate['model']['api_key']=fresh;candidate['providers']['nvidia-prod']['api_key']=fresh;candidate['custom_providers'][0]['api_key']=fresh
   if case=='missing':candidate['model'].pop('api_key')
@@ -38,17 +49,23 @@ with tempfile.TemporaryDirectory() as root:
   if case=='model-drift':candidate['model']['default']='other'
   if case=='endpoint-drift':candidate['model']['base_url']='https://foreign.example/v1'
   if case=='settings-drift':candidate['discord']['require_mention']=False
+  if case=='stripped-local':
+   source=json.loads(json.dumps(source).replace('nvidia-prod','vllm-local').replace('https://integrate.api.nvidia.com/v1','http://host.openshell.internal:8000/v1'))
+   candidate=json.loads(json.dumps(candidate).replace('nvidia-prod','vllm-local').replace('https://integrate.api.nvidia.com/v1','http://host.openshell.internal:8000/v1').replace('NVIDIA_INFERENCE_API_KEY','NEMOCLAW_LOCAL_INFERENCE_TOKEN'))
   cfg.write_text(g.yaml.safe_dump(source));env.write_text('SAFE_SETTING=preserved\n')
   strict.write_text(g._hash_text(str(cfg),str(env))[0]);compat.write_text(strict.read_text())
   import hashlib
-  before=cfg.read_bytes();digest=hashlib.sha256(before).hexdigest()
+  before=cfg.read_bytes();digest='0'*64 if case=='stripped-stale-read' else hashlib.sha256(before).hexdigest()
+  if case=='stripped':
+   try:g._validate_restored_native_credential(cfg.read_text(),g.yaml.safe_dump(candidate).encode());results['default-stripped']=True
+   except g.UnsafePathError:results['default-stripped']=False
   try:
    g._adopt_restored_native_local_source(str(h),str(strict),str(h/'unused-state'),digest,g.yaml.safe_dump(candidate).encode(),{},{});results[case]=True
   except g.UnsafePathError as exc:
    assert old not in str(exc) and fresh not in str(exc)
    results[case]=False
   assert cfg.read_bytes()==before
- for label,reference in [('fresh',fresh),('template','$'+'{NVIDIA_INFERENCE_API_KEY}'),('stale',old),('missing',None),('malformed','not-a-handle'),('wrong-provider','openshell:resolve:env:v8_OPENAI_API_KEY')]:
+ for label,reference in [('fresh',fresh),('template','$'+'{NVIDIA_INFERENCE_API_KEY}'),('stripped','[STRIPPED_BY_MIGRATION]'),('stale',old),('missing',None),('malformed','not-a-handle'),('wrong-provider','openshell:resolve:env:v8_OPENAI_API_KEY')]:
   config=copy.deepcopy(base)
   config['model']['api_key']=reference;config['providers']['nvidia-prod']['api_key']=reference;config['custom_providers'][0]['api_key']=reference
   cfg.write_text(g.yaml.safe_dump(config));before=cfg.read_bytes();os.environ['NVIDIA_INFERENCE_API_KEY']=fresh
@@ -75,7 +92,7 @@ with tempfile.TemporaryDirectory() as root:
   except g.NvidiaCredentialRejectedError:results.setdefault('health-mixed',[]).append(False)
  # Exercise the real CLI result protocol; do not expose guard diagnostics to status.
  import subprocess
- for label,reference,supervisor in [('valid',fresh,fresh),('template','$'+'{NVIDIA_INFERENCE_API_KEY}',fresh),('mixed',[template,fresh,fresh],fresh),('stale',old,fresh),('missing-supervisor',fresh,''),('malformed-supervisor',fresh,'bad')]:
+ for label,reference,supervisor in [('valid',fresh,fresh),('template','$'+'{NVIDIA_INFERENCE_API_KEY}',fresh),('stripped','[STRIPPED_BY_MIGRATION]',fresh),('mixed',[template,fresh,fresh],fresh),('stale',old,fresh),('missing-supervisor',fresh,''),('malformed-supervisor',fresh,'bad')]:
   config=copy.deepcopy(base)
   slots=reference if isinstance(reference,list) else [reference]*3
   config['model']['api_key'],config['providers']['nvidia-prod']['api_key'],config['custom_providers'][0]['api_key']=slots
@@ -99,6 +116,19 @@ with tempfile.TemporaryDirectory() as root:
       "cli-template": { exit: 0, stdout: "verified=1" },
       "cli-mixed": { exit: 1, stdout: "rejected=1" },
       "cli-stale": { exit: 1, stdout: "rejected=1" },
+      "cli-stripped": { exit: 1, stdout: "rejected=1" },
+      "health-stripped": false,
+      "default-stripped": false,
+      "stripped-partial-model": false,
+      "stripped-partial-provider": false,
+      "stripped-partial-custom": false,
+      "stripped-duplicate": false,
+      "stripped-endpoint": false,
+      "stripped-metadata": false,
+      "stripped-local": false,
+      "stripped-raw": false,
+      "stripped-whitespace": false,
+      "stripped-stale-read": false,
       "cli-missing-supervisor": { exit: 1, stdout: "" },
       "cli-malformed-supervisor": { exit: 1, stdout: "" },
       "health-fresh": true,
@@ -112,6 +142,7 @@ with tempfile.TemporaryDirectory() as root:
       "health-wrong-provider": false,
       valid: true,
       template: true,
+      stripped: true,
       missing: false,
       malformed: false,
       "wrong-provider": false,

@@ -616,14 +616,16 @@ describe("onboarding phase fixture", () => {
           sandboxName: "e2e-policy-missing",
         }),
       ).rejects.toThrow(error);
+      const { NPM_CONFIG_PREFIX, ...onboardEnv } = runner.calls[0]!.options!.env!;
+      expect(NPM_CONFIG_PREFIX).toBe(path.join(onboardEnv.HOME!, ".npm-global"));
       expect(resolveSandboxResourceHandle).toHaveBeenCalledWith(
         "e2e-policy-missing",
         expect.objectContaining({
-          env: runner.calls[0]?.options?.env,
+          env: onboardEnv,
           redactionValues: ['secret"token', 'secret\\"token'],
           timeoutMs: 15_000,
           killGraceMs: 1_000,
-          captureLimitBytes: 64 * 1024,
+          captureLimitBytes: 1024 * 1024,
         }),
       );
       expect(probe).toHaveBeenCalledTimes(7);

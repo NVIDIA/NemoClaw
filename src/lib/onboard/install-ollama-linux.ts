@@ -39,9 +39,46 @@ const {
 
 export const OFFICIAL_OLLAMA_INSTALLER_URL =
   "https://raw.githubusercontent.com/ollama/ollama/de25dd526f4c9ba367ee69022168c6c5f2dc3285/scripts/install.sh";
+export const OFFICIAL_OLLAMA_INSTALLER_HOST = new URL(OFFICIAL_OLLAMA_INSTALLER_URL).hostname;
 export const OFFICIAL_OLLAMA_INSTALLER_SHA256 =
   "25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f";
 const OFFICIAL_OLLAMA_INSTALLER_PROCESS_TIMEOUT_MS = 190_000;
+const CURL_DOWNLOAD_FAILURES: Partial<Record<number, string>> = {
+  5: "Proxy name resolution or configuration failed.",
+  6: "Could not resolve the download host.",
+  7: "Could not connect to the server or proxy.",
+  22: "The server returned an HTTP error.",
+  28: "The download timed out.",
+  35: "The TLS connection failed.",
+  60: "TLS certificate verification failed.",
+};
+
+/**
+ * Build a recovery-oriented failure message for an attempted download of the
+ * pinned official Ollama installer. Names the URL and host that failed,
+ * summarizes common curl failures, and tells the user which host to allow
+ * (or which proxy to use) before rerunning onboarding.
+ */
+export function ollamaInstallerDownloadFailureMessage(exitCode: number | null): string {
+  // Even curl's failure line can contain credentials from proxy configuration.
+  // Display only known summaries, never host-provided stderr.
+  const curlDetail = exitCode === null ? undefined : CURL_DOWNLOAD_FAILURES[exitCode];
+  const lines = [
+    `  Ollama installer download failed after bounded retries (exit ${exitCode ?? "unknown"}).`,
+    `  Could not download: ${OFFICIAL_OLLAMA_INSTALLER_URL}`,
+    `  Required host:     ${OFFICIAL_OLLAMA_INSTALLER_HOST} (outbound HTTPS, port 443)`,
+  ];
+  if (curlDetail) {
+    lines.push(`  curl reported:     ${curlDetail}`);
+  }
+  lines.push(
+    `  Allow outbound HTTPS to ${OFFICIAL_OLLAMA_INSTALLER_HOST} through your firewall or`,
+    `  proxy (for example, export HTTPS_PROXY to a working proxy), verify with:`,
+    `    curl -fsSI "${OFFICIAL_OLLAMA_INSTALLER_URL}"`,
+    `  then rerun ${cliName()} onboard.`,
+  );
+  return lines.join("\n");
+}
 
 export function sha256File(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -190,7 +227,7 @@ function runOfficialInstallScript(opts: InstallOllamaLinuxOptions): void {
     if (fetchResult.exitCode !== 0) {
       failure = {
         exitCode: fetchResult.exitCode ?? 1,
-        message: `  Ollama installer download failed after bounded retries (exit ${fetchResult.exitCode ?? "unknown"}).`,
+        message: ollamaInstallerDownloadFailureMessage(fetchResult.exitCode),
       };
     } else {
       let actualSha256 = "";

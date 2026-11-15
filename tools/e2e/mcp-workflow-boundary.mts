@@ -303,6 +303,7 @@ function validateJobIdentity(
   }
 }
 
+/** Reject MCP jobs that expand token access or change trusted checkout and execution boundaries. */
 function validateJobSecurity(
   errors: string[],
   jobName: string,
@@ -318,8 +319,8 @@ function validateJobSecurity(
     }
   }
   const permissions = asRecord(job.permissions);
-  if (Object.keys(permissions).sort().join(",") !== "contents" || permissions.contents !== "read") {
-    errors.push(`${jobName} must use only contents:read permissions`);
+  if (!hasExactEntries(permissions, { contents: "read", "pull-requests": "read" })) {
+    errors.push(`${jobName} must use only contents:read and pull-requests:read permissions`);
   }
 
   const checkouts = asSteps(job).filter((step) =>

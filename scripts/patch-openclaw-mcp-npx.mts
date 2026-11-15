@@ -187,7 +187,7 @@ function listJsFiles(dir: string): string[] {
     const entryPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       files.push(...listJsFiles(entryPath));
-    } else if (entry.isFile() && entry.name.endsWith(".js")) {
+    } else if (entry.isFile() && /\.m?js$/u.test(entry.name)) {
       files.push(entryPath);
     }
   }

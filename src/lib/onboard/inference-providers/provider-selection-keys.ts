@@ -29,7 +29,6 @@ export const NON_INTERACTIVE_PROVIDER_KEYS: ReadonlySet<string> = new Set([
   "custom",
   "nim-local",
   "vllm",
-  "routed",
   "install-vllm",
   "install-ollama",
   "install-windows-ollama",
@@ -42,7 +41,6 @@ export const NON_INTERACTIVE_PROVIDER_VALID_VALUES = `Valid values: ${Array.from
 ).join(", ")}`;
 
 const PERSISTED_PROVIDER_SELECTION_KEYS: Readonly<Record<string, string>> = {
-  "nvidia-router": "routed",
   "ollama-local": "ollama",
   "vllm-local": "vllm",
   // This legacy name identifies NVIDIA Endpoints, not Local NVIDIA NIM.

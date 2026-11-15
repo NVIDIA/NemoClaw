@@ -13,7 +13,7 @@ import {
 
 export const SWITCHYARD_ONBOARD_CONFIG_MAX_BYTES = 16 * 1024;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
-const TOP_LEVEL_KEYS = new Set(["schemaVersion", "efficient", "capable"]);
+const TOP_LEVEL_KEYS = new Set(["schemaVersion", "efficient", "capable", "judge"]);
 
 export class SwitchyardOnboardConfigError extends Error {
   constructor(message: string) {
@@ -119,6 +119,7 @@ export function parseSwitchyardOnboardConfig(text: string): HermesSwitchyardRout
     return createHermesSwitchyardRoutingIntent({
       efficient: value.efficient,
       capable: value.capable,
+      ...(Object.hasOwn(value, "judge") ? { judge: value.judge } : {}),
     });
   } catch (error) {
     fail(

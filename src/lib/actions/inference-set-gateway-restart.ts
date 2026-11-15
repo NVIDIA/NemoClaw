@@ -13,6 +13,8 @@ import {
 import type { GatewayRestartResult } from "./sandbox/gateway-restart";
 import {
   observeOpenClawPairingSettlement,
+  OpenClawPairingQualificationError,
+  type OpenClawPairingObservationFailureReason,
   type OpenClawPairingSettlementObservation,
 } from "./sandbox/launch-readiness/openclaw-pairing-qualification";
 
@@ -26,6 +28,8 @@ export type InferenceSetOpenClawPairingTarget = {
 export type InferenceSetOpenClawPairingFailureLayer =
   | "initial-state-unavailable"
   | "final-state-unavailable"
+  | `initial-state-unavailable:${OpenClawPairingObservationFailureReason}`
+  | `final-state-unavailable:${OpenClawPairingObservationFailureReason}`
   | "final-state-unsettled"
   | "pairing-operation-failed"
   | "pairing-target-unavailable"
@@ -82,8 +86,14 @@ export function settleInferenceSetOpenClawPairing(
   let initial: OpenClawPairingSettlementObservation;
   try {
     initial = deps.observePairing(target);
-  } catch {
-    return { ok: false, failureLayer: "initial-state-unavailable" };
+  } catch (error) {
+    return {
+      ok: false,
+      failureLayer:
+        error instanceof OpenClawPairingQualificationError && error.failureReason
+          ? `initial-state-unavailable:${error.failureReason}`
+          : "initial-state-unavailable",
+    };
   }
   if (initial.state === "settled") return { ok: true };
 
@@ -98,8 +108,14 @@ export function settleInferenceSetOpenClawPairing(
   let final: OpenClawPairingSettlementObservation;
   try {
     final = deps.observePairing(target);
-  } catch {
-    return { ok: false, failureLayer: "final-state-unavailable" };
+  } catch (error) {
+    return {
+      ok: false,
+      failureLayer:
+        error instanceof OpenClawPairingQualificationError && error.failureReason
+          ? `final-state-unavailable:${error.failureReason}`
+          : "final-state-unavailable",
+    };
   }
   if (final.state === "settled") return { ok: true };
   return {

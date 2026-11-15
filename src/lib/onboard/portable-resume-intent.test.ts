@@ -57,6 +57,26 @@ describe("portable resume intent", () => {
     return file;
   }
 
+  it.each(["in_progress", "failed", "complete"])(
+    "rejects a retired router checkpoint in %s state without changing it",
+    (status) => {
+      const raw = JSON.parse(rawSession("default"));
+      raw.provider = "nvidia-router";
+      raw.status = status;
+      const file = sessionFile(JSON.stringify(raw));
+      const before = fs.readFileSync(file, "utf8");
+      expect(() =>
+        resolveOnboardResumeIntent({
+          explicitResume: true,
+          fresh: false,
+          explicitProfile: null,
+          sessionFile: file,
+        }),
+      ).toThrow("Model Router has been removed");
+      expect(fs.readFileSync(file, "utf8")).toBe(before);
+    },
+  );
+
   it("reconstructs portable profile intent for plain and matching explicit resume (#9035)", () => {
     const file = sessionFile();
     const plain = resolveOnboardResumeIntent({

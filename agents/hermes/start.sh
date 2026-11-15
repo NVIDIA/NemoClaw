@@ -2773,6 +2773,24 @@ hermes_dashboard_healthy() {
   esac
 }
 
+# Supervised recovery keeps this entrypoint alive, so each gateway launch must qualify.
+qualify_hermes_switchyard_judge() {
+  if [ ! -e /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
+    && [ ! -L /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
+    && [ ! -e /usr/local/share/nemoclaw/hermes-switchyard-v1.toml ] \
+    && [ ! -L /usr/local/share/nemoclaw/hermes-switchyard-v1.toml ]; then
+    return 0
+  fi
+  local prefix=()
+  [ "$(id -u)" -ne 0 ] || prefix=("${STEP_DOWN_PREFIX_GATEWAY[@]}")
+  if ! HERMES_HOME="${HERMES_DIR}" HOME=/sandbox \
+    "${prefix[@]}" "$_HERMES_PYTHON" -I \
+    /opt/nemoclaw-hermes-config/qualify-switchyard-judge.py >/dev/null 2>&1; then
+    echo "[gateway] Switchyard judge qualification failed. Routing remains stopped. Check model access or select a supported judge in --switchyard-config and onboard with a new sandbox name." >&2
+    return 1
+  fi
+}
+
 launch_hermes_gateway() {
   # This function is called from an `if ! ...` recovery branch, where Bash
   # disables errexit throughout the function call. Propagate every security-
@@ -2780,6 +2798,7 @@ launch_hermes_gateway() {
   if [ "$HERMES_RESTART_SEALED" -ne 1 ]; then
     cleanup_stale_hermes_gateway_runtime || return 1
   fi
+  qualify_hermes_switchyard_judge || return 1
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
     HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}" \
@@ -3064,6 +3083,7 @@ launch_hermes_gateway_current_user() {
     }
   fi
   cleanup_stale_hermes_gateway_runtime || return $?
+  qualify_hermes_switchyard_judge || return 1
   HERMES_HOME="${HERMES_DIR}" \
     HOME=/sandbox \
     HERMES_LAZY_INSTALL_TARGET="${HERMES_SANDBOX_LAZY_INSTALL_TARGET}" \

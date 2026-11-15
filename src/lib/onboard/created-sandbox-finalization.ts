@@ -15,6 +15,7 @@ import {
   abortUnregisteredOpenClawPostRestoreDoctor,
   beginUnregisteredOpenClawBackupQuiesce,
   finishUnregisteredOpenClawPostRestoreDoctor,
+  prepareUnregisteredOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
@@ -382,12 +383,16 @@ export function createCreatedSandboxCompletionActions(
   let dashboardPort = 0;
   let dashboardExternalUrl: string | null = null;
   let hermesDashboardState = options.dashboard.initialHermesState;
-  async function verifyCreatedProviderGpu(created: SandboxGpuCreateFlowResult): Promise<void> {
+  async function verifyCreatedProviderGpu(
+    created: SandboxGpuCreateFlowResult,
+    resolveInferenceRoute: () => dockerGpuLocalInference.GpuSandboxInferenceRoute,
+  ): Promise<void> {
     await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
       options.gpu.config,
       options.gpu.provider,
       {
         sandboxName: options.finalization.sandboxName,
+        resolveInferenceRoute,
         dockerDriverGateway: options.gpu.dockerDriverGateway,
         selectedRoute: created.route,
         verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
@@ -458,11 +463,32 @@ export function createCreatedSandboxCompletionActions(
       deps.revalidateSandboxIdentity?.(
         `finalizing verified policy for sandbox '${options.finalization.sandboxName}'`,
       );
+      const verifiedRegistrationAuthority = () => {
+        const verifiedCreate = options.policy.getVerifiedCreateRegistrationAuthority();
+        assertVerifiedCreateMatchesCreateBoundary(verifiedCreateBoundary, verifiedCreate);
+        if (
+          inferenceRouteReservation &&
+          !isDeepStrictEqual(inferenceRouteReservation, verifiedCreate.reservation)
+        ) {
+          throw new Error(
+            "Sandbox registration inference route differs from its verified create reservation.",
+          );
+        }
+        return verifiedCreate;
+      };
       if (providerGpuDisposition === "created") {
         deps.revalidateSandboxIdentity?.(
           `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
         );
-        await verifyCreatedProviderGpu(created!);
+        await verifyCreatedProviderGpu(created!, () =>
+          dockerGpuLocalInference.resolveGpuSandboxInferenceRoute(
+            options.finalization.sandboxName,
+            options.registration.gatewayName,
+            options.finalization.targetAgentType,
+            options.gpu.provider,
+            verifiedRegistrationAuthority().reservation,
+          ),
+        );
       } else if (providerGpuDisposition === "hermes") {
         deps.revalidateSandboxIdentity?.(
           `recording GPU capability for sandbox '${options.finalization.sandboxName}'`,
@@ -505,17 +531,8 @@ export function createCreatedSandboxCompletionActions(
           options.registration.gatewayPort,
           currentLifecycle,
         );
-        const verifiedCreate = options.policy.getVerifiedCreateRegistrationAuthority();
-        assertVerifiedCreateMatchesCreateBoundary(verifiedCreateBoundary, verifiedCreate);
+        const verifiedCreate = verifiedRegistrationAuthority();
         const verifiedInferenceRouteReservation = verifiedCreate.reservation;
-        if (
-          inferenceRouteReservation &&
-          !isDeepStrictEqual(inferenceRouteReservation, verifiedInferenceRouteReservation)
-        ) {
-          throw new Error(
-            "Sandbox registration inference route differs from its verified create reservation.",
-          );
-        }
         return {
           ...options.registration,
           inferenceSelection: verifiedInferenceRouteReservation.authority.selection,
@@ -1022,6 +1039,13 @@ export async function finalizeCreatedSandbox(
         preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
         if (!options.gatewayName)
           throw new Error("OpenClaw restore reconciliation requires its selected gateway.");
+        // Native config mutation rejects legacy schemas. Complete the pinned
+        // migrations first while retaining the same gateway-down authority.
+        const prepared = await prepareUnregisteredOpenClawPostRestoreDoctor(openClawRestoreWindow);
+        if (!prepared.ok) {
+          throw new Error(`OpenClaw restored state migration failed (${prepared.stage}).`);
+        }
+        openClawRestoreWindow = prepared.window;
         await (deps.writeRestoredOpenclawInferenceRoute ?? writeRestoredOpenclawInferenceRoute)(
           options.sandboxName,
           options.model,

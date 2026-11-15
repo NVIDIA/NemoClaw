@@ -10,7 +10,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+import {
+  buildNativePluginInvocationScript,
+  nativePluginInvocationSucceeded,
+} from "../fixtures/openclaw-agent-output.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import {
   SANDBOX_SURVIVAL_FINAL_DESTROY_TIMEOUT_MS,
@@ -18,11 +24,11 @@ import {
   SANDBOX_SURVIVAL_INSTALL_TIMEOUT_MS,
   SANDBOX_SURVIVAL_LIFECYCLE_READINESS,
   SANDBOX_SURVIVAL_MARKER_PATHS,
-  SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT,
   SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
   SANDBOX_SURVIVAL_NATIVE_READINESS,
   SANDBOX_SURVIVAL_OPENSHELL_DELETE_TIMEOUT_MS,
   SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS,
+  SANDBOX_SURVIVAL_RECOVER_TIMEOUT_MS,
   SANDBOX_SURVIVAL_SANDBOX_LIFECYCLE_TIMEOUT_MS,
   SANDBOX_SURVIVAL_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/sandbox-survival-timeout-contract.mts";
@@ -36,11 +42,7 @@ import {
 } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import {
-  nativePluginAgentInvocationOutcome,
-  nativePluginWriteScript,
-} from "../fixtures/native-plugin-evidence.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
 import type { SandboxMarker } from "../fixtures/phases/state-validation.ts";
 import { pollUntil } from "../fixtures/polling.ts";
@@ -76,11 +78,84 @@ async function waitForNativeAgentReady(
     delayMs: SANDBOX_SURVIVAL_NATIVE_READINESS.delayMs,
     probe: (_attempt, artifactName) =>
       exec(
-        `code="$(curl -q --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 http://127.0.0.1:${String(gatewayPort)}/health)"; case "$code" in 200|401) printf '%s\\n' ready ;; *) exit 1 ;; esac`,
+        `curl -q --noproxy '*' -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:${String(gatewayPort)}/readyz | node -e 'let s="";process.stdin.on("data",b=>s+=b);process.stdin.on("end",()=>{try{const v=JSON.parse(s);if(v.ready!==true||!Array.isArray(v.failing)||v.failing.length)throw Error("not ready");console.log("ready");}catch{process.exitCode=1;}});'`,
         artifactName,
       ),
     accept: (result) => result.exitCode === 0 && result.stdout.trim() === "ready",
   });
+}
+
+function nativeSurvivalPluginInstallScript(): string {
+  const packageJson = JSON.stringify({
+    name: "@nemoclaw/e2e-survival-plugin",
+    version: "1.0.0",
+    type: "module",
+    main: "index.js",
+    files: ["index.js", "openclaw.plugin.json"],
+    openclaw: { extensions: ["./index.js"] },
+    peerDependencies: { openclaw: ">=2026.7.1" },
+  });
+  const manifest = JSON.stringify({
+    id: "e2e-survival-plugin",
+    name: "E2E Survival Plugin",
+    version: "1.0.0",
+    description: "Native stop/start persistence fixture",
+    activation: { onStartup: true },
+    contracts: { tools: ["survival_probe"] },
+    configSchema: { type: "object", properties: {}, additionalProperties: false },
+  });
+  const entrypoint = `const plugin = {
+  id: "e2e-survival-plugin",
+  name: "E2E Survival Plugin",
+  version: "1.0.0",
+  register(api) {
+    api.registerTool({
+      name: "survival_probe",
+      label: "Survival Probe",
+      description: "Prove a native plugin remains executable after OpenShell stop/start.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+      async execute() {
+        const details = { survived: true };
+        return { content: [{ type: "text", text: JSON.stringify(details) }], details };
+      },
+    });
+  },
+};
+export default plugin;
+`;
+  return [
+    "set -eu",
+    "source_dir=/sandbox/e2e-survival-plugin-source",
+    'rm -rf -- "$source_dir"',
+    'mkdir -p -- "$source_dir"',
+    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
+    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
+    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
+    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
+  ].join("\n");
+}
+
+async function expectNativeSurvivalPluginInvocation(
+  exec: (
+    script: string,
+    artifactName: string,
+    timeoutMs?: number,
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number | null }>,
+): Promise<void> {
+  const invocation = await exec(
+    buildNativePluginInvocationScript({
+      tool: "survival_probe",
+      plugin: "e2e-survival-plugin",
+      args: {},
+      details: { survived: true },
+    }),
+    "post-openshell-start-native-plugin-invoke",
+    SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
+  );
+  expect(
+    invocation.exitCode === 0 && nativePluginInvocationSucceeded(invocation.stdout),
+    resultText(invocation),
+  ).toBe(true);
 }
 
 test(
@@ -97,6 +172,7 @@ test(
         "stop the sandbox through OpenShell",
         "start the sandbox through OpenShell",
         "recheck native agent readiness, state, and plugin execution",
+        "recover a cold sandbox through the public CLI",
         "destroy the sandbox",
       ],
     },
@@ -125,6 +201,7 @@ test(
         "sandbox exec and the native OpenClaw gateway are usable after restart",
         "arbitrary home, workspace, package, plugin, hook, cron, session, and memory markers survive without NemoClaw recovery",
         "a native plugin package installed before stop executes through OpenClaw after start",
+        "public recover succeeds on its first invocation after stop, with usable native health and host forwarding and unchanged identities",
         "final destroy removes the sandbox",
       ],
     });
@@ -189,6 +266,7 @@ test(
     );
     const sandboxCleanupOptions = {
       artifactName: "cleanup-openshell-delete-sandbox-survival",
+      env: sandboxAccessEnv(),
       redactionValues: [apiKey],
     };
     let sandboxDeleted = false;
@@ -229,11 +307,15 @@ test(
     };
 
     stateValidation.expectLocalRegistryContains(SANDBOX_NAME);
-    const execShell = (script: string, artifactName: string) =>
+    const execShell = (
+      script: string,
+      artifactName: string,
+      timeoutMs: number = SANDBOX_SURVIVAL_NATIVE_READINESS.timeoutMs,
+    ) =>
       sandbox.exec(SANDBOX_NAME, ["sh", "-lc", script], {
         artifactName,
         env: sandboxAccessEnv(),
-        timeoutMs: SANDBOX_SURVIVAL_NATIVE_READINESS.timeoutMs,
+        timeoutMs,
       });
 
     progress.phase("prove baseline sandbox access and native agent readiness");
@@ -248,7 +330,19 @@ test(
     await stateValidation.writeSandboxMarkers(instance, markers);
     await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
     progress.phase("install a native OpenClaw plugin package");
-    await execShell(nativePluginWriteScript("v1"), "pre-openshell-stop-native-plugin-install");
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      SANDBOX_NAME,
+      sandboxAccessEnv(),
+      [apiKey],
+      false,
+    );
+    const pluginInstall = await execShell(
+      nativeSurvivalPluginInstallScript(),
+      "pre-openshell-stop-native-plugin-install",
+    );
+    assertExitZero(pluginInstall, "install native OpenClaw survival plugin");
 
     progress.phase("stop the sandbox through OpenShell");
     const stop = await sandbox.openshell(["sandbox", "stop", "-g", "nemoclaw", SANDBOX_NAME], {
@@ -269,6 +363,7 @@ test(
     progress.phase("recheck native agent readiness, state, and plugin execution");
     await lifecycle.waitForSandboxReadyAfterGatewayRestart(instance, {
       artifactNamePrefix: "post-openshell-start-ready",
+      env: sandboxAccessEnv(),
       attempts: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.attempts,
       delayMs: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.delayMs,
       timeoutMs: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.timeoutMs,
@@ -279,47 +374,154 @@ test(
       markers,
       "post-openshell-start-marker-read",
     );
-    await approveOpenClawAdminScope(
-      host,
-      sandbox,
-      SANDBOX_NAME,
-      { ...buildAvailabilityProbeEnv(), ...hosted.env },
-      [apiKey],
-      false,
+    await expectNativeSurvivalPluginInvocation(execShell);
+
+    progress.phase("recover a cold sandbox through the public CLI");
+    const beforeRecovery = await sandbox.openshell(
+      ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
+      { artifactName: "cold-recovery-source-sandbox", env: sandboxAccessEnv(), timeoutMs: 10_000 },
     );
-    const pluginOutcome = await nativePluginAgentInvocationOutcome(sandbox, {
-      sandboxName: SANDBOX_NAME,
-      version: "v1",
-      artifactName: "post-openshell-start-native-plugin-invoke",
-      env: sandboxAccessEnv(),
-      turnTimeoutMs: SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
-      audit: SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT,
+    assertExitZero(beforeRecovery, "record the cold-recovery source sandbox");
+    const sourceRows = (
+      JSON.parse(beforeRecovery.stdout) as Array<{ id: string; name: string }>
+    ).filter((row) => row.name === SANDBOX_NAME);
+    expect(sourceRows).toHaveLength(1);
+    const sourceSandboxId = sourceRows[0]!.id;
+    expect(sourceSandboxId).toMatch(/^[A-Za-z0-9._-]{1,512}$/u);
+    const sourceContainerId = await runtimeProvider.resolveSandboxResourceHandle(SANDBOX_NAME, {
+      artifactName: "cold-recovery-source-container",
+      timeoutMs: 10_000,
     });
-    expect(pluginOutcome, "the plugin tool must start and succeed in this agent run").toBe(
-      "succeeded",
+    const recoveryEnv = {
+      ...buildAvailabilityProbeEnv(),
+      ...hosted.env,
+      NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "120",
+    };
+    const publicStop = await host.command(
+      process.execPath,
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "stop"],
+      {
+        artifactName: "cold-recovery-public-stop",
+        env: recoveryEnv,
+        redactionValues: [apiKey],
+        timeoutMs: SANDBOX_SURVIVAL_SANDBOX_LIFECYCLE_TIMEOUT_MS,
+      },
     );
+    assertExitZero(publicStop, "stop the source sandbox through the public CLI");
+    // Recover owns startup observation. Do not warm the transport or listener before this call.
+    const recover = await host.command(
+      process.execPath,
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "recover"],
+      {
+        artifactName: "cold-recovery-first-public-recover",
+        env: recoveryEnv,
+        redactionValues: [apiKey],
+        timeoutMs: SANDBOX_SURVIVAL_RECOVER_TIMEOUT_MS,
+      },
+    );
+    assertExitZero(recover, "recover the cold sandbox on the first invocation");
+
+    const healthArgs = [
+      "-q",
+      "--noproxy",
+      "*",
+      "-sS",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "--connect-timeout",
+      "2",
+      "--max-time",
+      "5",
+      `http://127.0.0.1:${String(DASHBOARD_PORT)}/health`,
+    ];
+    const nativeHealth = await sandbox.exec(SANDBOX_NAME, ["curl", ...healthArgs], {
+      artifactName: "cold-recovery-native-health",
+      env: sandboxAccessEnv(),
+      timeoutMs: SANDBOX_SURVIVAL_NATIVE_READINESS.timeoutMs,
+    });
+    assertExitZero(nativeHealth, "probe native OpenClaw immediately after recover");
+    expect(nativeHealth.stdout.trim()).toMatch(/^(?:200|401)$/u);
+    const forwardedHealth = await host.command("curl", healthArgs, {
+      artifactName: "cold-recovery-forwarded-health",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: SANDBOX_SURVIVAL_NATIVE_READINESS.timeoutMs,
+    });
+    assertExitZero(forwardedHealth, "probe the host forward immediately after recover");
+    expect(forwardedHealth.stdout.trim()).toMatch(/^(?:200|401)$/u);
+
+    const afterRecovery = await sandbox.openshell(
+      ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
+      {
+        artifactName: "cold-recovery-retained-sandbox",
+        env: sandboxAccessEnv(),
+        timeoutMs: 10_000,
+      },
+    );
+    assertExitZero(afterRecovery, "observe the recovered sandbox identity");
+    const recoveredIds = (JSON.parse(afterRecovery.stdout) as Array<{ id: string; name: string }>)
+      .filter((row) => row.name === SANDBOX_NAME)
+      .map((row) => row.id);
+    expect(recoveredIds).toEqual([sourceSandboxId]);
+    const recoveredContainerId = await runtimeProvider.resolveSandboxResourceHandle(SANDBOX_NAME, {
+      artifactName: "cold-recovery-retained-container",
+      timeoutMs: 10_000,
+    });
+    expect(recoveredContainerId).toBe(sourceContainerId);
 
     progress.phase("destroy the sandbox");
     await sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "final-openshell-delete-sandbox-survival",
-      env: buildAvailabilityProbeEnv(),
+      env: sandboxAccessEnv(),
       timeoutMs: SANDBOX_SURVIVAL_FINAL_DESTROY_TIMEOUT_MS,
     });
-    sandboxDeleted = true;
-    const postDestroyList = await sandbox.list({
-      artifactName: "post-destroy-openshell-sandbox-list",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS,
+    const deleteDeadline = performance.now() + SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS;
+    const { value: postDestroyList } = await pollUntil({
+      artifactPrefix: "post-destroy-openshell-sandbox-list",
+      deadlineMs: SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS,
+      now: () => performance.now(),
+      delayMs: () => Math.min(1_000, Math.max(0, deleteDeadline - performance.now())),
+      probe: (_attempt, artifactName) =>
+        sandbox.list({
+          artifactName,
+          env: sandboxAccessEnv(),
+          timeoutMs: Math.max(1, Math.floor(deleteDeadline - performance.now())),
+        }),
+      accept: (result) => result.exitCode === 0 && !outputContainsSandbox(result, SANDBOX_NAME),
+      terminal: (result) => {
+        const deleting = stripVTControlCharacters(result.stdout)
+          .split(/\r?\n/)
+          .some((line) => {
+            const fields = line.trim().split(/\s+/);
+            return fields[0] === SANDBOX_NAME && fields.at(-1) === "Deleting";
+          });
+        return result.exitCode !== 0 || (outputContainsSandbox(result, SANDBOX_NAME) && !deleting)
+          ? `sandbox destroy verification failed: ${resultText(result)}`
+          : undefined;
+      },
     });
     const destroyedAtEnd = !outputContainsSandbox(postDestroyList, SANDBOX_NAME);
     expect(
       postDestroyList.exitCode === 0 && destroyedAtEnd,
       `sandbox destroy verification failed: ${resultText(postDestroyList)}`,
     ).toBe(true);
+    sandboxDeleted = true;
 
     await artifacts.target.complete({
       id: "sandbox-survival",
       status: "passed",
+      coldRecovery: {
+        sourceRevision: process.env.NEMOCLAW_E2E_EXPECTED_SHA,
+        runtime: runtimeProvider.id,
+        sandboxId: sourceSandboxId,
+        recoveredSandboxIds: recoveredIds,
+        sourceContainerId,
+        recoveredContainerId,
+        recoverExitCode: recover.exitCode,
+        nativeHealthStatus: nativeHealth.stdout.trim(),
+        forwardedHealthStatus: forwardedHealth.stdout.trim(),
+      },
       assertions: {
         installCompleted: install.exitCode === 0,
         openshellStopStartCompleted: true,
@@ -327,6 +529,14 @@ test(
         nativeAgentReadyAfterStart: true,
         markersPersistedAfterRestart: true,
         nativePluginInvokedAfterRestart: true,
+        firstPublicRecoverSucceeded: recover.exitCode === 0,
+        nativeHealthAfterRecover:
+          nativeHealth.exitCode === 0 && /^(?:200|401)$/u.test(nativeHealth.stdout.trim()),
+        forwardedHealthAfterRecover:
+          forwardedHealth.exitCode === 0 && /^(?:200|401)$/u.test(forwardedHealth.stdout.trim()),
+        sandboxIdentityPreservedAfterRecover:
+          recoveredIds.length === 1 && recoveredIds[0] === sourceSandboxId,
+        containerIdentityPreservedAfterRecover: recoveredContainerId === sourceContainerId,
         destroyedAtEnd,
       },
     });

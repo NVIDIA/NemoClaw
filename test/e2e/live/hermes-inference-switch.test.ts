@@ -295,17 +295,6 @@ test(
       model: SWITCH_MODEL,
     });
 
-    const config = await sandbox.exec(
-      SANDBOX_NAME,
-      ["sed", "/^[[:space:]]*api_key:/d", "/sandbox/.hermes/config.yaml"],
-      {
-        artifactName: "hermes-config-yaml",
-        env: env(),
-        redactionValues,
-        timeoutMs: 30_000,
-      },
-    );
-    expect(config.exitCode, resultText(config)).toBe(0);
     // Field projection is covered by inference-set-patch-hermes and config generation
     // tests. Live dashboard, API, and CLI turns below verify the selected route.
     expect((await apiKeyShape(sandbox)).exitCode).toBe(0);

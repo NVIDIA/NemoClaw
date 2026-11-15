@@ -184,6 +184,7 @@ export function applyHermesManagedRoute(
 export function refreshHermesNativeLocalCredential(
   config: Record<string, unknown>,
   route: HermesManagedRoute & { nativeCredentialHandle: string },
+  options: { recoverStrippedNvidia?: boolean } = {},
 ): void {
   const expected: Record<string, unknown> = {};
   applyHermesManagedRoute(expected, route);
@@ -205,6 +206,10 @@ export function refreshHermesNativeLocalCredential(
     : new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN);
   const template = nvidia ? NVIDIA_INFERENCE_PLACEHOLDER : `\${${NATIVE_LOCAL_CREDENTIAL_ENV}}`;
   const reference = pattern.exec(String(previous));
+  // The sentinel identifies damage, not authority. Only the registered restore
+  // caller may admit it after verifying live identity and provider binding.
+  const recoverStripped =
+    options.recoverStrippedNvidia === true && nvidia && previous === "[STRIPPED_BY_MIGRATION]";
   if (
     (!nvidia && !nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl)) ||
     upstream.provider !== route.upstreamProvider ||
@@ -223,7 +228,7 @@ export function refreshHermesNativeLocalCredential(
     typeof previous !== "string" ||
     managed.api_key !== previous ||
     matches[0].api_key !== previous ||
-    (previous !== template && reference?.[0] !== previous)
+    (previous !== template && reference?.[0] !== previous && !recoverStripped)
   ) {
     throw new Error("Restored Hermes inference configuration does not match its registered route.");
   }

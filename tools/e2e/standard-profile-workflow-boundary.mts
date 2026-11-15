@@ -123,6 +123,7 @@ function requirePinnedAction(errors: string[], step: WorkflowStep | undefined, n
   }
 }
 
+/** Verify SDK admission and execution identities passed from the catalogue to each reusable profile. */
 function validateProfileCallers(errors: string[], workflow: WorkflowRecord): void {
   const jobs = record(workflow.jobs);
   const sdkPackage = record(jobs["package-openshell-sdk"]);
@@ -139,9 +140,18 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     steps(sdkPackage.steps),
     "Download and verify reviewed OpenShell SDK packages",
   );
-  if (record(sdkPackageStep?.env).NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT !== "1") {
+  const sdkPackageScript = sdkPackageStep?.run;
+  if (
+    typeof sdkPackageScript !== "string" ||
+    !sdkPackageScript.includes("packageCandidateOpenShellSdkIfRequired(output,") ||
+    !sdkPackageScript.includes("packageReviewedOpenShellSdk(output, 'if-present'") ||
+    !sdkPackageScript.includes("process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'") ||
+    !sdkPackageScript.includes("process.env.CANDIDATE_SHA !== process.env.UPGRADE_BASE_SHA") ||
+    record(sdkPackageStep?.env).GITHUB_TOKEN !== "${{ github.token }}" ||
+    record(sdkPackage.permissions)["pull-requests"] !== "read"
+  ) {
     errors.push(
-      "catalogue SDK packaging must include an available reviewed transition replacement",
+      "catalogue SDK packaging must admit candidate identities and retain reviewed main and exact-base packages",
     );
   }
   for (const profile of E2E_EXECUTION_PROFILES) {
@@ -184,6 +194,8 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     for (const [name, expected] of Object.entries({
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+      upgrade_pr_number: "${{ inputs.pr_number }}",
+      upgrade_base_sha: "${{ inputs.base_sha }}",
       runtime_provider: "${{ matrix.runtime_provider }}",
       execution_id: "${{ matrix.execution_id }}",
       coverage_variant: "${{ matrix.coverage_variant }}",
@@ -242,6 +254,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
   }
 }
 
+/** Reject reusable profiles that change their declared inputs, permissions, or trusted execution steps. */
 function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): void {
   const triggers = record(profile.on ?? profile[true as unknown as string]);
   const call = record(triggers.workflow_call);
@@ -283,7 +296,14 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   };
   if (
     Object.keys(inputs).sort().join(",") !==
-      [...Object.keys(requiredInputs), "hosted_inference_model"].sort().join(",") ||
+      [
+        ...Object.keys(requiredInputs),
+        "hosted_inference_model",
+        "upgrade_pr_number",
+        "upgrade_base_sha",
+      ]
+        .sort()
+        .join(",") ||
     Object.entries(requiredInputs).some(
       ([name, type]) =>
         record(inputs[name]).required !== true || record(inputs[name]).type !== type,
@@ -300,6 +320,13 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must accept an optional selected hosted model");
   }
+  for (const name of ["upgrade_pr_number", "upgrade_base_sha"]) {
+    if (
+      !isDeepStrictEqual(record(inputs[name]), { required: false, type: "string", default: "" })
+    ) {
+      errors.push(`standard E2E profile must accept optional ${name} for SDK admission`);
+    }
+  }
   const acceptedSecrets = [
     "DOCKERHUB_TOKEN",
     "DOCKERHUB_USERNAME",
@@ -314,8 +341,10 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must accept only its declared optional profile secrets");
   }
-  if (record(profile.permissions).contents !== "read") {
-    errors.push("standard E2E profile permissions must be contents: read");
+  if (
+    !isDeepStrictEqual(record(profile.permissions), { contents: "read", "pull-requests": "read" })
+  ) {
+    errors.push("standard E2E profile permissions must be contents: read and pull-requests: read");
   }
 
   const runJob = record(record(profile.jobs).run);
@@ -336,6 +365,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
   const jobEnv = record(runJob.env);
   const expectedJobEnv = {
+    UPGRADE_PR_NUMBER: "${{ inputs.upgrade_pr_number }}",
+    CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
+    UPGRADE_BASE_SHA: "${{ inputs.upgrade_base_sha }}",
     E2E_JOB: "1",
     E2E_EXECUTION_ID: "${{ inputs.execution_id }}",
     NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "${{ inputs.managed_image_catalog }}",
@@ -361,7 +393,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Validate catalogue execution plan",
     "Provision trusted Hermes E2E swap",
     undefined,
-    "Set up supported Model Router Python",
     "Authenticate to Docker Hub",
     "Install target host dependencies",
     "Download reviewed OpenShell SDK archive",
@@ -478,22 +509,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     workflowSteps.indexOf(checkout ?? {}) !== 2
   ) {
     errors.push("standard E2E profile must check out checkout_sha without credentials");
-  }
-
-  const modelRouterPython = requireStep(
-    errors,
-    workflowSteps,
-    "Set up supported Model Router Python",
-  );
-  if (
-    !isDeepStrictEqual(modelRouterPython, {
-      name: "Set up supported Model Router Python",
-      if: "${{ inputs.target_id == 'model-router-provider-routed-inference' }}",
-      uses: "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
-      with: { "python-version": "3.13" },
-    })
-  ) {
-    errors.push("standard E2E profile must provision reviewed Python only for Model Router");
   }
 
   const auth = requireStep(errors, workflowSteps, "Authenticate to Docker Hub");

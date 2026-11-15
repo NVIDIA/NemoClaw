@@ -13,7 +13,6 @@ import {
 } from "../../inference/native-provider/custom-setup";
 import { D, R } from "../../cli/terminal-style";
 import { isBedrockRuntimeEndpoint } from "../../inference/bedrock-runtime";
-import { DEFAULT_ROUTE_CREDENTIAL_ENV } from "../../inference/config";
 import { validateNvidiaApiKeyValue } from "../../validation";
 import { hydrateCredentialEnv } from "../credential-env";
 import {
@@ -41,7 +40,6 @@ export type ResumeProviderShimDeps = {
     | undefined;
   isNonInteractive: ResumeProviderRecoveryDeps["isNonInteractive"];
   providerExistsInGateway(name: string, gatewayName: string): boolean | Promise<boolean>;
-  isRoutedInferenceProvider: ResumeProviderRecoveryDeps["isRoutedInferenceProvider"];
   replaceNamedCredential: ResumeProviderRecoveryDeps["replaceNamedCredential"];
   /** Recover an exact gateway-scoped managed runtime; false means no managed owner state exists. */
   resumeManagedLlamaCppRuntime?: (
@@ -109,8 +107,7 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
       }
       return ensureResumeProviderReadyImpl(provider, credentialEnv, {
         remoteProviderConfig: onboardProviders.REMOTE_PROVIDER_CONFIG,
-        defaultRouteCredentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
-        isRoutedInferenceProvider: deps.isRoutedInferenceProvider,
+
         providerExistsInGateway: (name) => deps.providerExistsInGateway(name, gatewayName),
         hydrateCredentialEnv,
         getProviderLabel: onboardProviders.getProviderLabel,

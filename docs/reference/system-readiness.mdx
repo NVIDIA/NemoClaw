@@ -343,14 +343,14 @@ Fresh onboarding and authoritative rebuilds use this order:
 
 1. Resolve and validate gateway authority.
 2. Collect canonical host and gateway facts and reject blocking findings or unknown required capabilities.
-3. On a resumed agent change, retain the old router and durable provider state until the full preflight phase succeeds; only then stop the old router and commit the projected agent state.
+3. On a resumed agent change, retain durable provider state until the full preflight phase succeeds; only then commit the projected agent state. Legacy Model Router sessions are rejected before the transition and retain their cleanup metadata.
 4. Apply only an explicitly permitted host remediation, if required, and replace the earlier observations.
 5. Run a bounded WSL GPU proof when required, then revalidate live host and gateway facts.
 6. Validate the effective GPU configuration before Docker bridge and container DNS probes that can start a short-lived container.
 7. Install or upgrade OpenShell when required. A successful install can change gateway authority only from managed `standalone` to `packaged-service`. NemoClaw records that transition before later effects.
 8. Revalidate gateway authority immediately before gateway selection, recovery, reconciliation, or other lifecycle effects.
 
-The readiness gate runs before model-router cleanup, provider selection, credential registration, policy changes, image builds, or sandbox lifecycle effects.
+The readiness gate runs before provider selection, credential registration, policy changes, image builds, or sandbox lifecycle effects.
 Host and gateway observations have a 30-second reuse window that starts when collection finishes.
 The readiness gate does not reject a collection for the time its own probes take.
 The `gateway.owner` evidence records the gateway collection duration as `collectionMs`.

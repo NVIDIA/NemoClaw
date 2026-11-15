@@ -6,6 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { sourceLoaderNodeOptions } from "./source-loader-options";
+
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const SCRIPT = path.join(REPO_ROOT, "tools", "e2e", "brev-launchable-e2e.sh");
 const REAL_CUT = spawnSync("which", ["cut"], { encoding: "utf8" }).stdout.trim();
@@ -549,7 +551,7 @@ case "$remote" in
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic declared gateway listener\n' >> "$FAKE_CALLS"
     remote="\${remote/\\/opt\\/nemoclaw-image\\/NemoClaw/$FAKE_REPO_ROOT}"
-    bash -c "$remote"
+    NODE_OPTIONS="$FAKE_LISTENER_NODE_OPTIONS" bash -c "$remote"
     exit $? ;;
   "bash -s") ;;
   *)
@@ -582,6 +584,12 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     ...process.env,
     NEMOCLAW_GATEWAY_MANAGEMENT: path.join(root, "gateway.json"),
     FAKE_REPO_ROOT: options.diagnosticResolverMissing ? root : REPO_ROOT,
+    // The simulated guest has source files. Register shared-module aliases before
+    // tsx replaces the lazy TypeScript handler in the listener probe.
+    FAKE_LISTENER_NODE_OPTIONS: [
+      sourceLoaderNodeOptions(process.env.NODE_OPTIONS),
+      `--require=${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/full-e2e-gateway.ts"))}`,
+    ].join(" "),
     FAKE_BAKED_ROOT: options.realCommandEvidence ? bakedRoot : "",
     FAKE_OMIT_COMMAND_EVIDENCE: options.omitCommandEvidence ? "1" : "0",
     PATH: `${bin}:${process.env.PATH ?? ""}`,

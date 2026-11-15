@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouter } from "../inference/config";
 import type { NativeLocalProviderAttachment } from "../inference/config";
 import {
   requireNativeProviderPolicy,
@@ -279,7 +280,6 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
 const SUPPORTED_PROVIDER_NAMES = [
   "nvidia-prod",
   "nvidia-nim",
-  "nvidia-router",
   "openai-api",
   "openrouter-api",
   "anthropic-prod",
@@ -331,7 +331,6 @@ const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   vllm: "vllm-local",
   nim: "nvidia-nim",
   "nim-local": "nvidia-nim",
-  routed: "nvidia-router",
 };
 
 const SUPPORTED_PROVIDER_NAME_SET: ReadonlySet<string> = new Set(SUPPORTED_PROVIDER_NAMES);
@@ -352,6 +351,7 @@ const SUPPORTED_PROVIDER_NAME_SET: ReadonlySet<string> = new Set(SUPPORTED_PROVI
  * unchanged.
  */
 export function normalizeInferenceSetProvider(provider: string): string {
+  rejectRetiredModelRouter(provider);
   const trimmed = provider.trim();
   const lowered = trimmed.toLowerCase();
   const directAlias = INSTALLER_PROVIDER_ALIASES[lowered];
@@ -443,7 +443,7 @@ async function assertSelectableProvider(
   gatewayName: string,
   deps: Pick<InferenceSetDeps, "providerAdapter" | "log">,
 ): Promise<void> {
-  if (getProviderSelectionConfig(provider, model) || provider === "nvidia-router") return;
+  if (getProviderSelectionConfig(provider, model)) return;
   const registeredProviders = await queryRegisteredGatewayProviders(gatewayName, deps);
   if (registeredProviders?.includes(provider)) return;
   const providerGuidance =

@@ -1113,7 +1113,83 @@ describe("runner comparison summary", () => {
   });
 });
 
+function runLiveUpgradeComparison(
+  cwd: string,
+  target = "openshell-gateway-upgrade",
+  workflowOwned = false,
+): ReturnType<typeof spawnSync> {
+  return spawnSync(
+    process.execPath,
+    [
+      "--import",
+      TSX_IMPORT,
+      "--input-type=module",
+      "-e",
+      `import { initializeLiveUpgradeRunnerComparison, initializeRunnerComparison } from ${JSON.stringify(CLI)};
+       ${workflowOwned ? "initializeRunnerComparison();" : ""}
+       const finalize = initializeLiveUpgradeRunnerComparison();
+       finalize();`,
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        E2E_TARGET_ID: target,
+        E2E_ARTIFACT_DIR: "artifacts",
+      },
+    },
+  );
+}
+
 describe("runner comparison private artifacts", () => {
+  it("retains and finalizes the live upgrade ledger when the workflow did not create it", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "runner-comparison-upgrade-"));
+    try {
+      expectSuccess(runLiveUpgradeComparison(directory));
+      const samples = parseRunnerComparisonLedger(
+        fs.readFileSync(path.join(directory, "artifacts", RUNNER_COMPARISON_LEDGER_FILE), "utf8"),
+      );
+      expect(samples).toEqual([
+        expect.objectContaining({ kind: "initialize" }),
+        expect.objectContaining({ kind: "finalize" }),
+      ]);
+      expect(fs.existsSync(path.join(directory, "artifacts", RUNNER_COMPARISON_SUMMARY_FILE))).toBe(
+        true,
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a workflow-owned upgrade ledger without finalizing it", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "runner-comparison-upgrade-"));
+    try {
+      expectSuccess(runLiveUpgradeComparison(directory, "openshell-gateway-upgrade", true));
+      const samples = parseRunnerComparisonLedger(
+        fs.readFileSync(path.join(directory, "artifacts", RUNNER_COMPARISON_LEDGER_FILE), "utf8"),
+      );
+      expect(samples).toEqual([expect.objectContaining({ kind: "initialize" })]);
+      expect(fs.existsSync(path.join(directory, "artifacts", RUNNER_COMPARISON_SUMMARY_FILE))).toBe(
+        false,
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves other live targets without a fixture-owned comparison ledger", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "runner-comparison-upgrade-"));
+    try {
+      expectSuccess(runLiveUpgradeComparison(directory, "rebuild-hermes"));
+      expect(fs.existsSync(path.join(directory, "artifacts"))).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("creates a new private regular file and refuses every existing path (#7145)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-create-"));
     try {

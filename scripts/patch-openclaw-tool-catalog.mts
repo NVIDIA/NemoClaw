@@ -51,6 +51,14 @@ const NATIVE_TOOL_SEARCH_PATTERN_SETS = [
     "const toolSearchRunPlan = buildToolSearchRunPlan({",
     "replayAllowedToolNames: toolSearchRunPlan.replayAllowedToolNames",
   ],
+  [
+    "function buildToolSearchRunPlan(params) {",
+    "const { clientTools, uncompactedEffectiveTools } = input.bundleTools;",
+    "const compacted = preparedToolBase.toolSurfaceRuntime.compactTools(effectiveTools, {",
+    "const toolSearch = compacted.catalog;",
+    "const toolSearchRunPlan = buildToolSearchRunPlan({",
+    "replayAllowedToolNames: toolSearchRunPlan.replayAllowedToolNames",
+  ],
 ] as const;
 const CURRENT_NATIVE_TOOL_SEARCH_PATTERNS = NATIVE_TOOL_SEARCH_PATTERN_SETS[1];
 const NATIVE_DIRECT_TOOL_PATTERN = [
@@ -304,7 +312,9 @@ function listToolCatalogFiles(distDir: string): string[] {
     );
   }
   return entries
-    .filter((entry) => entry.isFile() && /^(?:builtin-openclaw|selection)-.*\.js$/.test(entry.name))
+    .filter(
+      (entry) => entry.isFile() && /^(?:builtin-openclaw|selection)-.*\.m?js$/.test(entry.name),
+    )
     .map((entry) => path.join(distDir, entry.name))
     .sort();
 }
@@ -320,16 +330,23 @@ function hasNativeToolSearch(source: string): boolean {
 }
 
 function hasCurrentNativeToolSearch(source: string): boolean {
-  return CURRENT_NATIVE_TOOL_SEARCH_PATTERNS.every((pattern) => source.includes(pattern));
+  return [CURRENT_NATIVE_TOOL_SEARCH_PATTERNS, NATIVE_TOOL_SEARCH_PATTERN_SETS[2]].some(
+    (patterns) => patterns.every((pattern) => source.includes(pattern)),
+  );
 }
 
-function patchNativeLlamacppCatalogCompat(distDir: string): {
+function patchNativeLlamacppCatalogCompat(
+  distDir: string,
+  version: string,
+): {
   patched: boolean;
   file: string;
 } {
+  const modulePattern =
+    version === "2026.10.5" ? /^tool-search-.*\.mjs$/ : /^local-model-lean-.*\.m?js$/;
   const candidates = fs
     .readdirSync(distDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /^local-model-lean-.*\.js$/.test(entry.name))
+    .filter((entry) => entry.isFile() && modulePattern.test(entry.name))
     .map((entry) => path.join(distDir, entry.name))
     .filter((file) => {
       const source = fs.readFileSync(file, "utf-8");
@@ -346,6 +363,17 @@ function patchNativeLlamacppCatalogCompat(distDir: string): {
   if (!NATIVE_TOOL_INPUT_ERROR_BINDING_PATTERNS.some((pattern) => pattern.test(source))) {
     throw new Error(`${target}: native llama.cpp ToolInputError binding is missing`);
   }
+  const emptyInputGuard =
+    "\tconst nestedInputIsEmpty = isRecord(nestedInput) && Object.keys(nestedInput).length === 0;";
+  const preserveEmptyInput = (pattern: string) =>
+    source.includes(emptyInputGuard)
+      ? pattern.replace(
+          "\tif (nestedInput != null)",
+          `${emptyInputGuard}\n\tif (nestedInput != null && !nestedInputIsEmpty)`,
+        )
+      : pattern;
+  const inputPattern = preserveEmptyInput(NATIVE_TOOL_CALL_INPUT_PATTERN);
+  const inputReplacement = preserveEmptyInput(NATIVE_TOOL_CALL_INPUT_REPLACEMENT);
   let text = source;
   let patched = false;
   if (text.includes(NATIVE_LLAMACPP_MARKER)) {
@@ -365,30 +393,24 @@ function patchNativeLlamacppCatalogCompat(distDir: string): {
   }
 
   if (text.includes(NATIVE_LLAMACPP_TOOL_CALL_MARKER)) {
-    if (
-      text.includes(NATIVE_TOOL_CALL_SCHEMA_PATTERN) ||
-      text.includes(NATIVE_TOOL_CALL_INPUT_PATTERN)
-    ) {
+    if (text.includes(NATIVE_TOOL_CALL_SCHEMA_PATTERN) || text.includes(inputPattern)) {
       throw new Error(
         `${target}: native llama.cpp tool-call marker is present but an original target remains`,
       );
     }
-    if (
-      !text.includes(NATIVE_TOOL_CALL_SCHEMA_REPLACEMENT) ||
-      !text.includes(NATIVE_TOOL_CALL_INPUT_REPLACEMENT)
-    ) {
+    if (!text.includes(NATIVE_TOOL_CALL_SCHEMA_REPLACEMENT) || !text.includes(inputReplacement)) {
       throw new Error(`${target}: native llama.cpp tool-call patch shape is incomplete`);
     }
   } else {
     const schemaCount = countOccurrences(text, NATIVE_TOOL_CALL_SCHEMA_PATTERN);
-    const inputCount = countOccurrences(text, NATIVE_TOOL_CALL_INPUT_PATTERN);
+    const inputCount = countOccurrences(text, inputPattern);
     if (schemaCount !== 1 || inputCount !== 1) {
       throw new Error(
         `${target}: expected one native llama.cpp tool-call schema and input target, found ${schemaCount} and ${inputCount}`,
       );
     }
     text = text.replace(NATIVE_TOOL_CALL_SCHEMA_PATTERN, NATIVE_TOOL_CALL_SCHEMA_REPLACEMENT);
-    text = text.replace(NATIVE_TOOL_CALL_INPUT_PATTERN, NATIVE_TOOL_CALL_INPUT_REPLACEMENT);
+    text = text.replace(inputPattern, inputReplacement);
     patched = true;
   }
 
@@ -397,7 +419,7 @@ function patchNativeLlamacppCatalogCompat(distDir: string): {
     !text.includes(NATIVE_LLAMACPP_TOOL_CALL_MARKER) ||
     text.includes(NATIVE_DIRECT_TOOL_PATTERN) ||
     text.includes(NATIVE_TOOL_CALL_SCHEMA_PATTERN) ||
-    text.includes(NATIVE_TOOL_CALL_INPUT_PATTERN)
+    text.includes(inputPattern)
   ) {
     throw new Error(`${target}: native llama.cpp compatibility patch verification failed`);
   }
@@ -490,7 +512,7 @@ export function patchOpenClawToolCatalog(distDir: string): {
     return { status: "skipped-built-in", file: target, version };
   }
   if (result.status === "native-tool-search" && hasCurrentNativeToolSearch(source)) {
-    const compat = patchNativeLlamacppCatalogCompat(resolvedDist);
+    const compat = patchNativeLlamacppCatalogCompat(resolvedDist, version);
     return {
       status: compat.patched ? "patched-native-llamacpp" : "native-llamacpp-compat",
       file: compat.file,

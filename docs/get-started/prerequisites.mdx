@@ -54,6 +54,11 @@ Managed llama.cpp and Windows-host Ollama remain Docker Desktop-only on WSL. Man
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
 
+The native Linux Ollama system install needs outbound HTTPS to `raw.githubusercontent.com` for the pinned installer.
+Both system and user-local installs download release tarballs through `ollama.com`, `github.com`, and `release-assets.githubusercontent.com`.
+On native Linux hosts outside JetPack, the system installer also needs `developer.download.nvidia.com` when it detects NVIDIA hardware but cannot find `nvidia-smi` and attempts to install the NVIDIA driver.
+If a download fails, check the error for the failed host, allow it through your firewall or proxy, then rerun onboarding.
+
 <Warning title="Docker Group Access (Default Docker Path)">
 The default Docker runtime path needs Docker access.
 On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.

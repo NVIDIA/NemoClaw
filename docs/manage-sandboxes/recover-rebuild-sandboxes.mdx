@@ -91,6 +91,10 @@ $$nemoclaw <sandbox-name> recover
 ```
 
 The command verifies the native gateway and re-establishes the dashboard port forward.
+After starting a stopped sandbox, `recover` waits up to 120 seconds for the OpenClaw gateway before ordinary process recovery and host-forward repair.
+Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` to override this startup budget.
+If the budget expires, recovery exits nonzero before those repairs.
+With a value of `0`, recovery skips the startup wait and continues ordinary recovery and verification.
 If the gateway is stopped, `recover` reports it and does not relaunch it.
 Run `gateway restart` to request a native restart.
 If the host forward is already active, recovery accepts it only after OpenShell ownership is reconciled and the local endpoint is reachable.
@@ -334,6 +338,16 @@ Correct the reported configuration or route error, then rerun `$$nemoclaw <sandb
 ### Resolve Rebuild Preflight Stops
 
 Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, inference route, policy, MCP, agent, and operation-lock state. When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`. At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
+
+<AgentOnly variant="openclaw">
+
+If `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` is nonempty, rebuild requires an integer from 1500 to 10000 milliseconds.
+An invalid value stops rebuild before its backup, deletion, or replacement.
+An installer-driven upgrade can already have created its strict pre-upgrade backup before rebuild runs this check.
+Unset the variable to use the default, or set a valid value, then rerun the original command.
+The existing sandbox remains unchanged after this preflight refusal.
+
+</AgentOnly>
 
 For a remote inference provider other than Hermes Provider, preflight checks the selected credential's non-secret expiration metadata from OpenShell.
 For these providers, a provider that no longer exposes the recorded credential key, an expired credential, or expiration metadata that NemoClaw cannot verify stops rebuild before backup or deletion, including with `--force`.

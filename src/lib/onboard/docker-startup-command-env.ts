@@ -62,14 +62,9 @@ function appendOpenClawDiagnosticRuntimeEnvArgs(
   }
 }
 
-function appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(
-  envArgs: string[],
-  agent: AgentDefinition | null,
-  env: NodeJS.ProcessEnv,
-): void {
-  if (agent && agent.name !== "openclaw") return;
+export function resolveOpenClawMcpToolsListTimeout(env: NodeJS.ProcessEnv): string | null {
   const raw = env[OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV];
-  if (raw === undefined || raw.trim() === "") return;
+  if (raw === undefined || raw.trim() === "") return null;
   const value = raw.trim();
   if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) {
     throw new Error(
@@ -86,7 +81,19 @@ function appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(
       `${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV} must be an integer from ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS} to ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS} milliseconds.`,
     );
   }
-  envArgs.push(formatEnvAssignment(OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV, String(timeoutMs)));
+  return String(timeoutMs);
+}
+
+function appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(
+  envArgs: string[],
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (agent && agent.name !== "openclaw") return;
+  const timeout = resolveOpenClawMcpToolsListTimeout(env);
+  if (timeout !== null) {
+    envArgs.push(formatEnvAssignment(OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV, timeout));
+  }
 }
 
 export interface SandboxRuntimeEnvArgsInput {

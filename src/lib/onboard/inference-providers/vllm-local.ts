@@ -6,6 +6,10 @@
 
 import { isLocalProviderProbeOutputHealthy } from "../../inference/serving/model-inventory";
 import type { SetupInferenceResult, VllmDeps } from "./types";
+import {
+  ManagedVllmInspectionError,
+  UnsafeLegacyVllmBindingsError,
+} from "../../inference/serving/vllm-host-local-lifecycle";
 
 export async function setupVllmLocalInference(
   args: { model: string; provider: string },
@@ -24,6 +28,19 @@ export async function setupVllmLocalInference(
     exitProcess,
     error,
   } = deps;
+
+  let managedBinding: ReturnType<typeof getManagedVllmProviderBinding>;
+  try {
+    managedBinding = getManagedVllmProviderBinding();
+  } catch (bindingError) {
+    error(
+      bindingError instanceof UnsafeLegacyVllmBindingsError ||
+        bindingError instanceof ManagedVllmInspectionError
+        ? `  ${bindingError.message}`
+        : "  Managed vLLM authentication state is unsafe or unreadable.",
+    );
+    return exitProcess(1);
+  }
 
   const validation = validateLocalProvider(provider);
   if (!validation.ok) {
@@ -52,13 +69,6 @@ export async function setupVllmLocalInference(
       }
       return exitProcess(1);
     }
-  }
-  let managedBinding: ReturnType<typeof getManagedVllmProviderBinding>;
-  try {
-    managedBinding = getManagedVllmProviderBinding();
-  } catch {
-    error("  Managed vLLM authentication state is unsafe or unreadable.");
-    return exitProcess(1);
   }
   const baseUrl = managedBinding?.baseUrl ?? getLocalProviderBaseUrl(provider);
   const providerToken = managedBinding?.apiKey ?? "dummy";

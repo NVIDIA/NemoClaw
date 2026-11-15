@@ -18,7 +18,7 @@ describe("Hermes onboard smoke verification", () => {
     // single Chat Completions request and first failed at `status`.
     expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-prod")).toBe(true);
     expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-nim")).toBe(true);
-    expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-router")).toBe(true);
+    expect(shouldSmokeOpenAiLikeOnboardRoute("nvidia-router")).toBe(false);
   });
 
   it("sends the NVIDIA Endpoints host smoke through Chat Completions (#10879)", async () => {

@@ -225,6 +225,7 @@ import {
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   upsertMcpProvider,
+  waitForAttachedMcpCredential,
 } from "./mcp-bridge-provider";
 import * as policies from "../../policy";
 
@@ -279,6 +280,7 @@ describe("Hermes MCP add reload finality", () => {
     );
     mocks.observeMcpCredentialRevision.mockImplementation(() => mocks.state.revision);
     mocks.observeStableMcpCredentialRevision.mockImplementation(async () => mocks.state.revision);
+    vi.mocked(waitForAttachedMcpCredential).mockResolvedValue("v7");
     vi.mocked(inspectMcpProvider)
       .mockReset()
       .mockImplementation(async () =>
@@ -350,6 +352,33 @@ describe("Hermes MCP add reload finality", () => {
       mocks.state.adapter = false;
       return "removed";
     });
+  });
+
+  it("explains policy phases and credential synchronization before registration (#12672)", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const phases: unknown[] = [];
+    mocks.applyGeneratedPolicy.mockImplementation((_sandbox, _entry, _target, options = {}) => {
+      phases.push(log.mock.lastCall?.[0]);
+      mocks.state.policy = options.bindCredential === false ? "capability" : "bound";
+    });
+    vi.mocked(waitForAttachedMcpCredential).mockImplementation(async () => {
+      phases.push(log.mock.lastCall?.[0]);
+      return "v7";
+    });
+    mocks.registerAgentAdapterAtCurrentCredentialRevision.mockImplementation(async () => {
+      phases.push(log.mock.lastCall?.[0]);
+    });
+
+    await runAdd();
+
+    expect(phases).toEqual([
+      "  Opening MCP route policy for 'github' (credential binding pending)...",
+      "  Binding the credential to MCP route policy for 'github'...",
+      "  Waiting for OpenShell to synchronize the MCP credential for 'github' (required even with --no-probe)...",
+      "  Waiting for OpenShell to synchronize the MCP credential for 'github' (required even with --no-probe)...",
+      "  Registering MCP server 'github' with hermes...",
+    ]);
+    expect(log.mock.calls.flat().join("\n")).not.toContain(process.env.GITHUB_TOKEN);
   });
 
   it("leaves all MCP state unchanged when a legacy Hermes helper lacks finality capability", async () => {

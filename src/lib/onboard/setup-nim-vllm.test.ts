@@ -3,7 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requireValue } from "../core/require-value";
+import * as localModelDocker from "../adapters/docker/run";
 import { resolveVllmModelAlias } from "../inference/vllm-models";
+import { getLegacyHostLocalManagedVllmBridgeHost } from "../inference/serving/vllm-host-local-lifecycle";
 import { bindStationExpressProviderSelection } from "./station-express-resume";
 import type { SetupNimSelectionState } from "./setup-nim-flow";
 import {
@@ -308,6 +310,52 @@ describe("setupNim vLLM route containment", () => {
       "  To install 'required/model', stop the managed vLLM deployment, then rerun the original install/onboard command.",
     );
     expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain("localhost");
+  });
+
+  it.each([
+    {
+      state: "unsafe public bindings",
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          Id: "a".repeat(64),
+          Name: "/nemoclaw-vllm",
+          State: { Running: true },
+          Config: { Labels: { "com.nvidia.nemoclaw.managed-vllm": "true" } },
+          NetworkSettings: { Ports: { "8000/tcp": [{ HostIp: "0.0.0.0", HostPort: "8000" }] } },
+        },
+      ]),
+      message:
+        "Handle a Running vLLM Server' in the vLLM setup guide before recreating the owned `nemoclaw-vllm` container. Preserve the original model and port settings.",
+    },
+    {
+      state: "unavailable inspection",
+      status: 1,
+      stdout: "",
+      message:
+        "Managed vLLM container inspection failed. Verify access to Docker's default local daemon before retrying.",
+    },
+  ])("stops onboarding before probing with $state", async ({ status, stdout, message }) => {
+    vi.spyOn(localModelDocker, "dockerRun").mockReturnValue({
+      status,
+      stdout,
+      stderr: "Cannot inspect Docker",
+    } as ReturnType<typeof localModelDocker.dockerRun>);
+    const runCapture = vi.fn();
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture,
+        getManagedVllmProviderBinding: () => {
+          getLegacyHostLocalManagedVllmBridgeHost(8000, () =>
+            JSON.stringify([{ Gateway: "172.18.0.1" }]),
+          );
+          return null;
+        },
+      }),
+    );
+    await expect(handler(state(null))).rejects.toThrow("exit 1");
+    expect(runCapture).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining(message));
   });
 
   it("fails closed before probing a managed dual endpoint whose key is missing", async () => {

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { teamsManifest } from "../../../src/lib/messaging/channels/teams/manifest.ts";
+import { resolveTeamsTemplateReference } from "../../../src/lib/messaging/channels/teams/template-resolver.ts";
+import { resolveRenderTemplatesInValue } from "../../../src/lib/messaging/compiler/engines/template.ts";
 import {
   createMessagingBoundaryPlan,
   encodeMessagingBoundaryPlan,
@@ -212,6 +215,19 @@ function imageFileArgs(path: string): string[] {
 }
 
 describe("messaging plan image boundary helper", () => {
+  it("uses the production Teams webhook render in the OpenClaw boundary plan", () => {
+    const render = teamsManifest.render.find((entry) => entry.id === "teams-openclaw-channel")!;
+    const production = resolveRenderTemplatesInValue(render.fragment.value, {
+      inputs: [],
+      referenceResolver: resolveTeamsTemplateReference,
+    }) as Record<string, unknown>;
+    const plan = decodePlan("openclaw");
+    const channel = plan.agentRender.find((entry: any) => entry.path === "channels.msteams");
+
+    expect(channel.value.webhook).toEqual(production.webhook);
+    expect(channel.value.legacyWebhook).toEqual(production.legacyWebhook);
+  });
+
   it.each(["openclaw", "hermes"] as const)(
     "builds a deterministic placeholder-only %s plan",
     (agent) => {

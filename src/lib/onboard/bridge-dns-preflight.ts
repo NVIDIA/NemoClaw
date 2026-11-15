@@ -298,7 +298,7 @@ function hostDnsPreflightSkipped(env: NodeJS.ProcessEnv = process.env): boolean 
 // `onboard/providers.ts::getNonInteractiveProvider`. Local/custom and
 // other hosted providers (ollama, vllm, openai, anthropic, nim-local, …)
 // do not need this host, so the NVIDIA host DNS probe must not gate them.
-const NVIDIA_ENDPOINT_PROVIDER_KEYS = new Set(["build", "cloud", "routed"]);
+const NVIDIA_ENDPOINT_PROVIDER_KEYS = new Set(["build", "cloud"]);
 
 /**
  * Whether onboarding's effective inference provider is NVIDIA Endpoints,

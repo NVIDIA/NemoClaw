@@ -524,9 +524,11 @@ run_install_check() {
     # into the block. `custom` is both a canonical provider value and a
     # POLICY_MODE token, so a leaked POLICY line would falsely make it
     # appear that `custom` is documented even after removal.
+    # Only literal help declarations start a block. A printf that reads the
+    # provider environment variable is executable code, not a usage declaration.
     awk '
-      /printf .*NEMOCLAW_PROVIDER/ { in_block = 1; print; next }
-      in_block && /printf .*NEMOCLAW_/ && !/NEMOCLAW_PROVIDER/ {
+      /^[[:space:]]*printf "[[:space:]]*NEMOCLAW_PROVIDER[[:space:]]/ { in_block = 1; print; next }
+      in_block && /^[[:space:]]*printf "[[:space:]]*NEMOCLAW_/ && !/NEMOCLAW_PROVIDER/ {
         in_block = 0
       }
       in_block { print }

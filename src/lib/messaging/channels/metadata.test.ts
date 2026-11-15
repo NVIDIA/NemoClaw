@@ -244,7 +244,7 @@ describe("built-in messaging channel metadata", () => {
       ),
     ).toMatchObject({
       discord: "npm:@openclaw/discord@{{openclaw.version}}",
-      wechat: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
+      wechat: "npm:@tencent-weixin/openclaw-weixin@2.4.10",
       slack: "npm:@openclaw/slack@{{openclaw.version}}",
       whatsapp: "npm:@openclaw/whatsapp@{{openclaw.version}}",
       teams: "npm:@openclaw/msteams@{{openclaw.version}}",
@@ -304,32 +304,32 @@ describe("built-in messaging channel metadata", () => {
       {
         packageKey: "discord/openclawPluginPackage",
         committedIntegrity:
-          "sha512-j+fSHxbXA+DSxwbL8SvtsDNL6tvBX4+RmH+EerVW6dCbeIwSconXj6J/+AaN/mhzZI4g0jPPj30TUhdCRRbc2w==",
+          "sha512-Gy2FmMF7cnCyhodvYQHVtOPoPm7daZ1djSS7ymLHsJ5nWIO9GFsW8Y/mlnZAMSGWlgmWedERkVbVDMlli9vgOw==",
       },
       {
         packageKey: "wechat/openclawPluginPackage",
         committedIntegrity:
-          "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
+          "sha512-qCN7rFtBK5BO/i5YGEJLdpC/8WQrm0dtPlQ0xNxku4RSyzGaRsiBoLVheU5hgpoOIBvfc5pUwKTktMbROLcIVg==",
       },
       {
         packageKey: "slack/openclawPluginPackage",
         committedIntegrity:
-          "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==",
+          "sha512-AzWaSLfUQZWPwDdrLXzXeQ/AraXPEnkTTWKTKq4MFO39futFAxy+FulsYSStDYEd1B0YjtWGvXswBjdrmwRlBw==",
       },
       {
         packageKey: "whatsapp/openclawPluginPackage",
         committedIntegrity:
-          "sha512-vOWQIk7FpLHrhMmO+FaLi+pnFB82hiWNJJFJONkBuofERh2SMEz7EMut/vECFFEjFnmOZSVlYfRlxhbNkd/R6g==",
+          "sha512-3Dbv0p60yuz6tzuZNUMHzIYjhGL816BfOPBfz2YIpszQ7kx2j1uZfgpa0xTaxH4Spbg0AFakIp0kIcWOU1ODEQ==",
       },
       {
         packageKey: "teams/openclawPluginPackage",
         committedIntegrity:
-          "sha512-py5KvGOTcd0qGGRf3EuqbH2jO+kZtvMquDMjwGkT6x9F4XZtaCBL/lmLitb4hDb5xaIpPP8ZLIbT8GIMXQr3Og==",
+          "sha512-Up5NG2C0vVJBNIX92Lv7SB8qoCQ9SX86LMLh2MTow71AglyVy20OjNc/rGpOco2YTwWl7HcjhSz9MJbqWcvvDQ==",
       },
       {
         packageKey: "googlechat/openclawPluginPackage",
         committedIntegrity:
-          "sha512-LUO8Lg07IhzJfEzxn+GSij8WMS/uX3hTmv0SydTy/0fKSN7iZksf74TaZg50kOoBi8FzeqeXo/zoGVuk0Mj1Ig==",
+          "sha512-FWJm5S7oaAdbq8k4BL1EopvF8D/wVpILRKY4seJ7MzxURLMIjF6a6mIBgx34VIFH40KEO5lszDgc/iRwPEjHcg==",
       },
     ]);
   });

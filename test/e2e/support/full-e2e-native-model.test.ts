@@ -41,7 +41,7 @@ it("keeps native NVIDIA routing and credential resolution across a model edit", 
   const fixture = buildNativeModelRestartFixture("nvidia/model", "nvidia-prod");
   expect(JSON.parse(fixture.patch).models.providers[fixture.provider]).toMatchObject({
     baseUrl: "https://integrate.api.nvidia.com/v1",
-    apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+    apiKey: "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
     api: "openai-completions",
     models: [{ id: "nvidia/model", name: "nvidia/model" }],
   });
@@ -107,7 +107,7 @@ it("retains a custom native endpoint and opaque credential reference through a m
   );
   expect(JSON.parse(fixture.patch).models.providers[fixture.provider]).toMatchObject({
     baseUrl: "https://custom.example/team/v1",
-    apiKey: "${COMPATIBLE_API_KEY}",
+    apiKey: "openshell:resolve:env:COMPATIBLE_API_KEY",
     api: "openai-completions",
     models: [{ id: "team/model", name: "team/model" }],
   });
