@@ -107,7 +107,7 @@ export interface PortableHostPreparationDeps {
   uid?: number;
   systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
   podman?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
-  docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  docker?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
   ip?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   sudo?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   hardenSocketDirectory?: (socketPath: string, uid: number) => void;
@@ -743,7 +743,9 @@ function staleRegistryAddressError(
   const raw = `${description} failed: ${detail}`;
 
   // Both probes need the verified Podman socket. If it changed, their output
-  // is untrusted: say so and give no recovery commands.
+  // is untrusted: say so and give no recovery commands. They run after a
+  // registry command already failed, so they use the short host timeout and
+  // cannot hold the error back for the registry's five minutes each.
   const socketChanged = (): Error =>
     new Error(
       `${raw}\nThe verified Podman socket changed while NemoClaw was checking address ${PORTABLE_REGISTRY_IP}, so it cannot say how to recover. ` +
@@ -755,7 +757,7 @@ function staleRegistryAddressError(
     } catch {
       return null;
     }
-    const probed = docker(args, env);
+    const probed = docker(args, env, HOST_COMMAND_TIMEOUT_MS);
     try {
       assertSocketAuthority();
     } catch {
@@ -1076,11 +1078,11 @@ export function preparePortableExperimentalHost(
 
   const docker =
     deps.docker ??
-    ((args, childEnv) =>
+    ((args, childEnv, timeoutMs = REGISTRY_COMMAND_TIMEOUT_MS) =>
       dockerSpawnSync(args, {
         encoding: "utf-8",
         env: childEnv,
-        timeout: REGISTRY_COMMAND_TIMEOUT_MS,
+        timeout: timeoutMs,
       }));
   requireDockerCompatibleCli(docker, podmanEnv);
   const ip =

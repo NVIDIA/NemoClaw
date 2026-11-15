@@ -17,6 +17,7 @@ import {
 } from "./portable-profile";
 
 type SpawnResult = ReturnType<typeof spawnSync>;
+type ProbeCall = { command: string; dockerHost: string | undefined; timeoutMs: number | undefined };
 type PreparationDeps = NonNullable<Parameters<typeof preparePortableExperimentalHost>[1]>;
 
 function result(status = 0, stdout = ""): SpawnResult {
@@ -49,10 +50,10 @@ function prepare(
       uid: 1001,
       systemctl: () => result(),
       podman: () => result(0, socketPath),
-      docker: (args, env) =>
+      docker: (args, env, timeoutMs) =>
         args[0] === "network" && args[1] === "inspect"
           ? result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }]))
-          : docker(args, env),
+          : docker(args, env, timeoutMs),
       ip: (args) =>
         args[0] === "-j"
           ? result(
@@ -138,6 +139,16 @@ describe("Portable managed registry recovery", () => {
         stderr: `docker: Error response from daemon: IPAM error: requested ip address ${ip} is already allocated to container ID ${staleId}`,
       }) as SpawnResult;
 
+    // The probes must reach the verified socket and stay on the short host timeout.
+    const expectBoundedProbes = (probes: ProbeCall[], expected: string[]): void => {
+      const recovery = probes.filter(({ command }) => command === "holder" || command === "ps");
+      expect(recovery.map(({ command }) => command)).toEqual(expected);
+      expect(recovery.map(({ dockerHost }) => dockerHost)).toEqual(
+        expected.map(() => "unix:///run/user/1001/podman/podman.sock"),
+      );
+      expect(recovery.map(({ timeoutMs }) => timeoutMs)).toEqual(expected.map(() => 30_000));
+    };
+
     // Commands shown to the user must reach the verified socket, not their ambient Docker.
     const podmanCommand = "podman --url 'unix:///run/user/1001/podman/podman.sock'";
 
@@ -150,30 +161,34 @@ describe("Portable managed registry recovery", () => {
       refusal: SpawnResult = ipamRefusal(),
       registry: SpawnResult = result(1),
       driftAt = "",
-    ): { message: string; commands: string[][] } {
+    ): { message: string; commands: string[][]; probes: ProbeCall[] } {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
       tempDirs.push(home);
       const commands: string[][] = [];
+      const probes: ProbeCall[] = [];
       let socketChanged = false;
-      const docker = vi.fn((args: readonly string[]): SpawnResult => {
-        commands.push([...args]);
-        const command = args[0] === "inspect" && args.includes(staleId) ? "holder" : args[0]!;
-        socketChanged = socketChanged || command === driftAt;
-        const responses: Record<string, SpawnResult> = {
-          run: refusal,
-          // A registry that is connected to no address yet needs `network connect`.
-          network: refusal,
-          holder,
-          inspect: registry,
-          ps: containers,
-        };
-        return responses[command] ?? result();
-      });
+      const docker = vi.fn(
+        (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => {
+          commands.push([...args]);
+          const command = args[0] === "inspect" && args.includes(staleId) ? "holder" : args[0]!;
+          probes.push({ command, dockerHost: env.DOCKER_HOST, timeoutMs });
+          socketChanged = socketChanged || command === driftAt;
+          const responses: Record<string, SpawnResult> = {
+            run: refusal,
+            // A registry that is connected to no address yet needs `network connect`.
+            network: refusal,
+            holder,
+            inspect: registry,
+            ps: containers,
+          };
+          return responses[command] ?? result();
+        },
+      );
       try {
         // Fails once a probe has run against a replaced socket.
         prepare(home, docker, () => expect(socketChanged).toBe(false));
       } catch (error) {
-        return { message: (error as Error).message, commands };
+        return { message: (error as Error).message, commands, probes };
       }
       throw new Error("expected the registry start to fail");
     }
@@ -182,8 +197,9 @@ describe("Portable managed registry recovery", () => {
       result(0, containerNames.map((name) => `${name}\n`).join(""));
 
     it("names the orphaned record and the file that holds it", () => {
-      const { message, commands } = startRegistry(noSuchObject());
+      const { message, commands, probes } = startRegistry(noSuchObject());
 
+      expectBoundedProbes(probes, ["holder", "ps"]);
       expect(message).toContain("Starting the managed portable registry failed");
       expect(message).toContain(
         `requested ip address ${PORTABLE_REGISTRY_IP} is already allocated`,
@@ -209,7 +225,12 @@ describe("Portable managed registry recovery", () => {
     });
 
     it("does not offer the file removal while a container on another network exists", () => {
-      const { message, commands } = startRegistry(noSuchObject(), names("unrelated-service"));
+      const { message, commands, probes } = startRegistry(
+        noSuchObject(),
+        names("unrelated-service"),
+      );
+
+      expectBoundedProbes(probes, ["holder", "ps"]);
 
       expect(commands.find(([command]) => command === "ps")).not.toContain("--filter");
       expect(message).toContain("Stop or remove all of them");
@@ -227,7 +248,9 @@ describe("Portable managed registry recovery", () => {
     });
 
     it("points at the live container when one still holds the address", () => {
-      const { message } = startRegistry(result(0, staleId));
+      const { message, probes } = startRegistry(result(0, staleId));
+
+      expectBoundedProbes(probes, ["holder"]);
 
       expect(message).toContain(`held by container ${staleId}, which still exists`);
       expect(message).toContain(`\`${podmanCommand} inspect ${staleId}\``);
@@ -242,13 +265,15 @@ describe("Portable managed registry recovery", () => {
     ])(
       "reports a changed Podman socket and gives no recovery commands while %s",
       (_case, driftAt) => {
-        const { message, commands } = startRegistry(
+        const { message, commands, probes } = startRegistry(
           noSuchObject(),
           result(0, ""),
           ipamRefusal(),
           result(1),
           driftAt,
         );
+
+        expectBoundedProbes(probes, driftAt === "ps" ? ["holder", "ps"] : ["holder"]);
 
         expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
         expect(message).toContain("The verified Podman socket changed");
@@ -259,6 +284,31 @@ describe("Portable managed registry recovery", () => {
         expect(commands.some(([command]) => command === "ps")).toBe(driftAt === "ps");
       },
     );
+
+    const timedOut = (): SpawnResult =>
+      ({
+        status: null,
+        stdout: "",
+        stderr: "",
+        error: Object.assign(new Error("spawnSync docker ETIMEDOUT"), { code: "ETIMEDOUT" }),
+      }) as unknown as SpawnResult;
+
+    it("keeps the raw error and skips the inventory when the holder probe times out", () => {
+      const { message, probes } = startRegistry(timedOut());
+
+      expectBoundedProbes(probes, ["holder"]);
+      expect(message).toMatch(/^Starting the managed portable registry failed: docker: /u);
+      expect(message).not.toContain("ipam.db");
+      expect(message).not.toContain("\n");
+    });
+
+    it("does not offer the file removal when the inventory probe times out", () => {
+      const { message, probes } = startRegistry(noSuchObject(), timedOut());
+
+      expectBoundedProbes(probes, ["holder", "ps"]);
+      expect(message).toContain("Stop or remove all of them");
+      expect(message).not.toContain("ipam.db");
+    });
 
     it.each([
       ["a different address", ipamRefusal("10.87.0.9"), noSuchObject()],
