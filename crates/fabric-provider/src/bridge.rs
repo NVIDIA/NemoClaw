@@ -133,14 +133,26 @@ fn failure(binding: &Row, response: &Response) -> Error {
     let Some(error) = response.error() else {
         return invalid();
     };
-    if error.code == "runtime_exists" {
-        return ObservationError::Backend(
+    // Fabric refuses another start in a sandbox after one whose outcome it
+    // doesn't know, since that start may have left a runtime nothing can
+    // address. Older runtime servers start one runtime per sandbox and refuse
+    // a second as `runtime_exists`.
+    let refused_start = match error.code.as_str() {
+        "start_uncertain" => Some(
+            "an earlier agent start in this sandbox has an unknown outcome, perhaps \
+             because its reply was lost; replace the sandbox and apply again",
+        ),
+        "runtime_exists" => Some(
             "this sandbox already started its agent runtime, perhaps when an earlier \
              reply was lost; replace the sandbox and apply again",
-        )
-        .into();
+        ),
+        _ => None,
+    };
+    if let Some(message) = refused_start {
+        return ObservationError::Backend(message).into();
     }
     crate::configuration::configuration_failure(
+        &response.operation,
         &error.stage,
         &error.code,
         &error.effects,
