@@ -16,7 +16,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
-import { expect, test } from "../fixtures/e2e-test.ts";
+import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import { nativeLocalChatCommand } from "../fixtures/native-local-chat.ts";
 import {
   assertAgentExecutionSucceeded,
@@ -47,6 +47,11 @@ import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 const TIMEOUT_MS = testTimeout(75 * 60_000);
 const HERMES_RESPONSE_TIMEOUT_MS = testTimeout(90 * 60_000);
 const VLLM_EXPORT_TIMEOUT_MS = testTimeout(90 * 60_000);
+// Explicit-only preset; the 96 GB RTX PRO 6000 runner meets its compute and memory floor (#14065).
+const MUSE_GLIMMER_VLLM_PROFILE_ID =
+  "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4" as const;
+const MUSE_GLIMMER_SERVED_MODEL = "muse-glimmer";
+const PROGRESSIVE_TOOL_SEARCH = { mode: "tools", searchDefaultLimit: 8, maxSearchLimit: 20 };
 
 function vllmExportEnv(): NodeJS.ProcessEnv {
   return env({
@@ -61,6 +66,11 @@ function vllmExportEnv(): NodeJS.ProcessEnv {
     NEMOCLAW_VLLM_PORT: "18000",
     NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
   });
+}
+
+function museGlimmerEnv(): NodeJS.ProcessEnv {
+  // Leave disclosure unset so the profile default, not an override, picks Tool Search.
+  return { ...vllmExportEnv(), NEMOCLAW_TOOL_DISCLOSURE: "" };
 }
 
 function hermesResponseEnv(): NodeJS.ProcessEnv {
@@ -556,6 +566,88 @@ exec ollama pull qwen2.5:0.5b`,
   },
 );
 
+/**
+ * Refuses a pre-existing managed vLLM container, clears prior GPU state, and registers the
+ * cleanup that destroys the sandbox first and then proves the final consumer retired the runtime.
+ */
+async function qualifyManagedVllmHost(
+  {
+    cleanup,
+    host,
+    lifecycle,
+    runtimeProvider,
+    sandbox,
+  }: Pick<E2ETargetFixtures, "cleanup" | "host" | "lifecycle" | "runtimeProvider" | "sandbox">,
+  exportEnv: NodeJS.ProcessEnv,
+): Promise<void> {
+  await runtimeProvider.requireAvailable({
+    artifactName: "vllm-export-runtime-info",
+    scenarioLabel: "managed vLLM export",
+  });
+  const preflight = await host.command(
+    "docker",
+    ["inspect", "--format", "{{.Id}}", HOST_LOCAL_VLLM_CONTAINER_NAME],
+    {
+      artifactName: "vllm-export-preflight-container",
+      env: exportEnv,
+      timeoutMs: 30_000,
+    },
+  );
+  expect(
+    `${String(preflight.exitCode)}\n${resultText(preflight)}`,
+    `Refusing to replace a pre-existing ${HOST_LOCAL_VLLM_CONTAINER_NAME} container.`,
+  ).toMatch(/^1\n[\s\S]*no such (?:object|container)/iu);
+  await cleanupGpu(host, lifecycle, sandbox, exportEnv);
+
+  cleanup.trackDisposable("verify final-consumer vLLM retirement", async () => {
+    try {
+      const remaining = await host.command(
+        "docker",
+        [
+          "container",
+          "ls",
+          "--all",
+          "--quiet",
+          "--filter",
+          `name=^/${HOST_LOCAL_VLLM_CONTAINER_NAME}$`,
+        ],
+        { artifactName: "vllm-retired-inventory", env: exportEnv, timeoutMs: 30_000 },
+      );
+      const listener = await host.command("ss", ["-H", "-ltn", "sport = :18000"], {
+        artifactName: "vllm-retired-listener",
+        env: exportEnv,
+        timeoutMs: 30_000,
+      });
+      expect(
+        {
+          inventoryExit: remaining.exitCode,
+          containers: remaining.stdout.trim(),
+          listenerExit: listener.exitCode,
+          listeners: listener.stdout.trim(),
+        },
+        `${resultText(remaining)}\n${resultText(listener)}`,
+      ).toEqual({ inventoryExit: 0, containers: "", listenerExit: 0, listeners: "" });
+    } finally {
+      // Preserve failed retirement evidence before the fixture attempts best-effort cleanup.
+      cleanupLocalModelRuntimes({ env: exportEnv, sandboxName: SANDBOX_NAME });
+    }
+  });
+
+  trackGpuGatewayCleanup(cleanup, host, lifecycle, exportEnv, "vllm-export-cleanup-gateway");
+  cleanup.trackDisposable("delete the managed vLLM export OpenShell sandbox", () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "vllm-export-cleanup-openshell",
+      env: exportEnv,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "vllm-export-cleanup-sandbox",
+    env: exportEnv,
+    timeoutMs: 15 * 60_000,
+  });
+}
+
 test.for(["initial", "after retirement"])(
   "Managed vLLM %s: recorded-port health, export, and final-consumer retirement (#12012, #11374)",
   {
@@ -584,72 +676,7 @@ test.for(["initial", "after retirement"])(
     });
 
     progress.phase("qualify the managed vLLM export host");
-    await runtimeProvider.requireAvailable({
-      artifactName: "vllm-export-runtime-info",
-      scenarioLabel: "managed vLLM export",
-    });
-    const preflight = await host.command(
-      "docker",
-      ["inspect", "--format", "{{.Id}}", HOST_LOCAL_VLLM_CONTAINER_NAME],
-      {
-        artifactName: "vllm-export-preflight-container",
-        env: exportEnv,
-        timeoutMs: 30_000,
-      },
-    );
-    expect(
-      `${String(preflight.exitCode)}\n${resultText(preflight)}`,
-      `Refusing to replace a pre-existing ${HOST_LOCAL_VLLM_CONTAINER_NAME} container.`,
-    ).toMatch(/^1\n[\s\S]*no such (?:object|container)/iu);
-    await cleanupGpu(host, lifecycle, sandbox, exportEnv);
-
-    cleanup.trackDisposable("verify final-consumer vLLM retirement", async () => {
-      try {
-        const remaining = await host.command(
-          "docker",
-          [
-            "container",
-            "ls",
-            "--all",
-            "--quiet",
-            "--filter",
-            `name=^/${HOST_LOCAL_VLLM_CONTAINER_NAME}$`,
-          ],
-          { artifactName: "vllm-retired-inventory", env: exportEnv, timeoutMs: 30_000 },
-        );
-        const listener = await host.command("ss", ["-H", "-ltn", "sport = :18000"], {
-          artifactName: "vllm-retired-listener",
-          env: exportEnv,
-          timeoutMs: 30_000,
-        });
-        expect(
-          {
-            inventoryExit: remaining.exitCode,
-            containers: remaining.stdout.trim(),
-            listenerExit: listener.exitCode,
-            listeners: listener.stdout.trim(),
-          },
-          `${resultText(remaining)}\n${resultText(listener)}`,
-        ).toEqual({ inventoryExit: 0, containers: "", listenerExit: 0, listeners: "" });
-      } finally {
-        // Preserve failed retirement evidence before the fixture attempts best-effort cleanup.
-        cleanupLocalModelRuntimes({ env: exportEnv, sandboxName: SANDBOX_NAME });
-      }
-    });
-
-    trackGpuGatewayCleanup(cleanup, host, lifecycle, exportEnv, "vllm-export-cleanup-gateway");
-    cleanup.trackDisposable("delete the managed vLLM export OpenShell sandbox", () =>
-      sandbox.cleanupSandbox(SANDBOX_NAME, {
-        artifactName: "vllm-export-cleanup-openshell",
-        env: exportEnv,
-        timeoutMs: 60_000,
-      }),
-    );
-    cleanup.trackSandbox(host, SANDBOX_NAME, {
-      artifactName: "vllm-export-cleanup-sandbox",
-      env: exportEnv,
-      timeoutMs: 15 * 60_000,
-    });
+    await qualifyManagedVllmHost({ cleanup, host, lifecycle, runtimeProvider, sandbox }, exportEnv);
 
     progress.phase("onboard the fixed managed vLLM profile");
     const onboard = await host.command(
@@ -732,5 +759,96 @@ test.for(["initial", "after retirement"])(
       timeoutMs: 300_000,
     });
     expect(connect.exitCode, resultText(connect)).toBe(0);
+  },
+);
+
+test(
+  "Muse Glimmer vLLM defaults a fresh OpenClaw sandbox to progressive Tool Search and answers a turn (#14065)",
+  {
+    timeout: VLLM_EXPORT_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "qualify the managed vLLM export host",
+        "onboard the explicit Muse Glimmer vLLM profile",
+        "verify progressive Tool Search in the generated OpenClaw configuration",
+        "complete a short first agent turn",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox }) => {
+    const museEnv = museGlimmerEnv();
+    await artifacts.target.declare({
+      id: "gpu-e2e",
+      boundary:
+        "native Linux Docker + explicit Muse Glimmer managed vLLM profile + fresh OpenClaw sandbox + first agent turn",
+      credentialBoundary:
+        "The managed vLLM bearer key remains in owner-only host state and is registered with the artifact redactor.",
+      profileId: MUSE_GLIMMER_VLLM_PROFILE_ID,
+      sandboxName: SANDBOX_NAME,
+    });
+
+    progress.phase("qualify the managed vLLM export host");
+    await qualifyManagedVllmHost({ cleanup, host, lifecycle, runtimeProvider, sandbox }, museEnv);
+
+    progress.phase("onboard the explicit Muse Glimmer vLLM profile");
+    const onboard = await host.command(
+      "node",
+      [
+        CLI,
+        "onboard",
+        "--profile",
+        MUSE_GLIMMER_VLLM_PROFILE_ID,
+        "--fresh",
+        "--non-interactive",
+        "--yes-i-accept-third-party-software",
+      ],
+      {
+        artifactName: "muse-glimmer-onboard",
+        cwd: REPO_ROOT,
+        env: museEnv,
+        timeoutMs: execTimeout(75 * 60_000),
+      },
+    );
+    expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    artifacts.addRedactionValues([loadManagedVllmApiKey() ?? ""]);
+
+    progress.phase("verify progressive Tool Search in the generated OpenClaw configuration");
+    const runtimeConfig = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(`node - <<'NODE'
+const fs = require("node:fs");
+const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
+process.stdout.write(JSON.stringify({
+  model: config.agents?.defaults?.model?.primary,
+  toolSearch: config.tools?.toolSearch,
+}));
+NODE`),
+      { artifactName: "muse-glimmer-runtime-config", env: museEnv, timeoutMs: 30_000 },
+    );
+    expect(JSON.parse(runtimeConfig.stdout)).toEqual({
+      model: `inference/${MUSE_GLIMMER_SERVED_MODEL}`,
+      toolSearch: PROGRESSIVE_TOOL_SEARCH,
+    });
+
+    progress.phase("complete a short first agent turn");
+    const agent = await host.nemoclaw(
+      [
+        SANDBOX_NAME,
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--session-id",
+        `e2e-gpu-muse-glimmer-${Date.now()}-${process.pid}`,
+        "-m",
+        "Respond with a short greeting.",
+      ],
+      {
+        artifactName: "muse-glimmer-first-turn",
+        env: museEnv,
+        timeoutMs: 12 * 60_000,
+      },
+    );
+    assertAgentExecutionSucceeded(agent.stdout, "inference", MUSE_GLIMMER_SERVED_MODEL);
   },
 );

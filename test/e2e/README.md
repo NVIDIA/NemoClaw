@@ -1289,7 +1289,7 @@ runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies attached-Ollama and fixed managed-vLLM configuration export on
 native Linux Docker. Each scenario runs the candidate CLI, checks its named service and `image: null`,
 rejects credential disclosure, and retains the generated YAML. The existing CUDA, authentication,
-and inference lifecycle scenarios remain separate. The catalogue allows 150 minutes for this target.
+and inference lifecycle scenarios remain separate. The catalogue allows 210 minutes for this target.
 The fixture retries read-only daemon readiness checks on connection refusal or curl
 timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
 preparation, onboarding, and export mutations are not retried.
@@ -2402,6 +2402,14 @@ status, doctor, and connect with the port override cleared. Normal cleanup destr
 the final sandbox and checks actual container and listener absence before any
 fixture fallback cleanup. The second cycle proves that onboarding can reacquire
 the released GPU resources.
+
+A separate `gpu-e2e` case onboards the explicit Muse Glimmer profile
+`vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4` on a fresh OpenClaw sandbox
+without a Tool Search override. It checks that the generated `openclaw.json` carries the
+progressive Tool Search settings and that a short first agent turn completes, so the
+profile-specific default is proven against the real vLLM and OpenClaw runtime. It runs on the
+96 GB x86_64 GPU runner. A DGX Spark proof of the matching Spark profile is not part of this
+target.
 
 Source tests own shared-consumer retention, receipt ownership, invalid recorded
 routes, and interrupted-cleanup recovery. The physical Spark Express test retains
