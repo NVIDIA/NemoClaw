@@ -359,12 +359,12 @@ fs.writeFileSync(file, JSON.stringify(state));
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
           HEAD_REPOSITORY: "NVIDIA/NemoClaw",
           REPOSITORY_ID: "888",
-          CANDIDATE_SHA: sdkCandidateIdentity.candidateSha,
+          CANDIDATE_SHA: mode === "stacked" ? "d".repeat(40) : sdkCandidateIdentity.candidateSha,
           UPGRADE_BASE_SHA:
             mode === "stacked" ? sdkCandidateIdentity.candidateSha : sdkCandidateIdentity.baseSha,
           GITHUB_BASE_REF: stack.baseRef,
           GITHUB_EVENT_NAME: "pull_request",
-          UPGRADE_PR_NUMBER: String(sdkCandidateIdentity.prNumber),
+          UPGRADE_PR_NUMBER: mode === "stacked" ? "456" : String(sdkCandidateIdentity.prNumber),
           SDK_LOCATOR_STATE: stateFile,
           SDK_LOCATOR_AVAILABILITY: JSON.stringify(availability),
           SDK_LOCATOR_DECISION: JSON.stringify({

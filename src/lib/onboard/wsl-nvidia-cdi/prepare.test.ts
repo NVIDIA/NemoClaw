@@ -1,8 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareWslNvidiaCdi, type WslNvidiaCdiDeps } from "./prepare";
+
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
 
 const nvidia = { Source: "cdi", ID: "nvidia.com/gpu=all" };
 function fixture(desktopName: unknown = "Docker Desktop 4.97.0 (12345)") {
@@ -150,7 +158,27 @@ describe("WSL NVIDIA CDI preparation", () => {
       expect(deps.dockerCapture.mock.calls[0][0]).not.toContain("version");
     },
   );
-  it.each([null, [null], [{ Source: "cdi" }]])(
+  it.each([undefined, null])("prepares when Docker omits empty inventory %j", (inventory) => {
+    const { deps, info } = fixture();
+    deps.dockerCapture
+      .mockReset()
+      .mockReturnValueOnce(JSON.stringify({ ...info, DiscoveredDevices: inventory }))
+      .mockReturnValueOnce(JSON.stringify("Docker Desktop 4.97.0"))
+      .mockReturnValue(JSON.stringify({ ...info, DiscoveredDevices: [nvidia] }));
+    expect(prepareWslNvidiaCdi(deps)).toBe(true);
+    expect(deps.runCapture.mock.calls[1][0].at(-1)).toBe("1");
+  });
+  it.each([undefined, null])("rejects missing post-install inventory %j", (inventory) => {
+    const { deps, info } = fixture();
+    deps.dockerCapture
+      .mockReset()
+      .mockReturnValueOnce(JSON.stringify(info))
+      .mockReturnValueOnce(JSON.stringify("Docker Desktop 4.97.0"))
+      .mockReturnValue(JSON.stringify({ ...info, DiscoveredDevices: inventory }));
+    expect(() => prepareWslNvidiaCdi(deps)).toThrow(/inventory is unavailable/);
+    expect(deps.runCapture).toHaveBeenCalledTimes(2);
+  });
+  it.each(["invalid", {}, [null], [{ Source: "cdi" }]])(
     "rejects malformed CDI inventory %j",
     (inventory) => {
       const { deps, info } = fixture();
@@ -228,6 +256,48 @@ describe("WSL NVIDIA CDI preparation", () => {
     });
     expect(() => prepareWslNvidiaCdi(deps)).toThrow("preparation failed");
     expect(deps.runCapture).toHaveBeenCalledTimes(2);
+  });
+  it("reports a real host command's recovery cause without its credentials or unbounded output", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cdi-host-"));
+    roots.push(root);
+    fs.writeFileSync(path.join(root, "wslinfo"), "#!/bin/sh\nprintf 'nat\\n'\n", { mode: 0o700 });
+    fs.writeFileSync(
+      path.join(root, "wsl.exe"),
+      `#!/bin/sh
+printf 'called\\n' >> "\${0%/*}/calls"
+printf '%s\\n' 'CDI preparation is active or interrupted; inspect its lock before retrying' >&2
+printf '%s\\n' 'NVIDIA_API_KEY=fixture-private-value https://user:fixture-password@example.invalid/' >&2
+printf '%s\\n' '${"x".repeat(500)}' >&2
+exit 1
+`,
+      { mode: 0o700 },
+    );
+    const { deps } = fixture();
+    let error: unknown;
+    try {
+      prepareWslNvidiaCdi({ ...deps, runCapture: undefined, env: { PATH: root } });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("active or interrupted; inspect its lock");
+    expect(message).toContain("wsl.exe");
+    expect(message).toContain("no retry was attempted");
+    expect(message).not.toContain("fixture-private-value");
+    expect(message).not.toContain("fixture-password");
+    expect(message.length).toBeLessThan(350);
+    expect(fs.readFileSync(path.join(root, "calls"), "utf8")).toBe("called\n");
+    expect(deps.dockerCapture).toHaveBeenCalledTimes(2);
+  });
+  it("identifies a missing host executable without attempting generation", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cdi-host-"));
+    roots.push(root);
+    const { deps } = fixture();
+    expect(() =>
+      prepareWslNvidiaCdi({ ...deps, runCapture: undefined, env: { PATH: root } }),
+    ).toThrow(/wslinfo.*ENOENT/);
+    expect(deps.dockerCapture).toHaveBeenCalledTimes(1);
   });
   it.each([
     ["same daemon, missing inventory", {}],

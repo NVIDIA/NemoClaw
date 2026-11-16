@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dockerCapture, type DockerCaptureOptions } from "../../adapters/docker/run";
+import { sanitizeReadinessText } from "../../readiness/sanitize";
 import { detectWsl } from "../wsl-docker-desktop-gpu";
 import { WSL_NVIDIA_CDI_PREPARE_SCRIPT } from "./script";
 
@@ -37,7 +38,13 @@ function captureHostCommand(args: readonly string[], options: DockerCaptureOptio
     stdio: ["pipe", "pipe", "pipe"],
   });
   if (result.error || result.status !== 0) {
-    throw new Error("WSL CDI host command failed; no retry was attempted.");
+    const detail = sanitizeReadinessText(
+      [result.stderr?.trim(), result.error?.message].filter(Boolean).join("\n"),
+      240,
+    );
+    throw new Error(
+      `WSL CDI host command failed; no retry was attempted. ${args[0]}${detail ? `: ${detail}` : ""}`,
+    );
   }
   return result.stdout.trim();
 }
@@ -158,7 +165,8 @@ export function prepareWslNvidiaCdi(deps: WslNvidiaCdiDeps = {}): boolean {
     );
   }
   // Existing CDI belongs to its current owner, regardless of the installed Desktop version.
-  const existing = hasNvidiaCdi(info);
+  // Docker omits this field when no devices are discovered. Post-write inventory stays strict.
+  const existing = hasNvidiaCdi({ ...info, DiscoveredDevices: info.DiscoveredDevices ?? [] });
   if (!existing) {
     const platformName = JSON.parse(
       docker(["version", "--format", "{{json .Server.Platform.Name}}"]),

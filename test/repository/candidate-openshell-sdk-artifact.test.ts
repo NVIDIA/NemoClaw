@@ -32,6 +32,8 @@ describe("candidate SDK artifact provenance", () => {
     const result = f.execute();
     expect(result.status, result.stderr).toBe(0);
     expect(result.output).toContain("stack_pr=123");
+    expect(result.output).toContain(`stack_head=${f.stack.parents[0]!.head.sha}`);
+    expect(result.output).toContain(`stack_base=${f.stack.parents[0]!.base.sha}`);
     expect(result.output).toContain("artifact_id=42");
     expect(result.output).toContain(f.artifact.name);
   });
@@ -49,6 +51,7 @@ describe("candidate SDK artifact provenance", () => {
     const result = f.execute();
     expect(result.status).not.toBe(0);
     expect(result.output).not.toContain("artifact_id=");
+    expect(result.stdout).toContain("::error::The stack parent's admitted SDK does not match");
   });
   it.each(["missing", "ambiguous", "changed head", "fork", "different base"])(
     "rejects %s stack parent before artifact lookup",
@@ -81,6 +84,9 @@ describe("candidate SDK artifact provenance", () => {
     const result = f.execute();
     expect(result.status).not.toBe(0);
     expect(result.output).not.toContain("artifact_id=");
+    expect(result.stdout).toContain(
+      "::error::A stacked PR cannot change the reviewed npm audit policy",
+    );
   });
   it("rechecks the parent's admission after download before releasing the archive", () => {
     const f = fixture("stacked");
@@ -101,6 +107,9 @@ describe("candidate SDK artifact provenance", () => {
     const result = f.execute(true);
     expect(result.status).not.toBe(0);
     expect(existsSync(join(f.root, "verified-sdk"))).toBe(false);
+    expect(result.stdout).toContain(
+      "::error::The stack parent's SDK admission changed after selection",
+    );
   });
   it("waits for the approved candidate archive and completed producer", () => {
     const f = fixture();

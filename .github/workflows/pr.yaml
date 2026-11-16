@@ -306,7 +306,10 @@ jobs:
               echo "::error::Could not resolve the current SDK stack parent. Check pull-request access and the parent identity."
               exit 1
             fi
-            cmp ci/reviewed-npm-audit.json .trusted-sdk-package-decision/ci/reviewed-npm-audit.json
+            if ! cmp -s ci/reviewed-npm-audit.json .trusted-sdk-package-decision/ci/reviewed-npm-audit.json; then
+              echo "::error::A stacked PR cannot change the reviewed npm audit policy and reuse its parent's SDK. Restore the inherited policy or obtain separate admission."
+              exit 1
+            fi
             UPGRADE_PR_NUMBER="$(jq -er '.number' <<<"$parent")"
             CANDIDATE_SHA="$(jq -er '.head.sha' <<<"$parent")"
             UPGRADE_BASE_SHA="$(jq -er '.base.sha' <<<"$parent")"
@@ -316,7 +319,10 @@ jobs:
               NEMOCLAW_CI_NPM_PACKAGE_MODE=inspect NEMOCLAW_CI_TARGET_ROOT="$GITHUB_WORKSPACE" \
               UPGRADE_PR_NUMBER="$UPGRADE_PR_NUMBER" CANDIDATE_SHA="$CANDIDATE_SHA" \
               UPGRADE_BASE_SHA="$UPGRADE_BASE_SHA" node "$trusted_inspector")"
-            jq -e --arg name "$artifact_name" '.required == true and .candidate == true and .artifactName == $name' <<<"$decision" >/dev/null
+            if ! jq -e --arg name "$artifact_name" '.required == true and .candidate == true and .artifactName == $name' <<<"$decision" >/dev/null; then
+              echo "::error::The stack parent's admitted SDK does not match this PR's SDK selection. Reconcile the parent admission and child manifests before retrying."
+              exit 1
+            fi
             printf 'stack_pr=%s\nstack_head=%s\nstack_base=%s\nstack_decision=%s\n' \
               "$UPGRADE_PR_NUMBER" "$CANDIDATE_SHA" "$UPGRADE_BASE_SHA" "$(jq -c . <<<"$decision")" >> "$GITHUB_OUTPUT"
             candidate=true
@@ -420,7 +426,10 @@ jobs:
               NEMOCLAW_CI_NPM_PACKAGE_MODE=inspect UPGRADE_PR_NUMBER="$STACK_PR" \
               CANDIDATE_SHA="$STACK_HEAD" UPGRADE_BASE_SHA="$STACK_BASE" \
               node .trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts)"
-            [ "$(jq -cS . <<<"$decision")" = "$(jq -cS . <<<"$STACK_DECISION")" ]
+            if [ "$(jq -cS . <<<"$decision")" != "$(jq -cS . <<<"$STACK_DECISION")" ]; then
+              echo "::error::The stack parent's SDK admission changed after selection. Confirm its current review and rerun this CI job."
+              exit 1
+            fi
           fi
           mkdir -p "$NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY" "$NEMOCLAW_CI_NPM_CACHE"
           cp "$RUNNER_TEMP/openshell-sdk-bundle/$ARTIFACT_NAME" "$NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY/$ARTIFACT_NAME"
