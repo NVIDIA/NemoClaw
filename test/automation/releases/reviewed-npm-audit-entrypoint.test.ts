@@ -89,7 +89,10 @@ describe("reviewed npm audit entry point", () => {
   );
 
   it("admits a new SDK through the action without forwarding API credentials to npm", async () => {
-    const { result, npmObservation } = await runCandidateSdkAuditAction();
+    const { result, npmObservation, selectedEntrypoint } = await runCandidateSdkAuditAction();
+    expect(selectedEntrypoint).toBe(
+      path.resolve(REPO_ROOT, "scripts/checks/audit-admitted-npm-graph.mts"),
+    );
     expect(result.status, result.stderr).toBe(1);
     expect(result.stderr).toContain("[stage=npm-version; category=rejected]");
     expect(npmObservation).toEqual({ command: "npm", args: ["--version"], github: null, gh: null });
