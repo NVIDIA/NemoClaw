@@ -156,6 +156,13 @@ With either registration:
 - Inference, web search, and API integrations use the profile that APF serves under the name NemoClaw would give it, once NemoClaw has checked that the profile delivers the credential in the variable the agent reads. NemoClaw creates the provider registrations but never imports or deletes these profiles. An API integration can't set `mcp`, because APF's profile sets the endpoint's rules.
 - NemoClaw doesn't verify the provenance token's signature; APF and OpenShell decide which policies a sandbox loads.
 
+Limits:
+
+- APF's bundle must serve each profile under the name NemoClaw gives it, which includes a hash of the sandbox image; no field chooses the names.
+- A deployment created without the field can't change to APF, because APF refuses to delete the profiles NemoClaw imported.
+- You give APF the gateway's signing key yourself, and with `registration: external` also install APF's CA in the gateway.
+- APF's bundle refresher updates running sandboxes only in OpenShell's `default` workspace, and NemoClaw creates its own workspace, so the refresher doesn't bring a new bundle's policy to a running NemoClaw sandbox.
+
 ### Supply Credential References
 
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
