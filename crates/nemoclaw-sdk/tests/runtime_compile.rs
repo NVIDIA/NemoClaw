@@ -8,7 +8,6 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-const CPU_LABEL: &str = "nemoclaw.nvidia.com/cpu-limit-millis";
 const MEMORY_LABEL: &str = "nemoclaw.nvidia.com/memory-limit-gib";
 
 fn label<'a>(container: &'a Value, name: &str) -> Option<&'a str> {
@@ -53,14 +52,12 @@ fn docker_model_limits_reach_opentofu_and_native_container_configuration() {
         let generations = ["managed_gateway", "inference_service", "ollama_service"]
             .map(|kind| (kind.into(), "b".repeat(32)))
             .into();
-        // Kubernetes and `docker --cpus` use a 100 ms CFS period. The kernel
-        // rejects quotas below 1 ms, so limits below 10 millicores use 1 ms as
-        // kubelet does.
-        for (cpu, quota, memory_gib) in [
-            (1250, 125_000, 64),
-            (2000, 200_000, 128),
-            (10, 1000, 48),
-            (1, 1000, 32),
+        // Millicores become the decimal CPU count that `docker --cpus` takes.
+        for (cpu, cpus, memory_gib) in [
+            (1250, "1.25", 64),
+            (2000, "2", 128),
+            (10, "0.01", 48),
+            (1, "0.001", 32),
         ] {
             let mut value = serde_json::to_value(&baseline).unwrap();
             for service in value["spec"]["services"]
@@ -81,12 +78,9 @@ fn docker_model_limits_reach_opentofu_and_native_container_configuration() {
             {
                 let (_, name) = target.address.split_once('.').unwrap();
                 let container = &graph["resource"]["docker_container"][name];
-                assert_eq!(container["cpu_period"], 100_000, "{}", target.kind);
-                assert_eq!(container["cpu_quota"], quota);
-                assert!(container.get("cpus").is_none());
-                // The pinned provider updates memory in place and omits CFS quota
-                // from updates, so both limits force replacement through labels.
-                assert_eq!(label(container, CPU_LABEL), Some(cpu.to_string().as_str()));
+                assert_eq!(container["cpus"], cpus, "{}", target.kind);
+                // The pinned provider updates memory in place, so a memory limit
+                // forces replacement through a label.
                 assert_eq!(
                     label(container, MEMORY_LABEL),
                     Some(memory_gib.to_string().as_str())
@@ -96,9 +90,7 @@ fn docker_model_limits_reach_opentofu_and_native_container_configuration() {
                 let spec: nemoclaw_sdk::managed::Spec =
                     serde_json::from_str(&target.values["spec"]).unwrap();
                 let host = spec.container("/data").unwrap().host_config.unwrap();
-                assert_eq!(host.cpu_period, Some(100_000));
-                assert_eq!(host.cpu_quota, Some(quota));
-                assert!(host.nano_cpus.is_none());
+                assert_eq!(host.nano_cpus, Some(i64::from(cpu) * 1_000_000));
                 assert_eq!(host.memory, Some(memory_gib * gib));
                 assert_eq!(host.memory_swap, host.memory);
             }
@@ -233,13 +225,8 @@ fn omitted_docker_model_limits_keep_independent_legacy_defaults() {
             assert_eq!(host.memory, Some(memory_gib * (1_i64 << 30)));
             assert_eq!(host.memory_swap, host.memory);
             if cpu.is_none() {
-                assert!(container.get("cpu_period").is_none());
-                assert!(container.get("cpu_quota").is_none());
                 assert!(container.get("cpus").is_none());
-                assert!(host.cpu_period.is_none());
-                assert!(host.cpu_quota.is_none());
                 assert!(host.nano_cpus.is_none());
-                assert_eq!(label(container, CPU_LABEL), None);
                 assert!(
                     serde_json::to_value(process)
                         .unwrap()
