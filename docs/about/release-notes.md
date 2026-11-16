@@ -185,7 +185,6 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
 - With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
   An endpoint host written as an IPv4-mapped IPv6 address, such as `::ffff:203.0.113.7`, no longer matches; write the IPv4 address.
 - The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
-- The first apply replaces a managed vLLM or Ollama container that sets `container.cpuLimitMillis`; with the default `updatePolicy: Preserve`, plan and apply refuse until the service sets `updatePolicy: Recreate`.
 
 ### Breaking Changes in v0.1.0-rc10
 

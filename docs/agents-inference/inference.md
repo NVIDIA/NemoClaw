@@ -130,7 +130,6 @@ These shared fields do not change [platform qualification limits](../resources/l
 The service-level `updatePolicy` defaults to `Preserve`.
 For Docker, this refuses an update that would replace a running managed model container.
 Changing the image, model, serving settings, `cpuLimitMillis`, `memoryLimitGiB`, or `gpuDevices` replaces the container; declaring the omitted 104 GiB default as `memoryLimitGiB: 104` does not.
-Earlier bundles replaced a running Docker model container for image, model, and serving changes without a policy; to keep that behavior, for example when automation updates images, set `spec.services.<name>.updatePolicy: Recreate`.
 Set `updatePolicy: Recreate` only when accepting sequential replacement and possible downtime if the replacement cannot start.
 The opt-in persists for later updates until removed or changed to `Preserve`; changing only this policy does not restart the workload.
 Initial creation, unchanged apply, and recovery of missing or stopped Docker containers remain allowed after ownership checks.
