@@ -833,7 +833,7 @@ const CLEANUP: &str = "(cleanup)";
 
 /// How long each run block took, in order, then the cleanup, from the debug
 /// lines OpenTofu's test runner writes to its core log. `tofu test -json`
-/// can't time them: OpenTofu 1.12 reports a file's runs only after the file
+/// can't time them: OpenTofu 1.13 reports a file's runs only after the file
 /// ends, all with one timestamp. A run lasts until the next run or the
 /// cleanup starts, and the last until the test runner's last line. Only these
 /// lines are read, so no value from the deployment reaches the table.

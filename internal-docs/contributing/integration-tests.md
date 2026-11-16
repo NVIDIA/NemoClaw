@@ -30,7 +30,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-provider --test contract provider_protocol:: -- --ignored
 ```
 
-Nextest builds every workspace target, including the fixture executables; after `cargo ci tools`, put `.tools/nextest-0.9.151` on `PATH` and narrow the `contract` or `integration` profile with a filter:
+Nextest builds every workspace target, including the fixture executables; after `cargo ci tools`, put `.tools/nextest-0.9.152` on `PATH` and narrow the `contract` or `integration` profile with a filter:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
@@ -49,7 +49,7 @@ Its coverage test is not ignored and runs with the unit tests; the remaining tes
 
 Each `tests/contract` directory separates the two kinds of test:
 
-- `hcl/`: scenarios that pass, as authored modules with `.tf` files and [`tofu test`](https://opentofu.org/docs/v1.12/cli/commands/test/) files in their `tests` directory.
+- `hcl/`: scenarios that pass, as authored modules with `.tf` files and [`tofu test`](https://opentofu.org/docs/v1.13/cli/commands/test/) files in their `tests` directory.
 - `failures/`: Rust tests of commands that must fail, which `tofu test` cannot expect.
 
 `main.rs` starts each module's fakes and runs it; the other Rust files hold shared fakes and checks of plans and state that `tofu test` cannot show.
@@ -237,7 +237,7 @@ A plan-only scenario needs no apply runs.
 A run's `module.observed` is read when the run plans, so it shows what the previous run left.
 A scenario that checks change, recovery, or isolation asserts each outcome in the run after the one that caused it.
 
-OpenTofu 1.12's test framework sets these limits:
+OpenTofu 1.13's test framework sets these limits:
 
 - Assertions cannot reference other runs. A test file passes an earlier run's `gateway` or `baseline` output, or the `observed` module's `openshell` output, in as the `baseline` variable. A plain second apply does not prove that nothing changed, so the scenario that owns unchanged reconciliation compares gateway effects and Fabric starts with that baseline.
 - OpenTofu keeps only the latest applying run's outputs of each module.

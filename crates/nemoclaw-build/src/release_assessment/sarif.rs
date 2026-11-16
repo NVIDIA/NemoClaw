@@ -187,7 +187,7 @@ mod tests {
             publication_authorized: false,
             scanner: Some(ScannerEvidence {
                 name: "grype".into(),
-                version: "0.121.0".into(),
+                version: "0.121.3".into(),
                 sha256: "a".repeat(64),
                 configuration_sha256: "b".repeat(64),
             }),
@@ -275,7 +275,7 @@ mod tests {
         );
         assert!(location.get("region").is_none());
         assert_eq!(run["artifacts"][0]["hashes"]["sha-256"], "e".repeat(64));
-        assert_eq!(run["properties"]["scanner"]["version"], "0.121.0");
+        assert_eq!(run["properties"]["scanner"]["version"], "0.121.3");
         assert_eq!(run["properties"]["database"]["sha256"], "c".repeat(64));
         assert!(
             run["tool"]["driver"]["rules"]

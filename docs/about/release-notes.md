@@ -102,7 +102,8 @@ Examples and builds:
 - Run `cargo images fetch` before a direct `docker buildx bake` build of an agent or Ollama image.
   See [building images](../build-deploy/build.md).
 - Dependency pins take security fixes, including rustls, webpki, tokio, and zip.
-- Pinned components: OpenShell 0.1.8, OpenTofu 1.12.12, Ollama 0.40.14, Hermes Agent v0.22.5, and OpenClaw 2026.9.34.
+- Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
+- OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
 
 OpenShell 0.1.8:
 
