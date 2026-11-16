@@ -109,7 +109,7 @@ Each layer that makes outbound TLS connections has its own trust store:
 | The machine running NemoClaw: catalog reads during onboarding, and OpenTofu's providers | The system trust store, or `SSL_CERT_FILE`; see [custom CA trust](../agents-inference/inference.md#trust-a-custom-certificate-authority) |
 | The engine pulling images | The Docker or Podman daemon's own registry trust, configured on the engine host |
 | The OIDC issuer of a managed Kubernetes gateway | `caConfigMap` in the [OIDC profile](../build-deploy/kubernetes.md) |
-| OpenShell's gateway and sandbox egress | OpenShell's images' trust store. NemoClaw can't configure it; OpenShell support is in progress ([NVIDIA/OpenShell#3292](https://github.com/NVIDIA/OpenShell/pull/3292)) |
+| OpenShell's gateway and sandbox egress | OpenShell's images' trust store. For sandbox egress, OpenShell also trusts the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas); no managed gateway can receive it ([current limits](../resources/limits.md#security)). A CA in the bundle authenticates every policy-permitted destination whose certificate chains to it, so include only CAs that sandboxes should trust |
 | A corporate proxy that OpenShell chains egress through | OpenShell's `proxy_ca_bundle` driver setting, a file on the gateway; no managed gateway can receive it ([current limits](../resources/limits.md#security)) |
 | Model downloads inside managed vLLM and Ollama | The runtime image's trust store; not configurable |
 | Image builds (`docker buildx bake`) | Not supported behind TLS-intercepting proxies; build on a network that doesn't intercept TLS |

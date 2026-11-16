@@ -73,7 +73,7 @@ The bundle pins these providers:
 | vLLM | `registry.opentofu.org/nvidia/vllm` | Source-derived, matching the bundle |
 | Ollama | `registry.opentofu.org/nvidia/ollama` | Source-derived, matching the bundle |
 | Host | `registry.opentofu.org/nvidia/host` | Source-derived, matching the bundle |
-| Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.6.0 |
+| Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.7.0 |
 | Helm | `registry.opentofu.org/hashicorp/helm` | 3.3.0 |
 
 None of them exposes ephemeral resources or provider functions.
@@ -120,17 +120,18 @@ Other inputs are typed too:
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
 - `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference`, `openshell_web_search` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
   OpenShell attaches at most 32 to one sandbox and refuses to create a sandbox with more.
-- `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables managed endpoint grants allow.
+- `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables that managed endpoint grants naming none allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
 - `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
-  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/sandboxes/runtimes.mdx).
+  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
   It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, replaces the sandbox, as for the image; see [change paths](../build-deploy/usage.md#choose-the-change-path).
 - `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
   A new sandbox's creation request carries them unchanged, so OpenShell's defaults apply: an omitted mode is `STRIP`, and an empty name is the unnamed endpoint.
   Adding, changing, or removing a block updates the sandbox in place, as `openshell service expose` and `openshell service delete` do; so does a declared endpoint observed differently on the gateway. Endpoints under other names stay as they are.
 - The computed `policy_hash` is the hash OpenShell reports for the sandbox's loaded policy, including paths OpenShell adds itself. It's recorded when the policy first loads with every declared rule intact; a different hash later is drift.
+  Creating a sandbox waits, within the 120-second startup deadline, for it to load its policy, so a policy changed after the first apply is drift. A sandbox that has not loaded one by then, one that exited, and one whose configuration OpenShell rejected are recorded without a hash, and the next apply that finds the policy loaded records it.
 - The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry. A plan that changes the `service` blocks leaves it unknown until apply.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
 
@@ -197,7 +198,8 @@ resource "openshell_inference" "nemotron" {
 
 Use `openshell_api` when a sandbox needs to authenticate to an API other than inference or web search, such as a booking service over HTTP MCP.
 It owns an OpenShell profile and registration; attach its `ref` to the sandbox's `providers`.
-The profile grants endpoint access to the named executables. OpenShell replaces the placeholder only at the bound host, port and path.
+The profile grants each of its `endpoints` to the named executables, and OpenShell replaces the placeholder only at those hosts, ports and paths.
+List several URLs when one key serves several hosts or path subtrees, such as an API whose services sit on different hosts.
 
 Set the credential in the environment of the process running OpenTofu, then name that variable in `credential_env`:
 
@@ -206,7 +208,7 @@ resource "openshell_api" "booking" {
   gateway        = data.openshell_gateway.example.ref
   workspace      = openshell_workspace.example.ref
   name           = "booking"
-  endpoint       = "https://booking.example.com/mcp"
+  endpoints      = ["https://booking.example.com/mcp"]
   credential_env = "BOOKING_API_KEY"
   binaries       = ["/usr/bin/curl"]
 }
@@ -219,8 +221,8 @@ resource "openshell_api" "booking" {
 For an API key sent without the Bearer prefix, set `auth_style = "header"` and `header_name = "X-API-Key"`.
 Query parameters, OAuth and refresh flows are not supported by this resource.
 Endpoints must use HTTP(S) without embedded credentials, queries, fragments or globs.
-By default, the profile grants full REST access to the endpoint's path subtree.
-To restrict an MCP endpoint to specific methods and tools, declare an `mcp` block with one or more `rules` blocks on `openshell_api`. OpenShell enforces those rules on the exact URL path with its default MCP protocol revision.
+By default, the profile grants full REST access to each endpoint's path subtree.
+To restrict an MCP endpoint to specific methods and tools, declare an `mcp` block with one or more `rules` blocks on `openshell_api`, which then takes exactly one URL in `endpoints`. OpenShell enforces those rules on the exact URL path with its default MCP protocol revision.
 Use a canonical path such as `/mcp` or `/mcp/`. Paths with repeated slashes, path parameters, `^`, or `|` are rejected.
 Include the server's initialization and tool discovery methods and the allowed `tools/call` selectors. Use the profile as the only grant for that endpoint, because a broader matching grant can allow additional requests.
 Each tool rule may use one selector, either `allow.tool` or `allow.params.name`.
@@ -232,6 +234,8 @@ A literal IP grants only that address; a DNS name receives no private-network gr
 The provider resolves the host variable during apply and sends its value to OpenShell's credential store.
 OpenTofu state and the exported `ref` contain the variable name, never its value.
 OpenShell projects a credential placeholder into `NEMOCLAW_API_BOOKING_KEY` for `name = "booking"`; the agent does not receive the stored credential value.
+Set `sandbox_env` to project it under another name, such as a variable the sandbox's tools already read.
+OpenShell rejects a sandbox whose attached registrations put keys in the same variable; give each a different `sandbox_env`, or list every URL that shares a key in one resource's `endpoints`.
 The registration is named `booking` and its profile `nemoclaw-api-booking`.
 
 Changing `credential_env` updates the stored credential in place on the next apply, retaining the registration and attached sandbox.
@@ -725,12 +729,11 @@ Generated graphs place managed vLLM with Docker and declare:
 - `entrypoint = ["/usr/local/bin/nemoclaw-runtime"]` and `env = ["NEMOCLAW_RUNTIME_SPEC=${data.vllm_runtime.NAME.spec}"]`.
 - The model cache volume at `/data` and, with bearer authentication, the `vllm_credential_storage` credential volume at `/credentials`.
 - The serving port, published on the service's bind address.
-- `gpus = "all"`, which gives the container every GPU, or `gpus = "device=GPU"` when the service lists one GPU in `container.gpuDevices`, whose length the runtime contract data source also receives as `gpu_count`.
-  A list of several GPUs compiles to `device_requests { driver = "nvidia", device_ids = [...], capabilities = ["gpu"] }`, because Docker provider v4.6.0 reads a list in `gpus` as one device and a count ([kreuzwerker/terraform-provider-docker#1019](https://github.com/kreuzwerker/terraform-provider-docker/issues/1019)).
+- `gpus = "all"`, which gives the container every GPU, or `gpus = "device=GPU[,GPU...]"` with the GPUs listed in `container.gpuDevices`, whose length the runtime contract data source also receives as `gpu_count`.
   `container.gpuDevices` accepts one entry until serving one model across several GPUs is implemented.
 - `memory` and `memory_swap` follow `container.memoryLimitGiB`, defaulting to 106496 MiB (104 GiB); `shm_size` defaults to 8192 MiB unless the service sets another size.
-- No CPU cap unless `container.cpuLimitMillis` is supplied; Docker then enforces `cpu_quota = cpuLimitMillis × 100` microseconds per `cpu_period = 100000` (100 ms, as on Kubernetes), with a minimum quota of 1000 microseconds.
-- A `nemoclaw.nvidia.com/cpu-limit-millis` label when a CPU limit is set and a `nemoclaw.nvidia.com/memory-limit-gib` label when the memory limit differs from 104 GiB; because label changes replace the container, changing either limit is a replacement rather than an in-place `docker update`.
+- No CPU cap unless `container.cpuLimitMillis` is supplied; `cpus` then holds the limit as a CPU count, such as `"1.25"` for 1250, and the Docker provider replaces the container when it changes.
+- A `nemoclaw.nvidia.com/memory-limit-gib` label with the memory limit; because label changes replace the container, changing the memory limit is a replacement rather than an in-place `docker update`.
 - Private IPC unless the service selects host IPC, an unlimited `memlock` ulimit, and a `stack` ulimit of 67108864.
 - All capabilities dropped, `no-new-privileges`, restart policy `no`, and JSON-file logs rotated at 32 MB across three files.
 

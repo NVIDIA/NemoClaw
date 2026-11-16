@@ -195,12 +195,9 @@ impl Scenario {
         let config = read(&self.root, "config.yaml");
         let limits = &config["spec"]["services"]["qwen"]["container"];
         let host = &state["container"]["HostConfig"];
-        // A 100 ms period, as on Kubernetes; Ollama's 10 millicores give the
-        // kernel's 1 ms minimum quota.
-        assert_eq!(host["CpuPeriod"], 100_000);
         assert_eq!(
-            host["CpuQuota"],
-            limits["cpuLimitMillis"].as_u64().unwrap() * 100
+            host["NanoCpus"],
+            limits["cpuLimitMillis"].as_u64().unwrap() * 1_000_000
         );
         assert_eq!(
             host["Memory"],
@@ -260,11 +257,13 @@ async fn remote_ollama_recovers_reapplies_and_stops_on_observation_failure_keepi
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
-async fn remote_ollama_preserve_refuses_image_memory_and_gpu_changes_and_recreate_replaces_gpu() {
+async fn remote_ollama_preserve_refuses_image_cpu_memory_and_gpu_changes_and_recreate_replaces_gpu()
+{
     let s = Scenario::new("nvidia.fabric.openclaw", false, "ollama").await;
     let stable = s.apply().await;
     let state = s.runtime_state();
     image_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
+    cpu_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
     memory_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
     gpu_change_replaces_the_container_with_one_device(&s, &stable, &state).await;
 }
@@ -624,6 +623,18 @@ async fn image_change_plans_compute_replacement_without_effects(
     let mut changed = read(&s.root, "config.yaml");
     changed["spec"]["services"]["qwen"]["image"] =
         json!(format!("runtime@sha256:{}", "f".repeat(64)));
+    change_plans_compute_replacement_without_effects(s, stable, state, changed).await;
+}
+
+// The Docker provider replaces a container whose `cpus` changes, so Preserve
+// refuses a new CPU limit.
+async fn cpu_change_plans_compute_replacement_without_effects(
+    s: &Scenario,
+    stable: &Value,
+    state: &[u8],
+) {
+    let mut changed = read(&s.root, "config.yaml");
+    changed["spec"]["services"]["qwen"]["container"]["cpuLimitMillis"] = json!(2000);
     change_plans_compute_replacement_without_effects(s, stable, state, changed).await;
 }
 

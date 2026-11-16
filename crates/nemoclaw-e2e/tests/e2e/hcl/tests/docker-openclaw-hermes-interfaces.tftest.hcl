@@ -18,9 +18,9 @@
 # connection to the managed gateway, which no grant names. Destroy keeps only
 # the gateway's storage. cargo ci live-docker runs it.
 #
-# Each agent starts with two skills.paths entries, each on its own volume: a
-# writable folder of skills and a folder that is one skill, read-only for
-# OpenClaw and writable for Hermes. OpenClaw's folder holds two skills and a
+# Each agent starts with two skills.directories entries, each on its own
+# volume: a writable folder of skills and one skill, read-only for OpenClaw
+# and writable for Hermes. OpenClaw's folder holds two skills and a
 # file that isn't one; Hermes's is empty. Each skill's description is a
 # marker that the stub looks for in requests, so the replies in OpenClaw's
 # terminal UI and from Hermes's API server name the skills that each running
@@ -30,8 +30,8 @@
 
 # The skills volumes, which a platform provides before apply. The agent images
 # run agents as 10001:10001 (image/fabric/Dockerfile). OpenClaw's bundled
-# skills take precedence over skills of the same name in skills.paths, so no
-# skill here shares a name with one of them.
+# skills take precedence over skills of the same name in skills.directories,
+# so no skill here shares a name with one of them.
 run "volume" {
   module {
     source = "./volume"

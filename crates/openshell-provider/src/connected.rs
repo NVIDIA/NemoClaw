@@ -68,7 +68,7 @@ impl ConnectedOpenShellGateway {
                     == format!("nemoclaw-api-{}", value(want, "name"))
                     && !value(want, "credential_env").is_empty() =>
             {
-                ("api", "NEMOCLAW_API_ENDPOINT", "")
+                ("api", nemoclaw_openshell::api::ENDPOINTS_CONFIG, "")
             }
             "" => ("openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
             "anthropic" => ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
@@ -99,7 +99,7 @@ impl ConnectedOpenShellGateway {
                 .observe_profile(value(want, "workspace"), value(want, "profile_name"), false)
                 .await?
                 .ok_or(ObservationError::BindingMismatch)?;
-            if ["owner", "generation", "endpoint"]
+            if ["owner", "generation", "endpoints_json", "sandbox_env"]
                 .iter()
                 .any(|field| value(&bound, field) != value(want, field))
                 || !source.is_empty()
@@ -180,7 +180,9 @@ impl ConnectedOpenShellGateway {
             config: if endpoint_key.is_empty() {
                 Default::default()
             } else {
-                [(endpoint_key.into(), value(want, "endpoint").into())].into()
+                // An API records its endpoint list; inference its server.
+                let endpoint = if api { "endpoints_json" } else { "endpoint" };
+                [(endpoint_key.into(), value(want, endpoint).into())].into()
             },
             credentials: match profile {
                 Some(profile) => profile

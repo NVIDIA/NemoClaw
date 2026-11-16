@@ -158,7 +158,7 @@ fn a_sandbox_with_more_than_32_attached_providers_is_rejected_by_name() {
         let mut value = input.clone();
         if api {
             value["spec"]["integrations"]["bookings"] = json!({
-                "kind": "api", "endpoint": "https://bookings.example.com/mcp",
+                "kind": "api", "endpoints": ["https://bookings.example.com/mcp"],
                 "credential": {"env": "BOOKINGS_API_KEY"}
             });
             value["spec"]["sandboxes"]["researcher"]["agent"]["integrationRefs"] =

@@ -447,10 +447,15 @@ fn policy_choice_preserves_the_export_shape() {
             NetworkPolicy::Explicit(explicit),
             json!({"policy": explicit_input}),
         ),
+        (
+            NetworkPolicy::Reference("docs-only".into()),
+            json!({"policyRef": "docs-only"}),
+        ),
     ] {
         let network = Network {
             policy,
             grants: Default::default(),
+            grant_refs: Default::default(),
         };
         network.validate().unwrap();
         assert_eq!(serde_json::to_value(&network).unwrap(), expected);

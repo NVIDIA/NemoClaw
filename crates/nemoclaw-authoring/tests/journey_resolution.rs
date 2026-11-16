@@ -92,6 +92,9 @@ fn omitted_optional_sdk_field_stays_absent_even_when_its_scope_is_asked() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -272,6 +275,9 @@ fn omit_guidance_keeps_valid_supplied_adapter_settings_and_asks_the_rest() {
     let state = JourneyDefinition::new("supplied-settings", base)
         .omit([
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
         ])
         .omit([JourneyScope::ActiveAdapterSettings])
@@ -925,8 +931,8 @@ fn conditional_native_journey(model: bool) -> (Capabilities, nemoclaw_authoring:
         });
     } else {
         adapter.descriptor["config"]["schema"] = json!({"type":"object","required":["workflow"]});
-        base["spec"]["sandboxes"]["assistant"]["harness"]["config"] =
-            json!({"workflow":{"target_id":"fixture.target","settings":{}}});
+        base["spec"]["sandboxes"]["assistant"]["agent"]["workflow"] =
+            json!({"target_id":"fixture.target","settings":{}});
         catalog.targets = vec![json!({"descriptor":{
             "type":"workflow", "id":"fixture.target", "adapter_id":"fixture.conditional",
             "spec":{"settings_schema":conditional_settings_schema()}
@@ -1422,7 +1428,7 @@ fn sparse_journey_uses_workflow_and_model_owner_schemas() {
     assert_eq!(
         sparse
             .values()
-            .pointer("/spec/sandboxes/assistant/harness/config/workflow/settings/region"),
+            .pointer("/spec/sandboxes/assistant/agent/workflow/settings/region"),
         Some(&json!("west"))
     );
     let mut base: serde_json::Value =
@@ -2244,13 +2250,13 @@ fn delegation_accepts_when_a_credential_was_never_observed() {
 }
 
 #[test]
-fn credential_availability_names_each_observed_state_without_blocking_delegation() {
+fn credential_availability_neither_blocks_delegation_nor_becomes_a_note() {
     use nemoclaw_sdk::discovery::ObservationStatus;
     let capabilities = Capabilities::available();
-    for (status, says, plan_guidance) in [
-        (ObservationStatus::Available, "is set", false),
-        (ObservationStatus::Unavailable, "is not set", true),
-        (ObservationStatus::Unknown, "could not be read", true),
+    for status in [
+        ObservationStatus::Available,
+        ObservationStatus::Unavailable,
+        ObservationStatus::Unknown,
     ] {
         let mut facts = delegation_facts(&capabilities);
         facts.credentials[0].status = status;
@@ -2261,30 +2267,10 @@ fn credential_availability_names_each_observed_state_without_blocking_delegation
             .resolve_with_observations(&capabilities, &facts.observations())
             .unwrap();
         let reference = &facts.credentials[0].reference;
-        let notes = resolution.credentials();
-        assert_eq!(notes.iter().any(|note| note.is_missing()), plan_guidance);
-        let note = notes
-            .iter()
-            .map(|note| note.text())
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert!(note.contains(&format!("{reference} {says}")), "{note}");
-        assert_eq!(
-            note.contains(&format!("export {reference}=...")),
-            plan_guidance,
-            "{note}"
-        );
-        assert_eq!(
-            note.contains("https://build.nvidia.com/settings/api-keys"),
-            plan_guidance,
-            "{note}"
-        );
-        assert!(!note.contains("non-interactive"), "{note}");
-        assert!(!note.contains("PRIVATE_SENTINEL"));
-        assert!(
-            !resolution.information().join(" ").contains(reference),
-            "credential availability is not a note for every question"
-        );
+        let notes = [resolution.information(), resolution.warnings()].concat();
+        let notes = notes.join(" ");
+        assert!(!notes.contains(reference), "{notes}");
+        assert!(!notes.contains("PRIVATE_SENTINEL"), "{notes}");
     }
 }
 
@@ -2297,7 +2283,6 @@ fn a_credential_never_checked_says_nothing_about_its_availability() {
         .state
         .resolve_with_observations(&capabilities, &facts.observations())
         .unwrap();
-    assert!(resolution.credentials().is_empty());
     assert!(resolution.information().is_empty());
 }
 
@@ -2433,6 +2418,9 @@ fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -2698,7 +2686,7 @@ fn referenced_model_settings_are_written_to_the_selected_route() {
 }
 
 #[test]
-fn referenced_workflow_answers_keep_the_named_harness_as_the_owner() {
+fn workflow_answers_belong_to_the_agent_when_the_harness_is_referenced() {
     let mut catalog = FabricCatalog::bundled();
     let mut adapter = catalog.adapters[0].clone();
     adapter.descriptor["adapter_id"] = json!("fixture.workflow-owner");
@@ -2739,8 +2727,15 @@ fn referenced_workflow_answers_keep_the_named_harness_as_the_owner() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/harnesses/assistant/config/workflow/target_id"),
+            .pointer("/spec/sandboxes/researcher/agent/workflow/target_id"),
         Some(&json!("fixture.target"))
+    );
+    assert!(
+        state
+            .values()
+            .pointer("/spec/harnesses/assistant/workflow")
+            .is_none(),
+        "the shared harness definition must not receive one agent's workflow"
     );
     assert!(
         state
@@ -3045,6 +3040,9 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
         "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
         "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
         "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/agents",
+        "adapter:nvidia.fabric.openclaw:/plugins",
+        "adapter:nvidia.fabric.openclaw:/tools",
     ]);
     let mut state = definition.start(&capabilities).unwrap();
     assert!(
@@ -3142,6 +3140,9 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -3504,6 +3505,9 @@ fn optional_sdk_question_can_be_deliberately_omitted() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -3698,6 +3702,9 @@ fn fully_supplied_express_definition_has_no_current_questions() {
         "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
         "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
         "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/agents",
+        "adapter:nvidia.fabric.openclaw:/plugins",
+        "adapter:nvidia.fabric.openclaw:/tools",
     ]);
 
     let resolved = definition
@@ -3751,6 +3758,9 @@ fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ]);
     let mut state = definition.start(&capabilities).unwrap();
     assert_eq!(state.resolve(&capabilities).unwrap().questions().len(), 2);
@@ -3885,6 +3895,9 @@ fn external_gateway_choice_reveals_its_required_endpoint() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -4084,6 +4097,9 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -4299,6 +4315,9 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();

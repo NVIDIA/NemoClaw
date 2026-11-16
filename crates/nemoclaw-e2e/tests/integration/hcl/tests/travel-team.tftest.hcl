@@ -54,6 +54,7 @@ run "deploy" {
       tools          = ["get_quote", "book_option"]
       credential_env = "BOOKINGS_API_KEY"
     }
+    skills_volume = "travel-skills"
   }
 
   assert {
@@ -129,6 +130,20 @@ run "observe" {
     error_message = "A researcher's local model or the buyer's booking service is missing."
   }
 
+  # Researchers read the skills volume as a folder of skills that refuses
+  # duplicate names; the others have no skills.
+  assert {
+    condition = { for role, agent in output.agents : role => try(agent.start.configuration.skills, null) } == {
+      flights     = { directories = [{ folder = "/sandbox/skills" }], duplicates = "reject" }
+      stays       = { directories = [{ folder = "/sandbox/skills" }], duplicates = "reject" }
+      transport   = { directories = [{ folder = "/sandbox/skills" }], duplicates = "reject" }
+      attractions = { directories = [{ folder = "/sandbox/skills" }], duplicates = "reject" }
+      scheduler   = null
+      buyer       = null
+    }
+    error_message = "A researcher did not start with the skills volume as a folder of skills, or another role started with skills."
+  }
+
   assert {
     condition     = try(output.agents.buyer.start.configuration.mcp.servers.bookings.custom_headers.Authorization, "") == "Bearer $${NEMOCLAW_API_BOOKINGS_KEY}"
     error_message = "The buyer does not send the booking key placeholder in its MCP Authorization header."
@@ -163,6 +178,7 @@ run "change_frontier" {
       tools          = ["get_quote", "book_option"]
       credential_env = "BOOKINGS_API_KEY"
     }
+    skills_volume = "travel-skills"
   }
 }
 
@@ -194,6 +210,7 @@ run "teardown" {
       tools          = ["get_quote", "book_option"]
       credential_env = "BOOKINGS_API_KEY"
     }
+    skills_volume = "travel-skills"
     destroy = true
   }
 }

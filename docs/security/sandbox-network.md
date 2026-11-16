@@ -36,10 +36,10 @@ network:
 
 Each grant takes `endpoints` in the same shape as an explicit policy rule, including MCP method and tool rules.
 Its optional `binaries` default to the harness's executables, like the managed inference and search grants.
-Grant names can't reuse a managed grant's name, and an explicit policy can't take `grants`, since it already lists every rule.
+Grant names can't reuse a managed grant's name, and an explicit policy can't take `grants` or `grantRefs`, since it already lists every rule.
 
 An explicit policy replaces the entire preset.
-Omit `tier` when declaring `policy.explicit`; combining a nonempty tier with an explicit policy is rejected.
+Omit `tier` when declaring `policy.explicit` or `policyRef`; a network that sets more than one of `tier`, `policy`, and `policyRef` is rejected.
 Omitted fields inside an explicit policy follow OpenShell defaults, so copy the filesystem and process settings you intend to retain.
 An empty `network_policies` map grants no general egress.
 
@@ -57,6 +57,49 @@ See the [generated field reference](../reference/configuration.md#explicitpolicy
 `landlock.compatibility: best_effort` permits startup when the host cannot enforce Landlock restrictions.
 Use `hard_requirement` to require enforcement.
 Kernel enforcement still requires qualification on the deployment host.
+
+## Reuse Policies and Grants
+
+To give several sandboxes the same policy or grant, define it once under `spec.policies` or `spec.grants` and select it by name:
+
+```yaml
+spec:
+  policies:
+    docs-only:
+      version: 1
+      filesystem_policy:
+        include_workdir: false
+        read_only: [/usr, /opt, /app]
+        read_write: [/sandbox, /tmp]
+      network_policies:
+        documentation:
+          name: documentation
+          endpoints:
+            - host: docs.example.com
+              port: 443
+          binaries:
+            - path: /usr/bin/curl
+  grants:
+    github:
+      endpoints:
+        - host: api.github.com
+          port: 443
+  sandboxes:
+    researcher:
+      network:
+        policyRef: docs-only
+    writer:
+      network:
+        tier: isolated
+        grantRefs: [github]
+```
+
+This fragment omits the deployment's other required fields.
+`policyRef` applies the named policy exactly as if it were written in `policy.explicit`.
+`grantRefs` adds each named grant to the isolated preset as a rule with the grant's name; a network can combine it with inline `grants` when no name appears in both.
+A reference to an undefined name fails and lists the defined names.
+A definition that no sandbox selects is validated but applies to none; see [the authoring rule](../build-deploy/configuration-references.md#the-authoring-rule).
+The [full-featured OpenClaw example](../../examples/full-featured-openclaw.yaml) gives three sandboxes one policy.
 
 ## Runtime Filesystem Access
 
@@ -101,7 +144,7 @@ Do not choose `tls: skip` for an endpoint that relies on those controls, includi
 Use explicit `enforcement: enforce` when the policy must reject disallowed inspected requests.
 The checked-in example uses that enforcement setting with automatic TLS handling.
 
-The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
+The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
 The [SDK policy validator](../../crates/nemoclaw-openshell/src/policy.rs) accepts only supported field combinations; a field's presence in the schema does not bypass protocol validation.
 Live enforcement and application trust on your host remain qualification requirements.
 Follow [policy change constraints](#verify-and-change-the-configuration) before changing a deployed policy.
@@ -175,13 +218,13 @@ Changing a binding is a policy change; see [Verify and Change the Configuration]
 Changing a managed gateway's registration restarts the gateway, as other [gateway configuration](../build-deploy/usage.md#configure-a-managed-gateway) changes do.
 
 OpenShell describes supervisor middleware as a research preview whose policy and service contracts can change.
-Its [middleware guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/extensibility/supervisor-middleware/configure.mdx) for the pinned release describes registration fields, failure behavior, and the decisions it logs.
+Its [middleware guide](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/extensibility/supervisor-middleware/configure.mdx) for the pinned release describes registration fields, failure behavior, and the decisions it logs.
 
 
 ## Use an Upstream Proxy
 
 OpenShell owns the workload's proxy environment and routes traffic through its policy proxy.
-To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-supervisor-network/src/upstream_proxy.rs).
+To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-supervisor-network/src/upstream_proxy.rs).
 At this revision, chaining applies to TLS CONNECT traffic; plain HTTP still connects directly.
 An external gateway's operator sets the proxy.
 
@@ -200,7 +243,7 @@ spec:
 ```
 
 Use `openshell.drivers.podman` for a Podman gateway, and `openshell.drivers.kubernetes` for a Kubernetes or OpenShift gateway.
-OpenShell's configuration reference describes each setting for [Docker](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/configuration.mdx#L1410-L1423), [Podman](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/configuration.mdx#L1531-L1608) and [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/configuration.mdx#L1220-L1257).
+OpenShell's configuration reference describes each setting for [Docker](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#L1485-L1498), [Podman](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#L1606-L1683) and [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#L1292-L1329).
 NemoClaw passes them through unchecked; OpenShell validates them when the gateway starts.
 
 A Kubernetes or OpenShift gateway reads proxy credentials from a Secret in the deployment's namespace, whose key holds `user:pass`.

@@ -85,6 +85,28 @@ run "custom_header" {
   }
 }
 
+# One key for two hosts, in the variable the sandbox's tools read: one
+# profile binds each URL's host, port and path subtree to the same credential.
+run "one_key_for_two_endpoints" {
+  variables {
+    sandbox         = false
+    api_endpoints   = ["https://integrate.api.example.com/v1", "https://ai.api.example.com/v1"]
+    api_sandbox_env = "EXAMPLE_API_KEY"
+  }
+  assert {
+    condition     = local.openshell.profiles["nemoclaw-api-booking"].endpoints == ["integrate.api.example.com:443/v1/**", "ai.api.example.com:443/v1/**"]
+    error_message = "One API profile must bind every endpoint's host, port and path subtree."
+  }
+  assert {
+    condition     = local.openshell.profiles["nemoclaw-api-booking"].credentials[*].env_vars == [["EXAMPLE_API_KEY"]]
+    error_message = "The API profile must hold one key, in the variable the sandbox sees."
+  }
+  assert {
+    condition     = local.openshell.registration_credentials["booking"] == { EXAMPLE_API_KEY = "env:NEMOCLAW_TEST_BOOKING_KEY" }
+    error_message = "The API registration must hold the key under the chosen variable."
+  }
+}
+
 # Removing credentials needs no destroy mode once no sandbox attaches them.
 run "remove" {
   variables {

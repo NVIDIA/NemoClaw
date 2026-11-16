@@ -10,19 +10,18 @@ pub fn requirements_for_sandbox(
     document: &crate::config::Document,
     sandbox: crate::config::NamedSandbox<'_>,
 ) -> Result<FabricRequirements, crate::config::ConfigError> {
-    let filesystem_read = match &sandbox.network.policy {
-        crate::config::NetworkPolicy::Explicit(policy) => {
-            policy.filesystem_policy.as_ref().map(|fs| {
-                fs.read_only
-                    .iter()
-                    .flatten()
-                    .chain(fs.read_write.iter().flatten())
-                    .cloned()
-                    .collect()
-            })
-        }
-        _ => None,
-    };
+    let filesystem_read = document
+        .sandbox_network(sandbox)?
+        .explicit
+        .and_then(|policy| policy.filesystem_policy.as_ref())
+        .map(|fs| {
+            fs.read_only
+                .iter()
+                .flatten()
+                .chain(fs.read_write.iter().flatten())
+                .cloned()
+                .collect()
+        });
     Ok(FabricRequirements {
         configuration: crate::fabric_config::for_sandbox(document, sandbox)?,
         filesystem_read,

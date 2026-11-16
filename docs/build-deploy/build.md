@@ -3,7 +3,7 @@
 
 # Build Local Artifacts
 
-Build from the repository root with Rust 1.99.1, pinned in [rust-toolchain.toml](../../rust-toolchain.toml).
+Build from the repository root with Rust 1.100.0, pinned in [rust-toolchain.toml](../../rust-toolchain.toml).
 Native bundles also require Protocol Buffers compiler 36.2.
 Native builds also require a C toolchain for TLS dependencies.
 Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.2`; `cargo ci` finds it there.
@@ -75,7 +75,7 @@ Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image bui
 Direct Bake builds and checks use the host's platform unless the `AGENT_PLATFORM` environment variable selects the other one.
 Both platforms build every harness in the Bake file's `HARNESSES` map.
 Agent images share a Python 3.14.10 base without pip.
-Only OpenClaw, Hermes, and Pi add Node.js 24.22.2 LTS: OpenClaw's CLI and the Pi adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
+Only OpenClaw, Hermes, and Pi add Node.js 26.13.1 LTS: OpenClaw's CLI and the Pi adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages supply the pinned toolchains for image assembly; the host uses Rust to run the image builder and source downloader.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.

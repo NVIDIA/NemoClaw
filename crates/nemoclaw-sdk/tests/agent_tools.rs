@@ -7,25 +7,23 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 
 #[test]
-fn shell_restriction_changes_only_the_allow_list_and_restores_the_baseline_graph() {
+fn shell_restriction_changes_only_the_enabled_list_and_restores_the_baseline_graph() {
     // The adapter owns these names and file settings; the SDK must not interpret them.
     let shell = "fixture.shell-launch";
     let other_tools = json!(["fixture.file-read", "fixture.lookup"]);
     let mut baseline = input(2);
     let sandbox = &mut baseline["spec"]["sandboxes"]["sandbox-0"];
-    sandbox["agent"]["tools"] = json!({"allow":["fixture.file-read", shell, "fixture.lookup"]});
+    sandbox["agent"]["tools"] = json!({"enabled":["fixture.file-read", shell, "fixture.lookup"]});
     sandbox["harness"]["kind"] = json!("org.fixture.adapter");
     sandbox["harness"]["settings"] = json!({
         "files": {"instructions": "/sandbox/workspace/AGENTS.md"}
     });
-    sandbox["harness"]["config"] = json!({
-        "skills": {"paths": ["/sandbox/workspace/skills/probe"]},
-        "relay": {"plugins": {"dynamic": [{
-            "manifest": "/sandbox/workspace/plugins/probe/relay-plugin.toml",
-            "config": {"mode": "observe"}
-        }]}},
-        "runtime": {"keep_state": true, "max_turns": 7}
-    });
+    sandbox["agent"]["skills"] = json!({"paths": ["/sandbox/workspace/skills/probe"]});
+    sandbox["harness"]["relay"] = json!({"plugins": {"dynamic": [{
+        "manifest": "/sandbox/workspace/plugins/probe/relay-plugin.toml",
+        "config": {"mode": "observe"}
+    }]}});
+    sandbox["harness"]["runtime"] = json!({"keep_state": true, "max_turns": 7});
     sandbox["driverConfig"] = json!({"docker": {"mounts": [
         {"type": "volume", "source": "workspace", "target": "/sandbox/workspace", "read_only": false},
         {"type": "volume", "source": "artifacts", "target": "/sandbox/artifacts", "read_only": false}
@@ -47,7 +45,7 @@ fn shell_restriction_changes_only_the_allow_list_and_restores_the_baseline_graph
     };
     let (baseline_settings, baseline_graph) = compile_input(&baseline);
     let mut restricted = baseline.clone();
-    restricted["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"]["allow"] = other_tools.clone();
+    restricted["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"]["enabled"] = other_tools.clone();
     let (restricted_settings, restricted_graph) = compile_input(&restricted);
     assert_eq!(
         restricted_settings["tools"]["enabled"], other_tools,
@@ -105,7 +103,7 @@ fn input(count: usize) -> Value {
                 let mut sandbox = primary.clone();
                 sandbox["agent"]["name"] = json!(format!("agent-{n}"));
                 if n != 0 {
-                    sandbox["agent"]["tools"] = json!({"allow":["read"]});
+                    sandbox["agent"]["tools"] = json!({"enabled":["read"]});
                 }
                 (format!("sandbox-{n}"), sandbox)
             })
@@ -139,7 +137,7 @@ fn separate_sandboxes_preserve_each_agents_restrictions_in_launch_and_yaml() {
         }
     }
     let mut v = input(1);
-    v["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] = json!({"allow":["read"]});
+    v["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] = json!({"enabled":["read"]});
     assert!(parse(&v).is_ok());
     assert!(schema.is_valid(&v));
 }
@@ -148,13 +146,7 @@ fn invalid_sandboxes_and_permissions_fail_before_planning() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     assert!(parse(&input(0)).is_err());
     assert!(!schema.is_valid(&input(0)));
-    for tools in [
-        json!({}),
-        json!({"allow":[]}),
-        json!({"allow":["read","read"]}),
-        json!({"allow":["read"],"alsoAllow":["exec"]}),
-        json!(null),
-    ] {
+    for tools in [json!(["read"]), json!("read"), json!(null)] {
         let mut v = input(3);
         v["spec"]["sandboxes"]["sandbox-1"]["agent"]["tools"] = tools;
         assert!(parse(&v).is_err());
@@ -187,8 +179,6 @@ fn disclosure_belongs_to_opaque_native_settings() {
         .unwrap();
         assert_eq!(config["harness"]["settings"]["disclosure"], *mode);
     }
-    value["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] = json!({"disclosure":"direct"});
-    assert!(parse(&value).is_err());
 }
 
 #[test]
@@ -197,7 +187,7 @@ fn tool_choices_are_preserved_independently_of_harness_identity() {
     for harness in ["deepagents", "pi"] {
         let mut value = input(1);
         value["spec"]["sandboxes"]["sandbox-0"]["harness"]["kind"] = json!(harness);
-        value["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] = json!({"allow":["read"]});
+        value["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] = json!({"enabled":["read"]});
         let document = parse(&value).expect("native read tool policy");
         assert!(schema.is_valid(&value));
         let generations = ["workspace", "provider", "sandbox"]
@@ -209,13 +199,6 @@ fn tool_choices_are_preserved_independently_of_harness_identity() {
         )
         .unwrap();
         assert_eq!(settings["tools"], json!({"enabled":["read"]}));
-        for disclosure in ["direct", "progressive"] {
-            value["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] =
-                json!({"disclosure":disclosure});
-            assert!(parse(&value).is_err());
-            // Native disclosure belongs to harness.settings.
-            assert!(!schema.is_valid(&value));
-        }
     }
 }
 

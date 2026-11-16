@@ -56,16 +56,3 @@ pub struct AgentAuth {
     /// API-key authentication. Interactive login is not supported.
     pub method: AuthMethod,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-/// Explicit native tool identifiers forwarded to Fabric.
-pub struct AgentTools {
-    /// Native tool identifiers. Fabric validates availability and semantics.
-    #[schemars(length(min = 1, max = 128))]
-    pub allow: Vec<String>,
-}
-impl AgentTools {
-    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        super::schema::validate_definition("AgentTools", self)
-    }
-}

@@ -28,9 +28,6 @@ spec:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: nvidia.fabric.hermes
-        config:
-          skills:
-            paths: [/sandbox/skills]
       network:
         tier: isolated
       driverConfig:
@@ -46,6 +43,10 @@ spec:
               read_only: false
       agent:
         name: hermes
+        skills:
+          directories:
+            - folder: /sandbox/skills
+          duplicates: reject
         inference:
           routes:
             - name: primary

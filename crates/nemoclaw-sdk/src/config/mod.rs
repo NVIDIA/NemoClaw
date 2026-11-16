@@ -6,7 +6,6 @@ pub(crate) mod constraints;
 #[doc(hidden)]
 pub use nemoclaw_openshell::credential_metadata;
 mod engine_endpoint;
-mod execution;
 pub use constraints::{GATEWAY_ENGINE, GPU_DEVICE};
 pub use engine_endpoint::validate_engine_endpoint;
 mod integrations;
@@ -20,7 +19,6 @@ mod source;
 mod yaml_source;
 pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
-pub use execution::*;
 mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
 pub use nemoclaw_openshell::policy::policy_json;

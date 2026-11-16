@@ -5,7 +5,7 @@
 
 Use an inline definition for one consumer, or a named definition with references to share it.
 Both forms use the same configuration type, defaults, and validation.
-A shared inference, provider, harness, or integration definition becomes active only when a consumer selects it.
+A shared inference, provider, harness, integration, policy, or grant definition becomes active only when a consumer selects it.
 Managed services have a separate rule: every entry in `spec.services` is installed and checked, even without a consumer.
 
 The authoring library and its [example TUI](../../crates/nemoclaw-onboarding/README.md) can generate a validated starter document without resolving credentials, planning, or applying.
@@ -27,7 +27,7 @@ Equal settings do not make two definitions the same object: reuse requires refer
 There is no implicit attachment, override precedence, or merging.
 YAML anchors, aliases, and merge keys are disabled.
 
-Unused enclosing inference, provider, harness, and integration definitions are retained and validated, but create no runtime resources, access grants, or credential-resolution requirements.
+Unused enclosing inference, provider, harness, integration, policy, and grant definitions are retained and validated, but create no runtime resources, access grants, or credential-resolution requirements.
 Selecting an object does not bypass that object's harness, service, credential, or runtime constraints.
 Export preserves the declaration scope and inline/reference form, alongside defaults and supported observed updates.
 Moving a definition does not authorize replacing an existing resource; normal identity and lifecycle checks still apply.
@@ -42,8 +42,11 @@ Paths below are relative to `spec`; `agent` is inside `sandboxes.<sandbox>` and 
 | Inference | `inferences.<name>` or `sandboxes.<sandbox>.inferences.<name>` | Agent `inference` or `inferenceRef` | An explicit default selects a Fabric model role; Fabric validates the adapter's supported roles |
 | Harness | `harnesses.<name>` or `sandboxes.<sandbox>.harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration and one agent per sandbox |
 | Integration | `integrations.<name>` or `sandboxes.<sandbox>.integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Brave or Tavily `webSearch` credentials and grants; one attached search definition per sandbox |
+| Policy | `policies.<name>` | Network `policy.explicit` or `policyRef` | At most one of `tier`, `policy`, and `policyRef` per network; see [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants) |
+| Grant | `grants.<name>` | Network `grants.<name>` and/or `grantRefs` | Added to the isolated preset only; names are unique across `grants` and `grantRefs` |
 
-Sandboxes, inference providers, inferences, harnesses, and integrations are maps keyed by name.
+Sandboxes, inference providers, inferences, harnesses, integrations, policies, and grants are maps keyed by name.
+Policies and grants are defined only at the deployment level: only the sandbox's own network selects them, so a sandbox-level definition would add nothing over writing it in place.
 An inline provider has no key, so it requires `name`.
 Deployment-level provider names identify their OpenShell registrations; sandbox-local providers receive stable identities derived from the sandbox and provider names.
 Different sandboxes can reuse a local definition name without sharing its registration.
@@ -63,8 +66,8 @@ spec:
   harnesses:
     assistant:
       kind: nvidia.fabric.openclaw
-      execution:
-        timeoutSeconds: 900
+      runtime:
+        timeout_seconds: 900
       settings:
         startup_timeout_seconds: 60
   sandboxes:
@@ -83,7 +86,7 @@ spec:
 This fragment assumes a `chat` inference definition and omits other required deployment fields.
 Put `harnesses` under the sandbox to keep the definitions local to that sandbox.
 Use `harness: {kind: nvidia.fabric.openclaw}` for an inline configuration without additional settings.
-Generic execution timeouts belong in `execution`; native observability and interfaces belong in Fabric-owned `settings` or public `config`.
+Native observability and interfaces belong in the harness's `settings`; [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness) says which Fabric sections the harness holds and which each agent keeps for itself.
 Each sandbox requires exactly one of `harness` or `harnessRef`; agents cannot select a harness.
 Each sandbox’s agent uses the selected implementation in its own Fabric runtime.
 Sharing a definition reuses configuration; each sandbox owns its runtime process.
@@ -168,7 +171,7 @@ For integration examples, see [define and attach integrations](../agents-inferen
 
 ## Combine Supported Features
 
-The [full-featured OpenClaw example](../../examples/full-featured-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents in separate sandboxes, execution settings, tool restrictions, and explicit network policy.
+The [full-featured OpenClaw example](../../examples/full-featured-openclaw.yaml) combines a managed gateway, remote authenticated vLLM, explicit ownership and GPU requirements, three agents in separate sandboxes that share one harness definition and one explicit network policy, a runtime timeout, and tool restrictions.
 All three agents select the same provider and inference settings.
 It passes the SDK parser and JSON Schema checks, but this combined deployment has not been qualified against live services.
 Replace the image placeholders, deployment UID, SSH alias, addresses, and model settings for your hosts before use.
@@ -194,7 +197,7 @@ Unselected definitions do not exercise another provider's runtime.
 
 An image `ref` selects an external immutable artifact, and `credential.env` selects a caller-supplied environment variable.
 These are not references to application definitions in this document, and inline credential values remain forbidden.
-Model, recipe, policy, and gateway settings remain nested configuration.
+Model, recipe, and gateway settings remain nested configuration.
 Managed services are named definitions under `spec.services`; providers select them with `serviceRef` instead of `endpoint` and `credential`.
 Services have no inline provider form or sandbox-local scope, and every declared service participates in apply and destroy.
 Use [service configuration](../agents-inference/inference.md#choose-a-service-mode) for the available installers and lifecycle limits.

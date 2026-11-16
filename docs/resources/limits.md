@@ -71,6 +71,7 @@ Select the adapter and image together, then verify its integrations and native r
 | OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
 | Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| OpenShell refuses new connections to an address its policy DNS answered once the answer's TTL has passed, so a client that reconnects to the address it kept fails, as OpenClaw's Node.js does. For an OpenClaw agent, the model request fails and its runtime stops; the next apply starts a new runtime without the conversation | [NVIDIA/OpenShell#4674](https://github.com/NVIDIA/OpenShell/issues/4674) |
 
 ## Access and Diagnostics
 
@@ -102,10 +103,10 @@ Sandbox policy and credential routing depend on OpenShell and the host's control
 | Limit | Issue |
 |---|---|
 | Host-specific security qualification | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| An inference endpoint whose certificate comes from a CA that OpenShell's supervisor image doesn't trust; OpenShell's provider registrations take no CA ([custom CA trust](../agents-inference/inference.md#trust-a-custom-certificate-authority)) | [#13834](https://github.com/NVIDIA/NemoClaw/issues/13834), [NVIDIA/OpenShell#3295](https://github.com/NVIDIA/OpenShell/issues/3295) |
-| A corporate CA for OpenShell's gateway and sandbox egress, managed model downloads, and image builds | [Corporate CA](../security/security.md#trust-a-corporate-certificate-authority) |
+| A private CA for sandbox egress on a managed gateway, such as an inference endpoint's CA ([custom CA trust](../agents-inference/inference.md#trust-a-custom-certificate-authority)): OpenShell trusts the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas). Docker and Podman read the bundle from a file on the gateway, which NemoClaw doesn't mount, and the chart mounts it only from its `supervisor.network.additionalCaConfigMapName` value, which NemoClaw doesn't set. Don't set `additional_ca_bundle` in `spec.gateway.config`: the path names no file on the gateway, and OpenShell doesn't start a gateway whose bundle is missing | [#14486](https://github.com/NVIDIA/NemoClaw/issues/14486) |
+| A corporate CA for OpenShell's gateway, managed model downloads, and image builds | [Corporate CA](../security/security.md#trust-a-corporate-certificate-authority) |
 | [Proxy](../security/sandbox-network.md#use-an-upstream-proxy) credentials for a managed Docker or Podman gateway: OpenShell reads them only from a file on the gateway (`proxy_auth_file`), which NemoClaw doesn't mount | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
-| A proxy CA (`proxy_ca_bundle`) for any managed gateway: Docker and Podman read it from a file on the gateway, and the chart mounts it only from its `upstreamProxy.caBundle.configMapName` value, which NemoClaw doesn't set | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
+| A proxy CA (`proxy_ca_bundle`) for any managed gateway: Docker and Podman read it from a file on the gateway, and the chart mounts it only from its `upstreamProxy.caBundle.configMapName` value, which NemoClaw doesn't set | [#14486](https://github.com/NVIDIA/NemoClaw/issues/14486) |
 | OAuth-refresh credentials have no NemoClaw YAML wrapper; use [operator-managed OpenShell providers](../agents-inference/oauth-refresh.md), with separate sandbox attachments | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
 | Interactive network-request approval and explaining policy to an agent; OpenShell's policy advisor owns both | Not planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)) |
 | Named policy presets; named [`grants`](../security/sandbox-network.md#choose-a-policy) extend the isolated preset instead | Not planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)) |

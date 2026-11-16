@@ -31,7 +31,7 @@ cargo ci --full
 ```
 
 The command needs the pinned Rust toolchain and a C linker.
-It downloads Protocol Buffers compiler 36.2 and cargo-nextest 0.9.151 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
+It downloads Protocol Buffers compiler 36.2 and cargo-nextest 0.9.152 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
 It then runs formatting, Clippy, the unit tests and doctests, the schema check, a bundle build, and the contract and integration tests, stopping at the first failure.
 To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.2/bin/protoc` after `cargo ci tools`, or to another protoc 36.2.
 
@@ -123,7 +123,6 @@ Integration tests live in `nemoclaw-e2e`'s `integration` binary, `crates/nemocla
 Its `hcl/` directory holds the `tofu test` scenarios, which the `hcl_integration` module in `tofu_test/` runs: shared NemoClaw documents, unchanged examples, and authored HCL examples.
 Its `rust/` directory holds the `container_service`, `deployment`, `export_observations`, `fabric_deployment`, `multi_agent`, `remote_service`, and `helm_recovery` modules, which keep the SDK and CLI behavior that `tofu test` cannot observe. [Run integration tests](integration-tests.md#integration-tests) says which a check belongs in.
 On Unix, `helm_recovery` runs the bundle's OpenTofu and Helm provider against an in-memory Kubernetes API.
-The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `nemoclaw-fixture-provider`, so that `cargo ci archive` packages their fixture executables with the tests.
 [Run integration tests](integration-tests.md#integration-tests) describes the scenarios.
 
 ### Live
@@ -150,7 +149,9 @@ The default steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bund
 `cargo ci test` runs the tests not marked `#[ignore]` with the `ci` nextest profile, then the doctests, which nextest does not run.
 The `ci` profile runs at most eight tests concurrently, retries nothing, and finishes the remaining tests after a failure.
 
-The contract, integration, and live tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle.
+The contract, integration, and live tests read `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle.
+A test that starts a fixture executable from `nemoclaw-test-fixtures` or `nemoclaw-fixture-provider`, such as the fake `ssh` relay or the fixture provider, reads `NEMOCLAW_TEST_FIXTURES`, the absolute path of the directory that holds them.
+Run from the checkout, `cargo ci test`, `contract`, and `integration` first build every workspace target and set `NEMOCLAW_TEST_FIXTURES` to `target/debug`, where Cargo puts a build's executables.
 `cargo ci bundle` builds the host platform's bundle in `dist/PLATFORM`, such as `dist/linux_arm64`, and `cargo ci contract` and `cargo ci integration` pass that path to their profiles.
 Local contract and integration runs use the available CPU count, with a minimum of four workers and a maximum of eight.
 CI keeps the profile's four-worker setting; the runner treats `CI` or `GITHUB_ACTIONS` being set as CI.
@@ -344,10 +345,11 @@ Adding or removing a test moves later tests to other partitions.
 
 `cargo ci archive` writes the files that let other runners run the tests without compiling, one nextest archive per test layer so each job downloads only the tests it runs:
 
-- `.build/ci/contract.tar.zst`, the test binaries that the `contract` profile selects, and those that the `fixtures` profile selects, so that it also holds the fixture executables the contract tests start;
+- `.build/ci/contract.tar.zst`, the test binaries that the `contract` profile selects;
 - `.build/ci/integration.tar.zst`, the test binaries that the `integration` profile selects;
 - `.build/ci/live.tar.zst`, on Linux only, the test binaries that the `live-docker` and `live-kind` profiles select;
-- `.build/ci/lifecycle-inputs.tar`, which keeps the executable permissions of the pinned tools, the `nemoclaw-build` executable, and the fake `ssh` relay.
+- `.build/ci/e2e`, on Linux only, a copy of `nemoclaw-e2e`'s `e2e` test executable from that archive, at the path nextest lists for it, which the hosted and GPU HCL case jobs run alone;
+- `.build/ci/lifecycle-inputs.tar`, which keeps the executable permissions of the pinned tools, the `nemoclaw-build` executable, and the fixture executables, which it unpacks into `target/debug`, where `NEMOCLAW_TEST_FIXTURES` points.
 
 Each archive also holds the executables that its test binaries' packages build.
 The build job uploads each file as its own artifact, and the bundle job uploads `dist/PLATFORM` separately.
@@ -471,8 +473,8 @@ Checks produce build cache entries and no tagged runtime images.
 For a faster Python source edit loop with host uv:
 
 ```sh
-uv tool run --from ruff==0.16.7 ruff check .
-uv tool run --from ruff==0.16.7 ruff format --check .
+uv tool run --from ruff==0.17.5 ruff check .
+uv tool run --from ruff==0.17.5 ruff format --check .
 ```
 
 Use `ruff format .` through the same pinned uv invocation to apply formatting.
@@ -554,7 +556,7 @@ Dependency caches are keyed by platform and the Rust toolchain, manifests, lockf
 The native build-and-test job and `E2E build images` share each platform's dependency cache instead of adding their job names to its key.
 Only the native build-and-test job writes that shared cache; `E2E build images` restores it without uploading a duplicate copy, and the bundle job writes its own.
 The live suites' Docker, Kind, and HCL jobs compile nothing, so they restore no Rust cache.
-Documentation restores a bundle cache without saving one, but it names `native-bundle-v3`, which nothing writes since the bundle job moved to `native-bundle-v4` ([#14414](https://github.com/NVIDIA/NemoClaw/issues/14414)); Live / Brev and Live / HCL's `Build` job keep their own prefixes.
+Documentation restores the bundle job's cache without saving one; Live / Brev and Live / HCL's `Build` job keep their own prefixes.
 The shared key causes a one-time cold build when first enabled; old job-specific entries can expire normally.
 
 `E2E build images` keeps BuildKit's layers for the live images in the same cache, through `cargo images build --gha-cache`: about 1.8 GB per Linux platform, mostly the OpenClaw application, the Rust toolchain, and the Fabric runtime's Rust build.

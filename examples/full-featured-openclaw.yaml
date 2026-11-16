@@ -16,8 +16,8 @@ spec:
   harnesses:
     assistant:
       kind: nvidia.fabric.openclaw
-      execution:
-        timeoutSeconds: 900
+      runtime:
+        timeout_seconds: 900
   gateway:
     management: managed
     runtime:
@@ -67,6 +67,34 @@ spec:
       provider: openai
       api: openai-completions
       serviceRef: nemotron
+  # Every sandbox selects this policy; it replaces the isolated preset.
+  policies:
+    documentation-only:
+      version: 1
+      filesystem_policy:
+        include_workdir: false
+        read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt,
+              /proc]
+        read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
+      landlock:
+        compatibility: best_effort
+      process:
+        run_as_user: "10001"
+        run_as_group: "10001"
+      network_policies:
+        documentation:
+          name: documentation
+          endpoints:
+            - host: docs.example.com
+              port: 443
+              protocol: rest
+              enforcement: enforce
+              rules:
+                - allow:
+                    method: GET
+                    path: /docs/**
+          binaries:
+            - path: /usr/local/bin/node
   sandboxes:
     researcher:
       image:
@@ -74,34 +102,7 @@ spec:
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        # Explicit policy replaces the tier preset.
-        policy:
-          explicit:
-            version: 1
-            filesystem_policy:
-              include_workdir: false
-              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt,
-                    /proc]
-              read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
-            landlock:
-              compatibility: best_effort
-            process:
-              run_as_user: "10001"
-              run_as_group: "10001"
-            network_policies:
-              documentation:
-                name: documentation
-                endpoints:
-                  - host: docs.example.com
-                    port: 443
-                    protocol: rest
-                    enforcement: enforce
-                    rules:
-                      - allow:
-                          method: GET
-                          path: /docs/**
-                binaries:
-                  - path: /usr/local/bin/node
+        policyRef: documentation-only
       harnessRef: assistant
       agent:
         name: researcher
@@ -118,34 +119,7 @@ spec:
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        # Explicit policy replaces the tier preset.
-        policy:
-          explicit:
-            version: 1
-            filesystem_policy:
-              include_workdir: false
-              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt,
-                    /proc]
-              read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
-            landlock:
-              compatibility: best_effort
-            process:
-              run_as_user: "10001"
-              run_as_group: "10001"
-            network_policies:
-              documentation:
-                name: documentation
-                endpoints:
-                  - host: docs.example.com
-                    port: 443
-                    protocol: rest
-                    enforcement: enforce
-                    rules:
-                      - allow:
-                          method: GET
-                          path: /docs/**
-                binaries:
-                  - path: /usr/local/bin/node
+        policyRef: documentation-only
       harnessRef: assistant
       agent:
         name: writer
@@ -162,39 +136,12 @@ spec:
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        # Explicit policy replaces the tier preset.
-        policy:
-          explicit:
-            version: 1
-            filesystem_policy:
-              include_workdir: false
-              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt,
-                    /proc]
-              read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
-            landlock:
-              compatibility: best_effort
-            process:
-              run_as_user: "10001"
-              run_as_group: "10001"
-            network_policies:
-              documentation:
-                name: documentation
-                endpoints:
-                  - host: docs.example.com
-                    port: 443
-                    protocol: rest
-                    enforcement: enforce
-                    rules:
-                      - allow:
-                          method: GET
-                          path: /docs/**
-                binaries:
-                  - path: /usr/local/bin/node
+        policyRef: documentation-only
       harnessRef: assistant
       agent:
         name: reader
         tools:
-          allow: [read]
+          enabled: [read]
         inference:
           routes:
             - name: primary

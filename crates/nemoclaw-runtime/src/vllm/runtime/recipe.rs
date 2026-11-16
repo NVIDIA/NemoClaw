@@ -10,6 +10,26 @@ pub(crate) struct PreparedModel {
     pub model: PathBuf,
     pub environment: std::collections::BTreeMap<String, std::ffi::OsString>,
 }
+/// The environment every vLLM process starts with: offline model access, and
+/// Hugging Face's and vLLM's caches on the retained model volume at /data.
+/// A recipe's serving environment is applied over it.
+pub(crate) fn serving_environment() -> std::collections::BTreeMap<String, std::ffi::OsString> {
+    [
+        ("HF_HUB_OFFLINE", "1"),
+        ("TRANSFORMERS_OFFLINE", "1"),
+        ("HF_HOME", "/data/huggingface"),
+        ("VLLM_CACHE_ROOT", "/data/vllm-cache"),
+        // vLLM keeps a single-GPU FlashInfer autotune cache in FlashInfer's
+        // default root under $HOME, not VLLM_CACHE_ROOT, unless this is set.
+        (
+            "VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR",
+            "/data/vllm-cache/flashinfer-autotune",
+        ),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v.into()))
+    .collect()
+}
 pub(crate) async fn prepare(
     service: &crate::vllm::Service,
     root: &Path,
@@ -51,15 +71,7 @@ pub(crate) async fn prepare(
         .map_err(|_| Error::State("model download exceeded budget; partial data retained"))??;
         snapshot::record(&model, &manifest)?;
     }
-    let mut environment: std::collections::BTreeMap<String, std::ffi::OsString> = [
-        ("HF_HUB_OFFLINE", "1"),
-        ("TRANSFORMERS_OFFLINE", "1"),
-        ("HF_HOME", "/data/huggingface"),
-        ("VLLM_CACHE_ROOT", "/data/vllm-cache"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_owned(), v.into()))
-    .collect();
+    let mut environment = serving_environment();
     if let Some(recipe) = &service.recipe {
         report(
             "preparing",

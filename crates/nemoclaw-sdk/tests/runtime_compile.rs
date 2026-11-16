@@ -8,7 +8,6 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-const CPU_LABEL: &str = "nemoclaw.nvidia.com/cpu-limit-millis";
 const MEMORY_LABEL: &str = "nemoclaw.nvidia.com/memory-limit-gib";
 
 fn label<'a>(container: &'a Value, name: &str) -> Option<&'a str> {
@@ -53,14 +52,12 @@ fn docker_model_limits_reach_opentofu_and_native_container_configuration() {
         let generations = ["managed_gateway", "inference_service", "ollama_service"]
             .map(|kind| (kind.into(), "b".repeat(32)))
             .into();
-        // Kubernetes and `docker --cpus` use a 100 ms CFS period. The kernel
-        // rejects quotas below 1 ms, so limits below 10 millicores use 1 ms as
-        // kubelet does.
-        for (cpu, quota, memory_gib) in [
-            (1250, 125_000, 64),
-            (2000, 200_000, 128),
-            (10, 1000, 48),
-            (1, 1000, 32),
+        // Millicores become the decimal CPU count that `docker --cpus` takes.
+        for (cpu, cpus, memory_gib) in [
+            (1250, "1.25", 64),
+            (2000, "2", 128),
+            (10, "0.01", 48),
+            (1, "0.001", 32),
         ] {
             let mut value = serde_json::to_value(&baseline).unwrap();
             for service in value["spec"]["services"]
@@ -81,12 +78,9 @@ fn docker_model_limits_reach_opentofu_and_native_container_configuration() {
             {
                 let (_, name) = target.address.split_once('.').unwrap();
                 let container = &graph["resource"]["docker_container"][name];
-                assert_eq!(container["cpu_period"], 100_000, "{}", target.kind);
-                assert_eq!(container["cpu_quota"], quota);
-                assert!(container.get("cpus").is_none());
-                // The pinned provider updates memory in place and omits CFS quota
-                // from updates, so both limits force replacement through labels.
-                assert_eq!(label(container, CPU_LABEL), Some(cpu.to_string().as_str()));
+                assert_eq!(container["cpus"], cpus, "{}", target.kind);
+                // The pinned provider updates memory in place, so a memory limit
+                // forces replacement through a label.
                 assert_eq!(
                     label(container, MEMORY_LABEL),
                     Some(memory_gib.to_string().as_str())
@@ -96,9 +90,7 @@ fn docker_model_limits_reach_opentofu_and_native_container_configuration() {
                 let spec: nemoclaw_sdk::managed::Spec =
                     serde_json::from_str(&target.values["spec"]).unwrap();
                 let host = spec.container("/data").unwrap().host_config.unwrap();
-                assert_eq!(host.cpu_period, Some(100_000));
-                assert_eq!(host.cpu_quota, Some(quota));
-                assert!(host.nano_cpus.is_none());
+                assert_eq!(host.nano_cpus, Some(i64::from(cpu) * 1_000_000));
                 assert_eq!(host.memory, Some(memory_gib * gib));
                 assert_eq!(host.memory_swap, host.memory);
             }
@@ -164,7 +156,7 @@ fn a_named_gpu_reaches_opentofu_and_the_native_device_request() {
 }
 
 #[test]
-fn omitted_docker_model_limits_keep_independent_legacy_defaults() {
+fn omitted_docker_model_limits_use_independent_defaults() {
     for input in [
         include_str!("fixtures/config/spark.yaml"),
         include_str!("fixtures/config/managed-ollama.yaml"),
@@ -208,22 +200,16 @@ fn omitted_docker_model_limits_keep_independent_legacy_defaults() {
             let container = &graph["resource"]["docker_container"][name];
             assert_eq!(container["memory"], memory_gib * 1024);
             assert_eq!(container["memory_swap"], container["memory"]);
-            // Only a limit other than the 104 GiB default adds the replacement
-            // label, so containers created before memory limits stay unchanged.
-            if memory_gib == 104 {
-                assert_eq!(label(container, MEMORY_LABEL), None);
-                match &limits {
-                    None => omitted = Some(graph.clone()),
-                    Some(limits) if limits.get("memoryLimitGiB").is_some() => {
-                        assert_eq!(Some(&graph), omitted.as_ref());
-                    }
-                    Some(_) => {}
+            assert_eq!(
+                label(container, MEMORY_LABEL),
+                Some(memory_gib.to_string().as_str())
+            );
+            match &limits {
+                None => omitted = Some(graph.clone()),
+                Some(limits) if limits.get("memoryLimitGiB") == Some(&json!(104)) => {
+                    assert_eq!(Some(&graph), omitted.as_ref());
                 }
-            } else {
-                assert_eq!(
-                    label(container, MEMORY_LABEL),
-                    Some(memory_gib.to_string().as_str())
-                );
+                Some(_) => {}
             }
             let spec: nemoclaw_sdk::managed::Spec =
                 serde_json::from_str(&target.values["spec"]).unwrap();
@@ -233,13 +219,8 @@ fn omitted_docker_model_limits_keep_independent_legacy_defaults() {
             assert_eq!(host.memory, Some(memory_gib * (1_i64 << 30)));
             assert_eq!(host.memory_swap, host.memory);
             if cpu.is_none() {
-                assert!(container.get("cpu_period").is_none());
-                assert!(container.get("cpu_quota").is_none());
                 assert!(container.get("cpus").is_none());
-                assert!(host.cpu_period.is_none());
-                assert!(host.cpu_quota.is_none());
                 assert!(host.nano_cpus.is_none());
-                assert_eq!(label(container, CPU_LABEL), None);
                 assert!(
                     serde_json::to_value(process)
                         .unwrap()
@@ -453,7 +434,8 @@ fn caller_volumes_remain_external_through_changes_restore_and_recreation() {
     let mut value = serde_json::to_value(baseline).unwrap();
     value["spec"]["sandboxes"]["assistant"]["driverConfig"] = mounts.clone();
     let baseline = Document::parse(value.to_string().as_bytes()).unwrap();
-    value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = json!({"allow": ["fixture-shell"]});
+    value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] =
+        json!({"enabled": ["fixture-shell"]});
     let changed = Document::parse(value.to_string().as_bytes()).unwrap();
 
     for (phase, document, generation) in [
@@ -814,6 +796,59 @@ fn portable_container_memory_limits_cover_shared_memory_and_recipe_preparation_o
             );
             input["spec"]["services"]["qwen"]["container"]["memoryLimitGiB"] = json!(20);
             Document::parse(input.to_string().as_bytes()).unwrap();
+        }
+    }
+}
+
+#[test]
+fn recipe_preparation_must_fit_the_effective_docker_container_memory_limit() {
+    let baseline: Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/inline-recipe.yaml")).unwrap();
+    // Container settings, preparation GiB, and the limit a refusal names.
+    for (container, preparation, refused_limit) in [
+        (None, 104, None),
+        (None, 128, Some(104)),
+        (Some(json!({"cpuLimitMillis": 2000})), 104, None),
+        (Some(json!({"cpuLimitMillis": 2000})), 128, Some(104)),
+        (Some(json!({"memoryLimitGiB": 128})), 128, None),
+        (Some(json!({"memoryLimitGiB": 127})), 128, Some(127)),
+        // Host IPC exempts the host's shared memory, not preparation.
+        (
+            Some(json!({"memoryLimitGiB": 4, "sharedMemoryGiB": 8, "ipc": "host"})),
+            4,
+            None,
+        ),
+        (
+            Some(json!({"memoryLimitGiB": 4, "sharedMemoryGiB": 8, "ipc": "host"})),
+            5,
+            Some(4),
+        ),
+    ] {
+        let mut input = baseline.clone();
+        let service = &mut input["spec"]["services"]["qwen"];
+        service.as_object_mut().unwrap().remove("container");
+        if let Some(container) = &container {
+            service["container"] = container.clone();
+        }
+        service["recipe"]["resources"]["preparationMemoryGiB"] = json!(preparation);
+        let result = Document::parse(input.to_string().as_bytes());
+        match refused_limit {
+            None => {
+                result.unwrap_or_else(|error| {
+                    panic!("{container:?} must cover {preparation} GiB: {error}")
+                });
+            }
+            Some(limit) => {
+                let Err(error) = result else {
+                    panic!("{container:?} must refuse {preparation} GiB");
+                };
+                assert!(
+                    error.to_string().contains(&format!(
+                        "container.memoryLimitGiB must cover recipe preparationMemoryGiB; the container limit is {limit} GiB"
+                    )),
+                    "{container:?}: {error}"
+                );
+            }
         }
     }
 }
