@@ -34,6 +34,8 @@ Agents and interfaces:
 - OpenClaw stops where the sandbox denies process-group signals.
 - An explicit sandbox policy accepts `network_middlewares`.
   See [network middleware](../security/sandbox-network.md#attach-network-middleware).
+- A network grant's `binaries`, in a document's `grants` or an HCL `managed` block, are kept as written instead of being replaced with the harness's executables.
+  OpenShell matches a process by its executable's real path, so name the executable itself rather than a symlink to it, such as `/usr/local/bin/python3.14` rather than `/usr/local/bin/python3`; see OpenShell's [binary matching](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/policies/network-rules.mdx#binary-matching).
 
 Inference and models:
 
