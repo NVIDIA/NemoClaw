@@ -26,6 +26,7 @@ import {
   gatewayUpgradeRecoverySucceeded,
   gatewayUpgradeAgentResponseIsSuccessful,
   gatewayUpgradeInstallerCommand,
+  gatewayUpgradeMarkerWriteCommand,
   prepareGatewayUpgradeUserManager,
   prepareGatewayUpgradeInstallPaths,
   gatewayUpgradeInstallEnv,
@@ -353,6 +354,27 @@ describe("OpenShell gateway upgrade boundary", () => {
       ).toBe(expected);
     },
   );
+
+  it("writes marker bytes that the restored workspace check accepts (#14268)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upgrade-marker-"));
+    const markerPath = path.join(root, "workspace with spaces", "marker");
+    const marker = "gateway-upgrade-marker-'literal'-$HOME";
+    try {
+      const result = spawnSync(
+        "bash",
+        ["-c", gatewayUpgradeMarkerWriteCommand(markerPath, marker)],
+        {
+          encoding: "utf8",
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(markerPath, "utf8")).toBe(`${marker}\n`);
+      const restored = spawnSync("grep", ["-Fx", "--", marker, markerPath], { encoding: "utf8" });
+      expect(restored.status, restored.stderr).toBe(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("fails credential custody when managed-file inspection errors", () => {
     const temporaryDirectory = fs.mkdtempSync(

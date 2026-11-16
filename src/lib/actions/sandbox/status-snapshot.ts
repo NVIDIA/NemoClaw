@@ -453,9 +453,7 @@ async function refreshPreflightAfterDockerRecovery(
 
 function reportInferenceProbeError(error: unknown, writer: (message: string) => void): void {
   const detail = sanitizedStatusDetail(error);
-  writer(
-    `  Warning: the authoritative inference.local probe could not run: ${detail || "unknown error"}`,
-  );
+  writer(`  Warning: the sandbox inference probe could not run: ${detail || "unknown error"}`);
 }
 
 function reportInferenceProbeRetry(

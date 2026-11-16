@@ -77,8 +77,10 @@ import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
 import {
+  DCODE_QUICKJS_DIAGNOSTIC,
   inspectExtractedDcodeSessionsDatabase,
   inspectExtractedOpenClawDatabase,
+  normalizeDcodeSessionDiagnostic,
 } from "./snapshot/sqlite-credential-scan.js";
 import { withoutOpenClawSqliteMachineAuthority } from "./snapshot/openclaw-sqlite-sanitizer.js";
 import { nemoclawStateRoot } from "./state-root.js";
@@ -1739,6 +1741,7 @@ function scanNativeTarFilePayload(
   hermesManagedConfig: boolean,
   privateKeyHeader: boolean,
   dependencyBinary: boolean,
+  dcodeSidecar: boolean,
   deadlineMs: number | undefined,
 ): boolean | null | "deadline" {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
@@ -1753,7 +1756,17 @@ function scanNativeTarFilePayload(
     if (dependencyBinary && offset === position && chunk.subarray(0, count).includes(0)) {
       return false;
     }
-    const raw = overlap + chunk.subarray(0, count).toString("utf8");
+    let raw = overlap + chunk.subarray(0, count).toString("utf8");
+    if (dcodeSidecar) raw = normalizeDcodeSessionDiagnostic(raw);
+    // Carry normalized diagnostics so an overlap cannot retain only their token assignment.
+    overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
+    if (dcodeSidecar && remaining > count) {
+      const diagnosticStart = raw.lastIndexOf("\0");
+      if (diagnosticStart >= 0 && DCODE_QUICKJS_DIAGNOSTIC.startsWith(raw.slice(diagnosticStart))) {
+        // The next chunk completes this possible diagnostic. At EOF, scan incomplete bytes normally.
+        raw = raw.slice(0, diagnosticStart);
+      }
+    }
     if (npmConfig && npmConfigContainsCredentialDirective(raw)) return true;
     // Provider profiles describe whether injected material is secret with a
     // boolean schema field. Mask only that declaration; an opaque string in
@@ -1780,7 +1793,6 @@ function scanNativeTarFilePayload(
     ) {
       return true;
     }
-    overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
     offset += count;
     remaining -= count;
   }
@@ -2223,6 +2235,7 @@ function nativeArchiveRawCredentialViolation(
           hermesManagedConfig,
           !dependencyTree,
           dependencyTree,
+          dcodeSessionsDatabaseRole === "sidecar",
           deadlineMs,
         );
         if (violation === "deadline") return { entry, deadlineExpired: true };
