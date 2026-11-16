@@ -3,6 +3,9 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { OLLAMA_PROXY_PORT } from "../../../core/ollama-proxy-port";
+import { VLLM_PORT } from "../../../core/vllm-port";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../../inference/ollama/contract";
 import { nativeLocalIdentity } from "../../../inference/native-local/contract";
 import { createSession } from "../../../state/onboard-session";
 import {
@@ -16,13 +19,14 @@ const recorded: Parameters<typeof setNativeLocalProviderAuthority>[0][] = [];
 
 function recordAuthority(
   sandboxName: string,
-  provider: "ollama-local" | "vllm-local",
+  provider: "ollama-local" | "vllm-local" | "compatible-endpoint",
   gatewayName = "nemoclaw",
   endpointUrl = "http://host.openshell.internal:11435/v1",
+  agent: "openclaw" | "hermes" = "openclaw",
 ): void {
   const binding = {
     provider,
-    agent: "openclaw",
+    agent,
     endpointUrl,
     credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
     authMode: "authenticated",
@@ -140,6 +144,45 @@ describe("native local provider inference resume (#13540)", () => {
     expect(calls.skipped).toHaveBeenCalledWith("inference", "ollama-local / llama3.1:8b");
     expect(calls.setupInference).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["the proxy credential", OLLAMA_LOCAL_CREDENTIAL_ENV, true],
+    ["another credential", "COMPATIBLE_API_KEY", false],
+  ])(
+    "matches a recorded no-authentication proxy authority only for %s",
+    async (_name, credentialEnv, skipped) => {
+      recordAuthority(
+        "pv2-probe",
+        "compatible-endpoint",
+        "nemoclaw",
+        `http://host.openshell.internal:${String(OLLAMA_PROXY_PORT)}/v1`,
+        "hermes",
+      );
+      const session = createSession({
+        agent: "hermes",
+        sandboxName: "pv2-probe",
+        provider: "compatible-endpoint",
+        model: "custom-model",
+        endpointUrl: `http://localhost:${String(VLLM_PORT)}/v1`,
+        credentialEnv,
+      });
+      session.steps.provider_selection.status = "complete";
+      const { deps, calls } = createDeps({
+        isInferenceRouteReady: vi.fn(() => true),
+        hasNativeLocalProviderAuthority: undefined,
+      });
+      calls.complete.mockResolvedValue(session);
+
+      await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "pv2-probe",
+        agent: { name: "hermes" },
+      });
+
+      expect(calls.setupInference).toHaveBeenCalledTimes(skipped ? 0 : 1);
+    },
+  );
 
   it("still skips a ready shared route for a shared-route selection", async () => {
     const session = createSession({
