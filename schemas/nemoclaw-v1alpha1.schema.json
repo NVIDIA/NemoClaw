@@ -81,14 +81,8 @@
         },
         "tools": {
           "additionalProperties": true,
-          "description": "Fabric's tools section, passed to Fabric unchanged, such as enabled, blocked, and definitions. Fabric validates tool identifiers against the selected adapter; this does not change OS-level filesystem permissions. The former allow list is rejected; list those tools in enabled.",
-          "not": {
-            "required": [
-              "allow"
-            ]
-          },
-          "type": "object",
-          "x-nemoclaw-error": "agent.tools.allow was removed; list the tools in agent.tools.enabled"
+          "description": "Fabric's tools section, passed to Fabric unchanged, such as enabled, blocked, and definitions. Fabric validates tool identifiers against the selected adapter; this does not change OS-level filesystem permissions.",
+          "type": "object"
         },
         "workflow": {
           "additionalProperties": true,

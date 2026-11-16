@@ -690,10 +690,7 @@ fn native_identifiers_and_model_metadata_do_not_require_sdk_registration() {
     tree["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
         serde_json::json!({"disclosure":"adapter-defined-mode"});
     Document::parse(serde_json::to_vec(&tree).unwrap().as_slice()).unwrap();
-    for invalid in [
-        serde_json::json!({"allow":[]}),
-        serde_json::json!({"allow":["read"]}),
-    ] {
+    for invalid in [serde_json::json!(["read"]), serde_json::json!("read")] {
         tree["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = invalid;
         assert!(Document::parse(serde_json::to_vec(&tree).unwrap().as_slice()).is_err());
     }

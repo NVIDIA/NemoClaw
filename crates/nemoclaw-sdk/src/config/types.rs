@@ -425,7 +425,7 @@ pub struct Agent {
     pub instructions: Option<FabricSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "FabricSection")]
-    /// Fabric's tools section, passed to Fabric unchanged, such as enabled, blocked, and definitions. Fabric validates tool identifiers against the selected adapter; this does not change OS-level filesystem permissions. The former allow list is rejected; list those tools in enabled.
+    /// Fabric's tools section, passed to Fabric unchanged, such as enabled, blocked, and definitions. Fabric validates tool identifiers against the selected adapter; this does not change OS-level filesystem permissions.
     pub tools: Option<FabricSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "FabricSection")]

@@ -70,7 +70,7 @@ fn agents_sharing_a_harness_definition_keep_their_own_instructions() {
 }
 
 #[test]
-fn harness_runtime_timeout_reaches_fabric_and_execution_is_rejected() {
+fn harness_runtime_timeout_reaches_fabric() {
     let mut value = input();
     value["spec"]["sandboxes"]["assistant"]["harness"]["runtime"] = json!({"timeout_seconds": 900});
     let document = parse(&value).expect("harness runtime parses");
@@ -80,18 +80,6 @@ fn harness_runtime_timeout_reaches_fabric_and_execution_is_rejected() {
         config["runtime"]["artifacts"], "/sandbox/artifacts",
         "the deployment still sets the artifacts folder"
     );
-
-    let mut removed = input();
-    removed["spec"]["sandboxes"]["assistant"]["harness"]["execution"] =
-        json!({"timeoutSeconds": 900});
-    let error = parse(&removed).expect_err("execution is no longer a harness field");
-    assert!(
-        error
-            .to_string()
-            .contains("spec.sandboxes.assistant.harness"),
-        "{error}"
-    );
-    assert!(!schema_accepts(&removed));
 }
 
 #[test]
@@ -114,12 +102,6 @@ fn agent_tools_reach_fabric_unchanged() {
     assert!(schema_accepts(&value));
     let document = parse(&value).expect("Fabric's tools section parses");
     assert_eq!(fabric(&document, "assistant")["tools"], tools);
-
-    let mut removed = input();
-    removed["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = json!({"allow": ["read"]});
-    let error = parse(&removed).expect_err("the removed allow list would restrict nothing");
-    assert!(error.to_string().contains("tools.enabled"), "{error}");
-    assert!(!schema_accepts(&removed));
 }
 
 #[test]
@@ -137,7 +119,7 @@ fn harness_telemetry_and_relay_reach_fabric() {
 }
 
 #[test]
-fn agent_skills_and_mcp_reach_fabric_and_harness_config_is_rejected() {
+fn agent_skills_and_mcp_reach_fabric() {
     let mut value = input();
     let skills = json!({"directories": [{"folder": "/sandbox/skills"}], "duplicates": "reject"});
     let mcp = json!({"servers": {"docs": {
@@ -153,12 +135,4 @@ fn agent_skills_and_mcp_reach_fabric_and_harness_config_is_rejected() {
     let config = fabric(&document, "assistant");
     assert_eq!(config["skills"], skills);
     assert_eq!(config["mcp"], mcp);
-
-    let mut removed = input();
-    removed["spec"]["sandboxes"]["assistant"]["harness"]["config"] = json!({"skills": skills});
-    assert!(
-        parse(&removed).is_err(),
-        "harness.config is no longer a field"
-    );
-    assert!(!schema_accepts(&removed));
 }

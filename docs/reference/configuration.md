@@ -69,7 +69,7 @@ Paths:
 | `mcp` | object | No | — | Fabric's MCP section, passed to Fabric unchanged. NemoClaw grants no network access or credentials for the servers it names. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `skills` | object | No | — | Fabric's skills section, passed to Fabric unchanged, such as directories and duplicates. Paths are absolute sandbox paths. |
-| `tools` | object | No | — | Fabric's tools section, passed to Fabric unchanged, such as enabled, blocked, and definitions. Fabric validates tool identifiers against the selected adapter; this does not change OS-level filesystem permissions. The former allow list is rejected; list those tools in enabled. |
+| `tools` | object | No | — | Fabric's tools section, passed to Fabric unchanged, such as enabled, blocked, and definitions. Fabric validates tool identifiers against the selected adapter; this does not change OS-level filesystem permissions. |
 | `workflow` | object | No | — | Fabric's workflow section, passed to Fabric unchanged: the registered workflow target the agent runs. |
 
 ## AgentAuth

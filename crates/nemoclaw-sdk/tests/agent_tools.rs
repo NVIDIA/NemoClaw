@@ -146,13 +146,7 @@ fn invalid_sandboxes_and_permissions_fail_before_planning() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     assert!(parse(&input(0)).is_err());
     assert!(!schema.is_valid(&input(0)));
-    for tools in [
-        json!({"allow":[]}),
-        json!({"allow":["read"]}),
-        json!({"enabled":["read"],"allow":["exec"]}),
-        json!(["read"]),
-        json!(null),
-    ] {
+    for tools in [json!(["read"]), json!("read"), json!(null)] {
         let mut v = input(3);
         v["spec"]["sandboxes"]["sandbox-1"]["agent"]["tools"] = tools;
         assert!(parse(&v).is_err());

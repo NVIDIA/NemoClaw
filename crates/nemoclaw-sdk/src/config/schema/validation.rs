@@ -99,16 +99,6 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         {"required": ["inference"], "not": {"required": ["inferenceRef"]}},
         {"required": ["inferenceRef"], "not": {"required": ["inference"]}}
     ]);
-    // Fabric keeps unknown tools fields as extensions, so the removed allow
-    // list would otherwise be accepted and silently restrict nothing.
-    property(
-        &mut defs["Agent"],
-        "tools",
-        json!({
-            "not": {"required": ["allow"]},
-            "x-nemoclaw-error": "agent.tools.allow was removed; list the tools in agent.tools.enabled"
-        }),
-    );
     property(
         &mut defs["Agent"],
         "integrationRefs",
