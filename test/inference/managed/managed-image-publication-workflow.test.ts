@@ -871,6 +871,8 @@ describe("complete managed-image publication workflow", () => {
         expect.arrayContaining([
           "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
           "test/e2e/fixtures/hermes-switchyard-package.ts",
+          "test/e2e/fixtures/hermes-switchyard-bounds.ts",
+          "src/lib/hermes-switchyard-routing.ts",
         ]),
       );
       const builder = required(workflow.jobs?.[job], `missing ${job}`);
