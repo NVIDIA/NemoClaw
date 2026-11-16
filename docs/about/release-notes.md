@@ -12,9 +12,25 @@ The workspace package version alone does not establish that a release has been p
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
 Refer to [the overview](overview.md) for implemented boundaries and [the CLI reference](../references/cli.md) for commands.
 
-### Changes Since v0.1.0-rc9
+### Changes Since v0.1.0-rc10
 
-These changes reached `v1` after the `v0.1.0-rc9` tag; [breaking changes](#breaking-changes-and-migration) are listed separately.
+These changes reached `v1` after the `v0.1.0-rc10` tag; [breaking changes](#breaking-changes-since-v010-rc10) are listed separately.
+
+Examples and builds:
+
+- Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
+- OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
+
+OpenShell 0.1.8:
+
+- On Kubernetes, deleting a sandbox no longer waits out its pod's 30-second termination grace period, so destroy and sandbox replacement finish sooner.
+- The OpenShell CLI renews a token it got through client credentials while `OPENSHELL_OIDC_CLIENT_SECRET` is set.
+  See [reaching the gateway from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli).
+- The gateway no longer keeps memory for deleted sandboxes.
+
+### Changes in v0.1.0-rc10
+
+These changes reached `v1` between the `v0.1.0-rc9` and `v0.1.0-rc10` tags; [breaking changes](#breaking-changes-in-v010-rc10) are listed separately.
 
 Agents and interfaces:
 
@@ -107,21 +123,26 @@ Examples and builds:
 - Run `cargo images fetch` before a direct `docker buildx bake` build of an agent or Ollama image.
   See [building images](../build-deploy/build.md).
 - Dependency pins take security fixes, including rustls, webpki, tokio, and zip.
-- Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
-- OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
-
-OpenShell 0.1.8:
-
-- On Kubernetes, deleting a sandbox no longer waits out its pod's 30-second termination grace period, so destroy and sandbox replacement finish sooner.
-- The OpenShell CLI renews a token it got through client credentials while `OPENSHELL_OIDC_CLIENT_SECRET` is set.
-  See [reaching the gateway from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli).
-- The gateway no longer keeps memory for deleted sandboxes.
+- Pinned components: OpenShell 0.1.7, OpenTofu 1.12.12, Ollama 0.40.14, Hermes Agent v0.22.5, and OpenClaw 2026.9.34.
 
 ## Breaking Changes and Migration
 
 Earlier CLI commands, schemas, and state formats have no compatibility guarantees.
 See [migration](../get-started/migration.md) for where each earlier task lives now, and [state](../build-deploy/state.md) for data preservation.
-Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents:
+
+### Breaking Changes Since v0.1.0-rc10
+
+These changes since the `v0.1.0-rc10` tag affect existing deployments or documents:
+
+- With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
+  A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
+- With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
+  An endpoint host written as an IPv4-mapped IPv6 address, such as `::ffff:203.0.113.7`, no longer matches; write the IPv4 address.
+- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
+
+### Breaking Changes in v0.1.0-rc10
+
+These changes between the `v0.1.0-rc9` and `v0.1.0-rc10` tags affect existing deployments or documents:
 
 - The intent record is now version 22.
   `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, 21, and 22 as later changes altered it.
@@ -186,13 +207,10 @@ Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents
 - In hand-written HCL, `openshell_kubernetes_auth` has no `gateway_values` attribute.
 - In hand-written HCL on Kubernetes or OpenShift, the gateway ownership receipts that `v0.1.0-rc9` wrote no longer load, and the intent record refusal above doesn't cover them.
   Destroy such a deployment with the bundle that created it, then create it again with this release.
-- With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
-  A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
-- With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
-  An endpoint host written as an IPv4-mapped IPv6 address, such as `::ffff:203.0.113.7`, no longer matches; write the IPv4 address.
-- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
 
-Earlier changes that affect existing deployments:
+### Earlier Breaking Changes
+
+These changes before the `v0.1.0-rc9` tag affect existing deployments:
 
 - Docker-managed vLLM and Ollama services default to [`updatePolicy: Preserve`](../agents-inference/inference.md#set-container-limits-and-update-policy), which refuses an image, model, serving, or container-limit change that would replace a running container; set `spec.services.<name>.updatePolicy: Recreate` to permit the replacement and its downtime.
 - `spec.gateway.image` is removed: the SDK pins the managed gateway image, and defaulted and exported documents no longer name it.
