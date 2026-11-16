@@ -40,42 +40,32 @@ impl OpenShell {
     /// Ask APF to issue its policy to a bound sandbox again, then wait until
     /// the sandbox has loaded a policy with a new token.
     async fn reissue(&self, want: &Row, live: &Row) -> Result<Mutation, ObservationError> {
-        let workspace = value(want, "workspace");
-        let name = value(want, "name");
-        let failed = |error| {
-            Ok(Mutation::partial(
-                unproven_policy(live.clone(), want),
-                error,
-            ))
-        };
         self.gateway.reissue_policy(want).await?;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-        loop {
-            let observed = match self.observe("sandbox", workspace, name, false).await {
-                Ok(Some(row)) => Some(row),
-                Ok(None) => return failed(ObservationError::Incomplete),
-                // The new revision is pending until the sandbox loads it.
-                Err(ObservationError::Incomplete) => None,
-                Err(error) => return failed(error),
-            };
-            if let Some(mut row) = observed {
-                if let Err(error) = verify_identity(live, &row) {
-                    return failed(error);
-                }
-                let token = value(&row, crate::POLICY_PROVENANCE);
-                if !token.is_empty()
-                    && token != value(live, crate::POLICY_PROVENANCE)
-                    && !value(&row, crate::POLICY_HASH).is_empty()
-                {
-                    self.observe_services(&mut row, want, false).await?;
-                    return Ok(Mutation::complete(row));
-                }
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return failed(ObservationError::Incomplete);
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
+        let issued = |row: &Row| {
+            let token = value(row, crate::POLICY_PROVENANCE);
+            !token.is_empty()
+                && token != value(live, crate::POLICY_PROVENANCE)
+                && !value(row, crate::POLICY_HASH).is_empty()
+        };
+        // The new revision is pending until the sandbox loads it; a replaced
+        // sandbox ends the wait.
+        let settled = |row: &Row| issued(row) || verify_identity(live, row).is_err();
+        let error = match self
+            .read_back_sandbox_until(live, want, true, STARTUP_DEADLINE, settled)
+            .await
+        {
+            Ok(Some(row)) => match verify_identity(live, &row) {
+                Ok(()) if issued(&row) => return Ok(Mutation::complete(row)),
+                Ok(()) => ObservationError::Incomplete,
+                Err(error) => error,
+            },
+            Ok(None) => ObservationError::Incomplete,
+            Err(error) => error,
+        };
+        Ok(Mutation::partial(
+            unproven_policy(live.clone(), want),
+            error,
+        ))
     }
     /// Add a sandbox's declared service endpoints and their URLs to its
     /// observation, written as the reference row writes them. A sandbox being
@@ -172,6 +162,21 @@ impl OpenShell {
         created: bool,
         patience: Duration,
     ) -> Result<Option<Row>, ObservationError> {
+        self.read_back_sandbox_until(bound, want, created, patience, |row| {
+            !value(row, crate::POLICY_HASH).is_empty()
+        })
+        .await
+    }
+
+    /// [`Self::read_back_sandbox`], waiting until `loaded` holds instead.
+    async fn read_back_sandbox_until(
+        &self,
+        bound: &Row,
+        want: &Row,
+        created: bool,
+        patience: Duration,
+        loaded: impl Fn(&Row) -> bool,
+    ) -> Result<Option<Row>, ObservationError> {
         let deadline = tokio::time::Instant::now() + patience;
         let mut unavailable = None;
         let observed = loop {
@@ -184,7 +189,7 @@ impl OpenShell {
                 )
                 .await;
             let loading = match &observed {
-                Ok(Some(row)) => value(row, crate::POLICY_HASH).is_empty(),
+                Ok(Some(row)) => !loaded(row),
                 Err(ObservationError::Incomplete) => created,
                 _ => false,
             };

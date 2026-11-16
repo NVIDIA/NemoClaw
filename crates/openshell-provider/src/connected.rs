@@ -101,34 +101,19 @@ impl ConnectedOpenShellGateway {
         let native = search.is_none() && !api;
         let source = value(want, "credential_source");
         let profile = if value(want, crate::POLICY_AUTHORITY) == "apf" {
-            // The registration takes APF's profile as its type, and gives the
-            // credential to the one the profile delivers in the variable
-            // NemoClaw tells the agent to read.
+            // The registration takes APF's profile as its type and gives the
+            // credential to it; the resource checked that the profile delivers
+            // it in the variable NemoClaw tells the agent to read.
             let id = if native {
                 format!("nemoclaw-inference-{}", value(want, "name"))
             } else {
                 value(want, "profile_name").into()
             };
-            if api && !source.is_empty() {
-                return Err(ObservationError::BindingMismatch);
-            }
-            let authenticated = !source.is_empty() || !value(want, "credential_env").is_empty();
-            let expected = profile::apf_credential_variable(
-                &[
-                    ("name".into(), id.clone()),
-                    ("authenticated".into(), authenticated.to_string()),
-                    ("sandbox_env".into(), value(want, "sandbox_env").into()),
-                ]
-                .into(),
-            )?;
-            let profile = self
-                .apf_profile(value(want, "workspace"), &id)
-                .await?
-                .ok_or(ObservationError::BindingMismatch)?;
-            if profile::credential_variable(&profile) != expected {
-                return Err(ObservationError::BindingMismatch);
-            }
-            Some(profile)
+            Some(
+                self.apf_profile(value(want, "workspace"), &id)
+                    .await?
+                    .ok_or(ObservationError::BindingMismatch)?,
+            )
         } else if api {
             let bound = self
                 .observe_profile(value(want, "workspace"), value(want, "profile_name"), false)
