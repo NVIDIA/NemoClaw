@@ -58,21 +58,28 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     let agent = &mut input["spec"]["sandboxes"]["assistant"]["agent"];
     agent["mcp"] = json!({"servers":{"custom":{"transport":"stdio","url":"owned-fixture","exposure":"harness_native"}}});
     agent["skills"] = json!({"paths":["/sandbox/workspace/skills/supplied-skill"]});
+    agent["tools"] = json!({"enabled":["read"],"blocked":["exec"]});
     let harness = &mut input["spec"]["sandboxes"]["assistant"]["harness"];
     harness["relay"] = json!({"plugins":{"dynamic":[{"manifest":"/plugins/example/relay-plugin.toml","config":{"mode":"route"}}]}});
-    harness["runtime"] = json!({"max_turns":3});
+    harness["telemetry"] = json!({"providers":{"relay":{}}});
+    harness["runtime"] = json!({"max_turns":3,"timeout_seconds":900});
     let doc = Document::parse(input.to_string().as_bytes()).unwrap();
     let actual =
         nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();
     assert_eq!(actual["runtime"]["max_turns"], 3);
-    assert_eq!(
-        actual["mcp"],
-        input["spec"]["sandboxes"]["assistant"]["agent"]["mcp"]
-    );
-    assert_eq!(
-        actual["relay"],
-        input["spec"]["sandboxes"]["assistant"]["harness"]["relay"]
-    );
+    assert_eq!(actual["runtime"]["timeout_seconds"], 900);
+    assert_eq!(actual["runtime"]["artifacts"], "/sandbox/artifacts");
+    for (owner, section) in [
+        ("agent", "mcp"),
+        ("agent", "tools"),
+        ("harness", "relay"),
+        ("harness", "telemetry"),
+    ] {
+        assert_eq!(
+            actual[section], input["spec"]["sandboxes"]["assistant"][owner][section],
+            "{section} reaches Fabric unchanged"
+        );
+    }
     assert_eq!(
         actual["skills"], input["spec"]["sandboxes"]["assistant"]["agent"]["skills"],
         "skills must pass through without driverConfig"
@@ -86,6 +93,13 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     assert_eq!(
         actual["skills"], input["spec"]["sandboxes"]["assistant"]["agent"]["skills"],
         "workspace mounts must not add or replace skill paths"
+    );
+    input["spec"]["sandboxes"]["assistant"]["harness"]["runtime"]["artifacts"] =
+        json!("/elsewhere");
+    let doc = Document::parse(input.to_string().as_bytes()).unwrap();
+    assert!(
+        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).is_err(),
+        "an authored section cannot change a deployment-owned field"
     );
 }
 

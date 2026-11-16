@@ -31,31 +31,7 @@ The other sections of Fabric's agent configuration go where they belong, under F
 | `discovery` | `harness` | Additional descriptor discovery paths |
 | `telemetry` and `relay` | `harness` | Telemetry providers and Relay plugins; see [Hermes Relay tracing](#hermes-relay-tracing) |
 
-Sandboxes that share a harness definition through `harnessRef` share its `runtime` and `telemetry`, and each agent keeps its own instructions, tools, and skills.
-The [travel team example](../../examples/travel-team.yaml) gives four researchers one harness definition and each its own instructions:
-
-```yaml
-spec:
-  harnesses:
-    researcher:
-      kind: nvidia.fabric.hermes
-      runtime:
-        max_turns: 16
-  sandboxes:
-    flights:
-      harnessRef: researcher
-      agent:
-        name: flights
-        tools:
-          enabled: [web]
-        instructions:
-          system:
-            mode: replace
-            content: You research flights for each leg of a trip.
-        inferenceRef: travel
-```
-
-This fragment omits the deployment's other required fields.
+Sandboxes that share a harness definition through `harnessRef` share its `runtime` and `telemetry`, and each agent keeps its own instructions, tools, and skills; the [travel team example](../../examples/travel-team.yaml) gives four researchers one harness definition and each its own instructions.
 The deployment sets the configuration's `metadata`, `harness`, and `models`, `runtime.artifacts`, `runtime.keep_state` for adapters that accept it, and `environment.provider` and `environment.workspace`; an authored section that sets one of those fields to another value fails planning.
 See [the SDK configuration projection](../../crates/nemoclaw-sdk/src/fabric_config.rs) for the deployment boundary.
 

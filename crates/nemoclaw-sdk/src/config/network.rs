@@ -181,21 +181,27 @@ impl super::Document {
         sandbox: super::NamedSandbox<'a>,
     ) -> Result<ResolvedNetwork<'a>, ConfigError> {
         use super::references::{diagnostic_name, missing_reference};
+        fn select<'a, T>(
+            definitions: &'a BTreeMap<String, T>,
+            path: &str,
+            kind: &str,
+            name: &str,
+        ) -> Result<&'a T, ConfigError> {
+            definitions.get(name).ok_or_else(|| {
+                missing_reference(path, kind, name, definitions.keys().map(String::as_str))
+            })
+        }
         let path = format!("spec.sandboxes[{}].network", diagnostic_name(sandbox.name));
         let network = &sandbox.definition.network;
         let explicit = match &network.policy {
             NetworkPolicy::Isolated => None,
             NetworkPolicy::Explicit(policy) => Some(policy),
-            NetworkPolicy::Reference(name) => {
-                Some(self.spec.policies.get(name).ok_or_else(|| {
-                    missing_reference(
-                        &format!("{path}.policyRef"),
-                        "policy",
-                        name,
-                        self.spec.policies.keys().map(String::as_str),
-                    )
-                })?)
-            }
+            NetworkPolicy::Reference(name) => Some(select(
+                &self.spec.policies,
+                &format!("{path}.policyRef"),
+                "policy",
+                name,
+            )?),
         };
         let mut grants: BTreeMap<&str, &Grant> = network
             .grants
@@ -203,17 +209,15 @@ impl super::Document {
             .map(|(name, grant)| (name.as_str(), grant))
             .collect();
         for name in &network.grant_refs {
-            let grant = self.spec.grants.get(name).ok_or_else(|| {
-                missing_reference(
-                    &format!("{path}.grantRefs"),
-                    "grant",
-                    name,
-                    self.spec.grants.keys().map(String::as_str),
-                )
-            })?;
+            let grant = select(
+                &self.spec.grants,
+                &format!("{path}.grantRefs"),
+                "grant",
+                name,
+            )?;
             if grants.insert(name, grant).is_some() {
                 return Err(ConfigError(format!(
-                    "{path}.grantRefs: grant {:?} is already selected; grant names must be unique across grants and grantRefs",
+                    "{path}.grantRefs: grant {:?} is also defined in grants",
                     diagnostic_name(name)
                 )));
             }

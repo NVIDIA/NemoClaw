@@ -28,8 +28,6 @@ mod support;
 mod transport;
 mod travel_team;
 
-#[path = "agent_harness_split.rs"]
-mod agent_harness_split;
 #[path = "agent_runtimes.rs"]
 mod agent_runtimes;
 #[path = "agent_tools.rs"]

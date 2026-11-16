@@ -86,8 +86,7 @@ spec:
 This fragment assumes a `chat` inference definition and omits other required deployment fields.
 Put `harnesses` under the sandbox to keep the definitions local to that sandbox.
 Use `harness: {kind: nvidia.fabric.openclaw}` for an inline configuration without additional settings.
-Fabric's `runtime`, `environment`, `discovery`, `telemetry`, and `relay` sections belong on the harness, and native observability and interfaces in its `settings`.
-Each agent keeps its own `instructions`, `tools`, `skills`, `mcp`, and `workflow`, so sandboxes sharing a harness definition can give their agents different instructions; see [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness).
+Native observability and interfaces belong in the harness's `settings`; [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness) says which Fabric sections the harness holds and which each agent keeps for itself.
 Each sandbox requires exactly one of `harness` or `harnessRef`; agents cannot select a harness.
 Each sandbox’s agent uses the selected implementation in its own Fabric runtime.
 Sharing a definition reuses configuration; each sandbox owns its runtime process.

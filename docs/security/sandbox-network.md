@@ -98,7 +98,7 @@ This fragment omits the deployment's other required fields.
 `policyRef` applies the named policy exactly as if it were written in `policy.explicit`.
 `grantRefs` adds each named grant to the isolated preset as a rule with the grant's name; a network can combine it with inline `grants` when no name appears in both.
 A reference to an undefined name fails and lists the defined names.
-Policies and grants are defined only at the deployment level, and a definition that no sandbox selects is validated but applies to none; see [the authoring rule](../build-deploy/configuration-references.md#the-authoring-rule).
+A definition that no sandbox selects is validated but applies to none; see [the authoring rule](../build-deploy/configuration-references.md#the-authoring-rule).
 The [full-featured OpenClaw example](../../examples/full-featured-openclaw.yaml) gives three sandboxes one policy.
 
 ## Runtime Filesystem Access
