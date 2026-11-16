@@ -153,7 +153,7 @@ pub struct PolicyEndpoint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "bool")]
     pub allow_encoded_slash: Option<bool>,
-    /// Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade.
+    /// Enable OpenShell placeholder rewriting in client WebSocket text messages; requires protocol websocket.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "bool")]
     pub websocket_credential_rewrite: Option<bool>,

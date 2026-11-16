@@ -283,7 +283,7 @@ openshell gateway add https://127.0.0.1:17671 \
 openshell status
 ```
 
-The pinned CLI doesn't renew a token it got this way ([NVIDIA/OpenShell#4287](https://github.com/NVIDIA/OpenShell/issues/4287)); when it expires, run `openshell gateway login "$gateway_name"` with the secret still set.
+When the token expires, the CLI gets a new one the same way, so keep `OPENSHELL_OIDC_CLIENT_SECRET` set for as long as you run `openshell` commands.
 
 `openshell status` reports the gateway as connected and authenticated.
 Then [select the gateway and workspace](../agents-inference/interfaces.md#select-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
