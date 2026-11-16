@@ -1323,9 +1323,13 @@
               "$ref": "#/$defs/SecretRef",
               "description": "Host environment reference holding the API key."
             },
-            "endpoint": {
-              "description": "The API's HTTPS URL.",
-              "type": "string"
+            "endpoints": {
+              "description": "The API's HTTPS URLs. One key reaches each URL's host, port and path subtree.",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
             },
             "headerName": {
               "description": "The header that carries the key. Defaults to Authorization for bearer; required for header.",
@@ -1335,11 +1339,17 @@
               "const": "api",
               "description": "Integration implementation selected by this definition.",
               "type": "string"
+            },
+            "sandboxEnv": {
+              "description": "Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to NEMOCLAW_API_<registration>_KEY.",
+              "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+              "type": "string",
+              "x-nemoclaw-error": "api sandboxEnv must be an environment variable name"
             }
           },
           "required": [
             "kind",
-            "endpoint",
+            "endpoints",
             "credential"
           ],
           "type": "object"

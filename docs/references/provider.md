@@ -198,7 +198,8 @@ resource "openshell_inference" "nemotron" {
 
 Use `openshell_api` when a sandbox needs to authenticate to an API other than inference or web search, such as a booking service over HTTP MCP.
 It owns an OpenShell profile and registration; attach its `ref` to the sandbox's `providers`.
-The profile grants endpoint access to the named executables. OpenShell replaces the placeholder only at the bound host, port and path.
+The profile grants each of its `endpoints` to the named executables, and OpenShell replaces the placeholder only at those hosts, ports and paths.
+List several URLs when one key serves several hosts or path subtrees, such as an API whose services sit on different hosts.
 
 Set the credential in the environment of the process running OpenTofu, then name that variable in `credential_env`:
 
@@ -207,7 +208,7 @@ resource "openshell_api" "booking" {
   gateway        = data.openshell_gateway.example.ref
   workspace      = openshell_workspace.example.ref
   name           = "booking"
-  endpoint       = "https://booking.example.com/mcp"
+  endpoints      = ["https://booking.example.com/mcp"]
   credential_env = "BOOKING_API_KEY"
   binaries       = ["/usr/bin/curl"]
 }
@@ -220,8 +221,8 @@ resource "openshell_api" "booking" {
 For an API key sent without the Bearer prefix, set `auth_style = "header"` and `header_name = "X-API-Key"`.
 Query parameters, OAuth and refresh flows are not supported by this resource.
 Endpoints must use HTTP(S) without embedded credentials, queries, fragments or globs.
-By default, the profile grants full REST access to the endpoint's path subtree.
-To restrict an MCP endpoint to specific methods and tools, declare an `mcp` block with one or more `rules` blocks on `openshell_api`. OpenShell enforces those rules on the exact URL path with its default MCP protocol revision.
+By default, the profile grants full REST access to each endpoint's path subtree.
+To restrict an MCP endpoint to specific methods and tools, declare an `mcp` block with one or more `rules` blocks on `openshell_api`, which then takes exactly one URL in `endpoints`. OpenShell enforces those rules on the exact URL path with its default MCP protocol revision.
 Use a canonical path such as `/mcp` or `/mcp/`. Paths with repeated slashes, path parameters, `^`, or `|` are rejected.
 Include the server's initialization and tool discovery methods and the allowed `tools/call` selectors. Use the profile as the only grant for that endpoint, because a broader matching grant can allow additional requests.
 Each tool rule may use one selector, either `allow.tool` or `allow.params.name`.
@@ -233,6 +234,8 @@ A literal IP grants only that address; a DNS name receives no private-network gr
 The provider resolves the host variable during apply and sends its value to OpenShell's credential store.
 OpenTofu state and the exported `ref` contain the variable name, never its value.
 OpenShell projects a credential placeholder into `NEMOCLAW_API_BOOKING_KEY` for `name = "booking"`; the agent does not receive the stored credential value.
+Set `sandbox_env` to project it under another name, such as a variable the sandbox's tools already read.
+OpenShell rejects a sandbox whose attached registrations put keys in the same variable; give each a different `sandbox_env`, or list every URL that shares a key in one resource's `endpoints`.
 The registration is named `booking` and its profile `nemoclaw-api-booking`.
 
 Changing `credential_env` updates the stored credential in place on the next apply, retaining the registration and attached sandbox.

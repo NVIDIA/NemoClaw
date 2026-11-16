@@ -16,12 +16,17 @@ pub enum Integration {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// A key-authenticated HTTP API. OpenShell injects the key into requests to the endpoint's host, port and path subtree from the harness's executables.
+/// A key-authenticated HTTP API. OpenShell injects the key into requests to each endpoint's host, port and path subtree from the harness's executables.
 pub struct Api {
-    /// The API's HTTPS URL.
-    pub endpoint: String,
+    #[schemars(length(min = 1))]
+    /// The API's HTTPS URLs. One key reaches each URL's host, port and path subtree.
+    pub endpoints: Vec<String>,
     /// Host environment reference holding the API key.
     pub credential: SecretRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String")]
+    /// Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to NEMOCLAW_API_<registration>_KEY.
+    pub sandbox_env: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ApiAuthStyle")]
     /// How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName.

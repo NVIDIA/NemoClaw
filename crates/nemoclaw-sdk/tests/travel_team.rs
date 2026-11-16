@@ -101,7 +101,10 @@ fn each_sandbox_attaches_only_its_providers_and_grants() {
         .iter()
         .find(|r| r.kind == "api")
         .expect("one booking API");
-    assert_eq!(api.values["endpoint"], "https://bookings.example.com/mcp");
+    assert_eq!(
+        api.values["endpoints_json"],
+        r#"["https://bookings.example.com/mcp"]"#
+    );
     let search_registration =
         nemoclaw_openshell::registration_name(&search.kind, &search.values).unwrap();
     let api_registration = nemoclaw_openshell::registration_name(&api.kind, &api.values).unwrap();
