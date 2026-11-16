@@ -30,6 +30,17 @@ provider attachment, persisted state, native configuration, stop/start, and clea
 The native Hermes rebuild receives the synthetic transport separately from the
 stored bot token. The rebuild still reads that token from its credential store.
 
+The `hermes-e2e` target also exercises the packaged native Switchyard plugin through real
+OpenShell credential injection and egress enforcement. A host-side HTTP fixture supplies a
+healthy provider and a separately listening forbidden destination. The test checks successful
+judge/answer routing, a forbidden redirect, direct destination denial, recovery, caller-auth
+non-disclosure, and a salted credential scan. It restores the fixture policy and removes its
+provider in `finally`. Only temporary child-process transport configuration changes; production
+provider validation and protected startup files stay unchanged. This does not qualify hosted
+provider TLS, adaptive onboarding, or `inference.local` isolation in a routed sandbox. The
+standard Hermes sandbox still uses `inference.local`. Support tests own fixture responses,
+redacted evidence, and probe syntax; they are not live OpenShell evidence.
+
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
@@ -49,6 +60,18 @@ The packaged qualifier validates classification and separate token accounting be
 continues. This proves the successful entrypoint handoff, not OpenShell credential rewriting
 or real provider access. Container cleanup removes the fixture processes, placeholders, and
 routing files. The clean package probe still leaves its supervised gateway unchanged.
+Each routed-startup mode also checks the native client deadline and retry policy in isolated
+gateway-user processes with authenticated loopback providers. Efficient and capable answer streams
+emit one partial event after 20 seconds and then stall; the selected judge sends a delayed body
+prefix after response headers. Each call must fail at the unchanged 120-second client deadline, with scheduling tolerance,
+and make one attempt. Separate HTTP 503 cases exhaust the configured answer candidates, with
+one failed attempt per physical call. Judge failures stop before answer selection.
+One active answer stream per judge mode is cancelled after its partial event. Caller settlement
+and runtime shutdown each have a five-second bound; the fixture must observe upstream connection
+release before runtime shutdown. Timeout and cancellation cases reject fallback, replay, successful
+stream terminators, and native routing bypass. Every case retains a bounded result before aggregate
+failure. A separate process watchdog fails a hung probe; it cannot establish deadline success.
+The cases run concurrently in separate native processes and are removed with their owned container.
 `support/hermes-switchyard-upstream.test.ts` owns deterministic fixture authentication,
 per-client endpoint localization, and preservation of production judge selection and credentials.
 `test/agents/hermes/hermes-switchyard-package.test.ts`
@@ -788,11 +811,18 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prepare private OpenShell and npm install locations before the historical install, preserving existing private executables. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
+| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89, v0.0.123, and v0.0.141 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prepare private OpenShell and npm install locations before the historical install, preserving existing private executables. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 The gateway fixture sets a canonical private `XDG_BIN_HOME` for both installer generations.
 Its current installer still receives duplicate-slash `HOME` and `XDG_CONFIG_HOME` values for the systemd service scenario.
+
+The v0.0.123 fixture uses one running survivor and one stopped sandbox.
+Both retain workspace-preservation checks; the stopped sandbox also retains its lifecycle check and stopped-phase assertion.
+This replaces the original three-sandbox topology with the smallest mixed-state recovery case.
+The removed second stopped sandbox repeated the same backup, migration, restore, and lifecycle path.
+The live target no longer qualifies recovery with two stopped sandboxes in one upgrade.
+The installer deadline remains 35 minutes; measured runtime for this smaller fixture still requires live qualification.
 
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
@@ -806,6 +836,13 @@ Deterministic tests own installer identity, OpenShell release asset selection,
 NemoClaw restore behavior, and Dockerfile patch behavior. The live target does not
 assert OpenClaw database tables, migration checkpoints, or other third-party
 storage details.
+
+The v0.0.141 fixture adds recent-release compatibility with one running and one stopped sandbox.
+It retains the released OpenShell 0.0.116 path, so it does not substitute for historical gateway replacement coverage.
+The existing support tests verify fixture identity, archive pins, and adapter behavior.
+The recent fixture uses the native agent RPC before and after upgrade because its convenience command requests administrator scope.
+Manual PR selection uses the catalogue from trusted `main`; a newly added selector becomes available after that catalogue merges.
+The OpenShell destination and workspace marker repairs in PR #14276 are prerequisites for completing upgrade qualification.
 
 The retained live target owns the released-gateway upgrade and usable-survivor
 boundary. Deterministic rebuild-flow tests own post-backup recreate failure,
