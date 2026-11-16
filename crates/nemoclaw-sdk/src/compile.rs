@@ -264,7 +264,10 @@ fn targets_with_plans(
                         "generation".into(),
                         generation(generations, "provider")?.into(),
                     ),
-                    ("endpoint".into(), api.api.endpoint.clone()),
+                    (
+                        "endpoints_json".into(),
+                        serde_json::to_string(&api.api.endpoints).expect("endpoint list"),
+                    ),
                     ("credential_env".into(), api.api.credential.env.clone()),
                 ]
                 .into(),
@@ -276,6 +279,9 @@ fn targets_with_plans(
             }
             if let Some(header) = &api.api.header_name {
                 target.values.insert("header_name".into(), header.clone());
+            }
+            if let Some(name) = &api.api.sandbox_env {
+                target.values.insert("sandbox_env".into(), name.clone());
             }
             if let Some(previous) = result.iter().find(|t| t.address == target.address) {
                 if previous != &target {
@@ -300,9 +306,22 @@ fn targets_with_plans(
                 .insert("credential_source".into(), source);
         }
     }
-    // OpenShell objects and Fabric configurations name their gateway.
+    // OpenShell objects and Fabric configurations name their gateway. On a
+    // gateway APF governs, APF authors each sandbox's policy and serves the
+    // profile of each credential.
     let gateway = gateway_values(document, generations)?;
+    let apf = document.spec.gateway.policy_authority().is_some();
     for target in &mut result {
+        if apf
+            && matches!(
+                target.kind.as_str(),
+                "sandbox" | "web_search" | "api" | "inference"
+            )
+        {
+            target
+                .values
+                .insert("policy_authority".into(), "apf".into());
+        }
         if nemoclaw_openshell::references(&target.kind)
             .iter()
             .any(|reference| reference.kind == nemoclaw_openshell::GATEWAY_TYPE)

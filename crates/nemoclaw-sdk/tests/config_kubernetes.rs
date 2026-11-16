@@ -609,7 +609,7 @@ fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_fi
         "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}},
         "bookings": {
             "kind": "api",
-            "endpoint": "https://bookings.example.com/mcp",
+            "endpoints": ["https://bookings.example.com/mcp"],
             "credential": {"env": "BOOKINGS_API_KEY"}
         }
     });

@@ -16,10 +16,37 @@ Refer to [the overview](overview.md) for implemented boundaries and [the CLI ref
 
 These changes reached `v1` after the `v0.1.0-rc10` tag; [breaking changes](#breaking-changes-since-v010-rc10) are listed separately.
 
+Agents and interfaces:
+
+- The agent holds Fabric's `instructions`, `tools`, `skills`, `mcp`, and `workflow` sections, and the harness holds `runtime`, `environment`, `discovery`, `telemetry`, and `relay`; NemoClaw passes each to Fabric unchanged.
+  Sandboxes that share a harness definition through `harnessRef` can give each agent its own instructions, tools, and skills.
+  See [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness).
+- `spec.policies` holds named sandbox policies that a network selects with `policyRef`, and `spec.grants` holds named grants that a network adds to the isolated preset with `grantRefs`.
+  See [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants).
+- A `kind: api` integration, and `openshell_api` in HCL, sends one key to every URL in its `endpoints`, so one registration covers an API spread across hosts.
+  `sandboxEnv` (`sandbox_env` in HCL) names the variable the sandbox sees the key in, such as `NVIDIA_API_KEY`; without it the name stays `NEMOCLAW_API_<NAME>_KEY`.
+  OpenShell reports, during apply, a sandbox whose attached registrations put keys in the same variable.
+  See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
+
+Sandbox policy:
+
+- `spec.gateway.policyAuthority.apf` lets NVIDIA Agent Policy Fabric (APF) author each sandbox's policy and serve the inference, web search, and API profiles, and `registration: managed` has NemoClaw register APF with a managed Docker gateway.
+  See [let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+
+Inference and models:
+
+- A managed vLLM or Ollama container's `container.cpuLimitMillis` reaches Docker through the Docker provider's `cpus`, without the `nemoclaw.nvidia.com/cpu-limit-millis` label.
+- A managed vLLM service keeps FlashInfer's autotune results on its model volume, in `/data/vllm-cache/flashinfer-autotune`, so a replaced container doesn't tune again; vLLM 0.33.0 otherwise keeps them inside the container.
+  See [retained model files](../agents-inference/models.md#retained-model-files).
+
 Examples and builds:
 
 - Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
 - OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
+- [Building from source](../build-deploy/build.md) uses Rust 1.100.0, as do the Rust stages of the agent, supervisor, and Ollama proxy images.
+- The vLLM runtime image builds on vLLM 0.33.0; rebuild it to use it.
+  Like 0.32.0, it uses CUDA 13.0, so GPU hosts and Kubernetes GPU nodes need NVIDIA driver 580 or newer.
+  With `authentication: bearer`, the supervisor answers vLLM's new `/v1/decisions` endpoint with 404, as it does every request outside its route allowlist; see [authenticating a managed vLLM service](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
 
 OpenShell 0.1.8:
 
@@ -129,6 +156,45 @@ See [migration](../get-started/migration.md) for where each earlier task lives n
 
 These changes since the `v0.1.0-rc10` tag affect existing deployments or documents:
 
+- A `kind: api` integration takes `endpoints`, a list of URLs, instead of `endpoint`, and `openshell_api` takes `endpoints` instead of `endpoint`; the parser rejects `endpoint`.
+  Write `endpoint: https://bookings.example.com/mcp` as `endpoints: [https://bookings.example.com/mcp]`.
+  An `openshell_api` with an `mcp` block takes exactly one URL.
+
+- The intent record is now version 24, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
+- `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
+  `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up.
+  Before:
+
+  ```yaml
+  harness:
+    kind: nvidia.fabric.hermes
+    config:
+      runtime: {max_turns: 16}
+      instructions: {system: {mode: replace, content: "Research flights."}}
+      skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
+  agent:
+    name: flights
+  ```
+
+  After:
+
+  ```yaml
+  harness:
+    kind: nvidia.fabric.hermes
+    runtime: {max_turns: 16}
+  agent:
+    name: flights
+    instructions: {system: {mode: replace, content: "Research flights."}}
+    skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
+  ```
+
+- `harness.execution` is removed. Set Fabric's `runtime.timeout_seconds` on the harness instead: replace `harness: {kind: nvidia.fabric.openclaw, execution: {timeoutSeconds: 600}}` with `harness: {kind: nvidia.fabric.openclaw, runtime: {timeout_seconds: 600}}`.
+
+- `agent.tools` is Fabric's tools section, and its `allow` list is removed. Rename `allow` to Fabric's `enabled`, so `tools: {allow: [read, write]}` becomes `tools: {enabled: [read, write]}`; `blocked` and `definitions` are now available too.
+
+- In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
+  Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
 - With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
   A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
 - With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.

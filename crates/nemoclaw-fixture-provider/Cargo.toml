@@ -4,7 +4,8 @@
 # A fixture nemoclaw provider for the provider protocol tests. It serves SDK
 # resource definitions, so it lives apart from nemoclaw-test-fixtures: the
 # openshell and fabric provider tests use those fixtures without compiling the
-# SDK. Tests find the executable beside theirs (fixture_executable).
+# SDK. Tests find the executable in the directory NEMOCLAW_TEST_FIXTURES names
+# (fixture_executable).
 [package]
 name = "nemoclaw-fixture-provider"
 version.workspace = true
@@ -26,9 +27,6 @@ async-trait.workspace = true
 rustls.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-
-[dev-dependencies]
-nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
 
 [lints]
 workspace = true

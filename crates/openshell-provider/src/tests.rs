@@ -93,7 +93,7 @@ fn workspace_reader_requires_complete_matching_active_identity() {
 }
 #[test]
 fn active_policy_absence_and_drift_never_mean_sandbox_absence() {
-    assert!(active_policy(proto::GetSandboxPolicyStatusResponse::default(), "").is_err());
+    assert!(active_policy(proto::GetSandboxPolicyStatusResponse::default(), Some("")).is_err());
     let mut policy = policy();
     policy
         .filesystem
@@ -171,11 +171,19 @@ fn a_loaded_policy_keeps_the_declared_rules_and_reports_its_hash() {
         .extend(["/var/log", "/proc", "/opt/anything"].map(String::from));
     fs.read_write.push("/scratch".into());
     assert_eq!(
-        active_policy(response(enriched.clone(), "sha256:a", loaded), &expected).unwrap(),
+        active_policy(
+            response(enriched.clone(), "sha256:a", loaded),
+            Some(&expected)
+        )
+        .unwrap(),
         "sha256:a"
     );
     assert_eq!(
-        active_policy(response(declared.clone(), "sha256:b", loaded), &expected).unwrap(),
+        active_policy(
+            response(declared.clone(), "sha256:b", loaded),
+            Some(&expected)
+        )
+        .unwrap(),
         "sha256:b"
     );
     // A missing declared path, a read-only path made writable, or a different
@@ -188,24 +196,24 @@ fn a_loaded_policy_keeps_the_declared_rules_and_reports_its_hash() {
         .unwrap()
         .read_only
         .retain(|path| path != &first);
-    assert!(active_policy(response(missing, "sha256:c", loaded), &expected).is_err());
+    assert!(active_policy(response(missing, "sha256:c", loaded), Some(&expected)).is_err());
     let mut writable = enriched.clone();
     let fs = writable.filesystem.as_mut().unwrap();
     fs.read_only.retain(|path| path != &first);
     fs.read_write.push(first.clone());
-    assert!(active_policy(response(writable, "sha256:d", loaded), &expected).is_err());
+    assert!(active_policy(response(writable, "sha256:d", loaded), Some(&expected)).is_err());
     let mut network = enriched.clone();
     network.network_policies.clear();
-    assert!(active_policy(response(network, "sha256:e", loaded), &expected).is_err());
+    assert!(active_policy(response(network, "sha256:e", loaded), Some(&expected)).is_err());
     // An unloaded revision, or one without a hash, has nothing to record.
     assert!(
         active_policy(
             response(enriched.clone(), "sha256:f", proto::PolicyStatus::Pending),
-            &expected
+            Some(&expected)
         )
         .is_err()
     );
-    assert!(active_policy(response(enriched, "", loaded), &expected).is_err());
+    assert!(active_policy(response(enriched, "", loaded), Some(&expected)).is_err());
 }
 
 /// A declared policy with filesystem grants and one middleware binding.

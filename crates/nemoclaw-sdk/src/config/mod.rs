@@ -6,7 +6,6 @@ pub(crate) mod constraints;
 #[doc(hidden)]
 pub use nemoclaw_openshell::credential_metadata;
 mod engine_endpoint;
-mod execution;
 pub use constraints::{GATEWAY_ENGINE, GPU_DEVICE};
 pub use engine_endpoint::validate_engine_endpoint;
 mod integrations;
@@ -20,7 +19,6 @@ mod source;
 mod yaml_source;
 pub use crate::services::ServiceDefinition;
 pub use agent_inference::*;
-pub use execution::*;
 mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
 pub use nemoclaw_openshell::policy::policy_json;
@@ -164,6 +162,9 @@ impl Document {
             names.extend(tls.certificate.iter().map(|file| file.env.as_str()));
             names.extend(tls.key.iter().map(|file| file.env.as_str()));
         }
+        if let Some(tls) = g.managed_apf().and_then(|apf| apf.tls.as_ref()) {
+            names.push(tls.ca.env.as_str());
+        }
         if let Ok(providers) = self.selected_inference_providers() {
             for provider in providers {
                 if let Some(credential) = &provider.credential {
@@ -305,6 +306,17 @@ impl Gateway {
             Self::Managed(gateway) => &mut gateway.runtime,
             Self::External(gateway) => &mut gateway.runtime,
         }
+    }
+    /// Who authors sandbox policy on this gateway; `None` means NemoClaw does.
+    pub fn policy_authority(&self) -> Option<&PolicyAuthority> {
+        match self {
+            Self::Managed(gateway) => gateway.policy_authority.as_ref(),
+            Self::External(gateway) => gateway.policy_authority.as_ref(),
+        }
+    }
+    /// APF's connection settings, when NemoClaw registers APF with this gateway.
+    pub fn managed_apf(&self) -> Option<&ManagedApf> {
+        self.policy_authority()?.managed()
     }
     /// The endpoint used to connect to either gateway configuration.
     pub fn endpoint(&self) -> &str {

@@ -94,9 +94,16 @@ impl Fixture {
     }
     /// Serve on an ephemeral loopback port; `endpoint` is `http://127.0.0.1:PORT`.
     pub async fn start_tcp(
+        handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
+    ) -> Self {
+        Self::start_tcp_at("127.0.0.1:0", handler).await
+    }
+    /// Serve on a caller-owned address, including a live case's host port.
+    pub async fn start_tcp_at(
+        address: &str,
         mut handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
     ) -> Self {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = tokio::net::TcpListener::bind(address).await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let task = tokio::spawn(async move {
             loop {
@@ -111,29 +118,42 @@ impl Fixture {
         }
     }
 }
+/// A fixture executable from `nemoclaw-test-fixtures` or
+/// `nemoclaw-fixture-provider`, such as the fake `ssh` relay.
+///
+/// Cargo's `CARGO_BIN_EXE_*` names only the executables of a test's own
+/// package, so the test runner names their directory in
+/// `NEMOCLAW_TEST_FIXTURES`: `cargo ci` sets it to `target/debug`, where
+/// Cargo puts a build's executables.
+#[must_use]
+pub fn fixture_executable(name: &str) -> std::path::PathBuf {
+    let directory = std::env::var_os("NEMOCLAW_TEST_FIXTURES").expect(
+        "NEMOCLAW_TEST_FIXTURES must name the directory of the fixture executables, such as $PWD/target/debug after cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider; cargo ci sets it",
+    );
+    let path =
+        std::path::Path::new(&directory).join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        path.is_file(),
+        "{} is missing; build it with cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider",
+        path.display()
+    );
+    path
+}
 /// Install the relay as `ssh` beside this test executable, once. Windows
 /// resolves a bare program name in the launching executable's directory
 /// before `PATH`, so the engine client reaches the relay without changing the
-/// environment. The relay is built beside the test executables' `deps`.
+/// environment.
 #[cfg(not(unix))]
 fn relay_as_ssh() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         let executable = std::env::current_exe().unwrap();
-        let deps = executable.parent().unwrap();
-        let relay = deps.parent().unwrap().join(format!(
-            "nemoclaw-fixture-ssh{}",
-            std::env::consts::EXE_SUFFIX
-        ));
-        assert!(
-            relay.is_file(),
-            "{} is missing; build it with cargo build -p nemoclaw-test-fixtures",
-            relay.display()
-        );
+        let directory = executable.parent().unwrap();
+        let relay = fixture_executable("nemoclaw-fixture-ssh");
         // Other test executables install it too; replace it atomically.
-        let staged = deps.join(format!("ssh-{}.tmp", std::process::id()));
+        let staged = directory.join(format!("ssh-{}.tmp", std::process::id()));
         std::fs::copy(&relay, &staged).unwrap();
-        let installed = deps.join(format!("ssh{}", std::env::consts::EXE_SUFFIX));
+        let installed = directory.join(format!("ssh{}", std::env::consts::EXE_SUFFIX));
         if std::fs::rename(&staged, &installed).is_err() {
             // A running relay keeps the file open; the installed copy serves.
             let _ = std::fs::remove_file(&staged);

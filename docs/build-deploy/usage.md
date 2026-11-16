@@ -106,7 +106,7 @@ Follow [Configure a Container Service](container-services.md) for inputs, readin
 ### Configure a Managed Gateway
 
 `spec.gateway.config` passes OpenShell gateway settings to a managed gateway in the format of the OpenShell Helm chart's `gatewayConfig` value.
-Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields; nested maps become inline tables, and a list of maps becomes an array of tables.
+Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields; nested maps become inline tables, and a list of maps becomes an array of tables.
 
 ```yaml
 gateway:
@@ -121,7 +121,7 @@ gateway:
 ```
 
 Docker and Podman gateways write these tables into their configuration file beside the keys NemoClaw sets.
-Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources; see OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/migrate-gateway-config.mdx).
+Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources; see OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/kubernetes/migrate-gateway-config.mdx).
 Plan rejects a setting that replaces a key NemoClaw manages, such as the gateway's authentication, signing paths, or the driver's images.
 OpenShell validates the rest when the gateway starts: an unknown or misplaced field in the selected driver's table stops the gateway, and tables for other drivers are ignored.
 A change replaces a Docker or Podman gateway's container, which receives the new file and keeps the gateway's data, and upgrades a Kubernetes gateway's chart release.
@@ -129,6 +129,39 @@ The restarted gateway restarts its sandboxes but not their Fabric agents; the ne
 A sandbox that exits instead of restarting is replaced, which deletes its files and conversation history.
 Do not put secrets in it: plans and state show it.
 An external gateway takes no `config`; its operator configures it.
+
+### Let APF Author Sandbox Policy
+
+NVIDIA Agent Policy Fabric (APF) is an OpenShell interceptor that issues signed sandbox policies and serves provider profiles.
+When APF does both on a gateway, set `spec.gateway.policyAuthority.apf`:
+
+```yaml
+gateway:
+  management: managed
+  policyAuthority:
+    apf:
+      registration: managed
+      endpoint: https://host.docker.internal:18202
+      tls:
+        ca: {env: APF_CA_FILE}
+```
+
+- With `registration: managed`, NemoClaw writes APF's interceptor and provider-profile source into a managed Docker gateway's configuration file and copies the CA certificate that `tls.ca` names into the gateway's storage; `spec.gateway.config` must not register interceptors or profile sources.
+- With `registration: external`, the gateway's operator registers APF, such as in `spec.gateway.config` on a managed Podman, Kubernetes, or OpenShift gateway. An external gateway requires it.
+
+With either registration:
+
+- Each sandbox runs APF's policy, so it can't set `network.policy` or `network.policyRef`. Apply refuses a sandbox that APF admitted without its provenance annotations.
+- Apply records each sandbox's loaded policy hash and APF's provenance token. The next apply records a policy that arrives with a new token. A policy that changes under the same token, or a sandbox that loses APF's provenance, plans an in-place update that asks OpenShell for the sandbox's configuration without a policy, so that APF issues its policy again.
+- Inference, web search, and API integrations use the profile that APF serves under the name NemoClaw would give it, once NemoClaw has checked that the profile delivers the credential in the variable the agent reads. NemoClaw creates the provider registrations but never imports or deletes these profiles. An API integration can't set `mcp`, because APF's profile sets the endpoint's rules.
+- NemoClaw doesn't verify the provenance token's signature; APF and OpenShell decide which policies a sandbox loads.
+
+Limits:
+
+- APF's bundle must serve each profile under the name NemoClaw gives it, which includes a hash of the sandbox image; no field chooses the names.
+- A deployment created without the field can't change to APF, because APF refuses to delete the profiles NemoClaw imported.
+- You give APF the gateway's signing key yourself, and with `registration: external` also install APF's CA in the gateway.
+- APF's bundle refresher updates running sandboxes only in OpenShell's `default` workspace, and NemoClaw creates its own workspace, so the refresher doesn't bring a new bundle's policy to a running NemoClaw sandbox.
 
 ### Supply Credential References
 

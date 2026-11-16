@@ -16,7 +16,11 @@ use tempfile::TempDir;
 /// before `PATH`, so providers copied here run the relay as `ssh`.
 fn install_ssh_relay(directory: &Path) {
     if cfg!(not(unix)) {
-        fs::copy(crate::ssh_relay(), directory.join(crate::executable("ssh"))).unwrap();
+        fs::copy(
+            crate::fixture_executable("nemoclaw-fixture-ssh"),
+            directory.join(crate::executable("ssh")),
+        )
+        .unwrap();
     }
 }
 

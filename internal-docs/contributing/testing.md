@@ -123,7 +123,6 @@ Integration tests live in `nemoclaw-e2e`'s `integration` binary, `crates/nemocla
 Its `hcl/` directory holds the `tofu test` scenarios, which the `hcl_integration` module in `tofu_test/` runs: shared NemoClaw documents, unchanged examples, and authored HCL examples.
 Its `rust/` directory holds the `container_service`, `deployment`, `export_observations`, `fabric_deployment`, `multi_agent`, `remote_service`, and `helm_recovery` modules, which keep the SDK and CLI behavior that `tofu test` cannot observe. [Run integration tests](integration-tests.md#integration-tests) says which a check belongs in.
 On Unix, `helm_recovery` runs the bundle's OpenTofu and Helm provider against an in-memory Kubernetes API.
-The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `nemoclaw-fixture-provider`, so that `cargo ci archive` packages their fixture executables with the tests.
 [Run integration tests](integration-tests.md#integration-tests) describes the scenarios.
 
 ### Live
@@ -150,7 +149,9 @@ The default steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bund
 `cargo ci test` runs the tests not marked `#[ignore]` with the `ci` nextest profile, then the doctests, which nextest does not run.
 The `ci` profile runs at most eight tests concurrently, retries nothing, and finishes the remaining tests after a failure.
 
-The contract, integration, and live tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle.
+The contract, integration, and live tests read `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle.
+A test that starts a fixture executable from `nemoclaw-test-fixtures` or `nemoclaw-fixture-provider`, such as the fake `ssh` relay or the fixture provider, reads `NEMOCLAW_TEST_FIXTURES`, the absolute path of the directory that holds them.
+Run from the checkout, `cargo ci test`, `contract`, and `integration` first build every workspace target and set `NEMOCLAW_TEST_FIXTURES` to `target/debug`, where Cargo puts a build's executables.
 `cargo ci bundle` builds the host platform's bundle in `dist/PLATFORM`, such as `dist/linux_arm64`, and `cargo ci contract` and `cargo ci integration` pass that path to their profiles.
 Local contract and integration runs use the available CPU count, with a minimum of four workers and a maximum of eight.
 CI keeps the profile's four-worker setting; the runner treats `CI` or `GITHUB_ACTIONS` being set as CI.
@@ -344,10 +345,11 @@ Adding or removing a test moves later tests to other partitions.
 
 `cargo ci archive` writes the files that let other runners run the tests without compiling, one nextest archive per test layer so each job downloads only the tests it runs:
 
-- `.build/ci/contract.tar.zst`, the test binaries that the `contract` profile selects, and those that the `fixtures` profile selects, so that it also holds the fixture executables the contract tests start;
+- `.build/ci/contract.tar.zst`, the test binaries that the `contract` profile selects;
 - `.build/ci/integration.tar.zst`, the test binaries that the `integration` profile selects;
 - `.build/ci/live.tar.zst`, on Linux only, the test binaries that the `live-docker` and `live-kind` profiles select;
-- `.build/ci/lifecycle-inputs.tar`, which keeps the executable permissions of the pinned tools, the `nemoclaw-build` executable, and the fake `ssh` relay.
+- `.build/ci/e2e`, on Linux only, a copy of `nemoclaw-e2e`'s `e2e` test executable from that archive, at the path nextest lists for it, which the hosted and GPU HCL case jobs run alone;
+- `.build/ci/lifecycle-inputs.tar`, which keeps the executable permissions of the pinned tools, the `nemoclaw-build` executable, and the fixture executables, which it unpacks into `target/debug`, where `NEMOCLAW_TEST_FIXTURES` points.
 
 Each archive also holds the executables that its test binaries' packages build.
 The build job uploads each file as its own artifact, and the bundle job uploads `dist/PLATFORM` separately.

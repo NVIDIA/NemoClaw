@@ -40,6 +40,11 @@
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         },
+        "instructions": {
+          "additionalProperties": true,
+          "description": "Fabric's instructions section, passed to Fabric unchanged: the agent's system prompt and instruction files. Fabric validates it against the selected adapter.",
+          "type": "object"
+        },
         "integrationRefs": {
           "description": "Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions.",
           "items": {
@@ -59,14 +64,30 @@
           },
           "type": "object"
         },
+        "mcp": {
+          "additionalProperties": true,
+          "description": "Fabric's MCP section, passed to Fabric unchanged. NemoClaw grants no network access or credentials for the servers it names.",
+          "type": "object"
+        },
         "name": {
           "description": "Lowercase agent name.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         },
+        "skills": {
+          "additionalProperties": true,
+          "description": "Fabric's skills section, passed to Fabric unchanged, such as directories and duplicates. Paths are absolute sandbox paths.",
+          "type": "object"
+        },
         "tools": {
-          "$ref": "#/$defs/AgentTools",
-          "description": "Explicit native tool identifiers projected into public Fabric configuration. Fabric validates adapter support; this does not change OS-level filesystem permissions."
+          "additionalProperties": true,
+          "description": "Fabric's tools section, passed to Fabric unchanged, such as enabled, blocked, and definitions. Fabric validates tool identifiers against the selected adapter; this does not change OS-level filesystem permissions.",
+          "type": "object"
+        },
+        "workflow": {
+          "additionalProperties": true,
+          "description": "Fabric's workflow section, passed to Fabric unchanged: the registered workflow target the agent runs.",
+          "type": "object"
         }
       },
       "required": [
@@ -88,43 +109,52 @@
       ],
       "type": "object"
     },
-    "AgentExecution": {
-      "additionalProperties": false,
-      "description": "Execution timeout shared by the sandbox; Fabric owns native execution settings.",
-      "minProperties": 1,
-      "properties": {
-        "timeoutSeconds": {
-          "description": "Invocation timeout in seconds passed to Fabric. Readiness has its own deployment deadline.",
-          "format": "uint32",
-          "maximum": 1000000000,
-          "minimum": 1,
-          "type": "integer"
-        }
-      },
-      "type": "object"
-    },
-    "AgentTools": {
-      "additionalProperties": false,
-      "description": "Explicit native tool identifiers forwarded to Fabric.",
-      "properties": {
-        "allow": {
-          "description": "Native tool identifiers. Fabric validates availability and semantics.",
-          "items": {
-            "maxLength": 256,
-            "minLength": 1,
-            "pattern": "^[^\\x00-\\x1f\\x7f]+$",
-            "type": "string"
+    "ApfPolicyAuthority": {
+      "description": "Who registers APF with the gateway as its interceptor and provider-profile source.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "NemoClaw registers APF in a managed Docker gateway's configuration file.",
+          "properties": {
+            "endpoint": {
+              "description": "APF's gRPC origin as the gateway reaches it: `https://HOST[:PORT]`, without a path.",
+              "pattern": "^https://[^/?#@]+$",
+              "type": "string"
+            },
+            "registration": {
+              "const": "managed",
+              "description": "Who registers APF with the gateway: managed means NemoClaw does, external means the gateway's operator does.",
+              "type": "string"
+            },
+            "tls": {
+              "$ref": "#/$defs/InterceptorTls",
+              "description": "The CA certificate that verifies APF; omission uses the gateway's system roots."
+            }
           },
-          "maxItems": 128,
-          "minItems": 1,
-          "type": "array",
-          "uniqueItems": true
+          "required": [
+            "registration",
+            "endpoint"
+          ],
+          "title": "Registered by NemoClaw",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The gateway's operator registers APF, such as in spec.gateway.config. Required on an external gateway.",
+          "properties": {
+            "registration": {
+              "const": "external",
+              "description": "Who registers APF with the gateway: managed means NemoClaw does, external means the gateway's operator does.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "registration"
+          ],
+          "title": "Registered by the gateway's operator",
+          "type": "object"
         }
-      },
-      "required": [
-        "allow"
-      ],
-      "type": "object"
+      ]
     },
     "ApiAuthStyle": {
       "description": "How an API key is sent.",
@@ -701,6 +731,10 @@
               "type": "string",
               "x-nemoclaw-default-rule": "Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes."
             },
+            "policyAuthority": {
+              "$ref": "#/$defs/PolicyAuthority",
+              "description": "Who authors sandbox policy on this gateway; omission means NemoClaw does."
+            },
             "runtime": {
               "$ref": "#/$defs/Runtime",
               "description": "Compute driver the gateway runs every sandbox with; omission selects Docker."
@@ -777,6 +811,10 @@
               "const": "external",
               "description": "Whether this deployment manages the gateway.",
               "type": "string"
+            },
+            "policyAuthority": {
+              "$ref": "#/$defs/PolicyAuthority",
+              "description": "Who authors sandbox policy on this gateway; omission means NemoClaw does."
             },
             "runtime": {
               "$ref": "#/$defs/Runtime",
@@ -867,14 +905,15 @@
       "additionalProperties": false,
       "description": "One harness runtime configuration. Every sandbox runs its own instance for its configured agent.",
       "properties": {
-        "config": {
+        "discovery": {
           "additionalProperties": true,
-          "description": "Public Fabric configuration. Deployment-owned identities and model connections cannot be overridden.",
+          "description": "Fabric's discovery section, passed to Fabric unchanged: additional descriptor discovery paths in the sandbox.",
           "type": "object"
         },
-        "execution": {
-          "$ref": "#/$defs/AgentExecution",
-          "description": "Public Fabric runtime execution settings."
+        "environment": {
+          "additionalProperties": true,
+          "description": "Fabric's environment section, passed to Fabric unchanged. The deployment sets provider to local and workspace to /sandbox/workspace; a different authored value fails.",
+          "type": "object"
         },
         "kind": {
           "description": "Fabric harness implementation for the sandbox agent.",
@@ -882,9 +921,24 @@
           "pattern": "\\S",
           "type": "string"
         },
+        "relay": {
+          "additionalProperties": true,
+          "description": "Fabric's relay section, passed to Fabric unchanged, such as Relay plugins. Relay validates and activates them.",
+          "type": "object"
+        },
+        "runtime": {
+          "additionalProperties": true,
+          "description": "Fabric's runtime section, passed to Fabric unchanged, such as timeout_seconds and max_turns. The deployment sets artifacts and, for adapters that accept it, keep_state; a different authored value fails.",
+          "type": "object"
+        },
         "settings": {
           "additionalProperties": true,
           "description": "Opaque native settings validated by the selected Fabric adapter.",
+          "type": "object"
+        },
+        "telemetry": {
+          "additionalProperties": true,
+          "description": "Fabric's telemetry section, passed to Fabric unchanged, such as providers.relay. NemoClaw grants no network access for its exporters.",
           "type": "object"
         }
       },
@@ -1324,9 +1378,13 @@
               "$ref": "#/$defs/SecretRef",
               "description": "Host environment reference holding the API key."
             },
-            "endpoint": {
-              "description": "The API's HTTPS URL.",
-              "type": "string"
+            "endpoints": {
+              "description": "The API's HTTPS URLs. One key reaches each URL's host, port and path subtree.",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
             },
             "headerName": {
               "description": "The header that carries the key. Defaults to Authorization for bearer; required for header.",
@@ -1336,16 +1394,36 @@
               "const": "api",
               "description": "Integration implementation selected by this definition.",
               "type": "string"
+            },
+            "sandboxEnv": {
+              "description": "Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to NEMOCLAW_API_<registration>_KEY.",
+              "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+              "type": "string",
+              "x-nemoclaw-error": "api sandboxEnv must be an environment variable name"
             }
           },
           "required": [
             "kind",
-            "endpoint",
+            "endpoints",
             "credential"
           ],
           "type": "object"
         }
       ]
+    },
+    "InterceptorTls": {
+      "additionalProperties": false,
+      "description": "TLS file reference for a service the gateway dials.",
+      "properties": {
+        "ca": {
+          "$ref": "#/$defs/FileRef",
+          "description": "Environment variable whose value names the local CA certificate file. NemoClaw copies the certificate into the gateway's storage."
+        }
+      },
+      "required": [
+        "ca"
+      ],
+      "type": "object"
     },
     "KubernetesAuthentication": {
       "additionalProperties": false,
@@ -1861,11 +1939,35 @@
       "additionalProperties": false,
       "description": "Sandbox policy selection.",
       "if": {
+        "anyOf": [
+          {
+            "required": [
+              "policy"
+            ]
+          },
+          {
+            "required": [
+              "policyRef"
+            ]
+          }
+        ]
+      },
+      "not": {
         "required": [
-          "policy"
+          "policy",
+          "policyRef"
         ]
       },
       "properties": {
+        "grantRefs": {
+          "description": "Names of grants in spec.grants added to the isolated preset, alongside grants. Names must be unique across both. Excluded by policy and policyRef.",
+          "items": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
         "grants": {
           "additionalProperties": {
             "$ref": "#/$defs/Grant"
@@ -1875,7 +1977,12 @@
         },
         "policy": {
           "$ref": "#/$defs/ExplicitPolicySelection",
-          "description": "Complete authored OpenShell policy, replacing the isolated preset."
+          "description": "Complete authored OpenShell policy, replacing the isolated preset. Excludes tier and policyRef."
+        },
+        "policyRef": {
+          "description": "Name of a policy in spec.policies, applied as if written in policy.explicit. Excludes tier and policy.",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "type": "string"
         },
         "tier": {
           "anyOf": [
@@ -1887,12 +1994,30 @@
             }
           ],
           "default": "isolated",
-          "description": "Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated.",
+          "description": "Isolated policy preset. Omit when declaring policy or policyRef; omitting all three selects isolated.",
           "type": "string",
-          "x-nemoclaw-default-rule": "Omitted or empty selects isolated only without policy.explicit."
+          "x-nemoclaw-default-rule": "Omitted or empty selects isolated only without policy or policyRef."
         }
       },
       "then": {
+        "allOf": [
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "grants"
+                  ]
+                },
+                {
+                  "required": [
+                    "grantRefs"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
         "properties": {
           "tier": {
             "const": ""
@@ -2177,6 +2302,20 @@
       },
       "required": [
         "any"
+      ],
+      "type": "object"
+    },
+    "PolicyAuthority": {
+      "additionalProperties": false,
+      "description": "The component that authors every sandbox's policy on a gateway, instead of NemoClaw.",
+      "properties": {
+        "apf": {
+          "$ref": "#/$defs/ApfPolicyAuthority",
+          "description": "APF's admission interceptor replaces each sandbox's policy with its signed bundle's, and APF serves the provider profiles. Sandboxes must not set a policy or policyRef, and API integrations must not set mcp. NemoClaw requires APF's provenance on each sandbox, records each policy APF issues with a new provenance token, and asks APF to issue its policy again when the loaded policy changes without one."
+        }
+      },
+      "required": [
+        "apf"
       ],
       "type": "object"
     },
@@ -4071,6 +4210,16 @@
           "$ref": "#/$defs/Gateway",
           "description": "OpenShell gateway connection or managed gateway settings."
         },
+        "grants": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Grant"
+          },
+          "description": "Named network grants available to sandbox networks through grantRefs. Each selected grant becomes a policy rule with its definition's name; unselected grants are validated but grant nothing.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
+        },
         "harnesses": {
           "additionalProperties": {
             "$ref": "#/$defs/Harness"
@@ -4106,6 +4255,16 @@
             "$ref": "#/$defs/Integration"
           },
           "description": "Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "type": "object"
+        },
+        "policies": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ExplicitPolicy"
+          },
+          "description": "Named complete OpenShell sandbox policies available to sandbox networks through policyRef. Unselected policies are validated but apply to no sandbox.",
           "propertyNames": {
             "pattern": "^[a-z][a-z0-9-]{0,39}$"
           },

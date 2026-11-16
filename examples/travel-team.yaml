@@ -62,9 +62,17 @@ spec:
       sandboxEnv: BRAVE_SEARCH_API_KEY
     bookings:
       kind: api
-      endpoint: https://bookings.example.com/mcp
+      endpoints: [https://bookings.example.com/mcp]
       credential:
         env: BOOKINGS_API_KEY
+
+  # The four researchers share one harness configuration; each agent has its
+  # own instructions. The scheduler and buyer allow a different number of turns.
+  harnesses:
+    researcher:
+      kind: nvidia.fabric.hermes
+      runtime:
+        max_turns: 16
 
   sandboxes:
     flights:
@@ -73,24 +81,20 @@ spec:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
-      harness:
-        kind: nvidia.fabric.hermes
-        config:
-          runtime:
-            max_turns: 16
-          instructions:
-            system:
-              mode: replace
-              content: |
-                You research flights for each leg of a trip: nonstop and one-stop options, fares, fare rules, and baggage allowances.
-                Search the web; never invent an option, a price, or a source.
-                Reply with JSON only: {"topic": "flights", "options": [...]}, up to five options per leg, cheapest first.
-                Each option has an id starting with "flights-", a summary, a price with amount and currency, and the URL it came from.
+      harnessRef: researcher
       agent:
         name: flights
         integrationRefs: [search]
         tools:
-          allow: [web]
+          enabled: [web]
+        instructions:
+          system:
+            mode: replace
+            content: |
+              You research flights for each leg of a trip: nonstop and one-stop options, fares, fare rules, and baggage allowances.
+              Search the web; never invent an option, a price, or a source.
+              Reply with JSON only: {"topic": "flights", "options": [...]}, up to five options per leg, cheapest first.
+              Each option has an id starting with "flights-", a summary, a price with amount and currency, and the URL it came from.
         inference:
           routes:
             - name: primary
@@ -107,24 +111,20 @@ spec:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
-      harness:
-        kind: nvidia.fabric.hermes
-        config:
-          runtime:
-            max_turns: 16
-          instructions:
-            system:
-              mode: replace
-              content: |
-                You research places to stay near each stop's points of interest: hotels and apartments, nightly rates, cancellation terms, and reviews.
-                Search the web; never invent an option, a price, or a source.
-                Reply with JSON only: {"topic": "stays", "options": [...]}, up to five options per stop, cheapest first.
-                Each option has an id starting with "stays-", a summary, a price with amount and currency, and the URL it came from.
+      harnessRef: researcher
       agent:
         name: stays
         integrationRefs: [search]
         tools:
-          allow: [web]
+          enabled: [web]
+        instructions:
+          system:
+            mode: replace
+            content: |
+              You research places to stay near each stop's points of interest: hotels and apartments, nightly rates, cancellation terms, and reviews.
+              Search the web; never invent an option, a price, or a source.
+              Reply with JSON only: {"topic": "stays", "options": [...]}, up to five options per stop, cheapest first.
+              Each option has an id starting with "stays-", a summary, a price with amount and currency, and the URL it came from.
         inference:
           routes:
             - name: primary
@@ -141,24 +141,20 @@ spec:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
-      harness:
-        kind: nvidia.fabric.hermes
-        config:
-          runtime:
-            max_turns: 16
-          instructions:
-            system:
-              mode: replace
-              content: |
-                You research getting around: airport transfers, transit passes, trains between cities, and car rental where transit is poor.
-                Search the web; never invent an option, a price, or a source.
-                Reply with JSON only: {"topic": "transport", "options": [...]}, up to five options per stop, cheapest first.
-                Each option has an id starting with "transport-", a summary, a price with amount and currency, and the URL it came from.
+      harnessRef: researcher
       agent:
         name: transport
         integrationRefs: [search]
         tools:
-          allow: [web]
+          enabled: [web]
+        instructions:
+          system:
+            mode: replace
+            content: |
+              You research getting around: airport transfers, transit passes, trains between cities, and car rental where transit is poor.
+              Search the web; never invent an option, a price, or a source.
+              Reply with JSON only: {"topic": "transport", "options": [...]}, up to five options per stop, cheapest first.
+              Each option has an id starting with "transport-", a summary, a price with amount and currency, and the URL it came from.
         inference:
           routes:
             - name: primary
@@ -175,24 +171,20 @@ spec:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
-      harness:
-        kind: nvidia.fabric.hermes
-        config:
-          runtime:
-            max_turns: 16
-          instructions:
-            system:
-              mode: replace
-              content: |
-                You research things to do at each stop: attractions, opening hours, ticket prices, advance booking requirements, and seasonal closures.
-                Search the web; never invent an option, a price, or a source.
-                Reply with JSON only: {"topic": "attractions", "options": [...]}, up to five options per stop, cheapest first.
-                Each option has an id starting with "attractions-", a summary, a price with amount and currency, and the URL it came from.
+      harnessRef: researcher
       agent:
         name: attractions
         integrationRefs: [search]
         tools:
-          allow: [web]
+          enabled: [web]
+        instructions:
+          system:
+            mode: replace
+            content: |
+              You research things to do at each stop: attractions, opening hours, ticket prices, advance booking requirements, and seasonal closures.
+              Search the web; never invent an option, a price, or a source.
+              Reply with JSON only: {"topic": "attractions", "options": [...]}, up to five options per stop, cheapest first.
+              Each option has an id starting with "attractions-", a summary, a price with amount and currency, and the URL it came from.
         inference:
           routes:
             - name: primary
@@ -211,21 +203,20 @@ spec:
         tier: isolated
       harness:
         kind: nvidia.fabric.hermes
-        config:
-          runtime:
-            max_turns: 12
-          instructions:
-            system:
-              mode: replace
-              content: |
-                You compose a day-by-day itinerary from a trip request and the researchers' results for flights, stays, transport, and attractions.
-                Use only options the researchers returned, by id, and keep the total within the budget.
-                Before answering, delegate a check of your draft for impossible connections, overlaps, closed attractions, and budget overruns, and fix what it finds.
-                Reply with JSON only: {"days": [...], "total": {"amount": ..., "currency": ...}}, each day listing the option ids it uses with their prices.
+        runtime:
+          max_turns: 12
       agent:
         name: scheduler
         tools:
-          allow: [delegation]
+          enabled: [delegation]
+        instructions:
+          system:
+            mode: replace
+            content: |
+              You compose a day-by-day itinerary from a trip request and the researchers' results for flights, stays, transport, and attractions.
+              Use only options the researchers returned, by id, and keep the total within the budget.
+              Before answering, delegate a check of your draft for impossible connections, overlaps, closed attractions, and budget overruns, and fix what it finds.
+              Reply with JSON only: {"days": [...], "total": {"amount": ..., "currency": ...}}, each day listing the option ids it uses with their prices.
         inference:
           routes:
             - name: primary
@@ -260,29 +251,28 @@ spec:
                   - allow: {method: tools/call, tool: book_option}
       harness:
         kind: nvidia.fabric.hermes
-        config:
-          runtime:
-            max_turns: 24
-          mcp:
-            servers:
-              bookings:
-                transport: streamable-http
-                url: https://bookings.example.com/mcp
-                exposure: harness_native
-          instructions:
-            system:
-              mode: replace
-              content: |
-                You book an itinerary a person has approved, using only the booking service's get_quote and book_option tools.
-                An option can appear on several days; book each distinct option once.
-                First quote every distinct option, passing its itinerary price as expected_price.
-                Book only when every quote matches and every option is available; otherwise book nothing and report what changed.
-                Never substitute an option. Reply with JSON only: {"bookings": [...], "status": "booked" or "not booked", "reason": ...}.
+        runtime:
+          max_turns: 24
       agent:
         name: buyer
         integrationRefs: [bookings]
         tools:
-          allow: [bookings]
+          enabled: [bookings]
+        mcp:
+          servers:
+            bookings:
+              transport: streamable-http
+              url: https://bookings.example.com/mcp
+              exposure: harness_native
+        instructions:
+          system:
+            mode: replace
+            content: |
+              You book an itinerary a person has approved, using only the booking service's get_quote and book_option tools.
+              An option can appear on several days; book each distinct option once.
+              First quote every distinct option, passing its itinerary price as expected_price.
+              Book only when every quote matches and every option is available; otherwise book nothing and report what changed.
+              Never substitute an option. Reply with JSON only: {"bookings": [...], "status": "booked" or "not booked", "reason": ...}.
         inference:
           routes:
             - name: primary

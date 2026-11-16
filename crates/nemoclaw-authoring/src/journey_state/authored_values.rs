@@ -140,8 +140,8 @@ impl AuthoredValues {
         value: Option<Value>,
     ) -> Result<(), Diagnostics> {
         let root = match owner {
-            NativeSettingOwner::Workflow => harness_path(&self.values)
-                .ok_or_else(|| diagnostic("journey", "Harness is unavailable."))?,
+            NativeSettingOwner::Workflow => agent_path(&self.values)
+                .ok_or_else(|| diagnostic("journey", "Agent is unavailable."))?,
             NativeSettingOwner::Model(route) => format!(
                 "{}/{}",
                 routes_path(&self.values)
@@ -158,16 +158,12 @@ impl AuthoredValues {
         // Containers an omission leaves empty, innermost first, are removed so
         // an omitted setting does not author `settings: {}`.
         let containers: &[&str] = if owner == NativeSettingOwner::Workflow {
-            &["config", "workflow"]
+            &["workflow"]
         } else {
             &["overrides", "settings"]
         };
         let settings = if owner == NativeSettingOwner::Workflow {
             owner_object
-                .entry("config")
-                .or_insert_with(|| Value::Object(Map::new()))
-                .as_object_mut()
-                .ok_or_else(|| diagnostic("journey", "Harness config must be an object."))?
                 .entry("workflow")
                 .or_insert_with(|| Value::Object(Map::new()))
         } else {

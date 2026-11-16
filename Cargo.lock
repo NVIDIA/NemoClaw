@@ -3184,7 +3184,6 @@ dependencies = [
  "async-trait",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
- "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
  "rustls",
  "serde_json",
@@ -3225,6 +3224,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "url",
 ]
 
 [[package]]

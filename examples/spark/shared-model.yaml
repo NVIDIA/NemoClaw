@@ -53,8 +53,8 @@ spec:
         tier: isolated
       harness:
         kind: nvidia.fabric.pi
-        execution:
-          timeoutSeconds: 300
+        runtime:
+          timeout_seconds: 300
       agent:
         name: assistant
         inference:
@@ -70,8 +70,8 @@ spec:
         tier: isolated
       harness:
         kind: nvidia.fabric.openclaw
-        execution:
-          timeoutSeconds: 300
+        runtime:
+          timeout_seconds: 300
       agent:
         name: assistant
         inference:
@@ -88,8 +88,8 @@ spec:
         tier: isolated
       harness:
         kind: nvidia.fabric.langchain.deepagents
-        execution:
-          timeoutSeconds: 300
+        runtime:
+          timeout_seconds: 300
       agent:
         name: assistant
         inference:

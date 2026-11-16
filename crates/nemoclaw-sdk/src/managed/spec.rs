@@ -93,8 +93,6 @@ pub struct ImageLaunch {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub ulimits: std::collections::BTreeMap<String, i64>,
 }
-/// CFS period for container CPU limits, matching kubelet and `docker --cpus`.
-pub(crate) const CPU_PERIOD_MICROS: u64 = 100_000;
 /// The supervisor every managed vLLM and Ollama image runs.
 pub const RUNTIME_ENTRYPOINT: &str = "/usr/local/bin/nemoclaw-runtime";
 /// Where a runtime keeps its data, such as downloaded models.
@@ -107,13 +105,6 @@ pub const RUNTIME_ULIMITS: [(&str, i64); 2] = [("memlock", -1), ("stack", 67_108
 /// Shared memory a runtime gets unless its service sets its own.
 pub fn default_shared_memory_bytes() -> u64 {
     crate::services::installers::vllm::ServiceContainer::resources(None).shared_memory_bytes
-}
-/// The kernel's minimum CFS quota; kubelet raises smaller CPU limits to it.
-const MIN_CPU_QUOTA_MICROS: u64 = 1000;
-
-/// CFS quota per [`CPU_PERIOD_MICROS`] for a CPU limit in millicores.
-pub(crate) fn cpu_quota_micros(limit_millis: u32) -> u64 {
-    (u64::from(limit_millis) * CPU_PERIOD_MICROS / 1000).max(MIN_CPU_QUOTA_MICROS)
 }
 /// Data source computing a Docker gateway container's launch.
 pub const GATEWAY_RUNTIME_DATA_SOURCE: &str = "gateway_runtime";
@@ -198,6 +189,9 @@ pub const GATEWAY_ATTRIBUTES: [&str; 8] = [
 /// Authored OpenShell gateway settings, as JSON, when the deployment sets
 /// them; absent otherwise.
 pub const CONFIG_ATTRIBUTE: &str = "gateway_config";
+/// APF's connection settings, as JSON, when the deployment has NemoClaw
+/// register APF with a Docker gateway; absent otherwise.
+pub const APF_ATTRIBUTE: &str = "apf_registration";
 /// Docker gateway data does not depend on the listen port, so its storage
 /// records this endpoint instead of the gateway's.
 const DOCKER_STORAGE_ENDPOINT: &str = "http://127.0.0.1:8080";
@@ -228,6 +222,11 @@ pub fn check_gateway_attribute(attribute: &str, value: &str) -> Result<(), &'sta
                 }
                 _ => Err("must be a JSON object in the OpenShell chart's gatewayConfig format"),
             };
+        }
+        APF_ATTRIBUTE => {
+            return serde_json::from_str::<crate::config::ManagedApf>(value)
+                .map(|_| ())
+                .map_err(|_| "must be a JSON object of APF connection settings");
         }
         _ => return Ok(()),
     };
@@ -313,6 +312,13 @@ impl Spec {
                     .map_err(|_| Error::State("cannot encode gateway config"))?,
             );
         }
+        if let Some(apf) = self.managed_apf().filter(|_| kind == GATEWAY_KIND) {
+            row.insert(
+                APF_ATTRIBUTE.into(),
+                serde_json::to_string(apf)
+                    .map_err(|_| Error::State("cannot encode APF registration"))?,
+            );
+        }
         Ok(row)
     }
     /// Gateway or storage specification named by resource attributes.
@@ -327,11 +333,13 @@ impl Spec {
                 .cloned()
                 .ok_or(crate::ObservationError::Incomplete)
         };
-        for attribute in GATEWAY_ATTRIBUTES.into_iter().chain([CONFIG_ATTRIBUTE]) {
-            if let Some(value) = row
-                .get(attribute)
-                .filter(|value| !value.is_empty() || attribute != CONFIG_ATTRIBUTE)
-            {
+        for attribute in GATEWAY_ATTRIBUTES
+            .into_iter()
+            .chain([CONFIG_ATTRIBUTE, APF_ATTRIBUTE])
+        {
+            if let Some(value) = row.get(attribute).filter(|value| {
+                !value.is_empty() || !matches!(attribute, CONFIG_ATTRIBUTE | APF_ATTRIBUTE)
+            }) {
                 check_gateway_attribute(attribute, value)
                     .map_err(|_| Error::Conflict("invalid managed gateway attribute"))?;
             }
@@ -376,6 +384,17 @@ impl Spec {
                     ),
                     None => None,
                 },
+                policy_authority: row
+                    .get(APF_ATTRIBUTE)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| {
+                        serde_json::from_str(value)
+                            .map(|apf| crate::config::PolicyAuthority {
+                                apf: crate::config::ApfPolicyAuthority::Managed(apf),
+                            })
+                            .map_err(|_| Error::Conflict("invalid managed gateway attribute"))
+                    })
+                    .transpose()?,
             },
             image: get("image")?,
             process: None,
@@ -691,8 +710,7 @@ impl Spec {
             host["Memory"] = json!(process.memory_bytes);
             host["MemorySwap"] = json!(process.memory_bytes);
             if let Some(limit) = process.cpu_limit_millis {
-                host["CpuPeriod"] = json!(CPU_PERIOD_MICROS);
-                host["CpuQuota"] = json!(cpu_quota_micros(limit));
+                host["NanoCpus"] = json!(u64::from(limit) * 1_000_000);
             }
             match &process.gpus {
                 Gpus::None => {}
@@ -744,16 +762,43 @@ impl Spec {
             &self.gateway.endpoint,
             data_path,
             self.gateway.config.as_ref(),
+            None,
         )
     }
 }
+
+impl Spec {
+    /// APF's connection settings, when NemoClaw registers APF with this gateway.
+    pub fn managed_apf(&self) -> Option<&crate::config::ManagedApf> {
+        self.gateway.policy_authority.as_ref()?.managed()
+    }
+}
+
+/// APF's registration in a managed Docker gateway's configuration file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApfRegistration {
+    /// APF's gRPC origin.
+    pub endpoint: String,
+    /// Path of APF's CA certificate inside the gateway, when one verifies APF.
+    pub ca: Option<String>,
+}
+
+/// The instance name under which NemoClaw registers APF.
+pub const APF_INTERCEPTOR: &str = "apf-policy-adapter";
+/// Where a managed gateway's storage holds APF's CA certificate.
+pub const APF_CA_FILE: &str = "apf/ca.pem";
 
 /// A Docker gateway's configuration file from its name, the data path its
 /// storage returns, and the authored tables as JSON, empty when none.
 ///
 /// # Errors
 /// Returns a conflict naming the invalid setting.
-pub fn docker_gateway_config(name: &str, data_path: &str, config: &str) -> Result<String, Error> {
+pub fn docker_gateway_config(
+    name: &str,
+    data_path: &str,
+    config: &str,
+    apf: Option<&ApfRegistration>,
+) -> Result<String, Error> {
     let config = if config.is_empty() {
         None
     } else {
@@ -771,6 +816,7 @@ pub fn docker_gateway_config(name: &str, data_path: &str, config: &str) -> Resul
         "",
         data_path,
         config.as_ref(),
+        apf,
     )
 }
 
@@ -783,6 +829,7 @@ fn gateway_file(
     endpoint: &str,
     data_path: &str,
     config: Option<&super::gateway_config::GatewayConfig>,
+    apf: Option<&ApfRegistration>,
 ) -> Result<String, Error> {
     use toml::{Table, Value};
     fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
@@ -809,7 +856,7 @@ fn gateway_file(
         driver.insert("sandbox_runtime_image".into(), text(SANDBOX_RUNTIME_IMAGE));
         driver.insert("supervisor_image".into(), text(SUPERVISOR_IMAGE));
     }
-    let gateway = table([
+    let mut gateway = table([
         ("compute_driver", text(compute_driver.as_str())),
         ("disable_tls", Value::Boolean(true)),
         (
@@ -832,6 +879,29 @@ fn gateway_file(
             table([("allow_unauthenticated_users", Value::Boolean(true))]),
         ),
     ]);
+    // APF admits every sandbox and serves every provider profile. Validation
+    // keeps the authored tables from registering either.
+    if let (Some(apf), Value::Table(gateway)) = (apf, &mut gateway) {
+        let mut interceptor = Table::new();
+        interceptor.insert("name".into(), text(APF_INTERCEPTOR));
+        interceptor.insert("grpc_endpoint".into(), text(&apf.endpoint));
+        if let Some(ca) = &apf.ca {
+            interceptor.insert("tls_ca_cert_path".into(), text(ca));
+        }
+        interceptor.insert("order".into(), Value::Integer(0));
+        interceptor.insert("failure_policy".into(), text("fail_closed"));
+        gateway.insert(
+            "interceptors".into(),
+            Value::Array(vec![Value::Table(interceptor)]),
+        );
+        gateway.insert(
+            "provider_profile_sources".into(),
+            Value::Array(vec![table([
+                ("type", text("interceptor")),
+                ("name", text(APF_INTERCEPTOR)),
+            ])]),
+        );
+    }
     let mut drivers = Table::new();
     drivers.insert(compute_driver.as_str().into(), driver);
     let mut root = Table::new();
