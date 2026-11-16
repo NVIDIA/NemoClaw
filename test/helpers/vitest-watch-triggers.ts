@@ -47,6 +47,11 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern:
+      /(?:^|\/)test\/e2e\/fixtures\/provider-profiles\/nemoclaw-e2e-(?:extra-provider|switchyard-peer)-v1\.yaml$/,
+    testsToRun: runTests("test/e2e/support/gateway-extra-provider-profile.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)schemas\/network-policy\.schema\.json$/,
     testsToRun: runTests("test/onboarding/validate-config-schemas.test.ts"),
   },

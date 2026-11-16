@@ -9,6 +9,8 @@ import {
   SWITCHYARD_BOUNDARY_ANSWER,
   SWITCHYARD_BOUNDARY_CREDENTIAL_ENV,
   SWITCHYARD_CALLER_CANARY,
+  SWITCHYARD_BODY_CANARY,
+  SWITCHYARD_PEER_CREDENTIAL_ENV,
 } from "../fixtures/hermes-switchyard-boundary.ts";
 
 test("boundary peers require the credential, expose redirect/denial witnesses, and retain no secrets", async () => {
@@ -45,7 +47,13 @@ test("boundary peers require the credential, expose redirect/denial witnesses, a
       signal: AbortSignal.timeout(5_000),
     });
     expect(await forbidden.text()).toBe(SWITCHYARD_BOUNDARY_ANSWER);
+    fixture.redirect(false);
+    fixture.respondWithError(true);
+    const failure = await post(headers);
+    expect(failure.status).toBe(500);
+    expect(await failure.text()).toContain(SWITCHYARD_BODY_CANARY);
     expect(fixture.evidence).toEqual({
+      requests: 5,
       judge: 1,
       answer: 1,
       redirects: 1,
@@ -58,13 +66,17 @@ test("boundary peers require the credential, expose redirect/denial witnesses, a
   }
 });
 
-test("boundary probe uses the injected handle and localizes the temporary deployment transport", () => {
-  const args = switchyardBoundaryProbe("http://host.openshell.internal:12345/v1");
-  const sdk = String.raw`
-import os, sys, types
+test.each([undefined, SWITCHYARD_PEER_CREDENTIAL_ENV])(
+  "boundary probe selects issued handle %s and localizes only temporary transport",
+  (credentialEnv) => {
+    const args = switchyardBoundaryProbe("http://host.openshell.internal:12345/v1", {
+      credentialEnv,
+    });
+    const sdk = String.raw`
+import base64, json, os, sys, types
 class Runtime:
     def __init__(self):
-        injected = os.environ['${SWITCHYARD_BOUNDARY_CREDENTIAL_ENV}']
+        injected = os.environ[json.loads(base64.b64decode(sys.argv[1]))['credentialEnv']]
         if any(os.environ.get(key) != injected for key in ('NVIDIA_INFERENCE_API_KEY', 'OPENAI_API_KEY')):
             raise RuntimeError('Client did not receive the injected credential handle')
     def managed_execution_enabled(self):
@@ -81,24 +93,139 @@ agent.relay_runtime = types.SimpleNamespace(RELAY_PLUGINS_CONFIG_ENV='TEST_RELAY
 sys.modules['nemo_relay'] = relay
 sys.modules['agent'] = agent
 `;
-  const probed = spawnSync("python3", ["-I", "-c", sdk + args[3], args[4]!], {
+    const probed = spawnSync("python3", ["-I", "-c", sdk + args[3], args[4]!], {
+      env: {
+        ...process.env,
+        [SWITCHYARD_BOUNDARY_CREDENTIAL_ENV]: `openshell:resolve:env:v7_${SWITCHYARD_BOUNDARY_CREDENTIAL_ENV}`,
+        [SWITCHYARD_PEER_CREDENTIAL_ENV]: `openshell:resolve:env:v9_${SWITCHYARD_PEER_CREDENTIAL_ENV}`,
+      },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(probed.status, probed.stderr).toBe(0);
+    expect(JSON.parse(probed.stdout)).toEqual({
+      active: true,
+      failed: false,
+      passthrough: false,
+      answer: SWITCHYARD_BOUNDARY_ANSWER,
+      callback_status: null,
+      failure_category: null,
+    });
+    const payload = JSON.parse(Buffer.from(args[4]!, "base64").toString());
+    expect(payload.deployment.match(/^base_url = .*$/gm)).toEqual([
+      'base_url = "http://host.openshell.internal:12345/v1"',
+      'base_url = "http://host.openshell.internal:12345/v1"',
+    ]);
+  },
+);
+
+function continuationProbe(mode: "unmanaged" | "unmatched" | undefined, fault = "") {
+  const args = switchyardBoundaryProbe("http://host.openshell.internal:12345/v1", { mode });
+  const sdk = String.raw`
+import base64, io, json, os, sys, types, urllib.error, urllib.request
+payload = json.loads(base64.b64decode(sys.argv[1]))
+fault = os.environ['TEST_PROBE_FAULT']
+canary = '${SWITCHYARD_BODY_CANARY}' * 10000
+class Runtime:
+    def managed_execution_enabled(self): return payload['mode'] != 'unmanaged'
+    def shutdown(self):
+        if fault == 'shutdown': raise RuntimeError(canary)
+class Response:
+    status = 200
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def read(self, size):
+        return json.dumps({'choices': [{'message': {'content': '${SWITCHYARD_BOUNDARY_ANSWER}'}}]}).encode()
+def urlopen(request, **kwargs):
+    if fault == 'http':
+        raise urllib.error.HTTPError(request.full_url, 503, 'unavailable', {}, io.BytesIO(canary.encode()))
+    if fault == 'proxy':
+        raise urllib.error.URLError(OSError('Tunnel connection failed: 403 Forbidden ' + canary))
+    if fault == 'transport': raise urllib.error.URLError(OSError(canary))
+    return Response()
+urllib.request.urlopen = urlopen
+async def execute(capability, request, continuation):
+    if fault == 'native-exception': raise RuntimeError(canary)
+    if fault == 'native-error': return {'error': {'message': canary}}
+    if fault == 'native-answer': return {'choices': [{'message': {'content': canary}}]}
+    return await continuation(request)
+relay = types.ModuleType('nemo_relay')
+relay.LLMRequest = lambda headers, body: body
+relay.llm = types.SimpleNamespace(execute=execute)
+agent = types.ModuleType('agent')
+agent.relay_runtime = types.SimpleNamespace(RELAY_PLUGINS_CONFIG_ENV='TEST_RELAY_CONFIG', RelayRuntime=Runtime)
+sys.modules['nemo_relay'] = relay
+sys.modules['agent'] = agent
+`;
+  const result = spawnSync("python3", ["-I", "-c", sdk + args[3], args[4]!], {
     env: {
       ...process.env,
-      [SWITCHYARD_BOUNDARY_CREDENTIAL_ENV]: `openshell:resolve:env:v7_${SWITCHYARD_BOUNDARY_CREDENTIAL_ENV}`,
+      TEST_PROBE_FAULT: fault,
+      [SWITCHYARD_BOUNDARY_CREDENTIAL_ENV]: "issued-fixture-handle",
     },
     encoding: "utf8",
     timeout: 10_000,
   });
-  expect(probed.status, probed.stderr).toBe(0);
-  expect(JSON.parse(probed.stdout)).toEqual({
-    active: true,
-    failed: false,
-    passthrough: false,
-    answer: SWITCHYARD_BOUNDARY_ANSWER,
+  expect(result.status, result.stderr).toBe(0);
+  expect(Buffer.byteLength(result.stdout + result.stderr)).toBeLessThan(1024);
+  expect(result.stdout + result.stderr).not.toContain(SWITCHYARD_BODY_CANARY);
+  return JSON.parse(result.stdout);
+}
+
+test.each(["unmanaged", "unmatched"] as const)(
+  "%s routing exercises the original-provider continuation",
+  (mode) => {
+    expect(continuationProbe(mode)).toEqual({
+      active: mode === "unmatched",
+      failed: false,
+      passthrough: true,
+      answer: SWITCHYARD_BOUNDARY_ANSWER,
+      callback_status: 200,
+      failure_category: null,
+    });
+  },
+);
+
+test.each(["unmanaged", "unmatched"] as const)(
+  "%s callback failures expose only observed status and bounded categories",
+  (mode) => {
+    expect(continuationProbe(mode, "http")).toMatchObject({
+      failed: true,
+      callback_status: 503,
+      failure_category: "http_error",
+      answer: null,
+    });
+    expect(continuationProbe(mode, "proxy")).toMatchObject({
+      failed: true,
+      callback_status: 403,
+      failure_category: "proxy_connect_denied",
+      answer: null,
+    });
+    expect(continuationProbe(mode, "transport")).toMatchObject({
+      failed: true,
+      callback_status: null,
+      failure_category: "transport_error",
+      answer: null,
+    });
+  },
+);
+
+test.each(["native-exception", "native-error"])(
+  "%s preserves unavailable upstream detail without leaking bodies",
+  (fault) => {
+    expect(continuationProbe(undefined, fault)).toMatchObject({
+      failed: true,
+      callback_status: null,
+      failure_category: "upstream_details_unavailable",
+      answer: null,
+    });
+  },
+);
+
+test("unexpected provider content and shutdown exceptions stay out of probe output", () => {
+  expect(continuationProbe(undefined, "native-answer").answer).toBeNull();
+  expect(continuationProbe("unmanaged", "shutdown")).toMatchObject({
+    failed: true,
+    failure_category: "shutdown_error",
   });
-  const payload = JSON.parse(Buffer.from(args[4]!, "base64").toString());
-  expect(payload.deployment.match(/^base_url = .*$/gm)).toEqual([
-    'base_url = "http://host.openshell.internal:12345/v1"',
-    'base_url = "http://host.openshell.internal:12345/v1"',
-  ]);
 });

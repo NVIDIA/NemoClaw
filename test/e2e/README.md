@@ -41,6 +41,15 @@ provider TLS, adaptive onboarding, or `inference.local` isolation in a routed sa
 standard Hermes sandbox still uses `inference.local`. Support tests own fixture responses,
 redacted evidence, and probe syntax; they are not live OpenShell evidence.
 
+Boundary probe outcomes retain only the fixture's fixed answer, booleans, observed callback status
+and bounded failure categories. Unknown provider content and exception text are discarded.
+The support fixtures can exercise disabled managed execution, unmatched-route continuations and
+independent credential handles; these support tests do not establish live OpenShell qualification.
+Relay 0.8.x can omit upstream details for unmatched routes. Status is reported only when the
+callback observed it, and missing details remain unavailable rather than being reconstructed
+from provider bodies. The judge-preflight tests distinguish a withheld probe from a sent request
+that failed and verify cleanup for both.
+
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
