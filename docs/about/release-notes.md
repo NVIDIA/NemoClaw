@@ -12,9 +12,15 @@ The workspace package version alone does not establish that a release has been p
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
 Refer to [the overview](overview.md) for implemented boundaries and [the CLI reference](../references/cli.md) for commands.
 
-### Changes Since v0.1.0-rc9
+### Changes Since v0.1.0-rc10
 
-These changes reached `v1` after the `v0.1.0-rc9` tag; [breaking changes](#breaking-changes-and-migration) are listed separately.
+These changes reached `v1` after the `v0.1.0-rc10` tag; [breaking changes](#breaking-changes-since-v010-rc10) are listed separately.
+
+None yet.
+
+### Changes in v0.1.0-rc10
+
+These changes reached `v1` between the `v0.1.0-rc9` and `v0.1.0-rc10` tags; [breaking changes](#breaking-changes-in-v010-rc10) are listed separately.
 
 Agents and interfaces:
 
@@ -108,7 +114,16 @@ Examples and builds:
 
 Earlier CLI commands, schemas, and state formats have no compatibility guarantees.
 See [migration](../get-started/migration.md) for where each earlier task lives now, and [state](../build-deploy/state.md) for data preservation.
-Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents:
+
+### Breaking Changes Since v0.1.0-rc10
+
+These changes since the `v0.1.0-rc10` tag affect existing deployments or documents.
+
+None yet.
+
+### Breaking Changes in v0.1.0-rc10
+
+These changes between the `v0.1.0-rc9` and `v0.1.0-rc10` tags affect existing deployments or documents:
 
 - The intent record is now version 21.
   `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, and 21 as later changes altered it.
@@ -131,7 +146,9 @@ Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents
 - In hand-written HCL on Kubernetes or OpenShift, the gateway ownership receipts that `v0.1.0-rc9` wrote no longer load, and the intent record refusal above doesn't cover them.
   Destroy such a deployment with the bundle that created it, then create it again with this release.
 
-Earlier changes that affect existing deployments:
+### Earlier Breaking Changes
+
+These changes before the `v0.1.0-rc9` tag affect existing deployments:
 
 - Docker-managed vLLM and Ollama services default to [`updatePolicy: Preserve`](../agents-inference/inference.md#set-container-limits-and-update-policy), which refuses an image, model, serving, or container-limit change that would replace a running container; set `spec.services.<name>.updatePolicy: Recreate` to permit the replacement and its downtime.
 - `spec.gateway.image` is removed: the SDK pins the managed gateway image, and defaulted and exported documents no longer name it.
