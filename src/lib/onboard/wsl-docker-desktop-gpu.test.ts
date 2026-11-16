@@ -159,6 +159,9 @@ describe("WSL Docker Desktop GPU compatibility helpers", () => {
     expect(
       wslDockerDesktopGpuCompatibilityRemediationLines("docker-desktop")?.join("\n"),
     ).toContain("Docker --gpus compatibility");
+    expect(
+      wslDockerDesktopGpuCompatibilityRemediationLines("docker-desktop")?.join("\n"),
+    ).toContain("ARM64 requires NAT");
     expect(wslDockerDesktopGpuCompatibilityRemediationLines("unknown")?.join("\n")).toContain(
       "could not determine whether Docker is Docker Desktop",
     );
