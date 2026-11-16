@@ -293,16 +293,12 @@ fn container(target: &Target) -> Result<Value, Error> {
             attrs["gpus"] = json!(format!("device={}", devices.join(",")));
         }
     }
-    // Labels force replacement because Docker provider v4.7.0 updates limits in
-    // place: its Update omits CFS quota, and lowering memory on a running
-    // container can OOM-kill the model. CPU uses an integer CFS quota per
-    // 100 ms period, as Kubernetes does:
-    // https://github.com/kreuzwerker/terraform-provider-docker/blob/v4.7.0/internal/provider/resource_docker_container_funcs.go
+    // The Docker provider replaces the container when `cpus` changes.
     if let Some(limit) = process.cpu_limit_millis {
-        attrs["cpu_period"] = json!(crate::managed::CPU_PERIOD_MICROS);
-        attrs["cpu_quota"] = json!(crate::managed::cpu_quota_micros(limit));
-        push_label(&mut attrs, "nemoclaw.nvidia.com/cpu-limit-millis", limit);
+        attrs["cpus"] = json!(cpus(limit));
     }
+    // A label forces replacement because Docker provider v4.7.0 lowers memory
+    // on a running container in place, which can OOM-kill the model.
     // Containers created before memory limits were configurable used the
     // default and have no label; keep them unchanged.
     let memory_gib = process.memory_bytes / nemoclaw_runtime::hardware::GIB;
@@ -324,6 +320,15 @@ fn with_gpu_count(mut settings: Value, target: &Target) -> Result<Value, Error> 
         settings["gpu_count"] = json!(devices.len());
     }
     Ok(settings)
+}
+/// A CPU limit in millicores as the decimal CPU count `docker --cpus` takes.
+fn cpus(millis: u32) -> String {
+    match (millis / 1000, millis % 1000) {
+        (whole, 0) => whole.to_string(),
+        (whole, fraction) => format!("{whole}.{fraction:03}")
+            .trim_end_matches('0')
+            .to_owned(),
+    }
 }
 fn push_label(attrs: &mut Value, label: &str, value: impl ToString) {
     attrs["labels"]
