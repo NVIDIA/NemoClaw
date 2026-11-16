@@ -57,4 +57,4 @@ Documentation-only changes need no new runtime tests or live resources.
 
 Obtain an independent documentation review with the reader's task, changed content, validation results, and writing guide.
 Resolve factual errors, missing prerequisites, broken links, and writing findings before handoff.
-Use `docs:` commits and explain the decision and validation in their bodies.
+Give the pull request a `docs:` title and describe the problem and the change as the [pull request template](../../.github/PULL_REQUEST_TEMPLATE.md) asks; its description becomes the squash commit's message.

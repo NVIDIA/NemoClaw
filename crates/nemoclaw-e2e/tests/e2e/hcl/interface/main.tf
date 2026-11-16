@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Requests services that sandboxes expose, as a person would with what apply
-# reports: hcl_live::interface reads each target's token in its sandbox and
-# forwards its port with the pinned OpenShell CLI, then sends one request.
+# reports: hcl_live::interface reads each target's token in its sandbox, or
+# from the page the service serves, and forwards its port with the pinned
+# OpenShell CLI, then sends one request.
 # Reports hold status codes; tokens and response bodies stay private, and the
 # output names only the targets that failed.
 
@@ -29,7 +30,7 @@ variable "connection" {
 }
 
 variable "targets" {
-  description = "By name: the sandbox, the service port, the token file apply reports or null, the request path, an optional JSON body to POST, text the response must contain, or the one-word answer a chat completion must be."
+  description = "By name: the sandbox, the service port, the token file apply reports or null, optionally the page global that holds a session token instead, the request path, an optional JSON body to POST, text the response must contain, or the answer a chat completion must be."
   type        = any
 }
 
@@ -46,6 +47,7 @@ resource "terraform_data" "request" {
       NEMOCLAW_HCL_SANDBOX    = each.value.sandbox
       NEMOCLAW_HCL_PORT       = tostring(each.value.port)
       NEMOCLAW_HCL_TOKEN_PATH = try(each.value.token_path, null) == null ? "" : each.value.token_path
+      NEMOCLAW_HCL_PAGE_TOKEN = try(each.value.page_token, "")
       NEMOCLAW_HCL_PATH       = each.value.path
       NEMOCLAW_HCL_BODY       = try(jsonencode(each.value.body), "")
       NEMOCLAW_HCL_REPORT     = "${var.context.evidence_dir}/${each.key}-${self.id}.json"

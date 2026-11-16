@@ -14,6 +14,8 @@ fn guided() -> nemoclaw_authoring::JourneyState {
             .unwrap();
     JourneyDefinition::new("guided-presets", base)
         .ask(["/spec/sandboxes/assistant/harness/kind", "inference:preset"])
+        // Exact guidance asks the API even where the vendor's preset decides it.
+        .ask(["/spec/inferenceProviders/nvidia-prod/api"])
         .ask([JourneyScope::InferenceApi])
         .ask([JourneyScope::RouteModels])
         .start(&capabilities)

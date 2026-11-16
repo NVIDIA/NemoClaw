@@ -235,6 +235,7 @@ pub fn remote_error(status: &tonic::Status) -> ObservationError {
 pub enum RejectableOperation {
     CreateWorkspace,
     CreateSandbox,
+    ExposeService,
     DeleteProvider,
     DeleteProviderProfile,
 }
@@ -244,6 +245,7 @@ impl RejectableOperation {
         match self {
             Self::CreateWorkspace => "CreateWorkspace",
             Self::CreateSandbox => "CreateSandbox",
+            Self::ExposeService => "ExposeService",
             Self::DeleteProvider => "DeleteProvider",
             Self::DeleteProviderProfile => "DeleteProviderProfile",
         }

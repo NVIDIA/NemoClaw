@@ -132,7 +132,10 @@ impl QuestionResolver<'_> {
             && let Some(provider) = self.provider_path()
         {
             let path = format!("{provider}/api");
+            // A vendor's preset decides its API, or the provider's protocol
+            // default applies; exact guidance still asks.
             if !self.decisions.accepted.contains(&path)
+                && self.vendor_preset().is_none()
                 && !questions.iter().any(|question| question.id == path)
                 && let Some((schema, required)) = sdk_field_schema(&path)
             {

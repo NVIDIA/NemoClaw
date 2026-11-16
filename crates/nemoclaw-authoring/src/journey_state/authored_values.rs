@@ -154,6 +154,14 @@ impl AuthoredValues {
             .pointer_mut(&root)
             .and_then(Value::as_object_mut)
             .ok_or_else(|| diagnostic("journey", "The native setting owner is unavailable."))?;
+        let omitted = value.is_none();
+        // Containers an omission leaves empty, innermost first, are removed so
+        // an omitted setting does not author `settings: {}`.
+        let containers: &[&str] = if owner == NativeSettingOwner::Workflow {
+            &["config", "workflow"]
+        } else {
+            &["overrides", "settings"]
+        };
         let settings = if owner == NativeSettingOwner::Workflow {
             owner_object
                 .entry("config")
@@ -171,7 +179,11 @@ impl AuthoredValues {
                 .entry("settings")
                 .or_insert_with(|| Value::Object(Map::new()))
         };
-        crate::settings::put(settings, path, value)
+        crate::settings::put(settings, path, value)?;
+        if omitted {
+            prune_empty(owner_object, containers);
+        }
+        Ok(())
     }
 
     pub(super) fn put_sdk_field(
@@ -281,5 +293,33 @@ impl AuthoredValues {
         }
         self.generated_gateway_engine = engine.is_some();
         self.put_sdk_field(GATEWAY_ENGINE_PATH, engine)
+    }
+}
+
+/// Remove the empty objects `object/keys[0]/keys[1]/…` leaves, innermost
+/// first, including empty objects nested within the innermost.
+fn prune_empty(object: &mut Map<String, Value>, keys: &[&str]) {
+    fn empty_tree(value: &mut Value) -> bool {
+        let Some(object) = value.as_object_mut() else {
+            return false;
+        };
+        object.retain(|_, child| !empty_tree(child));
+        object.is_empty()
+    }
+    let Some((first, rest)) = keys.split_first() else {
+        return;
+    };
+    let Some(child) = object.get_mut(*first) else {
+        return;
+    };
+    if let Some(inner) = child.as_object_mut() {
+        if rest.is_empty() {
+            inner.retain(|_, value| !empty_tree(value));
+        } else {
+            prune_empty(inner, rest);
+        }
+        if inner.is_empty() {
+            object.remove(*first);
+        }
     }
 }

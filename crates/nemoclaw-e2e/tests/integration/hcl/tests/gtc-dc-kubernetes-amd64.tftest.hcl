@@ -2,11 +2,33 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # The GTC DC AMD64 Kubernetes example, examples/gtc-dc/kubernetes-amd64.yaml,
-# compiled unchanged and planned against the fixtures with the real OpenShell
-# and Fabric providers. The plan must use the existing Kubernetes gateway and
+# compiled and planned against the inference and image metadata fixtures.
+# Kubernetes operations and Helm are mocked; the other providers are real.
+# The plan must install a managed Kubernetes gateway and
 # create an OpenClaw and a Hermes sandbox whose agents use the hosted NVIDIA
 # model, which the runner points at the fixture upstream. Nothing is applied;
-# kubernetes-external-three-agents owns an external Kubernetes gateway's apply.
+# kind-kubernetes-development owns a managed Kubernetes gateway's live apply.
+
+mock_provider "helm" {}
+
+override_resource {
+  target = openshell_kubernetes_storage.runtime
+  values = { running = "true" }
+}
+
+override_resource {
+  target = openshell_kubernetes_auth.runtime
+  values = { running = "true" }
+}
+
+override_resource {
+  target = openshell_kubernetes_gateway.runtime
+  values = { running = "true" }
+}
+
+variables {
+  nemoclaw_kubeconfig = "/unused/mocked-kubeconfig"
+}
 
 run "fixtures" {
   command = plan
@@ -29,10 +51,16 @@ run "plan" {
 
   assert {
     condition = (
-      data.openshell_gateway.current.compatible
-      && openshell_workspace.deployment.gateway == data.openshell_gateway.current.ref
+      openshell_kubernetes_gateway.runtime.compute_driver == "kubernetes"
+      && openshell_kubernetes_gateway.runtime.authentication_profile == "development"
+      && helm_release.gateway.namespace == "nemoclaw-gtc-dc"
     )
-    error_message = "The plan does not create the deployment's workspace on the existing Kubernetes gateway."
+    error_message = "The plan does not install a managed Kubernetes gateway with development authentication in the selected namespace."
+  }
+
+  assert {
+    condition     = jsondecode(helm_release.gateway.values[0]).gatewayConfig["openshell.drivers.kubernetes"].allow_driver_config
+    error_message = "The gateway chart does not allow the example's PVC driver configuration."
   }
 
   assert {

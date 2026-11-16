@@ -12,8 +12,8 @@
 use super::ConfigError;
 pub use nemoclaw_openshell::policy::{
     ExplicitPolicy, PolicyAllowRule, PolicyAnyMatcher, PolicyBinary, PolicyEndpoint,
-    PolicyFilesystem, PolicyJsonRpc, PolicyLandlock, PolicyMatcher, PolicyMcp, PolicyProcess,
-    PolicyRule, PolicyValueMatcher,
+    PolicyFilesystem, PolicyJsonRpc, PolicyLandlock, PolicyMatcher, PolicyMcp, PolicyMiddleware,
+    PolicyMiddlewareEndpoints, PolicyProcess, PolicyRule, PolicyValueMatcher,
 };
 use openshell_core::proto;
 use serde::{Deserialize, Serialize};

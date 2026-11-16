@@ -72,9 +72,16 @@ fn load_journey(
     // The harness question holds the template's sandbox name. A template
     // without exactly one sandbox has none, and the journey refuses to start.
     let harness = definition.harness_question();
+    // Isolated is the only network tier, and omitting it selects isolated.
+    let tier = harness
+        .as_deref()
+        .and_then(|harness| harness.strip_suffix("/harness/kind"))
+        .map(|sandbox| format!("{sandbox}/network/tier"));
     definition
-        .ask(["/metadata/name"])
+        // The agent comes first, so a name the template leaves out can be
+        // suggested from it.
         .ask(harness)
+        .ask(["/metadata/name"])
         // Only these run as full agents in a deployment today; a template that
         // names another harness keeps it.
         .offer_harnesses(["nvidia.fabric.openclaw", "nvidia.fabric.hermes"])
@@ -82,11 +89,12 @@ fn load_journey(
         .ask([JourneyScope::InferenceApi])
         .ask([JourneyScope::RouteModels])
         // Adapter settings keep their defaults, including messaging channels
-        // until onboarding has a channel journey.
+        // until onboarding has a channel journey. Optional native settings
+        // keep theirs too; Fabric-required and invalid ones are still asked.
         .omit([JourneyScope::ActiveAdapterSettings])
-        .ask([JourneyScope::NativeSettings])
         .ask([JourneyScope::DeploymentFields])
         .omit(["/spec/gateway/endpoint", "/spec/gateway/networkCIDR"])
+        .omit(tier)
         .start(capabilities)
         .map_err(Into::into)
 }
@@ -139,6 +147,13 @@ mod tests {
         let capabilities = Capabilities::available();
         let state = load_journey(Source::Defaults, &capabilities).unwrap();
         let mut wizard = tui::JourneyWizard::new(capabilities, state);
+        assert_eq!(
+            wizard.question().unwrap().unwrap().id(),
+            "/spec/sandboxes/assistant/harness/kind"
+        );
+        wizard
+            .submit(Some(serde_json::json!("nvidia.fabric.openclaw")))
+            .unwrap();
         assert_eq!(wizard.question().unwrap().unwrap().id(), "/metadata/name");
         wizard
             .submit(Some(serde_json::json!("guided-deployment")))

@@ -1,9 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_runtime::{
-    hardware::Capacity, hardware::GIB, hardware::GpuMemory,
+    hardware::Capacity, hardware::GIB, hardware::Gpu, hardware::GpuMemory,
     vllm::hardware_capacity::check_capacity, vllm::hardware_capacity::serving_memory,
 };
+
+const UUID: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
+
+/// `capacity` with one observed GPU, as the observation records it.
+fn with_gpu(
+    mut capacity: Capacity,
+    name: &str,
+    compute_capability: u32,
+    driver_major: u32,
+    memory: Option<GpuMemory>,
+) -> Capacity {
+    capacity.set_gpus(vec![Gpu {
+        index: 0,
+        uuid: UUID.into(),
+        name: name.into(),
+        driver_major,
+        compute_capability,
+        memory,
+    }]);
+    capacity
+}
 use nemoclaw_sdk::{config::Document, config::schema::input_schema, services::ServiceDefinition};
 use serde_json::{Value, json};
 
@@ -21,26 +42,28 @@ fn hardware_failures_report_the_requirement_and_observation() {
     let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
         panic!("expected vllm")
     };
-    let capacity = Capacity {
-        architecture: "amd64".into(),
-        gpu: "NVIDIA H100 80GB HBM3".into(),
-        driver_major: 610,
-        compute_capability: 90,
-        total: 512 * GIB,
-        available: 400 * GIB,
-        disk_free: 500 * GIB,
-        gpu_memory: Some(GpuMemory {
+    let capacity = with_gpu(
+        Capacity {
+            architecture: "amd64".into(),
+            total: 512 * GIB,
+            available: 400 * GIB,
+            disk_free: 500 * GIB,
+            ..Default::default()
+        },
+        "NVIDIA H100 80GB HBM3",
+        90,
+        610,
+        Some(GpuMemory {
             total: 80 * GIB,
             free: 70 * GIB,
         }),
-        ..Default::default()
-    };
+    );
     let mut old_driver = capacity.clone();
-    old_driver.driver_major = 570;
+    old_driver.gpus[0].driver_major = 570;
     let error = check_capacity(service, &old_driver, true, 0, 0).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "hardware.minDriverMajor requires at least 580; observed 570"
+        format!("{UUID}: hardware.minDriverMajor requires at least 580; observed 570")
     );
     let mut ollama_document: Value =
         serde_saphyr::from_str(include_str!("../../../examples/managed-ollama-gpu.yaml")).unwrap();
@@ -55,12 +78,12 @@ fn hardware_failures_report_the_requirement_and_observation() {
             .unwrap_err();
     assert_eq!(ollama_error.to_string(), error.to_string());
     let mut old_compute = capacity.clone();
-    old_compute.compute_capability = 89;
+    old_compute.gpus[0].compute_capability = 89;
     assert_eq!(
         check_capacity(service, &old_compute, true, 0, 0)
             .unwrap_err()
             .to_string(),
-        "hardware.minComputeCapability requires at least 90; observed 89"
+        format!("{UUID}: hardware.minComputeCapability requires at least 90; observed 89")
     );
     let mut wrong_architecture = capacity.clone();
     wrong_architecture.architecture = "arm64".into();
@@ -71,12 +94,14 @@ fn hardware_failures_report_the_requirement_and_observation() {
         "hardware.architecture requires amd64; observed arm64"
     );
     let mut low_memory = capacity;
-    low_memory.gpu_memory.as_mut().unwrap().free = GIB;
+    low_memory.gpus[0].memory.as_mut().unwrap().free = GIB;
     let detail = check_capacity(service, &low_memory, true, 0, 0)
         .unwrap_err()
         .to_string();
     assert!(
-        detail.contains("GPU free memory (bytes) requires at least"),
+        detail.contains(&format!(
+            "{UUID}: GPU free memory (bytes) requires at least"
+        )),
         "{detail}"
     );
     assert!(detail.contains(&format!("observed {GIB}")), "{detail}");
@@ -85,19 +110,23 @@ fn hardware_failures_report_the_requirement_and_observation() {
 #[test]
 fn a_dedicated_memory_service_at_the_reserve_floor_starts_when_26_gib_are_available() {
     // A 32 GiB host: MemTotal is a little below 32 GiB.
-    let capacity = |gpu: &str, compute_capability, gpu_total, available| Capacity {
-        architecture: "amd64".into(),
-        gpu: gpu.into(),
-        driver_major: 580,
-        compute_capability,
-        total: 31 * GIB,
-        available,
-        disk_free: 500 * GIB,
-        gpu_memory: Some(GpuMemory {
-            total: gpu_total,
-            free: gpu_total - GIB,
-        }),
-        ..Default::default()
+    let capacity = |gpu: &str, compute_capability, gpu_total, available| {
+        with_gpu(
+            Capacity {
+                architecture: "amd64".into(),
+                total: 31 * GIB,
+                available,
+                disk_free: 500 * GIB,
+                ..Default::default()
+            },
+            gpu,
+            compute_capability,
+            580,
+            Some(GpuMemory {
+                total: gpu_total,
+                free: gpu_total - GIB,
+            }),
+        )
     };
     let required = 26 * GIB;
 
@@ -198,21 +227,23 @@ fn profiles_validate_gpu_identity_and_keep_hbm_separate_from_host_ram() {
                 panic!("expected vllm")
             };
             // Fixture capacity, not a datasheet assertion about this GPU model.
-            let capacity = Capacity {
-                architecture: (*architecture).into(),
-                gpu: gpu.into(),
-                driver_major: 610,
-                total: 512 * GIB,
-                available: 400 * GIB,
-                free: 300 * GIB,
-                disk_free: 500 * GIB,
-                compute_capability: cc,
-                gpu_memory: Some(GpuMemory {
+            let capacity = with_gpu(
+                Capacity {
+                    architecture: (*architecture).into(),
+                    total: 512 * GIB,
+                    available: 400 * GIB,
+                    free: 300 * GIB,
+                    disk_free: 500 * GIB,
+                    ..Default::default()
+                },
+                gpu,
+                cc,
+                610,
+                Some(GpuMemory {
                     total: 80 * GIB,
                     free: 70 * GIB,
                 }),
-                ..Default::default()
-            };
+            );
             check_capacity(service, &capacity, true, 0, 0).unwrap();
             assert_eq!(serving_memory(service, &capacity).unwrap(), 80 * GIB);
             for mismatch in [
@@ -226,7 +257,7 @@ fn profiles_validate_gpu_identity_and_keep_hbm_separate_from_host_ram() {
             ] {
                 let mut bad = capacity.clone();
                 match mismatch {
-                    "name" => bad.gpu = "NVIDIA unrelated GPU".into(),
+                    "name" => bad.gpus[0].name = "NVIDIA unrelated GPU".into(),
                     "architecture" => {
                         bad.architecture = if *architecture == "arm64" {
                             "amd64"
@@ -235,10 +266,10 @@ fn profiles_validate_gpu_identity_and_keep_hbm_separate_from_host_ram() {
                         }
                         .into()
                     }
-                    "compute" => bad.compute_capability = cc - 1,
-                    "memory" => bad.gpu_memory = None,
-                    "free" => bad.gpu_memory.as_mut().unwrap().free = GIB,
-                    "driver" => bad.driver_major = 579,
+                    "compute" => bad.gpus[0].compute_capability = cc - 1,
+                    "memory" => bad.gpus[0].memory = None,
+                    "free" => bad.gpus[0].memory.as_mut().unwrap().free = GIB,
+                    "driver" => bad.gpus[0].driver_major = 579,
                     "host" => bad.available = GIB,
                     _ => unreachable!(),
                 }
@@ -315,20 +346,22 @@ fn similar_gpu_names_cannot_satisfy_a_different_profile() {
         let ServiceDefinition::Vllm(service) = &doc.spec.services["qwen"] else {
             panic!("expected vllm")
         };
-        let capacity = Capacity {
-            architecture: "amd64".into(),
-            gpu: format!("NVIDIA {other}"),
-            driver_major: 610,
-            total: 128 * GIB,
-            available: 100 * GIB,
-            disk_free: 500 * GIB,
-            compute_capability: 120,
-            gpu_memory: Some(GpuMemory {
+        let capacity = with_gpu(
+            Capacity {
+                architecture: "amd64".into(),
+                total: 128 * GIB,
+                available: 100 * GIB,
+                disk_free: 500 * GIB,
+                ..Default::default()
+            },
+            &format!("NVIDIA {other}"),
+            120,
+            610,
+            Some(GpuMemory {
                 total: 80 * GIB,
                 free: 70 * GIB,
             }),
-            ..Default::default()
-        };
+        );
         assert!(
             check_capacity(service, &capacity, true, 0, 0).is_err(),
             "{profile}: {other}"

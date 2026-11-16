@@ -7,7 +7,7 @@ These apply to OpenTofu 1.12, the version the bundle pins.
 
 ## Harness
 
-- An integration scenario applies a compiled NemoClaw document (`./cases/<name>` or `./examples/<path>`) or an authored HCL example (`./examples/hcl/<name>`).
+- An integration scenario applies a compiled NemoClaw document (`./cases/<name>` or `./examples/<path>`) or an authored HCL example, a directory (`./examples/hcl/<name>`) or one file (`./examples/kubernetes/hosted-nvidia.tf`).
   The runner compiles it, adds the harness, and resets the fixtures for each test file.
 - Its first run is a plan that targets `data.fixture_state.setup`, so the fixtures are declared before the deployment's first plan reads them.
 - `module.observed` exposes what the fixtures recorded; assert against it.

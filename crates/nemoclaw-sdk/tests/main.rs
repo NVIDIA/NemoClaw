@@ -112,6 +112,8 @@ mod kubernetes_connection;
 mod kubernetes_corrupt_receipt;
 #[path = "kubernetes_expired_authentication.rs"]
 mod kubernetes_expired_authentication;
+#[path = "kubernetes_exposure.rs"]
+mod kubernetes_exposure;
 #[path = "kubernetes_gateway.rs"]
 mod kubernetes_gateway;
 #[path = "kubernetes_inference.rs"]
@@ -122,8 +124,6 @@ mod kubernetes_interruption;
 mod kubernetes_lost_create_response;
 #[path = "kubernetes_managed_compile.rs"]
 mod kubernetes_managed_compile;
-#[path = "kubernetes_openshift_reapply.rs"]
-mod kubernetes_openshift_reapply;
 #[path = "kubernetes_operations.rs"]
 mod kubernetes_operations;
 #[path = "kubernetes_read_failures.rs"]

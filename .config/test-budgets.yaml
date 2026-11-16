@@ -34,10 +34,11 @@ integration:
   wall_seconds: 300
   test_seconds: 90
 
-# live-docker (E2E Docker tests), its four nextest commands together: at most 255 s on
-# linux_amd64 and 210 s on linux_arm64 in 11 v1 runs, which included the
-# runtime rebuild test since removed with the runtime builder; 228 s in one
-# linux_arm64 run without it.
+# The live-docker wall budget covers three nextest commands plus one per
+# selected HCL case, for five commands when both cases are selected.
+# Before the HCL E2E migration, the suite took at most 255 s on linux_amd64
+# and 210 s on linux_arm64 in 11 v1 runs with the runtime rebuild test, and
+# 228 s in one linux_arm64 run without it.
 # After the HCL E2E migration (#14179), the suite's five commands took
 # 118.3 s on linux_amd64 and 92.7 s on linux_arm64; its slowest test, the
 # interface case, 46.0 s and 38.8 s.
@@ -46,7 +47,7 @@ live-docker:
   test_seconds: 180
 
 # live-kind (E2E Kubernetes (kind) tests): at most 199 s on linux_amd64 and 171 s on linux_arm64 in 11 v1
-# runs. The slowest test, the kind OpenShift HCL E2E scenario (now kind-openshift-oidc), took
+# runs. The slowest test, the kind OpenShift HCL E2E scenario (now kind-kubernetes-oidc), took
 # 133 s on linux_amd64 and 138 s on linux_arm64 with three agents (#14097);
 # about 30 s of each test's destroy waits out the sandbox pods' termination
 # grace period (#13959, NVIDIA/OpenShell#5025). Lower test_seconds when that is
@@ -61,6 +62,8 @@ live-docker:
 # the development case, which destroys and redeploys, took 137.9 s on
 # linux_amd64 and 136.9 s on linux_arm64; with the OIDC case (105.1 s and
 # 95.7 s) the step took 243.0 s and 232.6 s.
+# The OIDC case also publishes its gateway through the chart's NodePort
+# Service (#14313), instead of a third case that took 90-99 s on its own.
 live-kind:
   wall_seconds: 300
   test_seconds: 180

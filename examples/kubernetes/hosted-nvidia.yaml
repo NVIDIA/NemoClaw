@@ -3,7 +3,7 @@
 # yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
 # GTC DC target: Linux AMD64 Kubernetes, one OpenClaw and one Hermes sandbox.
 # Both agents use NVIDIA cloud inference; live qualification is pending.
-# Replace the deployment UID, gateway endpoint, and both image digests before applying.
+# Replace the deployment UID, cluster context, namespace, and both image digests before applying.
 # Export each Linux AMD64 image's metadata with `cargo images export-metadata`.
 # Set the two image-metadata variables below to the matching bundle paths.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
@@ -13,15 +13,19 @@ metadata:
   uid: ab7d47cd-5466-4ae0-abfc-69155b4e07f2
 spec:
   gateway:
-    management: external
+    management: managed
     runtime:
       provider: kubernetes
-    endpoint: https://openshell.example.com
-    credential: {env: GATEWAY_TOKEN}
-    tls:
-      ca: {env: GATEWAY_CA}
-      certificate: {env: GATEWAY_CERT}
-      key: {env: GATEWAY_KEY}
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-gtc-dc
+      authentication:
+        profile: development
+    config:
+      openshell.drivers.kubernetes:
+        allow_driver_config: true
   inferenceProviders:
     hosted-nvidia-prod:
       provider: openai
@@ -36,6 +40,24 @@ spec:
       image:
         metadata: {env: NEMOCLAW_OPENCLAW_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      driverConfig:
+        kubernetes:
+          volumes:
+            - name: agent-data
+              persistent_volume_claim:
+                claim_name: gtc-dc-openclaw-data
+                read_only: false
+          containers:
+            agent:
+              volume_mounts:
+                - name: agent-data
+                  mount_path: /sandbox/workspace
+                  sub_path: workspace
+                  read_only: false
+                - name: agent-data
+                  mount_path: /sandbox/artifacts
+                  sub_path: artifacts
+                  read_only: false
       network:
         policy:
           explicit:
@@ -69,6 +91,24 @@ spec:
       image:
         metadata: {env: NEMOCLAW_HERMES_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      driverConfig:
+        kubernetes:
+          volumes:
+            - name: agent-data
+              persistent_volume_claim:
+                claim_name: gtc-dc-hermes-data
+                read_only: false
+          containers:
+            agent:
+              volume_mounts:
+                - name: agent-data
+                  mount_path: /sandbox/workspace
+                  sub_path: workspace
+                  read_only: false
+                - name: agent-data
+                  mount_path: /sandbox/artifacts
+                  sub_path: artifacts
+                  read_only: false
       network:
         policy:
           explicit:

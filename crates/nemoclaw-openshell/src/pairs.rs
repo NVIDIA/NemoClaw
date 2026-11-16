@@ -36,6 +36,10 @@ pub fn api_rows(row: &Row) -> (Row, Row) {
     for field in ["endpoint", "binaries_json", "auth_style", "header_name"] {
         profile_row.insert(field.into(), value(row, field).into());
     }
+    let mcp = value(row, crate::api::MCP_POLICY);
+    if !mcp.is_empty() {
+        profile_row.insert(crate::api::MCP_POLICY.into(), mcp.into());
+    }
     let mut registration = common(row);
     registration.extend([
         ("name".into(), value(row, "name").into()),

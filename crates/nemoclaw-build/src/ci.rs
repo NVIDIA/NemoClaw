@@ -133,8 +133,6 @@ impl Step {
                 "--locked",
                 "--workspace",
                 "--all-targets",
-                "--archive-file",
-                ".build/ci/lifecycle.tar.zst",
             ]],
             Step::Fmt => &[&["fmt", "--check"]],
             Step::Clippy => &[&[

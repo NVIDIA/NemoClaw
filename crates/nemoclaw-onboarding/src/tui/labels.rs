@@ -107,6 +107,30 @@ pub(super) fn choice(question: &JourneyQuestion, value: &Value) -> String {
         .unwrap_or_else(|| display_value(value))
 }
 
+/// A field's title from the map, else one derived from its ID.
+pub(super) fn field_title(id: &str) -> String {
+    question_text(id)
+        .and_then(|text| text.title.clone())
+        .unwrap_or_else(|| readable(id))
+}
+
+/// A field's description from the map.
+pub(super) fn field_description(id: &str) -> Option<String> {
+    question_text(id).and_then(|text| text.description.clone())
+}
+
+/// A field's value as its mapped choice label, else as written.
+pub(super) fn field_value(id: &str, value: &Value) -> String {
+    value
+        .as_str()
+        .and_then(|value| {
+            keys(id)
+                .iter()
+                .find_map(|key| text().choices.get(key)?.get(value).cloned())
+        })
+        .unwrap_or_else(|| display_value(value))
+}
+
 /// NemoClaw-owned questions need a title and description from the map or
 /// schema. Fabric adapter and model settings are described upstream.
 #[cfg(test)]

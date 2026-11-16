@@ -471,6 +471,7 @@ fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
 
 /// OpenShell objects and their planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
+    use nemoclaw_openshell::api::MCP_POLICY;
     use nemoclaw_tofu::Definition;
     [
         Definition::new("workspace", &["name", "owner", "generation"], &[]),
@@ -486,6 +487,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "binaries_json",
                 "auth_style",
                 "header_name",
+                MCP_POLICY,
             ],
             &["credential_env", "binaries_json"],
         )
@@ -495,6 +497,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "binaries_json",
             "auth_style",
             "header_name",
+            MCP_POLICY,
         ])
         .reset_when_omitted(&[
             "endpoint",
@@ -585,7 +588,9 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "driver_config_json",
                 services::FIELD,
             ],
-            &[],
+            // Service exposures change on the live sandbox, as `openshell
+            // service expose` and `openshell service delete` change them.
+            &[services::FIELD],
         )
         // The policy hash is empty until the loaded policy is observed.
         .optional(&[
@@ -597,8 +602,10 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             EXITED,
         ])
         .validate_inputs(network::validate_grant_names)
-        // The URLs of the sandbox's exposures, which are part of its creation.
+        // The URLs the gateway reports for the exposures; changed exposures
+        // report theirs when applied.
         .computed(services::URLS, nemoclaw_tofu::carry_prior)
+        .unknown_when_changed(services::URLS, services::FIELD)
         // The loaded policy's hash, OpenShell's additions included; later
         // observations must find the same one.
         .computed(POLICY_HASH, nemoclaw_tofu::carry_prior)

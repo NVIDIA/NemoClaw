@@ -52,7 +52,9 @@ if [ "$1 $2" = 'nextest --version' ]; then
     exit 0
 fi
 printf '%s\n' "$@" > arguments
+{ printf '%s\n' "$@"; printf -- '--\n'; } >> invocations
 printf '%s\n' "${NEXTEST_TEST_THREADS-unset}" > test-threads-env
+printf '%s\n' "${CARGO_PROFILE_DEV_DEBUG-unset}" > profile-debug-env
 [ -n "${NEMOCLAW_HCL_CASE-}" ] && printf '%s\n' "$NEMOCLAW_HCL_CASE" >> hcl-cases
 if [ "$1" = build ]; then
     /bin/mkdir -p target/debug
@@ -68,6 +70,9 @@ if [ "$1 $2" = 'nextest list' ]; then
         previous=$argument
     done
     case $profile in
+        contract) printf '%s\n' "${CARGO_LIST_CONTRACT:-$CARGO_LIST}" ;;
+        fixtures) printf '%s\n' "${CARGO_LIST_FIXTURES:-$CARGO_LIST}" ;;
+        integration) printf '%s\n' "${CARGO_LIST_INTEGRATION:-$CARGO_LIST}" ;;
         live-docker) printf '%s\n' "${CARGO_LIST_LIVE_DOCKER:-$CARGO_LIST}" ;;
         live-kind) printf '%s\n' "${CARGO_LIST_LIVE_KIND:-$CARGO_LIST}" ;;
         *) printf '%s\n' "$CARGO_LIST" ;;
@@ -103,12 +108,39 @@ exit "${CARGO_RESULT:-0}"
                 openshell["url"] = "http://offline.invalid/openshell.tar.gz".into();
             }
         }
+        // Image builds place their pinned sources first, which
+        // seed_image_sources downloads as an earlier run would have; these
+        // pins lead nowhere.
+        for files in pins["imageSources"].as_object_mut().unwrap().values_mut() {
+            for (name, source) in files.as_object_mut().unwrap() {
+                use sha2::{Digest, Sha256};
+                let checksum = nemoclaw_build::hex(&Sha256::digest(name.as_bytes()));
+                *source = serde_json::json!({
+                    "url": format!("https://offline.invalid/{name}"),
+                    "sha256": checksum,
+                });
+            }
+        }
         fs::write(
             root.path().join("versions.json"),
             serde_json::to_vec_pretty(&pins).unwrap(),
         )
         .unwrap();
         Self(root)
+    }
+
+    /// Download each pinned image source, whose bytes are its file name.
+    fn seed_image_sources(&self) {
+        let pins: serde_json::Value =
+            serde_json::from_slice(&fs::read(self.0.path().join("versions.json")).unwrap())
+                .unwrap();
+        let downloads = self.0.path().join(".build/downloads");
+        fs::create_dir_all(&downloads).unwrap();
+        for files in pins["imageSources"].as_object().unwrap().values() {
+            for (name, source) in files.as_object().unwrap() {
+                fs::write(downloads.join(source["sha256"].as_str().unwrap()), name).unwrap();
+            }
+        }
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -136,6 +168,25 @@ exit "${CARGO_RESULT:-0}"
 
     fn arguments(&self) -> String {
         fs::read_to_string(self.0.path().join("arguments")).unwrap()
+    }
+
+    /// Each `nextest archive` call's archive file and filterset, in order.
+    fn archives(&self) -> Vec<(String, String)> {
+        let invocations = fs::read_to_string(self.0.path().join("invocations")).unwrap_or_default();
+        invocations
+            .split("--\n")
+            .filter(|call| call.starts_with("nextest\narchive\n"))
+            .map(|call| {
+                let value = |option: &str| {
+                    call.lines()
+                        .skip_while(|arg| *arg != option)
+                        .nth(1)
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                (value("--archive-file"), value("--filterset"))
+            })
+            .collect()
     }
 
     /// Fake `docker` and `zstd` that record their calls in `docker.log` and
@@ -430,50 +481,73 @@ fn archive_packages_tools_and_the_ssh_relay_but_leaves_providers_to_the_bundle_a
     );
 }
 
-#[test]
-fn linux_archives_also_hold_the_live_suites_so_live_jobs_need_not_compile() {
-    let fixture = Fixture::new();
+/// Run `ci archive` with a distinct test binary selected by each profile.
+fn archive_layers(fixture: &Fixture, platform: &str) -> Output {
     fixture.seed_build_outputs();
-    let output = fixture
+    fixture
         .command(&["archive"])
+        .env("TEST_PLATFORM", platform)
+        .env("CARGO_LIST_CONTRACT", suite("contract-suite"))
+        .env("CARGO_LIST_FIXTURES", suite("fixture-suite"))
+        .env("CARGO_LIST_INTEGRATION", suite("integration-suite"))
         .env("CARGO_LIST_LIVE_DOCKER", suite("docker-suite"))
         .env("CARGO_LIST_LIVE_KIND", suite("kind-suite"))
         .output()
-        .unwrap();
+        .unwrap()
+}
+
+/// Each test job downloads only the executables its layer runs, so each layer
+/// gets its own archive. The contract archive also selects the fixture tests,
+/// whose packages' executables the contract tests start; Linux also archives
+/// the live suites, so live jobs need not compile.
+#[test]
+fn linux_archives_each_test_layer_separately_so_each_job_downloads_only_its_tests() {
+    let fixture = Fixture::new();
+    let output = archive_layers(&fixture, "linux_arm64");
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let args = fixture.arguments();
-    assert!(
-        args.contains(
-            "--filterset\nbinary_id(=docker-suite) | binary_id(=kind-suite) | binary_id(=selected-suite)\n"
-        ),
-        "{args}"
+    assert_eq!(
+        fixture.archives(),
+        [
+            (
+                ".build/ci/contract.tar.zst".to_owned(),
+                "binary_id(=contract-suite) | binary_id(=fixture-suite)".to_owned()
+            ),
+            (
+                ".build/ci/integration.tar.zst".to_owned(),
+                "binary_id(=integration-suite)".to_owned()
+            ),
+            (
+                ".build/ci/live.tar.zst".to_owned(),
+                "binary_id(=docker-suite) | binary_id(=kind-suite)".to_owned()
+            ),
+        ]
     );
 }
 
 #[test]
-fn other_platforms_archive_only_the_lifecycle_suite_because_live_suites_need_linux() {
+fn other_platforms_archive_no_live_suites_because_live_suites_need_linux() {
     let fixture = Fixture::new();
-    fixture.seed_build_outputs();
-    let output = fixture
-        .command(&["archive"])
-        .env("TEST_PLATFORM", "darwin_arm64")
-        .env("CARGO_LIST_LIVE_DOCKER", suite("docker-suite"))
-        .env("CARGO_LIST_LIVE_KIND", suite("kind-suite"))
-        .output()
-        .unwrap();
+    let output = archive_layers(&fixture, "darwin_arm64");
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let args = fixture.arguments();
-    assert!(
-        args.contains("--filterset\nbinary_id(=selected-suite)\n"),
-        "{args}"
+    let archives: Vec<_> = fixture
+        .archives()
+        .into_iter()
+        .map(|(file, _)| file)
+        .collect();
+    assert_eq!(
+        archives,
+        [
+            ".build/ci/contract.tar.zst",
+            ".build/ci/integration.tar.zst"
+        ]
     );
 }
 
@@ -491,6 +565,7 @@ fn live_suites_accept_an_archive_of_their_tests() {
 fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
+    fixture.seed_image_sources();
     let output = fixture.run(&["live-images"]);
     assert!(
         output.status.success(),
@@ -524,10 +599,53 @@ fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed(
     );
 }
 
+/// CI saves the live images' layers on v1 only; every build imports them.
+#[test]
+fn live_images_import_cached_layers_and_save_them_only_when_ci_asks() {
+    for save in [None, Some("false"), Some("true")] {
+        let fixture = Fixture::new();
+        fixture.fake_container_tools();
+        fixture.seed_image_sources();
+        let mut command = fixture.command(&["live-images"]);
+        command.env_remove("NEMOCLAW_SAVE_GHA_CACHE");
+        if let Some(save) = save {
+            command.env("NEMOCLAW_SAVE_GHA_CACHE", save);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let log = fixture.docker_log();
+        for name in ["openclaw", "hermes", "dummy"] {
+            let builds: Vec<&str> = log
+                .lines()
+                .filter(|line| line.starts_with(&format!("buildx bake {name} ")))
+                .collect();
+            assert_eq!(builds.len(), 2, "{log}");
+            let scope = format!("type=gha,scope=live-images-{name}-arm64");
+            for build in &builds {
+                assert!(
+                    build.contains(&format!("{name}.cache-from={scope}")),
+                    "{build}"
+                );
+            }
+            assert_eq!(
+                builds[1].contains(&format!("{name}.cache-to={scope},")),
+                save == Some("true"),
+                "NEMOCLAW_SAVE_GHA_CACHE={save:?}: {}",
+                builds[1]
+            );
+        }
+    }
+}
+
 #[test]
 fn live_images_report_each_build_duration() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
+    fixture.seed_image_sources();
     let output = fixture.run(&["live-images"]);
     let report = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{report}");
@@ -559,6 +677,7 @@ fn live_images_report_failed_build_duration_and_stop() {
     for (index, image) in images.iter().enumerate() {
         let fixture = Fixture::new();
         fixture.fake_container_tools();
+        fixture.seed_image_sources();
         let output = fixture
             .command(&["live-images"])
             .env("DOCKER_FAIL_IMAGE", image)
@@ -673,17 +792,17 @@ fn bundle_builds_its_build_tool_so_it_can_run_without_the_build_step() {
 }
 
 #[test]
-fn archive_rejects_an_empty_lifecycle_selection_instead_of_publishing_no_tests() {
+fn archive_rejects_a_layer_that_selects_no_tests_instead_of_publishing_none() {
     let fixture = Fixture::new();
     let output = fixture
         .command(&["archive"])
-        .env("CARGO_LIST", r#"{"rust-suites":{}}"#)
+        .env("CARGO_LIST_INTEGRATION", r#"{"rust-suites":{}}"#)
         .output()
         .unwrap();
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(
-        error.contains("no contract or integration test binaries were selected"),
+        error.contains("no integration test binaries were selected"),
         "{error}"
     );
     assert!(
@@ -705,6 +824,44 @@ fn a_failed_lifecycle_partition_fails_ci() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("CI step integration failed"));
+}
+
+/// Nothing in CI reads debug information, and it is most of each test
+/// archive, so CI builds and archives the workspace without it. Local runs keep
+/// the developer's setting, and a setting the caller passes wins.
+#[test]
+fn ci_builds_without_debug_information_unless_the_caller_sets_it() {
+    for (ci, explicit, expected) in [
+        (true, None, "0"),
+        (false, None, "unset"),
+        (true, Some("1"), "1"),
+    ] {
+        for step in ["build", "archive"] {
+            let fixture = Fixture::new();
+            fixture.seed_build_outputs();
+            let mut command = fixture.command(&[step]);
+            command.env_remove("CI").env_remove("GITHUB_ACTIONS");
+            if ci {
+                command.env("CI", "true");
+            }
+            match explicit {
+                Some(value) => command.env("CARGO_PROFILE_DEV_DEBUG", value),
+                None => command.env_remove("CARGO_PROFILE_DEV_DEBUG"),
+            };
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{step}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let seen = fs::read_to_string(fixture.0.path().join("profile-debug-env")).unwrap();
+            assert_eq!(
+                seen.trim(),
+                expected,
+                "{step} with CI={ci} and {explicit:?}"
+            );
+        }
+    }
 }
 
 #[test]

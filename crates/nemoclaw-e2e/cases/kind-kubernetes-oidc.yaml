@@ -1,0 +1,100 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Two agents on a managed gateway in a kind cluster, in a namespace that
+# carries OpenShift's UID range, each with its own sandbox and policy,
+# sharing one inference route to a stub model in its own namespace. The
+# gateway uses the kubernetes profile, since kind can't run a managed
+# openshift gateway: its fsGroup comes only from OpenShift, and without one
+# it can't read its signing key. openshift-oidc deploys the same agents with
+# the openshift profile on OpenShift. The gateway accepts tokens from an
+# existing OIDC issuer in another namespace, and the agent image comes from a
+# private registry through the pull Secret the operator created. The chart's
+# NodePort Service publishes the gateway at its endpoint: NemoClaw still
+# forwards a port to the gateway pod, and the probe dials the node's address
+# as another client would, so the gateway's certificate must name it. cargo ci live-kind gives each run a fresh
+# identity, which is also the token audience, namespace, kubeconfig context,
+# registry, and agent image, and replaces the endpoint's host with the node's
+# address. The node port stays: it is in the range's lower band, which
+# Kubernetes leaves for Services that name their port.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-kind-agents
+  uid: 3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://192.0.2.1:30080
+    kubernetes:
+      kubeconfig:
+        env: NEMOCLAW_TEST_KUBECONFIG
+      context: kind-nemoclaw
+      namespace: nc-hcl-kind
+      imagePullSecrets:
+        - agent-registry
+      authentication:
+        profile: oidc
+        caConfigMap: issuer-oidc-ca
+        token:
+          env: NEMOCLAW_TEST_OIDC_TOKEN
+      expose:
+        service:
+          type: NodePort
+    config:
+      openshell.gateway.oidc:
+        issuer: https://issuer-oidc.nc-hcl-kind-issuer.svc.cluster.local:8443
+        audience: 3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36
+        roles_claim: roles
+        admin_role: nemoclaw-development-admin
+        user_role: nemoclaw-development-user
+        scopes_claim: scope
+  inferenceProviders:
+    stub:
+      provider: openai
+      endpoint: http://model.nc-hcl-kind-model.svc.cluster.local:8000/v1
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: stub
+          overrides:
+            model: fixture-model
+            maxTokens: 2048
+  sandboxes:
+    assistant:
+      image:
+        ref: nc-registry:5000/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        metadata:
+          env: NEMOCLAW_TEST_AGENT_METADATA
+      network:
+        tier: isolated
+        grants:
+          assistant:
+            endpoints:
+              - host: assistant.example.test
+                port: 443
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: main
+        inferenceRef: chat
+    researcher:
+      image:
+        ref: nc-registry:5000/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        metadata:
+          env: NEMOCLAW_TEST_AGENT_METADATA
+      network:
+        tier: isolated
+        grants:
+          researcher:
+            endpoints:
+              - host: researcher.example.test
+                port: 443
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: researcher
+        inferenceRef: chat

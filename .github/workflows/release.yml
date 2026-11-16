@@ -115,6 +115,15 @@ jobs:
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: v1.55.0
+      # The image builds' pinned sources, as CI / Images saved them.
+      - name: Restore the verified image sources
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build/downloads
+          key: image-sources-v1-${{ hashFiles('versions.json') }}
+      # Bake reads them from .build/image-sources.
+      - name: Fetch the pinned image sources
+        run: cargo images fetch
       - name: Build and push the vLLM and Ollama runtime images
         env:
           GH_TOKEN: ${{ github.token }}

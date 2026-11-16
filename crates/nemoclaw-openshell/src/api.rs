@@ -3,6 +3,18 @@
 //! Endpoint-bound credentials for APIs that are not inference or web search.
 use nemoclaw_backend::ObservationError;
 use openshell_sdk::raw::proto;
+use serde_json::json;
+
+/// Row field for an API's optional MCP policy.
+pub const MCP_POLICY: &str = "mcp_json";
+
+/// An enforced MCP policy for the API's exact path.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpPolicy {
+    /// The only MCP requests this endpoint admits.
+    rules: Vec<crate::policy::PolicyAllowRule>,
+}
 
 /// A stable placeholder name, independent of the host's credential reference.
 fn credential_key(name: &str) -> String {
@@ -19,6 +31,7 @@ pub fn definition(
     endpoint: &str,
     auth_style: &str,
     header_name: &str,
+    mcp_policy: &str,
 ) -> Result<proto::ProviderProfile, ObservationError> {
     if !crate::valid_name(name) {
         return Err(ObservationError::Query);
@@ -53,16 +66,53 @@ pub fn definition(
         return Err(ObservationError::Query);
     }
     let id = format!("nemoclaw-api-{name}");
+    let port = url
+        .port_or_known_default()
+        .filter(|port| *port != 0)
+        .ok_or(ObservationError::Query)?;
+    let mut policy_endpoint = json!({ "host": host, "port": port, "allowed_ips": allowed_ips });
+    if mcp_policy.is_empty() {
+        policy_endpoint["path"] = json!(format!("{}/**", url.path().trim_end_matches('/')));
+        policy_endpoint["protocol"] = json!("rest");
+        policy_endpoint["access"] = json!("full");
+    } else {
+        let path = url.path();
+        // OpenShell matches the selector against the canonical request path.
+        // Reject paths it would rewrite or refuse instead of installing an unusable rule.
+        if path.contains("//")
+            || path.contains([';', '^', '|'])
+            || endpoint.bytes().any(|byte| byte.is_ascii_control())
+        {
+            return Err(ObservationError::Query);
+        }
+        let mcp: McpPolicy =
+            serde_json::from_str(mcp_policy).map_err(|_| ObservationError::Query)?;
+        // OpenShell lowers both selectors to params.name and keeps an explicit
+        // params.name over tool. Reject the ambiguity before lowering.
+        if mcp.rules.is_empty()
+            || mcp.rules.iter().any(|rule| {
+                rule.allow.tool.is_some()
+                    && rule
+                        .allow
+                        .params
+                        .as_ref()
+                        .is_some_and(|params| params.contains_key("name"))
+            })
+        {
+            return Err(ObservationError::Query);
+        }
+        policy_endpoint["path"] = json!(path);
+        policy_endpoint["protocol"] = json!("mcp");
+        policy_endpoint["enforcement"] = json!("enforce");
+        policy_endpoint["rules"] = json!(mcp.rules);
+    }
     let policy = openshell_policy::parse_sandbox_policy(
-        &serde_json::json!({"version": 1, "network_policies": {&id: {
-            "name": id, "binaries": [], "endpoints": [{
-                "host": host,
-                "port": url.port_or_known_default().filter(|port| *port != 0).ok_or(ObservationError::Query)?,
-                "path": format!("{}/**", url.path().trim_end_matches('/')),
-                "protocol": "rest", "access": "full", "allowed_ips": allowed_ips
-            }]
-        }}}).to_string(),
-    ).map_err(|_| ObservationError::Query)?;
+        &json!({"version": 1, "network_policies": {&id: {
+            "name": id, "binaries": [], "endpoints": [policy_endpoint]
+        }}})
+        .to_string(),
+    )
+    .map_err(|_| ObservationError::Query)?;
     let key = credential_key(name);
     Ok(proto::ProviderProfile {
         id: id.clone(),
@@ -84,6 +134,46 @@ pub fn definition(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MCP_RULE: &str = r#"{"rules":[{"allow":{"method":"tools/call","tool":"get_quote"}}]}"#;
+
+    #[test]
+    fn mcp_rules_reject_two_selectors_for_the_same_tool_name() {
+        let policy = r#"{"rules":[{"allow":{"method":"tools/call","tool":"get_quote","params":{"name":"*"}}}]}"#;
+        let url = "https://booking.example.com/mcp";
+        assert!(definition("booking", url, "", "", policy).is_err());
+
+        let policy =
+            r#"{"rules":[{"allow":{"method":"tools/call","params":{"name":"get_quote"}}}]}"#;
+        let explicit_name = definition("booking", url, "", "", policy).unwrap();
+        let tool = definition("booking", url, "", "", MCP_RULE).unwrap();
+        assert_eq!(explicit_name.endpoints, tool.endpoints);
+    }
+
+    #[test]
+    fn mcp_endpoints_reject_paths_openshell_rewrites_before_matching() {
+        for path in [
+            "//mcp",
+            "/team//mcp",
+            "/mcp;v=1",
+            "/mcp^v",
+            "/mcp|v",
+            "/mcp\x7f",
+        ] {
+            let url = format!("https://booking.example.com{path}");
+            assert!(
+                definition("booking", &url, "", "", MCP_RULE).is_err(),
+                "{url}"
+            );
+            assert!(definition("booking", &url, "", "", "").is_ok(), "{url}");
+        }
+
+        for path in ["/", "/mcp", "/mcp/", "/team/mcp"] {
+            let url = format!("https://booking.example.com{path}");
+            let profile = definition("booking", &url, "", "", MCP_RULE).unwrap();
+            assert_eq!(profile.endpoints[0].path, path);
+        }
+    }
 
     #[test]
     fn literal_endpoint_grants_only_its_address_and_dns_grants_no_private_network() {
@@ -107,7 +197,7 @@ mod tests {
                 vec![],
             ),
         ] {
-            let profile = definition("booking", url, "", "").unwrap();
+            let profile = definition("booking", url, "", "", "").unwrap();
             assert_eq!(profile.endpoints.len(), 1);
             let endpoint = &profile.endpoints[0];
             assert_eq!(endpoint.host, host);

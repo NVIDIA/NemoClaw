@@ -146,6 +146,17 @@ impl JourneyQuestion {
     pub fn required(&self) -> bool {
         self.required
     }
+    /// Whether the question may be left unanswered. An optional choice whose
+    /// schema default is offered is not: omitting it would select that choice.
+    /// An invalid supplied value can always be omitted, which removes it.
+    pub fn omittable(&self) -> bool {
+        !self.required
+            && (self.reason == JourneyQuestionReason::InvalidSupplied
+                || self
+                    .schema
+                    .get("default")
+                    .is_none_or(|default| !self.choices.contains(default)))
+    }
     pub fn choices(&self) -> &[Value] {
         &self.choices
     }
@@ -174,15 +185,34 @@ impl JourneyQuestion {
     }
 }
 
+/// What review says about one checked credential reference.
+#[derive(Clone, Debug)]
+pub struct CredentialNote {
+    text: String,
+    missing: bool,
+}
+
+impl CredentialNote {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+    /// Whether the user must set the credential before plan can use it: it is
+    /// not set, or could not be read.
+    pub fn is_missing(&self) -> bool {
+        self.missing
+    }
+}
+
 /// A fresh result, recomputed after each answer or catalog change.
 #[derive(Clone, Debug)]
 pub struct JourneyResolution {
     questions: Vec<JourneyQuestion>,
     omitted: Vec<String>,
     kept: Vec<(String, Value)>,
+    defaults: Vec<(String, Value)>,
     warnings: Vec<String>,
     information: Vec<String>,
-    credentials: Vec<String>,
+    credentials: Vec<CredentialNote>,
     unverified: Vec<String>,
     assessment: PartialAssessment,
     target_required: bool,
@@ -206,6 +236,11 @@ impl JourneyResolution {
     pub fn kept(&self) -> &[(String, Value)] {
         &self.kept
     }
+    /// SDK fields omission left unset, with the value the SDK fills in for
+    /// each, so a frontend can show what applies without saving it.
+    pub fn defaults(&self) -> &[(String, Value)] {
+        &self.defaults
+    }
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
@@ -215,7 +250,7 @@ impl JourneyResolution {
     }
     /// The availability of each credential reference checked here, for review.
     /// A reference that was never checked has no entry.
-    pub fn credentials(&self) -> &[String] {
+    pub fn credentials(&self) -> &[CredentialNote] {
         &self.credentials
     }
     pub fn unverified(&self) -> &[String] {

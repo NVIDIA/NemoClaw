@@ -31,8 +31,8 @@
 |---|---|---|
 | [deploy-and-answer.md](deploy-and-answer.md) | every agent | The agent answers one request through the declared inference |
 | [export-reapply.md](export-reapply.md) | every agent | The deployment exports without secrets and reapplies with no changes |
-| [exposure-change.md](exposure-change.md) | every agent | A changed service exposure replaces the sandbox and reaches the gateway |
+| [exposure-change.md](exposure-change.md) | every agent | A changed service exposure updates the sandbox in place and reaches the gateway |
 | [openclaw-dashboard.md](openclaw-dashboard.md) | `openclaw` | The Control UI through a service exposure with curl and in a browser through a forward, signed in with the token file |
 | [hermes-interfaces.md](hermes-interfaces.md) | `hermes` | The API server and dashboard through forwards |
 
-Run them in this order: deploy-and-answer, the agent's interface feature, export-reapply, then exposure-change, which replaces the sandbox.
+Run them in this order: deploy-and-answer, the agent's interface feature, export-reapply, then exposure-change, whose `STRIP` mode would break the interface feature.

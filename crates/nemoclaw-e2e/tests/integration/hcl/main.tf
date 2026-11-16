@@ -8,3 +8,8 @@
 terraform {
   required_version = "= 1.12.12"
 }
+
+variable "fixture_image" {
+  description = "Digest reference matching the image metadata bundle supplied by the integration runner."
+  type        = string
+}

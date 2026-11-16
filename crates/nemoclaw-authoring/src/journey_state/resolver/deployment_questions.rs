@@ -24,6 +24,7 @@ impl QuestionResolver<'_> {
             )? {
                 if self.decisions.accepted.contains(&field.path)
                     || questions.iter().any(|question| question.id == field.path)
+                    || (field.path == GATEWAY_ENGINE_PATH && self.engine_known())
                 {
                     continue;
                 }
@@ -49,5 +50,27 @@ impl QuestionResolver<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Whether the managed gateway's engine is the one socket that answered on
+    /// this machine for the chosen runtime, so there is nothing to ask.
+    fn engine_known(&self) -> bool {
+        let Some(answered) = self.answered_engines else {
+            return false;
+        };
+        let values = &self.authored.values;
+        let runtime = values.pointer(RUNTIME_PROVIDER).and_then(Value::as_str);
+        let mut engines = answered
+            .iter()
+            .filter(|engine| Some(engine.compute_driver.as_str()) == runtime);
+        let (Some(only), None) = (engines.next(), engines.next()) else {
+            return false;
+        };
+        values
+            .pointer("/spec/gateway/management")
+            .and_then(Value::as_str)
+            == Some("managed")
+            && values.pointer(GATEWAY_ENGINE_PATH).and_then(Value::as_str)
+                == Some(only.engine.as_str())
     }
 }

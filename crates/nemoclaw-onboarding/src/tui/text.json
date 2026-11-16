@@ -53,7 +53,8 @@
       "title": "Network policy"
     },
     "/spec/sandboxes/*/network/tier": {
-      "title": "Network tier"
+      "title": "Network tier",
+      "description": "The agent reaches its inference endpoint and nothing else on the network."
     },
     "/spec/gateway/runtime/provider": {
       "title": "Where should the sandbox run?",
@@ -262,7 +263,9 @@
     },
     "/spec/gateway/runtime/provider": {
       "docker": "Docker",
-      "podman": "Podman"
+      "podman": "Podman",
+      "kubernetes": "Kubernetes",
+      "openshift": "OpenShift"
     },
     "/spec/services/*/authentication": {
       "bearer": "Bearer token"
