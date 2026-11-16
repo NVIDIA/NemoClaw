@@ -3063,7 +3063,9 @@ function backupNativeSandboxState(
     if (rawArchiveViolation && typeof rawArchiveViolation !== "string") {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(
-        `Native archive credential scan exceeded the backup deadline at '${rawArchiveViolation.entry}'`,
+        agentName === "langchain-deepagents-code"
+          ? formatDcodeScanDiagnostic(rawArchiveViolation.entry, { kind: "deadline-expiry" })
+          : `Native archive credential scan exceeded the backup deadline at '${rawArchiveViolation.entry}'`,
       );
     }
     if (rawArchiveViolation === "native state sparse archive entry") {
@@ -3131,7 +3133,9 @@ function backupNativeSandboxState(
       rmSync(backupPath, { recursive: true, force: true });
       if (typeof credentialViolation !== "string") {
         return nativeStateFailure(
-          `Native archive credential scan exceeded the backup deadline at '${credentialViolation.entry}'`,
+          agentName === "langchain-deepagents-code"
+            ? formatDcodeScanDiagnostic(credentialViolation.entry, { kind: "deadline-expiry" })
+            : `Native archive credential scan exceeded the backup deadline at '${credentialViolation.entry}'`,
         );
       }
       return nativeStateFailure(
@@ -3141,9 +3145,13 @@ function backupNativeSandboxState(
       );
     }
     if (backupDeadlineExpired(options.deadlineMs)) {
+      const deadlineFailure =
+        agentName === "langchain-deepagents-code"
+          ? formatDcodeScanDiagnostic("native state archive", { kind: "deadline-expiry" })
+          : "Native archive validation exceeded the backup deadline";
       if (!options.deferSanitizationDeadlineCleanup) {
         rmSync(backupPath, { recursive: true, force: true });
-        return nativeStateFailure("Native archive validation exceeded the backup deadline");
+        return nativeStateFailure(deadlineFailure);
       }
       const incompleteManifest: RebuildManifest = {
         version: MANIFEST_VERSION,
@@ -3164,7 +3172,7 @@ function backupNativeSandboxState(
       };
       writeManifest(backupPath, incompleteManifest);
       return {
-        ...nativeStateFailure("Native archive validation exceeded the backup deadline"),
+        ...nativeStateFailure(deadlineFailure),
         manifest: incompleteManifest,
       };
     }

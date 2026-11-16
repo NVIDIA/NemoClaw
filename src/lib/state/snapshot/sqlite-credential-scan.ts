@@ -190,12 +190,15 @@ export type NativeScanDiagnostic =
       kind: "sqlite-inspection";
       reason: "integrity-check" | "table-name" | "sqlite-query" | "file-access";
     }
-  | { kind: "extraction" | "archive-inspection" };
+  | { kind: "extraction" | "archive-inspection" | "deadline-expiry" };
 
 export function formatDcodeScanDiagnostic(entry: string, diagnostic: NativeScanDiagnostic): string {
   const location = JSON.stringify(redactCredentialText(entry).slice(0, 240));
   const recovery =
     "See https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#resolve-a-deep-agents-code-backup-refusal";
+  if (diagnostic.kind === "deadline-expiry") {
+    return `Native archive credential scan exceeded the backup deadline (category: deadline-expiry) at ${location}. Conversation identification unavailable. ${recovery}`;
+  }
   if (diagnostic.kind === "credential-content") {
     const finding = diagnostic.finding;
     const conversation = finding?.threadId

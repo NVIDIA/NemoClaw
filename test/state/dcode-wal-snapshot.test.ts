@@ -194,6 +194,62 @@ process.exit(result.status ?? 1);
     }
   });
 
+  it.each([false, true])(
+    "categorizes extraction deadline expiry with deferred cleanup %s without exposing history",
+    (deferCleanup) => {
+      const fixture = createConversationDatabase("private-deadline-test-value");
+      const priorPath = process.env.PATH;
+      const marker = path.join(fixture.root, "deadline-marker");
+      const start = Date.now();
+      const clock = vi
+        .spyOn(Date, "now")
+        .mockImplementation(() => (fs.existsSync(marker) ? start + 60_001 : start));
+      try {
+        const systemTar = spawnSync("which", ["tar"], { encoding: "utf8" }).stdout.trim();
+        const bin = path.join(fixture.root, "test-bin");
+        fs.mkdirSync(bin);
+        fs.writeFileSync(
+          path.join(bin, "tar"),
+          `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.some(arg => arg.includes(".native-scan-"))) {
+  require("node:fs").writeFileSync(${JSON.stringify(marker)}, "expired");
+}
+const result = require("node:child_process").spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
+process.exit(result.status ?? 1);
+`,
+          { mode: 0o755 },
+        );
+        process.env.PATH = `${bin}${path.delimiter}${priorPath ?? ""}`;
+        const before = fs.readFileSync(fixture.databasePath);
+        const backup = sandboxState.backupSandboxState("alpha", {
+          deadlineMs: start + 60_000,
+          deferSanitizationDeadlineCleanup: deferCleanup,
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: fixture.root,
+            assertCurrent: () => undefined,
+          },
+        });
+        expect(fs.existsSync(marker)).toBe(true);
+        expect(backup.success).toBe(false);
+        expect(Boolean(backup.manifest)).toBe(deferCleanup);
+        expect(backup.manifest?.backupComplete).toBe(deferCleanup ? false : undefined);
+        expect(backup.error).toContain("category: deadline-expiry");
+        expect(backup.error).toContain("Conversation identification unavailable");
+        expect(backup.error).toContain("#resolve-a-deep-agents-code-backup-refusal");
+        expect(backup.error).not.toContain("private-deadline-test-value");
+        expect(fs.readFileSync(fixture.databasePath)).toEqual(before);
+      } finally {
+        clock.mockRestore();
+        priorPath === undefined
+          ? Reflect.deleteProperty(process.env, "PATH")
+          : Reflect.set(process.env, "PATH", priorPath);
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("does not guess a conversation from a raw WAL finding", () => {
     const { backup } = captureSidecar(
       ".deepagents/.state/sessions.db-wal",
@@ -359,6 +415,9 @@ process.exit(result.status ?? 1);
 
       expect(backup.success).toBe(false);
       expect(backup.error).toContain("credential scan exceeded the backup deadline");
+      expect(backup.error).toContain("category: deadline-expiry");
+      expect(backup.error).toContain("Conversation identification unavailable");
+      expect(backup.error).toContain("#resolve-a-deep-agents-code-backup-refusal");
       expect(backup.error).toContain(".deepagents/.state/sessions.db-wal");
       expect(fs.readdirSync(backupsRoot)).toEqual(before);
     } finally {
