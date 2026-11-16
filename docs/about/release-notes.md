@@ -16,6 +16,14 @@ Refer to [the overview](overview.md) for implemented boundaries and [the CLI ref
 
 These changes reached `v1` after the `v0.1.0-rc10` tag; [breaking changes](#breaking-changes-since-v010-rc10) are listed separately.
 
+Agents and interfaces:
+
+- The agent holds Fabric's `instructions`, `tools`, `skills`, `mcp`, and `workflow` sections, and the harness holds `runtime`, `environment`, `discovery`, `telemetry`, and `relay`; NemoClaw passes each to Fabric unchanged.
+  Sandboxes that share a harness definition through `harnessRef` can give each agent its own instructions, tools, and skills.
+  See [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness).
+- `spec.policies` holds named sandbox policies that a network selects with `policyRef`, and `spec.grants` holds named grants that a network adds to the isolated preset with `grantRefs`.
+  See [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants).
+
 Examples and builds:
 
 - Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
@@ -54,11 +62,6 @@ Agents and interfaces:
 - OpenClaw stops where the sandbox denies process-group signals.
 - An explicit sandbox policy accepts `network_middlewares`.
   See [network middleware](../security/sandbox-network.md#attach-network-middleware).
-- The agent holds Fabric's `instructions`, `tools`, `skills`, `mcp`, and `workflow` sections, and the harness holds `runtime`, `environment`, `discovery`, `telemetry`, and `relay`; NemoClaw passes each to Fabric unchanged.
-  Sandboxes that share a harness definition through `harnessRef` can give each agent its own instructions, tools, and skills.
-  See [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness).
-- `spec.policies` holds named sandbox policies that a network selects with `policyRef`, and `spec.grants` holds named grants that a network adds to the isolated preset with `grantRefs`.
-  See [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants).
 - A network grant's `binaries`, in a document's `grants` or an HCL `managed` block, are kept as written instead of being replaced with the harness's executables.
   OpenShell matches a process by its executable's real path, so name the executable itself rather than a symlink to it, such as `/usr/local/bin/python3.14` rather than `/usr/local/bin/python3`; see OpenShell's [binary matching](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/policies/network-rules.mdx#binary-matching).
 
@@ -134,24 +137,8 @@ See [migration](../get-started/migration.md) for where each earlier task lives n
 
 These changes since the `v0.1.0-rc10` tag affect existing deployments or documents:
 
-- With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
-  A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
-- With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
-  An endpoint host written as an IPv4-mapped IPv6 address, such as `::ffff:203.0.113.7`, no longer matches; write the IPv4 address.
-- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
-
-### Breaking Changes in v0.1.0-rc10
-
-These changes between the `v0.1.0-rc9` and `v0.1.0-rc10` tags affect existing deployments or documents:
-
-- The intent record is now version 22.
-  `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, 21, and 22 as later changes altered it.
-  This release refuses any deployment whose intent record is an earlier version, including every one that `v0.1.0-rc9` created, without changing its state.
+- The intent record is now version 22, so this release refuses any deployment that `v0.1.0-rc10` created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
-- `spec.sandboxes`, `spec.inferenceProviders`, and a sandbox's `inferenceProviders` are maps keyed by name; the parser rejects the earlier lists.
-  A provider declared inline on a route still takes `name`.
-  In the Rust SDK, these fields are `BTreeMap`s, and `InferenceProvider` has no `name`.
-- A vLLM recipe whose `compatibility.gpu` belongs to no hardware profile's GPU family no longer parses.
 - `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
   `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up:
 
@@ -195,6 +182,24 @@ These changes between the `v0.1.0-rc9` and `v0.1.0-rc10` tags affect existing de
 
 - In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
   Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
+- With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
+  A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
+- With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
+  An endpoint host written as an IPv4-mapped IPv6 address, such as `::ffff:203.0.113.7`, no longer matches; write the IPv4 address.
+- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
+
+### Breaking Changes in v0.1.0-rc10
+
+These changes between the `v0.1.0-rc9` and `v0.1.0-rc10` tags affect existing deployments or documents:
+
+- The intent record is now version 21.
+  `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, and 21 as later changes altered it.
+  This release refuses any deployment whose intent record is an earlier version, including every one that `v0.1.0-rc9` created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
+- `spec.sandboxes`, `spec.inferenceProviders`, and a sandbox's `inferenceProviders` are maps keyed by name; the parser rejects the earlier lists.
+  A provider declared inline on a route still takes `name`.
+  In the Rust SDK, these fields are `BTreeMap`s, and `InferenceProvider` has no `name`.
+- A vLLM recipe whose `compatibility.gpu` belongs to no hardware profile's GPU family no longer parses.
 - Plan rejects `maxTokens`, `temperature`, and `topP` when the image's adapter doesn't accept them; see [OpenClaw route tuning](../agents-inference/inference.md#tune-openclaws-primary-route).
 - Hermes's `max_tokens` setting no longer defaults to 512, so Hermes uses its own response-token limit.
 - `skills.paths` works as in `v0.1.0-rc9`: OpenClaw requires each path to hold `SKILL.md`, and Hermes passes each path to its `skills.external_dirs` unchecked.
