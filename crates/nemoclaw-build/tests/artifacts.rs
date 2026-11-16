@@ -141,7 +141,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
 fn docker_provider_bundle_retains_the_verified_binary_and_license() {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (name, bytes) in [
-        ("terraform-provider-docker_v4.6.0", "binary"),
+        ("terraform-provider-docker_v4.7.0", "binary"),
         ("LICENSE", "upstream MPL license"),
     ] {
         zip.start_file(name, zip::write::SimpleFileOptions::default())
@@ -151,9 +151,9 @@ fn docker_provider_bundle_retains_the_verified_binary_and_license() {
     let bytes = zip.finish().unwrap().into_inner();
     let root = tempfile::tempdir().unwrap();
     let files =
-        nemoclaw_build::docker_provider::install(root.path(), &bytes, "4.6.0", "linux_arm64")
+        nemoclaw_build::docker_provider::install(root.path(), &bytes, "4.7.0", "linux_arm64")
             .unwrap();
-    let binary = "providers/registry.opentofu.org/kreuzwerker/docker/4.6.0/linux_arm64/terraform-provider-docker_v4.6.0";
+    let binary = "providers/registry.opentofu.org/kreuzwerker/docker/4.7.0/linux_arm64/terraform-provider-docker_v4.7.0";
     assert_eq!(std::fs::read(root.path().join(binary)).unwrap(), b"binary");
     assert_eq!(
         std::fs::read(root.path().join("licenses/docker-provider-LICENSE")).unwrap(),
@@ -169,8 +169,8 @@ fn docker_provider_bundle_retains_the_verified_binary_and_license() {
     assert!(
         nemoclaw_build::docker_provider::install(
             root.path(),
-            &archive("terraform-provider-docker_v4.6.0", b"binary"),
-            "4.6.0",
+            &archive("terraform-provider-docker_v4.7.0", b"binary"),
+            "4.7.0",
             "linux_arm64"
         )
         .is_err()

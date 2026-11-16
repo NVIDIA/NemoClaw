@@ -8,7 +8,7 @@
 # resources the deployment's state binds.
 
 terraform {
-  required_version = "= 1.12.12"
+  required_version = "= 1.13.9"
 }
 
 variable "context" {

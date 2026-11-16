@@ -122,9 +122,16 @@ impl JourneyWizard {
             frame.render_widget(content, rows[2]);
         }
         let optional = matches!(&current, Ok(Some(question)) if question.omittable());
-        let choosing = matches!(&current, Ok(Some(question))
-            if !question.choices().is_empty() && !self.custom_answer);
-        self.render_footer(frame, rows[3], reviewing, asking, choosing, optional);
+        let entry = match &current {
+            Ok(Some(question)) if !question.choices().is_empty() && !self.custom_answer => {
+                "↑/↓  choose"
+            }
+            Ok(Some(question)) if self.input.is_empty() && self.placeholder(question).is_some() => {
+                "Tab  edit suggestion"
+            }
+            _ => "Type to answer",
+        };
+        self.render_footer(frame, rows[3], reviewing, asking, entry, optional);
     }
 
     /// Draw the scrolled review with a scrollbar when it exceeds `area`. The
@@ -216,24 +223,39 @@ impl JourneyWizard {
         }
         lines.push(Line::from(""));
         if question.choices().is_empty() || self.custom_answer {
-            let input = if self.input.is_empty() {
-                self.suggested_input(question)
-            } else {
-                self.input.clone()
+            let cursor = Span::styled("▌", Style::new().fg(BRIGHT_GREEN));
+            let suggested = self.placeholder(question);
+            let hint = match (&suggested, self.input.is_empty()) {
+                // The cursor comes first and the text says what the value is,
+                // so a placeholder never reads as typed text, even without colour.
+                (Some(suggested), true) => {
+                    lines.push(Line::from(vec![
+                        cursor,
+                        Span::styled(terminal_text(suggested), Style::new().fg(MUTED)),
+                        Span::styled("  (suggested)", Style::new().fg(DIM)),
+                    ]));
+                    Some(if question.omittable() {
+                        "Enter accepts the suggestion · Tab edits it · typing replaces it · Ctrl+O omits it"
+                    } else {
+                        "Enter accepts the suggestion · Tab edits it · typing replaces it"
+                    })
+                }
+                (suggested, _) => {
+                    lines.push(Line::from(vec![
+                        Span::styled(terminal_text(&self.input), Style::new().fg(WHITE)),
+                        cursor,
+                    ]));
+                    suggested
+                        .is_some()
+                        .then_some("Delete the text to use the suggestion again.")
+                }
             };
-            lines.push(Line::from(vec![
-                Span::styled(terminal_text(&input), Style::new().fg(WHITE)),
-                Span::styled("▌", Style::new().fg(BRIGHT_GREEN)),
-            ]));
             lines.push(Line::from(Span::styled(
                 "─".repeat(width as usize),
                 Style::new().fg(BRIGHT_GREEN),
             )));
-            if question.suggestion().is_some() {
-                lines.push(Line::from(Span::styled(
-                    "Enter accepts the suggested value; typing replaces it.",
-                    Style::new().fg(MUTED),
-                )));
+            if let Some(hint) = hint {
+                lines.push(Line::from(Span::styled(hint, Style::new().fg(MUTED))));
             }
         } else {
             let selected = self.choice_index(question);
@@ -350,7 +372,7 @@ impl JourneyWizard {
         area: Rect,
         reviewing: bool,
         asking: bool,
-        choosing: bool,
+        entry: &str,
         optional: bool,
     ) {
         let rows = Layout::vertical([Constraint::Length(1); 2]).split(area);
@@ -366,15 +388,7 @@ impl JourneyWizard {
                 }
             )
         } else {
-            format!(
-                "{}     Enter  continue     ←  back     Esc  exit{}",
-                if choosing {
-                    "↑/↓  choose"
-                } else {
-                    "Type to replace"
-                },
-                if optional { "     Ctrl+O  omit" } else { "" }
-            )
+            format!("{entry}     Enter  continue     ←  back     Esc  exit")
         };
         let (controls, color) = match &self.error {
             Some(error) => (terminal_text(error), WARNING),
@@ -384,10 +398,14 @@ impl JourneyWizard {
             Paragraph::new(controls).style(Style::new().fg(color)),
             rows[0],
         );
+        // Omission shares the second row, so the first fits a 72-column terminal.
         if asking {
             frame.render_widget(
-                Paragraph::new("Ctrl+D  choose remaining settings and review")
-                    .style(Style::new().fg(MUTED)),
+                Paragraph::new(format!(
+                    "{}Ctrl+D  choose remaining settings and review",
+                    if optional { "Ctrl+O  omit     " } else { "" }
+                ))
+                .style(Style::new().fg(MUTED)),
                 rows[1],
             );
         }

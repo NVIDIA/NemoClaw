@@ -442,6 +442,60 @@ mod tests {
         assert_eq!(compose(&row).unwrap(), config);
     }
 
+    /// The `skills` input's JSON for a skills block as OpenTofu sends it.
+    fn skills_json(block: Value) -> Value {
+        let skills = structured_inputs()
+            .into_iter()
+            .find(|input| input.attribute == "skills")
+            .expect("skills is an input");
+        let encoded = skills.row_value(json!([block])).unwrap().unwrap();
+        serde_json::from_str(&encoded).unwrap()
+    }
+
+    /// OpenTofu sends a skills block's omitted `directories` blocks as an empty
+    /// list. Fabric reads an empty list as no external skills, and refuses one
+    /// beside `paths`, so the configuration leaves it out.
+    #[test]
+    fn a_skills_block_with_paths_and_no_directories_sends_no_directories() {
+        let block = json!({
+            "paths": ["/sandbox/skills"],
+            "directories": [],
+            "bundled": [],
+            "duplicates": null,
+            "extensions": null,
+        });
+        assert_eq!(skills_json(block), json!({"paths": ["/sandbox/skills"]}));
+    }
+
+    /// Each `directories` block sets `folder` or `skill`, and OpenTofu sends
+    /// the other as null; each entry carries only the one it sets.
+    #[test]
+    fn directories_blocks_send_each_entry_with_only_its_path() {
+        let block = json!({
+            "paths": null,
+            "directories": [
+                {"folder": "/sandbox/skills", "skill": null},
+                {"folder": null, "skill": "/sandbox/review-skill"},
+            ],
+            "bundled": [],
+            "duplicates": "reject",
+            "extensions": null,
+        });
+        let skills = skills_json(block);
+        assert_eq!(
+            skills,
+            json!({
+                "directories": [{"folder": "/sandbox/skills"}, {"skill": "/sandbox/review-skill"}],
+                "duplicates": "reject",
+            })
+        );
+        let mut config = document();
+        config["skills"] = skills;
+        if let Err(error) = serde_json::from_value::<nemo_fabric_core::FabricConfig>(config) {
+            panic!("{error}");
+        }
+    }
+
     /// The digest identifies a document's content, whatever its key order.
     #[test]
     fn a_digest_identifies_a_document_regardless_of_key_order() {

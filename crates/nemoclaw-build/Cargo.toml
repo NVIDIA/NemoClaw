@@ -28,6 +28,7 @@ object.workspace = true
 tempfile.workspace = true
 time.workspace = true
 getrandom.workspace = true
+ipnet.workspace = true
 serde-saphyr.workspace = true
 pulldown-cmark = { workspace = true, optional = true }
 pulldown-cmark-to-cmark = { workspace = true, optional = true }

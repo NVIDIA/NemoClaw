@@ -183,8 +183,11 @@ An endpoint whose certificate comes from an internal certificate authority, such
 
 - **The machine running NemoClaw** reads the endpoint's model catalog during onboarding, using its system trust store.
   Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw`.
-- **OpenShell's sandbox supervisor** makes the TLS connection to the endpoint, so the supervisor image must trust the CA; a CA added to an agent image isn't used.
-  NemoClaw can't add the CA: OpenShell's provider registrations take none, and NemoClaw pins the supervisor image on managed gateways; see [current limits](../resources/limits.md#security).
+- **OpenShell's sandbox supervisor** makes the TLS connection to the endpoint, so the supervisor must trust the CA; a CA added to an agent image isn't used.
+  The supervisor trusts its built-in and image CAs, and the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas).
+  On an external gateway, the operator sets the bundle in OpenShell's configuration, or on Kubernetes through the chart's [`supervisor.network.additionalCaConfigMapName`](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/deploy/helm/openshell/README.md#additional-destination-cas).
+  OpenShell reads the bundle only when the gateway starts, so the operator then restarts the gateway and stops and starts every affected sandbox.
+  No managed gateway can receive the bundle yet, and NemoClaw pins the supervisor image there; see [current limits](../resources/limits.md#security).
 
 If the machine running NemoClaw does not trust the certificate, onboarding reports that the server's certificate is not trusted rather than that the endpoint is unreachable.
 
@@ -278,7 +281,7 @@ CPU offload is rejected, and CPU-only execution is not part of this shared adapt
 NemoClaw leaves placement across GPUs to Ollama and doesn't set `OLLAMA_SCHED_SPREAD`.
 The runtime computes one per-GPU reserve, the largest free memory among the container's GPUs minus the GPU budget, and passes it in two settings that `ollama serve --help` documents:
 
-- `OLLAMA_GPU_OVERHEAD`, "Reserve a portion of VRAM per GPU (bytes)". Ollama v0.40.14, the version the runtime image pins, reads it for its logs and its default context size, not to place a GGUF model.
+- `OLLAMA_GPU_OVERHEAD`, "Reserve a portion of VRAM per GPU (bytes)". Ollama v0.40.16, the version the runtime image pins, reads it for its logs and its default context size, not to place a GGUF model.
 - `LLAMA_ARG_FIT_TARGET`, "Target free VRAM margin per device for llama.cpp fit (MiB)", rounded up to whole MiB. llama.cpp leaves this much free on each GPU when it fits the model's layers. When the reserve is below llama.cpp's own margin of 1024 MiB, the runtime leaves the setting unset and llama.cpp's margin applies. When it's set, Ollama doesn't add its own margin for a model's vision projector.
 
 With several GPUs, once [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) lifts the one-entry limit below, Ollama chooses its GPUs from their raw free memory, so a model can land on one GPU with part of it offloaded to the CPU instead of spreading across GPUs, and readiness then fails.
@@ -316,7 +319,7 @@ Agent requests use their OpenShell placeholder credential.
 YAML, plans, container launch settings, and OpenTofu state contain no generated key.
 The runtime's root user and Docker administrators can read the key and child environment.
 The key authenticates the `/v1` requests below and does not provide TLS.
-vLLM's key protects only some path prefixes, and its [security guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/usage/security.md) asks deployers to allowlist routes in a reverse proxy; for a managed service, the supervisor is that proxy.
+vLLM's key protects only some path prefixes, and its [security guide](https://github.com/vllm-project/vllm/blob/v0.33.0/docs/usage/security.md) asks deployers to allowlist routes in a reverse proxy; for a managed service, the supervisor is that proxy.
 In bearer mode, the supervisor serves the published port with HTTP/1.1 and forwards only these requests to vLLM:
 
 - `GET /v1/models` and `POST` to `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/messages`, or `/v1/messages/count_tokens`, each of which requires the key.
@@ -327,13 +330,13 @@ The supervisor compares the method and the path exactly as sent, without decodin
 It forwards the query string and end-to-end headers, including `Authorization`, removes hop-by-hop headers such as `Connection`, and streams request and response bodies.
 Because vLLM's server trusts forwarding headers from loopback, the supervisor replaces `X-Forwarded-For` with the connecting address and removes `X-Forwarded-Proto`; vLLM's access log shows that address with port 0.
 Every other request returns HTTP 404 with `{"error":"Not found"}` before reaching vLLM, with or without the key, and the supervisor does not log it.
-This includes `POST /invocations`, `OPTIONS` requests, `HEAD /health`, dot-segment or percent-encoded spellings such as `/v1/../invocations` and `/v1/%6Dodels`, a trailing slash such as `/v1/models/`, absolute-form request targets, requests that offer a protocol upgrade, such as WebSocket or the h2c offer of `curl --http2`, and management routes that recipe `VLLM_*` variables can enable, such as `/v1/load_lora_adapter`.
+This includes `POST /invocations`, `OPTIONS` requests, `HEAD /health`, dot-segment or percent-encoded spellings such as `/v1/../invocations` and `/v1/%6Dodels`, a trailing slash such as `/v1/models/`, absolute-form request targets, requests that offer a protocol upgrade, such as WebSocket or the h2c offer of `curl --http2`, and management routes that recipe `VLLM_*` variables can enable, such as `/v1/load_lora_adapter`, and vLLM's other key-protected APIs, such as `/v1/embeddings` and `/v1/decisions`.
 An allowed request returns HTTP 400 with `{"error":"Bad request"}` when its body cannot be read, such as invalid chunked framing, and HTTP 502 while vLLM is not accepting connections.
 A client must send its request headers within 30 seconds.
 A client that closes its sending side before the response arrives is treated as disconnected.
 The supervisor serves at most 256 connections at a time, or fewer when the container's maximum open-file limit is below 640; later connections wait to be accepted.
 If the route filter fails, the supervisor stops vLLM and reports the failure.
-This restriction closes an upstream gap: the [native vLLM authentication middleware](https://github.com/vllm-project/vllm/blob/v0.32.0/vllm/entrypoints/serve/middleware/authenticate.py) leaves `/invocations` unguarded, and an operator's test of an earlier image returned a chat completion through that route without a key.
+This restriction closes an upstream gap: the [native vLLM authentication middleware](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/entrypoints/serve/middleware/authenticate.py) leaves `/invocations` unguarded, and an operator's test of an earlier image returned a chat completion through that route without a key.
 Omitting `authentication: bearer` leaves the upstream route behavior unchanged; vLLM then serves the published port itself.
 Keep the whole listener on a trusted private network, including when `authentication: bearer` is enabled.
 For Docker, restrict access through the host's network controls.

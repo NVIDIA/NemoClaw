@@ -296,6 +296,16 @@ fn sandbox_row(
     let observed_policy = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
     let grants = network::recorded_grants(&input, observed_policy)?;
     let (authority, provenance) = policy_authority(&meta.annotations)?;
+    // APF admitted a sandbox NemoClaw did not declare APF-governed, so its
+    // policy is APF's, not the one NemoClaw authored.
+    if authority.is_empty()
+        && !removing
+        && APF_PROVENANCE
+            .iter()
+            .any(|key| meta.annotations.contains_key(*key))
+    {
+        return Err(ObservationError::BindingMismatch);
+    }
     // NemoClaw authored the policy unless APF governs it; APF's admission
     // replaces the submitted policy with its bundle's.
     if authority.is_empty()
@@ -545,6 +555,7 @@ fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
 
 /// OpenShell objects and their planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
+    use nemoclaw_openshell::api::MCP_POLICY;
     use nemoclaw_tofu::Definition;
     [
         Definition::new("workspace", &["name", "owner", "generation"], &[]),
@@ -561,6 +572,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "auth_style",
                 "header_name",
                 POLICY_AUTHORITY,
+                MCP_POLICY,
             ],
             &["credential_env", "binaries_json"],
         )
@@ -571,6 +583,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "auth_style",
             "header_name",
             POLICY_AUTHORITY,
+            MCP_POLICY,
         ])
         .reset_when_omitted(&[
             "endpoint",

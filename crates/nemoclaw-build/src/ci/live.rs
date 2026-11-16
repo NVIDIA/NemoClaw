@@ -3,6 +3,21 @@
 //! Fresh inputs for the Docker live tests: deployment UUIDs, unused
 //! loopback ports and private subnets, and owned gateway documents.
 
+/// Read Docker observations without deleting objects. Failed reads stay unknown.
+pub fn docker_lines(command: &mut std::process::Command) -> Option<Vec<String>> {
+    let output = command
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .ok()?;
+    output.status.success().then(|| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
 /// A random version 4 UUID, as deployment metadata requires.
 pub fn uuid() -> Result<String, String> {
     let mut bytes = [0u8; 16];
@@ -22,9 +37,27 @@ pub fn uuid() -> Result<String, String> {
 
 /// The first `172.30.N.0/24` from 200 up that neither Docker nor this run uses.
 pub fn free_subnet(used: &[String], taken: &[String]) -> Result<String, String> {
+    let occupied: Vec<ipnet::IpNet> = used
+        .iter()
+        .chain(taken)
+        .map(|subnet| {
+            subnet
+                .parse()
+                .map_err(|_| format!("invalid Docker subnet: {subnet}"))
+        })
+        .collect::<Result<_, _>>()?;
     (200..=254)
-        .map(|third| format!("172.30.{third}.0/24"))
-        .find(|subnet| !used.contains(subnet) && !taken.contains(subnet))
+        .map(|third| {
+            format!("172.30.{third}.0/24")
+                .parse::<ipnet::IpNet>()
+                .unwrap()
+        })
+        .find(|subnet| {
+            !occupied
+                .iter()
+                .any(|network| network.contains(subnet) || subnet.contains(network))
+        })
+        .map(|subnet| subnet.to_string())
         .ok_or_else(|| "no free 172.30.200-254.0/24 subnet for a test gateway".into())
 }
 

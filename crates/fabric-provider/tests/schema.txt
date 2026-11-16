@@ -414,10 +414,28 @@ resource fabric_agent (version 0)
     timeout_seconds: number, optional
       > Maximum duration of one invocation in seconds.
   block skills: optional
+    duplicates: string, optional
+      > Policy for two `directories` entries that provide skills with the same
+      > name. Requires `directories`. `None` preserves native handling.
     extensions: string, optional
       > Undeclared properties, as JSON text.
     paths: list(string), optional
       > Skill paths resolved relative to the config base directory.
+    block bundled: optional
+      > Bundled-skill selection. `None` preserves the harness default.
+      enabled: bool, optional
+        > Whether bundled skills load at all.
+      exclude: list(string), optional
+        > Load every bundled skill except these. `None` and `[]` differ.
+      include: list(string), optional
+        > Load only these bundled skills. `None` and `[]` differ.
+    block directories: list
+      > Structured external-skill entries, resolved relative to the config base
+      > directory. Each entry names one skill folder (`skill`) or a folder of
+      > skills (`folder`). Supply only when `paths` is empty; an empty list loads
+      > no external skills. `None` means not set.
+      folder: string, optional
+      skill: string, optional
   block system_stats: optional
     collect: list(string), optional
       > Groups to collect and persist. Omission selects all supported groups.

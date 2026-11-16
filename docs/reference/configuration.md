@@ -991,7 +991,7 @@ Paths:
 | `request_body_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting in supported REST request bodies. |
 | `rules` | array of [PolicyAllowRule](#policyallowrule) | No | — | Application-protocol allow rules. Constraints: minimum items 1. |
 | `tls` | string | No | — | Omit for automatic TLS handling, or use skip for a raw tunnel. Constraints: `"skip"`. |
-| `websocket_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade. |
+| `websocket_credential_rewrite` | boolean | No | — | Enable OpenShell placeholder rewriting in client WebSocket text messages; requires protocol websocket. |
 
 ## PolicyFilesystem
 

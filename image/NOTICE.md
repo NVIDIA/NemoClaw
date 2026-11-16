@@ -17,7 +17,7 @@ From the lock's `messaging` extra, the image installs only `aiohttp` and its dep
 Hermes's lock settles the packages it shares with Fabric; [the Hermes source notice](fabric/HERMES-NOTICE.md) records the release.
 The image installs the lock's exported packages as resolved, including the dependency overrides it records, such as Pillow 13.0.0 in place of browser-harness's Pillow 12.3.0 pin, and accepts only the dependency-check mismatches those overrides cause, using Hermes's own `pm.pip_check`.
 The Hermes image copies Hermes's built dashboard and TUI bundle unmodified from Hermes's published image for the same release, after checking that every file that image shares with the release source matches it, apart from the `README.md` its build empties.
-The Hermes image also installs the official [Switchyard Relay plugin 0.3.1](https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/tag/switchyard-plugin-0.3.1) bundle for its target architecture.
+The Hermes image also installs the official [Switchyard Relay plugin 0.3.2](https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/tag/switchyard-plugin-0.3.2) bundle for its target architecture.
 The unmodified bundle retains its licenses, notices, attributions, schema, and manifest under `/opt/nemo-relay/plugins/switchyard/`.
 
 OpenClaw installs the pinned search plugin archives through its native installer; the image packages them in OpenClaw’s bundled-plugin directory.

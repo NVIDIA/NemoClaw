@@ -2438,7 +2438,7 @@
           "type": "string"
         },
         "websocket_credential_rewrite": {
-          "description": "Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade.",
+          "description": "Enable OpenShell placeholder rewriting in client WebSocket text messages; requires protocol websocket.",
           "type": "boolean"
         }
       },

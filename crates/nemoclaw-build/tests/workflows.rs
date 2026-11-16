@@ -15,6 +15,33 @@ fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// Documentation builds the build tool with the bundle job's features, so it
+/// restores that job's Rust cache instead of one nothing writes (#14414).
+#[test]
+fn documentation_restores_the_cache_the_bundle_job_writes() {
+    let prefix = |path: &str, steps: &str| {
+        let definition: Value =
+            serde_saphyr::from_str(&fs::read_to_string(repository().join(path)).unwrap()).unwrap();
+        definition
+            .pointer(steps)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|step| step["uses"] == "./.github/actions/setup-rust")
+            .expect("a Rust setup step")["with"]["cache-prefix"]
+            .clone()
+    };
+    assert_eq!(
+        prefix(".github/actions/setup-docs/action.yml", "/runs/steps"),
+        prefix(
+            ".github/workflows/bundle-platform.yml",
+            "/jobs/bundle/steps"
+        ),
+        "documentation must restore the bundle job's cache"
+    );
+}
+
 /// Each workflow and composite action, by its path in the repository.
 fn definitions(root: &Path) -> Vec<(String, Value)> {
     let mut found = Vec::new();
@@ -276,7 +303,7 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
     assert_eq!(
         callers,
         [".github/workflows/e2e-platform.yml: gpu"],
-        "only the E2E platform workflow, which has the artifacts, calls Live / HCL"
+        "the E2E platform workflow calls Live / HCL"
     );
 
     let platform = read(".github/workflows/e2e-platform.yml");

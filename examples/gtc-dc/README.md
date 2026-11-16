@@ -144,6 +144,7 @@ Follow the [deployment workflow](../../docs/build-deploy/usage.md) for apply and
 For HCL, copy `hosted-nvidia.tf` and the repository's `versions.json` into a private working directory.
 The latter supplies the chart and gateway image pins from the same checkout as the native bundle.
 Set a fresh `deployment_uid` and `workspace`, the explicit `context` and `namespace`, and both agent `images` references.
+OpenShell accepts a workspace name of at most 19 characters, which plan checks.
 Export `NEMOCLAW_CLUSTER_KUBECONFIG` as the absolute kubeconfig path for the OpenShell provider, and set `TF_VAR_CLUSTER_KUBECONFIG` to the same path for Helm:
 
 ```sh
@@ -168,7 +169,7 @@ The changes select Nemotron Super NVFP4, one agent per file, target-specific har
 The [upstream vLLM Nemotron Super recipe](https://github.com/vllm-project/recipes/blob/d80a1692a40e79bc6a5dc77e5a2d71c32e3d4b37/models/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16.yaml), pinned to recipes commit `d80a1692a40e79bc6a5dc77e5a2d71c32e3d4b37`, informs the model and native parser choices.
 Its DGX Spark and Station commands use vLLM 0.28.0 with settings these templates do not select, such as an FP8 KV cache and MTP speculative decoding.
 These templates use only fields that this checkout's schema accepts.
-The pinned runtime image builds on the upstream `vllm/vllm-openai` v0.32.0 release image, pinned by digest.
+The pinned runtime image builds on the upstream `vllm/vllm-openai` v0.33.0 release image, pinned by digest.
 They do not reproduce or qualify the upstream recipe.
 The [ARM64 runtime notice](../../image/vllm/NOTICE.md) describes retained upstream sources and licenses.
 The model is distributed under the [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/); the pinned snapshot contains no separate license or notice file.

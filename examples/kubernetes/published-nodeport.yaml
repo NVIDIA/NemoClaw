@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# An agent on a managed Kubernetes gateway that a NodePort Service publishes at
+# gateway.endpoint, so that the OpenShell CLI dials a node instead of a port
+# forward. The oidc profile lets you sign in there with your own token; see
+# "Publish the Gateway Outside the Cluster" and "Reach the Gateway from the
+# OpenShell CLI" in docs/build-deploy/kubernetes.md. NemoClaw's own commands
+# still forward a port to the gateway pod.
+# Before the first plan, replace the endpoint's host with a node's address or
+# a DNS name for the nodes, and its port with a free node port: plan fixes
+# both, and the gateway certificate names the host. Every node listens on the
+# port, so restrict who can reach it with your network's own controls.
+# Before the first apply, create the namespace below and, in it, the ConfigMap
+# issuer-ca whose ca.crt verifies your issuer's certificate.
+# Replace the deployment UID, the context, the issuer settings, and the image
+# digest. Where you run nemoclaw, set NVIDIA_INFERENCE_API_KEY, and before
+# each plan, apply or destroy set NEMOCLAW_GATEWAY_TOKEN to a fresh token for
+# the audience that carries the admin role.
+# Write the image's metadata bundle with `cargo images export-metadata` and set
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-published-nodeport
+  uid: 9cb5e166-36f5-465b-90d7-020d22868a85
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    # A node port from 30000 through 32767; 30000 through 30085 are the least
+    # likely to be taken.
+    endpoint: https://gateway.agents.example.com:30080
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-published-nodeport
+      authentication:
+        profile: oidc
+        caConfigMap: issuer-ca
+        token: {env: NEMOCLAW_GATEWAY_TOKEN}
+      expose:
+        service:
+          type: NodePort
+    config:
+      openshell.gateway.oidc:
+        issuer: https://login.example.com/realms/openshell
+        audience: openshell
+        roles_claim: groups
+        admin_role: openshell-admins
+        user_role: openshell-users
+  inferenceProviders:
+    hosted-nvidia:
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential: {env: NVIDIA_INFERENCE_API_KEY}
+  sandboxes:
+    assistant:
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted-nvidia
+              overrides:
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b

@@ -16,7 +16,7 @@ use std::{
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-const VERSION: &str = "0.121.0";
+const VERSION: &str = "0.121.3";
 const OUTPUT_LIMIT: u64 = 128 << 20;
 const DATABASE_LIMIT: u64 = 8 << 30;
 

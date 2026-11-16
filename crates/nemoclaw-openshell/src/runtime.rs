@@ -100,7 +100,7 @@ pub struct Launch {
     pub environment: BTreeMap<String, String>,
     /// The runtime's policy, used when no explicit policy is authored.
     pub policy: ExplicitPolicy,
-    /// Executables that managed endpoint grants allow.
+    /// Executables that managed endpoint grants naming none allow.
     pub binaries: Vec<String>,
     /// Opaque values for whoever produced the launch, kept with the sandbox.
     pub metadata: BTreeMap<String, String>,
@@ -133,7 +133,8 @@ impl Launch {
         Ok(launch)
     }
     /// The sandbox policy: the authored explicit policy or the runtime's,
-    /// plus managed grants that allow this launch's executables.
+    /// plus managed grants, which allow this launch's executables unless they
+    /// name their own.
     pub fn policy(&self, input: &PolicyInput) -> Result<proto::SandboxPolicy, ObservationError> {
         let mut policy = input.explicit.as_ref().unwrap_or(&self.policy).clone();
         for rule in &input.managed {
@@ -142,11 +143,13 @@ impl Launch {
                 return Err(ObservationError::BindingMismatch);
             }
             let mut rule = rule.clone();
-            rule.binaries = self
-                .binaries
-                .iter()
-                .map(|path| PolicyBinary { path: path.clone() })
-                .collect();
+            if rule.binaries.is_empty() {
+                rule.binaries = self
+                    .binaries
+                    .iter()
+                    .map(|path| PolicyBinary { path: path.clone() })
+                    .collect();
+            }
             policy.network_policies.insert(name.clone(), rule);
         }
         policy.to_proto().map_err(|_| ObservationError::Incomplete)
@@ -343,18 +346,21 @@ mod tests {
         assert_eq!(launch.command, ["/srv/fabric-agent-ctl", "serve"]);
         assert_eq!(launch.environment["HOME"], "/work");
         assert!(!launch.environment.contains_key("NEMOCLAW_AGENT_NAME"));
-        let input: PolicyInput = serde_json::from_value(serde_json::json!({"explicit":null,"managed":[{"name":"model","endpoints":[{"host":"api.example.com","port":443}],"binaries":[]}]})).unwrap();
+        let input: PolicyInput = serde_json::from_value(serde_json::json!({"explicit":null,"managed":[{"name":"model","endpoints":[{"host":"api.example.com","port":443}],"binaries":[]},{"name":"packages","endpoints":[{"host":"pypi.org","port":443}],"binaries":[{"path":"/usr/bin/pip"}]}]})).unwrap();
         let policy = binding.policy(&input).unwrap();
         assert_eq!(policy.process.unwrap().run_as_user, "1234");
         assert_eq!(policy.filesystem.unwrap().read_write, ["/work"]);
-        assert_eq!(
-            policy.network_policies["model"]
+        let executables = |rule: &str| -> Vec<String> {
+            policy.network_policies[rule]
                 .binaries
                 .iter()
-                .map(|binary| binary.path.as_str())
-                .collect::<Vec<_>>(),
-            ["/srv/python3.99", "/srv/bun"]
-        );
+                .map(|binary| binary.path.clone())
+                .collect()
+        };
+        // A grant that names no executables takes the launch's; one that names
+        // its own keeps them.
+        assert_eq!(executables("model"), ["/srv/python3.99", "/srv/bun"]);
+        assert_eq!(executables("packages"), ["/usr/bin/pip"]);
         let mut explicit = input;
         explicit.explicit = Some(serde_json::from_value(serde_json::json!({"version":1,"filesystem_policy":{"read_only":["/srv"],"read_write":["/mine"]},"process":{"run_as_user":"4321","run_as_group":"4321"},"network_policies":{}})).unwrap());
         let policy = binding.policy(&explicit).unwrap();

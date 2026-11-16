@@ -92,6 +92,9 @@ fn omitted_optional_sdk_field_stays_absent_even_when_its_scope_is_asked() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -272,6 +275,9 @@ fn omit_guidance_keeps_valid_supplied_adapter_settings_and_asks_the_rest() {
     let state = JourneyDefinition::new("supplied-settings", base)
         .omit([
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
         ])
         .omit([JourneyScope::ActiveAdapterSettings])
@@ -2433,6 +2439,9 @@ fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -3045,6 +3054,9 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
         "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
         "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
         "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/agents",
+        "adapter:nvidia.fabric.openclaw:/plugins",
+        "adapter:nvidia.fabric.openclaw:/tools",
     ]);
     let mut state = definition.start(&capabilities).unwrap();
     assert!(
@@ -3142,6 +3154,9 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -3504,6 +3519,9 @@ fn optional_sdk_question_can_be_deliberately_omitted() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -3698,6 +3716,9 @@ fn fully_supplied_express_definition_has_no_current_questions() {
         "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
         "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
         "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/agents",
+        "adapter:nvidia.fabric.openclaw:/plugins",
+        "adapter:nvidia.fabric.openclaw:/tools",
     ]);
 
     let resolved = definition
@@ -3751,6 +3772,9 @@ fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ]);
     let mut state = definition.start(&capabilities).unwrap();
     assert_eq!(state.resolve(&capabilities).unwrap().questions().len(), 2);
@@ -3885,6 +3909,9 @@ fn external_gateway_choice_reveals_its_required_endpoint() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -4084,6 +4111,9 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -4299,6 +4329,9 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
