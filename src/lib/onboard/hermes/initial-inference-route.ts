@@ -120,6 +120,7 @@ export function createInitialHermesInferenceRoute(
               entry.endpointUrl,
               local.endpointUrl,
               entry.hostLocalInferenceReceipt,
+              entry.credentialEnv,
             ))
       )
         throw mismatch();

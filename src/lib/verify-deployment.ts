@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { nativeLocalAttachmentMatchesHostLocalReceipt } from "./state/registry/host-local-inference";
+import {
+  nativeLocalAttachmentMatchesHostLocalReceipt,
+  nativeLocalAttachmentMatchesSelectedEndpoint,
+} from "./state/registry/host-local-inference";
 
 /**
  * Post-deployment verification — confirms the full delivery chain is
@@ -289,6 +292,8 @@ type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
 export type InferenceRouteContext = {
   provider?: string | null;
   endpointUrl?: string | null;
+  /** Credential recorded for the selection; it identifies a no-authentication proxy route. */
+  credentialEnv?: string | null;
   gatewayName?: string;
   nativeLocalExpected?: boolean;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
@@ -444,7 +449,16 @@ function matchesNativeLocalVerificationRoute(
     ...attachment,
     endpointUrl: gatewayReachableCompatibleEndpointUrl(attachment.provider, context.endpointUrl),
   });
-  return selected?.endpointUrl === attachment.endpointUrl;
+  return (
+    selected?.endpointUrl === attachment.endpointUrl ||
+    nativeLocalAttachmentMatchesSelectedEndpoint(
+      attachment.provider,
+      context.endpointUrl,
+      attachment.endpointUrl,
+      undefined,
+      context.credentialEnv,
+    )
+  );
 }
 
 async function verifyInferenceRoute(
@@ -1017,6 +1031,7 @@ export function onboardInferenceVerificationContext(
         provider?: string | null;
         model?: string | null;
         endpointUrl?: string | null;
+        credentialEnv?: string | null;
         createdAt?: string | null;
         pendingRouteReservation?: boolean;
         hostLocalInferenceReceipt?: string | null;
@@ -1048,10 +1063,14 @@ export function onboardInferenceVerificationContext(
     )
       ? attachment.endpointUrl
       : (flow.endpointUrl ?? null);
+  const recordedCredential =
+    attachment?.provider === flow.provider ? attachment.credentialEnv : undefined;
+  const credentialEnv = recordedCredential ? { credentialEnv: recordedCredential } : {};
   return {
     route: {
       provider: flow.provider,
       endpointUrl,
+      ...credentialEnv,
       gatewayName,
       nativeLocalExpected,
       nativeLocalProviderAttachment,
@@ -1064,6 +1083,7 @@ export function onboardInferenceVerificationContext(
       model: flow.model,
       provider: flow.provider,
       endpointUrl,
+      ...credentialEnv,
       preferredInferenceApi: flow.preferredInferenceApi,
       nativeLocalExpected,
       nativeLocalProviderAttachment,

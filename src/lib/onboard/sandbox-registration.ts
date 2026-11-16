@@ -270,6 +270,7 @@ export function buildCreatedSandboxRegistryEntry(
         input.inferenceSelection.endpointUrl,
         nativeLocalProviderAttachment.endpointUrl,
         hostLocalInferenceReceipt,
+        input.inferenceSelection.credentialEnv,
       )
     )
   ) {
