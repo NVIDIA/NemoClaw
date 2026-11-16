@@ -450,7 +450,7 @@ Sandboxes still need `image.metadata`.
 NemoClaw doesn't put a managed gateway behind an ingress or an OpenShift Route; it passes none of the chart's `grpcRoute` or `openshiftRoute` values ([current limits](../resources/limits.md#platforms-models-and-placement)).
 Instead, the platform operator installs the OpenShell chart behind a Gateway API ingress with OpenShell's [Kubernetes ingress guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/ingress.mdx), and the deployment connects to it with `management: external`.
 No automated test covers this setup.
-[#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) records runs of these steps, with OpenShell 0.1.7 behind Envoy Gateway v1.8.1 on single-node kind and k3d clusters and a Keycloak issuer: an agent replied through the ingress, and destroy removed the deployment once the request timeout below was disabled.
+[#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) records runs of these steps behind Envoy Gateway v1.8.1 with a Keycloak issuer, with OpenShell 0.1.7 on single-node kind and k3d clusters and with OpenShell 0.1.8 on kind: an agent replied through the ingress in each, and requests longer than 15 seconds failed until the request timeout below was disabled.
 
 The operator follows the guide with these choices:
 
@@ -461,8 +461,8 @@ The operator follows the guide with these choices:
 - **Authentication:** configure an OIDC issuer, as the guide's HTTPS setups do; the ingress terminates TLS and forwards no client certificate, so clients authenticate with bearer tokens.
   If a private CA signed the issuer's certificate, also set the chart's `server.oidc.caConfigMapName` to a ConfigMap in the release's namespace whose `ca.crt` verifies it; create the ConfigMap before the install.
 - **Request timeout:** disable Envoy Gateway's default 15-second request timeout, which ends any longer request, including a whole `exec` stream.
-  In the recorded runs, deleting a sandbox took 31 seconds, so destroy failed with `observation transport failed` until a second destroy, after the sandbox was gone, completed.
-  Starting an agent runtime, which runs through `exec`, took 13 seconds, close to the limit, and a 20-second `openshell sandbox exec`, the command that sends agent requests, failed at 15 seconds.
+  In the recorded runs, a 20-second `openshell sandbox exec`, the command that sends agent requests, failed at 15 seconds, and starting an agent runtime, which runs through `exec`, took 12 to 13 seconds, close to the limit.
+  With OpenShell 0.1.7, deleting a sandbox also took 31 seconds, so destroy failed with `observation transport failed`; OpenShell 0.1.8 deletes one in about 3 seconds.
   Disable it with a `BackendTrafficPolicy` on the chart's `GRPCRoute`, named `openshell` in the guide's `openshell` namespace; for another release, find the route with `kubectl get grpcroutes`:
 
   ```sh
