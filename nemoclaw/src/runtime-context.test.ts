@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   localCodeRelationshipPrompts,
   localFilenamePrompts,
+  longSetupPrompt,
+  publicFetchPrompts,
   quotedExternalResearchPrompts,
   suppliedUrlListPrompts,
   webTargetPrompts,
@@ -22,11 +24,6 @@ vi.mock("./blueprint/state.js", () => ({
 
 import { loadState } from "./blueprint/state.js";
 import { registerRuntimeContext, suppliedSearchSources } from "./runtime-context.js";
-
-const publicFetchPrompts = [
-  "Use the web_fetch tool to fetch exactly this URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf web_fetch is not a directly callable tool, invoke it through tool_call with id openclaw:core:web_fetch and the URL in args.url.\nYou may use tool_search and tool_describe only to discover web_fetch. Do not call an unexposed tool directly.\nAfter web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
-  "Use web_fetch to fetch exactly this public HTTPS URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.\nDo not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.\nSet web_fetch maxChars to no more than 8000.\nAfter web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
-];
 
 const localCodeInspectionPrompts = [
   "Find unused imports",
@@ -237,6 +234,8 @@ const coordinatedLocalRequestPrompts = [
   "Search and also inspect README.md",
   "Find and additionally fix the bug",
   "Find and then also remove unused imports",
+  "Read README.md.\n".repeat(63) + "Search and\nread README.md.",
+  "Read README.md.\n".repeat(63) + "Search\nand read README.md.",
 ];
 
 const requestCoordinators = [
@@ -271,7 +270,7 @@ const admissionCases: {
   ...[
     "Search bug" + " ".repeat(32000) + "outside",
     "Search README.md".padEnd(4097),
-    "Read https://example.org/guide. Search README.md".padEnd(4097),
+    "Read https://example.org/guide. " + "Search README.md".padEnd(4097),
     "Explain " + "x".repeat(8192),
     "\u2003".repeat(4097),
     `Search ${nestedLocalTarget}`,
@@ -280,8 +279,8 @@ const admissionCases: {
     `Search for TODOs in ${nestedLocalTarget}`,
     `Investigate ${"cause of ".repeat(129)}npm install errors`,
     `Search ${"README.md and ".repeat(256)}package.json`,
-    "Read README.md. ".repeat(256),
   ].map((prompt) => ({ prompt, tools: false })),
+  { prompt: longSetupPrompt, tools: true, local: true, urls: [] },
   ...coordinatedLocalRequestPrompts.map((prompt) => ({
     prompt,
     tools: true,

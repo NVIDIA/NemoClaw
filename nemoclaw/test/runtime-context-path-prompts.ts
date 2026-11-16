@@ -127,3 +127,27 @@ export const webTargetPrompts = [
   "Read the official docs from nemoclaw.build",
   ...webLocationPrompts,
 ];
+
+// A long setup prompt: many short steps that read and write local files (#14309).
+const setupStep = [
+  "Step 1. Create these folders if they do not exist:",
+  "- /sandbox/redteam/memory",
+  "- /sandbox/redteam/reports",
+  "Step 2. Read /sandbox/redteam/profile.yaml if present. If it is missing, ask me these setup questions one at a time and write my answers to profile.yaml:",
+  "1. What is the name of the product or project the decks are about?",
+  "2. Who is the audience for the decks (investors, customers, executives)?",
+  "3. Which risks should the review focus on (market, technical, financial, legal)?",
+  "Step 3. For every deck file in /sandbox/redteam/decks, read the slides and list unsupported claims, missing evidence and weak arguments.",
+  "Write the findings to /sandbox/redteam/reports/<deck-name>.md with a severity for each finding.",
+  "Step 4. Save a short note about what you reviewed to /sandbox/redteam/memory/log.md.",
+  "Rules:",
+  "- Never delete my files.",
+  "- Keep each report under 400 words.",
+  "- Use the exec and read tools for all file operations.",
+].join("\n");
+export const longSetupPrompt = `${setupStep}\n`.repeat(8);
+
+export const publicFetchPrompts = [
+  "Use the web_fetch tool to fetch exactly this URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf web_fetch is not a directly callable tool, invoke it through tool_call with id openclaw:core:web_fetch and the URL in args.url.\nYou may use tool_search and tool_describe only to discover web_fetch. Do not call an unexposed tool directly.\nAfter web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
+  "Use web_fetch to fetch exactly this public HTTPS URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.\nDo not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.\nSet web_fetch maxChars to no more than 8000.\nAfter web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
+];

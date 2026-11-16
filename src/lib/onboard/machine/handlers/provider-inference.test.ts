@@ -314,7 +314,11 @@ describe("handleProviderInferenceState", () => {
       "compatible-endpoint",
       "COMPATIBLE_API_KEY",
       undefined,
-      { sandboxName: "mcp-rebuild", endpointUrl: "https://compatible.example.test/v1" },
+      {
+        sandboxName: "mcp-rebuild",
+        endpointUrl: "https://compatible.example.test/v1",
+        recoverRecordedProvider: false,
+      },
     );
     expect(calls.complete).toHaveBeenCalledWith(
       "provider_selection",
@@ -462,7 +466,7 @@ describe("handleProviderInferenceState", () => {
       "ollama-local",
       null,
       undefined,
-      { sandboxName: null, endpointUrl: null },
+      { sandboxName: null, endpointUrl: null, recoverRecordedProvider: false },
     );
     expect(calls.skipped).toHaveBeenCalledWith("provider_selection", "ollama-local / llama3.1");
     expect(calls.recordSkip).toHaveBeenCalledWith("provider_selection", {

@@ -23,6 +23,7 @@ import {
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURES,
   REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE,
 } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -47,6 +48,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   gatewayCredentialNonExposureScript,
+  gatewayUpgradeAgentResponseIsSuccessful,
   gatewayServiceWasPreserved,
   gatewayUpgradeInstallerCommand,
   gatewayUpgradeMarkerWriteCommand,
@@ -127,9 +129,10 @@ const DASHBOARD_PORT = "18789";
 const GATEWAY_CREDENTIAL = "nemoclaw-gateway-upgrade-fixture-key";
 const VERIFY_SYSTEMD_UPGRADE =
   OLD_NEMOCLAW_COMMIT === REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawCommit;
-const captureFixtureGatewayForward = VERIFY_SYSTEMD_UPGRADE
-  ? captureLegacyGatewayServiceForward
-  : captureLegacyGatewayForward;
+const captureFixtureGatewayForward =
+  OLD_NEMOCLAW_COMMIT === REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawCommit
+    ? captureLegacyGatewayForward
+    : captureLegacyGatewayServiceForward;
 const TEST_TIMEOUT_MS =
   REVIEWED_GATEWAY_UPGRADE_FIXTURE_FOR_REF.additionalStoppedSandboxes > 0
     ? 110 * 60_000
@@ -248,12 +251,30 @@ async function collectOpenClawCredentialBoundary(
   const requestOffset = fake.requests().length;
   const sessionId = `e2e-state-upgrade-${phase}`;
   const agentCommand = `agent --agent main --json --thinking off --session-id ${shellQuote(sessionId)} -m ${shellQuote("Reply with only: ok")}`;
+  const useNativeAgentRpc =
+    OLD_OPENCLAW_VERSION === REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE.openclawVersion;
+  // OpenClaw 2026.9.2's local convenience command requests operator.admin.
+  // The same native agent RPC needs operator.write for this ordinary message.
+  const rpcParams = JSON.stringify({
+    message: "Reply with only: ok",
+    agentId: "main",
+    sessionKey: `agent:main:${sessionId}`,
+    thinking: "off",
+    idempotencyKey: sessionId,
+    cleanupBundleMcpOnRunEnd: true,
+  });
   const agentOptions = {
     artifactName: `state-upgrade-${phase}-agent`,
     redactionValues: [GATEWAY_CREDENTIAL],
     timeoutMs: 120_000,
   };
-  const agent = await runInSurvivorSandbox(host, `openclaw ${agentCommand}`, agentOptions);
+  const agent = await runInSurvivorSandbox(
+    host,
+    useNativeAgentRpc
+      ? `openclaw gateway call agent --json --expect-final --timeout 120000 --params ${shellQuote(rpcParams)}`
+      : `openclaw ${agentCommand}`,
+    agentOptions,
+  );
   const requests = fake
     .requests()
     .slice(requestOffset)
@@ -265,6 +286,7 @@ async function collectOpenClawCredentialBoundary(
     valid:
       secretNonExposure.exitCode === 0 &&
       agent.exitCode === 0 &&
+      (!useNativeAgentRpc || gatewayUpgradeAgentResponseIsSuccessful(agent.stdout)) &&
       parseOpenClawAgentText(agent.stdout).trim().toLowerCase() === "ok" &&
       requests.length > 0 &&
       requests.every((request) => request.auth === "ok" && request.authorizationSent === true),

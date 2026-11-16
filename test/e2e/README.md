@@ -821,7 +821,7 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Install the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Attempt the 0.1.x cutover with registered sandboxes and require refusal. Verify the dashboard forward, sandbox phases, workspace marker, credential custody, and authenticated agent turns remain intact. Verify the old gateway service when the fixture provides it. Create each fixture-declared stopped sandbox, preserve its workspace marker, and restore its stopped phase after the lifecycle check. |
+| `openshell-gateway-upgrade` | Install the reviewed v0.0.89, v0.0.123, and v0.0.141 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Attempt the 0.1.x cutover with registered sandboxes and require refusal. Verify the dashboard forward, sandbox phases, workspace marker, credential custody, and authenticated agent turns remain intact. Verify the old gateway service when the fixture provides it. Create each fixture-declared stopped sandbox, preserve its workspace marker, and restore its stopped phase after the lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 The gateway-upgrade target observes the v0.0.89 forward through its legacy SSH registry.
@@ -832,6 +832,13 @@ PID, start time, and listener before and after refusal to require the same proce
 The gateway fixture prepares private OpenShell and npm install locations before the historical install, preserving existing private executables.
 The fixture sets a canonical private `XDG_BIN_HOME` for both installer generations.
 Its current installer still receives duplicate-slash `HOME` and `XDG_CONFIG_HOME` values for the systemd service scenario.
+
+The v0.0.123 fixture uses one running survivor and one stopped sandbox.
+Both retain workspace-preservation checks; the stopped sandbox also retains its lifecycle check and stopped-phase assertion.
+This replaces the original three-sandbox topology with the smallest mixed-state recovery case.
+The removed second stopped sandbox repeated the same preservation and lifecycle checks.
+The live target no longer qualifies recovery with two stopped sandboxes in one upgrade.
+The installer deadline remains 35 minutes; measured runtime for this smaller fixture still requires live qualification.
 
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
@@ -845,6 +852,13 @@ Deterministic tests own installer identity, OpenShell release asset selection,
 NemoClaw restore behavior, and Dockerfile patch behavior. The live target does not
 assert OpenClaw database tables, migration checkpoints, or other third-party
 storage details.
+
+The v0.0.141 fixture adds recent-release compatibility with one running and one stopped sandbox.
+It retains the released OpenShell 0.0.116 path, so it does not substitute for historical gateway replacement coverage.
+The existing support tests verify fixture identity, archive pins, and adapter behavior.
+The recent fixture uses the native agent RPC before and after cutover refusal because its convenience command requests administrator scope.
+Manual PR selection uses the catalogue from trusted `main`; a newly added selector becomes available after that catalogue merges.
+The OpenShell destination and workspace marker repairs in PR #14276 are prerequisites for completing upgrade qualification.
 
 The retained live target owns legacy-gateway cutover refusal and the usable-survivor
 boundary. Deterministic rebuild-flow tests own post-backup recreate failure,
