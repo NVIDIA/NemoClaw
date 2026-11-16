@@ -594,7 +594,8 @@ fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String 
 
 /// The command that invokes each agent whose runtime the state records, under
 /// the gateway and workspace selection, which `selected` records printing. A
-/// plan lists the runtimes the last apply left, which its changes may replace.
+/// plan lists the runtimes the last apply left, which its changes may replace,
+/// and prints nothing when the state records none, such as before any apply.
 fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool) -> String {
     let invocable = result
         .agents
