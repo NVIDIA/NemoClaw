@@ -687,6 +687,7 @@
         "test/e2e/fixtures/native-local-chat.ts"
       ],
       "fast": [
+        "src/lib/onboard/machine/handlers/sandbox-tool-disclosure.test.ts",
         "test/e2e/support/gpu-ollama-cleanup.test.ts",
         "src/lib/adapters/config/live-export-source-ollama.test.ts",
         "src/lib/adapters/config/live-export-source-vllm.test.ts",
