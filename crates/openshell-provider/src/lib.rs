@@ -391,14 +391,15 @@ fn policy_authority(
 }
 
 /// Plan APF to issue its policy again to a governed sandbox whose loaded policy
-/// was observed not to be the one APF issued; carry the token otherwise.
+/// was observed not to be the one APF issued: the reissued policy's token and
+/// hash are unknown until apply. Carry them otherwise.
 fn reissue_when_unproven(
     name: &str,
     prior: &nemoclaw_tofu::State,
 ) -> Option<tf_provider::value::Value<String>> {
     use tf_provider::value::Value;
     let governed = matches!(prior.get(POLICY_AUTHORITY), Some(Value::Value(a)) if a == "apf");
-    match prior.get(name) {
+    match prior.get(POLICY_PROVENANCE) {
         Some(Value::Value(token)) if governed && token.is_empty() => Some(Value::Unknown),
         _ => nemoclaw_tofu::carry_prior(name, prior),
     }
@@ -722,9 +723,10 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
         .unknown_when_changed(services::URLS, services::FIELD)
         // The loaded policy's hash, OpenShell's additions included; later
         // observations must find the same one.
-        .computed(POLICY_HASH, nemoclaw_tofu::carry_prior)
+        .computed(POLICY_HASH, reissue_when_unproven)
         // APF's token for an APF-governed sandbox's loaded policy; a policy APF
-        // did not issue is planned to be issued again in place.
+        // did not issue is planned to be issued again in place, with a new
+        // token and hash.
         .computed(POLICY_PROVENANCE, reissue_when_unproven)
         // OpenShell doesn't restart an exited sandbox, so it is replaced.
         .computed(EXITED, nemoclaw_tofu::replace_when_observed)

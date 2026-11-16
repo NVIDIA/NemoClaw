@@ -993,21 +993,20 @@ fn a_governed_sandbox_whose_policy_is_not_apfs_plans_an_update() {
         .unwrap();
     let state = |authority: &str, provenance: &str| -> nemoclaw_tofu::State {
         [
-            (
-                POLICY_AUTHORITY.to_owned(),
-                Value::Value(authority.to_owned()),
-            ),
-            (
-                POLICY_PROVENANCE.to_owned(),
-                Value::Value(provenance.to_owned()),
-            ),
+            (POLICY_AUTHORITY, authority),
+            (POLICY_PROVENANCE, provenance),
+            (POLICY_HASH, "sha256:recorded"),
         ]
         .into_iter()
+        .map(|(key, value)| (key.to_owned(), Value::Value(value.to_owned())))
         .collect()
     };
+    // APF's reissue loads a new policy, so the plan knows neither its token
+    // nor its hash.
     let (planned, replacements) =
         nemoclaw_tofu::plan_update(&definition, &state("apf", ""), state("apf", ""));
     assert_eq!(planned.get(POLICY_PROVENANCE), Some(&Value::Unknown));
+    assert_eq!(planned.get(POLICY_HASH), Some(&Value::Unknown));
     assert!(replacements.is_empty());
     for (authority, provenance) in [("apf", "token"), ("", "")] {
         let (planned, _) = nemoclaw_tofu::plan_update(
@@ -1018,6 +1017,10 @@ fn a_governed_sandbox_whose_policy_is_not_apfs_plans_an_update() {
         assert_eq!(
             planned.get(POLICY_PROVENANCE),
             Some(&Value::Value(provenance.to_owned()))
+        );
+        assert_eq!(
+            planned.get(POLICY_HASH),
+            Some(&Value::Value("sha256:recorded".to_owned()))
         );
     }
 }
