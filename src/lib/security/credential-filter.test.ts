@@ -9,6 +9,7 @@ import {
 } from "../../../test/helpers/security-token-fixtures";
 
 import {
+  credentialFindingRule,
   isCredentialField,
   isConfigValue,
   isSafeCredentialPlaceholder,
@@ -665,5 +666,17 @@ describe("stripCredentials secret patterns", () => {
     expect(args[3]).toBe("--token=[STRIPPED_BY_MIGRATION]");
     expect(args[4]).toBe("--name=server");
     expect(args[5]).toBe("[STRIPPED_BY_MIGRATION]");
+  });
+});
+
+describe("credential finding diagnostics", () => {
+  it.each([
+    ['password="private-test-value"', "credential-assignment"],
+    ["Authorization: Bearer private-test-value", "bearer-authorization"],
+    [`ghp_${"0123456789abcdef"}`, "credential-fingerprint"],
+    ["ordinary conversation", null],
+  ])("returns only a fixed rule for input %#", (value, rule) => {
+    expect(credentialFindingRule(value)).toBe(rule);
+    expect(textContainsCredential(value)).toBe(rule !== null);
   });
 });
