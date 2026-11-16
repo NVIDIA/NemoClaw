@@ -68,6 +68,7 @@ Gateways and Kubernetes:
 - A managed Kubernetes or OpenShift gateway's Helm install is atomic; a release left by an unfinished install fails apply with the `helm uninstall` command to run.
   See [recovering an unfinished Helm install](../build-deploy/usage.md#recover-from-an-unfinished-helm-install).
 - Plan fails when a managed Docker or Podman gateway's subnet or port is already in use.
+- On Kubernetes and OpenShift, deleting a sandbox, in destroy or when apply replaces it, no longer waits about 30 seconds for its agent pod to stop.
 
 Plan, apply, and diagnostics:
 
@@ -96,7 +97,7 @@ Examples and builds:
 - Run `cargo images fetch` before a direct `docker buildx bake` build of an agent or Ollama image.
   See [building images](../build-deploy/build.md).
 - Dependency pins take security fixes, including rustls, webpki, tokio, and zip.
-- Pinned components: OpenShell 0.1.7, OpenTofu 1.12.12, Ollama 0.40.14, Hermes Agent v0.22.5, and OpenClaw 2026.9.34.
+- Pinned components: OpenShell 0.1.8, OpenTofu 1.12.12, Ollama 0.40.14, Hermes Agent v0.22.5, and OpenClaw 2026.9.34.
 
 ## Breaking Changes and Migration
 
@@ -121,6 +122,14 @@ Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents
 - An endpoint must begin with its scheme and `://`.
   Endpoints and service addresses can't name a cloud metadata host, such as `metadata` or `fd00:ec2::254`, or an IPv6 address that embeds an IPv4 address.
   A `networkCIDR` must be in canonical form, without leading zeros.
+- OpenShell substitutes a provider's key only where the provider places it, and refuses a request that carries the key's placeholder anywhere else, such as another header, a query parameter, or the URL path, with `403` `credential_placement_mismatch`.
+  An `openai` inference provider places it in `Authorization`, an `anthropic` one in `x-api-key`, and a `kind: api` integration in `Authorization` or its `headerName`.
+  An agent that sends an `anthropic` provider's key in `Authorization` now fails: OpenClaw always does, and Hermes does for some endpoints, such as Azure AI Foundry and MiniMax.
+  Use an `openai` provider for an endpoint that accepts OpenAI-compatible requests.
+- A `protocol: rest` endpoint refuses an HTTP upgrade, such as a WebSocket handshake, with `403` in both enforce and audit mode, and plan rejects `websocket_credential_rewrite` on it.
+  Put WebSocket traffic on a separate `protocol: websocket` endpoint with its own path or port, and allow both the `GET` handshake and `WEBSOCKET_TEXT` client messages, or use `access: full`.
+  The grants NemoClaw writes for inference providers and `kind: api` integrations are REST endpoints, so they refuse WebSocket too.
+- A sandbox whose explicit `filesystem_policy` names a path through a symbolic link beneath a directory the sandbox user owns or can write no longer starts, even with best-effort Landlock; name the link's target instead.
 - In hand-written HCL, `openshell_kubernetes_auth` has no `gateway_values` attribute.
 - In hand-written HCL on Kubernetes or OpenShift, the gateway ownership receipts that `v0.1.0-rc9` wrote no longer load, and the intent record refusal above doesn't cover them.
   Destroy such a deployment with the bundle that created it, then create it again with this release.

@@ -81,8 +81,8 @@ pub fn client(
         .as_deref()
         .map(|reference| secrets.resolve(reference))
         .transpose()?;
-    // ClientConfig cannot express mTLS, lazy connection, or call bounds at
-    // the pinned revision. from_parts preserves those channel guarantees.
+    // ClientConfig cannot express lazy connection or call bounds at the
+    // pinned revision. from_parts preserves those channel guarantees.
     Ok(OpenShellClient::from_parts(
         channel.connect_lazy(),
         authentication(token.as_deref())?,

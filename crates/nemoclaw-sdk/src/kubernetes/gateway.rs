@@ -56,9 +56,12 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             },
         },
         "pkiInitJob": {"enabled": true},
-        // The gateway's memory grows about 4 MiB per sandbox; at 1Gi it ran
-        // out of memory before a document reached 256 sandboxes, and at 2Gi
-        // 256 peaked near 1.2 GiB (#14403).
+        // On OpenShell 0.1.7 the gateway's memory grew about 4 MiB per
+        // sandbox; at 1Gi it ran out of memory before a document reached 256
+        // sandboxes, and at 2Gi 256 peaked near 1.2 GiB (#14403). OpenShell
+        // 0.1.8 no longer allocates about 3.4 MiB of stream buffers for a
+        // sandbox nobody watches (NVIDIA/OpenShell#5408); 256 sandboxes
+        // haven't been measured on it.
         "resources": {
             "requests": {"cpu": "250m", "memory": "256Mi"},
             "limits": {"cpu": "1", "memory": "2Gi"},

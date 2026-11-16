@@ -118,6 +118,8 @@ fn policy_rejects_silently_ignored_or_ambiguous_endpoint_options() {
         ("rules", json!([])),
         ("json_rpc", json!({"max_body_bytes": 0})),
         ("mcp", json!({"max_body_bytes": 0})),
+        // OpenShell 0.1.8 refuses HTTP upgrades on REST endpoints.
+        ("websocket_credential_rewrite", json!(true)),
     ] {
         let mut document = input();
         document["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"]
@@ -133,6 +135,7 @@ fn explicit_policy_supports_tcp_rest_websocket_rpc_mcp_and_deny_all() {
         json!({"allowed_ips": ["10.50.0.0/24"], "port": 8443}),
         json!({"host": "docs.example.com", "port": 443, "protocol": "rest", "access": "read-only"}),
         json!({"host": "docs.example.com", "port": 443, "protocol": "websocket", "rules": [{"allow": {"method": "GET", "path": "/ws"}}]}),
+        json!({"host": "docs.example.com", "port": 443, "protocol": "websocket", "websocket_credential_rewrite": true, "rules": [{"allow": {"method": "GET", "path": "/ws"}}]}),
         json!({"host": "docs.example.com", "port": 443, "protocol": "json-rpc", "json_rpc": {"max_body_bytes": 65536}, "rules": [{"allow": {"method": "ping"}}]}),
         json!({"host": "docs.example.com", "port": 443, "protocol": "mcp", "mcp": {"strict_tool_names": true}, "rules": [{"allow": {"method": "tools/call", "params": {"name": "read_*"}}}]}),
     ];

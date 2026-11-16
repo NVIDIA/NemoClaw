@@ -81,14 +81,14 @@ Sandbox teardown uses workspace-scoped `get_sandbox`, `delete_sandbox`, and `wai
 Teardown does not require the sandbox's old image, command, or policy to remain intact.
 The connected implementation retains the SDK's raw API only for operations or fields missing from the high-level interface.
 The Rust SDK uses gRPC; adopting it does not remove the gateway RPC boundary.
-NemoClaw supplies the channel to preserve mutual TLS, lazy connection, and timeout settings that the pinned SDK configuration cannot express.
+NemoClaw supplies the channel to preserve lazy connection and timeout settings that the pinned SDK configuration cannot express.
 
-At the pinned OpenShell revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c`, the SDK has these integration limits:
+At the pinned OpenShell revision `f3d976590d3eb1379690a2abaf0f0e26c21d487d`, the SDK has these integration limits:
 
 | Requirement | SDK limit | Consequence |
 |---|---|---|
 | Telemetry disabled at build time | Its manifest enables `openshell-core` default features, including telemetry | Use a [vendored manifest patch](../../crates/vendor/openshell-sdk/NOTICE.md) with unchanged Rust source to disable core default features |
-| Mutual TLS and bounded lazy connections | `ClientConfig` lacks client certificate/key fields, lazy connection configuration, and request timeouts | Retain custom channel construction through `OpenShellClient::from_parts` |
+| Mutual TLS and bounded lazy connections | `ClientConfig` carries a client identity for mutual TLS but no lazy connection configuration or request timeouts | Retain custom channel construction through `OpenShellClient::from_parts` |
 | Complete workspace identity | `WorkspaceRef` omits the physical ID, resource version, and deletion timestamp | Use the SDK's supported `raw_grpc()` escape hatch for workspace observations and creation readback |
 | Sandbox creation with explicit policy | `SandboxSpec` has no policy field; the policy-bearing template API requires a separate workload template | Retain raw creation so the declared policy applies in the initial request |
 | Sandbox drift and startup checks | `SandboxRef` omits the specification, deletion timestamp, and startup conditions | Keep full protobuf observations through the raw SDK client |
@@ -97,7 +97,7 @@ At the pinned OpenShell revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c`, the
 | Bounded exec against a verified identity | High-level exec addresses the sandbox by name, buffers output without a size cap, and does not reject every malformed event sequence | Verify identity before workspace-scoped exec; retain the local deadline, output limits, and event validation |
 | Secret-safe diagnostics | SDK bearer construction does not mark metadata sensitive; SDK errors can retain upstream diagnostic text | Preserve sensitive metadata and NemoClaw's redacted error mapping |
 
-These limits are verified against the pinned [SDK manifest](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk/Cargo.toml), [configuration](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk/src/config.rs), [client](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk/src/client.rs), [types](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk/src/types.rs), and [authentication interceptor](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk/src/auth.rs).
+These limits are verified against the pinned [SDK manifest](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-sdk/Cargo.toml), [configuration](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-sdk/src/config.rs), [client](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-sdk/src/client.rs), [types](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-sdk/src/types.rs), and [authentication interceptor](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-sdk/src/auth.rs).
 The supported raw escape hatch provides an SDK integration point but still exposes protobuf compatibility risk.
 NemoClaw constructs the client without a token refresher; neither the selected high-level operations nor raw calls automatically retry mutations.
 A [telemetry test](../../crates/nemoclaw-sdk/tests/telemetry.rs) proves telemetry remains disabled even when the process environment requests it.

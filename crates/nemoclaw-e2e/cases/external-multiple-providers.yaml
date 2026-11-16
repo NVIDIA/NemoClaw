@@ -21,9 +21,10 @@ spec:
     local:
       provider: openai
       endpoint: http://172.20.0.1:11434/v1
+    # OpenClaw sends a route's key as a Bearer token in OpenAI-compatible
+    # requests, so its hosted endpoint uses the openai provider.
     hosted:
-      provider: anthropic
-      api: anthropic-messages
+      provider: openai
       endpoint: https://hosted.example/v1
       credential:
         env: HOSTED_API_KEY

@@ -214,7 +214,7 @@ A request that reaches `TIMEOUT` counts as failed; the script stops waiting for 
 - Each `fabric-agent-ctl invoke` is one `openshell sandbox exec` through the gateway, which NemoClaw limits to one CPU ([limits](../../../docs/resources/limits.md)), and Fabric runs one invocation at a time per runtime, so concurrent prompts to one such sandbox wait in the sandbox, not on the GPUs.
 - Hermes's API server runs at most 10 requests at once per sandbox by default and answers `429` beyond that.
 - A service URL skips the gateway's sign-in: anyone who can reach the gateway's listener with its client certificate can reach Hermes's API, which only its token protects; see [who can use an interface](../../../docs/agents-inference/interfaces.md#who-can-use-an-interface).
-- The OpenShell CLI doesn't renew a token it got through client credentials ([NVIDIA/OpenShell#4287](https://github.com/NVIDIA/OpenShell/issues/4287)); for a run longer than the token's lifetime, sign in again first.
+- When `OPENSHELL_OIDC_CLIENT_SECRET` is set, the OpenShell CLI renews an expired token it got through client credentials by repeating the grant ([NVIDIA/OpenShell#4389](https://github.com/NVIDIA/OpenShell/pull/4389)); it can't renew a token that a CLI older than 0.1.8 stored, so run `openshell gateway login` once with the pinned CLI.
 
 ## Remove the Deployment
 

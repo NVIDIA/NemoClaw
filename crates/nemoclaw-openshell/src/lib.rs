@@ -38,7 +38,7 @@ pub use observation::GatewayObservation;
 pub use wait::observe_with_wait;
 
 /// The providers OpenShell attaches to one sandbox: `MAX_PROVIDERS` in
-/// `crates/openshell-server/src/grpc/mod.rs:152` at the pinned OpenShell
-/// revision 5d25211. OpenShell refuses a sandbox with more; recheck the value
+/// `crates/openshell-server/src/grpc/mod.rs:159` at the pinned OpenShell
+/// revision f3d9765. OpenShell refuses a sandbox with more; recheck the value
 /// when the pin changes.
 pub const SANDBOX_PROVIDERS: usize = 32;
