@@ -26,8 +26,9 @@
 #   PROMPT_FILE      file with one prompt per line, used in turn (built-in prompts)
 #   GATEWAY_ADDRESS  host:port where this host reaches the gateway, such as its
 #                    port forward (127.0.0.1:17671); service URLs connect there
-#   MTLS_DIR         the gateway's client certificate: ca.crt, tls.crt, tls.key
-#                    (the OpenShell CLI's directory for OPENSHELL_GATEWAY)
+#   MTLS_DIR         directory holding ca.crt, the CA certificate that verifies
+#                    the gateway (the OpenShell CLI's directory for
+#                    OPENSHELL_GATEWAY)
 #   RESULTS          file to write one JSON line per request to (none)
 #
 # Adapted from scripts/e2e-fabric-load-test.py in NVIDIA/NemoClaw#14009 at
@@ -50,7 +51,7 @@ if [[ "${1:-}" == "--request" ]]; then
   ok=false error="" reply=""
   if [[ "$mode" == api ]]; then
     code="$(jq -n --arg p "$prompt" '{model: "hermes-agent", messages: [{role: "user", content: $p}]}' |
-      curl -sS --max-time "$TIMEOUT" --cacert "$MTLS_DIR/ca.crt" --cert "$MTLS_DIR/tls.crt" --key "$MTLS_DIR/tls.key" \
+      curl -sS --max-time "$TIMEOUT" --cacert "$MTLS_DIR/ca.crt" \
         --connect-to "::$GATEWAY_ADDRESS" -H @"$LOAD_DIR/$sandbox.header" -H 'Content-Type: application/json' \
         --data-binary @- -o "$out" -w '%{http_code}' "${url%/}/v1/chat/completions" 2>"$out.err")" || true
     reply="$(jq -r '.choices[0].message.content // empty' "$out" 2>/dev/null || true)"
@@ -116,9 +117,7 @@ jq -r '.agents // {} | to_entries[] | select(.value.runtimeId) | [.key, .value.a
   done >"$LOAD_DIR/sandboxes"
 [[ -s "$LOAD_DIR/sandboxes" ]] || { echo "load.sh: $apply_json lists no agent with a runtime" >&2; exit 1; }
 if grep -q ' api ' "$LOAD_DIR/sandboxes"; then
-  for file in ca.crt tls.crt tls.key; do
-    [[ -r "$MTLS_DIR/$file" ]] || { echo "load.sh: $MTLS_DIR/$file is missing; set MTLS_DIR" >&2; exit 2; }
-  done
+  [[ -r "$MTLS_DIR/ca.crt" ]] || { echo "load.sh: $MTLS_DIR/ca.crt is missing; set MTLS_DIR" >&2; exit 2; }
 fi
 if [[ -n "${PROMPT_FILE:-}" ]]; then
   grep -v '^[[:space:]]*$' "$PROMPT_FILE" >"$LOAD_DIR/prompts"
