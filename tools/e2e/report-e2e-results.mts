@@ -105,7 +105,8 @@ function validHostedCandidateContext(env: ReportEnv, context: ReportContext): bo
     env.MATRIX_RESULT === "success" &&
     Array.isArray(selectedJobs) &&
     (selectedJobs.includes("catalogue-hosted-inference") ||
-      selectedJobs.includes("llama-cpp-dgx-spark-qualification")) &&
+      selectedJobs.includes("llama-cpp-dgx-spark-qualification") ||
+      selectedJobs.includes("spark-express-vllm")) &&
     env.JOB_CHECKOUT_REPOSITORY === "NVIDIA/NemoClaw" &&
     Boolean(env.JOB_PR_NUMBER) &&
     [env.JOB_CHECKOUT_SHA, env.JOB_BASE_SHA, env.JOB_WORKFLOW_SHA].every((sha) =>
@@ -387,7 +388,8 @@ export function renderE2eReport(input: {
     ? requestedTestIds.filter((testId) => !allEntries.some(([name]) => name === testId))
     : [];
   const isSelectiveReportEntry = ([name, { result }]: [string, ReportEntry]) =>
-    (name === "catalogue-hosted-inference" && validHostedCandidateContext(env, context)) ||
+    (["catalogue-hosted-inference", "spark-express-vllm"].includes(name) &&
+      validHostedCandidateContext(env, context)) ||
     (result !== "skipped" &&
       (name !== "generate-matrix" || result === "failure" || result === "cancelled"));
   const sparkSelected =

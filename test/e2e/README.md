@@ -2419,13 +2419,18 @@ routes, and interrupted-cleanup recovery. The physical Spark owner covers Expres
 
 ### DGX Spark Muse Glimmer qualification (#14065)
 
-The `spark-express-vllm` selector includes a separate fresh explicit Muse Glimmer case in
-`dgx-express.test.ts`. Run it on a dedicated physical DGX Spark using the command below.
-Follow the [local execution prerequisites](docs/README.md#run-live-e2e-locally).
-Require a clean candidate checkout and build its CLI with `npm run build:cli`.
-The Spark selector pins NemoClaw host commands to that checkout before constructing the fixtures.
-Save `git rev-parse HEAD` and `git status --porcelain` beside the resulting artifacts before execution.
-The commit record must identify the same clean source used to build the CLI.
+The explicit-only `spark-express-vllm` job runs both Spark cases in `dgx-express.test.ts`
+on the protected physical GB10 runner. It requires a manual dispatch through trusted `main`,
+a current same-repository PR candidate, and `allow_dgx_spark_runner_queue=true`.
+Follow [Push and Manual PR E2E](#push-and-manual-pr-e2e) to bind the candidate, base,
+workflow and correlation identities. Select `jobs=spark-express-vllm` or
+`targets=spark-express-vllm` by itself, leaving the other selector empty.
+The existing `approve-dgx-spark-image-qualification` environment requires approval before
+candidate code executes on the protected host. The job shares the protected Spark queue without cancelling active work.
+It restores the verified candidate CLI, uses qualified managed images, and publishes
+`e2e-spark-express-vllm` artifacts through the standard E2E reporter.
+The 215-minute job budget contains 165 minutes of serial test deadlines, 30 minutes
+of cleanup deadlines, and 20 minutes for setup and finalization.
 It refuses pre-existing resources, clears disclosure and recreation overrides, and selects
 `vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4`.
 It reads the generated Tool Search configuration and requires `MUSE_SELECTOR_OK` in the first
@@ -2435,8 +2440,11 @@ and the final consumer released its container and port before any fallback remov
 Retain the normal candidate-bound artifacts, including the commit, hardware identity, profile,
 configuration projection, first-turn JSON, command statuses, and cleanup result.
 The amd64 GPU target cannot substitute for this physical Spark result.
-The selector is executable locally on Spark; it is not a hosted catalogue target.
-Until a completed hardware receipt is available, Spark qualification remains pending.
+The local invocation below runs the same selector from a clean Spark checkout after
+`npm run build:cli`; retain `git rev-parse HEAD` and `git status --porcelain` with its artifacts.
+The selector pins host commands to that checkout before constructing the fixtures.
+A registered workflow alone does not complete hardware qualification; retain the passing
+candidate-bound execution and cleanup artifacts.
 
 ### DGX Spark Express vLLM
 

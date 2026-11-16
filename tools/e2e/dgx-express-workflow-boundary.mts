@@ -128,3 +128,89 @@ export function validateDgxStationDispatchBoundary(workflow: unknown): string[] 
   );
   return errors;
 }
+
+/** Keep the physical Spark selector on its approved runner and candidate evidence path. */
+export function validateSparkExpressWorkflowBoundary(workflow: unknown): string[] {
+  const errors: string[] = [];
+  const job = record(record(record(workflow).jobs)["spark-express-vllm"]);
+  const steps = Array.isArray(job.steps) ? job.steps.map(record) : [];
+  const step = (name: string) => steps.find((entry) => entry.name === name) ?? {};
+  const requireEqual = (observed: unknown, expected: unknown, error: string) => {
+    if (!isDeepStrictEqual(observed, expected)) errors.push(`Spark Express ${error}`);
+  };
+  requireEqual(
+    job.if,
+    "${{ always() && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['package-openshell-sdk'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.allow_dgx_spark_runner_queue && inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.checkout_repository == github.repository && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'spark-express-vllm') && ((inputs.jobs == 'spark-express-vllm' && inputs.targets == '') || (inputs.targets == 'spark-express-vllm' && inputs.jobs == '')) }}",
+    "requires an explicit same-repository candidate dispatch with Spark queue approval",
+  );
+  requireEqual(
+    job.needs,
+    ["base-image-publication", "generate-matrix", "package-openshell-sdk"],
+    "must wait for authenticated planning, images and SDK packaging",
+  );
+  requireEqual(
+    job["runs-on"],
+    "linux-arm64-gpu-dgx-spark-gb10-protected-1",
+    "must use the protected physical GB10 runner",
+  );
+  requireEqual(
+    job.environment,
+    "approve-dgx-spark-image-qualification",
+    "must retain the Spark approval environment",
+  );
+  requireEqual(job.permissions, { contents: "read" }, "must retain read-only source permission");
+  requireEqual(
+    job.concurrency,
+    { group: "llama-cpp-dgx-spark-protected-runner", "cancel-in-progress": false },
+    "must share the non-cancelling protected Spark queue",
+  );
+  requireEqual(
+    job["timeout-minutes"],
+    215,
+    "must enclose both serial test and cleanup deadlines plus setup",
+  );
+  const env = record(job.env);
+  for (const [key, value] of Object.entries({
+    E2E_TARGET_ID: "spark-express-vllm",
+    E2E_DEFAULT_ENABLED: "0",
+    E2E_GATEWAY_RUNTIMES: "docker",
+    NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_GATEWAY_RUNTIME: "docker",
+  }))
+    requireEqual(env[key], value, `must bind ${key}`);
+  requireEqual(
+    step("Restore exact-commit CLI artifact").with,
+    {
+      "provenance-json": "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+    },
+    "must restore the authenticated candidate CLI",
+  );
+  const execution = step("Run Spark Express and Muse qualification");
+  requireEqual(
+    execution.run,
+    `set -euo pipefail
+export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+OPENSHELL_BIN="$(command -v openshell)"
+export OPENSHELL_BIN
+npx tsx tools/e2e/live-vitest-invocation.mts run \\
+  --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
+`,
+    "must run only the Spark cases with the candidate CLI",
+  );
+  requireEqual(execution["continue-on-error"], undefined, "must propagate test failures");
+  const upload = step("Upload Spark Express artifacts");
+  requireEqual(upload.if, "always()", "must retain artifacts after failure or cancellation");
+  requireEqual(
+    upload.uses,
+    E2E_ACTION_PROVENANCE.uploadArtifacts.reference,
+    "must use canonical artifact transport",
+  );
+  requireEqual(upload.with, undefined, "must use the canonical target artifact defaults");
+  requireEqual(
+    env.E2E_ARTIFACT_DIR,
+    "${{ github.workspace }}/e2e-artifacts/live/spark-express-vllm",
+    "must retain its own artifact namespace",
+  );
+  return errors;
+}

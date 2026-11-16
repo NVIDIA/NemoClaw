@@ -380,7 +380,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   if (
     workflow.concurrency?.["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
+    "${{ inputs.checkout_sha != '' && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',spark-express-vllm,') && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
     errors.push(
       "Manual PR E2E concurrency must not cancel an active hardware or Launchable dispatch",
@@ -1368,7 +1368,7 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       if (
         job.if !==
-        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification')))) }}"
+        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'spark-express-vllm')))) }}"
       ) {
         errors.push("report-to-pr must run only for manual workflow dispatches");
       }

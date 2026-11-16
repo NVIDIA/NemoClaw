@@ -53,7 +53,7 @@ on:
         default: false
         type: boolean
       allow_dgx_spark_runner_queue:
-        description: "Allow an explicit llama-cpp-dgx-spark-qualification dispatch to queue the protected DGX Spark runner and approval environment."
+        description: "Allow an explicit DGX Spark qualification or spark-express-vllm dispatch to queue the protected runner and approval environment."
         required: false
         default: false
         type: boolean
@@ -104,8 +104,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: ${{ inputs.checkout_sha != '' && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
+  group: e2e-${{ github.ref }}-${{ (inputs.jobs == 'llama-cpp-dgx-spark-qualification' || contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',spark-express-vllm,')) && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
+  cancel-in-progress: ${{ inputs.checkout_sha != '' && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',spark-express-vllm,') && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
   UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
@@ -6720,6 +6720,88 @@ jobs:
           name: e2e-jetson-nvmap-gpu
           path: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/
 
+  spark-express-vllm:
+    name: Spark Express and Muse qualification
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
+    if: ${{ always() && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['package-openshell-sdk'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.allow_dgx_spark_runner_queue && inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.checkout_repository == github.repository && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'spark-express-vllm') && ((inputs.jobs == 'spark-express-vllm' && inputs.targets == '') || (inputs.targets == 'spark-express-vllm' && inputs.jobs == '')) }}
+    runs-on: linux-arm64-gpu-dgx-spark-gb10-protected-1
+    environment: approve-dgx-spark-image-qualification
+    timeout-minutes: 215
+    concurrency:
+      group: llama-cpp-dgx-spark-protected-runner
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
+      E2E_JOB: "1"
+      E2E_TARGET_ID: spark-express-vllm
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_GATEWAY_RUNTIMES: docker
+      E2E_AGENT_RUNTIME: openclaw
+      E2E_OBSERVABLE_OUTCOME: Spark Express and fresh Muse onboarding serve sandbox inference and retire owned resources
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: Protected physical DGX Spark GB10; managed vLLM
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/spark-express-vllm
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_GATEWAY_RUNTIME: docker
+      NEMOCLAW_SANDBOX_NAME: e2e-spark-vllm
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
+        with:
+          build-cli: "false"
+          install-dependencies: "false"
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@855b8b80e13c4dbd59411672e3c3dd7720bc590f
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Run Spark Express and Muse qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          OPENSHELL_BIN="$(command -v openshell)"
+          export OPENSHELL_BIN
+          npx tsx tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
+
+      - name: Upload Spark Express artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   dgx-station-express:
     needs: [base-image-publication, generate-matrix]
     if: ${{ always() && needs['base-image-publication'].result == 'success' && needs['base-image-publication'].outputs.managed_image_revision != '' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || inputs.checkout_sha != inputs.base_sha) && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'dgx-station-express') && ((inputs.jobs == 'dgx-station-express' && inputs.targets == '') || (inputs.targets == 'dgx-station-express' && inputs.jobs == '')) }}
@@ -7085,11 +7167,12 @@ jobs:
         messaging-providers,
         jetson-nvmap-gpu,
         dgx-station-express,
+        spark-express-vllm,
         cloud-onboard,
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification')))) }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && (contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'llama-cpp-dgx-spark-qualification') || contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'spark-express-vllm')))) }}
     permissions:
       actions: read
       contents: read

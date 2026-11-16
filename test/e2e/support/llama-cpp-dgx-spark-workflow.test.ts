@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
@@ -133,6 +135,90 @@ describe("trusted DGX Spark workflow handoff (#13114)", () => {
     )[field as string] = value;
     expect(validateE2eOperationsWorkflow(changed).join("\n")).toContain(
       "must not execute candidate code or ignore step failures",
+    );
+  });
+});
+
+describe("Spark Express qualification workflow (#14065)", () => {
+  it.each(["jobs", "targets"] as const)(
+    "selects the protected Spark Express job through %s",
+    (selector) => {
+      const plan = buildE2eWorkflowPlan({ [selector]: "spark-express-vllm" });
+      expect(plan.selectedJobs).toEqual(["spark-express-vllm"]);
+      expect(plan.runtimeProvidersByJob).toEqual({ "spark-express-vllm": ["docker"] });
+      expect(plan.explicitOnlyJobs).toContain("spark-express-vllm");
+      expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("spark-express-vllm");
+      expect(validateE2eWorkflow(workflow)).toEqual([]);
+      expect(validateE2eOperationsWorkflow(workflow)).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["runs-on", "ubuntu-latest"],
+    ["environment", "unprotected"],
+    ["permissions", { contents: "write" }],
+    ["concurrency", { group: "independent-spark-queue", "cancel-in-progress": true }],
+    ["if", "${{ always() }}"],
+    ["timeout-minutes", 100],
+  ])("rejects an unsafe Spark Express %s", (field, value) => {
+    const changed = structuredClone(workflow);
+    changed.jobs["spark-express-vllm"][field as string] = value;
+    expect(validateE2eWorkflow(changed).join("\n")).toContain("Spark Express");
+  });
+
+  it.each([
+    [
+      "Run Spark Express and Muse qualification",
+      "run",
+      "^spark-express-vllm:",
+      "^dgx-station-express:",
+    ],
+    ["Upload Spark Express artifacts", "if", "always()", "success()"],
+  ])("rejects altered Spark execution or evidence at %s", (name, field, original, replacement) => {
+    const changed = structuredClone(workflow);
+    const step = changed.jobs["spark-express-vllm"].steps.find((item: any) => item.name === name);
+    step[field] = step[field].replace(original, replacement);
+    expect(validateE2eWorkflow(changed).join("\n")).toContain("Spark Express");
+  });
+
+  it.each([0, 7])("forwards the workflow Spark selector and propagates exit %i", (exitCode) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark-workflow-"));
+    try {
+      fs.writeFileSync(path.join(directory, "openshell"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(
+        path.join(directory, "npx"),
+        `#!/bin/sh\nprintf '%s\\n' "$@"\nexit ${exitCode}\n`,
+        { mode: 0o755 },
+      );
+      const execution = workflow.jobs["spark-express-vllm"].steps.find(
+        (item: any) => item.name === "Run Spark Express and Muse qualification",
+      );
+      const result = spawnSync("bash", ["-c", execution.run], {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: { ...process.env, HOME: directory, PATH: `${directory}:/usr/bin:/bin` },
+      });
+      expect(result.status, result.stderr).toBe(exitCode);
+      expect(result.stdout.trim().split("\n")).toEqual([
+        "tsx",
+        "tools/e2e/live-vitest-invocation.mts",
+        "run",
+        "--test-path",
+        "test/e2e/live/dgx-express.test.ts",
+        "--selector",
+        "^spark-express-vllm:",
+      ]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the Station controller when selecting Spark", () => {
+    expect(buildE2eWorkflowPlan({ jobs: "dgx-station-express" }).selectedJobs).toEqual([
+      "dgx-station-express",
+    ]);
+    expect(() => buildE2eWorkflowPlan({ jobs: "spark-express-vllm,dgx-station-express" })).toThrow(
+      "must be selected by itself",
     );
   });
 });

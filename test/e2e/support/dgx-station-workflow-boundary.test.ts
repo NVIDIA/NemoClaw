@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { validateDgxStationDispatchBoundary } from "../../../tools/e2e/dgx-station-workflow-boundary.mts";
+import { validateDgxStationDispatchBoundary } from "../../../tools/e2e/dgx-express-workflow-boundary.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
@@ -140,6 +140,7 @@ it.each(["jobs", "targets"] as const)(
       "external-gateway-health",
       "mcp-bridge-dev",
       "portable-hermes-finalization",
+      "spark-express-vllm",
       "dgx-station-express",
     ]);
     expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("dgx-station-express");

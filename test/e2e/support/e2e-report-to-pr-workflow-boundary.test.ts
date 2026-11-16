@@ -1018,24 +1018,34 @@ it.each(["failure", "cancelled"])(
   },
 );
 
-it.each(["success", "failure", "skipped"])(
-  "binds a hosted candidate report to its commit and retains %s results",
-  async (result) => {
+it.each([
+  ["catalogue-hosted-inference", "hosted-inference-openrouter", "success"],
+  ["catalogue-hosted-inference", "hosted-inference-openrouter", "failure"],
+  ["catalogue-hosted-inference", "hosted-inference-openrouter", "skipped"],
+  ["spark-express-vllm", "spark-express-vllm", "success"],
+  ["spark-express-vllm", "spark-express-vllm", "failure"],
+  ["spark-express-vllm", "spark-express-vllm", "skipped"],
+])(
+  "binds the %s candidate report to its commit and retains %s / %s results",
+  async (job, target, result) => {
+    const env = {
+      ...HOSTED_CANDIDATE_ENV,
+      SELECTED_WORKFLOW_JOBS: JSON.stringify([job]),
+      JOB_TARGETS: target,
+    };
     const core = { info: vi.fn(), setFailed: vi.fn(), warning: vi.fn() };
     const github = reportGithub({ get: vi.fn(async () => ({ data: hostedCandidatePr() })) });
-    expect(
-      await resolveReportPr({ github, context: REPORT_CONTEXT, core, env: HOSTED_CANDIDATE_ENV }),
-    ).toBe(12886);
+    expect(await resolveReportPr({ github, context: REPORT_CONTEXT, core, env })).toBe(12886);
     const report = renderE2eReport({
       context: REPORT_CONTEXT,
-      env: HOSTED_CANDIDATE_ENV,
+      env,
       apiJobs: [],
       apiJobsLoaded: true,
-      needs: { "generate-matrix": { result: "success" }, "catalogue-hosted-inference": { result } },
+      needs: { "generate-matrix": { result: "success" }, [job]: { result } },
     });
     expect(report.body).toContain(`**Candidate commit:** \`${"a".repeat(40)}\``);
     expect(report.body).toContain(`**Trusted workflow commit:** \`${"c".repeat(40)}\``);
-    expect(report.body).toContain("hosted-inference-openrouter");
+    expect(report.body).toContain(target);
     expect(report.body).toContain(` ${result} |`);
     expect(report.body).toContain("cleanup.json");
     expect(report.body.includes("All selected tests passed")).toBe(result === "success");
