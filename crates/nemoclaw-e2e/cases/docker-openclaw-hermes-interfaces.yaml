@@ -11,7 +11,9 @@
 # grants python3 the stub's /health, which the managed inference grant leaves
 # out. Each agent's skills.directories lists a writable folder of skills and
 # a skill on its own volume, read-only for claw and writable for hermes, and
-# refuses duplicate names; Hermes's folder is empty.
+# refuses duplicate names; Hermes's folder is empty. Each sandbox also keeps
+# its workspace and artifacts on volumes, so what its agent keeps there,
+# including Hermes's kept native home, outlasts a replacement of the sandbox.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -62,6 +64,14 @@ spec:
         docker:
           mounts:
             - type: volume
+              source: hcl-interfaces-claw-workspace
+              target: /sandbox/workspace
+              read_only: false
+            - type: volume
+              source: hcl-interfaces-claw-artifacts
+              target: /sandbox/artifacts
+              read_only: false
+            - type: volume
               source: hcl-interfaces-claw-skills
               target: /sandbox/skills
               read_only: false
@@ -96,6 +106,14 @@ spec:
       driverConfig:
         docker:
           mounts:
+            - type: volume
+              source: hcl-interfaces-hermes-workspace
+              target: /sandbox/workspace
+              read_only: false
+            - type: volume
+              source: hcl-interfaces-hermes-artifacts
+              target: /sandbox/artifacts
+              read_only: false
             - type: volume
               source: hcl-interfaces-hermes-skills
               target: /sandbox/skills
