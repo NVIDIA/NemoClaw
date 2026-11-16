@@ -238,7 +238,10 @@ fn run_step(
             ));
         }
         fs::create_dir_all(".build/ci")?;
-        for (layer, filter) in selections {
+        for (layer, (filter, paths)) in selections {
+            if layer == "live" {
+                archive::copy_e2e(&paths)?;
+            }
             let mut command = cargo();
             configure(&mut command);
             for args in step.cargo_args() {

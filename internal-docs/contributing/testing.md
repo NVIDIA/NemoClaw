@@ -348,6 +348,7 @@ Adding or removing a test moves later tests to other partitions.
 - `.build/ci/contract.tar.zst`, the test binaries that the `contract` profile selects;
 - `.build/ci/integration.tar.zst`, the test binaries that the `integration` profile selects;
 - `.build/ci/live.tar.zst`, on Linux only, the test binaries that the `live-docker` and `live-kind` profiles select;
+- `.build/ci/e2e`, on Linux only, a copy of `nemoclaw-e2e`'s `e2e` test executable from that archive, at the path nextest lists for it, which the hosted and GPU HCL case jobs run alone;
 - `.build/ci/lifecycle-inputs.tar`, which keeps the executable permissions of the pinned tools, the `nemoclaw-build` executable, and the fixture executables, which it unpacks into `target/debug`, where `NEMOCLAW_TEST_FIXTURES` points.
 
 Each archive also holds the executables that its test binaries' packages build.

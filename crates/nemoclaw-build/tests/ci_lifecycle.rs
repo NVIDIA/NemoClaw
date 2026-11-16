@@ -547,13 +547,24 @@ fn archive_packages_tools_and_fixture_executables_but_leaves_providers_to_the_bu
 /// Run `ci archive` with a distinct test binary selected by each profile.
 fn archive_layers(fixture: &Fixture, platform: &str) -> Output {
     fixture.seed_build_outputs();
+    // Cargo's build directory, whose layout the runner must not assume.
+    let e2e = fixture
+        .0
+        .path()
+        .join("build-dir/nemoclaw-e2e/0123/out/e2e-0123");
+    fs::create_dir_all(e2e.parent().unwrap()).unwrap();
+    fs::write(&e2e, "e2e test executable").unwrap();
+    let kind = serde_json::json!({"rust-suites": {"nemoclaw-e2e::e2e": {
+        "binary-path": e2e,
+        "testcases": {"case": {"filter-match": {"status": "matches"}}},
+    }}});
     fixture
         .command(&["archive"])
         .env("TEST_PLATFORM", platform)
         .env("CARGO_LIST_CONTRACT", suite("contract-suite"))
         .env("CARGO_LIST_INTEGRATION", suite("integration-suite"))
         .env("CARGO_LIST_LIVE_DOCKER", suite("docker-suite"))
-        .env("CARGO_LIST_LIVE_KIND", suite("kind-suite"))
+        .env("CARGO_LIST_LIVE_KIND", kind.to_string())
         .output()
         .unwrap()
 }
@@ -583,10 +594,25 @@ fn linux_archives_each_test_layer_separately_so_each_job_downloads_only_its_test
             ),
             (
                 ".build/ci/live.tar.zst".to_owned(),
-                "binary_id(=docker-suite) | binary_id(=kind-suite)".to_owned()
+                "binary_id(=docker-suite) | binary_id(=nemoclaw-e2e::e2e)".to_owned()
             ),
         ]
     );
+}
+
+/// The hosted and GPU HCL case jobs run the e2e test executable alone, so the
+/// archive step copies out the one nextest lists, wherever Cargo built it.
+#[test]
+fn linux_archive_copies_out_the_e2e_executable_that_hcl_case_jobs_run() {
+    let fixture = Fixture::new();
+    let output = archive_layers(&fixture, "linux_arm64");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let e2e = fixture.0.path().join(".build/ci/e2e");
+    assert_eq!(fs::read_to_string(&e2e).unwrap(), "e2e test executable");
 }
 
 #[test]
