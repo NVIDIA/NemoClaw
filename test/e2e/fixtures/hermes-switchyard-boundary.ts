@@ -41,6 +41,7 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
     judge: 0,
     answer: 0,
     redirects: 0,
+    errors: 0,
     forbidden: 0,
     badAuth: 0,
     callerLeaked: false,
@@ -88,6 +89,7 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
       return;
     }
     if (fail) {
+      evidence.errors++;
       response
         .writeHead(500, { "content-type": "application/json" })
         .end(JSON.stringify({ error: { message: `${SWITCHYARD_BODY_CANARY}:${credential}` } }));
@@ -259,8 +261,7 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
         try:
             runtime.shutdown()
         except Exception:
-            outcome['failed'] = True
-            outcome['failure_category'] = 'shutdown_error'
+            raise RuntimeError('Native Switchyard shutdown failed') from None
     print(json.dumps(outcome))
 signal.alarm(0)
 `,

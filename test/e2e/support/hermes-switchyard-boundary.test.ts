@@ -57,6 +57,7 @@ test("boundary peers require the credential, expose redirect/denial witnesses, a
       judge: 1,
       answer: 1,
       redirects: 1,
+      errors: 1,
       forbidden: 1,
       badAuth: 1,
       callerLeaked: true,
@@ -66,7 +67,7 @@ test("boundary peers require the credential, expose redirect/denial witnesses, a
   }
 });
 
-test.each([undefined, SWITCHYARD_PEER_CREDENTIAL_ENV])(
+test.each([undefined, SWITCHYARD_PEER_CREDENTIAL_ENV] as const)(
   "boundary probe selects issued handle %s and localizes only temporary transport",
   (credentialEnv) => {
     const args = switchyardBoundaryProbe("http://host.openshell.internal:12345/v1", {
@@ -119,7 +120,7 @@ sys.modules['agent'] = agent
   },
 );
 
-function continuationProbe(mode: "unmanaged" | "unmatched" | undefined, fault = "") {
+function runContinuationProbe(mode: "unmanaged" | "unmatched" | undefined, fault = "") {
   const args = switchyardBoundaryProbe("http://host.openshell.internal:12345/v1", { mode });
   const sdk = String.raw`
 import base64, io, json, os, sys, types, urllib.error, urllib.request
@@ -166,9 +167,14 @@ sys.modules['agent'] = agent
     encoding: "utf8",
     timeout: 10_000,
   });
-  expect(result.status, result.stderr).toBe(0);
   expect(Buffer.byteLength(result.stdout + result.stderr)).toBeLessThan(1024);
   expect(result.stdout + result.stderr).not.toContain(SWITCHYARD_BODY_CANARY);
+  return result;
+}
+
+function continuationProbe(mode: "unmanaged" | "unmatched" | undefined, fault = "") {
+  const result = runContinuationProbe(mode, fault);
+  expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout);
 }
 
@@ -222,10 +228,10 @@ test.each(["native-exception", "native-error"])(
   },
 );
 
-test("unexpected provider content and shutdown exceptions stay out of probe output", () => {
+test("unexpected content is withheld and shutdown failure cannot satisfy a denial probe", () => {
   expect(continuationProbe(undefined, "native-answer").answer).toBeNull();
-  expect(continuationProbe("unmanaged", "shutdown")).toMatchObject({
-    failed: true,
-    failure_category: "shutdown_error",
-  });
+  const stopped = runContinuationProbe("unmanaged", "shutdown");
+  expect(stopped.status).toBe(1);
+  expect(stopped.stderr).toContain("Native Switchyard shutdown failed");
+  expect(stopped.stdout).toBe("");
 });
