@@ -100,7 +100,7 @@ pub struct Launch {
     pub environment: BTreeMap<String, String>,
     /// The runtime's policy, used when no explicit policy is authored.
     pub policy: ExplicitPolicy,
-    /// Executables that managed endpoint grants allow.
+    /// Executables that managed endpoint grants naming none allow.
     pub binaries: Vec<String>,
     /// Opaque values for whoever produced the launch, kept with the sandbox.
     pub metadata: BTreeMap<String, String>,
@@ -133,7 +133,8 @@ impl Launch {
         Ok(launch)
     }
     /// The sandbox policy: the authored explicit policy or the runtime's,
-    /// plus managed grants that allow this launch's executables.
+    /// plus managed grants, which allow this launch's executables unless they
+    /// name their own.
     pub fn policy(&self, input: &PolicyInput) -> Result<proto::SandboxPolicy, ObservationError> {
         let mut policy = input.explicit.as_ref().unwrap_or(&self.policy).clone();
         for rule in &input.managed {
