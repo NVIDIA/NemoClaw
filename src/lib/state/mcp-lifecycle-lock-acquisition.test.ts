@@ -157,6 +157,49 @@ describe("sandbox mutation lock acquisition", () => {
     expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toMatchObject({ token: "foreign" });
   });
 
+  it.each([
+    [
+      "async",
+      (opts: Parameters<typeof withMcpLifecycleLock>[2]) =>
+        withMcpLifecycleLock("alpha", () => undefined, opts),
+    ],
+    [
+      "sync",
+      (opts: Parameters<typeof withMcpLifecycleLock>[2]) =>
+        Promise.resolve().then(() => withMcpLifecycleLockSync("alpha", () => undefined, opts)),
+    ],
+  ])("prints one wait notice for a foreign owner (%s)", async (_name, run) => {
+    const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        ...createMcpLifecycleLockOwner("alpha", "foreign"),
+        pid: 4242,
+        hostIdentity: "foreign-host",
+      }),
+    );
+    const notices: string[] = [];
+    await expect(
+      run({
+        ...options({ timeoutMs: 50, waitNoticeMs: 5 }),
+        writeNotice: (message) => notices.push(message),
+      }),
+    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("PID 4242");
+    expect(notices[0]).toContain(lockPath);
+
+    notices.length = 0;
+    await expect(
+      run({
+        ...options({ timeoutMs: 20 }),
+        writeNotice: (message) => notices.push(message),
+      }),
+    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+    expect(notices).toEqual([]);
+  });
+
   it("reclaims a continuously corrupt main generation after the grace period", async () => {
     const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });

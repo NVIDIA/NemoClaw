@@ -35,6 +35,7 @@ import {
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_CORRUPT_LOCK_GRACE_MS = 30_000;
+const DEFAULT_WAIT_NOTICE_MS = 10_000;
 
 interface AcquiredMcpLifecycleLock {
   lockPath: string;
@@ -47,6 +48,10 @@ export interface McpLifecycleLockOptions {
   pollIntervalMs?: number;
   timeoutMs?: number;
   corruptLockGraceMs?: number;
+  /** How long to wait on a live or foreign owner before printing one notice. */
+  waitNoticeMs?: number;
+  /** Receives the wait notice. Defaults to stderr. */
+  writeNotice?: (message: string) => void;
   /** Monotonic clock override used by deterministic acquisition tests. */
   monotonicNow?: () => number;
 }
@@ -106,6 +111,26 @@ function timeoutError(sandboxName: string, ownerPid: number | null): Error {
   return new Error(
     `Timed out waiting for the sandbox mutation lock for '${sandboxName}'${ownerSuffix}. Another lifecycle, policy, channel, inference, session, or snapshot operation is still running.`,
   );
+}
+
+function createWaitNotifier(
+  sandboxName: string,
+  lockPath: string,
+  options: McpLifecycleLockOptions,
+  monotonicNow: () => number,
+): (ownerPid: number | null) => void {
+  const noticeAfterMs = positiveInteger(options.waitNoticeMs, DEFAULT_WAIT_NOTICE_MS);
+  const writeNotice = options.writeNotice ?? ((message: string) => process.stderr.write(message));
+  const startedAt = monotonicNow();
+  let announced = false;
+  return (ownerPid) => {
+    if (announced || monotonicNow() - startedAt < noticeAfterMs) return;
+    announced = true;
+    const owner = ownerPid ? `PID ${String(ownerPid)}` : "an unreadable lock record";
+    writeNotice(
+      `Still waiting for the sandbox mutation lock for '${sandboxName}' held by ${owner}. Lock file: ${lockPath}. If no nemoclaw command for this sandbox is running here, the owner may be in another PID namespace or on another host. Stop it there; NemoClaw does not remove that lock automatically.\n`,
+    );
+  };
 }
 
 async function tryReapStaleMainLock(
@@ -189,6 +214,7 @@ async function acquireMcpLifecycleLock(
   const corruptMainTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   const corruptReaperTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
+  const notifyWaiting = createWaitNotifier(sandboxName, lockPath, options, monotonicNow);
   const assertBeforeTimeout = () => {
     if (monotonicNow() >= deadline) throw timeoutError(sandboxName, lastOwnerPid);
   };
@@ -271,6 +297,7 @@ async function acquireMcpLifecycleLock(
         );
         continue;
       }
+      notifyWaiting(lastOwnerPid);
     } else {
       lastOwnerPid = null;
       resetCorruptGenerationTracker(corruptMainTracker);
@@ -296,6 +323,7 @@ function acquireMcpLifecycleLockSync(
   const corruptMainTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   const corruptReaperTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
+  const notifyWaiting = createWaitNotifier(sandboxName, lockPath, options, monotonicNow);
   const assertBeforeTimeout = () => {
     if (monotonicNow() >= deadline) throw timeoutError(sandboxName, lastOwnerPid);
   };
@@ -378,6 +406,7 @@ function acquireMcpLifecycleLockSync(
         );
         continue;
       }
+      notifyWaiting(lastOwnerPid);
     } else {
       lastOwnerPid = null;
       resetCorruptGenerationTracker(corruptMainTracker);
