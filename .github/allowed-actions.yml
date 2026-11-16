@@ -9,5 +9,5 @@
 verified-creators:
   - anchore
 commits:
-  - Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-  - taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853
+  - Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+  - taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519

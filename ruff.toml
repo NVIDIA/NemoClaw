@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-required-version = "==0.16.7"
+required-version = "==0.17.5"
 target-version = "py312"
 line-length = 100
 include = ["image/**/*.py"]

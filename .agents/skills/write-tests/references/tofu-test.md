@@ -3,7 +3,7 @@
 
 # `tofu test` Patterns
 
-These apply to OpenTofu 1.12, the version the bundle pins.
+These apply to OpenTofu 1.13, the version the bundle pins.
 
 ## Harness
 

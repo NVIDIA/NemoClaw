@@ -31,7 +31,7 @@ cargo ci --full
 ```
 
 The command needs the pinned Rust toolchain and a C linker.
-It downloads Protocol Buffers compiler 36.2 and cargo-nextest 0.9.151 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
+It downloads Protocol Buffers compiler 36.2 and cargo-nextest 0.9.152 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
 It then runs formatting, Clippy, the unit tests and doctests, the schema check, a bundle build, and the contract and integration tests, stopping at the first failure.
 To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.2/bin/protoc` after `cargo ci tools`, or to another protoc 36.2.
 
@@ -471,8 +471,8 @@ Checks produce build cache entries and no tagged runtime images.
 For a faster Python source edit loop with host uv:
 
 ```sh
-uv tool run --from ruff==0.16.7 ruff check .
-uv tool run --from ruff==0.16.7 ruff format --check .
+uv tool run --from ruff==0.17.5 ruff check .
+uv tool run --from ruff==0.17.5 ruff format --check .
 ```
 
 Use `ruff format .` through the same pinned uv invocation to apply formatting.

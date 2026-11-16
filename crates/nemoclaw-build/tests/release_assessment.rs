@@ -179,7 +179,7 @@ fn fixture_image(root: &Path, variant: &str) -> Value {
 }
 
 #[test]
-#[ignore = "requires verified Syft 1.55.0, Grype 0.121.0, and a prepared advisory database"]
+#[ignore = "requires verified Syft 1.57.1, Grype 0.121.3, and a prepared advisory database"]
 fn real_image_catalogs_retain_four_ecosystems_and_targeted_fixes() {
     let syft = std::env::var("NEMOCLAW_TEST_SYFT").unwrap();
     let grype = std::env::var("NEMOCLAW_TEST_GRYPE").unwrap();
@@ -192,7 +192,7 @@ fn real_image_catalogs_retain_four_ecosystems_and_targeted_fixes() {
     assert!(version.status.success());
     assert_eq!(
         serde_json::from_slice::<Value>(&version.stdout).unwrap()["version"],
-        "1.55.0"
+        "1.57.1"
     );
     let root = tempfile::tempdir().unwrap();
     let mut reports = Vec::new();

@@ -113,7 +113,7 @@ Review [trace data exposure](../security/security.md) before enabling collection
 
 Relay configuration belongs to Fabric's public configuration and the exact Hermes adapter contract.
 It does not trigger adapter selection in NemoClaw.
-The Hermes image installs Hermes Agent v0.22.5 on Python 3.14 with its Relay 0.10 dependency and the Switchyard Relay plugin 0.3.1.
+The Hermes image installs Hermes Agent v0.22.7 on Python 3.14 with its Relay 0.11 dependency and the Switchyard Relay plugin 0.3.2.
 Under `harness.config`, enable `telemetry.providers.relay` and add Switchyard under `relay.plugins.dynamic`; NemoClaw passes the configuration to Fabric without interpreting it, and Relay owns validation and activation.
 Set `manifest` to `/opt/nemo-relay/plugins/switchyard/relay-plugin.toml` and provide either `config.switchyard_config` or `config.switchyard_config_path`.
 Do not infer native API availability from a tracing setting.
