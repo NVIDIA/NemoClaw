@@ -216,7 +216,7 @@ resource openshell_sandbox (version 2)
           tls: string, optional
             > Omit for automatic TLS handling, or use skip for a raw tunnel.
           websocket_credential_rewrite: bool, optional
-            > Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade.
+            > Enable OpenShell placeholder rewriting in client WebSocket text messages; requires protocol websocket.
           block deny_rules: list
             > Application-protocol deny rules, evaluated before allow rules.
             method: string, optional
@@ -308,7 +308,7 @@ resource openshell_sandbox (version 2)
         tls: string, optional
           > Omit for automatic TLS handling, or use skip for a raw tunnel.
         websocket_credential_rewrite: bool, optional
-          > Enable OpenShell placeholder rewriting after an allowed REST WebSocket upgrade.
+          > Enable OpenShell placeholder rewriting in client WebSocket text messages; requires protocol websocket.
         block deny_rules: list
           > Application-protocol deny rules, evaluated before allow rules.
           method: string, optional

@@ -89,6 +89,16 @@ impl OpenShellClient {
         self.channel.clone()
     }
 
+    /// Clone of the auth interceptor backing [`OpenShellClient::raw_grpc`].
+    ///
+    /// tonic allows a single interceptor per channel, so callers that need
+    /// to stack another concern (e.g. trace-context forwarding) on top of
+    /// authentication can compose around this clone — it shares the same
+    /// live bearer slot, so OIDC refresh still reaches the composed stack.
+    pub fn auth_interceptor(&self) -> EdgeAuthInterceptor {
+        self.interceptor.clone()
+    }
+
     /// Authenticated gRPC client for the main `OpenShell` service.
     ///
     /// Use this when the curated surface below doesn't expose the RPC or
@@ -1767,6 +1777,31 @@ mod tests {
         assert_eq!(
             slot_token(client.bearer_slot.as_ref().unwrap()),
             "Bearer token-1"
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_interceptor_clone_sees_refreshed_token() {
+        use tonic::service::Interceptor as _;
+
+        // The clone handed out by `auth_interceptor()` must share the live
+        // bearer slot: callers compose other concerns (e.g. the CLI's
+        // trace-forwarding gateway interceptor) around it, and a forced OIDC
+        // refresh must reach those already-built stacks.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let client = oidc_client_with_refresher(Arc::clone(&calls));
+        let mut interceptor = client.auth_interceptor();
+
+        assert!(client.force_refresh().await.unwrap());
+
+        let request = interceptor.call(tonic::Request::new(())).unwrap();
+        assert_eq!(
+            request
+                .metadata()
+                .get("authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer token-1"),
+            "refreshed token must reach the cloned interceptor"
         );
     }
 
