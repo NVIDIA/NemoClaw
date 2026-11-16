@@ -13,13 +13,15 @@ const CLUSTER_ADDRESSES: &str = "nemoclaw.nvidia.com/cluster-addresses";
 const AUTH_STYLE: &str = "nemoclaw.nvidia.com/auth-style";
 const HEADER_NAME: &str = "nemoclaw.nvidia.com/header-name";
 const SANDBOX_ENV: &str = "nemoclaw.nvidia.com/sandbox-env";
+const ENDPOINTS: &str = "nemoclaw.nvidia.com/endpoints";
 
 /// Each ownership and definition field, and the profile annotation that carries it.
-const FIELDS: [(&str, &str); 12] = [
+const FIELDS: [(&str, &str); 13] = [
     ("owner", OWNER),
     ("generation", GENERATION),
     ("binaries_json", BINARIES),
     ("endpoint", ENDPOINT),
+    ("endpoints_json", ENDPOINTS),
     ("provider_type", PROVIDER_TYPE),
     ("authenticated", AUTHENTICATED),
     ("cluster_source", CLUSTER_SOURCE),
@@ -210,18 +212,24 @@ pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, Obser
         .strip_prefix("nemoclaw-api-")
         .ok_or(ObservationError::Query)?;
     let mcp = want.get(MCP_POLICY).map(String::as_str).unwrap_or_default();
+    let sandbox_env = want
+        .get("sandbox_env")
+        .map(String::as_str)
+        .unwrap_or_default();
     let mut profile = nemoclaw_openshell::api::definition(
         name,
-        &want["endpoint"],
+        &nemoclaw_openshell::api::endpoints(&want["endpoints_json"])?,
         &want["auth_style"],
         &want["header_name"],
         mcp,
+        sandbox_env,
     )?;
     profile.binaries = binaries(want)?;
+    // A default variable name is recorded as no annotation at all.
     let metadata = [
         "owner",
         "generation",
-        "endpoint",
+        "endpoints_json",
         "binaries_json",
         "auth_style",
         "header_name",
@@ -229,6 +237,7 @@ pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, Obser
     .into_iter()
     .map(|field| (field.into(), want[field].clone()))
     .chain((!mcp.is_empty()).then(|| (MCP_POLICY.into(), mcp.into())))
+    .chain((!sandbox_env.is_empty()).then(|| ("sandbox_env".into(), sandbox_env.into())))
     .collect();
     profile.annotations = annotations(metadata)?;
     Ok(profile)
@@ -300,7 +309,13 @@ fn row(
         if let Some(mcp) = metadata.get(MCP_POLICY) {
             fields.insert(MCP_POLICY.into(), mcp.clone());
         }
-        for field in ["endpoint", "auth_style", "header_name"] {
+        // Empty means the derived variable name.
+        fields.insert(
+            "sandbox_env".into(),
+            metadata.get("sandbox_env").cloned().unwrap_or_default(),
+        );
+        fields.remove("endpoint");
+        for field in ["endpoints_json", "auth_style", "header_name"] {
             fields.insert(
                 field.into(),
                 metadata
@@ -791,7 +806,10 @@ mod tests {
     fn api_profiles_round_trip_legacy_rest_and_enforced_mcp() {
         let mut want = native_fields("", true);
         want.insert("name".into(), "nemoclaw-api-booking".into());
-        want.insert("endpoint".into(), "http://10.42.0.7:8080/mcp/".into());
+        want.insert(
+            "endpoints_json".into(),
+            r#"["http://10.42.0.7:8080/mcp/"]"#.into(),
+        );
         want.insert("auth_style".into(), String::new());
         want.insert("header_name".into(), String::new());
 
@@ -807,6 +825,18 @@ mod tests {
             !row(legacy, "workspace", &want["name"], true, &DockerServices)
                 .unwrap()
                 .contains_key(MCP_POLICY)
+        );
+
+        // A chosen variable name survives the round trip; the default reads back empty.
+        let mut named = want.clone();
+        named.insert("sandbox_env".into(), "NVIDIA_API_KEY".into());
+        let mut chosen = api_definition(&named).unwrap();
+        chosen.resource_version = 1;
+        chosen.source = "user".into();
+        chosen.scope = "workspace".into();
+        assert_eq!(
+            row(chosen, "workspace", &want["name"], true, &DockerServices).unwrap()["sandbox_env"],
+            "NVIDIA_API_KEY"
         );
 
         want.insert(MCP_POLICY.into(), r#"{"rules":[]}"#.into());

@@ -379,7 +379,7 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
             .unwrap();
     document.spec.integrations = serde_json::from_value(serde_json::json!({
         "search": {"kind":"webSearch", "provider":"tavily", "credential":{"env":"SEARCH_KEY"}},
-        "bookings": {"kind":"api", "endpoint":"https://bookings.example.com/mcp",
+        "bookings": {"kind":"api", "endpoints":["https://bookings.example.com/mcp"],
             "credential":{"env":"BOOKINGS_API_KEY"}}
     }))
     .unwrap();

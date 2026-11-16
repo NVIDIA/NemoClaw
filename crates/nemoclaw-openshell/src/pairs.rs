@@ -33,7 +33,13 @@ pub fn api_rows(row: &Row) -> (Row, Row) {
     let profile = format!("nemoclaw-api-{}", value(row, "name"));
     let mut profile_row = common(row);
     profile_row.insert("name".into(), profile.clone());
-    for field in ["endpoint", "binaries_json", "auth_style", "header_name"] {
+    for field in [
+        "endpoints_json",
+        "binaries_json",
+        "auth_style",
+        "header_name",
+        "sandbox_env",
+    ] {
         profile_row.insert(field.into(), value(row, field).into());
     }
     let mcp = value(row, crate::api::MCP_POLICY);
@@ -45,8 +51,10 @@ pub fn api_rows(row: &Row) -> (Row, Row) {
         ("name".into(), value(row, "name").into()),
         ("profile_name".into(), profile),
         ("provider_type".into(), "api".into()),
-        ("endpoint".into(), value(row, "endpoint").into()),
+        ("endpoints_json".into(), value(row, "endpoints_json").into()),
         ("credential_env".into(), value(row, "credential_env").into()),
+        // The profile holds it; the registration checks its profile against it.
+        ("sandbox_env".into(), value(row, "sandbox_env").into()),
     ]);
     bind(&mut registration, row);
     (profile_row, registration)

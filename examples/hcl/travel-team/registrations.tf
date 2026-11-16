@@ -61,7 +61,7 @@ resource "openshell_api" "bookings" {
   gateway        = local.gateway
   workspace      = openshell_workspace.team.ref
   name           = "bookings"
-  endpoint       = var.bookings.url
+  endpoints      = [var.bookings.url]
   credential_env = var.bookings.credential_env
   binaries       = local.binaries.buyer
 

@@ -62,7 +62,7 @@ spec:
       sandboxEnv: BRAVE_SEARCH_API_KEY
     bookings:
       kind: api
-      endpoint: https://bookings.example.com/mcp
+      endpoints: [https://bookings.example.com/mcp]
       credential:
         env: BOOKINGS_API_KEY
 

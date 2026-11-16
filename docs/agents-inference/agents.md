@@ -155,13 +155,31 @@ agent:
   integrations:
     bookings:
       kind: api
-      endpoint: https://bookings.example.com/mcp
+      endpoints: [https://bookings.example.com/mcp]
       credential:
         env: BOOKINGS_API_KEY
 ```
 
 NemoClaw registers the API with OpenShell for each image and harness that attaches it, as `openshell_api` does in HCL.
-The profile grants access to the harness's executables. OpenShell replaces the placeholder on requests to the bound host, port and path subtree, and the sandbox never sees the key.
+The profile grants access to the harness's executables. OpenShell replaces the placeholder on requests to each endpoint's host, port and path subtree, and the sandbox never sees the key.
+When one key serves several hosts or path subtrees, list each URL in `endpoints`; one registration then covers them all.
+
+The sandbox sees the placeholder in `NEMOCLAW_API_<NAME>_<IMAGE>_KEY`, a name derived from the integration's name and the sandbox's image.
+Set `sandboxEnv` when the agent's tools read the key from a fixed variable, as clients of NVIDIA's hosted APIs read `NVIDIA_API_KEY`:
+
+```yaml
+    nvidia:
+      kind: api
+      endpoints:
+        - https://integrate.api.nvidia.com/v1
+        - https://ai.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_API_KEY
+      sandboxEnv: NVIDIA_API_KEY
+```
+
+OpenShell rejects, during apply, a sandbox whose attached registrations put keys in the same variable, including a `sandboxEnv` that matches a web search's variable.
+Give each integration its own `sandboxEnv`, or list the URLs that share a key in one integration's `endpoints`.
 The key goes in `Authorization` as a bearer token by default; set `authStyle: header` and `headerName` to send the raw value in another header.
 Set the referenced variable on the applying host; exported YAML and OpenTofu state retain only the reference.
 Registering a key does not configure the harness to send it. The HCL travel team configures Hermes to send the placeholder in its MCP `Authorization` header and gives the credential profile an enforced MCP tool allowlist.

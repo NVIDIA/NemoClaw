@@ -615,9 +615,10 @@ A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
 |---|---|---|---|---|
 | `authStyle` | [ApiAuthStyle](#apiauthstyle) | No | — | How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName. |
 | `credential` | [SecretRef](#secretref) | Yes | — | Host environment reference holding the API key. |
-| `endpoint` | string | Yes | — | The API's HTTPS URL. |
+| `endpoints` | array of string | Yes | — | The API's HTTPS URLs. One key reaches each URL's host, port and path subtree. Constraints: minimum items 1. |
 | `headerName` | string | No | — | The header that carries the key. Defaults to Authorization for bearer; required for header. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"api"`. |
+| `sandboxEnv` | string | No | — | Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to NEMOCLAW_API_<registration>_KEY. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 
 ## KubernetesAuthentication
 

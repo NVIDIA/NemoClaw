@@ -122,16 +122,19 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         .into_iter()
         .flatten()
     {
-        if variant["properties"]["kind"]["const"] == "webSearch" {
-            property(
-                variant,
-                "sandboxEnv",
-                json!({
-                    "pattern": c::ENV,
-                    "x-nemoclaw-error": "web search sandboxEnv must be an environment variable name"
-                }),
-            );
-        }
+        let kind = match variant["properties"]["kind"]["const"].as_str() {
+            Some("webSearch") => "web search",
+            Some("api") => "api",
+            _ => continue,
+        };
+        property(
+            variant,
+            "sandboxEnv",
+            json!({
+                "pattern": c::ENV,
+                "x-nemoclaw-error": format!("{kind} sandboxEnv must be an environment variable name")
+            }),
+        );
     }
     for (name, kind) in [("SecretRef", "secret"), ("FileRef", "file")] {
         property(
