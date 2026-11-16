@@ -166,6 +166,12 @@ describe("uninstall bulk sandbox cleanup", () => {
       "Reason: OpenShell sandbox delete timed out after 60 seconds. Deletion could not be confirmed.",
     ],
     ["OpenShell rejects the command", result(1, "", "cleanup failed"), "Reason: cleanup failed"],
+    ["timeout exits numerically", result(124), "Reason: The OpenShell sandbox deletion failed."],
+    [
+      "termination exits numerically",
+      result(137),
+      "Reason: The OpenShell sandbox deletion failed.",
+    ],
   ])("preserves cleanup authority when %s (#11831)", async (_case, deleteResult, reason) => {
     const calls: string[][] = [];
     const warnings: string[] = [];
@@ -260,23 +266,58 @@ describe("uninstall bulk sandbox cleanup", () => {
     ]);
   });
 
-  it("reports the reason when a timed-out single delete stays unconfirmed (#13443)", async () => {
-    const warnings: string[] = [];
-    const runtime = {
-      env: { PATH: "/usr/bin" },
-      log: vi.fn(),
-      run: (_command: string, args: string[]) =>
-        args[1] === "delete"
-          ? result(null, "", "", Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }))
-          : result(1, "", "permission denied"),
-      sleep: vi.fn(),
-      warn: (message: string) => warnings.push(message),
-    };
+  it.each([null, 124, 137])(
+    "reports the reason when single delete exit %s stays unconfirmed (#13443)",
+    async (status) => {
+      const warnings: string[] = [];
+      const runtime = {
+        env: { PATH: "/usr/bin" },
+        log: vi.fn(),
+        run: (_command: string, args: string[]) =>
+          args[1] === "delete"
+            ? result(
+                status,
+                "",
+                "",
+                status === null
+                  ? Object.assign(new Error("timed out"), { code: "ETIMEDOUT" })
+                  : undefined,
+              )
+            : result(1, "", "permission denied"),
+        sleep: vi.fn(),
+        warn: (message: string) => warnings.push(message),
+      };
 
-    await expect(deleteSelectedGatewaySandbox(runtime, "nemoclaw-8091", "alpha")).resolves.toBe(
-      false,
-    );
+      await expect(deleteSelectedGatewaySandbox(runtime, "nemoclaw-8091", "alpha")).resolves.toBe(
+        false,
+      );
 
-    expect(warnings.filter((line) => line.startsWith("Reason: "))).toHaveLength(1);
-  });
+      expect(warnings.filter((line) => line.startsWith("Reason: "))).toHaveLength(1);
+    },
+  );
+
+  it.each([124, 137])(
+    "confirms single-delete exit %s through the recorded gateway without repeating deletion",
+    async (status) => {
+      const calls: string[][] = [];
+      const runtime = {
+        env: { PATH: "/usr/bin" },
+        log: vi.fn(),
+        run: (_command: string, args: string[]) => {
+          calls.push(args);
+          return args[1] === "delete" ? result(status) : result(0, "No sandboxes found.\n");
+        },
+        sleep: vi.fn(),
+        warn: vi.fn(),
+      };
+
+      await expect(deleteSelectedGatewaySandbox(runtime, "nemoclaw-8091", "alpha")).resolves.toBe(
+        true,
+      );
+      expect(calls).toEqual([
+        ["sandbox", "delete", "-g", "nemoclaw-8091", "alpha"],
+        ["sandbox", "list", "-g", "nemoclaw-8091"],
+      ]);
+    },
+  );
 });

@@ -9,8 +9,85 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildMcpProviderRewriteAuthorization,
   buildMcpCredentialHandleAuthorizationPattern,
+  isMcpProviderDnsPolicyDenial,
   MCP_PROVIDER_REWRITE_PROBE_SOURCE,
 } from "../live/mcp-provider-rewrite-probe.ts";
+import type { DnsDenialProbe } from "../fixtures/curl-policy-denial.ts";
+
+describe("MCP provider DNS denial evidence", () => {
+  const hostname = "mcp.example.test";
+  const event = `2026-11-14T09:00:00Z OCSF NET:REFUSE [MED] DENIED ${hostname} [reason:policy_dns_no_valid_address]\n`;
+  const result = (patch: Partial<DnsDenialProbe> = {}): DnsDenialProbe => ({
+    exitCode: 1,
+    stdout: 'NEMOCLAW_NETWORK_RESULT {"errorCode":"ENOTFOUND","syscall":"getaddrinfo"}\n',
+    stderr: "",
+    signal: null,
+    timedOut: false,
+    ...patch,
+  });
+  const audit = (patch: Partial<DnsDenialProbe> = {}) =>
+    result({ exitCode: 0, stdout: "", ...patch });
+
+  it.each(["policy_dns_no_valid_address", "policy_dns_ineligible"])(
+    "accepts a failed lookup only with a fresh exact-host %s audit event",
+    (reason) => {
+      const after = audit({ stdout: event.replace("policy_dns_no_valid_address", reason) });
+      expect(isMcpProviderDnsPolicyDenial(result(), audit(), after, hostname)).toBe(true);
+    },
+  );
+
+  it.each([
+    ["missing audit", {}, {}, { stdout: "" }],
+    ["stale audit", {}, { stdout: event }, {}],
+    ["other host", {}, {}, { stdout: event.replace(hostname, "other.example.test") }],
+    [
+      "upstream DNS failure",
+      {},
+      {},
+      { stdout: event.replace("policy_dns_no_valid_address", "policy_dns_upstream_nxdomain") },
+    ],
+    ["failed prior audit", {}, { exitCode: 1 }, {}],
+    ["failed current audit", {}, {}, { exitCode: 1 }],
+    ["audit timeout", {}, {}, { timedOut: true }],
+    ["audit signal", {}, {}, { signal: "SIGTERM" }],
+    ["probe timeout", { timedOut: true }, {}, {}],
+    ["probe signal", { signal: "SIGTERM" }, {}, {}],
+    ["successful probe", { exitCode: 0 }, {}, {}],
+    ["credential failure", { exitCode: 2 }, {}, {}],
+    [
+      "transient DNS error",
+      { stdout: 'NEMOCLAW_NETWORK_RESULT {"errorCode":"EAI_AGAIN","syscall":"getaddrinfo"}\n' },
+      {},
+      {},
+    ],
+    [
+      "other syscall",
+      { stdout: 'NEMOCLAW_NETWORK_RESULT {"errorCode":"ENOTFOUND","syscall":"connect"}\n' },
+      {},
+      {},
+    ],
+    [
+      "mixed success fields",
+      {
+        stdout:
+          'NEMOCLAW_NETWORK_RESULT {"errorCode":"ENOTFOUND","syscall":"getaddrinfo","status":200}\n',
+      },
+      {},
+      {},
+    ],
+    ["duplicate records", { stdout: result().stdout.repeat(2) }, {}, {}],
+    ["malformed record", { stdout: "NEMOCLAW_NETWORK_RESULT invalid\n" }, {}, {}],
+  ] as const)("rejects %s", (_name, probePatch, beforePatch, afterPatch) => {
+    expect(
+      isMcpProviderDnsPolicyDenial(
+        result(probePatch),
+        audit(beforePatch),
+        audit({ stdout: event, ...afterPatch }),
+        hostname,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("managed MCP provider rewrite probe", () => {
   const stableCredentialId = "a".repeat(64);
@@ -91,9 +168,13 @@ describe("managed MCP provider rewrite probe", () => {
   });
 });
 
-function executeRewriteProbe(expectation: string) {
-  const request = Object.assign(new EventEmitter(), { end: vi.fn() });
-  const send = vi.fn((_options: object, _callback: (response: EventEmitter) => void) => request);
+function startRewriteProbe(expectation: string) {
+  const requests: Array<EventEmitter & { end: ReturnType<typeof vi.fn> }> = [];
+  const send = vi.fn((_options: object, _callback: (response: EventEmitter) => void) => {
+    const request = Object.assign(new EventEmitter(), { end: vi.fn() });
+    requests.push(request);
+    return request;
+  });
   const exit = vi.fn();
   const output: string[] = [];
   vm.runInNewContext(MCP_PROVIDER_REWRITE_PROBE_SOURCE, {
@@ -107,7 +188,26 @@ function executeRewriteProbe(expectation: string) {
     },
     console: { log: (line: string) => output.push(line), error: vi.fn() },
   });
-  return { request, send, exit, output };
+  function respond(index: number, statusCode: number, body: string, headers = {}) {
+    const response = Object.assign(new EventEmitter(), {
+      statusCode,
+      headers,
+      setEncoding: vi.fn(),
+    });
+    send.mock.calls[index]![1](response);
+    response.emit("data", body);
+    response.emit("end");
+  }
+  return { requests, send, exit, output, respond };
+}
+
+function executeRewriteProbe(expectation: string) {
+  const probe = startRewriteProbe(expectation);
+  probe.respond(0, 200, '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-11-25"}}', {
+    "mcp-session-id": "negotiated-fixture-session",
+  });
+  probe.respond(1, 202, "");
+  return { ...probe, request: probe.requests.at(-1)! };
 }
 
 describe("MCP request denial evidence", () => {
@@ -139,14 +239,42 @@ describe("MCP request denial evidence", () => {
       statusCode: status,
       setEncoding: vi.fn(),
     });
-    probe.send.mock.calls[0]![1](response);
+    probe.send.mock.calls.at(-1)![1](response);
     response.emit("data", body);
     response.emit("end");
     expect(probe.exit).toHaveBeenCalledWith(expected);
-    expect(probe.send.mock.calls[0]![0]).toMatchObject({
+    expect(
+      probe.requests.map((request) => JSON.parse(request.end.mock.calls[0]![0]).method),
+    ).toEqual(["initialize", "notifications/initialized", "tools/list"]);
+    expect(probe.send.mock.calls.at(-1)![0]).toMatchObject({
       autoSelectFamily: false,
       hostname: "mcp.example.test",
       path: "/mcp",
+      headers: {
+        "mcp-session-id": "negotiated-fixture-session",
+        "mcp-protocol-version": "2025-11-25",
+      },
     });
+  });
+
+  it.each([
+    ["missing session", {}, "2025-11-25"],
+    ["unsafe session", { "mcp-session-id": "unsafe\nsession" }, "2025-11-25"],
+    ["unreviewed revision", { "mcp-session-id": "fixture-session" }, "2025-03-26"],
+  ])("does not send the tested method after %s", (_label, headers, protocolVersion) => {
+    const probe = startRewriteProbe("allow");
+    probe.respond(0, 200, JSON.stringify({ id: 0, result: { protocolVersion } }), headers);
+    expect(probe.exit).toHaveBeenCalledWith(1);
+    expect(probe.send).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['{"error":"policy_denied"}', 0],
+    ['{"error":"mcp_protocol_version_not_allowed"}', 1],
+  ])("classifies initialization refusal %s without sending the tested method", (body, status) => {
+    const probe = startRewriteProbe("deny");
+    probe.respond(0, 403, body);
+    expect(probe.exit).toHaveBeenCalledWith(status);
+    expect(probe.send).toHaveBeenCalledTimes(1);
   });
 });

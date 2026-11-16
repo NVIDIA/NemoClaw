@@ -410,12 +410,13 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         'cp "$FAKE_BODY_FILE" "$output"',
         'printf "1\\n" >> "$FAKE_COUNT_FILE"',
         'printf "%s" "$FAKE_STATUS"',
+        'exit "$FAKE_CURL_EXIT"',
       ].join("\n"),
     );
     chmodSync(curl, 0o755);
 
     const apiKey = "fixture-api-key-value";
-    const run = (body: string, status: string) => {
+    const run = (body: string, status: string, curlExit = "0") => {
       writeFileSync(bodyFile, body);
       return spawnSync("sh", ["-c", script], {
         encoding: "utf8",
@@ -425,6 +426,7 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
           FAKE_BODY_FILE: bodyFile,
           FAKE_COUNT_FILE: countFile,
           FAKE_STATUS: status,
+          FAKE_CURL_EXIT: curlExit,
           PATH: `${directory}:${SYSTEM_PATH}`,
         },
         killSignal: "SIGKILL",
@@ -440,6 +442,10 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
       expect(failed.stderr).toContain(`${HERMES_MCP_HTTP_STATUS_MARKER}500`);
 
       expect(readFileSync(countFile, "utf8")).toBe("1\n");
+      const transportFailed = run(`failed with ${apiKey}`, "000", "7");
+      expect(transportFailed.status, transportFailed.stderr).toBe(7);
+      expect(transportFailed.stdout).toBe("");
+      expect(readFileSync(countFile, "utf8")).toBe("1\n1\n");
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

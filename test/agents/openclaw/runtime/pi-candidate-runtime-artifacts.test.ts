@@ -221,21 +221,27 @@ describe("Pi managed model catalog generation", () => {
   );
 
   it.each([
-    "",
-    "raw-host-secret",
-    "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-    "openshell:resolve:env:v2_OTHER_TOKEN",
-    "openshell:resolve:env:v2_NEMOCLAW_LOCAL_INFERENCE_TOKEN\n",
-  ])("refuses invalid Pi native-local credential %j", (token) => {
+    ["", "NEMOCLAW_NATIVE_PROVIDER_HANDLE_MISSING\n"],
+    ["raw-host-secret", "NEMOCLAW_NATIVE_PROVIDER_HANDLE_INVALID\n"],
+    [
+      "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      "NEMOCLAW_NATIVE_PROVIDER_HANDLE_INVALID\n",
+    ],
+    ["openshell:resolve:env:v2_OTHER_TOKEN", "NEMOCLAW_NATIVE_PROVIDER_HANDLE_INVALID\n"],
+    [
+      "openshell:resolve:env:v2_NEMOCLAW_LOCAL_INFERENCE_TOKEN\n",
+      "NEMOCLAW_NATIVE_PROVIDER_HANDLE_INVALID\n",
+    ],
+  ])("refuses invalid Pi native-local credential %j", (token, diagnostic) => {
     const provider = nativeCatalog();
     const key = resolveCommand(provider.apiKey, token);
     expect(key.status).not.toBe(0);
     expect(key.stdout).toBe("");
-    expect(key.stderr).toBe("");
+    expect(key.stderr).toBe(diagnostic);
     const header = resolveCommand(provider.headers.Authorization, token);
     expect(header.status).not.toBe(0);
     expect(header.stdout).toBe("");
-    expect(header.stderr).toBe("");
+    expect(header.stderr).toBe(diagnostic);
   });
 
   it.each(["http://host.openshell.internal:11434/v1", "https://inference.local/v1"])(

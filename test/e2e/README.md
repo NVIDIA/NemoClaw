@@ -644,6 +644,12 @@ MCP tests retain live allow/deny enforcement and credential-rotation checks with
 serialization or the provider-update success message.
 MCP credential scans check each supplied host credential against every selected sandbox state path.
 A credential match or scan error fails the check.
+The scan follows valid file and directory symlinks and reads regular file contents.
+It matches all supplied credentials in one file-reading pass per selected path.
+Live scans emit only fixed stage names, path indexes, batch sizes and grep statuses.
+These markers distinguish command entry and scan progress without exposing paths or credentials.
+Nested dangling aliases, including Hermes's optional SQLite aliases, have no file contents to scan.
+Explicitly selected dangling paths, directory traversal errors, and regular file read errors still fail.
 An absent path is accepted only when its parent directory is readable and searchable.
 The scan treats credentials as literal strings and suppresses scan output before artifact capture.
 Approval phase labels live with the existing
@@ -1102,6 +1108,9 @@ credential rotation and denied-tool behavior, it replaces only the live endpoint
 unrelated public address and requires a policy denial. It then runs
 `mcp update fake --refresh-public-pins` and requires an authenticated native tool call while the
 denied tool remains blocked. Existing restart and rebuild checks retain their own assertions.
+A stale-pin Node lookup failure also requires a fresh successful OpenShell DNS policy-refusal audit
+for that exact hostname. Missing, stale, failed or unrelated audit evidence cannot establish denial.
+The network probe runs once; only audit reads repeat within the existing five-read bound.
 Source tests own public-target validation, source conflicts, and preservation of every policy field
 except `allowed_ips`. This live step proves that OpenShell enforces the refreshed policy; it does not
 depend on an external DNS rotation happening during the test. A failed step restores the captured

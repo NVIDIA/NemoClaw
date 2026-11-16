@@ -12,29 +12,6 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { FakeMcpHttpsServer, FakeMcpRequest } from "./mcp-bridge-servers.ts";
-import { buildMcpCredentialHandleAuthorizationPattern } from "./mcp-provider-rewrite-probe.ts";
-
-export function buildDeepAgentsConfigProbe(
-  mcpUrl: string,
-  serverName: string,
-  hostSecret: string,
-): string {
-  const authorizationPattern = buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET");
-  return [
-    "set -eu",
-    "python3 - <<'PY'",
-    "import json, pathlib, re",
-    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
-    "text = path.read_text(encoding='utf-8')",
-    "data = json.loads(text)",
-    `entry = data['mcpServers'][${JSON.stringify(serverName)}]`,
-    "assert entry['type'] == 'http'",
-    `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-    `assert re.fullmatch(${JSON.stringify(authorizationPattern)}, entry['headers']['Authorization'])`,
-    `assert ${JSON.stringify(hostSecret)} not in text`,
-    "PY",
-  ].join("\n");
-}
 
 export interface AuthenticatedMcpDiscoveryTarget {
   server: FakeMcpHttpsServer;

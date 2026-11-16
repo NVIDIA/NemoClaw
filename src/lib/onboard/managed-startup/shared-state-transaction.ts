@@ -1294,6 +1294,7 @@ export function captureManagedStartupSharedState(
   inputOptions: Pick<ManagedStartupSharedTransactionOptions, "sandboxRoot" | "bootstrapIdentity">,
 ): string {
   const captured = captureSharedState(profile, resolveOptions(inputOptions));
+  requireNativeRestorationIdentity(captured.manifest);
   return serializeCapturedSharedState(
     captured.manifest,
     captured.snapshots.map(({ bytes }) => bytes),
@@ -1588,6 +1589,16 @@ export function exportManagedStartupSharedStateRestoration(
   return captured;
 }
 
+function requireNativeRestorationIdentity(manifest: TransactionManifest): void {
+  // A capability-free owner cannot restore another identity. Check before admission or mutation.
+  for (const receipt of [...manifest.files, ...manifest.directories]) {
+    if (receipt.state === "absent") continue;
+    if (receipt.uid !== process.geteuid?.() || receipt.gid !== process.getegid?.()) {
+      fail("captured output requires a different restoration identity");
+    }
+  }
+}
+
 /** Restore as the native owner. Only authenticated provider stdin may supply the root snapshot. */
 export function restoreManagedStartupCapturedSharedState(
   profile: ManagedStartupProfile,
@@ -1596,13 +1607,7 @@ export function restoreManagedStartupCapturedSharedState(
 ): string {
   const options = resolveOptions(inputOptions);
   const { manifest, snapshots } = parseCapturedSharedState(capturedState, profile, options);
-  // A capability-free owner cannot restore another identity. Reject before any mutation.
-  for (const receipt of [...manifest.files, ...manifest.directories]) {
-    if (receipt.state === "absent") continue;
-    if (receipt.uid !== process.geteuid?.() || receipt.gid !== process.getegid?.()) {
-      fail("captured output requires a different restoration identity");
-    }
-  }
+  requireNativeRestorationIdentity(manifest);
   const backups = new Map<string, Buffer>();
   for (const snapshot of snapshots) {
     if (snapshot.bytes !== null) backups.set(snapshot.receipt.path, snapshot.bytes);

@@ -443,6 +443,26 @@ describe("OpenShell sandbox lifecycle CLI", () => {
     expect(capture).toHaveBeenCalledOnce();
   });
 
+  it.each([124, 137])(
+    "keeps numeric termination exit %s ambiguous for named and bulk deletes",
+    async (status) => {
+      const capture = vi.fn().mockResolvedValue({ status, output: "" });
+      const lifecycle = createCliOpenShellSandboxLifecycle({ capture });
+
+      await expect(lifecycle.deleteSandbox(request)).resolves.toMatchObject({
+        kind: "failed",
+        ambiguous: true,
+        exitCode: status,
+      });
+      await expect(lifecycle.deleteAllSandboxes(bulkDeleteRequest)).resolves.toMatchObject({
+        kind: "failed",
+        ambiguous: true,
+        exitCode: status,
+      });
+      expect(capture).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("classifies an explicit connection refusal as definite non-submission", async () => {
     const capture = vi.fn().mockResolvedValue({
       status: 1,

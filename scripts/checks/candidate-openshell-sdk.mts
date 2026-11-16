@@ -189,24 +189,51 @@ export async function readApprovedOpenShellSdkConfig(
   };
 }
 
+function readCheckoutSource(targetRoot: string, path: string): string {
+  const file = resolvePathWithinRoot(targetRoot, path, "Candidate SDK input");
+  const descriptor = openSync(
+    file,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > 1024 * 1024) {
+      throw new Error("Candidate SDK input must be a bounded regular file");
+    }
+    return readFileSync(descriptor, "utf8");
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 function verifyCheckoutSources(targetRoot: string, sources: Readonly<Record<string, string>>) {
   for (const path of [...MANIFESTS, ...LOCKS]) {
-    const file = resolvePathWithinRoot(targetRoot, path, "Candidate SDK input");
-    const descriptor = openSync(
-      file,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    try {
-      const stat = fstatSync(descriptor);
-      if (!stat.isFile() || stat.size > 1024 * 1024) {
-        throw new Error("Candidate SDK input must be a bounded regular file");
-      }
-      if (readFileSync(descriptor, "utf8") !== sources[path]) {
-        throw new Error(`Candidate SDK checkout differs from admitted commit: ${path}`);
-      }
-    } finally {
-      closeSync(descriptor);
+    if (readCheckoutSource(targetRoot, path) !== sources[path]) {
+      throw new Error(`Candidate SDK checkout differs from admitted commit: ${path}`);
     }
+  }
+}
+
+/** Audit with only the independently admitted SDK change, checking admission again before success. */
+export async function auditWithApprovedOpenShellSdk(
+  targetRoot: string,
+  identity: SdkInputIdentity,
+  request: UpgradeRequest,
+  trustedSource: string,
+  audit: (config: Config) => void | Promise<void>,
+): Promise<void> {
+  const locks = LOCKS.map((path) => readCheckoutSource(targetRoot, path));
+  if (!requiresCandidateSdkAdmission(locks, trustedSource)) {
+    await audit(parseAuditConfig(trustedSource));
+    return;
+  }
+  const before = await readApprovedOpenShellSdkConfig(identity, request, trustedSource);
+  verifyCheckoutSources(targetRoot, before.sources);
+  await audit(parseAuditConfig(before.configSource));
+  const after = await readApprovedOpenShellSdkConfig(identity, request, trustedSource);
+  verifyCheckoutSources(targetRoot, after.sources);
+  if (!isDeepStrictEqual(before, after)) {
+    throw new Error("Candidate SDK admission changed during npm audit");
   }
 }
 

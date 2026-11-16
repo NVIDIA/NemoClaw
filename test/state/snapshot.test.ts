@@ -1119,6 +1119,7 @@ describe("complete native home persistence", () => {
       const binDir = path.join(fixture, "bin");
       const nativeRoot = path.join(fixture, "native-home");
       const commandLog = path.join(fixture, "ssh-commands.log");
+      const ownershipLog = path.join(fixture, "ownership-queries.jsonl");
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(nativeRoot, { recursive: true });
       const settings = Object.fromEntries(
@@ -1144,6 +1145,7 @@ const fs = require("node:fs");
 if (process.argv[2] !== "-c" || process.argv[3] !== "%u") {
   process.exit(require("node:child_process").spawnSync("native-stat", process.argv.slice(2), { stdio: process.argv.at(-1).startsWith("/dev/fd/") ? ["inherit", "inherit", "inherit", 3] : "inherit" }).status ?? 95);
 }
+fs.appendFileSync(${JSON.stringify(ownershipLog)}, JSON.stringify(process.argv.at(-1)) + "\\n");
 process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
 `,
       );
@@ -1165,6 +1167,9 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
           force: true,
         });
       }
+      // Exercise replacement, not just extraction into an empty native home.
+      fs.writeFileSync(path.join(nativeRoot, "original.txt"), "replacement state");
+      fs.symlinkSync("replacement-link", path.join(nativeRoot, "unsafe-link"));
       const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
       expect(restore.success, restore.error).toBe(true);
       expect(fs.readFileSync(path.join(nativeRoot, "original.txt"))).toEqual(trailing);
@@ -1172,6 +1177,13 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
       expect(parseYaml(fs.readFileSync(config, "utf8"))).toEqual(expected);
       expect(parseYaml(fs.readFileSync(saved, "utf8"))).toEqual(expected);
       expect(fs.readlinkSync(path.join(nativeRoot, "unsafe-link"))).toBe("../../outside");
+      const ownershipQueries = fs
+        .readFileSync(ownershipLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(ownershipQueries).not.toContain(path.join(nativeRoot, "original.txt"));
+      expect(ownershipQueries).toContain(path.join(nativeRoot, "unsafe-link"));
       const commands = fs.readFileSync(commandLog, "utf8");
       expect(commands).toContain('kill -STOP "$pid"');
       expect(commands).toContain("quiesce_pass=$((quiesce_pass + 1))");
@@ -1181,7 +1193,7 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
       expect(commands).not.toContain('< "$proc/status" 2>/dev/null');
       expect(commands).toContain("-links +1");
       expect(commands).toContain('mkdir -m 700 -- "$transfer"');
-      expect(commands).toContain('owner="$(stat -c %u -- "$target_item")"');
+      expect(commands).toContain('owner="$(stat -c %u -- "$1")"');
       expect(commands).toContain('[ "$owner" = "$uid" ] && [ -w "$target_dir" ]');
       expect(commands).toContain('restore_dir "$source_item" "$target_item"');
       expect(commands.indexOf('if [ -d "$target_item" ]')).toBeLessThan(
@@ -1225,7 +1237,7 @@ process.stdout.write(String(fs.lstatSync(process.argv.at(-1)).uid) + "\\n");
           fs.writeFileSync(imageOwned, "archived file must not be dropped");
         }
         writeFakeOpenshell(binDir);
-        writeFakeSsh(binDir);
+        writeFakeSsh(binDir, { statOwnership: true });
         writeExecutable(
           path.join(binDir, "stat"),
           `#!/usr/bin/env node

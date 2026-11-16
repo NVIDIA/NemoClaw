@@ -47,7 +47,19 @@ process.exit(0);
   );
 }
 
-export function writeFakeSsh(binDir: string): void {
+export function writeFakeSsh(binDir: string, options: { statOwnership?: boolean } = {}): void {
+  const ownershipEnv = options.statOwnership
+    ? { BASH_ENV: path.join(binDir, "bash-stat-ownership") }
+    : {};
+  if (ownershipEnv.BASH_ENV) {
+    // Keep the shell's ownership API consistent with fixtures that simulate a
+    // foreign UID through stat; the ordinary fixtures use real kernel metadata.
+    fs.writeFileSync(
+      ownershipEnv.BASH_ENV,
+      'function [() { if builtin [ "$1" = "-O" ]; then builtin [ "$(stat -c %u -- "$2")" = "$(id -u)" ]; else builtin [ "$@"; fi; }\n',
+      { mode: 0o600 },
+    );
+  }
   writeExecutable(
     path.join(binDir, "sftp"),
     `#!/usr/bin/env node
@@ -183,6 +195,7 @@ if (command.includes("tar -C")) {
 if (command.includes("nemoclaw-native-restore")) {
   const restored = spawnSync("sh", ["-c", command.replaceAll(remoteRoot, root).replaceAll("/proc/self/fd/", "/dev/fd/")], {
     stdio: ["inherit", "inherit", "inherit"],
+    env: { ...process.env, ...${JSON.stringify(ownershipEnv)} },
   });
   process.exit(restored.status ?? 94);
 }

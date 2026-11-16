@@ -1,14 +1,51 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { nativeLocalCredentialReference } from "./agent-config";
+import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT, nativeLocalCredentialReference } from "./agent-config";
 
 const endpoint = "http://host.openshell.internal:43123/team/v1";
 const reference = "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN";
 const handle = "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
 
 describe("native local image credential projection", () => {
+  it.each([
+    { value: undefined, category: "MISSING", status: 2 },
+    { value: "", category: "MISSING", status: 2 },
+    { value: "raw-secret-canary", category: "INVALID", status: 2 },
+    { value: reference, category: "INVALID", status: 2 },
+    { value: `${handle}\nraw-secret-canary`, category: "INVALID", status: 2 },
+    { value: `${handle}\n`, category: "INVALID", status: 2 },
+    { value: "openshell:resolve:env:v7_OPENAI_API_KEY", category: "INVALID", status: 2 },
+    { value: handle, category: null, status: 0 },
+    {
+      value: `openshell:resolve:env:s${"a".repeat(64)}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`,
+      category: null,
+      status: 0,
+    },
+  ])(
+    "classifies a projected auth header without disclosing its value, case %#",
+    ({ value, category, status }) => {
+      const result = spawnSync(
+        "sh",
+        ["-c", `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; printf request-ready`],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: process.env.PATH,
+            ...(value === undefined ? {} : { NEMOCLAW_LOCAL_INFERENCE_TOKEN: value }),
+          },
+        },
+      );
+      expect({ status: result.status, stdout: result.stdout, stderr: result.stderr }).toEqual({
+        status,
+        stdout: category ? "" : "request-ready",
+        stderr: category ? `NEMOCLAW_NATIVE_PROVIDER_HANDLE_${category}\n` : "",
+      });
+    },
+  );
+
   it.each([handle, `openshell:resolve:env:s${"a".repeat(64)}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`])(
     "rejects an issued handle for the retired Router: %s",
     (issued) => {

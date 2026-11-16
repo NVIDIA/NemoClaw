@@ -356,6 +356,12 @@ function isAmbiguousFailure(
   ) {
     return true;
   }
+  // Timeout wrappers can report a numeric exit instead of a spawn error or
+  // signal (including Uutils timeout's 124 for --signal=KILL). Neither proves
+  // that a submitted delete had no effect; callers must confirm exact absence.
+  if (error.kind === "command" && (result.status === 124 || result.status === 137)) {
+    return true;
+  }
   const output = outputOf(result);
   if (
     error.kind === "transport" &&
