@@ -140,10 +140,10 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
 - The intent record is now version 22, so this release refuses any deployment that `v0.1.0-rc10` created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
-  `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up:
+  `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up.
+  Before:
 
   ```yaml
-  # Before
   harness:
     kind: nvidia.fabric.hermes
     config:
@@ -152,7 +152,11 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
       skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
   agent:
     name: flights
-  # After
+  ```
+
+  After:
+
+  ```yaml
   harness:
     kind: nvidia.fabric.hermes
     runtime: {max_turns: 16}
@@ -162,23 +166,9 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
     skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
   ```
 
-- `harness.execution` is removed. Set Fabric's `runtime.timeout_seconds` on the harness instead:
+- `harness.execution` is removed. Set Fabric's `runtime.timeout_seconds` on the harness instead: replace `harness: {kind: nvidia.fabric.openclaw, execution: {timeoutSeconds: 600}}` with `harness: {kind: nvidia.fabric.openclaw, runtime: {timeout_seconds: 600}}`.
 
-  ```yaml
-  # Before
-  harness: {kind: nvidia.fabric.openclaw, execution: {timeoutSeconds: 600}}
-  # After
-  harness: {kind: nvidia.fabric.openclaw, runtime: {timeout_seconds: 600}}
-  ```
-
-- `agent.tools` is Fabric's tools section, and its `allow` list is removed. Rename `allow` to Fabric's `enabled`; `blocked` and `definitions` are now available too:
-
-  ```yaml
-  # Before
-  agent: {name: assistant, tools: {allow: [read, write]}}
-  # After
-  agent: {name: assistant, tools: {enabled: [read, write]}}
-  ```
+- `agent.tools` is Fabric's tools section, and its `allow` list is removed. Rename `allow` to Fabric's `enabled`, so `tools: {allow: [read, write]}` becomes `tools: {enabled: [read, write]}`; `blocked` and `definitions` are now available too.
 
 - In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
   Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
