@@ -49,7 +49,12 @@ fn config() -> serde_json::Value {
 
 /// The agent row configuring `sandbox`'s runtime.
 fn desired(sandbox: &Row) -> Row {
-    let mut desired = nemoclaw_fabric::agent::decompose(&config());
+    desired_with(sandbox, &config())
+}
+
+/// The agent row configuring `sandbox`'s runtime with `config`.
+fn desired_with(sandbox: &Row, config: &serde_json::Value) -> Row {
+    let mut desired = nemoclaw_fabric::agent::decompose(config);
     desired.extend(
         [
             ("workspace", sandbox["workspace"].as_str()),
@@ -138,6 +143,19 @@ async fn an_agent_starts_once_its_bridge_serves_and_stops_when_removed() {
     let refused = fabric.ensure("agent", &desired).await;
     let message = refused.error().unwrap().to_string();
     assert!(message.contains("replace the sandbox"), "{message}");
+    // Older runtime servers refuse the same start as `runtime_exists`.
+    self::reply(
+        &fixture,
+        Some(r#"{"operation":"start","status":"failed","changed":false,"result":null,"error":{"code":"runtime_exists","stage":"start","message":"m","effects":"none"}}"#.into()),
+    );
+    let message = fabric
+        .ensure("agent", &desired)
+        .await
+        .error()
+        .unwrap()
+        .to_string();
+    assert!(message.contains("replace the sandbox"), "{message}");
+    self::reply(&fixture, None);
 
     fabric.remove("agent", &agent, false).await.unwrap();
     assert_eq!(operations(&fixture, "stop"), 1);
@@ -474,4 +492,116 @@ async fn rejected_configuration_stops_startup_without_exec_and_preserves_binding
     );
     client.remove("sandbox", &binding, true).await.unwrap();
     assert_eq!(fixture.state.lock().unwrap().delete_calls, 1);
+}
+
+/// A Hermes agent whose runtimes share kept state on the artifacts volume and
+/// load skills from a mounted folder.
+fn kept_state_config() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "fabric.agent/v1alpha1",
+        "runtime": {"keep_state": true, "artifacts": "/sandbox/artifacts"},
+        "metadata": {"name": "main"},
+        "harness": {"adapter_id": "nvidia.fabric.hermes"},
+        "models": {"default": {"provider": "openai", "model": "fixture-model"}},
+        "skills": {"directories": [{"folder": "/sandbox/skills"}], "duplicates": "reject"},
+    })
+}
+
+/// The document each `fabric-agent-ctl start` sent, in order.
+fn started_documents(fixture: &Fixture) -> Vec<serde_json::Value> {
+    let state = fixture.state.lock().unwrap();
+    state
+        .exec_calls
+        .iter()
+        .zip(&state.exec_stdin)
+        .filter(|(command, _)| command.get(1).is_some_and(|arg| arg == "start"))
+        .map(|(_, stdin)| serde_json::from_slice(stdin).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_restarted_runtime_starts_with_the_same_agent_document_as_the_first() {
+    // Fabric finds an agent's kept state by its name and runtime settings, so a
+    // runtime restarted in the same sandbox must send the first one's document.
+    let fixture = Fixture::start().await;
+    let client = client(&fixture);
+    let sandbox = create_sandbox(&client, "fabric-hermes").await;
+    let fabric = AgentBackend(client.clone());
+    let started = fabric
+        .ensure("agent", &desired_with(&sandbox, &kept_state_config()))
+        .await;
+    assert!(started.error().is_none(), "{:?}", started.error());
+    let agent = started.into_parts().0.unwrap();
+
+    fixture.state.lock().unwrap().fabric_runtimes.clear();
+    let mut planned = fabric.read("agent", &agent, false).await.unwrap().unwrap();
+    planned.remove("running");
+    let restarted = fabric.ensure("agent", &planned).await;
+    assert!(restarted.error().is_none(), "{:?}", restarted.error());
+
+    let [first, restart]: [serde_json::Value; 2] = started_documents(&fixture)
+        .try_into()
+        .expect("one start and one restart");
+    assert_eq!(restart, first);
+    let expected = kept_state_config();
+    assert_eq!(first["metadata"]["name"], "main");
+    assert_eq!(first["runtime"], expected["runtime"]);
+    assert_eq!(first["skills"], expected["skills"]);
+}
+
+#[tokio::test]
+async fn refusals_over_kept_state_or_a_busy_runtime_report_fabrics_code() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture);
+    let sandbox = create_sandbox(&client, "fabric-hermes").await;
+    let fabric = AgentBackend(client.clone());
+    let desired = desired_with(&sandbox, &kept_state_config());
+
+    // Another runtime still owns the agent's kept state, so Fabric starts none.
+    fixture.state.lock().unwrap().state_in_use_starts = 1;
+    let message = fabric
+        .ensure("agent", &desired)
+        .await
+        .error()
+        .unwrap()
+        .to_string();
+    assert!(message.contains("start (state_in_use)"), "{message}");
+    assert!(
+        message.contains("agent runtime is unavailable"),
+        "{message}"
+    );
+    let agent = fabric
+        .ensure("agent", &desired)
+        .await
+        .into_parts()
+        .0
+        .unwrap();
+
+    // Fabric refuses to stop a runtime during a request and leaves it as it
+    // was, so removing the agent fails instead of counting it stopped.
+    let runtime_id = agent["runtime_id"].clone();
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .busy_runtimes
+        .insert(runtime_id.clone());
+    let message = fabric
+        .remove("agent", &agent, false)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("stop (runtime_busy)"), "{message}");
+    assert!(message.contains("agent runtime is unchanged"), "{message}");
+    // After the request, removing the agent stops the runtime.
+    fixture.state.lock().unwrap().busy_runtimes.clear();
+    fabric.remove("agent", &agent, false).await.unwrap();
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .unwrap()
+            .fabric_runtimes
+            .contains_key(&runtime_id)
+    );
 }

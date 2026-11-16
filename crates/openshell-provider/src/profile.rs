@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use nemoclaw_openshell::api::MCP_POLICY;
 use nemoclaw_openshell::search::SearchProvider;
 
 const BINARIES: &str = "nemoclaw.nvidia.com/binaries";
@@ -12,13 +13,15 @@ const CLUSTER_ADDRESSES: &str = "nemoclaw.nvidia.com/cluster-addresses";
 const AUTH_STYLE: &str = "nemoclaw.nvidia.com/auth-style";
 const HEADER_NAME: &str = "nemoclaw.nvidia.com/header-name";
 const SANDBOX_ENV: &str = "nemoclaw.nvidia.com/sandbox-env";
+const ENDPOINTS: &str = "nemoclaw.nvidia.com/endpoints";
 
 /// Each ownership and definition field, and the profile annotation that carries it.
-const FIELDS: [(&str, &str); 11] = [
+const FIELDS: [(&str, &str); 13] = [
     ("owner", OWNER),
     ("generation", GENERATION),
     ("binaries_json", BINARIES),
     ("endpoint", ENDPOINT),
+    ("endpoints_json", ENDPOINTS),
     ("provider_type", PROVIDER_TYPE),
     ("authenticated", AUTHENTICATED),
     ("cluster_source", CLUSTER_SOURCE),
@@ -26,6 +29,7 @@ const FIELDS: [(&str, &str); 11] = [
     ("auth_style", AUTH_STYLE),
     ("header_name", HEADER_NAME),
     ("sandbox_env", SANDBOX_ENV),
+    (MCP_POLICY, "nemoclaw.nvidia.com/mcp-policy"),
 ];
 
 fn annotations(fields: Row) -> Result<std::collections::HashMap<String, String>, ObservationError> {
@@ -207,26 +211,35 @@ pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, Obser
     let name = want["name"]
         .strip_prefix("nemoclaw-api-")
         .ok_or(ObservationError::Query)?;
+    let mcp = want.get(MCP_POLICY).map(String::as_str).unwrap_or_default();
+    let sandbox_env = want
+        .get("sandbox_env")
+        .map(String::as_str)
+        .unwrap_or_default();
     let mut profile = nemoclaw_openshell::api::definition(
         name,
-        &want["endpoint"],
+        &nemoclaw_openshell::api::endpoints(&want["endpoints_json"])?,
         &want["auth_style"],
         &want["header_name"],
+        mcp,
+        sandbox_env,
     )?;
     profile.binaries = binaries(want)?;
-    profile.annotations = annotations(
-        [
-            "owner",
-            "generation",
-            "endpoint",
-            "binaries_json",
-            "auth_style",
-            "header_name",
-        ]
-        .into_iter()
-        .map(|field| (field.into(), want[field].clone()))
-        .collect(),
-    )?;
+    // A default variable name is recorded as no annotation at all.
+    let metadata = [
+        "owner",
+        "generation",
+        "endpoints_json",
+        "binaries_json",
+        "auth_style",
+        "header_name",
+    ]
+    .into_iter()
+    .map(|field| (field.into(), want[field].clone()))
+    .chain((!mcp.is_empty()).then(|| (MCP_POLICY.into(), mcp.into())))
+    .chain((!sandbox_env.is_empty()).then(|| ("sandbox_env".into(), sandbox_env.into())))
+    .collect();
+    profile.annotations = annotations(metadata)?;
     Ok(profile)
 }
 
@@ -293,7 +306,16 @@ fn row(
         );
     }
     let expected = if api {
-        for field in ["endpoint", "auth_style", "header_name"] {
+        if let Some(mcp) = metadata.get(MCP_POLICY) {
+            fields.insert(MCP_POLICY.into(), mcp.clone());
+        }
+        // Empty means the derived variable name.
+        fields.insert(
+            "sandbox_env".into(),
+            metadata.get("sandbox_env").cloned().unwrap_or_default(),
+        );
+        fields.remove("endpoint");
+        for field in ["endpoints_json", "auth_style", "header_name"] {
             fields.insert(
                 field.into(),
                 metadata
@@ -778,6 +800,69 @@ mod tests {
                 Err(ObservationError::BindingMismatch)
             );
         }
+    }
+
+    #[test]
+    fn api_profiles_round_trip_legacy_rest_and_enforced_mcp() {
+        let mut want = native_fields("", true);
+        want.insert("name".into(), "nemoclaw-api-booking".into());
+        want.insert(
+            "endpoints_json".into(),
+            r#"["http://10.42.0.7:8080/mcp/"]"#.into(),
+        );
+        want.insert("auth_style".into(), String::new());
+        want.insert("header_name".into(), String::new());
+
+        let mut legacy = api_definition(&want).unwrap();
+        want.insert(MCP_POLICY.into(), String::new());
+        assert_eq!(api_definition(&want).unwrap(), legacy);
+        assert_eq!(legacy.endpoints[0].protocol, "rest");
+        assert_eq!(legacy.endpoints[0].path, "/mcp/**");
+        legacy.resource_version = 1;
+        legacy.source = "user".into();
+        legacy.scope = "workspace".into();
+        assert!(
+            !row(legacy, "workspace", &want["name"], true, &DockerServices)
+                .unwrap()
+                .contains_key(MCP_POLICY)
+        );
+
+        // A chosen variable name survives the round trip; the default reads back empty.
+        let mut named = want.clone();
+        named.insert("sandbox_env".into(), "NVIDIA_API_KEY".into());
+        let mut chosen = api_definition(&named).unwrap();
+        chosen.resource_version = 1;
+        chosen.source = "user".into();
+        chosen.scope = "workspace".into();
+        assert_eq!(
+            row(chosen, "workspace", &want["name"], true, &DockerServices).unwrap()["sandbox_env"],
+            "NVIDIA_API_KEY"
+        );
+
+        want.insert(MCP_POLICY.into(), r#"{"rules":[]}"#.into());
+        assert!(api_definition(&want).is_err());
+        let mcp = r#"{"rules":[{"allow":{"method":"tools/call","tool":"get_quote"}}]}"#;
+        want.insert(MCP_POLICY.into(), mcp.into());
+        let mut profile = api_definition(&want).unwrap();
+        let [endpoint] = profile.endpoints.as_slice() else {
+            panic!("expected one endpoint");
+        };
+        assert_eq!(endpoint.protocol, "mcp");
+        assert_eq!(endpoint.path, "/mcp/");
+        assert_eq!(endpoint.allowed_ips, ["10.42.0.7/32"]);
+        assert_eq!(
+            endpoint.enforcement(),
+            proto::NetworkEnforcementMode::Enforce
+        );
+        assert_eq!(endpoint.access(), proto::NetworkAccessPreset::Unspecified);
+        assert_eq!(endpoint.rules.len(), 1);
+        profile.resource_version = 1;
+        profile.source = "user".into();
+        profile.scope = "workspace".into();
+        let read = |profile| row(profile, "workspace", &want["name"], true, &DockerServices);
+        assert_eq!(read(profile.clone()).unwrap()[MCP_POLICY], mcp);
+        profile.endpoints[0].rules.clear();
+        assert_eq!(read(profile), Err(ObservationError::BindingMismatch));
     }
 
     #[test]

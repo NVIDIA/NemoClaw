@@ -55,9 +55,11 @@ async fn api_credentials_reject_invalid_bindings_before_mutation() {
     let fixture = Fixture::start().await;
     let root = credentials(&fixture.endpoint);
     for variables in [
-        ["-var=api_endpoint=https://*.example.com/mcp"].as_slice(),
-        &["-var=api_endpoint=https://user:password@booking.example.com/mcp"],
-        &["-var=api_endpoint=https://booking.example.com/*"],
+        [r#"-var=api_endpoints=["https://*.example.com/mcp"]"#].as_slice(),
+        &[r#"-var=api_endpoints=["https://user:password@booking.example.com/mcp"]"#],
+        &[r#"-var=api_endpoints=["https://booking.example.com/*"]"#],
+        &[r#"-var=api_endpoints=["https://booking.example.com/mcp", "https://*.example.com/mcp"]"#],
+        &["-var=api_endpoints=[]"],
         &["-var=auth_style=oauth"],
         &["-var=auth_style=header"],
         &["-var=auth_style=header", "-var=header_name=Bad Header"],

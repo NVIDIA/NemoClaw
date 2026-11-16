@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{AgentTools, ConfigError, Document, NamedSandbox, SecretRef};
+use super::{ConfigError, Document, NamedSandbox, SecretRef};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,12 +16,17 @@ pub enum Integration {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// A key-authenticated HTTP API. OpenShell injects the key into requests to the endpoint's host, port and path subtree from the harness's executables.
+/// A key-authenticated HTTP API. OpenShell injects the key into requests to each endpoint's host, port and path subtree from the harness's executables.
 pub struct Api {
-    /// The API's HTTPS URL.
-    pub endpoint: String,
+    #[schemars(length(min = 1))]
+    /// The API's HTTPS URLs. One key reaches each URL's host, port and path subtree.
+    pub endpoints: Vec<String>,
     /// Host environment reference holding the API key.
     pub credential: SecretRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String")]
+    /// Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to NEMOCLAW_API_<registration>_KEY.
+    pub sandbox_env: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ApiAuthStyle")]
     /// How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName.
@@ -242,15 +247,15 @@ pub use nemoclaw_openshell::search::{SearchProvider, search_provider_name};
 impl RuntimeWebSearch {
     pub(crate) fn validate<'a>(
         &self,
-        agents: impl Iterator<Item = (&'a str, Option<&'a AgentTools>)>,
+        agents: impl Iterator<Item = &'a str>,
     ) -> Result<(), ConfigError> {
-        let agents: std::collections::BTreeMap<_, _> = agents.collect();
+        let agents: std::collections::BTreeSet<_> = agents.collect();
         let mut names = std::collections::BTreeSet::new();
         if self.agent_refs.is_empty()
             || self
                 .agent_refs
                 .iter()
-                .any(|name| !names.insert(name) || !agents.contains_key(name.as_str()))
+                .any(|name| !names.insert(name) || !agents.contains(name.as_str()))
         {
             return Err(ConfigError::new(
                 "web search requires unique references to configured agents",

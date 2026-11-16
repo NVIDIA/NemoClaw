@@ -155,6 +155,30 @@ NVIDIA_INFERENCE_API_KEY=... \
 
 Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deployment` with the same bundle, whether or not the scenario passed.
 
+
+### DGX Station on Colossus
+
+Station runs only through a manual **Live / HCL** dispatch. It does not run on PRs or `v1` pushes; [#14346](https://github.com/NVIDIA/NemoClaw/issues/14346) owns trigger and gating policy. Dispatch the candidate branch:
+
+```bash
+gh workflow run hcl-e2e.yml --ref <branch> -f target=dgx-station -f hosted=false
+```
+
+Build, inference, and cleanup failures fail that manual run. An offline runner leaves its hardware job queued.
+
+Colorunner must prepare Ubuntu 24.04 ARM64, GB300, Docker GPU access, and the containerd image store. CI does not provision the host or manage its lease.
+The shared HCL workflow binds the existing GTC Station example to its pinned Nemotron 3.5 model/runtime and candidate images, fresh UID, state, and nonoverlapping subnet. The scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup.
+
+Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>/`. Published reports contain outcomes and candidate/UID/case identity only.
+Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
+To recover a failed run, set `run` to its retained directory and use the original executables:
+
+```bash
+"$run/bundle/bin/nemoclaw" destroy --output json --progress off --state-dir "$run/deployment"
+NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
+  "$run/e2e" hcl_live::docker_cleanup --exact --ignored --nocapture
+```
+
 ## Spark and Fabric
 
 The `docker-openclaw-vllm-shared` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
@@ -265,7 +289,7 @@ Before apply, the `tests/e2e/hcl/model` module runs a stub model with the bundle
 It lists one model and answers every chat completion with the same reply, streamed when the request asks, and refuses any request without that key.
 Each skill's description is a marker, and the reply ends with the name of each skill whose marker the request holds.
 The `tests/e2e/hcl/volume` module also creates each sandbox's two skills volumes, named for the run's UID, and writes their skills, owned by the agent image's user.
-Each agent's `skills.paths` lists a writable folder of skills on one volume and a folder that is one skill on another, as [Skills on a Mounted Volume](../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes; OpenClaw's skill volume is read-only and Hermes's writable, OpenClaw's folder holds two skills and a file that isn't one, and Hermes's folder is empty.
+Each agent's `skills.directories` lists a writable folder of skills on one volume and one skill on another, and refuses duplicate names, as [Skills on a Mounted Volume](../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes; OpenClaw's skill volume is read-only and Hermes's writable, OpenClaw's folder holds two skills and a file that isn't one, and Hermes's folder is empty.
 Apply must start both agents with them, and report each interface's port, sign-in, and token file.
 A harness offers the model the skills it finds, so each reply below must name the skills on that agent's volumes: `notes` for Hermes, and `digest`, `review`, and `translate` for OpenClaw.
 Whether the agent loads and follows a skill is not checked live; Fabric's tests check what each harness loads.

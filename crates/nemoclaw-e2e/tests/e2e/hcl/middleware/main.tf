@@ -3,7 +3,7 @@
 
 # Observe the external fixture after sandbox requests, and expose its bound URLs.
 terraform {
-  required_version = "= 1.12.12"
+  required_version = "= 1.13.9"
 }
 
 variable "context" {

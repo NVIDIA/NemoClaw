@@ -95,7 +95,7 @@ jobs:
           cargo images fetch
           mkdir candidate-image
           docker buildx create --name brev --driver docker-container \
-            --driver-opt image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+            --driver-opt image=moby/buildkit@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb
           docker buildx bake --builder brev openclaw \
             --set 'openclaw.output=type=oci,dest=candidate-image/image.tar' \
             --metadata-file candidate-image/metadata.json

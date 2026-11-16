@@ -264,7 +264,10 @@ fn targets_with_plans(
                         "generation".into(),
                         generation(generations, "provider")?.into(),
                     ),
-                    ("endpoint".into(), api.api.endpoint.clone()),
+                    (
+                        "endpoints_json".into(),
+                        serde_json::to_string(&api.api.endpoints).expect("endpoint list"),
+                    ),
                     ("credential_env".into(), api.api.credential.env.clone()),
                 ]
                 .into(),
@@ -276,6 +279,9 @@ fn targets_with_plans(
             }
             if let Some(header) = &api.api.header_name {
                 target.values.insert("header_name".into(), header.clone());
+            }
+            if let Some(name) = &api.api.sandbox_env {
+                target.values.insert("sandbox_env".into(), name.clone());
             }
             if let Some(previous) = result.iter().find(|t| t.address == target.address) {
                 if previous != &target {

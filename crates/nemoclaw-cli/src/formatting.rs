@@ -316,7 +316,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     let mut output = if planned {
         if !result.deferred.is_empty() {
             format!(
-                "{} incomplete · {} known resource changes\n",
+                "{}: {} known resource changes; some checks wait for apply\n",
                 context.operation,
                 result.changes.len()
             )
@@ -551,6 +551,15 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
+        if context.operation == "Plan"
+            && !result.deferred.is_empty()
+            && let Some(input) = &context.input
+        {
+            output.push_str(&format!(
+                "Next: nemoclaw apply {}\n",
+                terminal_text(&shell_word(&input.display().to_string()))
+            ));
+        }
     }
     if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
         output.push_str(&interface_access(result, selected));
@@ -585,17 +594,21 @@ fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String 
 
 /// The command that invokes each agent whose runtime the state records, under
 /// the gateway and workspace selection, which `selected` records printing. A
-/// plan lists the runtimes the last apply left, which its changes may replace.
+/// plan lists the runtimes the last apply left, which its changes may replace,
+/// and prints nothing when the state records none, such as before any apply.
 fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool) -> String {
+    let invocable = result
+        .agents
+        .values()
+        .any(|agent| agent.runtime_id.is_some());
+    if planned && !invocable {
+        return String::new();
+    }
     let mut output = String::from(if planned {
         "\nAgents, as last applied:\n"
     } else {
         "\nAgents:\n"
     });
-    let invocable = result
-        .agents
-        .values()
-        .any(|agent| agent.runtime_id.is_some());
     if invocable && let Some(connection) = &result.connection {
         output.push_str(&gateway_selection(connection));
         *selected = true;
@@ -1029,6 +1042,26 @@ mod tests {
         })
     }
 
+    /// Before any apply records a runtime, a plan lists no agents as last
+    /// applied; apply still says which agent has none.
+    #[test]
+    fn plan_omits_agents_until_a_runtime_is_recorded() {
+        let agents = json!({"assistant": {"agent": "main"}});
+        let plan = render(
+            &["nemoclaw", "plan", "deployment.yaml"],
+            json!({"outcome": "planned", "changes": [], "agents": agents}),
+        );
+        assert!(!plan.contains("assistant"), "{plan}");
+        let apply = render(
+            &["nemoclaw", "apply", "deployment.yaml"],
+            json!({"outcome": "succeeded", "changes": [], "agents": agents}),
+        );
+        assert!(
+            apply.contains("\nAgents:\n  assistant: agent main, no runtime recorded\n"),
+            "{apply}"
+        );
+    }
+
     /// Plan and apply print the command that invokes each agent with a recorded
     /// runtime, under this deployment's gateway and workspace selection, and
     /// say which agent has none; JSON carries the same facts under `agents`.
@@ -1038,6 +1071,11 @@ mod tests {
         for (command, outcome) in [("plan", "planned"), ("apply", "succeeded")] {
             let result = json!({"outcome": outcome, "changes": [], "connection": connection, "agents": agents()});
             let text = render(&["nemoclaw", command, "deployment.yaml"], result.clone());
+            assert_eq!(
+                text.contains("Agents, as last applied:"),
+                command == "plan",
+                "{command}: {text}"
+            );
             let lines: Vec<String> = text
                 .lines()
                 .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
@@ -1313,7 +1351,7 @@ mod tests {
         assert!(text.contains("No resource changes planned."), "{text}");
         assert!(text.contains("Unverified checks:"), "{text}");
         assert!(text.contains("Service readiness is checked during apply."));
-        assert!(!text.contains("Plan incomplete"));
+        assert!(!text.contains("some checks wait for apply"));
         assert!(!text.contains('\u{1b}'));
         let output: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "model.yaml", "-o", "json"],
@@ -1325,7 +1363,7 @@ mod tests {
         let mut blocked = result;
         blocked["deferred"] = json!(["Gateway inventory unavailable"]);
         let text = render(&["nemoclaw", "plan", "model.yaml"], blocked.clone());
-        assert!(text.contains("Plan incomplete"));
+        assert!(text.contains("some checks wait for apply"));
         assert!(text.contains("Unverified checks:"));
         let output: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "model.yaml", "-o", "json"],
@@ -1340,9 +1378,10 @@ mod tests {
         let result =
             json!({"outcome":"planned","changes":[],"deferred":["Gateway inventory unavailable"]});
         let text = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
-        assert!(text.contains("Plan incomplete"));
+        assert!(text.contains("some checks wait for apply"));
         assert!(!text.contains("No resource changes planned"));
         assert!(text.contains("Gateway inventory unavailable"));
+        assert!(text.contains("Next: nemoclaw apply spark.yaml"), "{text}");
         let json: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "spark.yaml", "-o", "json"],
             result,

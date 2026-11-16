@@ -6,6 +6,7 @@
 //! recreated in place; missing registrations replace the pair. Failed API
 //! creates retain the established profile or registration binding for recovery.
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
+use nemoclaw_openshell::api::MCP_POLICY;
 use nemoclaw_openshell::pairs::{
     api_rows, inference_provider_type, inference_rows, web_search_rows,
 };
@@ -42,7 +43,7 @@ fn rows(kind: &str, row: &Row) -> Result<(Row, Row), ObservationError> {
 fn registration_fields(kind: &str) -> &'static [&'static str] {
     match kind {
         INFERENCE => &["endpoint", "credential_env", "credential_source"],
-        API => &["endpoint", "credential_env"],
+        API => &["endpoints_json", "credential_env"],
         _ => &["credential_env"],
     }
 }
@@ -51,7 +52,8 @@ fn registration_fields(kind: &str) -> &'static [&'static str] {
 /// the plan shows drift.
 fn registration_marker(kind: &str) -> &'static str {
     match kind {
-        INFERENCE | API => "endpoint",
+        INFERENCE => "endpoint",
+        API => "endpoints_json",
         _ => "credential_env",
     }
 }
@@ -66,13 +68,19 @@ fn validate(kind: &str, desired: &Row) -> Result<(), Error> {
     }
     match kind {
         API => {
-            nemoclaw_openshell::api::definition(
-                value(desired, "name"),
-                value(desired, "endpoint"),
-                value(desired, "auth_style"),
-                value(desired, "header_name"),
-            ).map_err(|_| Error::Conflict(
-                "API credentials require an HTTP(S) endpoint and bearer or header authentication",
+            nemoclaw_openshell::api::endpoints(value(desired, "endpoints_json"))
+                .and_then(|endpoints| {
+                    nemoclaw_openshell::api::definition(
+                        value(desired, "name"),
+                        &endpoints,
+                        value(desired, "auth_style"),
+                        value(desired, "header_name"),
+                        value(desired, MCP_POLICY),
+                        value(desired, "sandbox_env"),
+                    )
+                })
+                .map_err(|_| Error::Conflict(
+                "API credentials require one or more valid HTTP(S) endpoints and an authentication style. If set, MCP policy requires exactly one endpoint, a canonical endpoint path and rules with at most one tool selector each",
             ))?;
             if value(desired, "credential_env").is_empty() {
                 return Err(Error::Conflict(
@@ -114,11 +122,13 @@ pub(crate) fn validate_api(
 ) -> Result<(), std::borrow::Cow<'static, str>> {
     if [
         "name",
-        "endpoint",
+        "endpoints_json",
+        "sandbox_env",
         "auth_style",
         "header_name",
         "credential_env",
         "binaries_json",
+        MCP_POLICY,
     ]
     .iter()
     .any(|field| unknown.contains(field))
@@ -189,7 +199,11 @@ pub(crate) async fn read(
     }
     match (profile, registration) {
         (Some(profile), Some(registration)) => {
-            if kind == API && value(&profile, "endpoint") != value(&registration, "endpoint") {
+            if kind == API
+                && ["endpoints_json", "sandbox_env"]
+                    .iter()
+                    .any(|field| value(&profile, field) != value(&registration, field))
+            {
                 return Err(ObservationError::BindingMismatch);
             }
             // Both halves must be the same incarnation; the resource reports
@@ -209,7 +223,7 @@ pub(crate) async fn read(
                 value(&profile, "binaries_json").into(),
             );
             if kind == API {
-                for field in ["auth_style", "header_name"] {
+                for field in ["auth_style", "header_name", "sandbox_env", MCP_POLICY] {
                     observed.insert(field.into(), value(&profile, field).into());
                 }
             }

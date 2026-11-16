@@ -290,53 +290,5 @@ fn single_sandbox_examples_offer_existing_sdk_values_without_changing_them() {
         );
         covered += 1;
     }
-    assert_eq!(covered, 41);
-}
-
-#[test]
-fn reference_scoped_execution_questions_follow_the_selected_harness_only() {
-    let capabilities = Capabilities::available();
-    let mut value = example("fabric-openclaw.yaml").supplied().clone();
-    let mut harness = value["spec"]["sandboxes"]["assistant"]["harness"].clone();
-    harness["execution"] = json!({"timeoutSeconds":120});
-    value["spec"]["harnesses"] = json!({"unused":harness});
-    let path = "/spec/harnesses/unused/execution/timeoutSeconds";
-    let state = JourneyDefinition::new(
-        "inline",
-        PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap(),
-    )
-    .ask([JourneyScope::DeploymentFields])
-    .start(&capabilities)
-    .unwrap();
-    assert!(
-        state
-            .resolve(&capabilities)
-            .unwrap()
-            .question(path)
-            .is_none()
-    );
-    let mut state = state;
-    assert!(state.answer(&capabilities, path, Some(json!(240))).is_err());
-
-    value["spec"]["sandboxes"]["assistant"]
-        .as_object_mut()
-        .unwrap()
-        .remove("harness");
-    value["spec"]["sandboxes"]["assistant"]["harnessRef"] = json!("unused");
-    let mut state = JourneyDefinition::new(
-        "reference",
-        PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap(),
-    )
-    .ask([JourneyScope::DeploymentFields])
-    .start(&capabilities)
-    .unwrap();
-    assert!(
-        state
-            .resolve(&capabilities)
-            .unwrap()
-            .question(path)
-            .is_some()
-    );
-    state.answer(&capabilities, path, Some(json!(240))).unwrap();
-    assert_eq!(state.values().pointer(path), Some(&json!(240)));
+    assert_eq!(covered, 43);
 }

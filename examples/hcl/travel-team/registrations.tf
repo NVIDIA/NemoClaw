@@ -49,15 +49,36 @@ resource "openshell_web_search" "research" {
   binaries    = local.search_binaries
 }
 
-# The booking service's API key, attached to the buyer only. OpenShell puts it
-# into a request in place of its placeholder, so the agent never sees the key.
-# Hermes doesn't send the placeholder to MCP servers yet, so the service
-# receives no key until it does (NVIDIA/NemoClaw#14417).
+locals {
+  booking_rules = concat(
+    [for method in ["initialize", "notifications/initialized", "tools/list"] : { method = method, tool = null }],
+    [for tool in var.bookings.tools : { method = "tools/call", tool = tool }],
+  )
+}
+
+# The booking service's credential and MCP policy, attached to the buyer only.
 resource "openshell_api" "bookings" {
   gateway        = local.gateway
   workspace      = openshell_workspace.team.ref
   name           = "bookings"
-  endpoint       = var.bookings.url
+  endpoints      = [var.bookings.url]
   credential_env = var.bookings.credential_env
   binaries       = local.binaries.buyer
+
+  mcp {
+    dynamic "rules" {
+      for_each = local.booking_rules
+      content {
+        allow {
+          method = rules.value.method
+          dynamic "tool" {
+            for_each = rules.value.tool == null ? [] : [rules.value.tool]
+            content {
+              value = tool.value
+            }
+          }
+        }
+      }
+    }
+  }
 }

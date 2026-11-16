@@ -181,10 +181,10 @@ fn provider_row(
         {
             return Err(ObservationError::BindingMismatch);
         }
-        let endpoint = provider
+        let endpoints = provider
             .config
-            .get("NEMOCLAW_API_ENDPOINT")
-            .filter(|endpoint| !endpoint.is_empty())
+            .get(nemoclaw_openshell::api::ENDPOINTS_CONFIG)
+            .filter(|endpoints| !endpoints.is_empty())
             .ok_or(ObservationError::Incomplete)?
             .clone();
         let credential = metadata
@@ -193,9 +193,16 @@ fn provider_row(
             .filter(|credential| !credential.is_empty())
             .ok_or(ObservationError::Incomplete)?
             .clone();
+        // OpenShell reports credential names with their values redacted. The
+        // one name is the variable sandboxes see; empty means the default.
+        let sandbox_env = match provider.credentials.keys().collect::<Vec<_>>()[..] {
+            [key] if *key != nemoclaw_openshell::api::credential_key(name) => key.clone(),
+            _ => String::new(),
+        };
         let mut row = base(provider.metadata, name, removing)?;
         row.extend([
-            ("endpoint".into(), endpoint),
+            ("sandbox_env".into(), sandbox_env),
+            ("endpoints_json".into(), endpoints),
             ("credential_env".into(), credential),
             ("provider_type".into(), "api".into()),
             ("profile_name".into(), provider.r#type),
@@ -471,6 +478,7 @@ fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
 
 /// OpenShell objects and their planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
+    use nemoclaw_openshell::api::MCP_POLICY;
     use nemoclaw_tofu::Definition;
     [
         Definition::new("workspace", &["name", "owner", "generation"], &[]),
@@ -481,27 +489,33 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "name",
                 "owner",
                 "generation",
-                "endpoint",
+                "endpoints_json",
                 "credential_env",
                 "binaries_json",
                 "auth_style",
                 "header_name",
+                "sandbox_env",
+                MCP_POLICY,
             ],
             &["credential_env", "binaries_json"],
         )
         .optional(&[
-            "endpoint",
+            "endpoints_json",
             "credential_env",
             "binaries_json",
             "auth_style",
             "header_name",
+            "sandbox_env",
+            MCP_POLICY,
         ])
+        // Omission selects the default, not the previous value.
         .reset_when_omitted(&[
-            "endpoint",
+            "endpoints_json",
             "credential_env",
             "binaries_json",
             "auth_style",
             "header_name",
+            "sandbox_env",
         ])
         .validate_inputs(composite::validate_api)
         .replaces(binaries_changes)

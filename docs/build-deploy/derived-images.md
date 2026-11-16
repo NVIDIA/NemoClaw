@@ -34,9 +34,9 @@ Add files anywhere else; prefer paths outside `/sandbox`, which OpenShell manage
 
 ## Use Your Additions
 
-Connect files added to the image through the selected harness configuration; adding them to the image alone does not make the agent use them.
+Connect files added to the image through the agent's configuration; adding them to the image alone does not make the agent use them.
 
-- **Skills:** point the harness configuration's `skills` paths at them, as in [skills on a mounted volume](../agents-inference/agents.md#skills-on-a-mounted-volume), using the path inside the image instead of a mount.
+- **Skills:** list them in the agent's `skills.directories`, as a `folder` of skills such as `/opt/example/skills` or as a single `skill`, the way [skills on a mounted volume](../agents-inference/agents.md#skills-on-a-mounted-volume) does, using the path inside the image instead of a mount.
 - **Tools:** binaries on the agent's `PATH` are available to harnesses that run commands, within the sandbox policy.
 - **Network access** for your tools still comes from the sandbox policy: [grants](../security/sandbox-network.md) decide which hosts they can reach.
 

@@ -107,6 +107,9 @@ fn supplied_document_with_explicit_optional_omissions_has_no_preview_questions()
         "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
         "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
         "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/agents",
+        "adapter:nvidia.fabric.openclaw:/plugins",
+        "adapter:nvidia.fabric.openclaw:/tools",
     ]);
     let tree = journey.print_tree(&Capabilities::available()).unwrap();
 

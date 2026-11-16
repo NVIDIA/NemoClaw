@@ -2,10 +2,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 ARG BUN_IMAGE=oven/bun:1.4.4-slim@sha256:1846adf22496bd711036aae8be147e57bdebbaea2e5264e3e0b5af1db187d9a4
-ARG NODE_IMAGE=node:24.22.2-trixie-slim@sha256:0820eaa85e07d0490446dd01d14707e17e6108a36988cf374899cd057eb3812d
+ARG NODE_IMAGE=node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc
 ARG PYTHON_IMAGE=python:3.14.10-slim-trixie@sha256:af8a5aa14780025dbfbcfbc81bd8a91ebd87711dd5b0f48ed71090949dd7cb1d
-ARG RUST_IMAGE=rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd3dacff4d457ca7cccd781e02297cc6
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490
+ARG RUST_IMAGE=rust:1.100.0-slim-trixie@sha256:e9d95b74296f7126a83ae3d041aeaba1ff4c478f13abc5cc034fcf7c131c3d4a
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85
 # The remote sources this image copies, such as the Fabric source every harness
 # installs, are pinned under imageSources.fabric in versions.json; Bake passes
 # them as the sources context, which `cargo images fetch` fills.
@@ -14,7 +14,7 @@ ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:70e88573161a9248cfe992c069f638085ac066278e03f11a46bcbd115f38e3fc
 # Hermes Agent's release image for the pinned Hermes source; only its built
 # dashboard and TUI bundle are copied. Move it with that source, not on its own.
-ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.22.5@sha256:9c5561579f3ffdf333401797094ac3a743738d6c25d40f4331c7bf77b694238d
+ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.22.7@sha256:e6d81ae52ebf6a43efa529701405509f20054ba818f179ddd748bed4f8af584c
 # The harness stage the catalog and labeled stages build on.
 ARG STAGE=generic
 FROM ${RUST_IMAGE} AS rust
@@ -36,7 +36,8 @@ USER root
 # sandboxes; Docker and Podman use the image's own user, so one image fits all.
 # OpenShift instead runs sandboxes as the namespace's UID, which must be able
 # to read /sandbox: OpenShell copies it to a private workspace volume.
-RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 iproute2 nftables ca-certificates \
+# Node.js, which the JavaScript harnesses copy in, links libstdc++ and libatomic.
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 libatomic1 iproute2 nftables ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
@@ -115,7 +116,7 @@ RUN printf '%s\n' '{"nvidia.fabric.openclaw": {"files": ["/app"], "binaries": ["
 USER node
 
 FROM base AS hermes-assets
-# Hermes Agent release v0.22.5, which includes its native Relay integration.
+# Hermes Agent release v0.22.7, which includes its native Relay integration.
 COPY --from=sources /hermes.tar.gz /sources/hermes.tar.gz
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
 RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
@@ -248,8 +249,8 @@ COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /repo/image
 COPY ruff.toml /repo/
 COPY image/ /repo/image/
-RUN --mount=type=cache,target=/root/.cache/uv uv tool run --from ruff==0.16.7 ruff check /repo \
-    && uv tool run --from ruff==0.16.7 ruff format --check /repo
+RUN --mount=type=cache,target=/root/.cache/uv uv tool run --from ruff==0.17.5 ruff check /repo \
+    && uv tool run --from ruff==0.17.5 ruff format --check /repo
 
 FROM common-wheels AS unit-tests
 COPY image/fabric/ /catalog/image/fabric/

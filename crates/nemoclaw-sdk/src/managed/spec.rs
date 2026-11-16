@@ -80,20 +80,6 @@ pub enum Gpus {
     Devices(Vec<String>),
 }
 
-/// The driver of the Docker device request for these GPUs.
-///
-/// One GPU uses the Docker provider's `gpus = "device=ID"`, which leaves the
-/// driver empty, as `docker run --gpus` does. Docker provider v4.6.0 reads a
-/// list in `gpus` as one device and a count
-/// (https://github.com/kreuzwerker/terraform-provider-docker/issues/1019), so several GPUs
-/// use its `device_requests` block instead, whose driver defaults to `cdi`
-/// and must name `nvidia`. The block's `device_ids` is a set, so Docker
-/// receives the IDs in the provider's order: a check of a running service's
-/// `DeviceIDs` must compare them as a set.
-pub(crate) fn gpu_device_driver(devices: &[String]) -> &'static str {
-    if devices.len() == 1 { "" } else { "nvidia" }
-}
-
 /// Launch settings when the image owns its entrypoint, command, and health check.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,8 +93,6 @@ pub struct ImageLaunch {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub ulimits: std::collections::BTreeMap<String, i64>,
 }
-/// CFS period for container CPU limits, matching kubelet and `docker --cpus`.
-pub(crate) const CPU_PERIOD_MICROS: u64 = 100_000;
 /// The supervisor every managed vLLM and Ollama image runs.
 pub const RUNTIME_ENTRYPOINT: &str = "/usr/local/bin/nemoclaw-runtime";
 /// Where a runtime keeps its data, such as downloaded models.
@@ -121,13 +105,6 @@ pub const RUNTIME_ULIMITS: [(&str, i64); 2] = [("memlock", -1), ("stack", 67_108
 /// Shared memory a runtime gets unless its service sets its own.
 pub fn default_shared_memory_bytes() -> u64 {
     crate::services::installers::vllm::ServiceContainer::resources(None).shared_memory_bytes
-}
-/// The kernel's minimum CFS quota; kubelet raises smaller CPU limits to it.
-const MIN_CPU_QUOTA_MICROS: u64 = 1000;
-
-/// CFS quota per [`CPU_PERIOD_MICROS`] for a CPU limit in millicores.
-pub(crate) fn cpu_quota_micros(limit_millis: u32) -> u64 {
-    (u64::from(limit_millis) * CPU_PERIOD_MICROS / 1000).max(MIN_CPU_QUOTA_MICROS)
 }
 /// Data source computing a Docker gateway container's launch.
 pub const GATEWAY_RUNTIME_DATA_SOURCE: &str = "gateway_runtime";
@@ -705,8 +682,7 @@ impl Spec {
             host["Memory"] = json!(process.memory_bytes);
             host["MemorySwap"] = json!(process.memory_bytes);
             if let Some(limit) = process.cpu_limit_millis {
-                host["CpuPeriod"] = json!(CPU_PERIOD_MICROS);
-                host["CpuQuota"] = json!(cpu_quota_micros(limit));
+                host["NanoCpus"] = json!(u64::from(limit) * 1_000_000);
             }
             match &process.gpus {
                 Gpus::None => {}
@@ -714,9 +690,11 @@ impl Spec {
                     host["DeviceRequests"] =
                         json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
                 }
+                // The Docker provider's `gpus = "device=ID[,ID...]"` leaves the
+                // driver empty and keeps the IDs in order, as `docker run --gpus` does.
                 Gpus::Devices(devices) => {
                     host["DeviceRequests"] = json!([{
-                        "Driver": gpu_device_driver(devices),
+                        "Driver": "",
                         "DeviceIDs": devices,
                         "Capabilities": [["gpu"]],
                     }]);

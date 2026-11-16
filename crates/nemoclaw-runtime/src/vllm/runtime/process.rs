@@ -258,6 +258,44 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn vllm_keeps_its_compile_and_autotune_caches_on_the_model_volume() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        // A fake vLLM exits successfully only when its caches are on /data,
+        // the retained model volume.
+        crate::executable::write_executable(
+            &bin.join("python3"),
+            "#!/bin/sh\ntest \"$VLLM_CACHE_ROOT\" = /data/vllm-cache || { echo \"VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT\"; exit 1; }\ntest \"$VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR\" = /data/vllm-cache/flashinfer-autotune || { echo \"VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR=$VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR\"; exit 1; }\n",
+        );
+        let mut environment = super::super::recipe::serving_environment();
+        environment.insert("PATH".into(), bin.into_os_string());
+        let prepared = PreparedModel {
+            model: root.path().join("model"),
+            environment,
+        };
+        let (mut command, _, output) = launch(
+            &crate::fixture(),
+            &prepared,
+            121 * crate::hardware::GIB,
+            None,
+        )
+        .unwrap();
+        let mut child = command.spawn().unwrap();
+        // The command keeps the output pipe's writer open until dropped.
+        drop(command);
+        let status = child.wait().await.unwrap();
+        let result = output
+            .explain(if status.success() {
+                Ok(())
+            } else {
+                Err(Error::Exited(None))
+            })
+            .await;
+        assert!(result.is_ok(), "{result:?}");
+    }
+
     /// Run `script` as a fake vLLM under the supervisor until it exits, and
     /// return the error the runtime reports and the bearer key, if any.
     async fn exit_error(script: &str, bearer: bool) -> (String, Option<String>) {

@@ -3,6 +3,7 @@
 //! Inputs nextest cannot discover from test executable metadata.
 
 use super::*;
+use std::collections::BTreeMap;
 
 pub(super) fn package_inputs(tools: &Tools<'_>) -> Result<()> {
     let output = fs::File::create(".build/ci/lifecycle-inputs.tar")?;
@@ -20,25 +21,28 @@ pub(super) fn package_inputs(tools: &Tools<'_>) -> Result<()> {
         std::env::current_exe()?,
         Path::new(".build/ci").join(nemoclaw_build_executable("nemoclaw-build")),
     )?;
-    // The lifecycle step puts the fake ssh first on PATH where Unix sockets
+    // Tests from other packages start these from NEMOCLAW_TEST_FIXTURES, and
+    // the lifecycle step puts the fake ssh first on PATH where Unix sockets
     // are missing. The providers need no copy here: the bundle ships them, and
     // nextest archives each provider package's executables with its tests.
-    archive.append_path(
-        Path::new("target/debug").join(nemoclaw_build_executable("nemoclaw-fixture-ssh")),
-    )?;
+    for name in [
+        "nemoclaw-fixture-control",
+        "nemoclaw-fixture-provider",
+        "nemoclaw-fixture-ssh",
+        "nemoclaw-fixture-ssh-simulator",
+    ] {
+        archive.append_path(Path::new("target/debug").join(nemoclaw_build_executable(name)))?;
+    }
     archive.finish()?;
     Ok(())
 }
 
 /// Each test layer's archive, which only that layer's jobs download, and the
-/// nextest profiles whose test binaries it holds. Nextest archives a package's
-/// executables only with one of its test binaries, so the contract archive
-/// also selects the fixture tests, whose packages hold the executables the
-/// contract tests start. Only Linux runs the live suites, from their own
-/// archive instead of compiling.
+/// nextest profiles whose test binaries it holds. Only Linux runs the live
+/// suites, from their own archive instead of compiling.
 pub(super) fn layers(platform: &str) -> Vec<(&'static str, &'static [&'static str])> {
     let mut layers: Vec<(&'static str, &'static [&'static str])> = vec![
-        ("contract", &["contract", "fixtures"]),
+        ("contract", &["contract"]),
         ("integration", &["integration"]),
     ];
     if platform.starts_with("linux_") {
@@ -52,15 +56,22 @@ pub(super) fn file(layer: &str) -> PathBuf {
     Path::new(".build/ci").join(format!("{layer}.tar.zst"))
 }
 
+/// Where `ci archive` copies the e2e test executable, which the hosted and
+/// GPU HCL case jobs run without the rest of the live archive.
+pub(super) const E2E: &str = ".build/ci/e2e";
+
+/// The e2e test binary's nextest ID.
+const E2E_BINARY: &str = "nemoclaw-e2e::e2e";
+
 /// Select from nextest's resolved profiles rather than maintaining a second
-/// suite list.
+/// suite list. Returns the filterset and the path of each selected test
+/// binary, from nextest's listing.
 pub(super) fn selected_binaries(
     configure: &impl Fn(&mut Command),
     layer: &str,
     profiles: &[&str],
-) -> Result<String> {
+) -> Result<(String, BTreeMap<String, PathBuf>)> {
     use serde::Deserialize;
-    use std::collections::{BTreeMap, BTreeSet};
 
     #[derive(Deserialize)]
     struct Listing {
@@ -69,6 +80,8 @@ pub(super) fn selected_binaries(
     }
     #[derive(Deserialize)]
     struct Suite {
+        #[serde(rename = "binary-path")]
+        binary_path: Option<PathBuf>,
         testcases: BTreeMap<String, Test>,
     }
     #[derive(Deserialize)]
@@ -87,7 +100,7 @@ pub(super) fn selected_binaries(
         Mismatch,
     }
 
-    let mut binaries = BTreeSet::new();
+    let mut binaries = BTreeMap::new();
     for profile in profiles {
         let mut command = cargo();
         configure(&mut command);
@@ -122,11 +135,29 @@ pub(super) fn selected_binaries(
                         .values()
                         .any(|test| matches!(test.filter_match.status, MatchStatus::Matches))
                 })
-                .map(|(id, _)| format!("binary_id(={id})")),
+                .map(|(id, suite)| (id, suite.binary_path)),
         );
     }
     if binaries.is_empty() {
         return Err(format!("no {layer} test binaries were selected").into());
     }
-    Ok(binaries.into_iter().collect::<Vec<_>>().join(" | "))
+    let filter = binaries
+        .keys()
+        .map(|id| format!("binary_id(={id})"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let paths = binaries
+        .into_iter()
+        .filter_map(|(id, path)| Some((id, path?)))
+        .collect();
+    Ok((filter, paths))
+}
+
+/// Copy the e2e test executable to [`E2E`] when the live archive holds it.
+/// The workflow's upload fails when it is missing.
+pub(super) fn copy_e2e(paths: &BTreeMap<String, PathBuf>) -> Result<()> {
+    if let Some(executable) = paths.get(E2E_BINARY) {
+        fs::copy(executable, E2E)?;
+    }
+    Ok(())
 }

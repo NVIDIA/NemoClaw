@@ -13,7 +13,7 @@ use nemoclaw_sdk::{
     CancellationToken, EnvironmentSecrets, Error, config::Document, discovery::DiscoveryQuery,
 };
 use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
-use std::{collections::VecDeque, io, time::Duration};
+use std::{collections::VecDeque, io, path::Path, time::Duration};
 
 struct TerminalGuard {
     brand: Option<BrandImage>,
@@ -53,6 +53,7 @@ pub(crate) async fn run(
     state: JourneyState,
     cancel: &CancellationToken,
     discover: bool,
+    output: &Path,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let mut guard = TerminalGuard::enter()?;
     let area = crossterm::terminal::size().map(|(width, height)| Rect::new(0, 0, width, height))?;
@@ -66,7 +67,8 @@ pub(crate) async fn run(
         },
     )?;
     let mut wizard = JourneyWizard::new(capabilities, state)
-        .with_local_engine_candidates(nemoclaw_discovery::local_engine_candidates());
+        .with_local_engine_candidates(nemoclaw_discovery::local_engine_candidates())
+        .with_output(output.to_owned());
     let mut needs_render = true;
     let mut queued_events = VecDeque::new();
     loop {
@@ -125,16 +127,6 @@ pub(crate) async fn run(
         needs_render = true;
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Err(Error::Cancelled.into());
-        }
-        if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            if let Ok(Some(question)) = wizard.question() {
-                if question.required() {
-                    wizard.error = Some("This question is required.".into());
-                } else if let Err(error) = wizard.submit(None) {
-                    wizard.error = Some(error.to_string());
-                }
-            }
-            continue;
         }
         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if wizard.input.is_empty() && !wizard.selection_changed && !wizard.custom_answer {
@@ -212,25 +204,9 @@ pub(crate) async fn run(
                         }
                     }
                 }
-                wizard.advance();
+                wizard.press(key);
             }
-            KeyCode::Left => wizard.back(),
-            KeyCode::Up => wizard.previous(),
-            KeyCode::Down => wizard.next(),
-            KeyCode::Backspace => {
-                wizard.input.pop();
-            }
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                wizard.input.clear()
-            }
-            KeyCode::Char(character)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                wizard.input.push(character)
-            }
-            _ => {}
+            _ => wizard.press(key),
         }
     }
 }

@@ -8,9 +8,11 @@ use openshell_provider::{OpenShell, verify_identity};
 use serde_json::Value;
 
 /// A failed bridge operation as a public diagnostic: only Fabric's fixed
-/// stages and codes cross the boundary, never its message. `message_file`
-/// names the private file that keeps the message, if one was saved.
+/// stages and codes cross the boundary, never its message. `operation` is the
+/// command that failed, such as `start` or `stop`. `message_file` names the
+/// private file that keeps the message, if one was saved.
 pub(crate) fn configuration_failure(
+    operation: &str,
     stage: &str,
     code: &str,
     effects: &str,
@@ -45,12 +47,16 @@ pub(crate) fn configuration_failure(
         "request_too_large" => "request_too_large",
         "response_too_large" => "response_too_large",
         "invalid_response" => "invalid_response",
+        "state_in_use" => "state_in_use",
+        "runtime_busy" => "runtime_busy",
         _ => "fabric_configuration_failed",
     };
-    // Fabric reports whether the failure changed anything; with no effects,
-    // no runtime is running.
-    let runtime_state = match effects {
-        "none" => "unavailable",
+    // Fabric reports whether the failure changed anything. A start with no
+    // effects left no runtime; any other command with none, such as a refused
+    // stop, left the runtime as it was.
+    let runtime_state = match (operation, effects) {
+        ("start", "none") => "unavailable",
+        (_, "none") => "unchanged",
         _ => "unknown",
     };
     ObservationError::FabricConfiguration {
@@ -273,13 +279,19 @@ mod tests {
 
     #[test]
     fn configuration_diagnostics_preserve_only_known_fields() {
-        let failure = super::configuration_failure("start", "start_failed", "none", None);
+        let failure = super::configuration_failure("start", "start", "start_failed", "none", None);
         let text = failure.to_string();
         assert!(text.contains("start_failed"));
         assert!(text.contains("agent runtime is unavailable"));
         assert!(!text.contains("private-value"));
         assert_eq!(
-            super::configuration_failure("private-value", "private-value", "private-value", None),
+            super::configuration_failure(
+                "start",
+                "private-value",
+                "private-value",
+                "private-value",
+                None
+            ),
             nemoclaw_backend::ObservationError::FabricConfiguration {
                 stage: "unknown",
                 code: "fabric_configuration_failed",
@@ -295,7 +307,7 @@ mod tests {
             ("start", "start_failed", "coder"),
             ("validation", "validation_failed", "assistant"),
         ] {
-            let error = super::configuration_failure(stage, code, "none", None);
+            let error = super::configuration_failure("start", stage, code, "none", None);
             let message = nemoclaw_tofu::observation_message(error, Some(sandbox));
             assert!(message.contains(&format!("sandbox/{sandbox}")), "{message}");
             for expected in [

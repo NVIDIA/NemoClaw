@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! The fake `ssh` relays docker dial-stdio to a loopback engine and fails
-//! like `ssh` for anything else. Building this test also builds the relay
-//! that fake engines find beside the test executables.
+//! like `ssh` for anything else.
 
 use std::{
     io::{Read, Write},
@@ -55,13 +54,4 @@ fn anything_but_a_loopback_dial_stdio_fails_like_ssh() {
         let output = Command::new(RELAY).args(&args).output().unwrap();
         assert_eq!(output.status.code(), Some(255), "{args:?}");
     }
-}
-
-/// The lifecycle profile selects this ignored test, so nextest archives the
-/// relay beside the extracted lifecycle tests, where fake engines find it.
-#[test]
-#[ignore = "run by the lifecycle profile to archive the relay with its tests"]
-fn the_relay_is_found_beside_the_test_executables() {
-    let relay = nemoclaw_test_fixtures::ssh_relay();
-    assert!(relay.is_file());
 }
