@@ -471,6 +471,7 @@ fn web_search_registration(known: &Row, unknown: &[&str]) -> Option<String> {
 
 /// OpenShell objects and their planning rules.
 pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
+    use nemoclaw_openshell::api::MCP_POLICY;
     use nemoclaw_tofu::Definition;
     [
         Definition::new("workspace", &["name", "owner", "generation"], &[]),
@@ -486,6 +487,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "binaries_json",
                 "auth_style",
                 "header_name",
+                MCP_POLICY,
             ],
             &["credential_env", "binaries_json"],
         )
@@ -495,6 +497,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "binaries_json",
             "auth_style",
             "header_name",
+            MCP_POLICY,
         ])
         .reset_when_omitted(&[
             "endpoint",

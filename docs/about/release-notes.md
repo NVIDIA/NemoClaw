@@ -47,9 +47,15 @@ Inference and models:
 - In hand-written HCL, the vLLM and Ollama capacity data sources take `gpu_devices`, and `vllm_runtime` and `ollama_runtime` take `gpu_count`, which must be 1 for now, and report it in `requirements`.
   See [service capacity](../references/provider.md#service-capacity).
 - When vLLM exits during startup, the apply error includes the last 4 KiB of its output, with the service key redacted; an Ollama runtime's stop detail, such as a memory protection stop, also appears in its apply error.
+- Plan refuses a sandbox that attaches more than 32 providers, OpenShell's limit: its inference providers, its web search and each `api` integration count one each.
+  A deployment is no longer limited to 32 selected inference providers.
+  See [inference](../agents-inference/inference.md).
 
 Gateways and Kubernetes:
 
+- A document holds up to 256 sandboxes with a `kubernetes` or `openshift` gateway; Docker and Podman keep 32.
+  See [sandbox count and cluster size](../build-deploy/kubernetes.md#sandbox-count-and-cluster-size).
+- A managed `kubernetes` or `openshift` gateway's memory limit is 2Gi, up from 1Gi, which ran out of memory before a document reached 256 sandboxes.
 - An external gateway's `gateway.tls` can name a CA alone; a client certificate and key must appear together.
 - `gateway.kubernetes.kubeconfig` and `context` can be omitted together; without them, NemoClaw uses the service account of the pod it runs in.
   See [running NemoClaw in a pod](../build-deploy/kubernetes.md#run-nemoclaw-in-a-pod).

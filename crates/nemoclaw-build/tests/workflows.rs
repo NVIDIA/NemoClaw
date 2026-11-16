@@ -276,7 +276,7 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
     assert_eq!(
         callers,
         [".github/workflows/e2e-platform.yml: gpu"],
-        "only the E2E platform workflow, which has the artifacts, calls Live / HCL"
+        "the E2E platform workflow calls Live / HCL"
     );
 
     let platform = read(".github/workflows/e2e-platform.yml");

@@ -1,0 +1,81 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# An agent on a managed Kubernetes gateway whose pod runs on chosen nodes with
+# CPU and memory requests and limits, and whose /sandbox claim comes from a
+# chosen StorageClass. NemoClaw passes the sandbox's driverConfig to OpenShell's
+# Kubernetes driver unchanged; OpenShell checks it when it creates the sandbox,
+# not at plan. Changing driverConfig later replaces the sandbox and its files;
+# see "Keep Agent Files on Mounted Volumes" in docs/build-deploy/state.md.
+# Replace the deployment UID, the context, the StorageClass, the node label,
+# the taint, and the image digest before applying.
+# Write the image's metadata bundle with `cargo images export-metadata` and set
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-sandbox-placement
+  uid: 4f15e347-dd0d-4f6f-9c59-b5e77bdaf8c0
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-sandbox-placement
+      authentication:
+        profile: development
+    config:
+      openshell.drivers.kubernetes:
+        # Set it from the first apply: OpenShell refuses driverConfig without
+        # it, and changing it later upgrades the gateway's chart release.
+        allow_driver_config: true
+        # Each sandbox's /sandbox claim. Without these, the claim comes from
+        # the cluster's default StorageClass with 2Gi.
+        workspace_storage_class: replace-with-storage-class
+        workspace_default_storage_size: 10Gi
+  inferenceProviders:
+    hosted-nvidia:
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential: {env: NVIDIA_INFERENCE_API_KEY}
+  sandboxes:
+    assistant:
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # OpenShell's Kubernetes driver settings, in its snake_case names. They
+      # apply to the pod that runs the agent, not to the sandbox's supervisor.
+      driverConfig:
+        kubernetes:
+          pod:
+            node_selector:
+              nodepool.example.com/name: agents
+            tolerations:
+              - key: dedicated
+                operator: Equal
+                value: agents
+                effect: NoSchedule
+          containers:
+            agent:
+              # Quantities are strings, so quote plain numbers such as "2".
+              # OpenShell refuses extended resources other than nvidia.com/gpu.
+              resources:
+                requests: {cpu: "500m", memory: 1Gi}
+                limits: {cpu: "2", memory: 4Gi}
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted-nvidia
+              overrides:
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b

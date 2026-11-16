@@ -15,6 +15,27 @@ fn resources(directory: &Path) -> Vec<Value> {
     state["resources"].as_array().unwrap().clone()
 }
 
+/// Docker volumes retained in state, without reproducing each runtime's naming rules.
+pub fn docker_volumes(directory: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+    for resource in resources(directory)
+        .iter()
+        .filter(|r| r["mode"] == "managed")
+    {
+        for instance in resource["instances"].as_array().unwrap() {
+            let Some(name) = instance["attributes"]["name"].as_str() else {
+                continue;
+            };
+            match resource["type"].as_str() {
+                Some("docker_volume" | "vllm_credential_storage") => names.push(name.to_owned()),
+                Some("openshell_gateway_storage") => names.push(format!("{name}-data")),
+                _ => {}
+            }
+        }
+    }
+    names
+}
+
 /// The managed resource of `kind` named `name`, from the deployment's
 /// OpenTofu state.
 fn resource(directory: &Path, kind: &str, name: &str) -> Value {
@@ -238,4 +259,32 @@ fn successful_fabric_results_allow_adapter_owned_output_shapes() {
         let result = serde_json::json!({"status":"succeeded","output":output,"error":null});
         assert!(successful_invocation(&serde_json::to_vec(&result).unwrap()));
     }
+}
+
+#[test]
+fn retained_docker_volumes_use_recorded_names_and_ignore_data_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let resources: Vec<Value> = [
+        ("managed", "docker_volume", "ollama-model-data"),
+        ("managed", "vllm_credential_storage", "vllm-model-auth"),
+        ("managed", "openshell_gateway_storage", "gateway"),
+        ("data", "docker_volume", "foreign"),
+        ("managed", "docker_container", "workload"),
+    ]
+    .into_iter()
+    .map(|(mode, kind, name)| {
+        serde_json::json!({
+            "mode":mode, "type":kind, "instances":[{"attributes":{"name":name}}]
+        })
+    })
+    .collect();
+    fs::write(
+        directory.path().join("terraform.tfstate"),
+        serde_json::json!({"resources":resources}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        docker_volumes(directory.path()),
+        ["ollama-model-data", "vllm-model-auth", "gateway-data"]
+    );
 }
