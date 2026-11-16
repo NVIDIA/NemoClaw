@@ -55,7 +55,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/7f8d4a4040646f7ac985b7b84440d51a6f279304/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/b4725580bc709f4efec04d1219cca2b34a172e3c/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID from a plan, as the [tutorial](../get-started/first-deployment.md#send-a-verification-request) does, and send a request:
@@ -170,7 +170,7 @@ The agent also doesn't start when an entry's path doesn't exist or isn't a folde
 
 Use `directories` or `paths`, not both.
 Each adapter defines what a `paths` entry means: OpenClaw requires each one to hold `SKILL.md`, and Hermes passes it to its `skills.external_dirs` unchecked.
-For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/7f8d4a4040646f7ac985b7b84440d51a6f279304/adapters) say which fields they support and what a path must hold.
+For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/b4725580bc709f4efec04d1219cca2b34a172e3c/adapters) say which fields they support and what a path must hold.
 The `bundled` field selects which of the harness's own skills load; leave it out to keep the harness's default.
 
 To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
@@ -278,7 +278,7 @@ Each harness finds the skills in a `folder` entry by its own rules:
 
 `duplicates` doesn't change which copy loads when a skill shares a name with the harness's own skill.
 Fabric doesn't expand `~` or `${VAR}` in a path; use absolute sandbox paths.
-The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/7f8d4a4040646f7ac985b7b84440d51a6f279304/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
+The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/b4725580bc709f4efec04d1219cca2b34a172e3c/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
 
 ## Web Search
 

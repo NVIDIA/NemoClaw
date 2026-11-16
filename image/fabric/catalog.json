@@ -796,7 +796,7 @@
             "supports_disable": false,
             "supports_enable": true,
             "supports_exclude": true,
-            "supports_include": true
+            "supports_include": false
           },
           "directory_loading": {
             "discovery": {
@@ -2556,8 +2556,8 @@
       ]
     }
   ],
-  "fabric_revision": "7f8d4a4040646f7ac985b7b84440d51a6f279304",
+  "fabric_revision": "b4725580bc709f4efec04d1219cca2b34a172e3c",
   "schema_version": 2,
-  "source_sha256": "5877f8bd6fdc565b21e0522597878e9a636d9b1a071d25bee9d604e5f9d59a6d",
+  "source_sha256": "eb3a583c5eeb0b21aeb64e367fae33a06742c463ac8005ab29d380a103192107",
   "targets": []
 }
