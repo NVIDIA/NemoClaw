@@ -788,7 +788,7 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89 and v0.0.123 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prepare private OpenShell and npm install locations before the historical install, preserving existing private executables. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
+| `openshell-gateway-upgrade` | Retain the reviewed v0.0.89, v0.0.123, and v0.0.141 x86-64 fixtures with pinned installer commits, digests, and OpenClaw archives. Prepare private OpenShell and npm install locations before the historical install, preserving existing private executables. Prove credential custody and authenticated agent turns before and after upgrade. Require the survivor to preserve workspace state. Create each fixture-declared stopped sandbox, preserve its workspace state, and restore its stopped phase after a lifecycle check. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 The gateway fixture sets a canonical private `XDG_BIN_HOME` for both installer generations.
@@ -806,6 +806,13 @@ Deterministic tests own installer identity, OpenShell release asset selection,
 NemoClaw restore behavior, and Dockerfile patch behavior. The live target does not
 assert OpenClaw database tables, migration checkpoints, or other third-party
 storage details.
+
+The v0.0.141 fixture adds recent-release compatibility with one running and one stopped sandbox.
+It retains the released OpenShell 0.0.116 path, so it does not substitute for historical gateway replacement coverage.
+The existing support tests verify fixture identity, archive pins, and adapter behavior.
+The recent fixture uses the native agent RPC before and after upgrade because its convenience command requests administrator scope.
+Manual PR selection uses the catalogue from trusted `main`; a newly added selector becomes available after that catalogue merges.
+The OpenShell destination and workspace marker repairs in PR #14276 are prerequisites for completing upgrade qualification.
 
 The retained live target owns the released-gateway upgrade and usable-survivor
 boundary. Deterministic rebuild-flow tests own post-backup recreate failure,
