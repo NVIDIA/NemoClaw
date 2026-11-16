@@ -28,6 +28,11 @@ Agents and interfaces:
   OpenShell reports, during apply, a sandbox whose attached registrations put keys in the same variable.
   See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
 
+Sandbox policy:
+
+- `spec.gateway.policyAuthority.apf` lets NVIDIA Agent Policy Fabric (APF) author each sandbox's policy and serve the inference, web search, and API profiles, and `registration: managed` has NemoClaw register APF with a managed Docker gateway.
+  See [let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+
 Inference and models:
 
 - A managed vLLM or Ollama container's `container.cpuLimitMillis` reaches Docker through the Docker provider's `cpus`, without the `nemoclaw.nvidia.com/cpu-limit-millis` label.
@@ -155,7 +160,7 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
   Write `endpoint: https://bookings.example.com/mcp` as `endpoints: [https://bookings.example.com/mcp]`.
   An `openshell_api` with an `mcp` block takes exactly one URL.
 
-- The intent record is now version 23, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
+- The intent record is now version 24, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
   `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up.

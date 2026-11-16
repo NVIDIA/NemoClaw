@@ -130,6 +130,39 @@ A sandbox that exits instead of restarting is replaced, which deletes its files 
 Do not put secrets in it: plans and state show it.
 An external gateway takes no `config`; its operator configures it.
 
+### Let APF Author Sandbox Policy
+
+NVIDIA Agent Policy Fabric (APF) is an OpenShell interceptor that issues signed sandbox policies and serves provider profiles.
+When APF does both on a gateway, set `spec.gateway.policyAuthority.apf`:
+
+```yaml
+gateway:
+  management: managed
+  policyAuthority:
+    apf:
+      registration: managed
+      endpoint: https://host.docker.internal:18202
+      tls:
+        ca: {env: APF_CA_FILE}
+```
+
+- With `registration: managed`, NemoClaw writes APF's interceptor and provider-profile source into a managed Docker gateway's configuration file and copies the CA certificate that `tls.ca` names into the gateway's storage; `spec.gateway.config` must not register interceptors or profile sources.
+- With `registration: external`, the gateway's operator registers APF, such as in `spec.gateway.config` on a managed Podman, Kubernetes, or OpenShift gateway. An external gateway requires it.
+
+With either registration:
+
+- Each sandbox runs APF's policy, so it can't set `network.policy` or `network.policyRef`. Apply refuses a sandbox that APF admitted without its provenance annotations.
+- Apply records each sandbox's loaded policy hash and APF's provenance token. The next apply records a policy that arrives with a new token. A policy that changes under the same token, or a sandbox that loses APF's provenance, plans an in-place update that asks OpenShell for the sandbox's configuration without a policy, so that APF issues its policy again.
+- Inference, web search, and API integrations use the profile that APF serves under the name NemoClaw would give it, once NemoClaw has checked that the profile delivers the credential in the variable the agent reads. NemoClaw creates the provider registrations but never imports or deletes these profiles. An API integration can't set `mcp`, because APF's profile sets the endpoint's rules.
+- NemoClaw doesn't verify the provenance token's signature; APF and OpenShell decide which policies a sandbox loads.
+
+Limits:
+
+- APF's bundle must serve each profile under the name NemoClaw gives it, which includes a hash of the sandbox image; no field chooses the names.
+- A deployment created without the field can't change to APF, because APF refuses to delete the profiles NemoClaw imported.
+- You give APF the gateway's signing key yourself, and with `registration: external` also install APF's CA in the gateway.
+- APF's bundle refresher updates running sandboxes only in OpenShell's `default` workspace, and NemoClaw creates its own workspace, so the refresher doesn't bring a new bundle's policy to a running NemoClaw sandbox.
+
 ### Supply Credential References
 
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
