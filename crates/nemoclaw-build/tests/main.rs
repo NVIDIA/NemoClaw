@@ -42,4 +42,6 @@ mod release_assessment;
 mod release_gate;
 #[path = "schema.rs"]
 mod schema;
+#[cfg(target_os = "linux")]
+mod setup_rust;
 mod workflows;

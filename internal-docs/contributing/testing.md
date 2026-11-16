@@ -568,6 +568,7 @@ Source-only changes reuse that archive cache without uploading it again.
 Bundle assembly still verifies every archive checksum and builds a fresh bundle; `dist` is not cached.
 
 The [shared Rust setup](../../.github/actions/setup-rust/action.yml) runs `cargo ci tools` for native, documentation, Brev, and Live / HCL builds and for `E2E build images`, and exports the installed `PROTOC` to later steps.
+On a runner without rustup, such as a leased Colossus machine, it first installs the `rustup-init` that `versions.json` pins, checked against its SHA-256, for the runner user without changing shell profiles, and then the toolchain that `rust-toolchain.toml` names.
 That runner compiles without the SDK in `target/ci-runner`, so it can install the compiler before anything needs it.
 GitHub restricts cache access by branch: temporary Brev branches may start cold because `v1` is not the default branch.
 Parallel VM preparation reduces the build's contribution to elapsed time even on a cold run.
