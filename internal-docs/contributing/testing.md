@@ -296,7 +296,7 @@ Documentation previews publish only for PRs targeting `v1`.
 | CI / Dependencies | `Policy`, `Python scripts` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
-| E2E / Colossus runner connectivity | Manual, on `v1` only: `smoke` runs `true` on the `colossus-gb300-pilot` runner without credentials, and `bundle` runs the Linux ARM64 bundle, unit, contract, and integration jobs there one after another, to compare their times with the hosted runners'; it restores the hosted runners' Rust caches but never saves them |
+| E2E / Colossus runner connectivity | Manual, on `v1` only: `smoke` runs `true` without credentials on `runner_label` (default `colossus-gb300`), and `bundle` runs the Linux ARM64 bundle, unit, contract, and integration jobs on `colossus-gb300` one after another, to compare their times with the hosted runners'; it restores the hosted runners' Rust caches but never saves them |
 
 The `v1` ruleset requires the four `Test /` checks, the two `Build /` checks, `Policy`, and `Validate`; `Python scripts` isn't required.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.

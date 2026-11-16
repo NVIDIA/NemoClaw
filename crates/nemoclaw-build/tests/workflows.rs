@@ -136,7 +136,7 @@ fn colossus_runs_are_manual_and_v1_only() {
     let events = workflow["on"]
         .as_object()
         .expect("explicit workflow events");
-    assert_eq!(events.len(), 1, "the pilot runner takes manual runs only");
+    assert_eq!(events.len(), 1, "the leased runner takes manual runs only");
     let suite = &workflow["on"]["workflow_dispatch"]["inputs"]["suite"];
     assert_eq!(suite["type"], "choice");
     assert_eq!(suite["options"], serde_json::json!(["smoke", "bundle"]));
@@ -171,7 +171,10 @@ fn colossus_runs_are_manual_and_v1_only() {
 fn colossus_smoke_executes_only_true_without_credentials() {
     let workflow = colossus_workflow();
     let job = &workflow["jobs"]["smoke"];
-    assert_eq!(job["runs-on"], "colossus-gb300-pilot");
+    assert_eq!(job["runs-on"], "${{ inputs.runner_label }}");
+    let label = &workflow["on"]["workflow_dispatch"]["inputs"]["runner_label"];
+    assert_eq!(label["type"], "string");
+    assert_eq!(label["default"], "colossus-gb300");
     assert_eq!(job["timeout-minutes"], 2);
     assert!(job["permissions"].is_null(), "inherit empty permissions");
     assert!(
@@ -188,7 +191,7 @@ fn colossus_smoke_executes_only_true_without_credentials() {
 }
 
 /// The bundle suite runs the Linux ARM64 bundle, unit, contract, and
-/// integration jobs on the pilot runner, to compare its timings with the
+/// integration jobs on the leased runner, to compare its timings with the
 /// hosted runners'. It reads the shared Rust caches but never writes them, so
 /// hosted v1 runs never restore artifacts built on the leased machine.
 #[test]
@@ -204,7 +207,7 @@ fn colossus_bundle_runs_linux_arm64_ci_without_writing_shared_caches() {
     assert_eq!(
         job["with"],
         serde_json::json!({
-            "runner": "colossus-gb300-pilot",
+            "runner": "colossus-gb300",
             "platform": "linux_arm64",
             "bundle": true,
             "lifecycle": true,
