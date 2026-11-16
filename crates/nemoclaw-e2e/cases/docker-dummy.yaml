@@ -5,9 +5,10 @@
 # runs Fabric's runtime with the test adapter, including native health,
 # without a model or credentials, and replies with its reply setting. Its
 # workspace is a named volume, which the gateway allows sandboxes to mount.
-# The case runner serves an external middleware and HTTP effect recorder on
-# host ports. The gateway bridge selects middleware; the default Docker bridge
-# is an otherwise-permitted excluded destination to the same recorder.
+# hcl_live::case serves an external middleware and an HTTP effect recorder on
+# host ports. The sandbox reaches the recorder at the gateway network's host
+# address, which the middleware binding selects, and at the default Docker
+# bridge's gateway, which the policy permits and the binding excludes.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

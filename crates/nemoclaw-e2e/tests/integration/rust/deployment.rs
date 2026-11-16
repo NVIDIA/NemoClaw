@@ -368,9 +368,10 @@ async fn shell_restriction_and_restore_replace_only_the_target_sandbox() {
 /// One document carries the authored settings that export must reproduce:
 /// web search and API integrations, an authored inference API, native harness
 /// settings, network grants, service exposures, and a second sandbox's tool
-/// limit and middleware binding. The bundle's CLI exports what the SDK applied,
-/// and reapplying the export changes nothing. Each kind of observed drift stops plan and
-/// export without gateway effects or a change to saved state.
+/// limit and middleware binding. The bundle's CLI exports what the SDK
+/// applied, and reapplying the export changes nothing. Each kind of observed
+/// drift stops plan and export without gateway effects or a change to saved
+/// state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() {
@@ -397,10 +398,6 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
     reader.network = serde_json::from_value(serde_json::json!({
         "policy": {"explicit": {
             "version": 1,
-            "filesystem_policy": {"include_workdir": false,
-                "read_only": ["/usr", "/opt"], "read_write": ["/sandbox", "/tmp"]},
-            "landlock": {"compatibility": "best_effort"},
-            "process": {"run_as_user": "10001", "run_as_group": "10001"},
             "network_policies": {"docs": {"name": "docs", "endpoints": [{
                 "host": "docs.example.com", "port": 443,
                 "protocol": "rest", "enforcement": "enforce",

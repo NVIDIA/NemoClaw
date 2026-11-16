@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! A live case's external middleware and HTTP destination, recording independent
-//! request effects. Dropping the fixture stops both listeners.
+//! The `docker-dummy` live case's external middleware and HTTP destination.
+//! Each counts the requests it sees by path and rewrites the counts to a file
+//! that the case's assertions read. Dropping the fixture stops both listeners.
 use openshell_core::{
     extension_protocol::{ExtensionFamily, extension_metadata},
     middleware::WebSocketResponseStream,
@@ -15,22 +16,33 @@ use openshell_core::{
         },
     },
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status};
 
-#[derive(Default)]
+/// Requests seen by path: `{"middleware": {PATH: N}, "destination": {PATH: N}}`.
+#[derive(Clone)]
 struct Effects {
-    middleware: BTreeMap<String, usize>,
-    destination: BTreeMap<String, usize>,
+    file: PathBuf,
+    counts: Arc<Mutex<Value>>,
 }
 
+impl Effects {
+    fn record(&self, side: &str, path: &str) {
+        let mut counts = self.counts.lock().unwrap();
+        let count = &mut counts[side][path];
+        *count = json!(count.as_u64().unwrap_or(0) + 1);
+        std::fs::write(&self.file, counts.to_string()).unwrap();
+    }
+}
+
+/// Allows every request except one to `/deny`.
 #[derive(Clone)]
-struct Guard(Arc<Mutex<Effects>>);
+struct Guard(Effects);
 
 #[tonic::async_trait]
 impl SupervisorMiddleware for Guard {
@@ -76,13 +88,7 @@ impl SupervisorMiddleware for Guard {
             .into_inner()
             .target
             .ok_or_else(|| Status::invalid_argument("missing target"))?;
-        *self
-            .0
-            .lock()
-            .unwrap()
-            .middleware
-            .entry(target.path.clone())
-            .or_default() += 1;
+        self.0.record("middleware", &target.path);
         Ok(Response::new(HttpRequestResult {
             decision: if target.path == "/deny" {
                 Decision::Deny
@@ -107,9 +113,14 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    /// Listen on the test host; the gateway and sandbox reach its bridge addresses.
-    pub async fn start(grpc_port: u16, http_port: u16) -> Self {
-        let effects = Arc::new(Mutex::new(Effects::default()));
+    /// Listen on every address of the test host, which the gateway and sandbox
+    /// reach through their bridges, and record effects in `file`.
+    pub async fn start(grpc_port: u16, http_port: u16, file: PathBuf) -> Self {
+        let effects = Effects {
+            file,
+            counts: Arc::new(Mutex::new(json!({"middleware": {}, "destination": {}}))),
+        };
+        std::fs::write(&effects.file, effects.counts.lock().unwrap().to_string()).unwrap();
         let guard = Guard(effects.clone());
         let listener = tokio::net::TcpListener::bind(("0.0.0.0", grpc_port))
             .await
@@ -123,14 +134,8 @@ impl Fixture {
         });
         let http =
             crate::http::Fixture::start_tcp_at(&format!("0.0.0.0:{http_port}"), move |request| {
-                let mut effects = effects.lock().unwrap();
-                let body = if request.path == "/effects" {
-                    json!({"middleware": effects.middleware, "destination": effects.destination})
-                } else {
-                    *effects.destination.entry(request.path).or_default() += 1;
-                    json!({"reached": true})
-                };
-                Some((200, serde_json::to_vec(&body).unwrap()))
+                effects.record("destination", &request.path);
+                Some((200, Vec::new()))
             })
             .await;
         Self { _http: http, grpc }

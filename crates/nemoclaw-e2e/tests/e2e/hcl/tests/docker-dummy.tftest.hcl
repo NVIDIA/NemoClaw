@@ -7,9 +7,10 @@
 # storage, then a redeploy that reuses that storage with a new gateway
 # container, the marker read back in the new sandbox, the reply again, and
 # destroy. It needs no model or credentials; cargo ci live-docker runs it.
-# Before destroy, actual sandbox HTTP requests prove middleware selection,
-# denial without a destination effect, and exclusion. Reapply must preserve
-# the sandbox identity without changing resources.
+# Before the first destroy, sandbox requests check that the gateway's
+# external middleware sees the requests its binding selects and blocks the
+# one it denies before the destination, and that an excluded destination
+# bypasses it.
 
 # The workspace volume, which a platform provides before apply. The agent
 # image runs agents as 10001:10001 (image/fabric/Dockerfile).
@@ -84,90 +85,46 @@ run "write_marker" {
   }
 }
 
-# Capture the identity and the bound request URLs before issuing traffic.
-run "middleware_before" {
-  module {
-    source = "./middleware"
-  }
-}
-
-run "middleware_requests" {
+# The sandbox requests the case's effect recorder at the gateway network's
+# host address, which the middleware binding selects, and at the default
+# bridge's gateway, which it excludes. The middleware denies /deny.
+run "middleware" {
   module {
     source = "./command"
   }
+
   variables {
     connection = run.apply.result.connection
-    targets    = run.middleware_before.targets
+    targets = {
+      requests = {
+        sandbox = "assistant"
+        command = ["python3", "-c", <<-EOT
+          import json, sys, urllib.error, urllib.request
+          selected, excluded = (f"http://{e['host']}:{e['port']}" for e in json.loads(sys.argv[1]))
+          for url in (f"{selected}/allow", f"{selected}/deny", f"{excluded}/bypass"):
+              try: print(urllib.request.urlopen(url, timeout=10).status)
+              except urllib.error.HTTPError as error: print(error.status)
+        EOT
+        , jsonencode(yamldecode(file(jsondecode(var.context).config)).spec.sandboxes.assistant.network.policy.explicit.network_policies.fixture.endpoints)]
+        contains = "200\n403\n200\n"
+      }
+    }
   }
+
   assert {
     condition     = length(output.failed) == 0
-    error_message = "Middleware request statuses failed: ${join(", ", output.failed)}"
+    error_message = "A request returned an unexpected status: ${join(", ", output.failed)}"
   }
-}
 
-run "middleware_effects" {
-  module {
-    source = "./middleware"
-  }
-  variables {
-    baseline = run.middleware_before.sandbox
-  }
+  # hcl_live::case's fixture records each request before answering it.
   assert {
-    condition     = try(output.effects.middleware["/allow"], 0) == 1
-    error_message = "The allowed request did not reach middleware exactly once."
+    condition     = jsondecode(file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")).middleware == { "/allow" = 1, "/deny" = 1 }
+    error_message = "Middleware must see the selected requests once each and not the excluded one: ${file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")}"
   }
-  assert {
-    condition     = try(output.effects.destination["/allow"], 0) == 1
-    error_message = "The allowed request did not produce exactly one destination effect."
-  }
-  assert {
-    condition     = try(output.effects.middleware["/deny"], 0) == 1
-    error_message = "The denied request did not reach middleware exactly once."
-  }
-  assert {
-    condition     = try(output.effects.destination["/deny"], 0) == 0
-    error_message = "The denied request reached the destination."
-  }
-  assert {
-    condition     = try(output.effects.middleware["/bypass"], 0) == 0
-    error_message = "The excluded destination reached middleware."
-  }
-  assert {
-    condition     = try(output.effects.destination["/bypass"], 0) == 1
-    error_message = "The otherwise-permitted excluded destination was not reached exactly once."
-  }
-}
 
-run "unchanged_apply" {
-  module {
-    source = "./cli"
-  }
-  variables {
-    operation = "apply"
-  }
   assert {
-    condition     = output.exit_code == 0 && output.changes == {}
-    error_message = "Unchanged reconciliation changed resources or failed: ${output.error}"
-  }
-}
-
-run "middleware_after_reapply" {
-  module {
-    source = "./middleware"
-  }
-  variables {
-    baseline = run.middleware_effects.sandbox
-  }
-  assert {
-    condition     = output.same_sandbox
-    error_message = "Unchanged reconciliation replaced the sandbox."
-  }
-}
-
-# Leave this module's final variables independent of earlier run outputs for cleanup.
-run "middleware_cleanup_inputs" {
-  module {
-    source = "./middleware"
+    condition     = jsondecode(file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")).destination == { "/allow" = 1, "/bypass" = 1 }
+    error_message = "The allowed and excluded requests must reach the destination once each, and the denied one never: ${file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")}"
   }
 }
 

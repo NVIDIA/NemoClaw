@@ -8,7 +8,10 @@
 //! a kind case's fixtures, from the bundle. A kind case's `tests/e2e/hcl/kind`
 //! module runs `issuer` once for its existing OIDC issuer, and
 //! `tests/e2e/hcl/admission` runs `admission` to refuse, then allow,
-//! StatefulSets in a kind case's namespace. The caller
+//! StatefulSets in a kind case's namespace. For `docker-dummy`, `case` also
+//! serves the external middleware and HTTP effect recorder that the case's
+//! gateway and sandbox reach, which write the requests they see to
+//! `middleware-effects.json` in the run's reports. The caller
 //! destroys the deployment, so cleanup also runs after a failed, cancelled, or
 //! timed-out job: `nemoclaw destroy --state-dir "$NEMOCLAW_HCL_RUN/deployment"`.
 //! After `tofu test`, `case` reports how long each run block took, on stderr
@@ -80,19 +83,24 @@ async fn case() {
         fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
         fs::write(reports.join("identity.json"), json!({"candidate":var("GITHUB_SHA").unwrap(),"uid":document["metadata"]["uid"],"case":case}).to_string()).unwrap();
     }
-    // These listeners live exactly as long as this case, including failed HCL runs.
+    // The dummy case's middleware and effect recorder listen on the ports its
+    // document names until the case ends, including after a failed run block.
     let _middleware = if case == "docker-dummy" {
         let document: Value =
             serde_saphyr::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
-        let endpoint = document["spec"]["gateway"]["config"]["openshell.supervisor.middleware"][0]
-            ["grpc_endpoint"]
-            .as_str()
-            .unwrap();
-        let grpc = url::Url::parse(endpoint).unwrap().port().unwrap();
-        let http = document["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"]["fixture"]["endpoints"][0]["port"].as_u64().unwrap();
+        let grpc = &document["spec"]["gateway"]["config"]["openshell.supervisor.middleware"][0]["grpc_endpoint"];
+        let recorder = &document["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]
+            ["network_policies"]["fixture"]["endpoints"][0]["port"];
         Some(
-            nemoclaw_test_fixtures::middleware::Fixture::start(grpc, u16::try_from(http).unwrap())
-                .await,
+            nemoclaw_test_fixtures::middleware::Fixture::start(
+                url::Url::parse(grpc.as_str().unwrap())
+                    .unwrap()
+                    .port()
+                    .unwrap(),
+                recorder.as_u64().unwrap().try_into().unwrap(),
+                reports.join("middleware-effects.json"),
+            )
+            .await,
         )
     } else {
         None
@@ -265,36 +273,6 @@ async fn probe() {
     });
     fs::write(input("REPLY"), reply).unwrap();
     fs::write(input("REPORT"), report.to_string()).unwrap();
-}
-
-/// Read independent middleware/destination effects and the sandbox identity
-/// after commands have completed. HCL compares these facts across reapply.
-#[tokio::test]
-#[ignore = "run by tests/e2e/hcl/middleware"]
-async fn middleware_observation() {
-    let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
-    let port = input("HTTP_PORT");
-    let effects = reqwest::Client::new()
-        .get(format!("http://127.0.0.1:{port}/effects"))
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap();
-    let effects: Value = serde_json::from_slice(&effects).unwrap();
-    let binding = sandbox_binding(&PathBuf::from(input("STATE")), "assistant");
-    fs::write(
-        input("REPORT"),
-        json!({
-            "effects": effects,
-            "sandbox": binding["id"],
-        })
-        .to_string(),
-    )
-    .unwrap();
 }
 
 /// Request one service a sandbox exposes, as a person would with what apply

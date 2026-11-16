@@ -301,28 +301,7 @@ fn prepare(
         let document = match case.as_str() {
             // The dummy reports native health, so its whole HCL E2E lifecycle
             // completes.
-            DUMMY_CASE => {
-                let host = subnet
-                    .strip_suffix(".0/24")
-                    .ok_or("a gateway subnet is a /24")?;
-                let bypass = docker_output(&[
-                    "network",
-                    "inspect",
-                    "bridge",
-                    "--format",
-                    "{{(index .IPAM.Config 0).Gateway}}",
-                ])?;
-                let document = dummy_case(&template, &uid, &endpoint, &subnet, &dummy)?;
-                live::bind_case(
-                    &document,
-                    &[
-                        ("172.30.122.1", &format!("{host}.1")),
-                        ("172.17.0.1", &bypass),
-                        ("17701", &live::free_port()?.to_string()),
-                        ("17702", &live::free_port()?.to_string()),
-                    ],
-                )?
-            }
+            DUMMY_CASE => dummy_case(&template, &uid, &endpoint, &subnet, &dummy)?,
             INTERFACES_CASE => {
                 let host = subnet
                     .strip_suffix(".0/24")
@@ -377,7 +356,11 @@ fn prepare(
 const DUMMY_CASE: &str = "docker-dummy";
 
 /// The dummy case bound to one run's UID, gateway endpoint, subnet, and image,
-/// and a workspace volume named for the UID, so runs never share one.
+/// a workspace volume named for the UID, so runs never share one, and free
+/// ports for the middleware and effect recorder that `hcl_live::case` serves.
+/// The sandbox reaches the recorder at the gateway network's host address,
+/// which the middleware binding selects, and at the default bridge's gateway,
+/// which it excludes.
 fn dummy_case(
     template: &str,
     uid: &str,
@@ -386,9 +369,25 @@ fn dummy_case(
     image: &str,
 ) -> Result<String> {
     let zero = format!("nc-live-dummy@sha256:{}", "0".repeat(64));
+    let host = subnet
+        .strip_suffix(".0/24")
+        .map(|prefix| format!("{prefix}.1"))
+        .ok_or("a gateway subnet is a /24")?;
+    let bridge = docker_output(&[
+        "network",
+        "inspect",
+        "bridge",
+        "--format",
+        "{{(index .IPAM.Config 0).Gateway}}",
+    ])?;
+    // The ports go first, before a random UID or digest could hold one.
     Ok(live::bind_case(
         template,
         &[
+            ("17701", &live::free_port()?.to_string()),
+            ("17702", &live::free_port()?.to_string()),
+            ("172.30.122.1", &host),
+            ("172.17.0.1", &bridge),
             ("0b3f1c52-7d0e-4c6a-9a51-2f6c8e4d7a10", uid),
             ("http://127.0.0.1:17697", endpoint),
             ("172.30.122.0/24", subnet),
