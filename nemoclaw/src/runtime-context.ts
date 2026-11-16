@@ -124,7 +124,30 @@ interface LocalTargetBudget {
   remaining: number;
 }
 const LOCAL_TARGET_WORK_LIMIT = 128;
+// A prompt up to the length limit is one parse unit per window. A longer prompt
+// is classified in windows, each parsed within the same bounds, so a sentence or
+// line above the window target, or a prompt above the total limit, loses tools.
 const SEARCH_PROMPT_LENGTH_LIMIT = 4096;
+const SEARCH_PROMPT_TOTAL_LIMIT = 16384;
+const SEARCH_PROMPT_WINDOW_TARGET = 1024;
+// Sentence and line ends are already request boundaries. A boundary whose
+// whitespace leads straight to a URL stays inside its window, because the
+// classifier joins a colon, line break and indented URL into one request. A
+// line that ends in a coordinator or comma ("Search and"), or a research verb
+// followed by a coordinated verb on the next line, also stays with its
+// continuation, because the classifier joins coordinated verbs across the break.
+const PROMPT_BOUNDARY = /(?<=[.!?])\s+|\n+/gu;
+const URL_AFTER_WHITESPACE = /\s*https?:\/\//iuy;
+const RESEARCH_VERB =
+  "(?:search|research|investigate|look\\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query|read|summarize)";
+const VERB_CHAIN_TAIL = new RegExp(
+  `\\b${RESEARCH_VERB}(?:\\s+(?:and|or|then)\\s+[a-z]+)*\\s*$`,
+  "iu",
+);
+const COORDINATOR_TAIL = /(?:,|\b(?:and|or|then|but|instead))\s*$/iu;
+const COORDINATED_VERB_AFTER_WHITESPACE = /\s*(?:and|or|then)\s+[a-z]+/iuy;
+// Bounds the text inspected before a boundary, so the check stays linear.
+const VERB_CHAIN_TAIL_SPAN = 256;
 const LOCAL_TARGET_BUDGET_EXHAUSTED = new Error("Local target parsing budget exhausted");
 const TARGET_PREFIX =
   /^(?:(?:for|through|out|which|what|why|how|many|of|all|any|some|each|every|both|the|this|that|these|those|our|my|your|a|an|top|current|latest|recent|last|active|today['’]s|largest|biggest|smallest|oldest|newest|duplicate|empty|hidden|temporary|recently|modified|unused|dead|unreachable|missing|unresolved|undefined|deprecated|broken|failing|failed|existing|TODO|FIXME|HACK|XXX|and|or|\d+)\s+)+/iu;
@@ -536,19 +559,77 @@ function classifySearchRequests(prompt: string, budget: LocalTargetBudget): Rese
   };
 }
 
+// Split at request boundaries and pack pieces into windows of roughly the target
+// size. Each window is classified with its own work budget, so a long setup
+// prompt keeps its tools while no single parse exceeds the proven bounds.
+function searchPromptWindows(prompt: string): string[] | undefined {
+  // Regex cost grows faster than length, so a long prompt allows only short pieces.
+  const pieceLimit =
+    prompt.length > SEARCH_PROMPT_LENGTH_LIMIT
+      ? SEARCH_PROMPT_WINDOW_TARGET
+      : SEARCH_PROMPT_LENGTH_LIMIT;
+  const windows: string[] = [];
+  let current = "";
+  let start = 0;
+  const flush = (): void => {
+    if (current) windows.push(current);
+    current = "";
+  };
+  // The limit applies to a sentence or line without its boundary separator, and
+  // separately to the separator, so one long whitespace run cannot form a window.
+  const add = (contentEnd: number, end: number): boolean => {
+    const piece = prompt.slice(start, end);
+    const contentLength = contentEnd - start;
+    start = end;
+    if (contentLength > pieceLimit || piece.length - contentLength > pieceLimit) return false;
+    if (current && current.length + piece.length > SEARCH_PROMPT_WINDOW_TARGET) flush();
+    current += piece;
+    return true;
+  };
+  for (const { index, 0: separator } of prompt.matchAll(PROMPT_BOUNDARY)) {
+    const end = index + separator.length;
+    URL_AFTER_WHITESPACE.lastIndex = end;
+    if (URL_AFTER_WHITESPACE.test(prompt)) continue;
+    const tail = prompt.slice(Math.max(start, index - VERB_CHAIN_TAIL_SPAN), index);
+    COORDINATED_VERB_AFTER_WHITESPACE.lastIndex = end;
+    if (
+      COORDINATOR_TAIL.test(tail) ||
+      (VERB_CHAIN_TAIL.test(tail) && COORDINATED_VERB_AFTER_WHITESPACE.test(prompt))
+    ) {
+      continue;
+    }
+    if (!add(index, end)) return undefined;
+  }
+  if (!add(prompt.length, prompt.length)) return undefined;
+  flush();
+  return windows;
+}
+
 export function classifySearchTurn(prompt: unknown): ResearchRequestScope {
   if (typeof prompt !== "string") {
     return { scope: "missing", local: false, urls: [] };
   }
   // Bound input before any regex or normalization; visits alone do not bound backtracking.
-  if (prompt.length > SEARCH_PROMPT_LENGTH_LIMIT) {
+  const windows =
+    prompt.length > SEARCH_PROMPT_TOTAL_LIMIT ? undefined : searchPromptWindows(prompt);
+  if (!windows) {
     return { scope: "external", local: false, urls: [] };
   }
   if (prompt.trim().length === 0) {
     return { scope: "missing", local: false, urls: [] };
   }
   try {
-    return classifySearchRequests(prompt, { remaining: LOCAL_TARGET_WORK_LIMIT });
+    const scopes = windows.map((window) =>
+      classifySearchRequests(window, { remaining: LOCAL_TARGET_WORK_LIMIT }),
+    );
+    if (scopes.some(({ scope }) => scope === "external")) {
+      return { scope: "external", local: false, urls: [] };
+    }
+    return {
+      scope: scopes.some(({ scope }) => scope === "supplied") ? "supplied" : "ordinary",
+      local: scopes.some(({ local }) => local),
+      urls: scopes.flatMap(({ urls }) => urls),
+    };
   } catch (error) {
     // Stop every fallback immediately on exhaustion; retain diagnostics for other failures.
     if (error !== LOCAL_TARGET_BUDGET_EXHAUSTED) throw error;
