@@ -16,7 +16,17 @@ Refer to [the overview](overview.md) for implemented boundaries and [the CLI ref
 
 These changes reached `v1` after the `v0.1.0-rc10` tag; [breaking changes](#breaking-changes-since-v010-rc10) are listed separately.
 
-None yet.
+Examples and builds:
+
+- Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
+- OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
+
+OpenShell 0.1.8:
+
+- On Kubernetes, deleting a sandbox no longer waits out its pod's 30-second termination grace period, so destroy and sandbox replacement finish sooner.
+- The OpenShell CLI renews a token it got through client credentials while `OPENSHELL_OIDC_CLIENT_SECRET` is set.
+  See [reaching the gateway from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli).
+- The gateway no longer keeps memory for deleted sandboxes.
 
 ### Changes in v0.1.0-rc10
 
@@ -117,9 +127,13 @@ See [migration](../get-started/migration.md) for where each earlier task lives n
 
 ### Breaking Changes Since v0.1.0-rc10
 
-These changes since the `v0.1.0-rc10` tag affect existing deployments or documents.
+These changes since the `v0.1.0-rc10` tag affect existing deployments or documents:
 
-None yet.
+- With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
+  A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
+- With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
+  An endpoint host written as an IPv4-mapped IPv6 address, such as `::ffff:203.0.113.7`, no longer matches; write the IPv4 address.
+- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
 
 ### Breaking Changes in v0.1.0-rc10
 

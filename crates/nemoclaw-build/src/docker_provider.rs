@@ -3,8 +3,8 @@
 
 use std::{collections::BTreeMap, fs, path::Path};
 
-// Release v4.6.0, source revision 1e48613cd36acab30e9146aae6f036ea8e40a288.
-// On 2026-09-19, versions.json archive pins were verified against the release
+// Release v4.7.0, source revision 1a313708c9213de9f600cdf1d22e6ea32919719c.
+// On 2026-11-16, versions.json archive pins were verified against the release
 // SHA256SUMS signature using the registry-published signing key fingerprint
 // F31236BA85096E3AE22A8C660DCE698927DAF8EC. Upstream binary and license are unchanged.
 /// Install the binary and unchanged upstream license from a checksum-verified release.
@@ -14,7 +14,7 @@ pub fn install(
     version: &str,
     platform: &str,
 ) -> Result<BTreeMap<String, String>, Box<dyn std::error::Error>> {
-    if version != "4.6.0"
+    if version != "4.7.0"
         || !matches!(
             platform,
             "linux_arm64" | "linux_amd64" | "darwin_arm64" | "darwin_amd64" | "windows_amd64"

@@ -12,7 +12,7 @@ The separate release controller evaluates reviewed exceptions and controls discl
 
 ## Prepare the Inputs
 
-Use the pinned Rust toolchain from [build prerequisites](../../docs/build-deploy/build.md) and a verified Grype 0.121.0 binary.
+Use the pinned Rust toolchain from [build prerequisites](../../docs/build-deploy/build.md) and a verified Grype 0.121.3 binary.
 Prepare a Grype database cache before assessment using the scanner's [database commands](https://oss.anchore.com/docs/reference/grype/cli/).
 Choose the maximum database age explicitly for the assessment; that local choice does not establish a release policy.
 
@@ -92,7 +92,7 @@ A checksum verifies saved bytes against the caller's mapping; it does not establ
 In particular, Rust lockfile entries can include build dependencies.
 A targeted vulnerable/fixed fixture establishes detection of that advisory through the inventory handoff, not that a production image or a later database has no vulnerabilities.
 
-To run the optional real-tool acceptance test, set `NEMOCLAW_TEST_SYFT`, `NEMOCLAW_TEST_GRYPE`, and `NEMOCLAW_TEST_GRYPE_DB` to absolute paths for verified Syft 1.55.0, Grype 0.121.0, and a prepared database cache no older than 24 hours:
+To run the optional real-tool acceptance test, set `NEMOCLAW_TEST_SYFT`, `NEMOCLAW_TEST_GRYPE`, and `NEMOCLAW_TEST_GRYPE_DB` to absolute paths for verified Syft 1.57.1, Grype 0.121.3, and a prepared database cache no older than 24 hours:
 
 ```sh
 cargo test --locked -p nemoclaw-build --no-default-features --test integration \
