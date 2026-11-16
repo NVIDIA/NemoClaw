@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onboard/docker-gpu-supervisor-reconnect.ts";
 import {
+  GPU_OLLAMA_TEST_TIMEOUT_MS,
+  GPU_HERMES_TEST_TIMEOUT_MS,
+  GPU_VLLM_TEST_TIMEOUT_MS,
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
@@ -68,6 +71,23 @@ const dcodeExpectedRefusalTimeout = liveTargetTimeoutContract(
 afterEach(() => vi.unstubAllEnvs());
 
 describe("onboard final-handoff timeout contract", () => {
+  it("contains every selected GPU scenario and its cleanup before job finalization (#14065)", () => {
+    const serialTests = [
+      GPU_OLLAMA_TEST_TIMEOUT_MS,
+      GPU_HERMES_TEST_TIMEOUT_MS,
+      GPU_OLLAMA_TEST_TIMEOUT_MS,
+      GPU_VLLM_TEST_TIMEOUT_MS,
+      GPU_VLLM_TEST_TIMEOUT_MS,
+      GPU_VLLM_TEST_TIMEOUT_MS,
+    ];
+    const serialBudgetMs = serialTests.reduce(
+      (total, timeout) => total + timeout + DEFAULT_CLEANUP_TIMEOUT_MS,
+      0,
+    );
+    expect(catalogueTarget("gpu-e2e").timeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
+      serialBudgetMs + jobHeadroomMs,
+    );
+  });
   it("contains the hosted Pi lifecycle and native requests around rebuild", () => {
     const readTaskRetryBudget =
       3 * (PI_PROVIDER_MAX_ATTEMPTS - 1) * (PI_COMMAND_TIMEOUT_MS + PI_PROVIDER_RETRY_DELAY_MS);
@@ -340,6 +360,9 @@ describe("onboard final-handoff timeout contract", () => {
     DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
+    GPU_OLLAMA_TEST_TIMEOUT_MS,
+    GPU_HERMES_TEST_TIMEOUT_MS,
+    GPU_VLLM_TEST_TIMEOUT_MS,
     CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
     CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS,
     CONFIG_EXPORT_POLICY_TIMEOUT_MS,

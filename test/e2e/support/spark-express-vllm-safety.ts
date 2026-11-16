@@ -3,6 +3,7 @@
 
 import { networkInterfaces } from "node:os";
 
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { CommandExitResult } from "../fixtures/clients/command.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 
@@ -14,6 +15,27 @@ const SANDBOX_ID_PATTERN = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/u;
 export type SandboxInspection =
   | { readonly kind: "absent" }
   | { readonly kind: "present"; readonly id: string };
+
+/** Clear inherited choices so the explicit Muse profile owns fresh onboarding. */
+export function sparkMuseGlimmerEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...base,
+    NEMOCLAW_AGENT: "openclaw",
+    NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE: "",
+    NEMOCLAW_LOCAL_MODEL_RUNTIME: "",
+    NEMOCLAW_MODEL: "",
+    NEMOCLAW_PROVIDER: "",
+    NEMOCLAW_RECREATE_SANDBOX: "",
+    NEMOCLAW_SERVING_PRESET: "",
+    NEMOCLAW_TOOL_DISCLOSURE: "",
+    NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "",
+    NEMOCLAW_VLLM_MODEL: "",
+    NEMOCLAW_VLLM_PORT: "18000",
+    NEMOCLAW_SANDBOX_GPU: "0",
+    NEMOCLAW_SANDBOX_GPU_DEVICE: "",
+    NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+  };
+}
 
 export function assertLocalDockerEnvironment(env: NodeJS.ProcessEnv): void {
   const host = String(env.DOCKER_HOST ?? "").trim();
@@ -103,4 +125,32 @@ export function inspectSandboxIdentity(
     throw new Error("OpenShell sandbox inspection did not match the expected identity.");
   }
   return { kind: "present", id: record.id };
+}
+
+/** Reconcile identity before destroying only the sandbox created by this qualification. */
+export async function cleanupSparkMuseSandbox(
+  host: Pick<HostCliClient, "command" | "cleanupSandbox">,
+  sandboxName: string,
+  expectedId: string | null,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const inspection = await host.command(
+    "openshell",
+    ["sandbox", "get", "-o", "json", sandboxName],
+    {
+      artifactName: "spark-muse-cleanup-identity",
+      env,
+      timeoutMs: 30_000,
+    },
+  );
+  const current = inspectSandboxIdentity(inspection, sandboxName);
+  if (current.kind === "absent") return;
+  if (current.id !== expectedId) {
+    throw new Error("Refusing to remove an unowned or replacement Spark Muse sandbox.");
+  }
+  await host.cleanupSandbox(sandboxName, {
+    artifactName: "spark-muse-destroy",
+    env,
+    timeoutMs: 15 * 60_000,
+  });
 }

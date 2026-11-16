@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
 import { resolveManagedVllmBridgeHost } from "../../../src/lib/inference/serving/vllm-host-local-network.ts";
+import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
 import { buildLocalManagedVllmDockerEnv } from "../../../src/lib/inference/vllm-docker-env.ts";
 import {
@@ -24,10 +26,13 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertLocalDockerEnvironment,
   classifyDockerContainerInspection,
+  cleanupSparkMuseSandbox,
   inspectSandboxIdentity,
   listedSandboxNames,
+  sparkMuseGlimmerEnv,
   vllmPublicationProbeUrls,
 } from "../support/spark-express-vllm-safety.ts";
+import { assertAgentExecutionSucceeded } from "./gpu-e2e-helpers.ts";
 import {
   cleanupSandbox,
   expectOpenAiChatThroughSandbox,
@@ -453,6 +458,172 @@ test(
     );
     expect(denied.exitCode, resultText(denied)).toBe(0);
     expect(denied.stdout.trim()).toBe("56 403");
+  },
+);
+
+test(
+  "spark-express-vllm: fresh explicit Muse Glimmer enables Tool Search and returns a visible first reply (#14065)",
+  {
+    timeout: 100 * 60_000,
+    meta: {
+      e2eCleanupTimeoutMs: 20 * 60_000,
+      e2ePhases: [
+        "qualify the physical Spark Muse host",
+        "onboard the explicit Spark Muse profile",
+        "verify generated Tool Search and the first visible reply",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    const profileId = "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4";
+    const sandboxName = `${SANDBOX_NAME}-muse`;
+    const env = sparkMuseGlimmerEnv(e2eEnv({ NEMOCLAW_SANDBOX_NAME: sandboxName }));
+    validateSandboxName(sandboxName);
+    assertLocalDockerEnvironment(process.env);
+    await artifacts.target.declare({
+      id: "spark-express-vllm",
+      boundary:
+        "physical DGX Spark GB10 + explicit Muse managed vLLM profile + fresh OpenClaw configuration + first visible reply + final-consumer cleanup",
+      profileId,
+      sandboxName,
+    });
+    progress.phase("qualify the physical Spark Muse host");
+    await requireLivePrerequisites(host, runtimeProvider);
+    const hardware = await host.command(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        "set -euo pipefail; uname -sm; nvidia-smi --query-gpu=name --format=csv,noheader; docker context show",
+      ],
+      { artifactName: "spark-muse-hardware", env, timeoutMs: 30_000 },
+    );
+    expect(hardware.exitCode, resultText(hardware)).toBe(0);
+    expect(hardware.stdout).toMatch(/^Linux aarch64\r?\nNVIDIA GB10\r?\ndefault\s*$/u);
+    await assertVllmContainerAbsent(host);
+    await assertSandboxAbsent(host, sandboxName);
+    expect(getSandbox(sandboxName)).toBeNull();
+    const listener = await host.command("ss", ["-H", "-ltn", "sport = :18000"], {
+      artifactName: "spark-muse-preflight-listener",
+      env,
+      timeoutMs: 30_000,
+    });
+    expect({ exitCode: listener.exitCode, output: listener.stdout.trim() }).toEqual({
+      exitCode: 0,
+      output: "",
+    });
+
+    let createdContainerId: string | null = null;
+    let createdSandboxId: string | null = null;
+    cleanup.add("verify Spark Muse final-consumer retirement", async () => {
+      try {
+        const containers = await host.command(
+          "docker",
+          ["container", "ls", "--all", "--quiet", "--filter", "name=^/nemoclaw-vllm$"],
+          { artifactName: "spark-muse-retired-container", env, timeoutMs: 30_000 },
+        );
+        const port = await host.command("ss", ["-H", "-ltn", "sport = :18000"], {
+          artifactName: "spark-muse-retired-listener",
+          env,
+          timeoutMs: 30_000,
+        });
+        expect({
+          containerExit: containers.exitCode,
+          containers: containers.stdout.trim(),
+          portExit: port.exitCode,
+          listeners: port.stdout.trim(),
+        }).toEqual({ containerExit: 0, containers: "", portExit: 0, listeners: "" });
+      } finally {
+        await (createdContainerId
+          ? removeExactVllmContainer(host, createdContainerId, "spark-muse-fallback-container")
+          : Promise.resolve());
+      }
+    });
+    cleanup.add("remove the owned Spark Muse sandbox", async () => {
+      await cleanupSparkMuseSandbox(host, sandboxName, createdSandboxId, env);
+      await assertSandboxAbsent(host, sandboxName);
+      expect(getSandbox(sandboxName)).toBeNull();
+    });
+
+    progress.phase("onboard the explicit Spark Muse profile");
+    let onboard: CommandExitResult;
+    try {
+      onboard = await host.command(
+        "node",
+        [
+          "bin/nemoclaw.js",
+          "onboard",
+          "--profile",
+          profileId,
+          "--fresh",
+          "--non-interactive",
+          "--yes-i-accept-third-party-software",
+        ],
+        { artifactName: "spark-muse-onboard", cwd: REPO_ROOT, env, timeoutMs: 75 * 60_000 },
+      );
+    } finally {
+      const captured = await Promise.allSettled([
+        (async () => {
+          const inspection = await host.command(
+            "docker",
+            ["inspect", "--format", '[{"Id":{{json .Id}}}]', VLLM_CONTAINER],
+            {
+              artifactName: "spark-muse-container-identity",
+              env,
+              timeoutMs: 30_000,
+            },
+          );
+          createdContainerId = capturedVllmContainerId(inspection);
+        })(),
+        (async () => {
+          const identity = await inspectSandbox(host, sandboxName, "spark-muse-sandbox-identity");
+          createdSandboxId = identity.kind === "present" ? identity.id : null;
+        })(),
+      ]);
+      artifacts.addRedactionValues([loadManagedVllmApiKey() ?? ""]);
+      await Promise.all(
+        captured.map((result) =>
+          result.status === "rejected" ? Promise.reject(result.reason) : result.value,
+        ),
+      );
+    }
+    expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    expect(createdContainerId).not.toBeNull();
+    expect(createdSandboxId).not.toBeNull();
+
+    progress.phase("verify generated Tool Search and the first visible reply");
+    const config = await sandbox.execShell(
+      sandboxName,
+      trustedSandboxShellScript(`node -e '
+const fs = require("node:fs");
+const c = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
+console.log(JSON.stringify({model: c.agents?.defaults?.model?.primary, toolSearch: c.tools?.toolSearch}));'`),
+      { artifactName: "spark-muse-generated-config", env, timeoutMs: 30_000 },
+    );
+    expect({ exitCode: config.exitCode, config: JSON.parse(config.stdout) }).toEqual({
+      exitCode: 0,
+      config: {
+        model: "inference/muse-glimmer",
+        toolSearch: { mode: "tools", searchDefaultLimit: 8, maxSearchLimit: 20 },
+      },
+    });
+    const turn = await host.nemoclaw(
+      [
+        sandboxName,
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--session-id",
+        `spark-muse-first-${Date.now()}-${process.pid}`,
+        "-m",
+        "Reply with exactly: MUSE_SELECTOR_OK.",
+      ],
+      { artifactName: "spark-muse-first-turn", env, timeoutMs: 12 * 60_000 },
+    );
+    expect(turn.exitCode, resultText(turn)).toBe(0);
+    assertAgentExecutionSucceeded(turn.stdout, "inference", "muse-glimmer", "MUSE_SELECTOR_OK");
   },
 );
 

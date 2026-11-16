@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   assertLocalDockerEnvironment,
   classifyDockerContainerInspection,
+  cleanupSparkMuseSandbox,
   inspectSandboxIdentity,
   listedSandboxNames,
+  sparkMuseGlimmerEnv,
   vllmPublicationProbeUrls,
 } from "./spark-express-vllm-safety.ts";
 
@@ -20,6 +22,35 @@ const result = (exitCode: number, stdout = "", stderr = "") => ({
 });
 
 describe("DGX Spark Express vLLM qualification safety", () => {
+  it("clears inherited selections for fresh explicit Muse onboarding (#14065)", () => {
+    const overrides = [
+      "NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE",
+      "NEMOCLAW_LOCAL_MODEL_RUNTIME",
+      "NEMOCLAW_MODEL",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_RECREATE_SANDBOX",
+      "NEMOCLAW_SERVING_PRESET",
+      "NEMOCLAW_TOOL_DISCLOSURE",
+      "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
+      "NEMOCLAW_VLLM_MODEL",
+      "NEMOCLAW_SANDBOX_GPU_DEVICE",
+    ];
+    const inherited = Object.fromEntries(overrides.map((key) => [key, "inherited-choice"]));
+    const env = sparkMuseGlimmerEnv({
+      ...inherited,
+      NEMOCLAW_SANDBOX_NAME: "owned-spark",
+      E2E_MANAGED_IMAGE_REVISION: "candidate",
+    });
+    expect(env).toMatchObject(Object.fromEntries(overrides.map((key) => [key, ""])));
+    expect(env).toMatchObject({
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_SANDBOX_GPU: "0",
+      NEMOCLAW_VLLM_PORT: "18000",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+      NEMOCLAW_SANDBOX_NAME: "owned-spark",
+      E2E_MANAGED_IMAGE_REVISION: "candidate",
+    });
+  });
   it("probes both allowed addresses and every unintended IPv4 and IPv6 address (#14083)", () => {
     const ipv4 = (address: string, internal = false) => ({
       address,
@@ -118,5 +149,57 @@ describe("DGX Spark Express vLLM qualification safety", () => {
     expect(() =>
       inspectSandboxIdentity(result(1, "", "gateway 'nemoclaw' not found"), "spark-e2e"),
     ).toThrow("sandbox inspection failed");
+  });
+});
+
+describe("Spark Muse cleanup ownership (#14065)", () => {
+  const sandboxName = "spark-muse";
+  const ownedId = "05d120e4-484c-47d4-9a59-77a08cbb6e67";
+  const env = { NEMOCLAW_SANDBOX_NAME: sandboxName };
+  it("destroys the recorded sandbox using the same qualification environment", async () => {
+    const host = {
+      command: vi
+        .fn()
+        .mockResolvedValue(result(0, JSON.stringify({ name: sandboxName, id: ownedId }))),
+      cleanupSandbox: vi.fn().mockResolvedValue(undefined),
+    };
+    await cleanupSparkMuseSandbox(host, sandboxName, ownedId, env);
+    expect(host.cleanupSandbox).toHaveBeenCalledWith(
+      sandboxName,
+      expect.objectContaining({ env, timeoutMs: 15 * 60_000 }),
+    );
+  });
+  it.each([null, "15d120e4-484c-47d4-9a59-77a08cbb6e67"])(
+    "refuses a sandbox without the captured identity [case %#]",
+    async (expectedId) => {
+      const host = {
+        command: vi
+          .fn()
+          .mockResolvedValue(result(0, JSON.stringify({ name: sandboxName, id: ownedId }))),
+        cleanupSandbox: vi.fn(),
+      };
+      await expect(cleanupSparkMuseSandbox(host, sandboxName, expectedId, env)).rejects.toThrow(
+        "unowned or replacement",
+      );
+      expect(host.cleanupSandbox).not.toHaveBeenCalled();
+    },
+  );
+  it("accepts confirmed absence without destroying another resource", async () => {
+    const host = {
+      command: vi.fn().mockResolvedValue(result(1, "", "sandbox not found")),
+      cleanupSandbox: vi.fn(),
+    };
+    await cleanupSparkMuseSandbox(host, sandboxName, ownedId, env);
+    expect(host.cleanupSandbox).not.toHaveBeenCalled();
+  });
+  it("stops on inconclusive inventory without destroying a sandbox", async () => {
+    const host = {
+      command: vi.fn().mockResolvedValue(result(1, "", "gateway unavailable")),
+      cleanupSandbox: vi.fn(),
+    };
+    await expect(cleanupSparkMuseSandbox(host, sandboxName, ownedId, env)).rejects.toThrow(
+      "inspection failed",
+    );
+    expect(host.cleanupSandbox).not.toHaveBeenCalled();
   });
 });

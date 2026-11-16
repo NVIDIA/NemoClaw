@@ -868,7 +868,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama and managed vLLM",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
-    timeoutMinutes: 210,
+    timeoutMinutes: 590,
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,

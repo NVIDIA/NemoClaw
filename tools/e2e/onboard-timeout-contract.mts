@@ -5,6 +5,9 @@ import type { ConfigExportExpectation } from "../../test/e2e/registry/types.ts";
 import { testTimeout } from "../../test/helpers/timeouts.ts";
 
 const MINUTE_MS = 60_000;
+export const GPU_OLLAMA_TEST_TIMEOUT_MS = testTimeout(75 * MINUTE_MS);
+export const GPU_HERMES_TEST_TIMEOUT_MS = testTimeout(90 * MINUTE_MS);
+export const GPU_VLLM_TEST_TIMEOUT_MS = testTimeout(90 * MINUTE_MS);
 const ONBOARD_TEST_HEADROOM_MS = 10 * MINUTE_MS;
 const ONBOARD_JOB_HEADROOM_MS = 20 * MINUTE_MS;
 // Preserve the 90-minute hosted Pi lifecycle and allow a separate native

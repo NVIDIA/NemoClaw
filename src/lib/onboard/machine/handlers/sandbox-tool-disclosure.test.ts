@@ -4,7 +4,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { buildConfig as buildOpenClawConfig } from "../../../../../scripts/generate-openclaw-config.mts";
-import { museGlimmerEnv } from "../../../../../test/e2e/live/gpu-e2e-helpers";
 import { baseOpenClawGenerationEnv } from "../../../../../test/helpers/openclaw-env-fixture";
 import { loadServingCatalog } from "../../../inference/serving/catalog-loader";
 import { createSession, type Session } from "../../../state/onboard-session";
@@ -245,46 +244,49 @@ describe("handleSandboxState tool disclosure", () => {
   it.each([
     "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
     "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
-  ])("uses first creation with the live Muse environment for %s (#14065)", async (recipeId) => {
-    const environment = museGlimmerEnv({
-      NEMOCLAW_RECREATE_SANDBOX: "1",
-      NEMOCLAW_TOOL_DISCLOSURE: "direct",
-    });
-    const session = createSession({
-      servingProfileProvenance: servingProfileProvenanceFor(recipeId, "vllm"),
-    });
-    const { deps, calls } = createDeps(
-      {
-        getSandboxRegistryEntry: (name) =>
-          registeredEntry(name, {
-            provider: "vllm-local",
-            model: "muse-glimmer",
-            pendingRouteReservation: true,
-            reservationSessionId: session.sessionId,
-          }),
-      },
-      session,
-    );
+  ])(
+    "uses first creation without disclosure or recreation overrides for %s (#14065)",
+    async (recipeId) => {
+      const environment = {
+        NEMOCLAW_RECREATE_SANDBOX: "",
+        NEMOCLAW_TOOL_DISCLOSURE: "",
+      };
+      const session = createSession({
+        servingProfileProvenance: servingProfileProvenanceFor(recipeId, "vllm"),
+      });
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) =>
+            registeredEntry(name, {
+              provider: "vllm-local",
+              model: "muse-glimmer",
+              pendingRouteReservation: true,
+              reservationSessionId: session.sessionId,
+            }),
+        },
+        session,
+      );
 
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      provider: "vllm-local",
-      model: "muse-glimmer",
-      agent: { name: "openclaw" },
-      // Match onboard's environment-backed recreation decision, including explicit requests.
-      recreateSandbox: (requested = false) =>
-        requested || environment.NEMOCLAW_RECREATE_SANDBOX === "1",
-      env: environment,
-    });
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        provider: "vllm-local",
+        model: "muse-glimmer",
+        agent: { name: "openclaw" },
+        // Match onboard's environment-backed recreation decision, including explicit requests.
+        recreateSandbox: (requested = false) =>
+          requested || environment.NEMOCLAW_RECREATE_SANDBOX === "1",
+        env: environment,
+      });
 
-    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
-    // The fallback is also progressive; reject recreation before checking the generated default.
-    expect(createSandboxCall[15]).toMatchObject({ recreate: false });
-    expect(generatedToolSearch(createSandboxCall[15], "muse-glimmer")).toEqual(
-      STRUCTURED_TOOL_SEARCH,
-    );
-    expect(calls.removeSandbox).not.toHaveBeenCalled();
-  });
+      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+      // The fallback is also progressive; reject recreation before checking the generated default.
+      expect(createSandboxCall[15]).toMatchObject({ recreate: false });
+      expect(generatedToolSearch(createSandboxCall[15], "muse-glimmer")).toEqual(
+        STRUCTURED_TOOL_SEARCH,
+      );
+      expect(calls.removeSandbox).not.toHaveBeenCalled();
+    },
+  );
 
   it("serves every catalog recipe the Muse default applies to on a 32K window (#14065)", () => {
     const windows = loadServingCatalog()

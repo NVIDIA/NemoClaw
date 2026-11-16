@@ -354,11 +354,12 @@ it.each([
 });
 
 it.each([
-  ["spark-express-vllm", "^spark-express-vllm:"],
-  ["dgx-station-express", "^dgx-station-express:"],
+  ["spark-express-vllm", "^spark-express-vllm:", 2, "fresh explicit Muse Glimmer"],
+  ["dgx-station-express", "^dgx-station-express:", 1, "Station Express installs"],
 ])(
-  "collects exactly the %s live case without loading hardware runtime modules",
-  (target, selector) => {
+  "collects the %s live cases without loading hardware runtime modules",
+  { timeout: 35_000 },
+  (target, selector, count, requiredCase) => {
     const result = spawnSync(
       process.execPath,
       [
@@ -388,8 +389,15 @@ it.each([
     );
     expect(result.status, result.stderr).toBe(0);
     const tests = JSON.parse(result.stdout);
-    expect(tests).toHaveLength(1);
-    expect(tests[0]).toMatchObject({ name: expect.stringMatching(new RegExp(selector)) });
+    expect(tests).toHaveLength(count);
+    expect(tests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: expect.stringMatching(new RegExp(selector)) }),
+      ]),
+    );
+    expect(tests).toContainEqual(
+      expect.objectContaining({ name: expect.stringContaining(requiredCase) }),
+    );
   },
 );
 

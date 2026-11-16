@@ -11,7 +11,12 @@ import { normalizeNativeLocalProviderAttachment } from "../../../src/lib/inferen
 import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
 import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
-import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import { execTimeout } from "../../helpers/timeouts.ts";
+import {
+  GPU_OLLAMA_TEST_TIMEOUT_MS,
+  GPU_HERMES_TEST_TIMEOUT_MS,
+  GPU_VLLM_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -46,9 +51,9 @@ import {
 } from "./gpu-e2e-helpers.ts";
 import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
-const TIMEOUT_MS = testTimeout(75 * 60_000);
-const HERMES_RESPONSE_TIMEOUT_MS = testTimeout(90 * 60_000);
-const VLLM_EXPORT_TIMEOUT_MS = testTimeout(90 * 60_000);
+const TIMEOUT_MS = GPU_OLLAMA_TEST_TIMEOUT_MS;
+const HERMES_RESPONSE_TIMEOUT_MS = GPU_HERMES_TEST_TIMEOUT_MS;
+const VLLM_EXPORT_TIMEOUT_MS = GPU_VLLM_TEST_TIMEOUT_MS;
 // Explicit-only preset; the 96 GB RTX PRO 6000 runner meets its compute and memory floor (#14065).
 const MUSE_GLIMMER_VLLM_PROFILE_ID =
   "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4" as const;
@@ -807,6 +812,7 @@ process.stdout.write(JSON.stringify({
 NODE`),
       { artifactName: "muse-glimmer-runtime-config", env: museEnv, timeoutMs: 30_000 },
     );
+    expect(runtimeConfig.exitCode, resultText(runtimeConfig)).toBe(0);
     expect(JSON.parse(runtimeConfig.stdout)).toEqual({
       model: `inference/${MUSE_GLIMMER_SERVED_MODEL}`,
       toolSearch: PROGRESSIVE_TOOL_SEARCH,
@@ -831,6 +837,7 @@ NODE`),
         timeoutMs: 12 * 60_000,
       },
     );
+    expect(agent.exitCode, resultText(agent)).toBe(0);
     assertAgentExecutionSucceeded(
       agent.stdout,
       "inference",
