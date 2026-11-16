@@ -139,17 +139,23 @@ function textWithoutSafeCredentialFixtures(value: string): string {
   );
 }
 
-/** Detect standalone and context-anchored credentials in opaque file content. */
-export function textContainsCredential(
+export type CredentialFindingRule =
+  | "credential-fingerprint"
+  | "bearer-authorization"
+  | "credential-assignment";
+
+/** Return a fixed rule identifier without retaining the matching value. */
+export function credentialFindingRule(
   value: string,
   options: { opaqueAssignments?: boolean; privateKeyHeader?: boolean } = {},
-): boolean {
+): CredentialFindingRule | null {
   const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
-  if (textContainsHighConfidenceCredential(withoutPlaceholders, options)) return true;
+  if (textContainsHighConfidenceCredential(withoutPlaceholders, options))
+    return "credential-fingerprint";
   const authorization =
     /\b(?:Proxy-)?Authorization["']?[ \t]*[:=][ \t]*["']?Bearer[ \t]+([A-Za-z0-9_.+/=-]{10,})/gimu;
-  if (authorization.test(withoutPlaceholders)) return true;
-  if (options.opaqueAssignments === false) return false;
+  if (authorization.test(withoutPlaceholders)) return "bearer-authorization";
+  if (options.opaqueAssignments === false) return null;
   const assignment =
     /(?<![A-Za-z0-9_.-])["']?([_A-Za-z][_A-Za-z0-9.-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}]+))/gu;
   for (;;) {
@@ -162,13 +168,21 @@ export function textContainsCredential(
       isCredentialField(field) &&
       !isSafeCredentialPlaceholder(candidate)
     ) {
-      return true;
+      return "credential-assignment";
     }
     // A non-credential outer JSON key can contain a nested credential key.
     // Advance one character so the bounded scan considers that inner object.
     assignment.lastIndex = match.index + 1;
   }
-  return false;
+  return null;
+}
+
+/** Detect standalone and context-anchored credentials in opaque file content. */
+export function textContainsCredential(
+  value: string,
+  options: { opaqueAssignments?: boolean; privateKeyHeader?: boolean } = {},
+): boolean {
+  return credentialFindingRule(value, options) !== null;
 }
 
 /** Detect npm registry credential directives even when their values are opaque. */

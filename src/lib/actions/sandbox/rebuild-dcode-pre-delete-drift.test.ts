@@ -17,6 +17,41 @@ import { revalidateDcodeReplacementAtMutationEdge } from "./rebuild-dcode-prefli
 describe("rebuildSandbox DCode flow: pre-delete drift", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
+  it("preserves the source and reports failed Auto revocation when backup is refused", async () => {
+    const entry = { ...makeDcodeSandboxEntry(), dcodeAutoApprovalMode: "thread-opt-in" };
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: entry,
+    });
+    configureDcodeSession(harness);
+    harness.backupSandboxStateSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      failedDirs: ["."],
+      backedUpFiles: [],
+      failedFiles: [],
+      error: "SQLite inspection failed (sqlite-query)",
+    });
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--dcode-auto-approval", "disabled"], {
+        throwOnError: true,
+      }),
+    ).rejects.toThrow("Failed to back up sandbox state");
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Requested capability changes were not applied");
+    expect(output).toContain(
+      "Previous DCode auto-approval capability remains configured as thread-opt-in",
+    );
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.registryUpdateSpy).not.toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ dcodeAutoApprovalMode: "disabled" }),
+    );
+    expect(entry.dcodeAutoApprovalMode).toBe("thread-opt-in");
+  });
+
   it("rejects prepared-image tool-disclosure drift before gateway or mutation work", async () => {
     const checkGatewaySchema = vi.fn(() => true);
     const verify = vi.fn(() => true);

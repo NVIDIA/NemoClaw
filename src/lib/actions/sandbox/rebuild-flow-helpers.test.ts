@@ -752,6 +752,30 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     vi.restoreAllMocks();
   });
 
+  it.each(["thread-opt-in", "disabled"] as const)(
+    "reports the previous %s capability after backup refusal",
+    async (mode) => {
+      const entry = { ...makeSandboxEntry(), dcodeAutoApprovalMode: mode };
+      backupSpy.mockReturnValue({
+        ...makeBackupResult(),
+        success: false,
+        manifest: null,
+        error: "SQLite inspection failed (sqlite-query)",
+      });
+      await expect(
+        backupSandboxStateForRebuild("alpha", entry, false, vi.fn(), makeBail()),
+      ).rejects.toThrow("Failed to back up sandbox state");
+      const output = errorSpy.mock.calls.flat().join("\n");
+      expect(output).toContain(
+        "No replacement was created. Requested capability changes were not applied.",
+      );
+      expect(output).toContain(
+        `Previous DCode auto-approval capability remains configured as ${mode}.`,
+      );
+      expect(entry.dcodeAutoApprovalMode).toBe(mode);
+    },
+  );
+
   it("aborts when backup fails completely", async () => {
     backupSpy.mockReturnValue({
       success: false,

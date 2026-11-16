@@ -708,6 +708,14 @@ export async function backupSandboxStateForRebuild(
       );
       console.error("  It is excluded from automatic rebuild recovery.");
     }
+    if (sb.agent === "langchain-deepagents-code") {
+      console.error("  No replacement was created. Requested capability changes were not applied.");
+      const previousMode =
+        sb.dcodeAutoApprovalMode === "thread-opt-in" ? "thread-opt-in" : "disabled";
+      console.error(
+        `  Previous DCode auto-approval capability remains configured as ${previousMode}.`,
+      );
+    }
     console.error("  Aborting rebuild to prevent data loss.");
     bail("Failed to back up sandbox state.");
     return undefined;
