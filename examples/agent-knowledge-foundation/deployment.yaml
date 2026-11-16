@@ -62,6 +62,9 @@ spec:
         skills:
           directories:
             - folder: /opt/akf/skills
+          # Only the examples' skills; OpenClaw's own would load beside them.
+          bundled:
+            enabled: false
           duplicates: reject
     market-analysis:
       # Market analysis: six questions over a synthetic equity market.
@@ -76,6 +79,9 @@ spec:
         skills:
           directories:
             - folder: /opt/akf/skills
+          # Only the examples' skills; OpenClaw's own would load beside them.
+          bundled:
+            enabled: false
           duplicates: reject
     provider-billing:
       # Provider billing integrity: 22 questions about a billing ring.
@@ -90,4 +96,7 @@ spec:
         skills:
           directories:
             - folder: /opt/akf/skills
+          # Only the examples' skills; OpenClaw's own would load beside them.
+          bundled:
+            enabled: false
           duplicates: reject
