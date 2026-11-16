@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::labels::display_value;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nemoclaw_authoring::{
     Capabilities, Diagnostics, JourneyQuestion, JourneyResolution, JourneyState,
 };
@@ -350,6 +351,43 @@ impl JourneyWizard {
             .and_then(|value| self.submit(value).map_err(|error| error.to_string()));
         if let Err(error) = result {
             self.error = Some(error);
+        }
+    }
+
+    /// Apply a key that only changes the questionnaire: answering, moving,
+    /// omitting, and editing the text answer. The terminal loop handles the
+    /// keys that exit or read the target before passing the rest here.
+    pub(super) fn press(&mut self, key: KeyEvent) {
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Char('o') if control => self.omit(),
+            KeyCode::Char('a') if control => self.input.clear(),
+            KeyCode::Enter => self.advance(),
+            KeyCode::Left => self.back(),
+            KeyCode::Up => self.previous(),
+            KeyCode::Down => self.next(),
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.input.push(character);
+            }
+            _ => {}
+        }
+    }
+
+    /// Leave the current question's value out, unless it is required.
+    fn omit(&mut self) {
+        if let Ok(Some(question)) = self.question() {
+            if question.required() {
+                self.error = Some("This question is required.".into());
+            } else if let Err(error) = self.submit(None) {
+                self.error = Some(error.to_string());
+            }
         }
     }
 

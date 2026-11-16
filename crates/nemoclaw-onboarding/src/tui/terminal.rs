@@ -126,16 +126,6 @@ pub(crate) async fn run(
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Err(Error::Cancelled.into());
         }
-        if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            if let Ok(Some(question)) = wizard.question() {
-                if question.required() {
-                    wizard.error = Some("This question is required.".into());
-                } else if let Err(error) = wizard.submit(None) {
-                    wizard.error = Some(error.to_string());
-                }
-            }
-            continue;
-        }
         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if wizard.input.is_empty() && !wizard.selection_changed && !wizard.custom_answer {
                 let document = wizard
@@ -212,25 +202,9 @@ pub(crate) async fn run(
                         }
                     }
                 }
-                wizard.advance();
+                wizard.press(key);
             }
-            KeyCode::Left => wizard.back(),
-            KeyCode::Up => wizard.previous(),
-            KeyCode::Down => wizard.next(),
-            KeyCode::Backspace => {
-                wizard.input.pop();
-            }
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                wizard.input.clear()
-            }
-            KeyCode::Char(character)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                wizard.input.push(character)
-            }
-            _ => {}
+            _ => wizard.press(key),
         }
     }
 }
