@@ -794,6 +794,13 @@ The historical fixtures retain these version boundaries:
 The gateway fixture sets a canonical private `XDG_BIN_HOME` for both installer generations.
 Its current installer still receives duplicate-slash `HOME` and `XDG_CONFIG_HOME` values for the systemd service scenario.
 
+The v0.0.123 fixture uses one running survivor and one stopped sandbox.
+Both retain workspace-preservation checks; the stopped sandbox also retains its lifecycle check and stopped-phase assertion.
+This replaces the original three-sandbox topology with the smallest mixed-state recovery case.
+The removed second stopped sandbox repeated the same backup, migration, restore, and lifecycle path.
+The live target no longer qualifies recovery with two stopped sandboxes in one upgrade.
+The installer deadline remains 35 minutes; measured runtime for this smaller fixture still requires live qualification.
+
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
 The gateway fixture already binds its remote historical inputs to immutable commits and cryptographic digests.
