@@ -20,6 +20,7 @@ Examples and builds:
 
 - Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
 - OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
+- [Building from source](../build-deploy/build.md) uses Rust 1.100.0, as do the Rust stages of the agent, supervisor, and Ollama proxy images.
 
 OpenShell 0.1.8:
 
