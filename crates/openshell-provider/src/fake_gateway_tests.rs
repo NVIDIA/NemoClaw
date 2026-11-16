@@ -768,37 +768,38 @@ fn apf_admission(provenance: bool) -> Arc<dyn Fn(&mut proto::Sandbox) + Send + S
     })
 }
 
+/// The fixture's rows, with the sandbox APF-governed.
+fn apf_rows() -> Vec<(&'static str, Row)> {
+    let mut rows = fixture_rows("explicit-policy");
+    for (kind, row) in &mut rows {
+        if *kind == "sandbox" {
+            row.insert(POLICY_AUTHORITY.into(), "apf".into());
+        }
+    }
+    rows
+}
+
 #[tokio::test]
 async fn an_apf_governed_sandbox_keeps_the_policy_apf_admitted() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let mut rows = fixture_rows("explicit-policy");
-    for (kind, row) in &mut rows {
-        if *kind == "sandbox" {
-            row.insert("policy_authority".into(), "apf".into());
-        }
-    }
     // Without APF's provenance, a replaced policy is not APF's.
     fixture.state.lock().unwrap().sandbox_admission = Some(apf_admission(false));
-    let (sandbox_rows, others): (Vec<_>, Vec<_>) = rows
-        .iter()
-        .cloned()
+    let (sandbox, others): (Vec<_>, Vec<_>) = apf_rows()
+        .into_iter()
         .partition(|(kind, _)| *kind == "sandbox");
     create(&client, &others).await;
-    let (_, want) = &sandbox_rows[0];
-    assert!(client.ensure("sandbox", want).await.error().is_some());
-    let key = format!("{}/{}", want["workspace"], want["name"]);
-    fixture.state.lock().unwrap().sandboxes.remove(&key);
+    assert!(
+        client
+            .ensure("sandbox", &sandbox[0].1)
+            .await
+            .error()
+            .is_some()
+    );
+    fixture.state.lock().unwrap().sandboxes.clear();
     // With it, the sandbox binds and records the loaded policy's hash.
-    fixture.state.lock().unwrap().sandbox_admission = Some(apf_admission(true));
-    let sandbox = create(&client, &sandbox_rows).await.remove(0);
-    assert_eq!(sandbox["policy_authority"], "apf");
-    let recorded = client
-        .read("sandbox", &sandbox, false)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(!recorded["policy_hash"].is_empty());
+    let (recorded, _) = apf_sandbox(&fixture, &client).await;
+    assert_eq!(recorded[POLICY_AUTHORITY], "apf");
     assert_eq!(recorded[POLICY_PROVENANCE], "token");
     assert!(client.read("sandbox", &recorded, false).await.is_ok());
 }
@@ -806,12 +807,7 @@ async fn an_apf_governed_sandbox_keeps_the_policy_apf_admitted() {
 /// An APF-governed sandbox, bound with its loaded policy recorded, and the key
 /// the fake gateway stores it under.
 async fn apf_sandbox(fixture: &Fixture, client: &OpenShell) -> (Row, String) {
-    let mut rows = fixture_rows("explicit-policy");
-    for (kind, row) in &mut rows {
-        if *kind == "sandbox" {
-            row.insert("policy_authority".into(), "apf".into());
-        }
-    }
+    let rows = apf_rows();
     fixture.state.lock().unwrap().sandbox_admission = Some(apf_admission(true));
     let sandbox = create(client, &rows)
         .await
@@ -1026,115 +1022,39 @@ fn a_governed_sandbox_whose_policy_is_not_apfs_plans_an_update() {
     }
 }
 
-/// The fixture's inference resource as OpenTofu sends it, under APF's policy
-/// authority, after creating its workspace.
-async fn apf_inference(client: &OpenShell) -> Row {
-    let rows = fixture_rows("explicit-policy");
-    let workspace: Vec<_> = rows
-        .iter()
-        .filter(|(kind, _)| *kind == "workspace")
-        .cloned()
-        .collect();
-    create(client, &workspace).await;
-    let profile = &rows
-        .iter()
-        .find(|(k, _)| *k == "provider_profile")
-        .unwrap()
-        .1;
-    let mut row = rows
-        .iter()
-        .find(|(k, _)| *k == "provider")
-        .unwrap()
-        .1
-        .clone();
-    row.insert("api".into(), "openai-completions".into());
-    row.insert("binaries_json".into(), profile["binaries_json"].clone());
-    row.insert("policy_authority".into(), "apf".into());
-    row
-}
-
-/// The profile APF's interceptor serves for an inference resource, as
-/// OpenShell reports a profile from an interceptor source.
-fn apf_profile(row: &Row, source: &str) -> proto::ProviderProfile {
-    let mut profile = inference_profile(
-        &row["name"],
-        &row["endpoint"],
-        nemoclaw_openshell::profile::InferenceProviderKind::Openai,
-        false,
-    )
-    .unwrap();
-    profile.binaries = vec![proto::NetworkBinary {
-        path: "/usr/local/bin/python3.99".into(),
-    }];
-    profile.source = source.into();
-    profile
-}
-
 #[tokio::test]
 async fn an_apf_governed_inference_resource_adopts_the_profile_apf_serves() {
     let fixture = Fixture::start().await;
-    let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let row = apf_inference(&client).await;
-    let key = format!("{}/nemoclaw-inference-{}", row["workspace"], row["name"]);
-    let imports = |fixture: &Fixture| {
-        fixture
-            .state
-            .lock()
-            .unwrap()
-            .rpcs
-            .iter()
-            .filter(|rpc| rpc.contains("ImportProviderProfiles"))
-            .count()
-    };
-    // Without APF's profile there is nothing to adopt, and NemoClaw never
-    // imports one of its own.
-    assert!(
-        crate::composite::ensure(&client, "inference", &row)
-            .await
-            .error()
-            .is_some()
-    );
-    // A profile NemoClaw or a user imported is not APF's.
-    fixture
-        .state
-        .lock()
-        .unwrap()
-        .profiles
-        .insert(key.clone(), apf_profile(&row, "user"));
-    assert!(
-        crate::composite::ensure(&client, "inference", &row)
-            .await
-            .error()
-            .is_some()
-    );
-    fixture.state.lock().unwrap().profiles.insert(
-        key.clone(),
-        apf_profile(&row, "interceptor/apf-policy-adapter"),
-    );
-    let mutation = crate::composite::ensure(&client, "inference", &row).await;
-    assert!(mutation.error().is_none(), "{:?}", mutation.error());
-    let bound = mutation.into_parts().0.unwrap();
-    assert_eq!(imports(&fixture), 0);
-    let provider_key = format!("{}/{}", row["workspace"], row["name"]);
-    assert_eq!(
-        fixture.state.lock().unwrap().providers[&provider_key].r#type,
-        format!("nemoclaw-inference-{}", row["name"])
-    );
-    // The bound resource reads back unchanged.
-    let observed = crate::composite::read(&client, "inference", &bound, false)
-        .await
-        .unwrap()
-        .unwrap();
-    for field in ["id", "owner", "generation", "endpoint", "binaries_json"] {
-        assert_eq!(observed[field], bound[field], "{field}");
-    }
-    // Removal deletes the registration and leaves APF's profile.
-    crate::composite::remove(&client, "inference", &bound, false)
-        .await
-        .unwrap();
-    let state = fixture.state.lock().unwrap();
-    assert!(!state.providers.contains_key(&provider_key));
-    assert!(state.profiles.contains_key(&key));
+    let client = client(&fixture, Arc::new(Keys));
+    let row = apf_credential_row(
+        &client,
+        &[
+            ("api", "openai-completions"),
+            ("credential_env", "NEMOCLAW_TEST_INFERENCE_KEY"),
+        ],
+    )
+    .await;
+    let name = row["name"].clone();
+    adopts_the_apf_profile(
+        &fixture,
+        &client,
+        "inference",
+        &row,
+        (
+            &format!("nemoclaw-inference-{name}"),
+            &nemoclaw_openshell::profile::inference_key_env(&name),
+            &name,
+        ),
+        &[
+            "id",
+            "owner",
+            "generation",
+            "endpoint",
+            "binaries_json",
+            "credential_env",
+        ],
+    )
+    .await;
 }
 
 /// A profile APF's interceptor serves under `id`, whose one credential the
@@ -1156,10 +1076,14 @@ fn apf_served(id: &str, variable: &str, source: &str) -> proto::ProviderProfile 
     }
 }
 
-/// A credential resource's row under APF, sharing the fixture inference
-/// resource's workspace, identity and gateway connection.
+/// A credential resource's row under APF, after creating its workspace: the
+/// fixture's inference registration, its kind-specific fields replaced by
+/// `fields`.
 async fn apf_credential_row(client: &OpenShell, fields: &[(&str, &str)]) -> Row {
-    let mut row = apf_inference(client).await;
+    let rows = fixture_rows("explicit-policy");
+    let row = |kind: &str| rows.iter().find(|(k, _)| *k == kind).unwrap().1.clone();
+    create(client, &[("workspace", row("workspace"))]).await;
+    let mut credential = row("provider");
     for field in [
         "api",
         "credential_source",
@@ -1167,10 +1091,15 @@ async fn apf_credential_row(client: &OpenShell, fields: &[(&str, &str)]) -> Row 
         "provider_type",
         "id",
     ] {
-        row.remove(field);
+        credential.remove(field);
     }
-    row.extend(fields.iter().map(|(k, v)| ((*k).into(), (*v).into())));
-    row
+    credential.insert(
+        "binaries_json".into(),
+        row("provider_profile")["binaries_json"].clone(),
+    );
+    credential.insert("policy_authority".into(), "apf".into());
+    credential.extend(fields.iter().map(|(k, v)| ((*k).into(), (*v).into())));
+    credential
 }
 
 /// NemoClaw adopts the profile APF serves for a credential resource of `kind`

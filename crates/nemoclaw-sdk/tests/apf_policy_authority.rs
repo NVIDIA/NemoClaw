@@ -61,10 +61,6 @@ fn values(document: &Document, kind: &str) -> std::collections::BTreeMap<String,
         .values
 }
 
-fn sandbox_values(document: &Document) -> std::collections::BTreeMap<String, String> {
-    values(document, "sandbox")
-}
-
 #[test]
 fn either_gateway_mode_accepts_apf_as_the_policy_authority() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
@@ -77,7 +73,7 @@ fn either_gateway_mode_accepts_apf_as_the_policy_authority() {
         let document = parse(&value).unwrap();
         assert_eq!(document.validate().map_err(|e| e.to_string()), Ok(()));
         assert_eq!(parse(&json!(document)).unwrap(), document);
-        assert_eq!(sandbox_values(&document)["policy_authority"], "apf");
+        assert_eq!(values(&document, "sandbox")["policy_authority"], "apf");
         // APF also serves the credential profiles.
         assert_eq!(values(&document, "inference")["policy_authority"], "apf");
     }
@@ -103,7 +99,7 @@ fn apf_serves_every_credential_profile_on_a_governed_gateway() {
 #[test]
 fn without_a_policy_authority_nemoclaw_authors_the_policy() {
     let document = parse(&example(include_str!("../../../examples/local.yaml"))).unwrap();
-    assert!(!sandbox_values(&document).contains_key("policy_authority"));
+    assert!(!values(&document, "sandbox").contains_key("policy_authority"));
     assert!(!values(&document, "inference").contains_key("policy_authority"));
 }
 
@@ -137,7 +133,7 @@ fn a_managed_docker_gateway_registers_apf_with_its_connection_settings() {
         let document = parse(&value).unwrap();
         assert_eq!(document.validate().map_err(|e| e.to_string()), Ok(()));
         assert_eq!(parse(&json!(document)).unwrap(), document);
-        assert_eq!(sandbox_values(&document)["policy_authority"], "apf");
+        assert_eq!(values(&document, "sandbox")["policy_authority"], "apf");
         assert_eq!(
             document.credential_names().contains(&"APF_CA_FILE"),
             ca,
