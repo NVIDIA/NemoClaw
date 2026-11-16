@@ -413,7 +413,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
                 {id:205,name:"Late app check",check_suite:{id:305}},
                 {id:206,name:"Late Actions check",details_url:"https://github.com/example/repo/actions/runs/12/job/206"},
                 {id:207,name:"Prior app check",check_suite:{id:307}}
-              ] else [] end) | map((if .id == 201 and $padding > 0 then .name = ("x" * $padding) else . end) + {app:{id:1,slug:"external"},started_at:(.started_at // (if $first or .id == 209 then null else "2026-01-01T00:11:00Z" end)),completed_at:(if $first then null else "2026-01-01T00:12:00Z" end),conclusion:(if $first then null else "success" end)}))}' ;;
+              ] else [] end) | map((if .id == 201 and $padding > 0 then .name = ("x" * $padding) else . end) + {app:{id:1,slug:"external"},started_at:(.started_at // (if $first and $scenario != "recovery_boundaries" and (.id == 203 or .id == 204) then "2026-01-01T00:02:00Z" elif $first or .id == 209 then null else "2026-01-01T00:11:00Z" end)),completed_at:(if $first then null else "2026-01-01T00:12:00Z" end),conclusion:(if $first then null else "success" end)}))}' ;;
           *) printf '{"check_runs":[]}' ;;
         esac ;;
       repos/example/repo/issues/comments/123)
@@ -532,8 +532,9 @@ raise 'Real readback failure suppressed' unless first[:failed]
 first_report = File.read("#{first[:root]}/temp/merge-outcomes.md")
 raise 'Failed attempt lost full report' unless first_report.include?('+209 / -10 lines across 5 files')
 raise 'Failed attempt omitted unfinished check' unless first_report.include?('[Unfinished check]')
+raise 'Unfinished checks were not retained in the timing snapshot' unless first_report.include?("#{head}:201,#{head}:203,#{head}:204 -->")
 raise 'Failed attempt omitted pending status' unless first_report.include?('[Pending status]')
-raise 'Failed attempt omitted queued checks' unless first_report.include?('[Queued app check]') && first_report.include?('[Queued Actions check]')
+raise 'Failed attempt omitted queued checks with provisional start times' unless first_report.include?('[Queued app check]') && first_report.include?('[Queued Actions check]')
 raise 'Failed attempt lost unfinished results or durations' unless first_report.scan(/\| (?:unfinished|unfinished at merge|pending) \| unavailable \|/).length == 4
 raise 'Failed attempt lost artifact' unless File.read("#{first[:artifact]}/merge-outcomes.md") == first_report
 raise 'Failed attempt claimed qualification' if File.exist?("#{first[:artifact]}/merge-outcomes-receipt.json")

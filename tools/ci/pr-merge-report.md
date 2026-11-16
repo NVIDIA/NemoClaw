@@ -69,12 +69,15 @@ lists the history gap and retains available revisions. Reviews without commit
 attribution remain in the report without commit lookups or attributed follow-ups.
 Workflow-run and check-suite creation times determine which checks belong to
 the PR window. They do not prove when each individual check was created.
-On recovery, a complete queued-check snapshot identifies previously queued
-checks even if they start later. The bot comment retains this snapshot before
-the display table, bound to the repository, PR number and merged revision.
+The published snapshot retains checks whose merge-time timing is unavailable.
+Every check unfinished at merge has an unavailable start and duration, even if
+GitHub supplies a provisional start timestamp. Recovery uses the snapshot to
+preserve these checks when their start timestamps change. The bot comment keeps
+the snapshot before the display table, bound to the repository, PR number and
+merged revision.
 Display truncation never removes snapshot entries. If the snapshot cannot fit,
 publication stops and retains the full report. Missing, malformed or mismatched
-snapshots stop recovery without another post. Previously queued checks keep
+snapshots stop recovery without another post. Previously unfinished checks keep
 unavailable start times and durations for that merge. New checks with a post-merge start are excluded. Newly seen checks with
 no start time are also excluded during recovery. Before the first publication,
 a queued check's suite supplies the available observation bound; GitHub exposes

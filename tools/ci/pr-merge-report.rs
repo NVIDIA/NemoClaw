@@ -534,7 +534,13 @@ impl Api {
                 {
                     continue;
                 }
-                let started = if started > merged { -1 } else { started };
+                // Queued checks can expose a provisional start that changes later.
+                // Freeze every unfinished check in the retained timing snapshot.
+                let started = if started > merged || completed < 0 {
+                    -1
+                } else {
+                    started
+                };
                 if observed >= 0 {
                     report.observe(&sha, observed);
                 }
