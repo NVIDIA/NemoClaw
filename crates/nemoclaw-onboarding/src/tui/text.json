@@ -39,9 +39,6 @@
     "/spec/sandboxes/*/agent/name": {
       "title": "Name the agent"
     },
-    "/spec/sandboxes/*/harness/execution/timeoutSeconds": {
-      "title": "Agent timeout (seconds)"
-    },
     "/spec/sandboxes/*/harness/kind": {
       "title": "Choose your agent harness",
       "description": "The harness is the agent environment NemoClaw installs and isolates. More harnesses will be offered later."

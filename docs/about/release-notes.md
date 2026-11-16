@@ -16,6 +16,14 @@ Refer to [the overview](overview.md) for implemented boundaries and [the CLI ref
 
 These changes reached `v1` after the `v0.1.0-rc10` tag; [breaking changes](#breaking-changes-since-v010-rc10) are listed separately.
 
+Agents and interfaces:
+
+- The agent holds Fabric's `instructions`, `tools`, `skills`, `mcp`, and `workflow` sections, and the harness holds `runtime`, `environment`, `discovery`, `telemetry`, and `relay`; NemoClaw passes each to Fabric unchanged.
+  Sandboxes that share a harness definition through `harnessRef` can give each agent its own instructions, tools, and skills.
+  See [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness).
+- `spec.policies` holds named sandbox policies that a network selects with `policyRef`, and `spec.grants` holds named grants that a network adds to the isolated preset with `grantRefs`.
+  See [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants).
+
 Inference and models:
 
 - A managed vLLM or Ollama container's `container.cpuLimitMillis` reaches Docker through the Docker provider's `cpus`, without the `nemoclaw.nvidia.com/cpu-limit-millis` label.
@@ -136,6 +144,41 @@ See [migration](../get-started/migration.md) for where each earlier task lives n
 
 These changes since the `v0.1.0-rc10` tag affect existing deployments or documents:
 
+- The intent record is now version 22, so this release refuses any deployment that `v0.1.0-rc10` created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
+- `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
+  `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up.
+  Before:
+
+  ```yaml
+  harness:
+    kind: nvidia.fabric.hermes
+    config:
+      runtime: {max_turns: 16}
+      instructions: {system: {mode: replace, content: "Research flights."}}
+      skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
+  agent:
+    name: flights
+  ```
+
+  After:
+
+  ```yaml
+  harness:
+    kind: nvidia.fabric.hermes
+    runtime: {max_turns: 16}
+  agent:
+    name: flights
+    instructions: {system: {mode: replace, content: "Research flights."}}
+    skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
+  ```
+
+- `harness.execution` is removed. Set Fabric's `runtime.timeout_seconds` on the harness instead: replace `harness: {kind: nvidia.fabric.openclaw, execution: {timeoutSeconds: 600}}` with `harness: {kind: nvidia.fabric.openclaw, runtime: {timeout_seconds: 600}}`.
+
+- `agent.tools` is Fabric's tools section, and its `allow` list is removed. Rename `allow` to Fabric's `enabled`, so `tools: {allow: [read, write]}` becomes `tools: {enabled: [read, write]}`; `blocked` and `definitions` are now available too.
+
+- In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
+  Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
 - With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
   A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
 - With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.

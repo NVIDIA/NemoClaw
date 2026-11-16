@@ -45,6 +45,7 @@ impl Document {
         }
         validate_endpoint(gateway.endpoint(), true)?;
         self.validate_harness_references()?;
+        self.validate_network_references()?;
         let selected_providers = self.selected_providers()?;
         crate::services::validate(self)?;
         self.validate_inference_references()?;
@@ -74,10 +75,7 @@ impl Document {
                     }),
                     "brave-search and tavily-search names are reserved for web search",
                 )?;
-                search.validate(std::iter::once((
-                    sandbox.agent.name.as_str(),
-                    sandbox.agent.tools.as_ref(),
-                )))?;
+                search.validate(std::iter::once(sandbox.agent.name.as_str()))?;
             }
             let image_scope = self.image_scope(sandbox)?;
             for api in self.apis(sandbox)? {
@@ -100,9 +98,6 @@ impl Document {
             }
             let agent = &sandbox.agent;
 
-            if let Some(tools) = &agent.tools {
-                tools.validate()?;
-            }
             let inference = self.scoped_inference(sandbox)?;
             for route in &inference.inference.routes {
                 let selected = self.route_provider(route, &inference)?;

@@ -551,7 +551,7 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 
 | Phase | Current budget and setting |
 |---|---|
-| Fabric runtime request | `harness.execution.timeoutSeconds` maps to public Fabric `runtime.timeout_seconds`; omitted values use Fabric defaults |
+| Fabric runtime request | The harness's `runtime.timeout_seconds`, passed to Fabric; omitted values use Fabric defaults |
 | Managed service loading | `spec.services.<name>.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
 | Managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |

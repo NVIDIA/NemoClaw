@@ -62,6 +62,13 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             json!({"propertyNames": {"pattern": c::SLUG}}),
         );
     }
+    for collection in ["policies", "grants"] {
+        property(
+            &mut defs["Spec"],
+            collection,
+            json!({"propertyNames": {"pattern": c::SLUG}}),
+        );
+    }
     for name in ["Spec", "Sandbox"] {
         for collection in ["inferences", "harnesses", "inferenceProviders"] {
             property(
@@ -256,10 +263,25 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     property(
         &mut defs["Network"],
         "tier",
-        json!({"x-nemoclaw-default-rule": "Omitted or empty selects isolated only without policy.explicit."}),
+        json!({"x-nemoclaw-default-rule": "Omitted or empty selects isolated only without policy or policyRef."}),
     );
-    defs["Network"]["if"] = json!({"required": ["policy"]});
-    defs["Network"]["then"] = json!({"properties": {"tier": {"const": ""}}});
+    property(
+        &mut defs["Network"],
+        "policyRef",
+        json!({"pattern": c::SLUG}),
+    );
+    property(
+        &mut defs["Network"],
+        "grantRefs",
+        json!({"uniqueItems": true, "items": {"type": "string", "pattern": c::SLUG}}),
+    );
+    defs["Network"]["if"] =
+        json!({"anyOf": [{"required": ["policy"]}, {"required": ["policyRef"]}]});
+    defs["Network"]["then"] = json!({
+        "properties": {"tier": {"const": ""}},
+        "allOf": [forbid(&["grants", "grantRefs"])]
+    });
+    defs["Network"]["not"] = json!({"required": ["policy", "policyRef"]});
     nemoclaw_openshell::policy::constrain(defs);
     property(
         &mut defs["Sandbox"],
@@ -273,15 +295,6 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             {"required": ["harness"], "not": {"required": ["harnessRef"]}},
             {"required": ["harnessRef"], "not": {"required": ["harness"]}}
         ]}));
-    let native_identifier =
-        json!({"minLength":1,"maxLength":256,"pattern":"^[^\\x00-\\x1f\\x7f]+$"});
-    let allow = &mut defs["AgentTools"]["properties"]["allow"];
-    allow["items"] = json!({"type":"string"});
-    allow["items"]
-        .as_object_mut()
-        .unwrap()
-        .extend(native_identifier.as_object().unwrap().clone());
-    allow["uniqueItems"] = json!(true);
 
     property(&mut defs["Route"], "name", json!({"pattern": c::SLUG}));
     property(
@@ -414,7 +427,6 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             }}
         ]);
     }
-    defs["AgentExecution"]["minProperties"] = json!(1);
     crate::services::constrain_schema(defs, normalized);
 
     root["allOf"] = json!([{

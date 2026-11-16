@@ -10,7 +10,7 @@ fn input() -> Value {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
     value["spec"]["sandboxes"]["assistant"]["harness"] =
-        json!({"kind":"openclaw", "execution":{"timeoutSeconds":900}});
+        json!({"kind":"openclaw", "runtime":{"timeout_seconds":900}});
     value
 }
 fn shared(mut value: Value, sandbox: bool) -> Value {
@@ -49,16 +49,26 @@ fn shared_harness_configuration_compiles_identically_and_survives_export() {
             Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
             doc
         );
+        // Agents sharing the harness keep their own instructions.
         let other = value["spec"]["sandboxes"]["assistant"].clone();
         value["spec"]["sandboxes"]["writer"] = other;
+        for sandbox in ["assistant", "writer"] {
+            value["spec"]["sandboxes"][sandbox]["agent"]["instructions"] =
+                json!({"system": {"mode": "replace", "content": sandbox}});
+        }
         let doc = Document::parse(value.to_string().as_bytes()).unwrap();
-        let rows = targets(&doc, &generations).unwrap();
-        let runtime: Value = nemoclaw_fabric::agent::compose(
-            &rows.iter().find(|row| row.kind == "agent").unwrap().values,
-        )
-        .unwrap();
-        assert_eq!(runtime["runtime"]["timeout_seconds"], 900);
-        assert_eq!(runtime["metadata"]["name"], "main");
+        for row in targets(&doc, &generations)
+            .unwrap()
+            .iter()
+            .filter(|row| row.kind == "agent")
+        {
+            let config: Value = nemoclaw_fabric::agent::compose(&row.values).unwrap();
+            assert_eq!(config["runtime"]["timeout_seconds"], 900);
+            assert_eq!(
+                config["instructions"]["system"]["content"], row.values["sandbox"],
+                "each agent receives its own instructions"
+            );
+        }
     }
 }
 #[test]
