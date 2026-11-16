@@ -1041,38 +1041,24 @@ mod tests {
         })
     }
 
+    /// Before any apply records a runtime, a plan lists no agents as last
+    /// applied; apply still says which agent has none.
     #[test]
-    fn plan_without_recorded_agent_runtimes_omits_applied_agent_history() {
-        for agent in [
-            json!({"agent": "main"}),
-            json!({"agent": "main", "runtimeId": null}),
-        ] {
-            let result = json!({
-                "outcome": "planned",
-                "changes": [],
-                "agents": {"assistant": agent}
-            });
-            let text = render(&["nemoclaw", "plan", "deployment.yaml"], result.clone());
-            assert!(
-                !text.contains("Agents, as last applied"),
-                "a plan without recorded runtimes must not claim applied agent history:\n{text}"
-            );
-            assert!(
-                !text.contains("no runtime recorded"),
-                "a plan must not list an agent without a recorded runtime as applied history:\n{text}"
-            );
-            let mut applied = result;
-            applied["outcome"] = json!("succeeded");
-            let text = render(&["nemoclaw", "apply", "deployment.yaml"], applied);
-            assert!(
-                text.contains("\nAgents:\n"),
-                "apply without recorded runtimes must retain the agents section:\n{text}"
-            );
-            assert!(
-                text.contains("assistant: agent main, no runtime recorded"),
-                "apply must report an agent whose runtime was not recorded:\n{text}"
-            );
-        }
+    fn plan_omits_agents_until_a_runtime_is_recorded() {
+        let agents = json!({"assistant": {"agent": "main"}});
+        let plan = render(
+            &["nemoclaw", "plan", "deployment.yaml"],
+            json!({"outcome": "planned", "changes": [], "agents": agents}),
+        );
+        assert!(!plan.contains("assistant"), "{plan}");
+        let apply = render(
+            &["nemoclaw", "apply", "deployment.yaml"],
+            json!({"outcome": "succeeded", "changes": [], "agents": agents}),
+        );
+        assert!(
+            apply.contains("\nAgents:\n  assistant: agent main, no runtime recorded\n"),
+            "{apply}"
+        );
     }
 
     /// Plan and apply print the command that invokes each agent with a recorded
@@ -1084,12 +1070,11 @@ mod tests {
         for (command, outcome) in [("plan", "planned"), ("apply", "succeeded")] {
             let result = json!({"outcome": outcome, "changes": [], "connection": connection, "agents": agents()});
             let text = render(&["nemoclaw", command, "deployment.yaml"], result.clone());
-            if command == "plan" {
-                assert!(
-                    text.contains("Agents, as last applied:"),
-                    "a plan with a recorded runtime must retain applied agent history:\n{text}"
-                );
-            }
+            assert_eq!(
+                text.contains("Agents, as last applied:"),
+                command == "plan",
+                "{command}: {text}"
+            );
             let lines: Vec<String> = text
                 .lines()
                 .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
