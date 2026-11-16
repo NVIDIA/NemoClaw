@@ -31,6 +31,8 @@ Agents and interfaces:
 Inference and models:
 
 - A managed vLLM or Ollama container's `container.cpuLimitMillis` reaches Docker through the Docker provider's `cpus`, without the `nemoclaw.nvidia.com/cpu-limit-millis` label.
+- A managed vLLM service keeps FlashInfer's autotune results on its model volume, in `/data/vllm-cache/flashinfer-autotune`, so a replaced container doesn't tune again; vLLM 0.33.0 otherwise keeps them inside the container.
+  See [retained model files](../agents-inference/models.md#retained-model-files).
 
 Examples and builds:
 
