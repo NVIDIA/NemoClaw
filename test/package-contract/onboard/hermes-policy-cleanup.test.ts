@@ -15,13 +15,14 @@ const gid = Number(spawnSync("/usr/bin/id", ["-g", "sandbox"], {encoding:"utf8"}
 assert.ok(uid > 0 && gid > 0);
 for (const mode of [0o700, 0o3770]) {
 fs.chownSync("/sandbox/.hermes", uid, gid);
-fs.chmodSync("/sandbox/.hermes", mode);
 const source = "/sandbox/.hermes/managed-policy.json";
 const policy = JSON.stringify({schema_version:3}) + String.fromCharCode(10);
-const generated = spawnSync(process.execPath, ["-e", "require('node:fs').writeFileSync(process.argv[1], process.argv[2], {mode:0o600})", source, policy], {
+// The owner can preserve setgid without granting root CAP_FSETID.
+const generated = spawnSync(process.execPath, ["-e", "const fs=require('node:fs'); fs.chmodSync('/sandbox/.hermes', Number(process.argv[3])); fs.writeFileSync(process.argv[1], process.argv[2], {mode:0o600})", source, policy, String(mode)], {
   uid, gid, env:{PATH:"/usr/bin:/bin"}, encoding:"utf8", timeout:10000,
 });
 assert.equal(generated.status, 0, generated.stderr);
+assert.equal(fs.statSync("/sandbox/.hermes").mode & 0o7777, mode);
 assert.throws(() => fs.unlinkSync(source), {code:"EACCES"});
 const runtime = require("/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs");
 runtime.installHermesManagedPolicy();
