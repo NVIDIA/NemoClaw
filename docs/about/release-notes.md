@@ -43,6 +43,8 @@ Agents and interfaces:
   See [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness).
 - `spec.policies` holds named sandbox policies that a network selects with `policyRef`, and `spec.grants` holds named grants that a network adds to the isolated preset with `grantRefs`.
   See [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants).
+- A network grant's `binaries`, in a document's `grants` or an HCL `managed` block, are kept as written instead of being replaced with the harness's executables.
+  OpenShell matches a process by its executable's real path, so name the executable itself rather than a symlink to it, such as `/usr/local/bin/python3.14` rather than `/usr/local/bin/python3`; see OpenShell's [binary matching](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/policies/network-rules.mdx#binary-matching).
 
 Inference and models:
 

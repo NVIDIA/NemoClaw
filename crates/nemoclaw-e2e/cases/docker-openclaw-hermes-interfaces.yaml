@@ -54,8 +54,10 @@ spec:
                 path: /health
                 protocol: rest
                 access: read-only
+            # OpenShell matches an executable's real path, which the
+            # image's python3 links to.
             binaries:
-              - path: /usr/local/bin/python3
+              - path: /usr/local/bin/python3.14
       driverConfig:
         docker:
           mounts:

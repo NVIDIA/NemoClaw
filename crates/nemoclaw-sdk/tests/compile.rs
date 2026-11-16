@@ -627,6 +627,23 @@ fn isolated_sandboxes_take_extra_network_grants() {
     assert_eq!(rules[0]["endpoints"][0]["host"], "docs.example.com");
     assert_eq!(rules[0]["binaries"], serde_json::json!([]));
 
+    // Authored executables stay with the grant.
+    value["spec"]["sandboxes"]["assistant"]["network"]["grants"]["docs"]["binaries"] =
+        serde_json::json!([{"path": "/usr/bin/pip"}]);
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
+    let rows = nemoclaw_sdk::compile::targets(&doc, &generations).unwrap();
+    let sandbox = rows.iter().find(|r| r.kind == "sandbox").unwrap();
+    let input: serde_json::Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
+    let docs = input["managed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["name"] == "docs");
+    assert_eq!(
+        docs.unwrap()["binaries"],
+        serde_json::json!([{"path": "/usr/bin/pip"}])
+    );
+
     // An explicit policy already holds every grant.
     value["spec"]["sandboxes"]["assistant"]["network"] = serde_json::json!({
         "policy": {"explicit": {"version": 1}},
