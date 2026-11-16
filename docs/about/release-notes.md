@@ -130,6 +130,7 @@ Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents
 - In hand-written HCL, `openshell_kubernetes_auth` has no `gateway_values` attribute.
 - In hand-written HCL on Kubernetes or OpenShift, the gateway ownership receipts that `v0.1.0-rc9` wrote no longer load, and the intent record refusal above doesn't cover them.
   Destroy such a deployment with the bundle that created it, then create it again with this release.
+- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
 
 Earlier changes that affect existing deployments:
 

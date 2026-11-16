@@ -80,20 +80,6 @@ pub enum Gpus {
     Devices(Vec<String>),
 }
 
-/// The driver of the Docker device request for these GPUs.
-///
-/// One GPU uses the Docker provider's `gpus = "device=ID"`, which leaves the
-/// driver empty, as `docker run --gpus` does. Docker provider v4.6.0 reads a
-/// list in `gpus` as one device and a count
-/// (https://github.com/kreuzwerker/terraform-provider-docker/issues/1019), so several GPUs
-/// use its `device_requests` block instead, whose driver defaults to `cdi`
-/// and must name `nvidia`. The block's `device_ids` is a set, so Docker
-/// receives the IDs in the provider's order: a check of a running service's
-/// `DeviceIDs` must compare them as a set.
-pub(crate) fn gpu_device_driver(devices: &[String]) -> &'static str {
-    if devices.len() == 1 { "" } else { "nvidia" }
-}
-
 /// Launch settings when the image owns its entrypoint, command, and health check.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -714,9 +700,11 @@ impl Spec {
                     host["DeviceRequests"] =
                         json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
                 }
+                // The Docker provider's `gpus = "device=ID[,ID...]"` leaves the
+                // driver empty and keeps the IDs in order, as `docker run --gpus` does.
                 Gpus::Devices(devices) => {
                     host["DeviceRequests"] = json!([{
-                        "Driver": gpu_device_driver(devices),
+                        "Driver": "",
                         "DeviceIDs": devices,
                         "Capabilities": [["gpu"]],
                     }]);

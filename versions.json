@@ -21,8 +21,8 @@
         "sha256": "3e35e8f6913af92558ba09d7155f74e35dd1f0024ef3cd891637433ae4eacbdd"
       },
       "dockerProvider": {
-        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_linux_arm64.zip",
-        "sha256": "d60fc2d42da1d567f28b6267dde57af03d7333033d8246c6880944f24d641556"
+        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.7.0/terraform-provider-docker_4.7.0_linux_arm64.zip",
+        "sha256": "58f6556d86ddedfbd277f0420666a2745ba85767fd5b97ced6564ff4a485d01e"
       },
       "helmProvider": {
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_arm64.zip",
@@ -51,8 +51,8 @@
         "sha256": "1d4ce302b820c41f4b89c5fb9bce45f0f0c94882c1cf08fc360caf08be6e7df4"
       },
       "dockerProvider": {
-        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_linux_amd64.zip",
-        "sha256": "866046fa4938ac1ed5cc58b3c4d36e27433dac1aae50256911e6f28184dcf82e"
+        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.7.0/terraform-provider-docker_4.7.0_linux_amd64.zip",
+        "sha256": "8169b9fed00c32db386a9cc0def03bfb654376f11bf6028ab1ac9516408ff6ef"
       },
       "helmProvider": {
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_amd64.zip",
@@ -77,8 +77,8 @@
         "sha256": "d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd"
       },
       "dockerProvider": {
-        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_darwin_arm64.zip",
-        "sha256": "e4f8d82f2a5171dd5cb9d5813a49d7d7221d09c10482c2c819d6b2a899e30c5f"
+        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.7.0/terraform-provider-docker_4.7.0_darwin_arm64.zip",
+        "sha256": "94128877ef7c7b04f9692c6d6d08a9cfd95a94ec067138ba225bec30575130b4"
       },
       "helmProvider": {
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_darwin_arm64.zip",
@@ -99,8 +99,8 @@
         "sha256": "d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd"
       },
       "dockerProvider": {
-        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_darwin_amd64.zip",
-        "sha256": "c14b8d122bd12cc84aed5eb62cc0a965b5a9807b5a2257a51be5460d2f69b437"
+        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.7.0/terraform-provider-docker_4.7.0_darwin_amd64.zip",
+        "sha256": "bc38def867b9438cce32208090acd6a50d18666e9ec4aa5d01071f02c46e0d38"
       },
       "helmProvider": {
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_darwin_amd64.zip",
@@ -121,8 +121,8 @@
         "sha256": "e51bdb4b5883df48f335381b287378edb244318fac65ae0adaf6b9e69298246b"
       },
       "dockerProvider": {
-        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_windows_amd64.zip",
-        "sha256": "bad00d59d082dcad2be2582660aae6f7683ffb3bba226cc627fb910008f27411"
+        "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.7.0/terraform-provider-docker_4.7.0_windows_amd64.zip",
+        "sha256": "3f3ee5c3fe666c987e34ea0e5603bd1b799d21d0a604dc9e8df3bda59f68cc6c"
       },
       "helmProvider": {
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_windows_amd64.zip",
@@ -169,6 +169,6 @@
       }
     }
   },
-  "dockerProvider": "4.6.0",
+  "dockerProvider": "4.7.0",
   "helmProvider": "3.3.0"
 }
