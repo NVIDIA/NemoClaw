@@ -733,7 +733,7 @@ Generated graphs place managed vLLM with Docker and declare:
   `container.gpuDevices` accepts one entry until serving one model across several GPUs is implemented.
 - `memory` and `memory_swap` follow `container.memoryLimitGiB`, defaulting to 106496 MiB (104 GiB); `shm_size` defaults to 8192 MiB unless the service sets another size.
 - No CPU cap unless `container.cpuLimitMillis` is supplied; `cpus` then holds the limit as a CPU count, such as `"1.25"` for 1250, and the Docker provider replaces the container when it changes.
-- A `nemoclaw.nvidia.com/memory-limit-gib` label when the memory limit differs from 104 GiB; because label changes replace the container, changing the memory limit is a replacement rather than an in-place `docker update`.
+- A `nemoclaw.nvidia.com/memory-limit-gib` label with the memory limit; because label changes replace the container, changing the memory limit is a replacement rather than an in-place `docker update`.
 - Private IPC unless the service selects host IPC, an unlimited `memlock` ulimit, and a `stack` ulimit of 67108864.
 - All capabilities dropped, `no-new-privileges`, restart policy `no`, and JSON-file logs rotated at 32 MB across three files.
 

@@ -156,7 +156,7 @@ fn a_named_gpu_reaches_opentofu_and_the_native_device_request() {
 }
 
 #[test]
-fn omitted_docker_model_limits_keep_independent_legacy_defaults() {
+fn omitted_docker_model_limits_use_independent_defaults() {
     for input in [
         include_str!("fixtures/config/spark.yaml"),
         include_str!("fixtures/config/managed-ollama.yaml"),
@@ -200,22 +200,16 @@ fn omitted_docker_model_limits_keep_independent_legacy_defaults() {
             let container = &graph["resource"]["docker_container"][name];
             assert_eq!(container["memory"], memory_gib * 1024);
             assert_eq!(container["memory_swap"], container["memory"]);
-            // Only a limit other than the 104 GiB default adds the replacement
-            // label, so containers created before memory limits stay unchanged.
-            if memory_gib == 104 {
-                assert_eq!(label(container, MEMORY_LABEL), None);
-                match &limits {
-                    None => omitted = Some(graph.clone()),
-                    Some(limits) if limits.get("memoryLimitGiB").is_some() => {
-                        assert_eq!(Some(&graph), omitted.as_ref());
-                    }
-                    Some(_) => {}
+            assert_eq!(
+                label(container, MEMORY_LABEL),
+                Some(memory_gib.to_string().as_str())
+            );
+            match &limits {
+                None => omitted = Some(graph.clone()),
+                Some(limits) if limits.get("memoryLimitGiB") == Some(&json!(104)) => {
+                    assert_eq!(Some(&graph), omitted.as_ref());
                 }
-            } else {
-                assert_eq!(
-                    label(container, MEMORY_LABEL),
-                    Some(memory_gib.to_string().as_str())
-                );
+                Some(_) => {}
             }
             let spec: nemoclaw_sdk::managed::Spec =
                 serde_json::from_str(&target.values["spec"]).unwrap();
