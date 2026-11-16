@@ -78,6 +78,7 @@ interface AgentOutputOverrides {
   status?: string;
   summary?: string;
   aborted?: boolean;
+  visibleText?: unknown;
   provider?: string;
   model?: string;
   winnerProvider?: string;
@@ -92,6 +93,7 @@ function agentOutput({
   status = "ok",
   summary = "completed",
   aborted = false,
+  visibleText = "NO_REPLY",
   provider = "inference",
   model = GPU_MODEL,
   winnerProvider = "inference",
@@ -109,7 +111,7 @@ function agentOutput({
       meta: {
         aborted,
         agentMeta: { provider, model },
-        finalAssistantVisibleText: "NO_REPLY",
+        finalAssistantVisibleText: visibleText,
         executionTrace: {
           winnerProvider,
           winnerModel,
@@ -829,6 +831,31 @@ describe("GPU E2E helpers", () => {
       assertAgentExecutionSucceeded(agentOutput(), "inference", GPU_MODEL),
     ).not.toThrow();
   });
+
+  it("accepts the requested visible reply alongside execution proof (#14065)", () => {
+    expect(() =>
+      assertAgentExecutionSucceeded(
+        agentOutput({ visibleText: "MUSE_SELECTOR_OK." }),
+        "inference",
+        GPU_MODEL,
+        "MUSE_SELECTOR_OK",
+      ),
+    ).not.toThrow();
+  });
+
+  it.each(["", "NO_REPLY", "A short greeting.", null, ["MUSE_SELECTOR_OK"]])(
+    "rejects %j when the first turn requires a visible reply (#14065)",
+    (visibleText) => {
+      expect(() =>
+        assertAgentExecutionSucceeded(
+          agentOutput({ visibleText }),
+          "inference",
+          GPU_MODEL,
+          "MUSE_SELECTOR_OK",
+        ),
+      ).toThrow("agent must include the requested visible reply");
+    },
+  );
 
   it("rejects a recovery trace without a successful assistant attempt", () => {
     expect(() =>

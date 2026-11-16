@@ -2406,8 +2406,9 @@ the released GPU resources.
 A separate `gpu-e2e` case onboards the explicit Muse Glimmer profile
 `vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4` on a fresh OpenClaw sandbox
 without recreation or Tool Search overrides. It checks that the generated `openclaw.json` carries the
-progressive Tool Search settings and that a short first agent turn completes, so the
-profile-specific default is proven against the real vLLM and OpenClaw runtime. It runs on the
+progressive Tool Search settings and that a short first agent turn completes with the requested
+`MUSE_SELECTOR_OK` visible reply. Empty text and `NO_REPLY` fail this case. These checks exercise the
+profile-specific default against the real vLLM and OpenClaw runtime. It runs on the
 96 GB x86_64 GPU runner. A DGX Spark proof of the matching Spark profile is not part of this
 target.
 

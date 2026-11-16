@@ -823,7 +823,7 @@ NODE`),
         "--session-id",
         `e2e-gpu-muse-glimmer-${Date.now()}-${process.pid}`,
         "-m",
-        "Respond with a short greeting.",
+        "Reply with exactly: MUSE_SELECTOR_OK.",
       ],
       {
         artifactName: "muse-glimmer-first-turn",
@@ -831,6 +831,11 @@ NODE`),
         timeoutMs: 12 * 60_000,
       },
     );
-    assertAgentExecutionSucceeded(agent.stdout, "inference", MUSE_GLIMMER_SERVED_MODEL);
+    assertAgentExecutionSucceeded(
+      agent.stdout,
+      "inference",
+      MUSE_GLIMMER_SERVED_MODEL,
+      "MUSE_SELECTOR_OK",
+    );
   },
 );
