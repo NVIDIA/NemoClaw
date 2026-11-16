@@ -114,14 +114,18 @@ impl Fixture {
 /// Install the relay as `ssh` beside this test executable, once. Windows
 /// resolves a bare program name in the launching executable's directory
 /// before `PATH`, so the engine client reaches the relay without changing the
-/// environment. The relay is built beside the test executables' `deps`.
+/// environment. The relay is in the fixture executables' directory, which
+/// `NEMOCLAW_TEST_FIXTURES` names.
 #[cfg(not(unix))]
 fn relay_as_ssh() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         let executable = std::env::current_exe().unwrap();
-        let deps = executable.parent().unwrap();
-        let relay = deps.parent().unwrap().join(format!(
+        let directory = executable.parent().unwrap();
+        let fixtures = std::env::var_os("NEMOCLAW_TEST_FIXTURES").expect(
+            "set NEMOCLAW_TEST_FIXTURES to the absolute path of the fixture executables, such as target/debug after cargo build -p nemoclaw-test-fixtures",
+        );
+        let relay = std::path::Path::new(&fixtures).join(format!(
             "nemoclaw-fixture-ssh{}",
             std::env::consts::EXE_SUFFIX
         ));
@@ -131,9 +135,9 @@ fn relay_as_ssh() {
             relay.display()
         );
         // Other test executables install it too; replace it atomically.
-        let staged = deps.join(format!("ssh-{}.tmp", std::process::id()));
+        let staged = directory.join(format!("ssh-{}.tmp", std::process::id()));
         std::fs::copy(&relay, &staged).unwrap();
-        let installed = deps.join(format!("ssh{}", std::env::consts::EXE_SUFFIX));
+        let installed = directory.join(format!("ssh{}", std::env::consts::EXE_SUFFIX));
         if std::fs::rename(&staged, &installed).is_err() {
             // A running relay keeps the file open; the installed copy serves.
             let _ = std::fs::remove_file(&staged);

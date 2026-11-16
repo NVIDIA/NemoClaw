@@ -9,7 +9,7 @@ Complete the [build prerequisites](../../docs/build-deploy/build.md) first.
 
 ## OpenTofu and Bundle Lifecycle
 
-The contract and integration tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle such as the `dist/PLATFORM` directory that `cargo ci bundle` writes.
+The contract and integration tests take two inputs: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle such as the `dist/PLATFORM` directory that `cargo ci bundle` writes, and `NEMOCLAW_TEST_FIXTURES`, the absolute path of the directory that holds the fixture executables, which `cargo ci` sets to `target/debug`.
 The bundle supplies the OpenTofu version pinned in `versions.json`, the CLI, and the providers.
 Each provider's contract tests run instead the provider Cargo built with them, so they test the checkout without a new bundle; the other providers they need come from the bundle.
 Integration tests run the bundle's CLI and providers, so rebuild the bundle after changing either.
@@ -22,18 +22,18 @@ cargo ci contract
 cargo ci integration
 ```
 
-To run one binary or module with Cargo, build the fixture executables first; tests find them beside the test executables:
+To run one binary or module with Cargo, build the fixture executables first and name their directory:
 
 ```sh
 cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle NEMOCLAW_TEST_FIXTURES=$PWD/target/debug \
   cargo test -p nemoclaw-provider --test contract provider_protocol:: -- --ignored
 ```
 
-Nextest builds every workspace target, including the fixture executables; after `cargo ci tools`, put `.tools/nextest-0.9.152` on `PATH` and narrow the `contract` or `integration` profile with a filter:
+To run them with nextest, put `.tools/nextest-0.9.152` on `PATH` after `cargo ci tools`, build the fixture executables the same way, and narrow the `contract` or `integration` profile with a filter:
 
 ```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle NEMOCLAW_TEST_FIXTURES=$PWD/target/debug \
   cargo nextest run --workspace --all-targets --profile contract --run-ignored only \
   -E 'binary_id(=openshell-provider::contract)'
 ```

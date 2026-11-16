@@ -3184,7 +3184,6 @@ dependencies = [
  "async-trait",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
- "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
  "rustls",
  "serde_json",

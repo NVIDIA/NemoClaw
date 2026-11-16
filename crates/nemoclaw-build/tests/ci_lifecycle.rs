@@ -71,7 +71,6 @@ if [ "$1 $2" = 'nextest list' ]; then
     done
     case $profile in
         contract) printf '%s\n' "${CARGO_LIST_CONTRACT:-$CARGO_LIST}" ;;
-        fixtures) printf '%s\n' "${CARGO_LIST_FIXTURES:-$CARGO_LIST}" ;;
         integration) printf '%s\n' "${CARGO_LIST_INTEGRATION:-$CARGO_LIST}" ;;
         live-docker) printf '%s\n' "${CARGO_LIST_LIVE_DOCKER:-$CARGO_LIST}" ;;
         live-kind) printf '%s\n' "${CARGO_LIST_LIVE_KIND:-$CARGO_LIST}" ;;
@@ -79,7 +78,7 @@ if [ "$1 $2" = 'nextest list' ]; then
     esac
     exit "${CARGO_RESULT:-0}"
 fi
-printf '%s\n' "$NEMOCLAW_TEST_BUNDLE" "${NEMOCLAW_TEST_TOFU-unset}" "${NEMOCLAW_TEST_PROVIDER-unset}" > inputs
+printf '%s\n' "$NEMOCLAW_TEST_BUNDLE" "${NEMOCLAW_TEST_TOFU-unset}" "${NEMOCLAW_TEST_PROVIDER-unset}" "${NEMOCLAW_TEST_FIXTURES-unset}" > inputs
 exit "${CARGO_RESULT:-0}"
 "#,
             ),
@@ -168,6 +167,26 @@ exit "${CARGO_RESULT:-0}"
 
     fn arguments(&self) -> String {
         fs::read_to_string(self.0.path().join("arguments")).unwrap()
+    }
+
+    /// Each cargo call's arguments, in order.
+    fn invocations(&self) -> Vec<String> {
+        fs::read_to_string(self.0.path().join("invocations"))
+            .unwrap_or_default()
+            .split("--\n")
+            .filter(|call| !call.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The test inputs the last test run received: the bundle, OpenTofu, the
+    /// provider, and the fixture executables' directory.
+    fn inputs(&self) -> Vec<String> {
+        fs::read_to_string(self.0.path().join("inputs"))
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
     }
 
     /// Each `nextest archive` call's archive file and filterset, in order.
@@ -330,7 +349,10 @@ fi
             "target/debug/terraform-provider-vllm",
             "target/debug/terraform-provider-ollama",
             "target/debug/terraform-provider-host",
+            "target/debug/nemoclaw-fixture-control",
+            "target/debug/nemoclaw-fixture-provider",
             "target/debug/nemoclaw-fixture-ssh",
+            "target/debug/nemoclaw-fixture-ssh-simulator",
         ] {
             let file = self.0.path().join(path);
             fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -363,12 +385,41 @@ fn lifecycle_partition_reaches_nextest_without_changing_the_selected_suite() {
     );
     // The bundle supplies OpenTofu and the providers; each provider's own
     // tests use the one Cargo built.
-    let inputs = fs::read_to_string(fixture.0.path().join("inputs")).unwrap();
-    let inputs: Vec<_> = inputs.lines().collect();
-    assert_eq!(inputs.len(), 3, "{inputs:?}");
+    let inputs = fixture.inputs();
+    assert_eq!(inputs.len(), 4, "{inputs:?}");
     assert!(inputs[0].ends_with("/dist/linux_arm64"), "{inputs:?}");
-    assert!(std::path::Path::new(inputs[0]).is_absolute(), "{inputs:?}");
-    assert_eq!(inputs[1..], ["unset", "unset"]);
+    assert!(std::path::Path::new(&inputs[0]).is_absolute(), "{inputs:?}");
+    assert_eq!(inputs[1..3], ["unset", "unset"]);
+}
+
+/// Tests started from another package find the fixture executables in the
+/// directory the runner names, where Cargo leaves a build's executables.
+#[test]
+fn test_steps_build_the_fixture_executables_and_name_their_directory() {
+    for step in ["test", "contract", "integration"] {
+        let fixture = Fixture::new();
+        let output = fixture.run(&[step]);
+        assert!(
+            output.status.success(),
+            "{step}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let invocations = fixture.invocations();
+        assert!(
+            invocations[0].starts_with("build\n--locked\n--workspace\n--all-targets\n"),
+            "{step} must build every executable before its tests: {invocations:?}"
+        );
+        assert!(
+            invocations[1].starts_with("nextest\nrun\n"),
+            "{step}: {invocations:?}"
+        );
+        let fixtures = fixture.inputs()[3].clone();
+        assert!(
+            std::path::Path::new(&fixtures).is_absolute(),
+            "{step}: {fixtures}"
+        );
+        assert!(fixtures.ends_with("/target/debug"), "{step}: {fixtures}");
+    }
 }
 
 #[test]
@@ -411,6 +462,15 @@ fn archived_lifecycle_uses_the_checkout_without_building_again() {
             "archive execution must not request a build: {args}"
         );
     }
+    let invocations = fixture.invocations();
+    assert!(
+        !invocations.iter().any(|call| call.starts_with("build\n")),
+        "{invocations:?}"
+    );
+    // The lifecycle inputs unpack the fixture executables into the checkout.
+    let fixtures = fixture.inputs()[3].clone();
+    assert!(std::path::Path::new(&fixtures).is_absolute(), "{fixtures}");
+    assert!(fixtures.ends_with("/target/debug"), "{fixtures}");
 }
 
 #[test]
@@ -438,7 +498,7 @@ fn lifecycle_options_cannot_silently_narrow_default_or_other_ci_steps() {
 }
 
 #[test]
-fn archive_packages_tools_and_the_ssh_relay_but_leaves_providers_to_the_bundle_and_nextest() {
+fn archive_packages_tools_and_fixture_executables_but_leaves_providers_to_the_bundle_and_nextest() {
     let fixture = Fixture::new();
     fixture.seed_build_outputs();
     // Tool discovery uses the fixture's explicit PROTOC and cargo commands.
@@ -469,7 +529,10 @@ fn archive_packages_tools_and_the_ssh_relay_but_leaves_providers_to_the_bundle_a
     }
     for path in [
         ".tools/nextest-0.9.152/cargo-nextest",
+        "target/debug/nemoclaw-fixture-control",
+        "target/debug/nemoclaw-fixture-provider",
         "target/debug/nemoclaw-fixture-ssh",
+        "target/debug/nemoclaw-fixture-ssh-simulator",
     ] {
         let file = unpacked.path().join(path);
         assert_eq!(fs::read_to_string(&file).unwrap(), path);
@@ -488,7 +551,6 @@ fn archive_layers(fixture: &Fixture, platform: &str) -> Output {
         .command(&["archive"])
         .env("TEST_PLATFORM", platform)
         .env("CARGO_LIST_CONTRACT", suite("contract-suite"))
-        .env("CARGO_LIST_FIXTURES", suite("fixture-suite"))
         .env("CARGO_LIST_INTEGRATION", suite("integration-suite"))
         .env("CARGO_LIST_LIVE_DOCKER", suite("docker-suite"))
         .env("CARGO_LIST_LIVE_KIND", suite("kind-suite"))
@@ -497,9 +559,8 @@ fn archive_layers(fixture: &Fixture, platform: &str) -> Output {
 }
 
 /// Each test job downloads only the executables its layer runs, so each layer
-/// gets its own archive. The contract archive also selects the fixture tests,
-/// whose packages' executables the contract tests start; Linux also archives
-/// the live suites, so live jobs need not compile.
+/// gets its own archive; Linux also archives the live suites, so live jobs
+/// need not compile.
 #[test]
 fn linux_archives_each_test_layer_separately_so_each_job_downloads_only_its_tests() {
     let fixture = Fixture::new();
@@ -514,7 +575,7 @@ fn linux_archives_each_test_layer_separately_so_each_job_downloads_only_its_test
         [
             (
                 ".build/ci/contract.tar.zst".to_owned(),
-                "binary_id(=contract-suite) | binary_id(=fixture-suite)".to_owned()
+                "binary_id(=contract-suite)".to_owned()
             ),
             (
                 ".build/ci/integration.tar.zst".to_owned(),

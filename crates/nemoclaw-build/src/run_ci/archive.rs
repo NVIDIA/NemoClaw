@@ -20,25 +20,28 @@ pub(super) fn package_inputs(tools: &Tools<'_>) -> Result<()> {
         std::env::current_exe()?,
         Path::new(".build/ci").join(nemoclaw_build_executable("nemoclaw-build")),
     )?;
-    // The lifecycle step puts the fake ssh first on PATH where Unix sockets
+    // Tests from other packages start these from NEMOCLAW_TEST_FIXTURES, and
+    // the lifecycle step puts the fake ssh first on PATH where Unix sockets
     // are missing. The providers need no copy here: the bundle ships them, and
     // nextest archives each provider package's executables with its tests.
-    archive.append_path(
-        Path::new("target/debug").join(nemoclaw_build_executable("nemoclaw-fixture-ssh")),
-    )?;
+    for name in [
+        "nemoclaw-fixture-control",
+        "nemoclaw-fixture-provider",
+        "nemoclaw-fixture-ssh",
+        "nemoclaw-fixture-ssh-simulator",
+    ] {
+        archive.append_path(Path::new("target/debug").join(nemoclaw_build_executable(name)))?;
+    }
     archive.finish()?;
     Ok(())
 }
 
 /// Each test layer's archive, which only that layer's jobs download, and the
-/// nextest profiles whose test binaries it holds. Nextest archives a package's
-/// executables only with one of its test binaries, so the contract archive
-/// also selects the fixture tests, whose packages hold the executables the
-/// contract tests start. Only Linux runs the live suites, from their own
-/// archive instead of compiling.
+/// nextest profiles whose test binaries it holds. Only Linux runs the live
+/// suites, from their own archive instead of compiling.
 pub(super) fn layers(platform: &str) -> Vec<(&'static str, &'static [&'static str])> {
     let mut layers: Vec<(&'static str, &'static [&'static str])> = vec![
-        ("contract", &["contract", "fixtures"]),
+        ("contract", &["contract"]),
         ("integration", &["integration"]),
     ];
     if platform.starts_with("linux_") {

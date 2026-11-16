@@ -176,8 +176,16 @@ fn run_step(
     let without_debug = (std::env::var_os("CI").is_some()
         || std::env::var_os("GITHUB_ACTIONS").is_some())
         && std::env::var_os("CARGO_PROFILE_DEV_DEBUG").is_none();
+    // Cargo's CARGO_BIN_EXE_* names only the executables of a test's own
+    // package, so tests find the fixture executables in the directory this
+    // names: where Cargo puts a build's executables, and where archived runs
+    // unpack them from the lifecycle inputs.
+    let fixtures = std::path::absolute(Path::new("target").join("debug"))?;
     let configure = |command: &mut Command| {
-        command.env("PROTOC", &protoc).env("PATH", &path);
+        command
+            .env("PROTOC", &protoc)
+            .env("PATH", &path)
+            .env("NEMOCLAW_TEST_FIXTURES", &fixtures);
         if without_debug {
             command.env("CARGO_PROFILE_DEV_DEBUG", "0");
         }
@@ -245,6 +253,13 @@ fn run_step(
         return archive::package_inputs(tools);
     }
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
+    // Cargo builds a package's executables for its tests only when the package
+    // has integration tests, so build them all before the tests start them.
+    if archive_file.is_none() && (step == Step::Test || Step::BUNDLED.contains(&step)) {
+        let mut build = cargo();
+        configure(&mut build);
+        run(build.args(["build", "--locked", "--workspace", "--all-targets"]))?;
+    }
     for args in step.cargo_args() {
         let mut command = match archive_file {
             Some(archive) => archived(step, archive, &configure)?,
