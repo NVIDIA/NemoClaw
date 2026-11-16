@@ -253,6 +253,10 @@ describe("OpenShell gateway upgrade boundary", () => {
     });
   });
 
+  it("retains one stopped sandbox for the v0.0.123 gateway-registration regression (#11898)", () => {
+    expect(REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.additionalStoppedSandboxes).toBe(1);
+  });
+
   it.each([REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE, REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE])(
     "pins the $nemoclawRef upgrade target to amd64 (#14268)",
     (fixture) => {

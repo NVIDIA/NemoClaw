@@ -21,7 +21,8 @@ export const REVIEWED_GATEWAY_UPGRADE_FIXTURE = Object.freeze({
 } as const);
 
 export const REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE = Object.freeze({
-  additionalStoppedSandboxes: 2,
+  // One running survivor and one stopped sandbox cover both recovery states.
+  additionalStoppedSandboxes: 1,
   expectedAdvisoryAuditCount: 0,
   installerSha256: "d6d8b3f4fe9298efae4a0ddce3d1f256f75e5c5ea33c91b41dfb274ef350c335",
   nemoclawCommit: "f75f722bb4a1ec9642c8df36c8924e24500d78f0",
