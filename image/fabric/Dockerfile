@@ -36,7 +36,8 @@ USER root
 # sandboxes; Docker and Podman use the image's own user, so one image fits all.
 # OpenShift instead runs sandboxes as the namespace's UID, which must be able
 # to read /sandbox: OpenShell copies it to a private workspace volume.
-RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 iproute2 nftables ca-certificates \
+# Node.js, which the JavaScript harnesses copy in, links libstdc++ and libatomic.
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 libatomic1 iproute2 nftables ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
