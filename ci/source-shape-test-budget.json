@@ -520,6 +520,16 @@
       "file": "test/automation/pull-requests/candidate-upgrade-admission-workflow.test.ts",
       "test": "refreshes admission through the configured %s review handoff after %s",
       "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-security-scan.test.ts",
+      "test": "evaluates promotion with scans selected %s and scan result %s",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-security-scan.test.ts",
+      "test": "keeps scans optional and reuses the complete publication inventory",
+      "category": "security"
     }
   ]
 }
