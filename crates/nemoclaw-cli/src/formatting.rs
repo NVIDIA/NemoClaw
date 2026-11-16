@@ -316,7 +316,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     let mut output = if planned {
         if !result.deferred.is_empty() {
             format!(
-                "{} incomplete · {} known resource changes\n",
+                "{}: {} known resource changes; some checks wait for apply\n",
                 context.operation,
                 result.changes.len()
             )
@@ -551,6 +551,15 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
+        if context.operation == "Plan"
+            && !result.deferred.is_empty()
+            && let Some(input) = &context.input
+        {
+            output.push_str(&format!(
+                "Next: nemoclaw apply {}\n",
+                terminal_text(&shell_word(&input.display().to_string()))
+            ));
+        }
     }
     if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
         output.push_str(&interface_access(result, selected));
@@ -1313,7 +1322,7 @@ mod tests {
         assert!(text.contains("No resource changes planned."), "{text}");
         assert!(text.contains("Unverified checks:"), "{text}");
         assert!(text.contains("Service readiness is checked during apply."));
-        assert!(!text.contains("Plan incomplete"));
+        assert!(!text.contains("some checks wait for apply"));
         assert!(!text.contains('\u{1b}'));
         let output: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "model.yaml", "-o", "json"],
@@ -1325,7 +1334,7 @@ mod tests {
         let mut blocked = result;
         blocked["deferred"] = json!(["Gateway inventory unavailable"]);
         let text = render(&["nemoclaw", "plan", "model.yaml"], blocked.clone());
-        assert!(text.contains("Plan incomplete"));
+        assert!(text.contains("some checks wait for apply"));
         assert!(text.contains("Unverified checks:"));
         let output: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "model.yaml", "-o", "json"],
@@ -1340,9 +1349,10 @@ mod tests {
         let result =
             json!({"outcome":"planned","changes":[],"deferred":["Gateway inventory unavailable"]});
         let text = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
-        assert!(text.contains("Plan incomplete"));
+        assert!(text.contains("some checks wait for apply"));
         assert!(!text.contains("No resource changes planned"));
         assert!(text.contains("Gateway inventory unavailable"));
+        assert!(text.contains("Next: nemoclaw apply spark.yaml"), "{text}");
         let json: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "spark.yaml", "-o", "json"],
             result,

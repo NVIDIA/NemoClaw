@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# An OpenClaw and a Hermes agent on a managed Kubernetes gateway that accepts
+# tokens from your OIDC issuer, with images from a private registry. Unlike
+# the development profile, the oidc profile lets you reach the gateway with
+# the OpenShell CLI; see "Authenticate Through an Existing OIDC Issuer" in
+# docs/build-deploy/kubernetes.md.
+# Before the first apply, create the namespace below and, in it, the ConfigMap
+# issuer-ca and the registry Secret registry-credentials, as that guide shows.
+# Replace the deployment UID, the context, the issuer settings, and both image
+# digests. Where you run nemoclaw, set NVIDIA_INFERENCE_API_KEY, and before
+# each plan, apply or destroy set NEMOCLAW_GATEWAY_TOKEN to a fresh token for
+# the audience that carries the admin role.
+# Write each image's metadata bundle with `cargo images export-metadata` and set
+# NEMOCLAW_OPENCLAW_IMAGE_METADATA and NEMOCLAW_HERMES_IMAGE_METADATA to their
+# paths; see docs/build-deploy/build.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-managed-oidc
+  uid: 0d45525b-c45e-44e9-9b25-ab508eb713ce
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-oidc
+      # Secrets in the namespace that the gateway, helper and sandbox pods
+      # pull with; NemoClaw never reads them.
+      imagePullSecrets:
+        - registry-credentials
+      authentication:
+        profile: oidc
+        # A ConfigMap in the namespace whose ca.crt verifies the issuer's
+        # certificate; omit it for a publicly trusted issuer.
+        caConfigMap: issuer-ca
+        token: {env: NEMOCLAW_GATEWAY_TOKEN}
+    config:
+      # OpenShell's OIDC settings, in OpenShell's names.
+      openshell.gateway.oidc:
+        issuer: https://login.example.com/realms/openshell
+        audience: openshell
+        roles_claim: groups
+        admin_role: openshell-admins
+        user_role: openshell-users
+  inferenceProviders:
+    hosted-nvidia:
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential: {env: NVIDIA_INFERENCE_API_KEY}
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: hosted-nvidia
+          overrides:
+            model: nvidia/nemotron-3.5-super-vl-120b-a12b
+  sandboxes:
+    openclaw:
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_OPENCLAW_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: openclaw
+        inferenceRef: chat
+    hermes:
+      harness:
+        kind: nvidia.fabric.hermes
+      image:
+        metadata: {env: NEMOCLAW_HERMES_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: hermes
+        inferenceRef: chat

@@ -119,6 +119,7 @@ Other inputs are typed too:
   Because grants are unlabeled, a `dynamic "managed"` block can generate them in a sandbox that uses `for_each`; OpenTofu requires the labels of dynamic blocks to be known when it validates, before `each.key` is.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
 - `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference`, `openshell_web_search` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
+  OpenShell attaches at most 32 to one sandbox and refuses to create a sandbox with more.
 - `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables managed endpoint grants allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
@@ -130,6 +131,7 @@ Other inputs are typed too:
   A new sandbox's creation request carries them unchanged, so OpenShell's defaults apply: an omitted mode is `STRIP`, and an empty name is the unnamed endpoint.
   Adding, changing, or removing a block updates the sandbox in place, as `openshell service expose` and `openshell service delete` do; so does a declared endpoint observed differently on the gateway. Endpoints under other names stay as they are.
 - The computed `policy_hash` is the hash OpenShell reports for the sandbox's loaded policy, including paths OpenShell adds itself. It's recorded when the policy first loads with every declared rule intact; a different hash later is drift.
+  Creating a sandbox waits, within the 120-second startup deadline, for it to load its policy, so a policy changed after the first apply is drift. A sandbox that has not loaded one by then, one that exited, and one whose configuration OpenShell rejected are recorded without a hash, and the next apply that finds the policy loaded records it.
 - The computed `service_urls` maps each service name to the URL the gateway reports for it, such as `openshell_sandbox.researcher.service_urls["research"]`. A service the gateway reports without a URL has no entry. A plan that changes the `service` blocks leaves it unknown until apply.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [credential storage](#vllm-and-ollama-types).
 
@@ -196,8 +198,7 @@ resource "openshell_inference" "nemotron" {
 
 Use `openshell_api` when a sandbox needs to authenticate to an API other than inference or web search, such as a booking service over HTTP MCP.
 It owns an OpenShell profile and registration; attach its `ref` to the sandbox's `providers`.
-The profile binds credential injection to the endpoint's host, port and path subtree, and the named executables.
-OpenShell owns injection and destination checks when the sandbox connects.
+The profile grants endpoint access to the named executables. OpenShell replaces the placeholder only at the bound host, port and path.
 
 Set the credential in the environment of the process running OpenTofu, then name that variable in `credential_env`:
 
@@ -219,7 +220,13 @@ resource "openshell_api" "booking" {
 For an API key sent without the Bearer prefix, set `auth_style = "header"` and `header_name = "X-API-Key"`.
 Query parameters, OAuth and refresh flows are not supported by this resource.
 Endpoints must use HTTP(S) without embedded credentials, queries, fragments or globs.
-For `/mcp`, the profile allows `/mcp` and its descendants, not sibling paths.
+By default, the profile grants full REST access to the endpoint's path subtree.
+To restrict an MCP endpoint to specific methods and tools, declare an `mcp` block with one or more `rules` blocks on `openshell_api`. OpenShell enforces those rules on the exact URL path with its default MCP protocol revision.
+Use a canonical path such as `/mcp` or `/mcp/`. Paths with repeated slashes, path parameters, `^`, or `|` are rejected.
+Include the server's initialization and tool discovery methods and the allowed `tools/call` selectors. Use the profile as the only grant for that endpoint, because a broader matching grant can allow additional requests.
+Each tool rule may use one selector, either `allow.tool` or `allow.params.name`.
+If the gateway defines a global policy, that policy controls authorization.
+See the [HCL travel team](https://github.com/NVIDIA/NemoClaw/tree/v1/examples/hcl/travel-team) for the rules and Hermes header configuration.
 A literal IP grants only that address; a DNS name receives no private-network grant.
 `binaries` must list the absolute paths of the callers allowed to use the credential.
 
@@ -237,7 +244,7 @@ Foreign ownership or an incomplete observation stops planning.
 
 To remove the credential, first detach or explicitly remove sandboxes using its registration, then remove the API resource and apply.
 Removal deletes the registration and its owned profile; it does not unset the host variable or revoke the key at the API service.
-Endpoint, authentication and executable changes replace the pair, so detach consumers before making those changes.
+Endpoint, MCP policy, authentication and executable changes replace the pair. Arrange for attached sandboxes to detach or be replaced first.
 
 #### Web Search
 

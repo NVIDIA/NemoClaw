@@ -113,3 +113,8 @@ resource "docker_container" "owner" {
     }
   }
 }
+
+output "files" {
+  description = "The files written in each volume, as var.files names them, for checks of what an agent reads from them."
+  value       = var.files
+}

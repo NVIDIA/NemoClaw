@@ -7,6 +7,10 @@ use nemoclaw_backend::{Backend, Mutation};
 use nemoclaw_openshell::{OpenShellLifecycle, openshell_lifecycle};
 use std::time::Duration;
 
+/// How long a sandbox has to load its policy: the time Fabric allows the
+/// sandbox to start before it starts the agent.
+const STARTUP_DEADLINE: Duration = Duration::from_secs(120);
+
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
     row.get(field).map(String::as_str).unwrap_or("")
 }
@@ -84,6 +88,76 @@ impl OpenShell {
         }
         Ok(())
     }
+    /// Read a sandbox back after it is created or updated, waiting for it to
+    /// load its policy so the binding records the loaded policy's hash. Without
+    /// one, a policy changed before the next apply would be recorded as the
+    /// baseline.
+    ///
+    /// A sandbox that has not loaded its policy by the deadline is returned as
+    /// observed, as are one that exited and one whose configuration OpenShell
+    /// rejected, which never load one; the agent reports why. A sandbox loading
+    /// its policy reads as incomplete only while it was just created, so a
+    /// policy that differs from the declared one fails at once on an update.
+    ///
+    /// A failure to ask OpenShell for the phase (transport or authentication)
+    /// says nothing about the sandbox, so the wait goes on. If the phase is
+    /// still unavailable at the deadline, the readback fails, and the caller
+    /// records the sandbox as partial rather than complete without a hash.
+    pub(super) async fn read_back_sandbox(
+        &self,
+        bound: &Row,
+        want: &Row,
+        created: bool,
+        patience: Duration,
+    ) -> Result<Option<Row>, ObservationError> {
+        let deadline = tokio::time::Instant::now() + patience;
+        let mut unavailable = None;
+        let observed = loop {
+            let observed = self
+                .observe(
+                    "sandbox",
+                    value(want, "workspace"),
+                    value(want, "name"),
+                    false,
+                )
+                .await;
+            let loading = match &observed {
+                Ok(Some(row)) => value(row, crate::POLICY_HASH).is_empty(),
+                Err(ObservationError::Incomplete) => created,
+                _ => false,
+            };
+            if !loading {
+                break observed;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                if let Some(error) = unavailable {
+                    return Err(nemoclaw_backend::Error::into_observation(error));
+                }
+                break observed;
+            }
+            match self.gateway.sandbox_phase(bound, true).await {
+                Ok(_) => unavailable = None,
+                // A sandbox that exited or whose configuration was rejected
+                // never loads a policy.
+                Err(
+                    nemoclaw_backend::Error::SandboxStartup { .. }
+                    | nemoclaw_backend::Error::Observation(
+                        ObservationError::SandboxConfigurationRejected { .. },
+                    ),
+                ) => break observed,
+                Err(error) => unavailable = Some(error),
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        };
+        match observed {
+            Ok(Some(mut row)) => {
+                self.observe_services(&mut row, want, false).await?;
+                Ok(Some(row))
+            }
+            other => other,
+        }
+    }
+
     async fn reconcile(
         &self,
         kind: &str,
@@ -107,6 +181,7 @@ impl OpenShell {
         } else if !value(want, "id").is_empty() {
             return Err(ObservationError::BindingMismatch);
         }
+        let created = live.is_none();
         let established = match live {
             Some(row) => {
                 if kind == "provider" {
@@ -129,12 +204,11 @@ impl OpenShell {
                 row
             }
         };
-        let readback = match self.observe(kind, workspace, name, false).await {
-            Ok(Some(mut row)) if kind == "sandbox" => self
-                .observe_services(&mut row, want, false)
+        let readback = if kind == "sandbox" {
+            self.read_back_sandbox(&established, want, created, STARTUP_DEADLINE)
                 .await
-                .map(|()| Some(row)),
-            other => other,
+        } else {
+            self.observe(kind, workspace, name, false).await
         };
         match readback {
             Ok(Some(row)) => {
