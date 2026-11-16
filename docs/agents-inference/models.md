@@ -118,6 +118,9 @@ These size and timestamp checks reuse earlier verification; they do not rehash a
 A missing or changed verified file stops runtime preparation without silently replacing an established artifact.
 SDK plan and export do not inspect model-file inventories; apply consumes the runtime's current readiness result.
 
+The model volume also keeps vLLM's caches in `/data/vllm-cache`: its compile cache and, in `flashinfer-autotune`, FlashInfer's autotune results, so a replaced container reuses them instead of compiling and tuning again.
+FlashInfer reuses autotune results only while FlashInfer, its CUDA libraries, and the GPU model stay the same.
+
 The model and recipe metadata formats require a matching CLI/provider bundle and runtime image built from this checkout.
 Use a fresh deployment for these formats; older model manifests without a version and recipe `complete.json` files are not migrated automatically.
 Keep the original bundle, runtime image, and state for existing deployments; do not delete metadata to bypass a format error.
