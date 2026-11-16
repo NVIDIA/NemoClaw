@@ -14,31 +14,20 @@ const STARTUP_DEADLINE: Duration = Duration::from_secs(120);
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
     row.get(field).map(String::as_str).unwrap_or("")
 }
-/// Whether the observed sandbox's loaded policy is the one recorded. Before
-/// the first observation of a loaded policy no hash is recorded. APF refuses
-/// every policy update but its own, which comes with a new token, so until
-/// then an APF-governed sandbox must still run its first revision. OpenShell
-/// updates a policy NemoClaw authored after start, so there is nothing to
-/// compare it with yet.
+/// Whether the observed sandbox's loaded policy is the one recorded. Until a
+/// loaded policy is observed, no hash is recorded and nothing is compared.
 fn policy_unchanged(prior: &Row, row: &Row) -> bool {
-    let observed = value(row, crate::POLICY_HASH);
-    if observed.is_empty() {
-        return true;
-    }
-    match value(prior, crate::POLICY_HASH) {
-        "" => {
-            value(row, crate::POLICY_AUTHORITY) != "apf"
-                || matches!(value(row, crate::LOADED_VERSION), "" | "1")
-        }
-        recorded => recorded == observed,
-    }
+    let (recorded, observed) = (
+        value(prior, crate::POLICY_HASH),
+        value(row, crate::POLICY_HASH),
+    );
+    recorded.is_empty() || observed.is_empty() || recorded == observed
 }
 
 /// A sandbox observation whose loaded policy APF did not issue: no token, and
 /// the hash recorded before the change, so the next observation still sees the
 /// change and plans APF to issue its policy again.
 fn unproven_policy(mut row: Row, recorded: &Row) -> Row {
-    row.remove(crate::LOADED_VERSION);
     row.insert(crate::POLICY_PROVENANCE.into(), String::new());
     row.insert(
         crate::POLICY_HASH.into(),
@@ -78,7 +67,6 @@ impl OpenShell {
                     && token != value(live, crate::POLICY_PROVENANCE)
                     && !value(&row, crate::POLICY_HASH).is_empty()
                 {
-                    row.remove(crate::LOADED_VERSION);
                     self.observe_services(&mut row, want, false).await?;
                     return Ok(Mutation::complete(row));
                 }
@@ -225,7 +213,6 @@ impl OpenShell {
         };
         match observed {
             Ok(Some(mut row)) => {
-                row.remove(crate::LOADED_VERSION);
                 self.observe_services(&mut row, want, false).await?;
                 Ok(Some(row))
             }
@@ -417,7 +404,6 @@ impl Backend for OpenShell {
         if kind == "sandbox"
             && let Some(row) = &mut observed
         {
-            row.remove(crate::LOADED_VERSION);
             if unproven {
                 *row = unproven_policy(std::mem::take(row), prior);
             }

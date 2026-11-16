@@ -41,8 +41,6 @@ pub struct State {
     pub providers: HashMap<String, p::Provider>,
     pub sandboxes: HashMap<String, p::Sandbox>,
     pub active_policy: Option<p::SandboxPolicy>,
-    /// The loaded policy revision's version; omission reports 1.
-    pub active_version: Option<u32>,
     /// Sandbox-scoped UpdateConfig requests, in order.
     pub config_updates: Vec<p::UpdateConfigRequest>,
     /// Rewrites a sandbox as an UpdateConfig without a policy reaches it, as
@@ -1114,13 +1112,8 @@ fn update_config(
         .ok_or_else(|| Status::not_found("absent"))?;
     let rewrite = rewrite.ok_or_else(|| Status::failed_precondition("no policy to apply"))?;
     rewrite(sandbox);
-    let version = state.active_version.unwrap_or(1) + 1;
-    state.active_version = Some(version);
     state.active_policy = None;
-    Ok(p::UpdateConfigResponse {
-        version,
-        ..Default::default()
-    })
+    Ok(p::UpdateConfigResponse::default())
 }
 /// The gateway exposes a live sandbox's service, or updates an exposed one in
 /// place.
@@ -1248,11 +1241,10 @@ fn policy_status(
             format!("fixture:{:016x}", hasher.finish())
         })
         .unwrap_or_default();
-    let version = state.active_version.unwrap_or(1);
     Ok(p::GetSandboxPolicyStatusResponse {
-        active_version: version,
+        active_version: 1,
         revision: Some(p::SandboxPolicyRevision {
-            version,
+            version: 1,
             policy_hash,
             policy,
             status: p::PolicyStatus::Loaded as i32,

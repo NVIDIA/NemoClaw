@@ -863,9 +863,7 @@ fn change_loaded_policy(fixture: &Fixture, key: &str) {
         .policy
         .unwrap();
     changed.network_policies.remove("apf-bundle");
-    let mut state = fixture.state.lock().unwrap();
-    state.active_policy = Some(changed);
-    state.active_version = Some(2);
+    fixture.state.lock().unwrap().active_policy = Some(changed);
 }
 
 #[tokio::test]
@@ -873,11 +871,15 @@ async fn a_policy_apf_issues_to_a_governed_sandbox_is_adopted() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
     let (recorded, key) = apf_sandbox(&fixture, &client).await;
-    {
-        let mut state = fixture.state.lock().unwrap();
-        apf_reissue("token-2")(state.sandboxes.get_mut(&key).unwrap());
-        state.active_version = Some(2);
-    }
+    apf_reissue("token-2")(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&key)
+            .unwrap(),
+    );
     let observed = client
         .read("sandbox", &recorded, false)
         .await
@@ -958,47 +960,6 @@ async fn a_failed_reissue_leaves_the_policy_unproven() {
     let state = state.unwrap();
     assert_eq!(state[POLICY_PROVENANCE], "");
     assert_eq!(state[POLICY_HASH], recorded[POLICY_HASH]);
-}
-
-#[tokio::test]
-async fn a_policy_changed_before_its_first_observation_is_reissued() {
-    let fixture = Fixture::start().await;
-    let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let (mut recorded, key) = apf_sandbox(&fixture, &client).await;
-    // Apply records no hash for a sandbox that is not ready yet; the loaded
-    // policy APF admitted is then OpenShell's first revision.
-    recorded.insert(POLICY_HASH.into(), String::new());
-    let observed = client
-        .read("sandbox", &recorded, false)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(observed[POLICY_PROVENANCE], "token");
-    assert!(!observed[POLICY_HASH].is_empty());
-    change_loaded_policy(&fixture, &key);
-    let observed = client
-        .read("sandbox", &recorded, false)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(observed[POLICY_PROVENANCE], "");
-}
-
-#[tokio::test]
-async fn a_nemoclaw_policy_openshell_updated_before_its_first_observation_is_recorded() {
-    let fixture = Fixture::start().await;
-    let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let mut sandbox = create_sandbox(&client, "explicit-policy").await;
-    // OpenShell's supervisor loads a later revision after start.
-    sandbox.insert(POLICY_HASH.into(), String::new());
-    fixture.state.lock().unwrap().active_version = Some(2);
-    let observed = client
-        .read("sandbox", &sandbox, false)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(!observed[POLICY_HASH].is_empty());
-    assert_eq!(observed[POLICY_PROVENANCE], "");
 }
 
 #[tokio::test]

@@ -278,10 +278,8 @@ impl ConnectedOpenShellGateway {
                     } else {
                         Some(policy_json(&network::granted_row_policy(&row, &grants)?)?)
                     };
-                    let version = status.active_version;
                     let hash = active_policy(status, expected.as_deref())?;
                     row.insert(crate::POLICY_HASH.into(), hash);
-                    row.insert(crate::LOADED_VERSION.into(), version.to_string());
                 }
                 Some(row)
             }

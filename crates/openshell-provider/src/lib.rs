@@ -410,9 +410,6 @@ pub(crate) const POLICY_HASH: &str = "policy_hash";
 /// sandbox's loaded policy. Empty when that policy is not the one APF issued,
 /// which plans asking APF to issue it again.
 pub(crate) const POLICY_PROVENANCE: &str = "policy_provenance";
-/// The loaded policy revision's version, which an observation carries to the
-/// provider's checks and removes before it is recorded.
-pub(crate) const LOADED_VERSION: &str = "loaded_policy_version";
 /// The state attribute recording why OpenShell reports the sandbox exited:
 /// its terminal phase, reason, and exit code. A sandbox that exited plans a
 /// replacement.
