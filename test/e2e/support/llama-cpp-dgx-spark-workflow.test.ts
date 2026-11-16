@@ -181,6 +181,33 @@ describe("Spark Express qualification workflow (#14065)", () => {
     expect(validateE2eWorkflow(changed).join("\n")).toContain("Spark Express");
   });
 
+  it("rejects the credential-bearing alias for candidate Spark execution", () => {
+    const aliased = structuredClone(workflow);
+    const job = aliased.jobs["spark-express-vllm"];
+    const index = job.steps.findIndex((step: any) => step.name === "Authenticate to Docker Hub");
+    job.steps[index] = aliased.jobs.live.steps.find(
+      (step: any) => step.name === "Authenticate to Docker Hub",
+    );
+    expect(validateE2eWorkflow(aliased).join("\n")).toContain("anonymous Docker pulls");
+  });
+
+  it.each([
+    "${{ secrets.DOCKERHUB_TOKEN }}",
+    "${{ toJSON(secrets) }}",
+    "${{ sEcReTs['DOCKERHUB_TOKEN'] }}",
+  ])("rejects alternate Spark secret delivery through %s", (value) => {
+    const changed = structuredClone(workflow);
+    changed.jobs["spark-express-vllm"].env.EXTRA_CREDENTIAL = value;
+    expect(validateE2eWorkflow(changed).join("\n")).toContain("must not expose workflow secrets");
+    delete changed.jobs["spark-express-vllm"].env.EXTRA_CREDENTIAL;
+    changed.jobs["spark-express-vllm"].steps.push({
+      name: "Alternate credential delivery",
+      run: "candidate-command",
+      env: { EXTRA_CREDENTIAL: value },
+    });
+    expect(validateE2eWorkflow(changed).join("\n")).toContain("must not expose workflow secrets");
+  });
+
   it.each([0, 7])("forwards the workflow Spark selector and propagates exit %i", (exitCode) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark-workflow-"));
     try {

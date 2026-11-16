@@ -180,6 +180,18 @@ export function validateSparkExpressWorkflowBoundary(workflow: unknown): string[
   }))
     requireEqual(env[key], value, `must bind ${key}`);
   requireEqual(
+    step("Authenticate to Docker Hub"),
+    {
+      name: "Authenticate to Docker Hub",
+      uses: E2E_ACTION_PROVENANCE.dockerAuth.reference,
+      with: { "auth-required": "0", username: "", token: "" },
+    },
+    "must isolate anonymous Docker pulls without credentials for candidate code",
+  );
+  if (/\bsecrets\b/iu.test(JSON.stringify(job))) {
+    errors.push("Spark Express must not expose workflow secrets to candidate code");
+  }
+  requireEqual(
     step("Restore exact-commit CLI artifact").with,
     {
       "provenance-json": "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",

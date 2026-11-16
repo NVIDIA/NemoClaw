@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const CLEANUP_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-cleanup.sh");
 const AUTH_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-setup.sh");
@@ -164,6 +165,59 @@ fi
       expect(`${rejectedArgs.stdout}${rejectedArgs.stderr}`).toContain("does not accept arguments");
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps candidate Spark execution anonymous through Docker setup and cleanup", () => {
+    const workflow = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e.yaml"), "utf8"),
+    );
+    const auth = workflow.jobs["spark-express-vllm"].steps.find(
+      (step: { name?: string }) => step.name === "Authenticate to Docker Hub",
+    );
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark-anonymous-docker-"));
+    try {
+      const calls = path.join(directory, "docker-calls");
+      writeExecutable(
+        path.join(directory, "docker"),
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> "${calls}"\nexit 1\n`,
+      );
+      const githubEnv = path.join(directory, "github-env");
+      const env = {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        RUNNER_TEMP: directory,
+        GITHUB_JOB: "spark-express-vllm",
+        GITHUB_ENV: githubEnv,
+        DOCKERHUB_AUTH_REQUIRED: auth.with["auth-required"],
+        DOCKERHUB_USERNAME: auth.with.username,
+        DOCKERHUB_TOKEN: auth.with.token,
+      };
+      const setup = spawnSync(AUTH_HELPER_PATH, [], { encoding: "utf8", env });
+      expect(setup.status, setup.stderr).toBe(0);
+      const dockerConfig = fs.readFileSync(githubEnv, "utf8").trim().split("=")[1];
+      // Observe the environment and config from the subsequent candidate process.
+      const candidate = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `const fs = require("node:fs");
+          if (process.env.DOCKERHUB_TOKEN || process.env.DOCKERHUB_USERNAME) process.exit(1);
+          console.log(JSON.stringify(fs.readdirSync(process.env.DOCKER_CONFIG)));`,
+        ],
+        { encoding: "utf8", env: { ...env, DOCKER_CONFIG: dockerConfig } },
+      );
+      expect(candidate.status, candidate.stderr).toBe(0);
+      expect(JSON.parse(candidate.stdout)).toEqual([]);
+      const cleanup = spawnSync(CLEANUP_HELPER_PATH, [], {
+        encoding: "utf8",
+        env: { ...env, DOCKER_CONFIG: dockerConfig },
+      });
+      expect(cleanup.status, cleanup.stderr).toBe(0);
+      expect(fs.existsSync(dockerConfig)).toBe(false);
+      expect(fs.existsSync(calls)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
     }
   });
 

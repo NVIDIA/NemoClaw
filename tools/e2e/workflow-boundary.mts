@@ -1718,7 +1718,8 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
     const auth = authSteps[0];
     const cleanup = cleanupSteps[0];
-    if (auth && canonicalAuth && auth !== canonicalAuth) {
+    // Spark's candidate-only job is validated separately as strictly anonymous.
+    if (jobName !== "spark-express-vllm" && auth && canonicalAuth && auth !== canonicalAuth) {
       errors.push(`${jobName} Docker Hub auth must reuse the canonical workflow alias`);
     }
     requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
