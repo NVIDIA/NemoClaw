@@ -51,7 +51,7 @@
     },
     "/spec/sandboxes/*/network/tier": {
       "title": "Network tier",
-      "description": "The agent reaches its inference endpoint and nothing else on the network."
+      "description": "Isolated lets the agent reach only the endpoints this configuration declares."
     },
     "/spec/gateway/runtime/provider": {
       "title": "Where should the sandbox run?",
@@ -257,6 +257,10 @@
     },
     "/spec/sandboxes/*/network/tier": {
       "isolated": "Isolated"
+    },
+    "/spec/integrations/*/provider": {
+      "brave": "Brave",
+      "tavily": "Tavily"
     },
     "/spec/gateway/runtime/provider": {
       "docker": "Docker",
