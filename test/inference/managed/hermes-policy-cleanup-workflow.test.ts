@@ -19,10 +19,14 @@ it.each(
     const workflow = readWorkflow("managed-images.yaml");
     const builder = required(workflow.jobs?.[job], `missing ${job}`);
     const qualification = step(builder, "Verify Hermes managed policy source cleanup");
-    const result = spawnSync("bash", ["-c", `npx() { exit ${exitCode}; }\n${qualification.run}`], {
-      encoding: "utf8",
-      env: { PATH: process.env.PATH },
-    });
+    const result = spawnSync(
+      "bash",
+      ["-c", `npx() { return ${exitCode}; }\n${qualification.run}`],
+      {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH },
+      },
+    );
     expect(result.status, result.stderr).toBe(exitCode);
     expect(qualification.if).toBe("matrix.agent == 'hermes'");
     expect(qualification).not.toHaveProperty("continue-on-error");

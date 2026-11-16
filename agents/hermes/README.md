@@ -17,13 +17,14 @@ Other agents continue to use the existing reviewed shared artifact.
 
 The adapter changes deletion only for the four fixed Hermes generated-policy and routing source
 paths. If ordinary deletion returns `EACCES` or `EPERM`, it verifies the source, private parent,
-numeric sandbox identity and Node executable. A bounded child deletes the unchanged source as
+numeric sandbox identity and Node executable. The parent retains either its existing private mode
+or the exact shipped sandbox-owned `3770` mode. A bounded child deletes the unchanged source as
 the sandbox user. Startup fails unless the child succeeds and the source is confirmed absent.
 Policy installation, protected target ownership, private directory modes and container capabilities
 are unchanged.
 
 The integration tests check artifact freshness and deterministic cleanup failures. The image
 workflows run `test/package-contract/onboard/hermes-policy-cleanup.test.ts` against the built
-Hermes image. Its disposable, network-disabled container lacks DAC override and proves both
-root deletion denial and successful policy promotion followed by owner deletion.
+Hermes image. Its disposable, network-disabled container lacks DAC override and proves root deletion
+denial and successful policy promotion followed by owner deletion for `0700` and `3770` parents.
 The existing Hermes inference-switch E2E owns full rebuild and credential-preservation evidence.

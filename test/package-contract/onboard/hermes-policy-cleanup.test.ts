@@ -13,8 +13,9 @@ const {spawnSync} = require("node:child_process");
 const uid = Number(spawnSync("/usr/bin/id", ["-u", "sandbox"], {encoding:"utf8"}).stdout.trim());
 const gid = Number(spawnSync("/usr/bin/id", ["-g", "sandbox"], {encoding:"utf8"}).stdout.trim());
 assert.ok(uid > 0 && gid > 0);
+for (const mode of [0o700, 0o3770]) {
 fs.chownSync("/sandbox/.hermes", uid, gid);
-fs.chmodSync("/sandbox/.hermes", 0o700);
+fs.chmodSync("/sandbox/.hermes", mode);
 const source = "/sandbox/.hermes/managed-policy.json";
 const policy = JSON.stringify({schema_version:3}) + String.fromCharCode(10);
 const generated = spawnSync(process.execPath, ["-e", "require('node:fs').writeFileSync(process.argv[1], process.argv[2], {mode:0o600})", source, policy], {
@@ -30,12 +31,13 @@ assert.equal(fs.readFileSync(target,"utf8"), policy);
 assert.equal(fs.statSync(target).uid, 0);
 assert.equal(fs.statSync(target).gid, 0);
 assert.equal(fs.statSync(target).mode & 0o777, 0o444);
-assert.equal(fs.statSync("/sandbox/.hermes").mode & 0o777, 0o700);
+assert.equal(fs.statSync("/sandbox/.hermes").mode & 0o7777, mode);
+}
 console.log("Hermes policy promotion and owner cleanup passed without DAC override");
 `;
 
 it.runIf(Boolean(image))(
-  "installs policy and removes its private source without DAC override (#13684)",
+  "installs policy and removes its source without DAC override for private and canonical parents (#13684)",
   () => {
     const name = `hermes-policy-cleanup-${randomUUID()}`;
     try {

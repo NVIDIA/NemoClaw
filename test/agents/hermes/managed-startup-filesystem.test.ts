@@ -92,12 +92,21 @@ describe("Hermes generated-source cleanup", () => {
   });
   it.each([
     { uid: 0n },
+    { gid: 0n },
+    { mode: 0o42770n },
+    { mode: 0o43772n },
     { mode: 0o40777n },
     { isSymbolicLink: () => true },
     { isDirectory: () => false },
   ])("rejects an unsafe private parent %o", (overrides) => {
     state.parent = stat({ ...state.parent, ...overrides });
     expect(() => unlinkHermesGeneratedFile(source)).toThrow("unsafe ownership or metadata");
+  });
+  it("preserves the declared sandbox-owned 3770 state root during owner cleanup", () => {
+    state.parent = stat({ ...state.parent, mode: 0o43770n });
+    unlinkHermesGeneratedFile(source);
+    expect(state.removed).toBe(true);
+    expect(state.parent.mode).toBe(0o43770n);
   });
   it("rejects an untrusted identity executable before starting children", () => {
     vi.mocked(fs.lstatSync).mockReturnValueOnce({
@@ -133,6 +142,16 @@ describe("Hermes generated-source cleanup", () => {
       stdout: command === "/usr/bin/id" ? "1000" : "",
     }));
     expect(() => unlinkHermesGeneratedFile(source)).toThrow("remains after cleanup");
+  });
+  it("does not let a no-op child satisfy the filesystem double", () => {
+    processMock.spawnSync
+      .mockImplementationOnce(fixture.spawn)
+      .mockImplementationOnce(fixture.spawn)
+      .mockImplementationOnce((command: string, args: string[]) =>
+        fixture.spawn(command, [...args.slice(0, 2), "", ...args.slice(3)]),
+      );
+    expect(() => unlinkHermesGeneratedFile(source)).toThrow("remains after cleanup");
+    expect(state.removed).toBe(false);
   });
   it("does not interpret an inspection denial as absence", () => {
     state.verifyError = denied();

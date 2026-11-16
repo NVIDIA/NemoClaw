@@ -110,7 +110,9 @@ export function unlinkHermesGeneratedFile(target: fs.PathLike): void {
     parent.isSymbolicLink() ||
     parent.uid !== BigInt(uid) ||
     parent.gid !== BigInt(gid) ||
-    (parent.mode & 0o022n) !== 0n
+    // The shipped state root is setgid/sticky 3770, owned by sandbox:sandbox.
+    // Preserve that exact contract as well as private restored roots.
+    ((parent.mode & 0o022n) !== 0n && (parent.mode & 0o7777n) !== 0o3770n)
   )
     throw new Error("Hermes generated source has unsafe ownership or metadata");
 
