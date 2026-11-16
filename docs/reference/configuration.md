@@ -90,7 +90,7 @@ Paths:
 
 Who registers APF with the gateway as its interceptor and provider-profile source.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
 
 Paths:
 
@@ -659,7 +659,7 @@ A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
 
 TLS file reference for a service the gateway dials.
 
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
 
 Paths:
 
@@ -930,7 +930,7 @@ Paths:
 
 The component that authors every sandbox's policy on a gateway, instead of NemoClaw.
 
-Guide: [Sandbox policy](../security/sandbox-network.md).
+Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
 
 Paths:
 
@@ -938,7 +938,7 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `apf` | [ApfPolicyAuthority](#apfpolicyauthority) | Yes | — | APF's admission interceptor replaces each sandbox's policy with its signed bundle's, and APF serves the provider profiles. Sandboxes must not author an explicit policy; NemoClaw requires APF's provenance on each sandbox and treats a later change to the loaded policy as drift. |
+| `apf` | [ApfPolicyAuthority](#apfpolicyauthority) | Yes | — | APF's admission interceptor replaces each sandbox's policy with its signed bundle's, and APF serves the provider profiles. Sandboxes must not set a policy or policyRef, and API integrations must not set mcp. NemoClaw requires APF's provenance on each sandbox, records each policy APF issues with a new provenance token, and asks APF to issue its policy again when the loaded policy changes without one. |
 
 ## PolicyBinary
 

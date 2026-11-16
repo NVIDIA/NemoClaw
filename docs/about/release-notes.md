@@ -28,6 +28,11 @@ Agents and interfaces:
   OpenShell reports, during apply, a sandbox whose attached registrations put keys in the same variable.
   See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
 
+Sandbox policy:
+
+- `spec.gateway.policyAuthority.apf` lets NVIDIA Agent Policy Fabric (APF) author each sandbox's policy and serve the inference, web search, and API profiles, and `registration: managed` has NemoClaw register APF with a managed Docker gateway.
+  See [let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+
 Inference and models:
 
 - A managed vLLM or Ollama container's `container.cpuLimitMillis` reaches Docker through the Docker provider's `cpus`, without the `nemoclaw.nvidia.com/cpu-limit-millis` label.

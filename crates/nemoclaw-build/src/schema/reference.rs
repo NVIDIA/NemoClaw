@@ -223,6 +223,9 @@ fn guide(name: &str) -> &'static str {
         "Network" | "ExplicitPolicy" | "ExplicitPolicySelection" => {
             "[Sandbox policy](../security/sandbox-network.md)"
         }
+        "PolicyAuthority" | "ApfPolicyAuthority" | "InterceptorTls" => {
+            "[Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy)"
+        }
         name if name.starts_with("Policy") => "[Sandbox policy](../security/sandbox-network.md)",
         "InlineRecipe" | "Compatibility" | "Tool" | "Resources" | "Settings" | "Compilation"
         | "Reuse" | "Manifest" | "File" => "[Inline model recipes](../agents-inference/recipes.md)",
