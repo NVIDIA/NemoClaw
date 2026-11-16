@@ -19,6 +19,7 @@ filesystem_policy:
     - /lib
     - /opt/hermes
     - /opt/nemoclaw-agent-browser-runtime # agent-browser CLI behind /usr/local/bin.
+    - /opt/nemo-relay/plugins/switchyard
     - /proc
     - /sys/class/drm               # Discover GPU device names for startup identity checks.
     - /dev/urandom
