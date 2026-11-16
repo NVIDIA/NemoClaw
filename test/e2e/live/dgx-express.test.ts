@@ -25,6 +25,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertLocalDockerEnvironment,
+  bindSparkCandidateCli,
   classifyDockerContainerInspection,
   cleanupSparkMuseSandbox,
   inspectSandboxIdentity,
@@ -38,6 +39,9 @@ import {
   expectOpenAiChatThroughSandbox,
   requireLivePrerequisites,
 } from "./inference-routing-helpers.ts";
+
+// Host fixtures capture their executable before a scenario starts.
+bindSparkCandidateCli(process.env);
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-spark-vllm";
 const VLLM_CONTAINER = "nemoclaw-vllm";

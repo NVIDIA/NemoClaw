@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { networkInterfaces } from "node:os";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { CommandExitResult } from "../fixtures/clients/command.ts";
@@ -15,6 +16,13 @@ const SANDBOX_ID_PATTERN = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/u;
 export type SandboxInspection =
   | { readonly kind: "absent" }
   | { readonly kind: "present"; readonly id: string };
+
+/** Bind Spark qualification to its checkout before host fixtures capture the CLI. */
+export function bindSparkCandidateCli(env: NodeJS.ProcessEnv): void {
+  if (env.E2E_TARGET_ID === "spark-express-vllm") {
+    env.NEMOCLAW_CLI_BIN = CLI_ENTRYPOINT;
+  }
+}
 
 /** Clear inherited choices so the explicit Muse profile owns fresh onboarding. */
 export function sparkMuseGlimmerEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

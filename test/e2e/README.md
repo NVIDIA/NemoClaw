@@ -2423,6 +2423,7 @@ The `spark-express-vllm` selector includes a separate fresh explicit Muse Glimme
 `dgx-express.test.ts`. Run it on a dedicated physical DGX Spark using the command below.
 Follow the [local execution prerequisites](docs/README.md#run-live-e2e-locally).
 Require a clean candidate checkout and build its CLI with `npm run build:cli`.
+The Spark selector pins NemoClaw host commands to that checkout before constructing the fixtures.
 Save `git rev-parse HEAD` and `git status --porcelain` beside the resulting artifacts before execution.
 The commit record must identify the same clean source used to build the CLI.
 It refuses pre-existing resources, clears disclosure and recreation overrides, and selects
@@ -2458,7 +2459,7 @@ Spark and Station retain their own probe targets and request results.
 Run the target from a clean candidate checkout on the Spark host:
 
 ```bash
-E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
+NEMOCLAW_CLI_BIN="$PWD/bin/nemoclaw.js" E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
 ```
 
 A passing Spark target establishes that option 2 selects the fixed vLLM preset and recipe.

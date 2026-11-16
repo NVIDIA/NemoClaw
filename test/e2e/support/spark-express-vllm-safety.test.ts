@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import type { TrustedShellCommand } from "../fixtures/shell-probe.ts";
 import {
   assertLocalDockerEnvironment,
   classifyDockerContainerInspection,
@@ -11,6 +14,11 @@ import {
   sparkMuseGlimmerEnv,
   vllmPublicationProbeUrls,
 } from "./spark-express-vllm-safety.ts";
+
+vi.mock("../fixtures/e2e-test.ts", async () => ({
+  expect: (await import("vitest")).expect,
+  test: vi.fn(),
+}));
 
 const result = (exitCode: number, stdout = "", stderr = "") => ({
   command: ["docker"],
@@ -203,3 +211,52 @@ describe("Spark Muse cleanup ownership (#14065)", () => {
     expect(host.cleanupSandbox).not.toHaveBeenCalled();
   });
 });
+
+describe.each([
+  { target: "spark-express-vllm", inheritedCli: undefined, expectedCli: CLI_ENTRYPOINT },
+  {
+    target: "spark-express-vllm",
+    inheritedCli: "/another-checkout/bin/nemoclaw.js",
+    expectedCli: CLI_ENTRYPOINT,
+  },
+  {
+    target: "dgx-station-express",
+    inheritedCli: "/installed/bin/nemoclaw",
+    expectedCli: "/installed/bin/nemoclaw",
+  },
+])(
+  "candidate CLI binding for $target with inherited CLI $inheritedCli (#14065)",
+  ({ target, inheritedCli, expectedCli }) => {
+    beforeEach(async () => {
+      vi.stubEnv("E2E_TARGET_ID", target);
+      vi.stubEnv("NEMOCLAW_CLI_BIN", inheritedCli);
+      vi.resetModules();
+      await import("../live/dgx-express.test.ts");
+    });
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("uses the selected CLI for first-turn and owned destroy commands", async () => {
+      const sandboxName = "spark-muse";
+      const ownedId = "05d120e4-484c-47d4-9a59-77a08cbb6e67";
+      const run = vi.fn(async (command: TrustedShellCommand) => ({
+        command: [command.command, ...command.args],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: JSON.stringify({ name: sandboxName, id: ownedId }),
+        stderr: "",
+        artifacts: { stdout: "", stderr: "", result: "" },
+      }));
+      const host = new HostCliClient({ run });
+      const turnArgs = [sandboxName, "agent", "-m", "Reply with exactly: MUSE_SELECTOR_OK."];
+      await host.nemoclaw(turnArgs);
+      await cleanupSparkMuseSandbox(host, sandboxName, ownedId, {});
+
+      expect(run.mock.calls.map(([command]) => [command.command, ...command.args])).toEqual([
+        [expectedCli, ...turnArgs],
+        ["openshell", "sandbox", "get", "-o", "json", sandboxName],
+        [expectedCli, sandboxName, "destroy", "--yes"],
+      ]);
+    });
+  },
+);
