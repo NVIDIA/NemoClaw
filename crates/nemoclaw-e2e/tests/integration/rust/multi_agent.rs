@@ -8,7 +8,7 @@
 //! leaving the others unchanged.
 use crate::deployment::Lifecycle;
 use nemoclaw_e2e::openshell::State;
-use nemoclaw_sdk::config::{AgentTools, Document};
+use nemoclaw_sdk::config::Document;
 use std::{collections::BTreeMap, fs, process::Command};
 
 /// Three OpenClaw agents from the example, each in its own sandbox and with
@@ -79,9 +79,10 @@ async fn one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it() {
     // Fabric then starts the researcher's agent and rejects the reviewer's.
     let mut changed = lifecycle.document.clone();
     for name in ["researcher", "reviewer"] {
-        changed.spec.sandboxes.get_mut(name).unwrap().agent.tools = Some(AgentTools {
-            allow: vec!["read".into()],
-        });
+        changed.spec.sandboxes.get_mut(name).unwrap().agent.tools =
+            serde_json::json!({"enabled": ["read"]})
+                .as_object()
+                .cloned();
     }
     lifecycle
         .fixture

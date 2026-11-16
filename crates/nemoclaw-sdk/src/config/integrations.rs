@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{AgentTools, ConfigError, Document, NamedSandbox, SecretRef};
+use super::{ConfigError, Document, NamedSandbox, SecretRef};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -242,15 +242,15 @@ pub use nemoclaw_openshell::search::{SearchProvider, search_provider_name};
 impl RuntimeWebSearch {
     pub(crate) fn validate<'a>(
         &self,
-        agents: impl Iterator<Item = (&'a str, Option<&'a AgentTools>)>,
+        agents: impl Iterator<Item = &'a str>,
     ) -> Result<(), ConfigError> {
-        let agents: std::collections::BTreeMap<_, _> = agents.collect();
+        let agents: std::collections::BTreeSet<_> = agents.collect();
         let mut names = std::collections::BTreeSet::new();
         if self.agent_refs.is_empty()
             || self
                 .agent_refs
                 .iter()
-                .any(|name| !names.insert(name) || !agents.contains_key(name.as_str()))
+                .any(|name| !names.insert(name) || !agents.contains(name.as_str()))
         {
             return Err(ConfigError::new(
                 "web search requires unique references to configured agents",

@@ -36,10 +36,10 @@ network:
 
 Each grant takes `endpoints` in the same shape as an explicit policy rule, including MCP method and tool rules.
 Its optional `binaries` default to the harness's executables, like the managed inference and search grants.
-Grant names can't reuse a managed grant's name, and an explicit policy can't take `grants`, since it already lists every rule.
+Grant names can't reuse a managed grant's name, and an explicit policy can't take `grants` or `grantRefs`, since it already lists every rule.
 
 An explicit policy replaces the entire preset.
-Omit `tier` when declaring `policy.explicit`; combining a nonempty tier with an explicit policy is rejected.
+Omit `tier` when declaring `policy.explicit` or `policyRef`; a network that sets more than one of `tier`, `policy`, and `policyRef` is rejected.
 Omitted fields inside an explicit policy follow OpenShell defaults, so copy the filesystem and process settings you intend to retain.
 An empty `network_policies` map grants no general egress.
 
@@ -57,6 +57,49 @@ See the [generated field reference](../reference/configuration.md#explicitpolicy
 `landlock.compatibility: best_effort` permits startup when the host cannot enforce Landlock restrictions.
 Use `hard_requirement` to require enforcement.
 Kernel enforcement still requires qualification on the deployment host.
+
+## Reuse Policies and Grants
+
+To give several sandboxes the same policy or grant, define it once under `spec.policies` or `spec.grants` and select it by name:
+
+```yaml
+spec:
+  policies:
+    docs-only:
+      version: 1
+      filesystem_policy:
+        include_workdir: false
+        read_only: [/usr, /opt, /app]
+        read_write: [/sandbox, /tmp]
+      network_policies:
+        documentation:
+          name: documentation
+          endpoints:
+            - host: docs.example.com
+              port: 443
+          binaries:
+            - path: /usr/bin/curl
+  grants:
+    github:
+      endpoints:
+        - host: api.github.com
+          port: 443
+  sandboxes:
+    researcher:
+      network:
+        policyRef: docs-only
+    writer:
+      network:
+        tier: isolated
+        grantRefs: [github]
+```
+
+This fragment omits the deployment's other required fields.
+`policyRef` applies the named policy exactly as if it were written in `policy.explicit`.
+`grantRefs` adds each named grant to the isolated preset as a rule with the grant's name; a network can combine it with inline `grants` when no name appears in both.
+A reference to an undefined name fails and lists the defined names.
+Policies and grants are defined only at the deployment level, and a definition that no sandbox selects is validated but applies to none; see [the authoring rule](../build-deploy/configuration-references.md#the-authoring-rule).
+The [full-featured OpenClaw example](../../examples/full-featured-openclaw.yaml) gives three sandboxes one policy.
 
 ## Runtime Filesystem Access
 

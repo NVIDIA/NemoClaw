@@ -38,6 +38,11 @@ Agents and interfaces:
 - OpenClaw stops where the sandbox denies process-group signals.
 - An explicit sandbox policy accepts `network_middlewares`.
   See [network middleware](../security/sandbox-network.md#attach-network-middleware).
+- The agent holds Fabric's `instructions`, `tools`, `skills`, `mcp`, and `workflow` sections, and the harness holds `runtime`, `environment`, `discovery`, `telemetry`, and `relay`; NemoClaw passes each to Fabric unchanged.
+  Sandboxes that share a harness definition through `harnessRef` can give each agent its own instructions, tools, and skills.
+  See [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness).
+- `spec.policies` holds named sandbox policies that a network selects with `policyRef`, and `spec.grants` holds named grants that a network adds to the isolated preset with `grantRefs`.
+  See [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants).
 
 Inference and models:
 
@@ -108,14 +113,57 @@ Earlier CLI commands, schemas, and state formats have no compatibility guarantee
 See [migration](../get-started/migration.md) for where each earlier task lives now, and [state](../build-deploy/state.md) for data preservation.
 Changes since the `v0.1.0-rc9` tag that affect existing deployments or documents:
 
-- The intent record is now version 21.
-  `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, and 21 as later changes altered it.
+- The intent record is now version 22.
+  `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, 21, and 22 as later changes altered it.
   This release refuses any deployment whose intent record is an earlier version, including every one that `v0.1.0-rc9` created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - `spec.sandboxes`, `spec.inferenceProviders`, and a sandbox's `inferenceProviders` are maps keyed by name; the parser rejects the earlier lists.
   A provider declared inline on a route still takes `name`.
   In the Rust SDK, these fields are `BTreeMap`s, and `InferenceProvider` has no `name`.
 - A vLLM recipe whose `compatibility.gpu` belongs to no hardware profile's GPU family no longer parses.
+- `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
+  `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up:
+
+  ```yaml
+  # Before
+  harness:
+    kind: nvidia.fabric.hermes
+    config:
+      runtime: {max_turns: 16}
+      instructions: {system: {mode: replace, content: "Research flights."}}
+      skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
+  agent:
+    name: flights
+  # After
+  harness:
+    kind: nvidia.fabric.hermes
+    runtime: {max_turns: 16}
+  agent:
+    name: flights
+    instructions: {system: {mode: replace, content: "Research flights."}}
+    skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
+  ```
+
+- `harness.execution` is removed. Set Fabric's `runtime.timeout_seconds` on the harness instead:
+
+  ```yaml
+  # Before
+  harness: {kind: nvidia.fabric.openclaw, execution: {timeoutSeconds: 600}}
+  # After
+  harness: {kind: nvidia.fabric.openclaw, runtime: {timeout_seconds: 600}}
+  ```
+
+- `agent.tools` is Fabric's tools section, and its `allow` list is removed. Rename `allow` to Fabric's `enabled`; `blocked` and `definitions` are now available too:
+
+  ```yaml
+  # Before
+  agent: {name: assistant, tools: {allow: [read, write]}}
+  # After
+  agent: {name: assistant, tools: {enabled: [read, write]}}
+  ```
+
+- In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
+  Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
 - Plan rejects `maxTokens`, `temperature`, and `topP` when the image's adapter doesn't accept them; see [OpenClaw route tuning](../agents-inference/inference.md#tune-openclaws-primary-route).
 - Hermes's `max_tokens` setting no longer defaults to 512, so Hermes uses its own response-token limit.
 - `skills.paths` works as in `v0.1.0-rc9`: OpenClaw requires each path to hold `SKILL.md`, and Hermes passes each path to its `skills.external_dirs` unchecked.

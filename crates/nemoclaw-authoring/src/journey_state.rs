@@ -442,6 +442,6 @@ use authored_values::AuthoredValues;
 use decision_record::DecisionRecord;
 use journey_position::JourneyPosition;
 use paths::{
-    escape_pointer, harness_kind, harness_path, native_value, routes_path, scalar_question,
-    settings_path,
+    agent_path, escape_pointer, harness_kind, harness_path, native_value, routes_path,
+    scalar_question, settings_path,
 };

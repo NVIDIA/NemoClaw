@@ -28,6 +28,8 @@ mod support;
 mod transport;
 mod travel_team;
 
+#[path = "agent_harness_split.rs"]
+mod agent_harness_split;
 #[path = "agent_runtimes.rs"]
 mod agent_runtimes;
 #[path = "agent_tools.rs"]
@@ -64,8 +66,6 @@ mod discovery_graph;
 mod engine_endpoint;
 #[path = "error.rs"]
 mod error;
-#[path = "execution_settings.rs"]
-mod execution_settings;
 #[path = "explicit_hardware.rs"]
 mod explicit_hardware;
 #[path = "fabric_capabilities.rs"]
@@ -155,6 +155,8 @@ mod native_inference;
 mod nemotron_serving;
 #[path = "network_config.rs"]
 mod network_config;
+#[path = "network_references.rs"]
+mod network_references;
 #[path = "observability.rs"]
 mod observability;
 #[path = "ollama_proxy.rs"]

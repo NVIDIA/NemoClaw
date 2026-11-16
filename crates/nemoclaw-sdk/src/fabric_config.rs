@@ -17,16 +17,6 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
         "environment":{"provider":"local","workspace":"/sandbox/workspace"},
         "models":{}
     });
-    if let Some(timeout) = harness
-        .execution
-        .as_ref()
-        .and_then(|execution| execution.timeout_seconds)
-    {
-        result["runtime"]["timeout_seconds"] = timeout.into();
-    }
-    if let Some(tools) = &sandbox.agent.tools {
-        result["tools"] = json!({"enabled":tools.allow});
-    }
     let selected = selection.inference.default_route()?;
     if selection
         .inference
@@ -201,18 +191,32 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
             }
         }
     }
-    if let Some(authored) = &harness.config {
-        for reserved in ["models", "harness", "metadata", "schema_version"] {
-            if authored.contains_key(reserved) {
-                return Err(ConfigError::new(
-                    "public Fabric configuration cannot override deployment-owned identities or models",
-                ));
-            }
-        }
-        let mut merged = Value::Object(authored.clone());
-        merge_owned(&mut merged, result)?;
-        result = merged;
-    }
+    // The harness and the agent each author their own Fabric sections; the
+    // deployment's values fill in around them and must not be contradicted.
+    let agent = &sandbox.agent;
+    let mut authored = Value::Object(
+        [
+            ("runtime", &harness.runtime),
+            ("environment", &harness.environment),
+            ("discovery", &harness.discovery),
+            ("telemetry", &harness.telemetry),
+            ("relay", &harness.relay),
+            ("instructions", &agent.instructions),
+            ("tools", &agent.tools),
+            ("skills", &agent.skills),
+            ("mcp", &agent.mcp),
+            ("workflow", &agent.workflow),
+        ]
+        .into_iter()
+        .filter_map(|(key, section)| {
+            section
+                .as_ref()
+                .map(|section| (key.to_owned(), Value::Object(section.clone())))
+        })
+        .collect(),
+    );
+    merge_owned(&mut authored, result)?;
+    let result = authored;
     serde_json::from_value::<nemo_fabric_core::FabricConfig>(result.clone())
         .map_err(|_| ConfigError::new("invalid public Fabric configuration"))?;
     Ok(result)

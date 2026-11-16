@@ -10,7 +10,7 @@ fn input() -> Value {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
     value["spec"]["sandboxes"]["assistant"]["harness"] =
-        json!({"kind":"openclaw", "execution":{"timeoutSeconds":900}});
+        json!({"kind":"openclaw", "runtime":{"timeout_seconds":900}});
     value
 }
 fn shared(mut value: Value, sandbox: bool) -> Value {

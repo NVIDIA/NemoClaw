@@ -57,6 +57,14 @@ pub struct Spec {
     #[schemars(default)]
     /// Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef.
     pub services: std::collections::BTreeMap<String, ServiceDefinition>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named complete OpenShell sandbox policies available to sandbox networks through policyRef. Unselected policies are validated but apply to no sandbox.
+    pub policies: std::collections::BTreeMap<String, super::ExplicitPolicy>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named network grants available to sandbox networks through grantRefs. Each selected grant becomes a policy rule with its definition's name; unselected grants are validated but grant nothing.
+    pub grants: std::collections::BTreeMap<String, super::Grant>,
     #[serde(rename = "gateway")]
     /// OpenShell gateway connection or managed gateway settings.
     pub gateway: Gateway,
@@ -412,10 +420,29 @@ pub struct Agent {
     /// Require API-key authentication through the selected routed provider. The provider must supply a credential.
     pub auth: Option<super::AgentAuth>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::AgentTools")]
-    /// Explicit native tool identifiers projected into public Fabric configuration. Fabric validates adapter support; this does not change OS-level filesystem permissions.
-    pub tools: Option<super::AgentTools>,
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's instructions section, passed to Fabric unchanged: the agent's system prompt and instruction files. Fabric validates it against the selected adapter.
+    pub instructions: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's tools section, passed to Fabric unchanged, such as enabled, blocked, and definitions. Fabric validates tool identifiers against the selected adapter; this does not change OS-level filesystem permissions. The former allow list is rejected; list those tools in enabled.
+    pub tools: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's skills section, passed to Fabric unchanged, such as directories and duplicates. Paths are absolute sandbox paths.
+    pub skills: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's MCP section, passed to Fabric unchanged. NemoClaw grants no network access or credentials for the servers it names.
+    pub mcp: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's workflow section, passed to Fabric unchanged: the registered workflow target the agent runs.
+    pub workflow: Option<FabricSection>,
 }
+
+/// One section of Fabric's agent configuration, passed to Fabric unchanged.
+pub type FabricSection = serde_json::Map<String, serde_json::Value>;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
@@ -491,17 +518,28 @@ pub struct Overrides {
 pub struct Harness {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
-    /// Public Fabric configuration. Deployment-owned identities and model connections cannot be overridden.
-    pub config: Option<serde_json::Map<String, serde_json::Value>>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     /// Opaque native settings validated by the selected Fabric adapter.
     pub settings: Option<serde_json::Map<String, serde_json::Value>>,
     /// Fabric harness implementation for the sandbox agent.
     pub kind: super::HarnessKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::AgentExecution")]
-    /// Public Fabric runtime execution settings.
-    pub execution: Option<super::AgentExecution>,
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's runtime section, passed to Fabric unchanged, such as timeout_seconds and max_turns. The deployment sets artifacts and, for adapters that accept it, keep_state; a different authored value fails.
+    pub runtime: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's environment section, passed to Fabric unchanged. The deployment sets provider to local and workspace to /sandbox/workspace; a different authored value fails.
+    pub environment: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's discovery section, passed to Fabric unchanged: additional descriptor discovery paths in the sandbox.
+    pub discovery: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's telemetry section, passed to Fabric unchanged, such as providers.relay. NemoClaw grants no network access for its exporters.
+    pub telemetry: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's relay section, passed to Fabric unchanged, such as Relay plugins. Relay validates and activates them.
+    pub relay: Option<FabricSection>,
 }

@@ -55,26 +55,26 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     use nemoclaw_sdk::config::Document;
     let mut input: serde_json::Value =
         serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
-    input["spec"]["sandboxes"]["assistant"]["harness"]["config"] = json!({
-        "mcp":{"servers":{"custom":{"transport":"stdio","url":"owned-fixture","exposure":"harness_native"}}},
-        "relay":{"plugins":{"dynamic":[{"manifest":"/plugins/example/relay-plugin.toml","config":{"mode":"route"}}]}},
-        "skills":{"paths":["/sandbox/workspace/skills/supplied-skill"]},
-        "runtime":{"max_turns":3}
-    });
+    let agent = &mut input["spec"]["sandboxes"]["assistant"]["agent"];
+    agent["mcp"] = json!({"servers":{"custom":{"transport":"stdio","url":"owned-fixture","exposure":"harness_native"}}});
+    agent["skills"] = json!({"paths":["/sandbox/workspace/skills/supplied-skill"]});
+    let harness = &mut input["spec"]["sandboxes"]["assistant"]["harness"];
+    harness["relay"] = json!({"plugins":{"dynamic":[{"manifest":"/plugins/example/relay-plugin.toml","config":{"mode":"route"}}]}});
+    harness["runtime"] = json!({"max_turns":3});
     let doc = Document::parse(input.to_string().as_bytes()).unwrap();
     let actual =
         nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();
     assert_eq!(actual["runtime"]["max_turns"], 3);
     assert_eq!(
         actual["mcp"],
-        input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["mcp"]
+        input["spec"]["sandboxes"]["assistant"]["agent"]["mcp"]
     );
     assert_eq!(
         actual["relay"],
-        input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["relay"]
+        input["spec"]["sandboxes"]["assistant"]["harness"]["relay"]
     );
     assert_eq!(
-        actual["skills"], input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["skills"],
+        actual["skills"], input["spec"]["sandboxes"]["assistant"]["agent"]["skills"],
         "skills must pass through without driverConfig"
     );
     input["spec"]["sandboxes"]["assistant"]["driverConfig"] = json!({"docker": {"mounts": [
@@ -84,14 +84,8 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     let actual =
         nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();
     assert_eq!(
-        actual["skills"], input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["skills"],
+        actual["skills"], input["spec"]["sandboxes"]["assistant"]["agent"]["skills"],
         "workspace mounts must not add or replace skill paths"
-    );
-    input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["models"] =
-        json!({"default":{"base_url":"https://substituted.invalid"}});
-    let doc = Document::parse(input.to_string().as_bytes()).unwrap();
-    assert!(
-        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).is_err()
     );
 }
 

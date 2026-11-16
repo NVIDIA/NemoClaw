@@ -100,30 +100,6 @@ fn normalization_markers_are_accepted_only_before_defaults() {
 }
 
 #[test]
-fn standalone_harness_validation_uses_the_same_contract_as_documents() {
-    let baseline = document("fabric-openclaw.yaml");
-    let harness = baseline.spec.sandboxes["assistant"]
-        .harness
-        .as_ref()
-        .unwrap();
-    for invalid in [
-        json!({"execution":{"timeoutSeconds":0}}),
-        json!({"execution":{"timeoutSeconds":1000000001_u64}}),
-    ] {
-        let mut value = serde_json::to_value(harness).unwrap();
-        value
-            .as_object_mut()
-            .unwrap()
-            .extend(invalid.as_object().unwrap().clone());
-        let candidate: nemoclaw_sdk::config::Harness = serde_json::from_value(value).unwrap();
-        assert!(candidate.validate().is_err());
-        let mut direct = baseline.clone();
-        direct.spec.sandboxes.get_mut("assistant").unwrap().harness = Some(candidate);
-        assert!(direct.validate().is_err());
-    }
-}
-
-#[test]
 fn schema_diagnostics_never_echo_values_unknown_properties_or_definition_names() {
     let baseline = serde_json::to_value(document("spark/vllm.yaml")).unwrap();
     for (path, replacement) in [

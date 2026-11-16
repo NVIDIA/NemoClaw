@@ -931,8 +931,8 @@ fn conditional_native_journey(model: bool) -> (Capabilities, nemoclaw_authoring:
         });
     } else {
         adapter.descriptor["config"]["schema"] = json!({"type":"object","required":["workflow"]});
-        base["spec"]["sandboxes"]["assistant"]["harness"]["config"] =
-            json!({"workflow":{"target_id":"fixture.target","settings":{}}});
+        base["spec"]["sandboxes"]["assistant"]["agent"]["workflow"] =
+            json!({"target_id":"fixture.target","settings":{}});
         catalog.targets = vec![json!({"descriptor":{
             "type":"workflow", "id":"fixture.target", "adapter_id":"fixture.conditional",
             "spec":{"settings_schema":conditional_settings_schema()}
@@ -1428,7 +1428,7 @@ fn sparse_journey_uses_workflow_and_model_owner_schemas() {
     assert_eq!(
         sparse
             .values()
-            .pointer("/spec/sandboxes/assistant/harness/config/workflow/settings/region"),
+            .pointer("/spec/sandboxes/assistant/agent/workflow/settings/region"),
         Some(&json!("west"))
     );
     let mut base: serde_json::Value =
@@ -2707,7 +2707,7 @@ fn referenced_model_settings_are_written_to_the_selected_route() {
 }
 
 #[test]
-fn referenced_workflow_answers_keep_the_named_harness_as_the_owner() {
+fn workflow_answers_belong_to_the_agent_when_the_harness_is_referenced() {
     let mut catalog = FabricCatalog::bundled();
     let mut adapter = catalog.adapters[0].clone();
     adapter.descriptor["adapter_id"] = json!("fixture.workflow-owner");
@@ -2748,8 +2748,15 @@ fn referenced_workflow_answers_keep_the_named_harness_as_the_owner() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/harnesses/assistant/config/workflow/target_id"),
+            .pointer("/spec/sandboxes/researcher/agent/workflow/target_id"),
         Some(&json!("fixture.target"))
+    );
+    assert!(
+        state
+            .values()
+            .pointer("/spec/harnesses/assistant/workflow")
+            .is_none(),
+        "the shared harness definition must not receive one agent's workflow"
     );
     assert!(
         state

@@ -19,7 +19,7 @@ The new scenarios use managed Docker gateways and authenticated vLLM services.
 | [vllm.yaml](vllm.yaml) | OpenClaw with Qwen3-4B | The original ordinary-vLLM example |
 | [remote-vllm.yaml](remote-vllm.yaml) | OpenClaw with SSH-managed Qwen3-4B and an external Podman gateway | Separate sandbox and model engines; Podman with a remote model service is [untested](../../docs/resources/limits.md#platforms-models-and-placement) |
 
-The Deep Agents researcher has `tools.allow: [read]`; the writer retains the harness's default tools.
+The Deep Agents researcher has `tools.enabled: [read]`; the writer retains the harness's default tools.
 Each agent receives its own sandbox, workspace, and artifact directory.
 Declaring several agents does not arrange communication or delegate work between them.
 

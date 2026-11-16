@@ -123,8 +123,8 @@ Parser acceptance does not establish installation, compatibility or readiness.
 Supply an explicit immutable sandbox image containing the generic launcher and selected Fabric adapter.
 The omitted-image default is a generic image pin, not a per-adapter image lookup.
 Optional `harness.settings` carries a JSON object, including nested values, to Fabric's `harness.settings` unchanged.
-Optional `harness.config` adds public Fabric fields such as workflow, MCP and telemetry.
-It cannot replace deployment-owned identities, models, workspace paths or artifact paths.
+The agent's `instructions`, `tools`, `skills`, `mcp`, and `workflow` and the harness's `runtime`, `environment`, `discovery`, `telemetry`, and `relay` add Fabric's sections unchanged.
+These sections cannot replace deployment-owned identities, models, workspace paths or artifact paths.
 Model `overrides.settings` likewise passes native settings through without interpretation.
 These fields contain configuration and credential references, not inline secrets.
 Fabric owns their schemas, validation and native mapping.
