@@ -1,0 +1,93 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+
+# The three Agent Knowledge Foundation examples, each an OpenClaw agent in its
+# own sandbox. README.md builds the image, prepares each run directory and
+# runs the eval kits. Replace the UID and the image digest before planning.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: agent-knowledge-foundation
+  uid: 0012ac8b-71cc-4af6-a8da-b669703866ef
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17931
+  inferenceProviders:
+    build-nvidia:
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_API_KEY
+  inferences:
+    nemotron:
+      routes:
+        - name: primary
+          providerRef: build-nvidia
+          overrides:
+            model: nvidia/nemotron-3.5-super-vl-120b-a12b
+  # The examples' tools call Nemotron embed, rerank and parse, and Kumo, on
+  # build.nvidia.com with the same key, which they read from NVIDIA_API_KEY.
+  # One integration sends it to both hosts; the sandbox never sees the key.
+  integrations:
+    nvidia:
+      kind: api
+      endpoints:
+        - https://integrate.api.nvidia.com/v1
+        - https://ai.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_API_KEY
+      sandboxEnv: NVIDIA_API_KEY
+  harnesses:
+    openclaw:
+      kind: nvidia.fabric.openclaw
+      runtime:
+        # An analysis question can take many minutes of tool calls.
+        timeout_seconds: 3600
+  sandboxes:
+    supply-chain:
+      # Supply-chain allocation: six questions about a cut shipment.
+      image:
+        # Build the derived image (README.md) and select its digest.
+        ref: nc-akf:akf-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harnessRef: openclaw
+      agent:
+        name: supply-chain
+        inferenceRef: nemotron
+        integrationRefs: [nvidia]
+        skills:
+          directories:
+            - folder: /opt/akf/skills
+          duplicates: reject
+    market-analysis:
+      # Market analysis: six questions over a synthetic equity market.
+      image:
+        # Build the derived image (README.md) and select its digest.
+        ref: nc-akf:akf-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harnessRef: openclaw
+      agent:
+        name: market-analysis
+        inferenceRef: nemotron
+        integrationRefs: [nvidia]
+        skills:
+          directories:
+            - folder: /opt/akf/skills
+          duplicates: reject
+    provider-billing:
+      # Provider billing integrity: 22 questions about a billing ring.
+      image:
+        # Build the derived image (README.md) and select its digest.
+        ref: nc-akf:akf-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harnessRef: openclaw
+      agent:
+        name: provider-billing
+        inferenceRef: nemotron
+        integrationRefs: [nvidia]
+        skills:
+          directories:
+            - folder: /opt/akf/skills
+          duplicates: reject
