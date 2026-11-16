@@ -997,6 +997,7 @@ describe("Hermes native attachment registration", () => {
       const input = makeProxyInput(OLLAMA_LOCAL_CREDENTIAL_ENV);
       const registered = buildCreatedSandboxRegistryEntry(input);
       expect(registered.endpointUrl).toBe(input.inferenceSelection.endpointUrl);
+      expect(registered.credentialEnv).toBe(OLLAMA_LOCAL_CREDENTIAL_ENV);
       expect(registered.nativeLocalProviderAttachment).toEqual(input.nativeLocalProviderAttachment);
     });
     it.each([null, "COMPATIBLE_API_KEY"])(

@@ -12,8 +12,6 @@ import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "../../onboard/runtime
 import type { SandboxHostLocalInferenceProvenance } from "./types";
 import { gatewayReachableCompatibleEndpointUrl } from "../../inference/native-local/eligibility";
 import { qualifiedNativeLocalEndpointUrl } from "../../inference/native-local/agent-config";
-import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
-import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_SANDBOX_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
@@ -37,52 +35,16 @@ export function nativeLocalAttachmentMatchesHostLocalReceipt(
   }
 }
 
-/**
- * Return the token-protected proxy route a no-authentication loopback selection is attached to.
- * Onboarding fronts that endpoint with the proxy, so the sandbox-facing URL names the proxy port
- * instead of the backend port the user entered. Only a loopback selection the gateway bridge maps
- * to the host alias can be fronted this way.
- */
-function noAuthProxyAttachmentEndpointUrl(
-  provider: string,
-  selectedEndpointUrl: string | null | undefined,
-  credentialEnv: string | null | undefined,
-): string | null {
-  if (
-    provider !== "compatible-endpoint" ||
-    credentialEnv !== OLLAMA_LOCAL_CREDENTIAL_ENV ||
-    !selectedEndpointUrl
-  )
-    return null;
-  const bridged = gatewayReachableCompatibleEndpointUrl(provider, selectedEndpointUrl);
-  if (!bridged || bridged === selectedEndpointUrl) return null;
-  try {
-    const { hostname, pathname } = new URL(bridged);
-    if (hostname !== "host.openshell.internal") return null;
-    return qualifiedNativeLocalEndpointUrl(
-      `http://host.openshell.internal:${String(OLLAMA_PROXY_PORT)}${pathname}`,
-    );
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Match a normalized native attachment to its selected route using the existing endpoint owners.
- * Pass the selection's recorded credential so a no-authentication route is matched to its proxy.
- */
+/** Match a normalized native attachment to its selected route using the existing endpoint owners. */
 export function nativeLocalAttachmentMatchesSelectedEndpoint(
   provider: string,
   selectedEndpointUrl: string | null | undefined,
   attachmentEndpointUrl: string,
   serializedReceipt: string | null | undefined,
-  credentialEnv?: string | null,
 ): boolean {
   const gatewayEndpoint = gatewayReachableCompatibleEndpointUrl(provider, selectedEndpointUrl);
   return (
     attachmentEndpointUrl === qualifiedNativeLocalEndpointUrl(gatewayEndpoint ?? "") ||
-    attachmentEndpointUrl ===
-      noAuthProxyAttachmentEndpointUrl(provider, selectedEndpointUrl, credentialEnv) ||
     nativeLocalAttachmentMatchesHostLocalReceipt(
       selectedEndpointUrl,
       attachmentEndpointUrl,

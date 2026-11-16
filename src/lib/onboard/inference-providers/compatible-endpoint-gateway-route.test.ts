@@ -34,8 +34,11 @@ import {
   COMPATIBLE_ENDPOINT_GATEWAY_PORTS,
   gatewayReachableCompatibleEndpointUrl,
   isLoopbackNoAuthCompatibleEndpointUrl,
+  nativeLocalAttachmentMatchesSelectedRoute,
+  noAuthProxyAttachmentEndpointUrl,
   reuseRegisteredProviderWithGatewayEndpoint,
 } from "./compatible-endpoint-gateway-route";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 
 const tempHomes: string[] = [];
 
@@ -235,6 +238,142 @@ describe("compatible endpoint gateway routing", () => {
     ).toBe("http://localhost:8000/v1");
     expect(gatewayReachableCompatibleEndpointUrl("compatible-endpoint", null)).toBeNull();
     expect(gatewayReachableCompatibleEndpointUrl("compatible-endpoint", undefined)).toBeUndefined();
+  });
+});
+
+describe("no-authentication proxy attachment route", () => {
+  const proxyUrl = `http://host.openshell.internal:${String(OLLAMA_PROXY_PORT)}/v1`;
+  const vllmUrl = `http://localhost:${String(VLLM_PORT)}/v1`;
+
+  it.each([
+    { name: "the vLLM port", selected: vllmUrl },
+    { name: "an IPv4 loopback address", selected: `http://127.0.0.1:${String(VLLM_PORT)}/v1` },
+    { name: "a trailing slash", selected: `${vllmUrl}/` },
+    { name: "the Ollama port", selected: "http://localhost:11434/v1" },
+  ])("derives the proxy route for $name", ({ selected }) => {
+    expect(
+      noAuthProxyAttachmentEndpointUrl(
+        "compatible-endpoint",
+        selected,
+        OLLAMA_LOCAL_CREDENTIAL_ENV,
+      ),
+    ).toBe(proxyUrl);
+    expect(
+      nativeLocalAttachmentMatchesSelectedRoute(
+        "compatible-endpoint",
+        selected,
+        proxyUrl,
+        undefined,
+        OLLAMA_LOCAL_CREDENTIAL_ENV,
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    { name: "an authenticated selection", selected: vllmUrl, credentialEnv: "COMPATIBLE_API_KEY" },
+    { name: "a selection without a credential", selected: vllmUrl, credentialEnv: null },
+    {
+      name: "the protected gateway port as the source",
+      selected: `http://localhost:${String(GATEWAY_PORT)}/v1`,
+      credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+    },
+    {
+      name: "a remote endpoint",
+      selected: "http://example.com:8000/v1",
+      credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+    },
+    {
+      name: "an unsupported loopback port",
+      selected: "http://localhost:9999/v1",
+      credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+    },
+    {
+      name: "a missing selection",
+      selected: undefined,
+      credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+    },
+  ])("derives no proxy route for $name", ({ selected, credentialEnv }) => {
+    expect(
+      noAuthProxyAttachmentEndpointUrl("compatible-endpoint", selected, credentialEnv),
+    ).toBeNull();
+    expect(
+      nativeLocalAttachmentMatchesSelectedRoute(
+        "compatible-endpoint",
+        selected,
+        proxyUrl,
+        undefined,
+        credentialEnv,
+      ),
+    ).toBe(false);
+  });
+
+  it("derives no proxy route from the protected proxy port as the source", () => {
+    expect(
+      noAuthProxyAttachmentEndpointUrl(
+        "compatible-endpoint",
+        `http://localhost:${String(OLLAMA_PROXY_PORT)}/v1`,
+        OLLAMA_LOCAL_CREDENTIAL_ENV,
+      ),
+    ).toBeNull();
+  });
+
+  it("derives no proxy route for another provider", () => {
+    expect(
+      noAuthProxyAttachmentEndpointUrl("vllm-local", vllmUrl, OLLAMA_LOCAL_CREDENTIAL_ENV),
+    ).toBeNull();
+  });
+
+  it.each([
+    {
+      name: "another port",
+      attachment: `http://host.openshell.internal:${String(OLLAMA_PROXY_PORT + 1)}/v1`,
+    },
+    {
+      name: "another path",
+      attachment: `http://host.openshell.internal:${String(OLLAMA_PROXY_PORT)}/other`,
+    },
+    {
+      name: "another host alias",
+      attachment: `http://host.docker.internal:${String(OLLAMA_PROXY_PORT)}/v1`,
+    },
+  ])("rejects a proxy attachment on $name", ({ attachment }) => {
+    expect(
+      nativeLocalAttachmentMatchesSelectedRoute(
+        "compatible-endpoint",
+        vllmUrl,
+        attachment,
+        undefined,
+        OLLAMA_LOCAL_CREDENTIAL_ENV,
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps the direct gateway mapping for a selection without the proxy credential", () => {
+    expect(
+      nativeLocalAttachmentMatchesSelectedRoute(
+        "compatible-endpoint",
+        vllmUrl,
+        `http://host.openshell.internal:${String(VLLM_PORT)}/v1`,
+        undefined,
+        null,
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts the moved proxy's old default port only with the recorded proxy credential", async () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_PORT", "12435");
+    vi.resetModules();
+    const route = await import("./compatible-endpoint-gateway-route");
+    const legacy = "http://localhost:11435/v1";
+
+    expect(
+      route.noAuthProxyAttachmentEndpointUrl(
+        "compatible-endpoint",
+        legacy,
+        OLLAMA_LOCAL_CREDENTIAL_ENV,
+      ),
+    ).toBe("http://host.openshell.internal:12435/v1");
+    expect(route.noAuthProxyAttachmentEndpointUrl("compatible-endpoint", legacy, null)).toBeNull();
   });
 });
 

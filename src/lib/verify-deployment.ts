@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  nativeLocalAttachmentMatchesHostLocalReceipt,
-  nativeLocalAttachmentMatchesSelectedEndpoint,
-} from "./state/registry/host-local-inference";
+import { nativeLocalAttachmentMatchesHostLocalReceipt } from "./state/registry/host-local-inference";
 
 /**
  * Post-deployment verification — confirms the full delivery chain is
@@ -51,7 +48,10 @@ import {
   type SandboxCommandExecutor,
 } from "./onboard/custom-openclaw-runtime-diagnosis";
 import { GATEWAY_PORT, resolveGatewayLogPathForPort } from "./onboard/gateway/state-dir";
-import { gatewayReachableCompatibleEndpointUrl } from "./onboard/inference-providers/compatible-endpoint-gateway-route";
+import {
+  gatewayReachableCompatibleEndpointUrl,
+  nativeLocalAttachmentMatchesSelectedRoute,
+} from "./onboard/inference-providers/compatible-endpoint-gateway-route";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "./onboard/runtime-provider/host-local-inference-routing";
 
@@ -451,7 +451,7 @@ function matchesNativeLocalVerificationRoute(
   });
   return (
     selected?.endpointUrl === attachment.endpointUrl ||
-    nativeLocalAttachmentMatchesSelectedEndpoint(
+    nativeLocalAttachmentMatchesSelectedRoute(
       attachment.provider,
       context.endpointUrl,
       attachment.endpointUrl,
