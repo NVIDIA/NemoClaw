@@ -27,6 +27,8 @@ A built CLI takes the same arguments, as `nemoclaw onboard`.
 - **Output:** defaults to `deployment.yaml` and must be a new file; onboarding never overwrites one.
 
 Each screen lists its keys.
+A text question with a suggestion shows it dimmed and marked `(suggested)` while the answer is empty: **Enter** accepts it, **Tab** copies it into the answer for editing, and typing replaces it.
+**Ctrl+O** leaves an optional question's value out.
 After you choose a harness, **Ctrl+D** accepts the remaining suggested settings and opens the review; when the target checks below cannot confirm those suggestions, it says why and you answer the rest yourself.
 **Esc** exits without saving.
 

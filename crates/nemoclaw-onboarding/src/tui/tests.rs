@@ -8,6 +8,7 @@ use super::{
     terminal::{ask_target, credential_probe, local_engine_probe, model_catalog_probe},
 };
 use crate::{Source, load_journey};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nemoclaw_authoring::{
     Capabilities, JourneyDefinition, JourneyQuestionKind, PartialDocument, TargetPrerequisite,
     discovery_queries, inference_request_for_document,
@@ -1878,4 +1879,143 @@ fn the_default_harness_menu_offers_openclaw_then_hermes() {
         question.suggestion(),
         Some(&serde_json::json!("nvidia.fabric.openclaw"))
     );
+}
+
+fn key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+fn type_text(wizard: &mut JourneyWizard, text: &str) {
+    for character in text.chars() {
+        wizard.press(key(KeyCode::Char(character)));
+    }
+}
+
+/// The default journey at the question `id`, accepting every suggestion before it.
+fn wizard_at(id: &str) -> JourneyWizard {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    wizard.started = true;
+    for _ in 0..20 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.id() == id)
+        {
+            return wizard;
+        }
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    }
+    panic!("the default journey never asked {id}");
+}
+
+/// The text answer's line on screen: the one with the cursor.
+fn input_line(wizard: &JourneyWizard) -> String {
+    screen(wizard, 100, 40)
+        .lines()
+        .find(|line| line.contains('▌'))
+        .expect("a text question draws a cursor")
+        .trim_matches('"')
+        .trim()
+        .to_owned()
+}
+
+#[test]
+fn after_tab_backspace_removes_one_character_of_the_suggestion() {
+    let mut wizard = wizard_at("/metadata/name");
+    wizard.press(key(KeyCode::Tab));
+    wizard.press(key(KeyCode::Backspace));
+    assert_eq!(input_line(&wizard), "opencla▌");
+    type_text(&mut wizard, "w-2");
+    wizard.press(key(KeyCode::Enter));
+    assert_eq!(
+        wizard.state().values().pointer("/metadata/name"),
+        Some(&serde_json::json!("openclaw-2"))
+    );
+}
+
+#[test]
+fn an_emptied_answer_shows_the_suggestion_as_a_placeholder_not_as_typed_text() {
+    let mut wizard = wizard_at("/metadata/name");
+    type_text(&mut wizard, "x");
+    wizard.press(key(KeyCode::Backspace));
+    // The cursor comes before the suggestion, which is marked in text.
+    assert_eq!(input_line(&wizard), "▌openclaw  (suggested)");
+    let placeholder = foreground_of(&wizard, "openclaw");
+    type_text(&mut wizard, "openclaw");
+    assert_ne!(
+        placeholder,
+        foreground_of(&wizard, "openclaw"),
+        "the placeholder is drawn unlike typed text"
+    );
+}
+
+#[test]
+fn enter_on_an_empty_answer_accepts_the_suggestion() {
+    let mut wizard = wizard_at("/metadata/name");
+    type_text(&mut wizard, "x");
+    wizard.press(key(KeyCode::Backspace));
+    wizard.press(key(KeyCode::Enter));
+    assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    assert_eq!(
+        wizard.state().values().pointer("/metadata/name"),
+        Some(&serde_json::json!("openclaw"))
+    );
+}
+
+#[test]
+fn typing_replaces_the_placeholder() {
+    let mut wizard = wizard_at("/metadata/name");
+    type_text(&mut wizard, "my-agent");
+    assert_eq!(input_line(&wizard), "my-agent▌");
+    wizard.press(key(KeyCode::Enter));
+    assert_eq!(
+        wizard.state().values().pointer("/metadata/name"),
+        Some(&serde_json::json!("my-agent"))
+    );
+}
+
+#[test]
+fn an_optional_suggested_value_is_left_out_with_the_omit_key_the_screen_names() {
+    let engine = "/spec/gateway/engine";
+    let mut wizard = wizard_at(engine);
+    let question = wizard.question().unwrap().unwrap();
+    assert!(question.omittable() && question.suggestion().is_some());
+    // The narrowest terminal the wizard draws still names the key.
+    let screen = screen(&wizard, 72, 24);
+    assert!(screen.contains("Ctrl+O  omit"), "{screen}");
+    wizard.press(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    assert_eq!(
+        wizard.state().decision_status(engine),
+        nemoclaw_authoring::DecisionStatus::Omitted
+    );
+    assert_eq!(wizard.state().values().pointer(engine), None);
+}
+
+#[test]
+fn a_suggested_text_question_names_every_key_at_the_narrowest_width() {
+    let wizard = wizard_at("/metadata/name");
+    let screen = screen(&wizard, 72, 24);
+    for keys in ["Tab  edit suggestion", "Enter  continue", "Esc  exit"] {
+        assert!(screen.contains(keys), "{keys}: {screen}");
+    }
+}
+
+#[test]
+fn another_model_entry_starts_empty_because_enter_needs_a_typed_identifier() {
+    let mut wizard =
+        wizard_at("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model");
+    let question = wizard.question().unwrap().unwrap();
+    assert!(question.suggestion().is_some());
+    wizard.selected = question.choices().len();
+    wizard.selection_changed = true;
+    wizard.press(key(KeyCode::Enter));
+    assert!(wizard.custom_answer);
+    assert_eq!(input_line(&wizard), "▌");
+    wizard.press(key(KeyCode::Tab));
+    wizard.press(key(KeyCode::Enter));
+    assert_eq!(wizard.error.as_deref(), Some("Enter a model identifier."));
 }
