@@ -273,10 +273,17 @@ impl JourneyWizard {
         }
     }
 
-    pub(super) fn suggested_input(&self, question: &JourneyQuestion) -> String {
+    /// The suggestion a text question shows while its answer is empty, and
+    /// accepts on Enter. The text a model menu opens for another identifier
+    /// has none: Enter there needs a typed identifier.
+    pub(super) fn placeholder(&self, question: &JourneyQuestion) -> Option<String> {
+        if !question.choices().is_empty() {
+            return None;
+        }
         question
             .suggestion()
-            .map_or_else(String::new, display_value)
+            .map(display_value)
+            .filter(|suggested| !suggested.is_empty())
     }
 
     pub(super) fn answer_from_input(
@@ -294,7 +301,7 @@ impl JourneyWizard {
             return Ok(question.choices().get(self.choice_index(question)).cloned());
         }
         let raw = if self.input.is_empty() {
-            self.suggested_input(question)
+            self.placeholder(question).unwrap_or_default()
         } else {
             self.input.clone()
         };
@@ -362,6 +369,7 @@ impl JourneyWizard {
         match key.code {
             KeyCode::Char('o') if control => self.omit(),
             KeyCode::Char('a') if control => self.input.clear(),
+            KeyCode::Tab => self.edit_suggestion(),
             KeyCode::Enter => self.advance(),
             KeyCode::Left => self.back(),
             KeyCode::Up => self.previous(),
@@ -377,6 +385,16 @@ impl JourneyWizard {
                 self.input.push(character);
             }
             _ => {}
+        }
+    }
+
+    /// Copy the placeholder into the empty answer, so it can be edited.
+    fn edit_suggestion(&mut self) {
+        if self.input.is_empty()
+            && let Ok(Some(question)) = self.question()
+            && let Some(suggested) = self.placeholder(&question)
+        {
+            self.input = suggested;
         }
     }
 
