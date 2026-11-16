@@ -225,7 +225,7 @@ With the `oidc` profile, the OpenShell CLI can reach the gateway with your own t
 It needs three things: a port forward to the gateway pod, the CA certificate that verifies the gateway, and an OpenShell gateway entry that signs in through your identity provider.
 A [published gateway](#publish-the-gateway-outside-the-cluster) needs no forward: set the variables in the first step but skip its `port-forward` command, and add the gateway at `gateway.endpoint` instead of `https://127.0.0.1:17671`.
 No automated test covers these steps. [#14131](https://github.com/NVIDIA/NemoClaw/issues/14131) records a manual run of the browser sign-in against a bare-metal single-node OpenShift 4.22 cluster, and [#14192](https://github.com/NVIDIA/NemoClaw/pull/14192) one of the client-credentials sign-in on kind; both used Keycloak as the issuer.
-[#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) records the client-credentials sign-in on k3d with only the CA certificate, through the forward and at a published endpoint.
+[#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) records the client-credentials sign-in on kind and k3d with only the CA certificate, through the forward and at a published endpoint.
 
 In one terminal, forward the port in `gateway.endpoint` to the gateway, which listens on port 8080 in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets.
 Leave the forward running:
@@ -450,7 +450,7 @@ Sandboxes still need `image.metadata`.
 NemoClaw doesn't put a managed gateway behind an ingress or an OpenShift Route; it passes none of the chart's `grpcRoute` or `openshiftRoute` values ([current limits](../resources/limits.md#platforms-models-and-placement)).
 Instead, the platform operator installs the OpenShell chart behind a Gateway API ingress with OpenShell's [Kubernetes ingress guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/ingress.mdx), and the deployment connects to it with `management: external`.
 No automated test covers this setup.
-[#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) records one run of these steps, with OpenShell 0.1.7 behind Envoy Gateway v1.8.1 on a single-node k3d cluster and a Keycloak issuer: an agent replied through the ingress, and destroy removed the deployment once the request timeout below was disabled.
+[#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) records runs of these steps, with OpenShell 0.1.7 behind Envoy Gateway v1.8.1 on single-node kind and k3d clusters and a Keycloak issuer: an agent replied through the ingress, and destroy removed the deployment once the request timeout below was disabled.
 
 The operator follows the guide with these choices:
 
@@ -461,7 +461,7 @@ The operator follows the guide with these choices:
 - **Authentication:** configure an OIDC issuer, as the guide's HTTPS setups do; the ingress terminates TLS and forwards no client certificate, so clients authenticate with bearer tokens.
   If a private CA signed the issuer's certificate, also set the chart's `server.oidc.caConfigMapName` to a ConfigMap in the release's namespace whose `ca.crt` verifies it; create the ConfigMap before the install.
 - **Request timeout:** disable Envoy Gateway's default 15-second request timeout, which ends any longer request, including a whole `exec` stream.
-  In the recorded run, deleting a sandbox took 31 seconds, so destroy failed with `observation transport failed` until a second destroy, after the sandbox was gone, completed.
+  In the recorded runs, deleting a sandbox took 31 seconds, so destroy failed with `observation transport failed` until a second destroy, after the sandbox was gone, completed.
   Starting an agent runtime, which runs through `exec`, took 13 seconds, close to the limit, and a 20-second `openshell sandbox exec`, the command that sends agent requests, failed at 15 seconds.
   Disable it with a `BackendTrafficPolicy` on the chart's `GRPCRoute`, named `openshell` in the guide's `openshell` namespace; for another release, find the route with `kubectl get grpcroutes`:
 
@@ -513,7 +513,7 @@ spec:
   If the gateway sets `scopes_claim`, the token also needs `config:read`, `workspace:read`, `workspace:write`, `sandbox:read`, `sandbox:write`, `provider:read` and `provider:write`, or `openshell:all`.
 - **Service URLs:** [service exposure](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) URLs skip the gateway's authentication, so prefer [`openshell forward service`](../agents-inference/interfaces.md#forward-a-native-service).
   The chart routes only gRPC, so the URLs need the operator's own route, as the guide's [Route Sandbox Service Traffic](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/kubernetes/ingress.mdx#route-sandbox-service-traffic) section describes.
-  OpenShell builds them with the gateway pod's port, 8080, so behind an ingress on port 443 the URLs that apply prints name a port the ingress doesn't serve; with the chart's default service domain, the recorded run printed `https://<workspace>--<sandbox>--<service>.openshell.localhost:8080/`.
+  OpenShell builds them with the gateway pod's port, 8080, so behind an ingress on port 443 the URLs that apply prints name a port the ingress doesn't serve; with the chart's default service domain, the recorded runs printed `https://<workspace>--<sandbox>--<service>.openshell.localhost:8080/`.
 
 ## Use a Model Server in the Cluster
 
