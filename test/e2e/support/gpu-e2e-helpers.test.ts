@@ -22,6 +22,7 @@ import {
   createGpuPrivateHome,
   env,
   hasExactReadyPhase,
+  museGlimmerEnv,
   ollamaCleanupScript,
   ollamaProxyTokenFile,
   openClawModelConfigProjectionScript,
@@ -29,6 +30,7 @@ import {
   startAttachedOllama,
   trackGpuGatewayCleanup,
   waitForAttachedOllama,
+  vllmExportEnv,
 } from "../live/gpu-e2e-helpers.ts";
 import * as observedChild from "../fixtures/observed-child-process.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
@@ -760,6 +762,27 @@ describe("GPU E2E helpers", () => {
       env({ NEMOCLAW_MODEL: "qwen2.5:0.5b" }, { NEMOCLAW_MODEL: GPU_MODEL }).NEMOCLAW_MODEL,
     ).toBe("qwen2.5:0.5b");
   });
+
+  it.each(["direct", "progressive"] as const)(
+    "keeps GPU recreation and filters inherited %s disclosure outside the fresh Muse case (#14065)",
+    (disclosure) => {
+      const inherited = {
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+        NEMOCLAW_TOOL_DISCLOSURE: disclosure,
+      };
+      const scenarios = [env({}, inherited), vllmExportEnv(inherited), museGlimmerEnv(inherited)];
+      expect(
+        scenarios.map((scenario) => [
+          scenario.NEMOCLAW_RECREATE_SANDBOX,
+          scenario.NEMOCLAW_TOOL_DISCLOSURE,
+        ]),
+      ).toEqual([
+        ["1", undefined],
+        ["1", undefined],
+        ["", ""],
+      ]);
+    },
+  );
 
   it("resolves the proxy token from the export scenario's private home", () => {
     expect(ollamaProxyTokenFile("/private/export-home")).toBe(

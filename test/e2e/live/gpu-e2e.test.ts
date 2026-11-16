@@ -31,6 +31,7 @@ import {
   ensureOllama,
   env,
   hasExactReadyPhase,
+  museGlimmerEnv,
   ollamaProxyTokenFile,
   PROXY_PORT,
   proxyStatus,
@@ -41,6 +42,7 @@ import {
   startAttachedOllama,
   trackGpuGatewayCleanup,
   waitForAttachedOllama,
+  vllmExportEnv,
 } from "./gpu-e2e-helpers.ts";
 import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
@@ -52,26 +54,6 @@ const MUSE_GLIMMER_VLLM_PROFILE_ID =
   "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4" as const;
 const MUSE_GLIMMER_SERVED_MODEL = "muse-glimmer";
 const PROGRESSIVE_TOOL_SEARCH = { mode: "tools", searchDefaultLimit: 8, maxSearchLimit: 20 };
-
-function vllmExportEnv(): NodeJS.ProcessEnv {
-  return env({
-    NEMOCLAW_AGENT: "openclaw",
-    NEMOCLAW_MODEL: "",
-    NEMOCLAW_PROVIDER: "",
-    NEMOCLAW_SANDBOX_GPU: "0",
-    NEMOCLAW_SANDBOX_GPU_DEVICE: "",
-    NEMOCLAW_SERVING_PRESET: "",
-    NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "",
-    NEMOCLAW_VLLM_MODEL: "",
-    NEMOCLAW_VLLM_PORT: "18000",
-    NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
-  });
-}
-
-function museGlimmerEnv(): NodeJS.ProcessEnv {
-  // Leave disclosure unset so the profile default, not an override, picks Tool Search.
-  return { ...vllmExportEnv(), NEMOCLAW_TOOL_DISCLOSURE: "" };
-}
 
 function hermesResponseEnv(): NodeJS.ProcessEnv {
   return env({

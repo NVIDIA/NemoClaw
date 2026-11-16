@@ -29,6 +29,29 @@ export {
 
 export { REPO_ROOT };
 
+export function vllmExportEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return env(
+    {
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_MODEL: "",
+      NEMOCLAW_PROVIDER: "",
+      NEMOCLAW_SANDBOX_GPU: "0",
+      NEMOCLAW_SANDBOX_GPU_DEVICE: "",
+      NEMOCLAW_SERVING_PRESET: "",
+      NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "",
+      NEMOCLAW_VLLM_MODEL: "",
+      NEMOCLAW_VLLM_PORT: "18000",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+    },
+    base,
+  );
+}
+
+export function museGlimmerEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  // Exercise the first-creation default instead of recreation or an explicit disclosure choice.
+  return { ...vllmExportEnv(base), NEMOCLAW_RECREATE_SANDBOX: "", NEMOCLAW_TOOL_DISCLOSURE: "" };
+}
+
 /** The export fixture owns only this attached daemon; onboarding owns the auth proxy. */
 export function startAttachedOllama(progress: TestProgress, environment: NodeJS.ProcessEnv) {
   const child = spawnObservedChild("ollama", ["serve"], {

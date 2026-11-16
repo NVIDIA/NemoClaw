@@ -2405,7 +2405,7 @@ the released GPU resources.
 
 A separate `gpu-e2e` case onboards the explicit Muse Glimmer profile
 `vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4` on a fresh OpenClaw sandbox
-without a Tool Search override. It checks that the generated `openclaw.json` carries the
+without recreation or Tool Search overrides. It checks that the generated `openclaw.json` carries the
 progressive Tool Search settings and that a short first agent turn completes, so the
 profile-specific default is proven against the real vLLM and OpenClaw runtime. It runs on the
 96 GB x86_64 GPU runner. A DGX Spark proof of the matching Spark profile is not part of this
@@ -2414,6 +2414,86 @@ target.
 Source tests own shared-consumer retention, receipt ownership, invalid recorded
 routes, and interrupted-cleanup recovery. The physical Spark Express test retains
 its existing platform-specific qualification.
+
+### DGX Spark Muse Glimmer qualification (#14065)
+
+The amd64 Muse case and `spark-express-vllm` do not qualify the explicit Spark Muse profile.
+Use this manual procedure on a dedicated physical DGX Spark for each candidate that needs this evidence.
+It is not a registered E2E selector or a substitute for the hosted GPU target.
+A procedure without a completed, candidate-bound hardware receipt leaves the Spark obligation unresolved.
+
+1. Use a clean checkout of the candidate on Linux aarch64 with an NVIDIA GB10 GPU.
+   Follow the local E2E prerequisites in [the execution guide](docs/README.md#run-live-e2e-locally).
+   Build the candidate CLI with `npm run build:cli`.
+   Require local Docker on its default context, NVIDIA Container Toolkit, OpenShell, and sufficient image/model storage.
+   Refuse remote Docker contexts, `DOCKER_HOST`, or `DOCKER_CONTEXT` overrides.
+   Set `umask 077` before creating the evidence directory.
+   Require GNU `timeout` for the bounded commands below.
+   Save `git rev-parse HEAD`, `git status --porcelain`, `uname -sm`, and `nvidia-smi` output in a private checkout-local evidence directory.
+   The receipt must name the full commit and profile, not only a branch or PR number.
+2. Choose a new sandbox name and confirm its absence in both the local registry and `openshell sandbox list`.
+   Refuse any existing `nemoclaw-vllm` container, including stopped containers, or listener on port 18000.
+   Treat failed inventory commands as unknown state and stop.
+   Do not remove a pre-existing resource to make qualification proceed.
+   Keep the host exclusive until cleanup finishes so another operator cannot replace these identities.
+3. In a dedicated shell, set the new name and clear inherited choices before onboarding:
+
+   ```bash
+   export NEMOCLAW_SANDBOX_NAME="e2e-spark-muse-$(date +%s)"
+   export NEMOCLAW_AGENT=openclaw NEMOCLAW_NON_INTERACTIVE=1
+   export NEMOCLAW_RECREATE_SANDBOX= NEMOCLAW_TOOL_DISCLOSURE=
+   export NEMOCLAW_PROVIDER= NEMOCLAW_MODEL= NEMOCLAW_SERVING_PRESET=
+   export NEMOCLAW_VLLM_MODEL= NEMOCLAW_VLLM_EXTRA_ARGS_JSON=
+   export NEMOCLAW_VLLM_PORT=18000 NEMOCLAW_WEB_SEARCH_PROVIDER=none
+   export NEMOCLAW_SANDBOX_GPU=0 NEMOCLAW_SANDBOX_GPU_DEVICE=
+   timeout --signal=TERM --kill-after=30s 75m node bin/nemoclaw.js onboard \
+     --profile vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4 \
+     --fresh --non-interactive --yes-i-accept-third-party-software
+   ```
+
+   Check the chosen name's absence before running the final command.
+   Do not pass `--resume` or `--recreate-sandbox`.
+   Bound onboarding to 75 minutes and record its exit status and redacted output.
+   A nonzero exit or timeout is a failed qualification, even if a container started.
+   Record the created sandbox identity and full managed-container ID before continuing.
+4. Read the generated configuration through the candidate CLI, before any agent turn:
+
+   ```bash
+   timeout --signal=TERM --kill-after=5s 30s node bin/nemoclaw.js "$NEMOCLAW_SANDBOX_NAME" exec -- node -e '
+   const fs = require("node:fs");
+   const c = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
+   console.log(JSON.stringify({model: c.agents?.defaults?.model?.primary,
+     toolSearch: c.tools?.toolSearch}));'
+   ```
+
+   Require exit status zero, model `inference/muse-glimmer`, and exactly
+   `{"mode":"tools","searchDefaultLimit":8,"maxSearchLimit":20}` for `toolSearch`.
+   Save this projection instead of the complete configuration, which can contain credentials.
+   Do not set Tool Search manually or retry onboarding with a disclosure override.
+5. Run the first OpenClaw turn in a new session:
+
+   ```bash
+   timeout --signal=TERM --kill-after=30s 12m node bin/nemoclaw.js "$NEMOCLAW_SANDBOX_NAME" agent --agent main --json \
+     --session-id "spark-muse-first-$(date +%s)" \
+     -m 'Reply with exactly: MUSE_SELECTOR_OK.'
+   ```
+
+   Bound the turn to 12 minutes and retain its exit status and redacted JSON.
+   Require status `ok`, summary `completed`, `aborted: false`, and provider/model `inference`/`muse-glimmer`.
+   Require the same winning route and a successful assistant attempt in `executionTrace`.
+   Require `result.meta.finalAssistantVisibleText` to contain the normal reply `MUSE_SELECTOR_OK`.
+   Empty text, `NO_REPLY`, a context-window error, or success metadata without that reply does not pass.
+6. On success or failure, retain bounded redacted diagnostics before cleanup.
+   Keep the managed bearer key in its owner-only host state; never copy it into the receipt.
+   Verify the sandbox and container still have the identities recorded in step 3.
+   Then run `timeout --signal=TERM --kill-after=30s 15m node bin/nemoclaw.js "$NEMOCLAW_SANDBOX_NAME" destroy --yes`.
+   Confirm sandbox absence, managed-container absence, and no listener on port 18000 before any fallback cleanup.
+   Preserve the shared model cache and images.
+   If identity verification, cleanup, or absence checks fail, stop and report retained resources; do not delete a replacement resource.
+
+The review receipt must link the commit, hardware identity, explicit profile, configuration projection,
+first-turn JSON, command statuses, and cleanup results.
+Missing hardware execution, a dirty checkout, an override, or incomplete evidence leaves this qualification pending.
 
 ### DGX Spark Express vLLM
 
