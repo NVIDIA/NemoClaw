@@ -63,18 +63,19 @@ impl ServiceContainer {
     }
 
     pub(crate) fn validate_memory(
-        &self,
+        container: Option<&Self>,
         preparation_memory_gib: u64,
     ) -> Result<(), crate::config::ConfigError> {
-        if let Some(limit) = self.memory_limit_gib {
-            crate::config::validation::require(
-                self.ipc == ServiceIpc::Host || self.shared_memory_gi_b <= limit,
-                "container.memoryLimitGiB must cover container.sharedMemoryGiB for private IPC",
-            )?;
-            crate::config::validation::require(
-                preparation_memory_gib <= limit,
-                "container.memoryLimitGiB must cover recipe preparationMemoryGiB",
-            )?;
+        let resources = Self::resources(container);
+        let limit = resources.memory_bytes / nemoclaw_runtime::hardware::GIB;
+        crate::config::validation::require(
+            resources.host_ipc || resources.shared_memory_bytes <= resources.memory_bytes,
+            "container.memoryLimitGiB must cover container.sharedMemoryGiB for private IPC",
+        )?;
+        if preparation_memory_gib > limit {
+            return Err(crate::config::ConfigError(format!(
+                "container.memoryLimitGiB must cover recipe preparationMemoryGiB; the container limit is {limit} GiB"
+            )));
         }
         Ok(())
     }
