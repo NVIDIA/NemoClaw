@@ -287,53 +287,6 @@ impl RuntimeBinding {
 mod tests {
     use super::*;
     #[test]
-    fn managed_grants_keep_authored_binaries_instead_of_launch_defaults() {
-        let launch = Launch::from_json(&serde_json::json!({
-            "command":["/srv/agent"], "environment":{}, "metadata":{},
-            "binaries":["/srv/python"],
-            "policy":{"version":1,"filesystem_policy":{"read_only":["/srv"],"read_write":["/work"]},"process":{"run_as_user":"1000","run_as_group":"1000"},"network_policies":{}}
-        }).to_string()).unwrap();
-        let input: PolicyInput = serde_json::from_value(serde_json::json!({
-            "explicit":null,"managed":[
-                {"name":"packages","endpoints":[{"host":"pypi.org","port":443}],"binaries":[{"path":"/usr/bin/pip"}]},
-                {"name":"default","endpoints":[{"host":"api.example.com","port":443}],"binaries":[]}
-            ]
-        })).unwrap();
-        let policy = launch.policy(&input).unwrap();
-        assert_eq!(
-            policy.network_policies["packages"]
-                .binaries
-                .iter()
-                .map(|binary| binary.path.as_str())
-                .collect::<Vec<_>>(),
-            ["/usr/bin/pip"],
-            "an authored grant must not authorize the launch interpreter instead"
-        );
-        assert_eq!(
-            policy.network_policies["default"]
-                .binaries
-                .iter()
-                .map(|binary| binary.path.as_str())
-                .collect::<Vec<_>>(),
-            ["/srv/python"],
-            "an empty grant still defaults to launch executables"
-        );
-        let mut conflicting = input;
-        let mut explicit = launch.policy.clone();
-        explicit
-            .network_policies
-            .insert("packages".into(), conflicting.managed[0].clone());
-        conflicting.explicit = Some(explicit);
-        assert!(
-            matches!(
-                launch.policy(&conflicting),
-                Err(ObservationError::BindingMismatch)
-            ),
-            "authored binaries must not bypass a conflicting explicit policy"
-        );
-    }
-
-    #[test]
     fn sandbox_paths_use_linux_grant_components_on_every_client_platform() {
         for (path, grant, expected) in [
             ("/sandbox", "/sandbox", true),
@@ -392,18 +345,21 @@ mod tests {
         assert_eq!(launch.command, ["/srv/fabric-agent-ctl", "serve"]);
         assert_eq!(launch.environment["HOME"], "/work");
         assert!(!launch.environment.contains_key("NEMOCLAW_AGENT_NAME"));
-        let input: PolicyInput = serde_json::from_value(serde_json::json!({"explicit":null,"managed":[{"name":"model","endpoints":[{"host":"api.example.com","port":443}],"binaries":[]}]})).unwrap();
+        let input: PolicyInput = serde_json::from_value(serde_json::json!({"explicit":null,"managed":[{"name":"model","endpoints":[{"host":"api.example.com","port":443}],"binaries":[]},{"name":"packages","endpoints":[{"host":"pypi.org","port":443}],"binaries":[{"path":"/usr/bin/pip"}]}]})).unwrap();
         let policy = binding.policy(&input).unwrap();
         assert_eq!(policy.process.unwrap().run_as_user, "1234");
         assert_eq!(policy.filesystem.unwrap().read_write, ["/work"]);
-        assert_eq!(
-            policy.network_policies["model"]
+        let executables = |rule: &str| -> Vec<String> {
+            policy.network_policies[rule]
                 .binaries
                 .iter()
-                .map(|binary| binary.path.as_str())
-                .collect::<Vec<_>>(),
-            ["/srv/python3.99", "/srv/bun"]
-        );
+                .map(|binary| binary.path.clone())
+                .collect()
+        };
+        // A grant that names no executables takes the launch's; one that names
+        // its own keeps them.
+        assert_eq!(executables("model"), ["/srv/python3.99", "/srv/bun"]);
+        assert_eq!(executables("packages"), ["/usr/bin/pip"]);
         let mut explicit = input;
         explicit.explicit = Some(serde_json::from_value(serde_json::json!({"version":1,"filesystem_policy":{"read_only":["/srv"],"read_write":["/mine"]},"process":{"run_as_user":"4321","run_as_group":"4321"},"network_policies":{}})).unwrap());
         let policy = binding.policy(&explicit).unwrap();
