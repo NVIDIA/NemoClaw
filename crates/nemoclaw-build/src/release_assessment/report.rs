@@ -125,7 +125,7 @@ mod tests {
             publication_authorized: false,
             scanner: Some(ScannerEvidence {
                 name: "grype".into(),
-                version: "0.121.0".into(),
+                version: "0.121.3".into(),
                 sha256: "scanner-checksum".into(),
                 configuration_sha256: "configuration-checksum".into(),
             }),
@@ -177,7 +177,7 @@ mod tests {
         assert!(report.contains("one platform assessment failed"));
         assert!(report.contains("Repair verification"));
         assert!(report.contains("Publication is not authorized"));
-        assert!(report.contains("Scanner version: 0.121.0"));
+        assert!(report.contains("Scanner version: 0.121.3"));
         assert!(report.contains("Database SHA-256: database-checksum"));
         assert!(report.contains("Database age (seconds): 3600"));
     }
@@ -219,7 +219,7 @@ mod tests {
         assessment.problems[0] = AssessmentError::Input {
             reason: "failed\rAssessment passed".into(),
         };
-        assessment.scanner.as_mut().unwrap().version = "0.121.0\nforged".into();
+        assessment.scanner.as_mut().unwrap().version = "0.121.3\nforged".into();
         let report = text(&assessment);
         assert!(report.starts_with("Assessment incomplete\n"));
         assert!(!report.contains('\u{1b}'));
@@ -227,6 +227,6 @@ mod tests {
         assert!(!report.contains('\u{202e}'));
         assert!(!report.contains("\nAssessment passed"));
         assert!(report.contains("image\\nAssessment passed\\u{1b}[2J"));
-        assert!(report.contains("Scanner version: 0.121.0\\nforged"));
+        assert!(report.contains("Scanner version: 0.121.3\\nforged"));
     }
 }

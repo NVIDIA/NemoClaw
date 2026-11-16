@@ -9,9 +9,9 @@
 # apply names. cargo ci live-docker gives each run a fresh identity, gateway
 # port and subnet, stub address, volume names, and agent images. Only claw
 # grants python3 the stub's /health, which the managed inference grant leaves
-# out. Each agent's skills.paths lists a writable folder of skills and a skill
-# on its own volume, read-only for claw and writable for hermes; Hermes's
-# folder is empty.
+# out. Each agent's skills.directories lists a writable folder of skills and
+# a skill on its own volume, read-only for claw and writable for hermes, and
+# refuses duplicate names; Hermes's folder is empty.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -54,8 +54,10 @@ spec:
                 path: /health
                 protocol: rest
                 access: read-only
+            # OpenShell matches an executable's real path, which the
+            # image's python3 links to.
             binaries:
-              - path: /usr/local/bin/python3
+              - path: /usr/local/bin/python3.14
       driverConfig:
         docker:
           mounts:
@@ -71,7 +73,10 @@ spec:
         kind: nvidia.fabric.openclaw
         config:
           skills:
-            paths: [/sandbox/skills, /sandbox/review-skill]
+            directories:
+              - folder: /sandbox/skills
+              - skill: /sandbox/review-skill
+            duplicates: reject
         settings:
           interfaces:
             dashboard:
@@ -104,7 +109,10 @@ spec:
         kind: nvidia.fabric.hermes
         config:
           skills:
-            paths: [/sandbox/skills, /sandbox/notes-skill]
+            directories:
+              - folder: /sandbox/skills
+              - skill: /sandbox/notes-skill
+            duplicates: reject
         settings:
           interfaces:
             api:

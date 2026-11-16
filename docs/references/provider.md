@@ -73,7 +73,7 @@ The bundle pins these providers:
 | vLLM | `registry.opentofu.org/nvidia/vllm` | Source-derived, matching the bundle |
 | Ollama | `registry.opentofu.org/nvidia/ollama` | Source-derived, matching the bundle |
 | Host | `registry.opentofu.org/nvidia/host` | Source-derived, matching the bundle |
-| Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.6.0 |
+| Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.7.0 |
 | Helm | `registry.opentofu.org/hashicorp/helm` | 3.3.0 |
 
 None of them exposes ephemeral resources or provider functions.
@@ -120,7 +120,7 @@ Other inputs are typed too:
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
 - `openshell_sandbox`'s `providers` takes the `ref` of a registration, of type `openshell_provider`, from `openshell_inference`, `openshell_web_search` or `openshell_api`. Each ref names the OpenShell registration it attaches in `registration`.
   OpenShell attaches at most 32 to one sandbox and refuses to create a sandbox with more.
-- `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables managed endpoint grants allow.
+- `launch_json` is a JSON-encoded launch: the command, environment, and metadata to start the sandbox, the policy used when no explicit policy is authored, and the executables that managed endpoint grants naming none allow.
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
 - `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
@@ -726,8 +726,7 @@ Generated graphs place managed vLLM with Docker and declare:
 - `entrypoint = ["/usr/local/bin/nemoclaw-runtime"]` and `env = ["NEMOCLAW_RUNTIME_SPEC=${data.vllm_runtime.NAME.spec}"]`.
 - The model cache volume at `/data` and, with bearer authentication, the `vllm_credential_storage` credential volume at `/credentials`.
 - The serving port, published on the service's bind address.
-- `gpus = "all"`, which gives the container every GPU, or `gpus = "device=GPU"` when the service lists one GPU in `container.gpuDevices`, whose length the runtime contract data source also receives as `gpu_count`.
-  A list of several GPUs compiles to `device_requests { driver = "nvidia", device_ids = [...], capabilities = ["gpu"] }`, because Docker provider v4.6.0 reads a list in `gpus` as one device and a count ([kreuzwerker/terraform-provider-docker#1019](https://github.com/kreuzwerker/terraform-provider-docker/issues/1019)).
+- `gpus = "all"`, which gives the container every GPU, or `gpus = "device=GPU[,GPU...]"` with the GPUs listed in `container.gpuDevices`, whose length the runtime contract data source also receives as `gpu_count`.
   `container.gpuDevices` accepts one entry until serving one model across several GPUs is implemented.
 - `memory` and `memory_swap` follow `container.memoryLimitGiB`, defaulting to 106496 MiB (104 GiB); `shm_size` defaults to 8192 MiB unless the service sets another size.
 - No CPU cap unless `container.cpuLimitMillis` is supplied; Docker then enforces `cpu_quota = cpuLimitMillis × 100` microseconds per `cpu_period = 100000` (100 ms, as on Kubernetes), with a minimum quota of 1000 microseconds.

@@ -6,7 +6,8 @@
 # under the same name, so Fabric hands it the folder the old runtime used.
 # That Hermes finds its sessions there needs real Hermes; the live suite owns it.
 # Each sandbox also mounts a skills volume on /sandbox/skills, and each start
-# request lists that path in the agent's skills.paths.
+# request lists that path as a folder of skills in the agent's
+# skills.directories, refusing duplicate names.
 
 # Docker is mocked. Its alias follows from the runner's engine socket, and
 # its IDs match what the fixtures module declares to the engine.
@@ -98,9 +99,12 @@ run "teardown" {
   assert {
     condition = [
       for exec in module.observed.openshell.execs :
-      try(jsondecode(exec.stdin).skills.paths, null) if contains(exec.command, "start")
-    ] == [["/sandbox/skills"], ["/sandbox/skills"]]
-    error_message = "The agent did not start in each sandbox with /sandbox/skills in its skills paths."
+      try(jsondecode(exec.stdin).skills, null) if contains(exec.command, "start")
+      ] == [
+      { directories = [{ folder = "/sandbox/skills" }], duplicates = "reject" },
+      { directories = [{ folder = "/sandbox/skills" }], duplicates = "reject" },
+    ]
+    error_message = "The agent did not start in each sandbox with /sandbox/skills as a folder of skills that refuses duplicate names."
   }
 
   assert {

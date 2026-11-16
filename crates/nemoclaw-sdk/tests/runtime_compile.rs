@@ -818,6 +818,59 @@ fn portable_container_memory_limits_cover_shared_memory_and_recipe_preparation_o
     }
 }
 
+#[test]
+fn recipe_preparation_must_fit_the_effective_docker_container_memory_limit() {
+    let baseline: Value =
+        serde_saphyr::from_str(include_str!("fixtures/config/inline-recipe.yaml")).unwrap();
+    // Container settings, preparation GiB, and the limit a refusal names.
+    for (container, preparation, refused_limit) in [
+        (None, 104, None),
+        (None, 128, Some(104)),
+        (Some(json!({"cpuLimitMillis": 2000})), 104, None),
+        (Some(json!({"cpuLimitMillis": 2000})), 128, Some(104)),
+        (Some(json!({"memoryLimitGiB": 128})), 128, None),
+        (Some(json!({"memoryLimitGiB": 127})), 128, Some(127)),
+        // Host IPC exempts the host's shared memory, not preparation.
+        (
+            Some(json!({"memoryLimitGiB": 4, "sharedMemoryGiB": 8, "ipc": "host"})),
+            4,
+            None,
+        ),
+        (
+            Some(json!({"memoryLimitGiB": 4, "sharedMemoryGiB": 8, "ipc": "host"})),
+            5,
+            Some(4),
+        ),
+    ] {
+        let mut input = baseline.clone();
+        let service = &mut input["spec"]["services"]["qwen"];
+        service.as_object_mut().unwrap().remove("container");
+        if let Some(container) = &container {
+            service["container"] = container.clone();
+        }
+        service["recipe"]["resources"]["preparationMemoryGiB"] = json!(preparation);
+        let result = Document::parse(input.to_string().as_bytes());
+        match refused_limit {
+            None => {
+                result.unwrap_or_else(|error| {
+                    panic!("{container:?} must cover {preparation} GiB: {error}")
+                });
+            }
+            Some(limit) => {
+                let Err(error) = result else {
+                    panic!("{container:?} must refuse {preparation} GiB");
+                };
+                assert!(
+                    error.to_string().contains(&format!(
+                        "container.memoryLimitGiB must cover recipe preparationMemoryGiB; the container limit is {limit} GiB"
+                    )),
+                    "{container:?}: {error}"
+                );
+            }
+        }
+    }
+}
+
 /// Managed resources, by address, whose configuration differs between two graphs,
 /// including resources only one of them declares.
 fn changed_resources(before: &Value, after: &Value) -> BTreeSet<String> {

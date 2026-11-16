@@ -31,7 +31,7 @@ cargo ci --full
 ```
 
 The command needs the pinned Rust toolchain and a C linker.
-It downloads Protocol Buffers compiler 36.2 and cargo-nextest 0.9.151 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
+It downloads Protocol Buffers compiler 36.2 and cargo-nextest 0.9.152 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
 It then runs formatting, Clippy, the unit tests and doctests, the schema check, a bundle build, and the contract and integration tests, stopping at the first failure.
 To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.2/bin/protoc` after `cargo ci tools`, or to another protoc 36.2.
 
@@ -471,8 +471,8 @@ Checks produce build cache entries and no tagged runtime images.
 For a faster Python source edit loop with host uv:
 
 ```sh
-uv tool run --from ruff==0.16.7 ruff check .
-uv tool run --from ruff==0.16.7 ruff format --check .
+uv tool run --from ruff==0.17.5 ruff check .
+uv tool run --from ruff==0.17.5 ruff format --check .
 ```
 
 Use `ruff format .` through the same pinned uv invocation to apply formatting.
@@ -554,7 +554,7 @@ Dependency caches are keyed by platform and the Rust toolchain, manifests, lockf
 The native build-and-test job and `E2E build images` share each platform's dependency cache instead of adding their job names to its key.
 Only the native build-and-test job writes that shared cache; `E2E build images` restores it without uploading a duplicate copy, and the bundle job writes its own.
 The live suites' Docker, Kind, and HCL jobs compile nothing, so they restore no Rust cache.
-Documentation restores a bundle cache without saving one, but it names `native-bundle-v3`, which nothing writes since the bundle job moved to `native-bundle-v4` ([#14414](https://github.com/NVIDIA/NemoClaw/issues/14414)); Live / Brev and Live / HCL's `Build` job keep their own prefixes.
+Documentation restores the bundle job's cache without saving one; Live / Brev and Live / HCL's `Build` job keep their own prefixes.
 The shared key causes a one-time cold build when first enabled; old job-specific entries can expire normally.
 
 `E2E build images` keeps BuildKit's layers for the live images in the same cache, through `cargo images build --gha-cache`: about 1.8 GB per Linux platform, mostly the OpenClaw application, the Rust toolchain, and the Fabric runtime's Rust build.

@@ -136,7 +136,7 @@ locals {
         instructions = local.instructions[role]
         # The buyer reaches the booking service over MCP.
         bookings = role == "buyer"
-        # Researchers read skills from the optional volume.
+        # Researchers read the folder of skills on the optional volume.
         skills = settings.search && var.skills_volume != null ? [local.skills_path] : []
         # Hermes enables exactly the toolsets listed, and all of its defaults
         # without a list. Researchers only search, the scheduler only delegates
@@ -250,7 +250,15 @@ resource "fabric_agent" "agent" {
   dynamic "skills" {
     for_each = length(each.value.skills) > 0 ? [each.value.skills] : []
     content {
-      paths = skills.value
+      # Hermes finds each skill in a folder of skills, and the agent doesn't
+      # start when two of them share a name.
+      dynamic "directories" {
+        for_each = skills.value
+        content {
+          folder = directories.value
+        }
+      }
+      duplicates = "reject"
     }
   }
   # The booking registration enforces the MCP rules and replaces the header's

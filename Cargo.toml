@@ -57,9 +57,9 @@ regex = "1"
 url = "2"
 ipnet = "2"
 nix = { version = "0.29", features = ["signal", "term"] }
-openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c", default-features = false }
-openshell-sdk = { git = "https://github.com/NVIDIA/OpenShell", rev = "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c", default-features = false }
-openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", rev = "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c", default-features = false }
+openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "f3d976590d3eb1379690a2abaf0f0e26c21d487d", default-features = false }
+openshell-sdk = { git = "https://github.com/NVIDIA/OpenShell", rev = "f3d976590d3eb1379690a2abaf0f0e26c21d487d", default-features = false }
+openshell-policy = { git = "https://github.com/NVIDIA/OpenShell", rev = "f3d976590d3eb1379690a2abaf0f0e26c21d487d", default-features = false }
 tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
 prost = "0.14"
 prost-types = "0.14"
@@ -83,9 +83,9 @@ rustix = { version = "1", features = ["fs", "termios"] }
 zip = { version = "9.0", default-features = false, features = ["deflate"] }
 flate2 = "1.1"
 schemars = "=1.2.3"
-jsonschema = { version = "=0.56.0", default-features = false }
+jsonschema = { version = "=0.61.2", default-features = false }
 pulldown-cmark = { version = "=0.13.6", default-features = false }
-pulldown-cmark-to-cmark = "=22.0.1"
+pulldown-cmark-to-cmark = "=23.0.1"
 crossterm = "0.29"
 # Cluster access for Kubernetes gateways; helm is the only cluster subprocess.
 kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "ring", "ws"] }

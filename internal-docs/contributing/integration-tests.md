@@ -30,7 +30,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-provider --test contract provider_protocol:: -- --ignored
 ```
 
-Nextest builds every workspace target, including the fixture executables; after `cargo ci tools`, put `.tools/nextest-0.9.151` on `PATH` and narrow the `contract` or `integration` profile with a filter:
+Nextest builds every workspace target, including the fixture executables; after `cargo ci tools`, put `.tools/nextest-0.9.152` on `PATH` and narrow the `contract` or `integration` profile with a filter:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
@@ -49,7 +49,7 @@ Its coverage test is not ignored and runs with the unit tests; the remaining tes
 
 Each `tests/contract` directory separates the two kinds of test:
 
-- `hcl/`: scenarios that pass, as authored modules with `.tf` files and [`tofu test`](https://opentofu.org/docs/v1.12/cli/commands/test/) files in their `tests` directory.
+- `hcl/`: scenarios that pass, as authored modules with `.tf` files and [`tofu test`](https://opentofu.org/docs/v1.13/cli/commands/test/) files in their `tests` directory.
 - `failures/`: Rust tests of commands that must fail, which `tofu test` cannot expect.
 
 `main.rs` starts each module's fakes and runs it; the other Rust files hold shared fakes and checks of plans and state that `tofu test` cannot show.
@@ -81,7 +81,7 @@ Its modules run the `nemoclaw` types against fake Docker engines, SSH hosts, and
 | `failures/service_storage` | Checks an invalid owner, an unchanged plan of intact storage, missing, foreign, or substituted storage, and a lost creation reply |
 | `failures/discovery` | Fabric requirements and compiled discovery that read image metadata |
 | `replacement_cleanup` | On Unix, the plans and state the SDK reads after a container replacement whose cleanup is unfinished |
-| `gpu_requests` | On Unix, the device requests the bundled Docker provider sends a fake engine: one named GPU reaches Docker and reads back unchanged; a list of GPUs, which the SDK writes as a `device_requests` block, reaches it as one NVIDIA request; and changing the GPUs replaces the container |
+| `gpu_requests` | On Unix, the device requests the bundled Docker provider sends a fake engine: one named GPU or a list of GPUs in `gpus` reaches Docker as one request for those IDs, in order, and reads back unchanged; and changing the GPUs replaces the container |
 | `readiness_refs` | Container-mode readiness exports the `inference_server` reference that registrations take, with the generated key's location as observed from the container |
 | `references` | A typed reference carries one resource's identity to another, replacement follows it, and a reference of another type fails validation |
 
@@ -237,7 +237,7 @@ A plan-only scenario needs no apply runs.
 A run's `module.observed` is read when the run plans, so it shows what the previous run left.
 A scenario that checks change, recovery, or isolation asserts each outcome in the run after the one that caused it.
 
-OpenTofu 1.12's test framework sets these limits:
+OpenTofu 1.13's test framework sets these limits:
 
 - Assertions cannot reference other runs. A test file passes an earlier run's `gateway` or `baseline` output, or the `observed` module's `openshell` output, in as the `baseline` variable. A plain second apply does not prove that nothing changed, so the scenario that owns unchanged reconciliation compares gateway effects and Fabric starts with that baseline.
 - OpenTofu keeps only the latest applying run's outputs of each module.
@@ -265,7 +265,7 @@ Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM
 | `docker-openclaw-vllm-bearer` | A vLLM service with bearer authentication. The credential storage is created on the engine and mounted by the container, and readiness reads the status file and the generated key. The registration holds that key under the sandbox's name for it, and the agent gets its model, address, and key name. |
 | `docker-openclaw-ollama` | A managed Ollama service. The container's Docker inputs come from the Ollama runtime launch, the runtime image is found on the engine, and readiness comes from the container's status file. The registration is at the service address without a credential, the sandbox's policy allows that address, and the agent gets its model and address. |
 | `docker-hosted-ollama-two-agents` | An OpenClaw agent on hosted inference and a Hermes agent on Ollama. There are two registrations, and each sandbox is bound to and may reach only its own provider. Each agent starts once in its own sandbox with its own harness and configuration. |
-| `docker-hermes-kept-state` | A Hermes agent whose sandbox mounts a volume on `/sandbox/artifacts` and one on `/sandbox/skills`, which its `skills.paths` lists. Replacing the sandbox gives the new one the same mounts, and the agent starts again under the same name with kept state and the same skills paths, so Fabric hands it the same state folder. Whether Hermes finds its sessions and skills there needs real Hermes. |
+| `docker-hermes-kept-state` | A Hermes agent whose sandbox mounts a volume on `/sandbox/artifacts` and one on `/sandbox/skills`, which its `skills.directories` lists as a folder of skills that refuses duplicate names. Replacing the sandbox gives the new one the same mounts, and the agent starts again under the same name with kept state and the same skills, so Fabric hands it the same state folder. Whether Hermes finds its sessions and skills there needs real Hermes. |
 | `docker-ollama-proxy` | An authenticating proxy in front of an existing Ollama daemon, which the fixture upstream lists the model for. The registration reads the key from the proxy's retained `/data` volume, and no resource or readiness check keeps it in OpenTofu state. An unchanged apply changes nothing; replacing the proxy container keeps the volume, the key's registration, and the agent's sandbox. |
 | `docker-vllm-shared-two-agents` | One authenticated vLLM service shared by OpenClaw and Hermes agents. Each harness has its own registration holding the generated key under its own sandbox name. Each sandbox names only its own registration, and each agent starts with that key name. |
 | `openshift-external-two-providers` | An OpenShift gateway with an Anthropic Messages provider and an NVIDIA provider. Each registration has its own API, base URL, and credential. The OpenClaw agent has both routes, the Hermes agent has one, and their sandboxes share no binding. An unchanged apply keeps every sandbox, registration, and agent start. |
@@ -378,7 +378,7 @@ The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibi
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/f33fa19a1aff584625e02af9007d8113e7b95dd8/tests), alongside the implementation.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/b4725580bc709f4efec04d1219cca2b34a172e3c/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 
