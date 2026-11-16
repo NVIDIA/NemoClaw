@@ -517,7 +517,7 @@ spec:
   Give the server the same key from a Secret, as [Supply the Key on Other Platforms](../agents-inference/inference.md#supply-the-key-on-other-platforms) shows.
   The key crosses the cluster network over plain HTTP unless your network plugin or a service mesh encrypts Pod traffic.
 - **Model IDs:** the machine running `nemoclaw` usually can't resolve cluster names, so onboarding can't list the server's models; write the route's model ID yourself.
-- **The server:** NemoClaw's vLLM and Ollama runtime images can run it; `vllm_runtime` and `ollama_runtime` describe the launch and requirements a platform needs ([Direct OpenTofu Usage](../references/provider.md#direct-opentofu-usage)). Readiness is the platform's: point its probe at the server's health endpoint.
+- **The server:** NemoClaw's vLLM and Ollama runtime images can run it; `vllm_runtime` and `ollama_runtime` describe the launch and requirements a platform needs ([Direct OpenTofu Usage](../references/provider.md#direct-opentofu-usage)). The vLLM image's CUDA 13.0 needs NVIDIA driver 580 or newer on the GPU nodes; NemoClaw doesn't check the nodes. Readiness is the platform's: point its probe at the server's health endpoint.
 - **Ollama:** its health endpoint answers before it has a model, and it does not pull one when a request names it. Pull the route's model into the server before the first agent request.
 
 Start from [the in-cluster vLLM example](../../examples/kubernetes/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../../examples/kubernetes/in-cluster-ollama.yaml) for a server without a key.
