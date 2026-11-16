@@ -562,6 +562,7 @@ export async function backupSandboxStateForRebuild(
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
   stoppedNativeState?: PreparedStoppedNativeState,
+  requestedDcodeAutoApprovalMode?: RebuildSandboxEntry["dcodeAutoApprovalMode"],
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
@@ -715,6 +716,18 @@ export async function backupSandboxStateForRebuild(
       console.error(
         `  Previous DCode auto-approval capability remains configured as ${previousMode}.`,
       );
+      if (
+        requestedDcodeAutoApprovalMode === "disabled" &&
+        previousMode === "thread-opt-in" &&
+        !backup.unreachable
+      ) {
+        console.error(
+          `  Auto approval was not disabled. The original sandbox retains its previous capability. To stop execution, run \`${CLI_NAME} ${sandboxName} stop\`.`,
+        );
+        console.error(
+          "  Stopping suspends execution without disabling Auto approval; restarting retains the previous capability.",
+        );
+      }
     }
     console.error("  Aborting rebuild to prevent data loss.");
     bail("Failed to back up sandbox state.");

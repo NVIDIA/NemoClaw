@@ -42,6 +42,12 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
     expect(output).toContain(
       "Previous DCode auto-approval capability remains configured as thread-opt-in",
     );
+    expect(output).toContain(
+      "Auto approval was not disabled. The original sandbox retains its previous capability. To stop execution, run `nemoclaw alpha stop`.",
+    );
+    expect(output).toContain(
+      "Stopping suspends execution without disabling Auto approval; restarting retains the previous capability.",
+    );
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
