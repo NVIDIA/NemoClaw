@@ -822,48 +822,42 @@ fn portable_container_memory_limits_cover_shared_memory_and_recipe_preparation_o
 fn recipe_preparation_must_fit_the_effective_docker_container_memory_limit() {
     let baseline: Value =
         serde_saphyr::from_str(include_str!("fixtures/config/inline-recipe.yaml")).unwrap();
-    for container in [None, Some(json!({"cpuLimitMillis": 2000}))] {
+    // Container settings, preparation GiB, and the limit a refusal names.
+    for (container, preparation, refused_limit) in [
+        (None, 104, None),
+        (None, 128, Some(104)),
+        (Some(json!({"cpuLimitMillis": 2000})), 104, None),
+        (Some(json!({"cpuLimitMillis": 2000})), 128, Some(104)),
+        (Some(json!({"memoryLimitGiB": 128})), 128, None),
+        (Some(json!({"memoryLimitGiB": 127})), 128, Some(127)),
+    ] {
         let mut input = baseline.clone();
         let service = &mut input["spec"]["services"]["qwen"];
         service.as_object_mut().unwrap().remove("container");
-        if let Some(container) = container {
-            service["container"] = container;
+        if let Some(container) = &container {
+            service["container"] = container.clone();
         }
-        service["recipe"]["resources"]["preparationMemoryGiB"] = json!(128);
-        let error = Document::parse(input.to_string().as_bytes())
-            .expect_err("128 GiB preparation must not fit the default 104 GiB container limit");
-        assert!(
-            error
-                .to_string()
-                .contains("container.memoryLimitGiB must cover recipe preparationMemoryGiB"),
-            "{error}"
-        );
-        assert!(error.to_string().contains("default is 104 GiB"), "{error}");
-        assert!(
-            error.to_string().contains("set container.memoryLimitGiB"),
-            "{error}"
-        );
-
-        input["spec"]["services"]["qwen"]["recipe"]["resources"]["preparationMemoryGiB"] =
-            json!(104);
-        Document::parse(input.to_string().as_bytes())
-            .expect("104 GiB preparation must fit the default container limit");
+        service["recipe"]["resources"]["preparationMemoryGiB"] = json!(preparation);
+        let result = Document::parse(input.to_string().as_bytes());
+        match refused_limit {
+            None => {
+                result.unwrap_or_else(|error| {
+                    panic!("{container:?} must cover {preparation} GiB: {error}")
+                });
+            }
+            Some(limit) => {
+                let Err(error) = result else {
+                    panic!("{container:?} must refuse {preparation} GiB");
+                };
+                assert!(
+                    error.to_string().contains(&format!(
+                        "container.memoryLimitGiB must cover recipe preparationMemoryGiB; the container limit is {limit} GiB"
+                    )),
+                    "{container:?}: {error}"
+                );
+            }
+        }
     }
-
-    let mut input = baseline;
-    input["spec"]["services"]["qwen"]["recipe"]["resources"]["preparationMemoryGiB"] = json!(128);
-    input["spec"]["services"]["qwen"]["container"] = json!({"memoryLimitGiB": 128});
-    Document::parse(input.to_string().as_bytes())
-        .expect("128 GiB preparation must fit an explicit 128 GiB container limit");
-    input["spec"]["services"]["qwen"]["container"]["memoryLimitGiB"] = json!(127);
-    let error = Document::parse(input.to_string().as_bytes())
-        .expect_err("128 GiB preparation must not fit an explicit 127 GiB container limit");
-    assert!(
-        error
-            .to_string()
-            .contains("container.memoryLimitGiB must cover recipe preparationMemoryGiB"),
-        "{error}"
-    );
 }
 
 #[test]
