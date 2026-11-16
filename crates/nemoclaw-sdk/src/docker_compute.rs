@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
-pub(crate) const VERSION: &str = "4.6.0";
+pub(crate) const VERSION: &str = "4.7.0";
 fn process(target: &Target) -> bool {
     (target.kind == crate::managed::GATEWAY_KIND
         && spec(target).is_ok_and(|spec| spec.compute_driver == ComputeDriver::Docker))
@@ -289,27 +289,15 @@ fn container(target: &Target) -> Result<Value, Error> {
     match &process.gpus {
         crate::managed::Gpus::None => {}
         crate::managed::Gpus::All => attrs["gpus"] = json!("all"),
-        // Docker provider v4.6.0 splits `gpus` on commas, so it would read
-        // `device=0,1` as GPU 0 and a count of 1, a request Docker refuses
-        // (https://github.com/kreuzwerker/terraform-provider-docker/issues/1019);
-        // several GPUs use its `device_requests` block until a release fixes it.
         crate::managed::Gpus::Devices(devices) => {
-            if let [device] = devices.as_slice() {
-                attrs["gpus"] = json!(format!("device={device}"));
-            } else {
-                attrs["device_requests"] = json!([{
-                    "driver": crate::managed::gpu_device_driver(devices),
-                    "device_ids": devices,
-                    "capabilities": ["gpu"],
-                }]);
-            }
+            attrs["gpus"] = json!(format!("device={}", devices.join(",")));
         }
     }
-    // Labels force replacement because Docker provider v4.6.0 updates limits in
+    // Labels force replacement because Docker provider v4.7.0 updates limits in
     // place: its Update omits CFS quota, and lowering memory on a running
-    // container can OOM-kill the model. Its `cpus` formatter also loses some
-    // fractions, so CPU uses an integer quota:
-    // https://github.com/kreuzwerker/terraform-provider-docker/blob/v4.6.0/internal/provider/resource_docker_container_funcs.go
+    // container can OOM-kill the model. CPU uses an integer CFS quota per
+    // 100 ms period, as Kubernetes does:
+    // https://github.com/kreuzwerker/terraform-provider-docker/blob/v4.7.0/internal/provider/resource_docker_container_funcs.go
     if let Some(limit) = process.cpu_limit_millis {
         attrs["cpu_period"] = json!(crate::managed::CPU_PERIOD_MICROS);
         attrs["cpu_quota"] = json!(crate::managed::cpu_quota_micros(limit));
@@ -1106,11 +1094,11 @@ mod tests {
             );
         }
     }
-    // Docker provider v4.6.0 reads `gpus = "device=0,1"` as one device and a
-    // count, so one GPU keeps `gpus` and a list uses a `device_requests`
-    // block. The native request names the same driver, IDs, and capability.
+    // One GPU or a list compiles to `gpus = "device=ID[,ID...]"`, which the
+    // Docker provider sends as one request for those IDs, as `docker run --gpus`
+    // does. The native request names the same IDs, in order, and capability.
     #[test]
-    fn several_gpu_devices_reach_docker_as_one_nvidia_device_request() {
+    fn gpu_devices_reach_docker_as_one_device_request_in_order() {
         const UUID: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
         let document =
             Document::parse(include_bytes!("../tests/fixtures/config/spark.yaml").as_slice())
@@ -1123,18 +1111,14 @@ mod tests {
             .iter_mut()
             .find(|target| target.kind == "inference_service")
             .unwrap();
-        for (devices, driver) in [
-            (vec!["1"], ""),
-            (vec![UUID, "0"], "nvidia"),
-            (vec!["2", "0", "1"], "nvidia"),
-        ] {
+        for devices in [vec!["1"], vec![UUID, "0"], vec!["2", "0", "1"]] {
             let devices: Vec<String> = devices.into_iter().map(str::to_owned).collect();
             let mut spec = spec(service).unwrap();
             spec.process.as_mut().unwrap().gpus = crate::managed::Gpus::Devices(devices.clone());
             let host = spec.container("/data").unwrap().host_config.unwrap();
             let requests = host.device_requests.unwrap();
             assert_eq!(requests.len(), 1, "{devices:?}");
-            assert_eq!(requests[0].driver.as_deref(), Some(driver), "{devices:?}");
+            assert_eq!(requests[0].driver.as_deref(), Some(""), "{devices:?}");
             assert_eq!(requests[0].device_ids, Some(devices.clone()), "{devices:?}");
             assert_eq!(requests[0].count, None, "{devices:?}");
             assert_eq!(
@@ -1146,17 +1130,8 @@ mod tests {
                 .values
                 .insert("spec".into(), serde_json::to_string(&spec).unwrap());
             let attrs = container(service).unwrap();
-            if let [device] = devices.as_slice() {
-                assert_eq!(attrs["gpus"], format!("device={device}"));
-                assert!(attrs.get("device_requests").is_none(), "{attrs}");
-            } else {
-                assert!(attrs.get("gpus").is_none(), "{attrs}");
-                assert_eq!(
-                    attrs["device_requests"],
-                    json!([{"driver": "nvidia", "device_ids": devices, "capabilities": ["gpu"]}]),
-                    "{devices:?}"
-                );
-            }
+            assert_eq!(attrs["gpus"], format!("device={}", devices.join(",")));
+            assert!(attrs.get("device_requests").is_none(), "{attrs}");
         }
     }
 }

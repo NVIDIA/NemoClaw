@@ -10,7 +10,7 @@ terraform {
   # Pin the NVIDIA providers to your bundle's version, for example
   # version = "0.1.0", and install them from the bundle's providers directory.
   required_providers {
-    docker    = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.6.0" }
+    docker    = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.7.0" }
     ollama    = { source = "registry.opentofu.org/nvidia/ollama" }
     openshell = { source = "registry.opentofu.org/nvidia/openshell" }
     fabric    = { source = "registry.opentofu.org/nvidia/fabric" }

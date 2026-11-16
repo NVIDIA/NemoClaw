@@ -114,7 +114,7 @@ jobs:
         id: syft
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          syft-version: v1.55.0
+          syft-version: v1.57.1
       # The image builds' pinned sources, as CI / Images saved them.
       - name: Restore the verified image sources
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -139,7 +139,7 @@ jobs:
           # image store, and rejects it with unpack=false in the containerd
           # one), so a pinned BuildKit in a container pushes them instead.
           docker buildx create --name runtimes --driver docker-container \
-            --driver-opt image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+            --driver-opt image=moby/buildkit@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb
           output='type=image,push=true,rewrite-timestamp=true'
           docker buildx bake --builder runtimes runtimes \
             --set "vllm.tags=$CI_PACKAGE:vllm-$tag" --set "vllm.output=$output" \
@@ -172,7 +172,7 @@ jobs:
         id: syft
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          syft-version: v1.55.0
+          syft-version: v1.57.1
       - name: List the release images
         id: images
         env:

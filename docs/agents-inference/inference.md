@@ -278,7 +278,7 @@ CPU offload is rejected, and CPU-only execution is not part of this shared adapt
 NemoClaw leaves placement across GPUs to Ollama and doesn't set `OLLAMA_SCHED_SPREAD`.
 The runtime computes one per-GPU reserve, the largest free memory among the container's GPUs minus the GPU budget, and passes it in two settings that `ollama serve --help` documents:
 
-- `OLLAMA_GPU_OVERHEAD`, "Reserve a portion of VRAM per GPU (bytes)". Ollama v0.40.14, the version the runtime image pins, reads it for its logs and its default context size, not to place a GGUF model.
+- `OLLAMA_GPU_OVERHEAD`, "Reserve a portion of VRAM per GPU (bytes)". Ollama v0.40.16, the version the runtime image pins, reads it for its logs and its default context size, not to place a GGUF model.
 - `LLAMA_ARG_FIT_TARGET`, "Target free VRAM margin per device for llama.cpp fit (MiB)", rounded up to whole MiB. llama.cpp leaves this much free on each GPU when it fits the model's layers. When the reserve is below llama.cpp's own margin of 1024 MiB, the runtime leaves the setting unset and llama.cpp's margin applies. When it's set, Ollama doesn't add its own margin for a model's vision projector.
 
 With several GPUs, once [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) lifts the one-entry limit below, Ollama chooses its GPUs from their raw free memory, so a model can land on one GPU with part of it offloaded to the CPU instead of spreading across GPUs, and readiness then fails.

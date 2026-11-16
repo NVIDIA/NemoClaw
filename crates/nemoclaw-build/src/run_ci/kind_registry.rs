@@ -9,8 +9,8 @@
 use super::*;
 use serde_json::{Value, json};
 
-// Docker Official Image registry:3, resolved 2026-10-17. Test dependency only.
-const IMAGE: &str = "docker.io/library/registry@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8";
+// Docker Official Image registry:3, resolved 2026-11-16. Test dependency only.
+const IMAGE: &str = "docker.io/library/registry@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c";
 // Public fixture credentials, valid only in a run's own registry.
 pub(super) const USER: &str = "nemoclaw-registry-fixture";
 pub(super) const PASSWORD: &str = "fixture-password-for-nemoclaw-tests-only";

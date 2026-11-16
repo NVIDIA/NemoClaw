@@ -5,7 +5,7 @@
 # its result. The CLI owns the deployment and its state.
 
 terraform {
-  required_version = "= 1.12.12"
+  required_version = "= 1.13.9"
 }
 
 variable "context" {

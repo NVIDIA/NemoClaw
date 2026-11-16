@@ -48,7 +48,7 @@ impl Fixture {
                 "cargo",
                 r#"#!/bin/sh
 if [ "$1 $2" = 'nextest --version' ]; then
-    printf 'cargo-nextest 0.9.151\n'
+    printf 'cargo-nextest 0.9.152\n'
     exit 0
 fi
 printf '%s\n' "$@" > arguments
@@ -324,7 +324,7 @@ fi
             "dist/linux_arm64/bin/nemoclaw",
             "dist/linux_arm64/libexec/tofu",
             ".tools/protoc-36.2/bin/protoc",
-            ".tools/nextest-0.9.151/cargo-nextest",
+            ".tools/nextest-0.9.152/cargo-nextest",
             "target/debug/terraform-provider-openshell",
             "target/debug/terraform-provider-fabric",
             "target/debug/terraform-provider-vllm",
@@ -468,7 +468,7 @@ fn archive_packages_tools_and_the_ssh_relay_but_leaves_providers_to_the_bundle_a
         assert!(!unpacked.path().join(&path).exists(), "{path}");
     }
     for path in [
-        ".tools/nextest-0.9.151/cargo-nextest",
+        ".tools/nextest-0.9.152/cargo-nextest",
         "target/debug/nemoclaw-fixture-ssh",
     ] {
         let file = unpacked.path().join(path);

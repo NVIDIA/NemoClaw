@@ -36,8 +36,11 @@ struct Page {
     slug: String,
 }
 
+/// The Markdown extensions the pages use; the writer must know them to round-trip.
+const PARSER_OPTIONS: Options = Options::ENABLE_TABLES.union(Options::ENABLE_STRIKETHROUGH);
+
 fn parser(text: &str) -> Parser<'_> {
-    Parser::new_ext(text, Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH)
+    Parser::new_ext(text, PARSER_OPTIONS)
 }
 
 fn check_yaml(source: &Path, text: &str) -> Result<()> {
@@ -227,15 +230,34 @@ impl Renderer<'_> {
                 Event::Html(html) | Event::InlineHtml(html) if html.trim().starts_with("<!--") => {
                     Event::Html(html.replace("<!--", "{/*").replace("-->", "*/}").into())
                 }
+                // MDX reads braces as expressions, so they become character
+                // references. The writer escapes `&` in text, so the references
+                // go out as inline HTML between the text around them.
                 Event::Text(text) if !in_code => {
-                    Event::Text(text.replace('{', "&#123;").replace('}', "&#125;").into())
+                    let mut rest = text.as_ref();
+                    while let Some(index) = rest.find(['{', '}']) {
+                        if index > 0 {
+                            events.push(Event::Text(rest[..index].to_owned().into()));
+                        }
+                        let reference = if rest.as_bytes()[index] == b'{' {
+                            "&#123;"
+                        } else {
+                            "&#125;"
+                        };
+                        events.push(Event::InlineHtml(reference.into()));
+                        rest = &rest[index + 1..];
+                    }
+                    if rest.is_empty() {
+                        continue;
+                    }
+                    Event::Text(rest.to_owned().into())
                 }
                 event => event,
             };
             events.push(event);
         }
         let mut output = String::new();
-        pulldown_cmark_to_cmark::cmark(events.iter(), &mut output)?;
+        pulldown_cmark_to_cmark::cmark(events.iter(), &mut output, PARSER_OPTIONS)?;
         output.push('\n');
         Ok(output)
     }
