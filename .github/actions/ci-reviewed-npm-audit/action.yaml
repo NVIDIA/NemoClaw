@@ -9,6 +9,18 @@ inputs:
     description: Read-only GitHub token for independent approval of a new candidate SDK identity.
     required: false
     default: ""
+  sdk-admission-pr-number:
+    description: Upstream PR number for candidate SDK admission.
+    required: false
+    default: ""
+  sdk-admission-candidate-sha:
+    description: Immutable candidate commit for SDK admission.
+    required: false
+    default: ""
+  sdk-admission-base-sha:
+    description: Immutable PR base commit for SDK admission.
+    required: false
+    default: ""
   target-root:
     description: Absolute path to the checked-out target tree whose graph inputs are audited.
     required: true
@@ -103,6 +115,9 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.sdk-admission-token }}
+        UPGRADE_PR_NUMBER: ${{ inputs.sdk-admission-pr-number }}
+        CHECKOUT_SHA: ${{ inputs.sdk-admission-candidate-sha }}
+        NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.sdk-admission-base-sha }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: ${{ inputs.report-dir }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR: ${{ inputs.cache-directory }}

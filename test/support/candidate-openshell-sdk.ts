@@ -2,9 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
+import { readApprovedOpenShellSdkConfig } from "../../scripts/checks/candidate-openshell-sdk.mts";
 import { vi } from "vitest";
 import YAML from "yaml";
 
@@ -304,4 +316,105 @@ else process.exit(97);
       return { ...result, output: existsSync(output) ? readFileSync(output, "utf8") : "" };
     },
   };
+}
+
+export type SdkAuditScenario =
+  | "admitted"
+  | "missing-token"
+  | "missing-pr"
+  | "missing-candidate"
+  | "missing-base";
+
+/** Run the real audit controller with synthetic admission responses and an observed npm child. */
+export async function runCandidateSdkAuditAction(scenario: SdkAuditScenario = "admitted") {
+  const sdkAuditRepoRoot = resolve(import.meta.dirname, "../..");
+  const fixture = candidateSdkFixture();
+  const responses: Record<string, unknown> = {};
+  await readApprovedOpenShellSdkConfig(
+    sdkCandidateIdentity,
+    async (route) => {
+      const value = await fixture.request(route);
+      responses[route] = value;
+      return value;
+    },
+    fixture.trustedSource,
+  );
+  const root = mkdtempSync(join(tmpdir(), "nemoclaw-admitted-audit-entry-"));
+  try {
+    candidateSdkCheckout(root, fixture);
+    const observation = join(root, "npm-observation.json");
+    const entrypoint = join(sdkAuditRepoRoot, "scripts/checks/audit-admitted-npm-graph.mts");
+    const action = YAML.parse(
+      readFileSync(
+        join(sdkAuditRepoRoot, ".github/actions/ci-reviewed-npm-audit/action.yaml"),
+        "utf8",
+      ),
+    ) as {
+      runs: { steps: { name: string; env?: Record<string, string> }[] };
+    };
+    const inputs: Record<string, string> = {
+      "sdk-admission-token": scenario === "missing-token" ? "" : "fixture-api-token",
+      "sdk-admission-pr-number":
+        scenario === "missing-pr" ? "" : String(sdkCandidateIdentity.prNumber),
+      "sdk-admission-candidate-sha":
+        scenario === "missing-candidate" ? "" : sdkCandidateIdentity.candidateSha,
+      "sdk-admission-base-sha": scenario === "missing-base" ? "" : sdkCandidateIdentity.baseSha,
+      "target-root": root,
+      "report-dir": "reports",
+      "cache-directory": "",
+    };
+    const controllerEnvironment = action.runs.steps.find(
+      (step) => step.name === "Materialize and audit production dependency graphs",
+    )!.env!;
+    const actionEnvironment = Object.fromEntries(
+      Object.entries(controllerEnvironment).map(([name, value]) => [
+        name,
+        value.replace(
+          /\$\{\{ inputs\.([\w-]+) \}\}/gu,
+          (_match, input: string) => inputs[input] ?? "",
+        ),
+      ]),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        [
+          'import fs from "node:fs";',
+          'import childProcess from "node:child_process";',
+          'import { syncBuiltinESMExports } from "node:module";',
+          `const responses = ${JSON.stringify(responses)};`,
+          "globalThis.fetch = async (input, options) => {",
+          "const url = new URL(input); const value = responses[url.pathname + url.search];",
+          'if (url.origin !== "https://api.github.com" || value === undefined || options.headers.Authorization !== "Bearer fixture-api-token") return new Response("denied", { status: 403 });',
+          "return new Response(JSON.stringify(value), { status: 200 }); };",
+          "childProcess.spawnSync = (command, args, options) => {",
+          `fs.writeFileSync(${JSON.stringify(observation)}, JSON.stringify({ command, args, github: options.env.GITHUB_TOKEN ?? null, gh: options.env.GH_TOKEN ?? null }));`,
+          // A deliberate version mismatch stops before package installs or registry access.
+          'return { status: 0, stdout: "0.0.0", stderr: "" }; }; syncBuiltinESMExports();',
+          `Object.defineProperty(process, "version", { value: ${JSON.stringify(`v${fixture.trusted.nodeVersion}`)} });`,
+          `process.argv[1] = ${JSON.stringify(entrypoint)};`,
+          `await import(${JSON.stringify(pathToFileURL(entrypoint).href)});`,
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          ...actionEnvironment,
+          GH_TOKEN: scenario === "missing-token" ? "" : "fixture-gh-token",
+        },
+      },
+    );
+    return {
+      result,
+      npmObservation: existsSync(observation)
+        ? JSON.parse(readFileSync(observation, "utf8"))
+        : null,
+    };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
