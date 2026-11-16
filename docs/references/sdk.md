@@ -78,8 +78,8 @@ Select the SDK call for the effect you need; keep the same state directory and b
 
 | Method | Input and result | Effect |
 |---|---|---|
-| `plan(&document, &cancel)` | `OperationResult` with changes, deferred prerequisites, and unverified checks | Observes and previews the desired deployment |
-| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness, with the URLs the gateway reports for sandbox service exposures in `service_urls`; a failed read leaves it empty and emits `Progress::Warning` | Can create/change resources, download models, and check readiness without generation |
+| `plan(&document, &cancel)` | `OperationResult` with changes, deferred prerequisites, unverified checks, and each agent's runtime ID from the last apply in `agents` | Observes and previews the desired deployment |
+| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness, with the URLs the gateway reports for sandbox service exposures in `service_urls` and each agent's runtime ID in `agents`; a failed read of the state leaves both empty and emits `Progress::Warning` | Can create/change resources, download models, and check readiness without generation |
 | `export(&cancel)` | Observed `Document`; call `yaml()` to serialize it | Checks retained intent and observations; does not back up agent data |
 | `plan_destroy(&cancel)` | `OperationResult` from retained state | Previews owned workload removal and retained resources |
 | `destroy(&cancel)` | `OperationResult` from retained state | Deletes sandbox writable layers and in-memory conversations under the [retention rules](../build-deploy/state.md) |
@@ -123,8 +123,7 @@ Parser acceptance does not establish installation, compatibility or readiness.
 Supply an explicit immutable sandbox image containing the generic launcher and selected Fabric adapter.
 The omitted-image default is a generic image pin, not a per-adapter image lookup.
 Optional `harness.settings` carries a JSON object, including nested values, to Fabric's `harness.settings` unchanged.
-Optional `harness.config` adds public Fabric fields such as workflow, MCP and telemetry.
-It cannot replace deployment-owned identities, models, workspace paths or artifact paths.
+The agent's and the harness's [Fabric sections](../agents-inference/agents.md#configure-the-agent-and-the-harness) reach Fabric unchanged, but cannot replace deployment-owned identities, models, workspace paths or artifact paths.
 Model `overrides.settings` likewise passes native settings through without interpretation.
 These fields contain configuration and credential references, not inline secrets.
 Fabric owns their schemas, validation and native mapping.
@@ -236,8 +235,8 @@ This transport does not tunnel inference traffic.
 
 ## Package Distribution and API Reference
 
-The public Rust API is exported from [the pinned v1 SDK crate](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-sdk/src/lib.rs).
-The [pinned deployment implementation](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-sdk/src/deployment/mod.rs) defines the lifecycle methods used above.
+The public Rust API is exported from [the SDK crate](../../crates/nemoclaw-sdk/src/lib.rs).
+The [deployment implementation](../../crates/nemoclaw-sdk/src/deployment/mod.rs) defines the lifecycle methods used above.
 See [the provider guide](provider.md) for the bundled OpenTofu boundary and [CLI reference](cli.md) for terminal access.
 
 The SDK crate is not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).

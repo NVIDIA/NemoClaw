@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
-pub(crate) const VERSION: &str = "4.6.0";
+pub(crate) const VERSION: &str = "4.7.0";
 fn process(target: &Target) -> bool {
     (target.kind == crate::managed::GATEWAY_KIND
         && spec(target).is_ok_and(|spec| spec.compute_driver == ComputeDriver::Docker))
@@ -230,8 +230,11 @@ fn container(target: &Target) -> Result<Value, Error> {
         let port = endpoint
             .port()
             .ok_or(Error::State("missing gateway port"))?;
+        // The engine socket is a host-path bind rather than a mount: Docker
+        // Desktop rewrites a socket mount's source unless it is the first
+        // mount, and the provider orders mounts by its own set hash.
         return Ok(
-            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"},{"type":"bind","source":spec.gateway.engine.strip_prefix("unix://").ok_or(Error::State("gateway requires Unix engine"))?,"target":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"unless-stopped","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
+            json!({"name":spec.name,"user":"0:0","labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":launch.entrypoint,"command":launch.cmd,"env":launch.env,"networks_advanced":[{"name":spec.network(),"ipv4_address":spec.gateway_address()?}],"ports":[{"internal":port,"external":port,"ip":endpoint.host_str().ok_or(Error::State("missing gateway host"))?,"protocol":"tcp"}],"mounts":[{"type":"volume","source":spec.volume(),"target":"/NEMOCLAW_GATEWAY_DATA"}],"volumes":[{"host_path":spec.gateway.engine.strip_prefix("unix://").ok_or(Error::State("gateway requires Unix engine"))?,"container_path":"/var/run/docker.sock"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"unless-stopped","log_driver":"json-file","log_opts":{"max-size":"32m","max-file":"3"},"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":60}),
         );
     }
     let process = spec
@@ -283,30 +286,46 @@ fn container(target: &Target) -> Result<Value, Error> {
             json!({"type":"volume","source":format!("{}-auth",spec.name),"target":"/credentials"}),
         );
     }
-    if process.gpu {
-        attrs["gpus"] = json!("all");
+    match &process.gpus {
+        crate::managed::Gpus::None => {}
+        crate::managed::Gpus::All => attrs["gpus"] = json!("all"),
+        crate::managed::Gpus::Devices(devices) => {
+            attrs["gpus"] = json!(format!("device={}", devices.join(",")));
+        }
     }
-    // Labels force replacement because Docker provider v4.6.0 updates limits in
-    // place: its Update omits CFS quota, and lowering memory on a running
-    // container can OOM-kill the model. Its `cpus` formatter also loses some
-    // fractions, so CPU uses an integer quota:
-    // https://github.com/kreuzwerker/terraform-provider-docker/blob/v4.6.0/internal/provider/resource_docker_container_funcs.go
+    // The Docker provider replaces the container when `cpus` changes.
     if let Some(limit) = process.cpu_limit_millis {
-        attrs["cpu_period"] = json!(crate::managed::CPU_PERIOD_MICROS);
-        attrs["cpu_quota"] = json!(crate::managed::cpu_quota_micros(limit));
-        push_label(&mut attrs, "nemoclaw.nvidia.com/cpu-limit-millis", limit);
+        attrs["cpus"] = json!(cpus(limit));
     }
-    // Containers created before memory limits were configurable used the
-    // default and have no label; keep them unchanged.
-    let memory_gib = process.memory_bytes / nemoclaw_runtime::hardware::GIB;
-    if memory_gib != crate::services::installers::container::DEFAULT_MEMORY_LIMIT_GIB {
-        push_label(
-            &mut attrs,
-            "nemoclaw.nvidia.com/memory-limit-gib",
-            memory_gib,
-        );
-    }
+    // The Docker provider updates memory in place, but a change must restart
+    // the container: Docker applies a lower limit to the running server and
+    // the kernel OOM-kills it, and Ollama and NemoClaw's supervisor size from
+    // the limit only at start. A label change forces the replacement.
+    push_label(
+        &mut attrs,
+        "nemoclaw.nvidia.com/memory-limit-gib",
+        process.memory_bytes / nemoclaw_runtime::hardware::GIB,
+    );
     Ok(attrs)
+}
+/// Runtime contract settings with the number of GPUs the service selects,
+/// which the contract's `requirements.gpu_count` reports to other placements.
+fn with_gpu_count(mut settings: Value, target: &Target) -> Result<Value, Error> {
+    if let Some(crate::managed::Gpus::Devices(devices)) =
+        spec(target)?.process.map(|process| process.gpus)
+    {
+        settings["gpu_count"] = json!(devices.len());
+    }
+    Ok(settings)
+}
+/// A CPU limit in millicores as the decimal CPU count `docker --cpus` takes.
+fn cpus(millis: u32) -> String {
+    match (millis / 1000, millis % 1000) {
+        (whole, 0) => whole.to_string(),
+        (whole, fraction) => format!("{whole}.{fraction:03}")
+            .trim_end_matches('0')
+            .to_owned(),
+    }
 }
 fn push_label(attrs: &mut Value, label: &str, value: impl ToString) {
     attrs["labels"]
@@ -392,24 +411,30 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             vllm::SERVICE_KIND => Some((
                 vllm::RUNTIME_DATA_SOURCE,
                 "NEMOCLAW_RUNTIME_SPEC",
-                crate::hcl_schema::to_hcl(
-                    &vllm::runtime_fields().map_err(|_| {
-                        Error::State("the vLLM runtime contract has no OpenTofu schema")
-                    })?,
-                    &serde_json::to_value(vllm::configured_service(&spec(target)?)?)
-                        .map_err(|_| Error::State("cannot encode runtime settings"))?,
-                ),
+                with_gpu_count(
+                    crate::hcl_schema::to_hcl(
+                        &vllm::runtime_fields().map_err(|_| {
+                            Error::State("the vLLM runtime contract has no OpenTofu schema")
+                        })?,
+                        &serde_json::to_value(vllm::configured_service(&spec(target)?)?)
+                            .map_err(|_| Error::State("cannot encode runtime settings"))?,
+                    ),
+                    target,
+                )?,
             )),
             ollama::SERVICE_KIND => Some((
                 ollama::RUNTIME_DATA_SOURCE,
                 "NEMOCLAW_RUNTIME_SPEC",
-                crate::hcl_schema::to_hcl(
-                    &ollama::runtime_fields().map_err(|_| {
-                        Error::State("the Ollama runtime contract has no OpenTofu schema")
-                    })?,
-                    &serde_json::to_value(ollama::configured_service(&spec(target)?)?)
-                        .map_err(|_| Error::State("cannot encode runtime settings"))?,
-                ),
+                with_gpu_count(
+                    crate::hcl_schema::to_hcl(
+                        &ollama::runtime_fields().map_err(|_| {
+                            Error::State("the Ollama runtime contract has no OpenTofu schema")
+                        })?,
+                        &serde_json::to_value(ollama::configured_service(&spec(target)?)?)
+                            .map_err(|_| Error::State("cannot encode runtime settings"))?,
+                    ),
+                    target,
+                )?,
             )),
             ollama::proxy::PROXY => {
                 let proxy = ollama::proxy::row_spec(&target.values)?;
@@ -784,7 +809,14 @@ mod tests {
             gateway["mounts"][0]["target"],
             "${openshell_gateway_storage.runtime.data_path}"
         );
-        assert_eq!(gateway["mounts"][1]["target"], "/var/run/docker.sock");
+        // The engine socket is a host-path bind, not a mount: Docker Desktop
+        // rewrites a socket mount's source unless it is the first mount,
+        // which then reads back as drift.
+        assert_eq!(gateway["mounts"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            gateway["volumes"],
+            json!([{"host_path":"/var/run/docker.sock","container_path":"/var/run/docker.sock"}])
+        );
         assert_eq!(gateway["wait"], false);
         // The engine brings the gateway back after it or the host restarts;
         // an explicit stop keeps it stopped.
@@ -907,7 +939,10 @@ mod tests {
         );
         assert_eq!(
             container["labels"],
-            json!([{ "label":crate::managed::OWNER_LABEL,"value":document.metadata.uid }])
+            json!([
+                { "label": crate::managed::OWNER_LABEL, "value": document.metadata.uid },
+                { "label": "nemoclaw.nvidia.com/memory-limit-gib", "value": "104" }
+            ])
         );
         assert!(container.get("lifecycle").is_none());
         assert_eq!(
@@ -1062,6 +1097,46 @@ mod tests {
                     .iter()
                     .any(|value| value.as_str().unwrap().starts_with("docker_network."))
             );
+        }
+    }
+    // One GPU or a list compiles to `gpus = "device=ID[,ID...]"`, which the
+    // Docker provider sends as one request for those IDs, as `docker run --gpus`
+    // does. The native request names the same IDs, in order, and capability.
+    #[test]
+    fn gpu_devices_reach_docker_as_one_device_request_in_order() {
+        const UUID: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
+        let document =
+            Document::parse(include_bytes!("../tests/fixtures/config/spark.yaml").as_slice())
+                .unwrap();
+        let generations = crate::state::Record::new(document.clone())
+            .unwrap()
+            .generations;
+        let (_, mut raw) = runtime_graph(&document, &generations, "0.1.0").unwrap();
+        let service = raw
+            .iter_mut()
+            .find(|target| target.kind == "inference_service")
+            .unwrap();
+        for devices in [vec!["1"], vec![UUID, "0"], vec!["2", "0", "1"]] {
+            let devices: Vec<String> = devices.into_iter().map(str::to_owned).collect();
+            let mut spec = spec(service).unwrap();
+            spec.process.as_mut().unwrap().gpus = crate::managed::Gpus::Devices(devices.clone());
+            let host = spec.container("/data").unwrap().host_config.unwrap();
+            let requests = host.device_requests.unwrap();
+            assert_eq!(requests.len(), 1, "{devices:?}");
+            assert_eq!(requests[0].driver.as_deref(), Some(""), "{devices:?}");
+            assert_eq!(requests[0].device_ids, Some(devices.clone()), "{devices:?}");
+            assert_eq!(requests[0].count, None, "{devices:?}");
+            assert_eq!(
+                requests[0].capabilities,
+                Some(vec![vec!["gpu".to_owned()]]),
+                "{devices:?}"
+            );
+            service
+                .values
+                .insert("spec".into(), serde_json::to_string(&spec).unwrap());
+            let attrs = container(service).unwrap();
+            assert_eq!(attrs["gpus"], format!("device={}", devices.join(",")));
+            assert!(attrs.get("device_requests").is_none(), "{attrs}");
         }
     }
 }

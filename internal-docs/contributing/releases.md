@@ -62,7 +62,7 @@ Before pushing a final tag, complete the provenance, SBOM, scanning, and license
 
 ## SBOM Assets
 
-Each image is scanned by the job that pushes it, with Syft 1.55.0: the image workflow scans each agent and proxy image it pushes on `v1`, and staging's runtime jobs scan the vLLM and Ollama images they build.
+Each image is scanned by the job that pushes it, with Syft 1.57.1: the image workflow scans each agent and proxy image it pushes on `v1`, and staging's runtime jobs scan the vLLM and Ollama images they build.
 Each scan reads the pushed platform manifest from the registry, so the SPDX document's subject is that manifest's digest; `v1-ci` keeps the document as `sbom-DIGEST`, and an unchanged image is never scanned again.
 Staging copies each release platform's document from there.
 It scans an image only when no recorded document names its digest, and records the result.

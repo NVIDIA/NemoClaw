@@ -12,13 +12,219 @@ The workspace package version alone does not establish that a release has been p
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
 Refer to [the overview](overview.md) for implemented boundaries and [the CLI reference](../references/cli.md) for commands.
 
+### Changes Since v0.1.0-rc10
+
+These changes reached `v1` after the `v0.1.0-rc10` tag; [breaking changes](#breaking-changes-since-v010-rc10) are listed separately.
+
+Agents and interfaces:
+
+- The agent holds Fabric's `instructions`, `tools`, `skills`, `mcp`, and `workflow` sections, and the harness holds `runtime`, `environment`, `discovery`, `telemetry`, and `relay`; NemoClaw passes each to Fabric unchanged.
+  Sandboxes that share a harness definition through `harnessRef` can give each agent its own instructions, tools, and skills.
+  See [configure the agent and the harness](../agents-inference/agents.md#configure-the-agent-and-the-harness).
+- `spec.policies` holds named sandbox policies that a network selects with `policyRef`, and `spec.grants` holds named grants that a network adds to the isolated preset with `grantRefs`.
+  See [reuse policies and grants](../security/sandbox-network.md#reuse-policies-and-grants).
+- A `kind: api` integration, and `openshell_api` in HCL, sends one key to every URL in its `endpoints`, so one registration covers an API spread across hosts.
+  `sandboxEnv` (`sandbox_env` in HCL) names the variable the sandbox sees the key in, such as `NVIDIA_API_KEY`; without it the name stays `NEMOCLAW_API_<NAME>_KEY`.
+  OpenShell reports, during apply, a sandbox whose attached registrations put keys in the same variable.
+  See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
+
+Inference and models:
+
+- A managed vLLM or Ollama container's `container.cpuLimitMillis` reaches Docker through the Docker provider's `cpus`, without the `nemoclaw.nvidia.com/cpu-limit-millis` label.
+- A managed vLLM service keeps FlashInfer's autotune results on its model volume, in `/data/vllm-cache/flashinfer-autotune`, so a replaced container doesn't tune again; vLLM 0.33.0 otherwise keeps them inside the container.
+  See [retained model files](../agents-inference/models.md#retained-model-files).
+
+Examples and builds:
+
+- Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
+- OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
+- [Building from source](../build-deploy/build.md) uses Rust 1.100.0, as do the Rust stages of the agent, supervisor, and Ollama proxy images.
+- The vLLM runtime image builds on vLLM 0.33.0; rebuild it to use it.
+  Like 0.32.0, it uses CUDA 13.0, so GPU hosts and Kubernetes GPU nodes need NVIDIA driver 580 or newer.
+  With `authentication: bearer`, the supervisor answers vLLM's new `/v1/decisions` endpoint with 404, as it does every request outside its route allowlist; see [authenticating a managed vLLM service](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
+
+OpenShell 0.1.8:
+
+- On Kubernetes, deleting a sandbox no longer waits out its pod's 30-second termination grace period, so destroy and sandbox replacement finish sooner.
+- The OpenShell CLI renews a token it got through client credentials while `OPENSHELL_OIDC_CLIENT_SECRET` is set.
+  See [reaching the gateway from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli).
+- The gateway no longer keeps memory for deleted sandboxes.
+
+### Changes in v0.1.0-rc10
+
+These changes reached `v1` between the `v0.1.0-rc9` and `v0.1.0-rc10` tags; [breaking changes](#breaking-changes-in-v010-rc10) are listed separately.
+
+Agents and interfaces:
+
+- `harness.settings.interfaces` turns on OpenClaw's dashboard and Hermes's API server and dashboard; plan checks each against the image's adapter, and apply prints how to reach it, including OpenClaw's terminal UI command.
+  See [agent interfaces](../agents-inference/interfaces.md#reach-an-agent-interface).
+- A sandbox's `serviceExposures` publishes one of its ports at a URL the gateway serves; apply prints each URL and returns it as `serviceUrls` in JSON.
+  Changing the exposures updates the running sandbox's endpoints in place.
+  See [service exposure](../agents-inference/interfaces.md#expose-a-service-through-the-gateway).
+- Plan and apply list each agent's runtime ID and `fabric-agent-ctl invoke` command under **Agents**, and as `agents` in JSON results.
+  See [invoking an agent](../agents-inference/interfaces.md#invoke-an-agent).
+- Hermes keeps its native state in `/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/<agent name>`, which every runtime of the agent uses, so its interface tokens moved there.
+  OpenClaw's native state stays in a temporary directory that its runtime removes at stop.
+  See [agent files](../build-deploy/state.md#agent-files).
+- `skills.directories` lists a folder of skills or one skill per entry for OpenClaw and Hermes, `skills.duplicates: reject` stops the agent's start when two of those skills share a name, and `skills.bundled` selects the harness's own skills.
+  In hand-written HCL, `fabric_agent`'s `skills` block takes them as `directories` blocks, `duplicates`, and a `bundled` block.
+  See [skills on a mounted volume](../agents-inference/agents.md#skills-on-a-mounted-volume).
+- The Hermes image includes the API server, dashboard, and browser chat dependencies, and the Switchyard Relay plugin.
+- Apply restarts an agent runtime that stopped in an unchanged sandbox.
+- OpenClaw's startup has one 60-second deadline, instead of 30 seconds for each step.
+- A failed agent start reports Fabric's cause.
+- OpenClaw stops where the sandbox denies process-group signals.
+- An explicit sandbox policy accepts `network_middlewares`.
+  See [network middleware](../security/sandbox-network.md#attach-network-middleware).
+- A network grant's `binaries`, in a document's `grants` or an HCL `managed` block, are kept as written instead of being replaced with the harness's executables.
+  OpenShell matches a process by its executable's real path, so name the executable itself rather than a symlink to it, such as `/usr/local/bin/python3.14` rather than `/usr/local/bin/python3`; see OpenShell's [binary matching](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/policies/network-rules.mdx#binary-matching).
+
+Inference and models:
+
+- `container.gpuDevices` selects the GPU for a Docker-managed vLLM or Ollama service, by UUID or index; it takes one entry.
+  See [container limits](../agents-inference/inference.md#set-container-limits-and-update-policy).
+- `serving.tensorParallelSize` and `serving.pipelineParallelSize` set vLLM's parallel layout; see [the parallel layout](../agents-inference/models.md#set-the-parallel-layout).
+  Until `container.gpuDevices` takes more than one GPU, vLLM refuses a layout larger than one GPU; see [current limits](../resources/limits.md#platforms-models-and-placement).
+- A service's GPU memory budget applies to each GPU it uses, and capacity errors name the GPU.
+- On dedicated-memory GPUs, `memory.hostReserveGiB` can be as low as 6 GiB, and a vLLM recipe's GPU budget is checked against the GPU's memory.
+  See [hardware profiles](../agents-inference/models.md#choose-a-hardware-profile).
+- In hand-written HCL, the vLLM and Ollama capacity data sources take `gpu_devices`, and `vllm_runtime` and `ollama_runtime` take `gpu_count`, which must be 1 for now, and report it in `requirements`.
+  See [service capacity](../references/provider.md#service-capacity).
+- When vLLM exits during startup, the apply error includes the last 4 KiB of its output, with the service key redacted; an Ollama runtime's stop detail, such as a memory protection stop, also appears in its apply error.
+- Plan refuses a sandbox that attaches more than 32 providers, OpenShell's limit: its inference providers, its web search and each `api` integration count one each.
+  A deployment is no longer limited to 32 selected inference providers.
+  See [inference](../agents-inference/inference.md).
+
+Gateways and Kubernetes:
+
+- A document holds up to 256 sandboxes with a `kubernetes` or `openshift` gateway; Docker and Podman keep 32.
+  See [sandbox count and cluster size](../build-deploy/kubernetes.md#sandbox-count-and-cluster-size).
+- A managed `kubernetes` or `openshift` gateway's memory limit is 2Gi, up from 1Gi, which ran out of memory before a document reached 256 sandboxes.
+- An external gateway's `gateway.tls` can name a CA alone; a client certificate and key must appear together.
+- `gateway.kubernetes.kubeconfig` and `context` can be omitted together; without them, NemoClaw uses the service account of the pod it runs in.
+  See [running NemoClaw in a pod](../build-deploy/kubernetes.md#run-nemoclaw-in-a-pod).
+- `gateway.kubernetes.namespace` can name an existing namespace: NemoClaw binds it by UID and never labels, changes, or deletes it, and refuses a namespace that another deployment created or that is being deleted.
+- NemoClaw no longer reads cluster-wide objects: it doesn't check for a default StorageClass, the Agent Sandbox CRD, or `kube-system`.
+  Without a default StorageClass, the gateway install times out in Helm's wait.
+- A managed OpenShift gateway lets OpenShift assign its UID and `fsGroup`.
+- `gateway.kubernetes.expose` publishes a managed Kubernetes or OpenShift gateway at `gateway.endpoint` through the OpenShell chart's own `NodePort` Service, for clients such as the OpenShell CLI; NemoClaw's own commands keep their port forward.
+  See [publishing the gateway](../build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster).
+- A managed Kubernetes or OpenShift gateway's Helm install is atomic; a release left by an unfinished install fails apply with the `helm uninstall` command to run.
+  See [recovering an unfinished Helm install](../build-deploy/usage.md#recover-from-an-unfinished-helm-install).
+- Plan fails when a managed Docker or Podman gateway's subnet or port is already in use.
+
+Plan, apply, and diagnostics:
+
+- The first interrupt lets the resource operations in progress finish; a second stops at once.
+  See [recovering an interrupted operation](../build-deploy/usage.md#recover-an-interrupted-operation).
+- Refusals name the object or setting: an ownership conflict, retained gateway storage from another state directory, a missing kubeconfig context, an image metadata bundle for another digest, and gateway TLS failures.
+- The sandbox deletion warning ends with "except on mounted volumes".
+- Adding a sandbox whose name sorts first leaves the other sandboxes unchanged.
+- `metadata.uid` accepts uppercase hexadecimal digits.
+- When a command's OpenTofu diagnostics together exceed 16 KiB, its error lists the whole diagnostics that fit, the next one's summary, and how many it left out, instead of replacing them all with `child output exceeds the supported limit`.
+
+Onboarding:
+
+- `nemoclaw onboard` offers OpenClaw and Hermes, saves only the values you chose, and leaves the rest for plan to fill.
+- It doesn't ask for settings it can decide, such as a named vendor's API, the only engine that answered, or the network tier; the review shows why a value can't be saved and whether each credential is set.
+- Saving prints the `nemoclaw plan` and `nemoclaw apply` commands with the saved path.
+- The review explains how to set an unset credential and, for a hosted provider, names the page that issues its key.
+- The Nous Research preset names `NOUS_API_KEY`.
+
+Examples and builds:
+
+- New examples: [an application container beside an agent](../../examples/application-container.yaml) and [GPU autoscaling on Kubernetes](../../examples/kubernetes/gpu-autoscaling/README.md).
+- The [GTC DC](../../examples/gtc-dc/README.md) Kubernetes profile runs one OpenClaw and one Hermes agent on a managed gateway, in YAML or HCL, and keeps their files on PVCs; the local templates allow 8,192 output tokens.
+- Linux bundles are built on Ubuntu 22.04 and need glibc 2.35 or newer; Ubuntu 22.04 is the oldest supported Linux.
+  See [prerequisites](../get-started/prerequisites.md).
+- Run `cargo images fetch` before a direct `docker buildx bake` build of an agent or Ollama image.
+  See [building images](../build-deploy/build.md).
+- Dependency pins take security fixes, including rustls, webpki, tokio, and zip.
+- Pinned components: OpenShell 0.1.7, OpenTofu 1.12.12, Ollama 0.40.14, Hermes Agent v0.22.5, and OpenClaw 2026.9.34.
+
 ## Breaking Changes and Migration
 
 Earlier CLI commands, schemas, and state formats have no compatibility guarantees.
 See [migration](../get-started/migration.md) for where each earlier task lives now, and [state](../build-deploy/state.md) for data preservation.
-Recent development changes that affect existing deployments:
 
-- The intent record is now version 16, so this release refuses every deployment that an earlier build created, without changing its state. Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
+### Breaking Changes Since v0.1.0-rc10
+
+These changes since the `v0.1.0-rc10` tag affect existing deployments or documents:
+
+- A `kind: api` integration takes `endpoints`, a list of URLs, instead of `endpoint`, and `openshell_api` takes `endpoints` instead of `endpoint`; the parser rejects `endpoint`.
+  Write `endpoint: https://bookings.example.com/mcp` as `endpoints: [https://bookings.example.com/mcp]`.
+  An `openshell_api` with an `mcp` block takes exactly one URL.
+
+- The intent record is now version 23, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
+- `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
+  `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up.
+  Before:
+
+  ```yaml
+  harness:
+    kind: nvidia.fabric.hermes
+    config:
+      runtime: {max_turns: 16}
+      instructions: {system: {mode: replace, content: "Research flights."}}
+      skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
+  agent:
+    name: flights
+  ```
+
+  After:
+
+  ```yaml
+  harness:
+    kind: nvidia.fabric.hermes
+    runtime: {max_turns: 16}
+  agent:
+    name: flights
+    instructions: {system: {mode: replace, content: "Research flights."}}
+    skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
+  ```
+
+- `harness.execution` is removed. Set Fabric's `runtime.timeout_seconds` on the harness instead: replace `harness: {kind: nvidia.fabric.openclaw, execution: {timeoutSeconds: 600}}` with `harness: {kind: nvidia.fabric.openclaw, runtime: {timeout_seconds: 600}}`.
+
+- `agent.tools` is Fabric's tools section, and its `allow` list is removed. Rename `allow` to Fabric's `enabled`, so `tools: {allow: [read, write]}` becomes `tools: {enabled: [read, write]}`; `blocked` and `definitions` are now available too.
+
+- In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
+  Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
+- With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
+  A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
+- With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
+  An endpoint host written as an IPv4-mapped IPv6 address, such as `::ffff:203.0.113.7`, no longer matches; write the IPv4 address.
+- The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
+
+### Breaking Changes in v0.1.0-rc10
+
+These changes between the `v0.1.0-rc9` and `v0.1.0-rc10` tags affect existing deployments or documents:
+
+- The intent record is now version 21.
+  `v0.1.0-rc9` wrote version 15, and the record moved to 16, 17, 18, 19, 20, and 21 as later changes altered it.
+  This release refuses any deployment whose intent record is an earlier version, including every one that `v0.1.0-rc9` created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
+- `spec.sandboxes`, `spec.inferenceProviders`, and a sandbox's `inferenceProviders` are maps keyed by name; the parser rejects the earlier lists.
+  A provider declared inline on a route still takes `name`.
+  In the Rust SDK, these fields are `BTreeMap`s, and `InferenceProvider` has no `name`.
+- A vLLM recipe whose `compatibility.gpu` belongs to no hardware profile's GPU family no longer parses.
+- Plan rejects `maxTokens`, `temperature`, and `topP` when the image's adapter doesn't accept them; see [OpenClaw route tuning](../agents-inference/inference.md#tune-openclaws-primary-route).
+- Hermes's `max_tokens` setting no longer defaults to 512, so Hermes uses its own response-token limit.
+- `skills.paths` works as in `v0.1.0-rc9`: OpenClaw requires each path to hold `SKILL.md`, and Hermes passes each path to its `skills.external_dirs` unchecked.
+  Earlier v1 development builds also read an OpenClaw or Hermes path as a folder of skills and refused duplicate names; list such a folder as a `folder` entry in `skills.directories`, with `duplicates: reject` to keep refusing duplicate names.
+  OpenClaw agents in those builds also kept their native state in `/sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/<agent name>`; that folder is no longer used, and the dashboard token is again under the runtime's own folder.
+  See [skills on a mounted volume](../agents-inference/agents.md#skills-on-a-mounted-volume).
+- An endpoint must begin with its scheme and `://`.
+  Endpoints and service addresses can't name a cloud metadata host, such as `metadata` or `fd00:ec2::254`, or an IPv6 address that embeds an IPv4 address.
+  A `networkCIDR` must be in canonical form, without leading zeros.
+- In hand-written HCL, `openshell_kubernetes_auth` has no `gateway_values` attribute.
+- In hand-written HCL on Kubernetes or OpenShift, the gateway ownership receipts that `v0.1.0-rc9` wrote no longer load, and the intent record refusal above doesn't cover them.
+  Destroy such a deployment with the bundle that created it, then create it again with this release.
+
+### Earlier Breaking Changes
+
+These changes before the `v0.1.0-rc9` tag affect existing deployments:
+
 - Docker-managed vLLM and Ollama services default to [`updatePolicy: Preserve`](../agents-inference/inference.md#set-container-limits-and-update-policy), which refuses an image, model, serving, or container-limit change that would replace a running container; set `spec.services.<name>.updatePolicy: Recreate` to permit the replacement and its downtime.
 - `spec.gateway.image` is removed: the SDK pins the managed gateway image, and defaulted and exported documents no longer name it.
   - Remove the field from documents; the parser rejects it as an unknown field.

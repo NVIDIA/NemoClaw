@@ -3,14 +3,15 @@
 
 # OpenClaw's Control UI and Hermes's API server and dashboard behind a managed
 # Docker gateway, on a stub model that answers every chat completion with the
-# same reply and refuses any request without the run's key. Apply reports
-# each interface; a person reaches it with the pinned OpenShell CLI's forward
-# and the token apply names. cargo ci live-docker gives each run a fresh
-# identity, gateway port and subnet, stub address, volume names, and agent
-# images. Only claw grants python3 the stub's /health, which the managed
-# inference grant leaves out. Each agent's skills.paths lists a folder of
-# skills on one volume and a skill on its own read-only volume; Hermes's
-# folder is empty.
+# same reply, followed by the skills whose markers the request holds, and
+# refuses any request without the run's key. Apply reports each interface; a
+# person reaches it with the pinned OpenShell CLI's forward and the token
+# apply names. cargo ci live-docker gives each run a fresh identity, gateway
+# port and subnet, stub address, volume names, and agent images. Only claw
+# grants python3 the stub's /health, which the managed inference grant leaves
+# out. Each agent's skills.directories lists a writable folder of skills and
+# a skill on its own volume, read-only for claw and writable for hermes, and
+# refuses duplicate names; Hermes's folder is empty.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -53,8 +54,10 @@ spec:
                 path: /health
                 protocol: rest
                 access: read-only
+            # OpenShell matches an executable's real path, which the
+            # image's python3 links to.
             binaries:
-              - path: /usr/local/bin/python3
+              - path: /usr/local/bin/python3.14
       driverConfig:
         docker:
           mounts:
@@ -68,15 +71,17 @@ spec:
               read_only: true
       harness:
         kind: nvidia.fabric.openclaw
-        config:
-          skills:
-            paths: [/sandbox/skills, /sandbox/review-skill]
         settings:
           interfaces:
             dashboard:
               port: 18789
       agent:
         name: main
+        skills:
+          directories:
+            - folder: /sandbox/skills
+            - skill: /sandbox/review-skill
+          duplicates: reject
         inference:
           routes:
             - name: primary
@@ -98,12 +103,9 @@ spec:
             - type: volume
               source: hcl-interfaces-hermes-notes-skill
               target: /sandbox/notes-skill
-              read_only: true
+              read_only: false
       harness:
         kind: nvidia.fabric.hermes
-        config:
-          skills:
-            paths: [/sandbox/skills, /sandbox/notes-skill]
         settings:
           interfaces:
             api:
@@ -112,6 +114,11 @@ spec:
               port: 9119
       agent:
         name: hermes
+        skills:
+          directories:
+            - folder: /sandbox/skills
+            - skill: /sandbox/notes-skill
+          duplicates: reject
         inference:
           routes:
             - name: primary

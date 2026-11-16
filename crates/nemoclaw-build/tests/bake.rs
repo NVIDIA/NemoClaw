@@ -222,3 +222,66 @@ fn runtime_images_build_only_for_the_host_with_their_supervisor() {
         assert_eq!(output["rewrite-timestamp"], "true", "{name}: {output}");
     }
 }
+
+/// Image builds copy remote files only from the sources that versions.json
+/// pins, which `cargo images fetch` downloads and checks, so BuildKit
+/// downloads nothing itself, and Bake passes each image its own sources.
+#[test]
+fn image_builds_copy_remote_files_only_from_their_pinned_sources() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let pins = nemoclaw_build::images::source_pins(&root).unwrap();
+    let mut copying = BTreeSet::new();
+    for entry in std::fs::read_dir(root.join("image")).unwrap() {
+        let directory = entry.unwrap().path();
+        let Ok(dockerfile) = std::fs::read_to_string(directory.join("Dockerfile")) else {
+            continue;
+        };
+        let image = directory.file_name().unwrap().to_str().unwrap().to_owned();
+        let instructions = dockerfile.replace("\\\n", " ");
+        for instruction in instructions.lines().map(str::trim) {
+            assert!(
+                !(instruction.starts_with("ADD ") && instruction.contains("://")),
+                "image/{image}/Dockerfile downloads a file; pin it in versions.json: {instruction}"
+            );
+            let Some(arguments) = instruction.strip_prefix("COPY --from=sources ") else {
+                continue;
+            };
+            let paths: Vec<&str> = arguments
+                .split_whitespace()
+                .filter(|argument| !argument.starts_with("--"))
+                .collect();
+            for source in &paths[..paths.len() - 1] {
+                let name = source.trim_start_matches('/');
+                assert!(
+                    pins.get(&image)
+                        .is_some_and(|files| files.contains_key(name)),
+                    "image/{image}/Dockerfile copies {name}, which imageSources.{image} doesn't pin"
+                );
+            }
+            copying.insert(image.clone());
+        }
+    }
+    assert_eq!(
+        copying,
+        pins.keys().cloned().collect(),
+        "every image with pinned sources copies them"
+    );
+    let Some(targets) = plan(host_platform(), &["agents", "dummy", "check", "runtimes"]) else {
+        return;
+    };
+    for (name, target) in &targets {
+        let dockerfile = target["dockerfile"].as_str().unwrap();
+        let image = dockerfile
+            .strip_prefix("image/")
+            .and_then(|path| path.strip_suffix("/Dockerfile"))
+            .unwrap();
+        let expected = copying
+            .contains(image)
+            .then(|| format!("{}/{image}", nemoclaw_build::images::SOURCES));
+        assert_eq!(
+            target["contexts"]["sources"].as_str(),
+            expected.as_deref(),
+            "{name}"
+        );
+    }
+}

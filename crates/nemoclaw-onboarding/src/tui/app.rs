@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::labels::display_value;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nemoclaw_authoring::{
     Capabilities, Diagnostics, JourneyQuestion, JourneyResolution, JourneyState,
 };
 use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{config::Document, discovery::DiscoveryRequest};
 use serde_json::Value;
-use std::cell::{Cell, RefCell};
+use std::{
+    cell::{Cell, RefCell},
+    path::PathBuf,
+};
 
 pub(crate) struct JourneyWizard {
     pub(super) capabilities: Capabilities,
@@ -38,6 +42,10 @@ pub(crate) struct JourneyWizard {
     /// The furthest the review can scroll, as of its last render: the view
     /// alone knows how its wrapped text fits.
     pub(super) review_scroll_limit: Cell<u16>,
+    /// Where saving writes, named on the review.
+    pub(super) output: Option<PathBuf>,
+    /// Whether the review shows the saved YAML under its summary.
+    pub(super) show_configuration: bool,
 }
 
 impl JourneyWizard {
@@ -61,7 +69,15 @@ impl JourneyWizard {
             accepted: false,
             review_scroll: 0,
             review_scroll_limit: Cell::new(0),
+            output: None,
+            show_configuration: false,
         }
+    }
+
+    /// Name `output` on the review as the file saving writes.
+    pub(crate) fn with_output(mut self, output: PathBuf) -> Self {
+        self.output = Some(output);
+        self
     }
 
     /// Read `candidates` as this machine's engines.
@@ -234,6 +250,13 @@ impl JourneyWizard {
         }
     }
 
+    /// Show or hide the saved YAML on the review.
+    pub(super) fn toggle_configuration(&mut self) {
+        if self.reviewing() {
+            self.show_configuration = !self.show_configuration;
+        }
+    }
+
     // A resolver failure has no choices to move through; the view shows it.
     pub(super) fn previous(&mut self) {
         match self.question() {
@@ -272,10 +295,17 @@ impl JourneyWizard {
         }
     }
 
-    pub(super) fn suggested_input(&self, question: &JourneyQuestion) -> String {
+    /// The suggestion a text question shows while its answer is empty, and
+    /// accepts on Enter. The text a model menu opens for another identifier
+    /// has none: Enter there needs a typed identifier.
+    pub(super) fn placeholder(&self, question: &JourneyQuestion) -> Option<String> {
+        if !question.choices().is_empty() {
+            return None;
+        }
         question
             .suggestion()
-            .map_or_else(String::new, display_value)
+            .map(display_value)
+            .filter(|suggested| !suggested.is_empty())
     }
 
     pub(super) fn answer_from_input(
@@ -293,7 +323,7 @@ impl JourneyWizard {
             return Ok(question.choices().get(self.choice_index(question)).cloned());
         }
         let raw = if self.input.is_empty() {
-            self.suggested_input(question)
+            self.placeholder(question).unwrap_or_default()
         } else {
             self.input.clone()
         };
@@ -350,6 +380,55 @@ impl JourneyWizard {
             .and_then(|value| self.submit(value).map_err(|error| error.to_string()));
         if let Err(error) = result {
             self.error = Some(error);
+        }
+    }
+
+    /// Apply a key that only changes the questionnaire: answering, moving,
+    /// omitting, and editing the text answer. The terminal loop handles the
+    /// keys that exit or read the target before passing the rest here.
+    pub(super) fn press(&mut self, key: KeyEvent) {
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Char('o') if control => self.omit(),
+            KeyCode::Char('a') if control => self.input.clear(),
+            KeyCode::Tab if self.reviewing() => self.toggle_configuration(),
+            KeyCode::Tab => self.edit_suggestion(),
+            KeyCode::Enter => self.advance(),
+            KeyCode::Left => self.back(),
+            KeyCode::Up => self.previous(),
+            KeyCode::Down => self.next(),
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.input.push(character);
+            }
+            _ => {}
+        }
+    }
+
+    /// Copy the placeholder into the empty answer, so it can be edited.
+    fn edit_suggestion(&mut self) {
+        if self.input.is_empty()
+            && let Ok(Some(question)) = self.question()
+            && let Some(suggested) = self.placeholder(&question)
+        {
+            self.input = suggested;
+        }
+    }
+
+    /// Leave the current question's value out, unless it is required.
+    fn omit(&mut self) {
+        if let Ok(Some(question)) = self.question() {
+            if question.required() {
+                self.error = Some("This question is required.".into());
+            } else if let Err(error) = self.submit(None) {
+                self.error = Some(error.to_string());
+            }
         }
     }
 

@@ -78,8 +78,8 @@ spec:
     user-0000:
       harness:
         kind: nvidia.fabric.hermes
-        execution:
-          timeoutSeconds: 300
+        runtime:
+          timeout_seconds: 300
         settings:
           interfaces:
             # Hermes's OpenAI-compatible API server, on loopback in the sandbox.
@@ -102,8 +102,8 @@ spec:
     user-0001:
       harness:
         kind: nvidia.fabric.openclaw
-        execution:
-          timeoutSeconds: 300
+        runtime:
+          timeout_seconds: 300
       image:
         metadata: {env: OPENCLAW_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000

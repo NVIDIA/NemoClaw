@@ -88,7 +88,7 @@ fn search_rejects_unknown_and_duplicate_references() {
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
     }
     let mut value = input();
-    value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = json!({"allow":["read"]});
+    value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = json!({"enabled":["read"]});
     assert!(Document::parse(value.to_string().as_bytes()).is_ok());
 }
 
@@ -390,7 +390,7 @@ fn native_search_preserves_explicit_grants_and_tool_configuration() {
             .iter()
             .any(|name| name.starts_with("brave-search-"))
     );
-    value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = json!({"allow":["read"]});
+    value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = json!({"enabled":["read"]});
     assert!(Document::parse(value.to_string().as_bytes()).is_ok());
 }
 
@@ -525,7 +525,7 @@ fn native_search_constraints_are_forwarded_for_fabric_validation() {
     }
     let mut value = input();
     value["spec"]["sandboxes"]["assistant"]["integrations"]["search"]["provider"] = json!("tavily");
-    value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = json!({"allow":["read"]});
+    value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = json!({"enabled":["read"]});
     assert!(Document::parse(value.to_string().as_bytes()).is_ok());
 }
 

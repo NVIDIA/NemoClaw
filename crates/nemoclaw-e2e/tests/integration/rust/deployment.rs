@@ -226,13 +226,13 @@ async fn shell_restriction_and_restore_replace_only_the_target_sandbox() {
         .get_mut("assistant")
         .unwrap()
         .agent
-        .tools = Some(nemoclaw_sdk::config::AgentTools {
-        allow: vec![
-            "fixture.file-read".into(),
-            "fixture.shell-launch".into(),
-            "fixture.lookup".into(),
-        ],
-    });
+        .tools = serde_json::json!({"enabled": [
+        "fixture.file-read",
+        "fixture.shell-launch",
+        "fixture.lookup",
+    ]})
+    .as_object()
+    .cloned();
     let mut reader = document.spec.sandboxes["assistant"].clone();
     reader.agent.name = "reader".into();
     // An exposure on the unrelated sandbox gives the gateway a service endpoint
@@ -251,8 +251,9 @@ async fn shell_restriction_and_restore_replace_only_the_target_sandbox() {
         .agent
         .tools
         .as_mut()
+        .and_then(|tools| tools.get_mut("enabled"))
+        .and_then(serde_json::Value::as_array_mut)
         .unwrap()
-        .allow
         .retain(|tool| tool != "fixture.shell-launch");
     let target = format!("{}/assistant", lifecycle.document.workspace());
 
@@ -378,7 +379,7 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
             .unwrap();
     document.spec.integrations = serde_json::from_value(serde_json::json!({
         "search": {"kind":"webSearch", "provider":"tavily", "credential":{"env":"SEARCH_KEY"}},
-        "bookings": {"kind":"api", "endpoint":"https://bookings.example.com/mcp",
+        "bookings": {"kind":"api", "endpoints":["https://bookings.example.com/mcp"],
             "credential":{"env":"BOOKINGS_API_KEY"}}
     }))
     .unwrap();
@@ -390,9 +391,9 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
         .api = Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
     let mut reader = document.spec.sandboxes["assistant"].clone();
     reader.agent.name = "reader".into();
-    reader.agent.tools = Some(nemoclaw_sdk::config::AgentTools {
-        allow: vec!["read".into()],
-    });
+    reader.agent.tools = serde_json::json!({"enabled": ["read"]})
+        .as_object()
+        .cloned();
     let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
     sandbox.agent.integration_refs = vec!["search".into(), "bookings".into()];
     sandbox.harness.as_mut().unwrap().settings = Some(
@@ -467,6 +468,73 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
     let unchanged = lifecycle.export_and_reapply_unchanged(effects).await;
     assert_eq!(unchanged.service_urls, expected);
     lifecycle.assert_drift_stops_plan_and_export(effects).await;
+    lifecycle.destroy();
+}
+
+/// A changed, added, or removed service exposure updates the sandbox in
+/// place: the sandbox and its agent keep running, and apply reports the URLs
+/// of the declared endpoints. The provider's sandbox contract scenario checks
+/// the endpoints the gateway holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn changed_service_exposures_keep_the_sandbox_and_its_agent() {
+    let mut document =
+        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
+            .unwrap();
+    let exposures = |value| serde_json::from_value(value).unwrap();
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .service_exposures = exposures(serde_json::json!({
+        "dashboard": {"targetPort": 18800},
+        "api": {"targetPort": 8642}
+    }));
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    lifecycle.apply().await;
+    let (created, starts) = {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        (state.created_sandboxes.len(), state.fabric_starts.clone())
+    };
+    let mut changed = lifecycle.document.clone();
+    changed
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .service_exposures = exposures(serde_json::json!({
+        "dashboard": {"targetPort": 18801},
+        "web": {"targetPort": 3000, "authorizationMode": "BEARER_PASSTHROUGH"}
+    }));
+    let applied = lifecycle
+        .deployment
+        .apply(&changed, &lifecycle.cancel)
+        .await
+        .unwrap();
+    {
+        let state = lifecycle.fixture.state.lock().unwrap();
+        assert_eq!(
+            state.created_sandboxes.len(),
+            created,
+            "the change replaced the sandbox"
+        );
+        assert_eq!(
+            state.fabric_starts, starts,
+            "the change restarted the agent"
+        );
+    }
+    let workspace = lifecycle.document.workspace();
+    let url =
+        |service: &str| format!("http://{workspace}--assistant--{service}.services.fixture.test/");
+    let expected: BTreeMap<_, _> = [(
+        "assistant".to_owned(),
+        [("dashboard", url("dashboard")), ("web", url("web"))]
+            .map(|(service, url)| (service.to_owned(), url))
+            .into(),
+    )]
+    .into();
+    assert_eq!(applied.service_urls, expected);
     lifecycle.destroy();
 }
 

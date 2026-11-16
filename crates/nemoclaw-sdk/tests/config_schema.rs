@@ -672,8 +672,6 @@ fn sandboxes_are_keyed_by_name() {
         ))
     };
     agrees(&validator, &count(0), false);
-    agrees(&validator, &count(32), true);
-    agrees(&validator, &count(33), false);
 
     // Schema errors name a valid sandbox key.
     let mut invalid = keyed.clone();
@@ -685,6 +683,53 @@ fn sandboxes_are_keyed_by_name() {
         error.contains("spec.sandboxes.reviewer.agent.name"),
         "{error}"
     );
+}
+
+/// Kubernetes and OpenShift schedule sandboxes across a cluster's nodes, so a
+/// document holds up to 256; Docker and Podman run every sandbox on one host
+/// and keep 32. Editors and the parser apply the same cap.
+#[test]
+fn the_gateway_runtime_sets_how_many_sandboxes_a_document_holds() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (example, cap, runtime) in [
+        ("kubernetes/managed-development.yaml", 256, "Kubernetes"),
+        ("kubernetes/external-gateway.yaml", 256, "Kubernetes"),
+        ("openshift/managed-development.yaml", 256, "OpenShift"),
+        ("local.yaml", 32, "Docker"),
+        // An omitted runtime selects Docker.
+        ("web-search.yaml", 32, "Docker"),
+        ("managed-podman.yaml", 32, "Podman"),
+    ] {
+        let value = input(example);
+        let sandbox = value["spec"]["sandboxes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        let count = |count: usize| {
+            let mut value = value.clone();
+            value["spec"]["sandboxes"] = Value::Object(
+                (0..count)
+                    .map(|index| (format!("sandbox-{index}"), sandbox.clone()))
+                    .collect(),
+            );
+            value
+        };
+        agrees(&validator, &count(cap), true);
+        let over = count(cap + 1);
+        agrees(&validator, &over, false);
+        let error = Document::parse(over.to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("spec.sandboxes")
+                && error.contains(&format!("at most {cap} sandboxes"))
+                && error.contains(runtime),
+            "{example}: {error}"
+        );
+    }
 }
 
 #[test]
@@ -992,6 +1037,124 @@ fn metadata_uid_accepts_either_case_and_keeps_it_lowercase() {
     direct.defaults();
     assert_eq!(direct, same);
     direct.validate().unwrap();
+}
+
+#[test]
+fn a_model_containers_gpu_devices_list_one_uuid_or_index_in_the_schema_and_the_parser() {
+    const UUID: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (file, service) in [
+        ("spark/vllm.yaml", "qwen"),
+        ("managed-ollama.yaml", "ollama-server"),
+    ] {
+        for (devices, accepted) in [
+            (json!(["0"]), true),
+            (json!(["12"]), true),
+            (json!(["999"]), true),
+            (json!([UUID]), true),
+            // Serving one model across several GPUs isn't implemented.
+            (json!(["0", "1"]), false),
+            (json!(["0", UUID]), false),
+            (json!(["0", "0"]), false),
+            (json!([]), false),
+            (json!("0"), false),
+            (json!(UUID), false),
+            (json!(["all"]), false),
+            (json!([""]), false),
+            (json!(["device=0"]), false),
+            (json!(["0,1"]), false),
+            (json!(["01"]), false),
+            (json!([" 0"]), false),
+            (json!(["1000"]), false),
+            (json!(["GPU-79B44E99-D10D-A381-8CD6-5CCB073EAEA3"]), false),
+            (json!(["GPU-79b44e99"]), false),
+            (json!(["MIG-79b44e99-d10d-a381-8cd6-5ccb073eaea3"]), false),
+            (json!([0]), false),
+        ] {
+            let mut value = input(file);
+            value["spec"]["services"][service]["container"]["gpuDevices"] = devices.clone();
+            agrees(&validator, &value, accepted);
+        }
+        // `kind: container` keeps its boolean `gpu`; model services don't have it.
+        let mut value = input(file);
+        value["spec"]["services"][service]["container"]["gpu"] = json!("0");
+        agrees(&validator, &value, false);
+    }
+}
+
+#[test]
+fn several_gpu_devices_are_refused_because_multi_gpu_serving_is_not_implemented() {
+    for devices in [json!(["0", "1"]), json!([])] {
+        let mut value = input("spark/vllm.yaml");
+        value["spec"]["services"]["qwen"]["container"]["gpuDevices"] = devices;
+        let error = Document::parse(value.to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("serving one model across several GPUs isn't implemented yet"),
+            "{error}"
+        );
+    }
+    let mut value = input("spark/vllm.yaml");
+    value["spec"]["services"]["qwen"]["container"]["gpuDevices"] = json!(["all"]);
+    let error = Document::parse(value.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("GPU UUID or an index"), "{error}");
+}
+
+// Lifting the one-entry limit must not admit a duplicate device, so the item
+// rules reject duplicates on their own.
+#[test]
+fn gpu_devices_stay_unique_without_the_one_entry_limit() {
+    let mut schema = input_schema();
+    let devices = &mut schema["$defs"]["ServiceContainer"]["properties"]["gpuDevices"];
+    assert_eq!(devices["maxItems"], 1);
+    devices.as_object_mut().unwrap().remove("maxItems");
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    for (devices, accepted) in [
+        (json!(["0", "1"]), true),
+        (json!(["0", "0"]), false),
+        (json!(["0", "1", "0"]), false),
+    ] {
+        let mut value = input("spark/vllm.yaml");
+        value["spec"]["services"]["qwen"]["container"]["gpuDevices"] = devices.clone();
+        assert_eq!(validator.is_valid(&value), accepted, "{devices}");
+    }
+}
+
+#[test]
+fn vllm_parallel_sizes_are_bounded_positive_integers_or_omitted() {
+    const RECIPE: &str = "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml";
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (size, accepted) in [
+        (json!(0), false),
+        (json!(1), true),
+        (json!(16), true),
+        (json!(17), false),
+        (json!(-1), false),
+    ] {
+        for field in ["tensorParallelSize", "pipelineParallelSize"] {
+            let mut value = input("spark/vllm.yaml");
+            value["spec"]["services"]["qwen"]["serving"][field] = size.clone();
+            agrees(&validator, &value, accepted);
+            let mut value = input(RECIPE);
+            value["spec"]["services"]["qwen"]["recipe"]["serving"][field] = size.clone();
+            agrees(&validator, &value, accepted);
+        }
+    }
+    // A recipe's layout is part of what its budget was measured on, so the
+    // service doesn't override it.
+    for field in ["tensorParallelSize", "pipelineParallelSize"] {
+        let mut value = input(RECIPE);
+        value["spec"]["services"]["qwen"]["serving"][field] = json!(2);
+        agrees(&validator, &value, false);
+    }
+    // A recipe names its layout only as vLLM does, in serving; it has no GPU
+    // count.
+    let mut value = input(RECIPE);
+    value["spec"]["services"]["qwen"]["recipe"]["compatibility"]["gpuCount"] = json!(1);
+    agrees(&validator, &value, false);
 }
 
 #[test]

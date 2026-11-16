@@ -95,12 +95,18 @@ async fn scenarios_in_shard_4() {
 /// before a bundle is built.
 #[test]
 fn every_scenario_test_names_its_inputs() {
-    let mut missing: Vec<String> = fs::read_dir(LIVE_TESTS)
-        .unwrap()
+    let manual = Path::new(LIVE_TESTS).parent().unwrap().join("manual");
+    let mut missing: Vec<String> = [Path::new(LIVE_TESTS), manual.as_path()]
+        .into_iter()
+        .flat_map(|directory| fs::read_dir(directory).unwrap())
         .filter_map(|entry| {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
             let scenario = name.strip_suffix(".tftest.hcl")?.to_owned();
-            let case = Path::new(CASES).join(format!("{scenario}.yaml"));
+            let case = if scenario == "dgx-station-openclaw-nemotron" {
+                Path::new(EXAMPLES).join("gtc-dc/openclaw-dgx-station.yaml")
+            } else {
+                Path::new(CASES).join(format!("{scenario}.yaml"))
+            };
             (!case.is_file()).then(|| format!("e2e/hcl/tests/{name}"))
         })
         .collect();

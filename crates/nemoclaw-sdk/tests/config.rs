@@ -673,7 +673,7 @@ fn native_identifiers_and_model_metadata_do_not_require_sdk_registration() {
         serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
     let sandbox = &mut tree["spec"]["sandboxes"]["assistant"];
     sandbox["harness"]["kind"] = "fixture-featureful-agent".into();
-    sandbox["agent"]["tools"] = serde_json::json!({"allow":["lookup","custom_search"]});
+    sandbox["agent"]["tools"] = serde_json::json!({"enabled":["lookup","custom_search"]});
     let inference = &mut sandbox["agent"]["inference"];
     inference["default"] = "primary".into();
     let mut second = inference["routes"][0].clone();
@@ -690,11 +690,7 @@ fn native_identifiers_and_model_metadata_do_not_require_sdk_registration() {
     tree["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
         serde_json::json!({"disclosure":"adapter-defined-mode"});
     Document::parse(serde_json::to_vec(&tree).unwrap().as_slice()).unwrap();
-    for invalid in [
-        serde_json::json!({"allow":[]}),
-        serde_json::json!({"allow":["read","read"]}),
-        serde_json::json!({"disclosure":""}),
-    ] {
+    for invalid in [serde_json::json!(["read"]), serde_json::json!("read")] {
         tree["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = invalid;
         assert!(Document::parse(serde_json::to_vec(&tree).unwrap().as_slice()).is_err());
     }

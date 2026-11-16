@@ -64,8 +64,6 @@ mod discovery_graph;
 mod engine_endpoint;
 #[path = "error.rs"]
 mod error;
-#[path = "execution_settings.rs"]
-mod execution_settings;
 #[path = "explicit_hardware.rs"]
 mod explicit_hardware;
 #[path = "fabric_capabilities.rs"]
@@ -112,6 +110,8 @@ mod kubernetes_connection;
 mod kubernetes_corrupt_receipt;
 #[path = "kubernetes_expired_authentication.rs"]
 mod kubernetes_expired_authentication;
+#[path = "kubernetes_exposure.rs"]
+mod kubernetes_exposure;
 #[path = "kubernetes_gateway.rs"]
 mod kubernetes_gateway;
 #[path = "kubernetes_inference.rs"]
@@ -122,8 +122,6 @@ mod kubernetes_interruption;
 mod kubernetes_lost_create_response;
 #[path = "kubernetes_managed_compile.rs"]
 mod kubernetes_managed_compile;
-#[path = "kubernetes_openshift_reapply.rs"]
-mod kubernetes_openshift_reapply;
 #[path = "kubernetes_operations.rs"]
 mod kubernetes_operations;
 #[path = "kubernetes_read_failures.rs"]
@@ -155,6 +153,8 @@ mod native_inference;
 mod nemotron_serving;
 #[path = "network_config.rs"]
 mod network_config;
+#[path = "network_references.rs"]
+mod network_references;
 #[path = "observability.rs"]
 mod observability;
 #[path = "ollama_proxy.rs"]

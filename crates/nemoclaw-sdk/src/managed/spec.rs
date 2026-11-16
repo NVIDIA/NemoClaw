@@ -65,7 +65,19 @@ pub struct Process {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_limit_millis: Option<u32>,
     pub memory_bytes: u64,
-    pub gpu: bool,
+    pub gpus: Gpus,
+}
+
+/// The GPUs a container gets.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Gpus {
+    #[default]
+    None,
+    /// Every GPU on the engine.
+    All,
+    /// These GPUs, by UUID or index, as `nvidia-smi` names them.
+    Devices(Vec<String>),
 }
 
 /// Launch settings when the image owns its entrypoint, command, and health check.
@@ -81,8 +93,6 @@ pub struct ImageLaunch {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub ulimits: std::collections::BTreeMap<String, i64>,
 }
-/// CFS period for container CPU limits, matching kubelet and `docker --cpus`.
-pub(crate) const CPU_PERIOD_MICROS: u64 = 100_000;
 /// The supervisor every managed vLLM and Ollama image runs.
 pub const RUNTIME_ENTRYPOINT: &str = "/usr/local/bin/nemoclaw-runtime";
 /// Where a runtime keeps its data, such as downloaded models.
@@ -95,13 +105,6 @@ pub const RUNTIME_ULIMITS: [(&str, i64); 2] = [("memlock", -1), ("stack", 67_108
 /// Shared memory a runtime gets unless its service sets its own.
 pub fn default_shared_memory_bytes() -> u64 {
     crate::services::installers::vllm::ServiceContainer::resources(None).shared_memory_bytes
-}
-/// The kernel's minimum CFS quota; kubelet raises smaller CPU limits to it.
-const MIN_CPU_QUOTA_MICROS: u64 = 1000;
-
-/// CFS quota per [`CPU_PERIOD_MICROS`] for a CPU limit in millicores.
-pub(crate) fn cpu_quota_micros(limit_millis: u32) -> u64 {
-    (u64::from(limit_millis) * CPU_PERIOD_MICROS / 1000).max(MIN_CPU_QUOTA_MICROS)
 }
 /// Data source computing a Docker gateway container's launch.
 pub const GATEWAY_RUNTIME_DATA_SOURCE: &str = "gateway_runtime";
@@ -679,11 +682,23 @@ impl Spec {
             host["Memory"] = json!(process.memory_bytes);
             host["MemorySwap"] = json!(process.memory_bytes);
             if let Some(limit) = process.cpu_limit_millis {
-                host["CpuPeriod"] = json!(CPU_PERIOD_MICROS);
-                host["CpuQuota"] = json!(cpu_quota_micros(limit));
+                host["NanoCpus"] = json!(u64::from(limit) * 1_000_000);
             }
-            if process.gpu {
-                host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
+            match &process.gpus {
+                Gpus::None => {}
+                Gpus::All => {
+                    host["DeviceRequests"] =
+                        json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
+                }
+                // The Docker provider's `gpus = "device=ID[,ID...]"` leaves the
+                // driver empty and keeps the IDs in order, as `docker run --gpus` does.
+                Gpus::Devices(devices) => {
+                    host["DeviceRequests"] = json!([{
+                        "Driver": "",
+                        "DeviceIDs": devices,
+                        "Capabilities": [["gpu"]],
+                    }]);
+                }
             }
             if process.image_owned.is_none() {
                 host["Ulimits"] = json!(

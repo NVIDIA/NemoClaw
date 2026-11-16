@@ -56,6 +56,9 @@ pub enum Error {
     ServiceStarting,
     #[error("managed container is absent but owned persistent resources remain")]
     PartialRuntime,
+    /// A managed service runtime stopped and recorded why.
+    #[error("service runtime stopped: {0}")]
+    ServiceStopped(String),
 }
 
 impl Error {
@@ -92,6 +95,7 @@ impl From<nemoclaw_runtime::Error> for Error {
             },
             nemoclaw_runtime::Error::Cancelled => Self::Cancelled,
             nemoclaw_runtime::Error::ServiceStarting => Self::ServiceStarting,
+            error @ nemoclaw_runtime::Error::Exited(_) => Self::ServiceStopped(error.to_string()),
             nemoclaw_runtime::Error::Observation(e) => Self::Observation(match e {
                 nemoclaw_runtime::ObservationError::Authentication => {
                     crate::ObservationError::Authentication

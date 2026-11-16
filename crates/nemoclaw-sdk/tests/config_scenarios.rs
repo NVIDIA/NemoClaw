@@ -120,11 +120,11 @@ fn multiple_openclaw_sandboxes_with_policy_tools_and_observability_should_work()
     assert_eq!(sandboxes["writer"]["agent"]["name"], "writer");
     assert_eq!(sandboxes["reader"]["agent"]["name"], "reader");
     assert_eq!(
-        sandboxes["reader"]["agent"]["tools"]["allow"],
+        sandboxes["reader"]["agent"]["tools"]["enabled"],
         json!(["read"])
     );
     assert_eq!(
-        desired["spec"]["harnesses"]["assistant"]["execution"]["timeoutSeconds"],
+        desired["spec"]["harnesses"]["assistant"]["runtime"]["timeout_seconds"],
         900
     );
 }

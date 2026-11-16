@@ -39,6 +39,47 @@ fn case() {
         fs::create_dir_all(directory).unwrap();
     }
     let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap_or_else(|_| format!("cases/{case}.yaml"));
+    if var("NEMOCLAW_HCL_PERSISTENT").as_deref() == Ok("true") {
+        assert!(!run.join("deployment").exists(), "use a fresh run");
+        assert_eq!(
+            fs::canonicalize(&config).unwrap().parent().unwrap(),
+            fs::canonicalize(&run).unwrap(),
+            "bind a private copy inside this run"
+        );
+        for label in ["nemoclaw.nvidia.com/uid", "openshell.ai/sandbox-namespace"] {
+            assert!(
+                docker_list(
+                    &["container", "ls", "--quiet", "--filter"],
+                    &format!("label={label}")
+                )
+                .is_empty(),
+                "another deployment is still running"
+            );
+        }
+        let mut document: Value =
+            serde_saphyr::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+        let ids = docker(&["network", "ls", "--quiet"]);
+        let mut occupied = Vec::new();
+        for id in ids.lines() {
+            occupied.extend(
+                docker(&[
+                    "network",
+                    "inspect",
+                    "--format",
+                    "{{range .IPAM.Config}}{{.Subnet}} {{end}}",
+                    id,
+                ])
+                .split_whitespace()
+                .map(str::to_owned),
+            );
+        }
+        document["spec"]["gateway"]["networkCIDR"] =
+            nemoclaw_build::ci::live::free_subnet(&occupied, &[])
+                .unwrap()
+                .into();
+        fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+        fs::write(reports.join("identity.json"), json!({"candidate":var("GITHUB_SHA").unwrap(),"uid":document["metadata"]["uid"],"case":case}).to_string()).unwrap();
+    }
     let context = json!({
         "config": fs::canonicalize(config).unwrap(),
         "state_dir": run.join("deployment"),
@@ -50,6 +91,15 @@ fn case() {
         "evidence_dir": reports,
         "versions": fs::canonicalize("../../versions.json").unwrap(),
     });
+    let directory = var("NEMOCLAW_HCL_TEST_DIRECTORY").unwrap_or_else(|_| "tests".into());
+    let modules = fs::canonicalize("tests/e2e/hcl").unwrap();
+    assert!(
+        modules
+            .join(&directory)
+            .join(format!("{case}.tftest.hcl"))
+            .is_file(),
+        "missing HCL case"
+    );
     let providers = run.join("providers.tfrc");
     fs::write(
         &providers,
@@ -72,22 +122,81 @@ fn case() {
             .env("TF_VAR_context", context.to_string());
         tofu
     };
-    let modules = fs::canonicalize("tests/e2e/hcl").unwrap();
     let initialized = tofu()
         .args(["init", "-input=false", "-no-color"])
+        .arg(format!("-test-directory={directory}"))
         .arg(format!("-from-module={}", modules.display()))
         .status();
     assert!(initialized.unwrap().success(), "tofu init failed");
     // The test's core log times its runs.
     let log = CoreLog::create(work.join("tofu-test.log"));
-    let filter = format!("-filter=tests/{case}.tftest.hcl");
+    let filter = format!("-filter={directory}/{case}.tftest.hcl");
     let tested = tofu()
-        .args(["test", "-no-color", &filter])
+        .args([
+            "test",
+            "-no-color",
+            &format!("-test-directory={directory}"),
+            &filter,
+        ])
         .env("TF_LOG_CORE", "debug")
         .env("TF_LOG_PATH", &log.0)
         .status();
     report_timings(&case, &log.run_durations());
     assert!(tested.unwrap().success(), "tofu test failed");
+}
+
+fn docker(args: &[&str]) -> String {
+    nemoclaw_build::ci::live::docker_lines(
+        Command::new("docker")
+            .args(["--host", "unix:///var/run/docker.sock"])
+            .args(args),
+    )
+    .expect("Docker observation failed")
+    .join("\n")
+}
+
+fn docker_list(args: &[&str], filter: &str) -> Vec<String> {
+    let args: Vec<_> = args.iter().copied().chain([filter]).collect();
+    docker(&args).lines().map(str::to_owned).collect()
+}
+
+#[test]
+#[ignore = "live: independently verifies owned Docker objects after SDK destroy"]
+fn docker_cleanup() {
+    let run = PathBuf::from(var("NEMOCLAW_HCL_RUN").unwrap());
+    let document =
+        Document::parse(fs::File::open(var("NEMOCLAW_HCL_DOCUMENT").unwrap()).unwrap()).unwrap();
+    let workspace = document.workspace();
+    let owner = format!("label=nemoclaw.nvidia.com/uid={}", document.metadata.uid);
+    let sandbox = format!("label=openshell.ai/sandbox-namespace={workspace}-gateway");
+    let containers = &["container", "ls", "--all", "--quiet", "--filter"];
+    let mut clean = docker_list(containers, &sandbox).is_empty();
+    for id in docker_list(containers, &owner) {
+        let rows: Vec<Value> =
+            serde_json::from_str(&docker(&["container", "inspect", &id])).unwrap();
+        clean &= rows.len() == 1
+            && rows[0]["Name"] == format!("/{workspace}-gateway-initialize")
+            && rows[0]["State"]["Status"] == "exited"
+            && rows[0]["State"]["ExitCode"] == 0;
+    }
+    let volumes = nemoclaw_e2e::state::docker_volumes(&run.join("deployment"));
+    for (kind, expected) in [
+        ("volume", volumes),
+        ("network", vec![format!("{workspace}-network")]),
+    ] {
+        clean &= docker_list(&[kind, "ls", "--format", "{{.Name}}", "--filter"], &owner)
+            .iter()
+            .all(|name| expected.contains(name));
+    }
+    fs::write(
+        run.join("reports/cleanup.json"),
+        json!({"succeeded":clean}).to_string(),
+    )
+    .unwrap();
+    assert!(
+        clean,
+        "owned Docker objects remain outside the retained state"
+    );
 }
 
 /// Invoke one target's agent. The published report records the outcome; the
@@ -106,10 +215,17 @@ async fn probe() {
     let runtime = runtime_id(&state, sandbox.name);
     let request: Value = serde_json::from_str(&input("REQUEST")).unwrap();
     // A managed Kubernetes gateway is reached through a port-forward that the
-    // connection holds, as the SDK's providers reach it.
+    // connection holds, as the SDK's providers reach it. A gateway published
+    // through kubernetes.expose is dialed at its endpoint instead, as another
+    // client would dial it, with the same client certificate and token.
+    let published = document.spec.gateway.as_managed().and_then(|gateway| {
+        gateway.kubernetes.as_ref()?.expose.as_ref()?;
+        Some(gateway.endpoint.clone())
+    });
     let (_forward, client) = match kubernetes_operations(&document, &state).await {
         Some(operations) => {
-            let (forward, client) = kubernetes_gateway(&operations, &recorded).await;
+            let (forward, client) =
+                kubernetes_gateway(&operations, &recorded, published.as_deref()).await;
             (Some(forward), client)
         }
         None => {
@@ -137,9 +253,10 @@ async fn probe() {
 /// Request one service a sandbox exposes, as a person would with what apply
 /// reports: read the interface's token in the sandbox and forward its port
 /// with the pinned OpenShell CLI, then send one request, with the token as a
-/// Bearer credential when there is one. The published report holds the
-/// status; the token stays in memory and the body in the private work
-/// directory for `hcl/interface`.
+/// Bearer credential when there is one. A service without a token file can
+/// name the page global that holds its session token, which a browser reads
+/// from the page. The published report holds the status; the token stays in
+/// memory and the body in the private work directory for `hcl/interface`.
 #[tokio::test]
 #[ignore = "run by tests/e2e/hcl/interface for one target"]
 async fn interface() {
@@ -187,31 +304,34 @@ async fn interface() {
         .timeout(Duration::from_secs(120))
         .build()
         .unwrap();
-    let url = format!("http://127.0.0.1:{local}{}", input("PATH"));
-    let body = input("BODY");
-    let (status, text) = loop {
-        let mut request = if body.is_empty() {
-            client.get(&url)
-        } else {
-            client
-                .post(&url)
-                .header("Content-Type", "application/json")
-                .body(body.clone())
-        };
-        if let Some(token) = &token {
-            request = request.bearer_auth(token);
-        }
-        match request.send().await {
-            Ok(response) => {
-                let status = response.status().as_u16();
-                break (status, response.text().await.unwrap_or_default());
-            }
-            Err(_) if Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            Err(error) => panic!("the request through the forward failed: {error}"),
+    let base = format!("http://127.0.0.1:{local}");
+    let token = match input("PAGE_TOKEN").as_str() {
+        "" => token,
+        name => {
+            let (_, page) = through_forward(|| client.get(&base), deadline).await;
+            page_global(&page, name)
         }
     };
+    let url = format!("{base}{}", input("PATH"));
+    let body = input("BODY");
+    let (status, text) = through_forward(
+        || {
+            let request = if body.is_empty() {
+                client.get(&url)
+            } else {
+                client
+                    .post(&url)
+                    .header("Content-Type", "application/json")
+                    .body(body.clone())
+            };
+            match &token {
+                Some(token) => request.bearer_auth(token),
+                None => request,
+            }
+        },
+        deadline,
+    )
+    .await;
     let _ = forward.kill();
     let _ = forward.wait();
     fs::write(input("RESPONSE"), text).unwrap();
@@ -220,6 +340,38 @@ async fn interface() {
         json!({"sandbox": sandbox, "port": input("PORT"), "status": status}).to_string(),
     )
     .unwrap();
+}
+
+/// The status and body of a request through a forward, retried until
+/// `deadline` while the forward's tunnel opens.
+async fn through_forward(
+    request: impl Fn() -> reqwest::RequestBuilder,
+    deadline: std::time::Instant,
+) -> (u16, String) {
+    loop {
+        match request().send().await {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                return (status, response.text().await.unwrap_or_default());
+            }
+            Err(_) if std::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(error) => panic!("the request through the forward failed: {error}"),
+        }
+    }
+}
+
+/// The string that a page's script assigns to `window.NAME`.
+fn page_global(page: &str, name: &str) -> Option<String> {
+    let global = format!("window.{name}");
+    let value = page[page.find(&global)? + global.len()..]
+        .trim_start()
+        .strip_prefix('=')?;
+    serde_json::Deserializer::from_str(value)
+        .into_iter()
+        .next()?
+        .ok()
 }
 
 /// The pinned OpenShell CLI, on the gateway and workspace that apply reports.
@@ -261,7 +413,7 @@ async fn command() {
     let (exit_code, text) = match kubernetes_operations(&document, &state).await {
         Some(operations) => {
             let binding = sandbox_binding(&state, &sandbox);
-            let (_forward, client) = kubernetes_gateway(&operations, &binding).await;
+            let (_forward, client) = kubernetes_gateway(&operations, &binding, None).await;
             let (code, output) = client
                 .exec_bound(&binding, command, Default::default(), 60)
                 .await
@@ -304,7 +456,6 @@ async fn kubernetes_operations(
     Some(nemoclaw_sdk::kubernetes::operations::Operations {
         client: nemoclaw_sdk::kubernetes::connect(&target).await.unwrap(),
         state: state.join("kubernetes"),
-        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     })
 }
 
@@ -459,10 +610,12 @@ fn visible(output: &[u8]) -> String {
 
 /// The managed Kubernetes gateway that `binding` records, reached as the
 /// SDK's providers reach it: through the port-forward the returned connection
-/// holds, with the token and TLS files in its environment.
+/// holds, with the token and TLS files in its environment. With `published`,
+/// the client dials that endpoint instead of the forward.
 async fn kubernetes_gateway(
     operations: &nemoclaw_sdk::kubernetes::operations::Operations,
     binding: &nemoclaw_sdk::backend::Row,
+    published: Option<&str>,
 ) -> (nemoclaw_sdk::kubernetes::Connection, OpenShell) {
     use nemoclaw_sdk::{
         ObservationError,
@@ -485,7 +638,7 @@ async fn kubernetes_gateway(
     let connection = operations.connect(&spec).await.unwrap();
     let file = |env: &str| FileRef { env: env.into() };
     let gateway = Gateway::External(ExternalGateway {
-        endpoint: connection.endpoint().to_owned(),
+        endpoint: published.unwrap_or(connection.endpoint()).to_owned(),
         credential: Some(SecretRef {
             env: TOKEN_ENV.into(),
         }),
@@ -680,7 +833,7 @@ const CLEANUP: &str = "(cleanup)";
 
 /// How long each run block took, in order, then the cleanup, from the debug
 /// lines OpenTofu's test runner writes to its core log. `tofu test -json`
-/// can't time them: OpenTofu 1.12 reports a file's runs only after the file
+/// can't time them: OpenTofu 1.13 reports a file's runs only after the file
 /// ends, all with one timestamp. A run lasts until the next run or the
 /// cleanup starts, and the last until the test runner's last line. Only these
 /// lines are read, so no value from the deployment reaches the table.
@@ -876,8 +1029,8 @@ fn timing_tables_list_each_run_in_order_with_their_total() {
         ("destroy".to_owned(), Duration::from_millis(33_800)),
     ];
     assert_eq!(
-        timing_table("kind-openshift-oidc", &runs),
-        "#### Runs of the kind-openshift-oidc case: 74.0 s\n\n\
+        timing_table("kind-kubernetes-oidc", &runs),
+        "#### Runs of the kind-kubernetes-oidc case: 74.0 s\n\n\
          | Run | Time |\n|---|---|\n\
          | apply | 40.2 s |\n\
          | destroy | 33.8 s |\n"
@@ -891,4 +1044,16 @@ fn timing_tables_list_each_run_in_order_with_their_total() {
 fn visible_text_drops_control_sequences() {
     let output = b"\x1b]0;openclaw tui\x07\x1b(B\x1b[?25l\x1b[1;32mconnected\x1b[0m | idle\r\n\x1b[2Knemoclaw-stub-reply";
     assert_eq!(visible(output), "connected | idle\nnemoclaw-stub-reply");
+}
+
+/// Hermes's dashboard serves its page with the session token in a script.
+#[test]
+fn page_globals_read_the_string_a_script_assigns() {
+    let page = r#"<script>window.__HERMES_SESSION_TOKEN__ = "a-b_c";window.__HERMES_AUTH_REQUIRED__=false;</script>"#;
+    assert_eq!(
+        page_global(page, "__HERMES_SESSION_TOKEN__").as_deref(),
+        Some("a-b_c")
+    );
+    assert_eq!(page_global(page, "__HERMES_AUTH_REQUIRED__"), None);
+    assert_eq!(page_global(page, "__HERMES_BASE_PATH__"), None);
 }

@@ -294,6 +294,11 @@ fn object_fields(root: &Value, schema: &Value, pointer: &str) -> Result<Fields, 
     let mut fields = Fields::new();
     for (json, property) in properties {
         let pointer = format!("{pointer}/properties/{json}");
+        // A property that can only be null can only be omitted, so it has no
+        // attribute; omission already expresses null.
+        if resolve(root, property, &pointer)?.get("type") == Some(&Value::from("null")) {
+            continue;
+        }
         let field = Field {
             json: json.clone(),
             shape: shape(root, property, &pointer)?,
@@ -780,6 +785,45 @@ mod tests {
             ]}},
         });
         assert_eq!(fields(&root, &[]).unwrap()["mode"].shape, Shape::String);
+    }
+
+    /// A property that can only be null can only be omitted, so it has no
+    /// attribute; alternatives that each allow only the other's key as null,
+    /// such as one entry naming either a skill or a folder, merge into one
+    /// object whose keys are both optional.
+    #[test]
+    fn a_property_that_can_only_be_null_is_left_out() {
+        let entry = |key: &str, other: &str| {
+            json!({"type": "object", "additionalProperties": false, "required": [key], "properties": {
+                key: {"type": "string"},
+                other: {"type": "null"},
+            }})
+        };
+        let root = json!({
+            "type": "object",
+            "properties": {
+                "unused": {"type": "null"},
+                "entries": {"type": ["array", "null"], "items": {"$ref": "#/$defs/Entry"}},
+            },
+            "$defs": {"Entry": {"oneOf": [entry("skill", "folder"), entry("folder", "skill")]}},
+        });
+        let fields = fields(&root, &[]).unwrap();
+        assert!(!fields.contains_key("unused"));
+        let Shape::ObjectList(entry) = &fields["entries"].shape else {
+            panic!("entries are a list of objects")
+        };
+        assert_eq!(entry["skill"].shape, Shape::String);
+        assert_eq!(entry["folder"].shape, Shape::String);
+        assert!(!entry["skill"].required && !entry["folder"].required);
+        // OpenTofu sends each entry's unset key as null, which is omitted.
+        let configured = json!({"entries": [
+            {"folder": "/sandbox/skills", "skill": null},
+            {"folder": null, "skill": "/sandbox/review"},
+        ]});
+        assert_eq!(
+            from_hcl(&fields, &configured),
+            json!({"entries": [{"folder": "/sandbox/skills"}, {"skill": "/sandbox/review"}]})
+        );
     }
 
     /// An object whose properties the schema leaves open has no OpenTofu

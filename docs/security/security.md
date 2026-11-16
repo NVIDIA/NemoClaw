@@ -10,7 +10,7 @@ Parser acceptance and protocol fixtures do not establish security qualification 
 
 OpenShell enforces the declared sandbox policy; Fabric runs the native agent within that sandbox.
 Use [sandbox policy](sandbox-network.md) for filesystem, process, egress, and proxy configuration.
-An explicit policy replaces the preset, and apply rejects policy changes that require sandbox replacement.
+An explicit policy replaces the preset, and a policy change replaces the sandbox, deleting its files and conversations (except on mounted volumes).
 
 The isolated preset uses Landlock `best_effort`; unavailable restrictions are not enforced.
 Each declared agent has its own OpenShell sandbox; tool grants do not further isolate processes or files within that sandbox.
@@ -36,7 +36,6 @@ Account for host operators, gateway operators, sandbox processes, and endpoint o
 Before granting access, identify the destination, executing binary, files, and credentials the task needs.
 Use [explicit network policy](sandbox-network.md#choose-a-policy) for an allowed destination; selecting an HTTP proxy alone does not grant egress.
 An explicit policy replaces the entire preset, so retain the intended filesystem and process settings too.
-Use a fresh deployment for policy or launch changes that apply refuses to replace.
 
 ## Credentials and Authentication
 
@@ -87,7 +86,7 @@ SDK stage progress, operation results, and known remaining-state guidance remain
 Protected values include resolved environment references passed to the child, including gateway TLS file paths, and nonempty values in the SDK process environment whose names contain `KEY`, `TOKEN`, `SECRET`, or `PASSWORD`, ignoring case.
 The environment scan includes values subsequently excluded from the child environment or overridden.
 If withholding is unexpected, check those references and remove unrelated credential-like environment variables from the invocation.
-The [subprocess tests](../../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI fixture](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-e2e/tests/integration/deployment.rs) exercise these boundaries.
+The [subprocess tests](../../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI fixture](../../crates/nemoclaw-e2e/tests/integration/rust/deployment.rs) exercise these boundaries.
 
 ### Separate the TLS Connections
 
@@ -110,7 +109,7 @@ Each layer that makes outbound TLS connections has its own trust store:
 | The machine running NemoClaw: catalog reads during onboarding, and OpenTofu's providers | The system trust store, or `SSL_CERT_FILE`; see [custom CA trust](../agents-inference/inference.md#trust-a-custom-certificate-authority) |
 | The engine pulling images | The Docker or Podman daemon's own registry trust, configured on the engine host |
 | The OIDC issuer of a managed Kubernetes gateway | `caConfigMap` in the [OIDC profile](../build-deploy/kubernetes.md) |
-| OpenShell's gateway and sandbox egress | OpenShell's images' trust store. NemoClaw can't configure it; OpenShell support is in progress ([NVIDIA/OpenShell#3292](https://github.com/NVIDIA/OpenShell/pull/3292)) |
+| OpenShell's gateway and sandbox egress | OpenShell's images' trust store. For sandbox egress, OpenShell also trusts the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas); no managed gateway can receive it ([current limits](../resources/limits.md#security)). A CA in the bundle authenticates every policy-permitted destination whose certificate chains to it, so include only CAs that sandboxes should trust |
 | A corporate proxy that OpenShell chains egress through | OpenShell's `proxy_ca_bundle` driver setting, a file on the gateway; no managed gateway can receive it ([current limits](../resources/limits.md#security)) |
 | Model downloads inside managed vLLM and Ollama | The runtime image's trust store; not configurable |
 | Image builds (`docker buildx bake`) | Not supported behind TLS-intercepting proxies; build on a network that doesn't intercept TLS |

@@ -17,11 +17,15 @@ const VLLM: &str = "  services:\n    model:\n      kind: vllm\n";
 const STUB_KEY: &str = "  inferenceProviders:\n    stub:\n      provider: openai\n      credential:\n        env: NEMOCLAW_TEST_STUB_KEY\n";
 
 #[test]
-fn kubernetes_and_openshift_gateways_run_on_the_kind_cluster() {
-    for provider in ["kubernetes", "openshift"] {
-        let needed = needs(&document(provider, NVIDIA_KEY)).unwrap();
-        assert_eq!(needed.runner, Runner::LiveKind, "{provider}");
-    }
+fn a_kubernetes_gateway_runs_on_the_kind_cluster() {
+    let needed = needs(&document("kubernetes", NVIDIA_KEY)).unwrap();
+    assert_eq!(needed.runner, Runner::LiveKind);
+}
+
+#[test]
+fn an_openshift_gateway_runs_only_on_openshift() {
+    let needed = needs(&document("openshift", NVIDIA_KEY)).unwrap();
+    assert_eq!(needed.runner, Runner::OpenShift);
 }
 
 #[test]

@@ -469,7 +469,8 @@
               "active",
               "ready"
             ]
-          }
+          },
+          "session_resume": true
         },
         "config": {
           "accepts": [
@@ -511,7 +512,110 @@
         "settings_schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "sdk": {
+                    "properties": {
+                      "enabled": {
+                        "const": false
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ]
+                  }
+                },
+                "required": [
+                  "sdk"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "interfaces": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "api": {
+                            "properties": {
+                              "enabled": {
+                                "const": true
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "api"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "dashboard": {
+                            "properties": {
+                              "enabled": {
+                                "const": true
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "dashboard"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "terminal": {
+                            "properties": {
+                              "enabled": {
+                                "const": true
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "terminal"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "interfaces"
+                ]
+              }
+            }
+          ],
           "properties": {
+            "auxiliary": {
+              "additionalProperties": false,
+              "description": "Native Hermes auxiliary-task controls written to config.yaml for every execution path. Only authored fields are written.",
+              "properties": {
+                "background_review": {
+                  "additionalProperties": false,
+                  "description": "Hermes's native auxiliary.background_review section.",
+                  "properties": {
+                    "enabled": {
+                      "description": "Whether Hermes starts automatic background memory and skill reviews after turns. Explicit native /refine remains available. When omitted, Hermes's default applies.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "title_generation": {
+                  "additionalProperties": false,
+                  "description": "Hermes's native auxiliary.title_generation section.",
+                  "properties": {
+                    "enabled": {
+                      "description": "Whether Hermes generates session titles automatically. When omitted, Relay-enabled runtimes disable it and other runtimes keep Hermes's default.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
             "interfaces": {
               "additionalProperties": false,
               "description": "Native interfaces served by the runtime as child processes.",
@@ -548,6 +652,26 @@
                     },
                     "port": {
                       "description": "Exact loopback port for the dashboard. Start fails if it is in use.",
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "port"
+                  ],
+                  "type": "object"
+                },
+                "terminal": {
+                  "additionalProperties": false,
+                  "description": "Experimental terminal attachment to a managed TUI backend. Uses headless serve without dashboard assets, or shares the dashboard process. The configuration (including terminal.port), interfaces/tui.json, interfaces/tui.token, and the nemo_fabric_adapters.hermes.terminal helper may change across releases as the #579 launcher contract is adopted; compatibility is not guaranteed for these surfaces.",
+                  "properties": {
+                    "enabled": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "port": {
+                      "description": "Experimental TUI backend loopback port. Must match dashboard.port when both interfaces are enabled. This required field may be removed when the #579 launcher contract is adopted.",
                       "maximum": 65535,
                       "minimum": 1,
                       "type": "integer"
@@ -607,6 +731,18 @@
               "description": "Whether Hermes saves its native conversation trajectories as JSONL.",
               "type": "boolean"
             },
+            "sdk": {
+              "additionalProperties": false,
+              "description": "Embedded SDK execution, enabled by default. Runtime management remains available when disabled.",
+              "properties": {
+                "enabled": {
+                  "default": true,
+                  "description": "Initialize the embedded SDK agent during startup. Disable for native-only execution; SDK invocation then fails explicitly.",
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
             "startup_timeout_seconds": {
               "default": 60,
               "description": "Time from the start of the runtime for every enabled interface to pass its health check, within NeMo Fabric's 90-second start limit.",
@@ -619,10 +755,77 @@
               "description": "Maximum number of seconds for a Hermes terminal operation.",
               "exclusiveMinimum": 0,
               "type": "number"
+            },
+            "tools": {
+              "additionalProperties": false,
+              "description": "Native Hermes tools section written to config.yaml. Distinct from NeMo Fabric's normalized top-level tools.enabled and tools.blocked. Only authored fields are written.",
+              "properties": {
+                "tool_search": {
+                  "additionalProperties": false,
+                  "description": "Hermes's native tools.tool_search section.",
+                  "properties": {
+                    "enabled": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "enum": [
+                            "auto",
+                            "on",
+                            "off"
+                          ],
+                          "type": "string"
+                        }
+                      ],
+                      "description": "Hermes tool search: auto, on, or off; true and false are native aliases for on and off. off presents the selected tool schemas directly. When omitted, Hermes's default applies."
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
             }
           },
           "required": [],
           "type": "object"
+        },
+        "skills": {
+          "bundled": {
+            "default": "disabled",
+            "supports_disable": false,
+            "supports_enable": true,
+            "supports_exclude": true,
+            "supports_include": false
+          },
+          "directory_loading": {
+            "discovery": {
+              "depth_limit": {
+                "kind": "no_fixed_limit"
+              },
+              "nested_skills": "include",
+              "traversal": "recursive"
+            },
+            "parsing": {
+              "frontmatter_errors": "recover_key_value",
+              "name_fallback": "directory_name",
+              "required_frontmatter_fields": []
+            },
+            "skill_file": "SKILL.md",
+            "supported_entries": [
+              "skill",
+              "folder"
+            ]
+          },
+          "duplicates": {
+            "name_source": "frontmatter",
+            "native": "Two different skills with the same name in skills.external_dirs are refused as ambiguous; a skill in the Hermes home, bundled or agent-created, outranks external_dirs.",
+            "supported_policies": [
+              "reject",
+              "first_wins",
+              "last_wins"
+            ]
+          }
         },
         "telemetry": {
           "providers": {
@@ -1403,9 +1606,50 @@
           "properties": {
             "agent_id": {
               "default": "default",
-              "description": "OpenClaw agent selected for NeMo Fabric-originated invocations.",
+              "description": "OpenClaw agent selected for SDK invocations and managed native clients.",
               "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$",
               "type": "string"
+            },
+            "agents": {
+              "additionalProperties": false,
+              "description": "Native OpenClaw agents.defaults controls for NeMo Fabric-owned Gateways. Only authored fields are written; attached Gateways reject them.",
+              "properties": {
+                "defaults": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "compaction": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "memoryFlush": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "enabled": {
+                              "description": "Whether OpenClaw runs its pre-compaction memory flush turn. This does not stop compaction itself.",
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "heartbeat": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "every": {
+                          "description": "Native recurring heartbeat interval, such as 30m or 1h30m. Units are required; 0m disables the recurring cadence but not event-driven turns.",
+                          "pattern": "^(?:[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d))+$",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
             },
             "channel_config": {
               "additionalProperties": false,
@@ -1470,11 +1714,32 @@
                       "maximum": 65425,
                       "minimum": 1,
                       "type": "integer"
+                    },
+                    "public_origins": {
+                      "default": [],
+                      "description": "Additional browser HTTP(S) origins. OpenClaw also permits loopback origins; the token is always required.",
+                      "items": {
+                        "pattern": "^https?://[^/\\s?#@]+$",
+                        "type": "string"
+                      },
+                      "type": "array",
+                      "uniqueItems": true
                     }
                   },
                   "required": [
                     "port"
                   ],
+                  "type": "object"
+                },
+                "terminal": {
+                  "additionalProperties": false,
+                  "description": "Attach the native terminal to the existing Gateway. No terminal port; publishes a private executable launcher and terminal.running marker.",
+                  "properties": {
+                    "enabled": {
+                      "default": true,
+                      "type": "boolean"
+                    }
+                  },
                   "type": "object"
                 }
               },
@@ -1484,6 +1749,41 @@
               "description": "OpenClaw executable name or path. Relative paths containing a directory are resolved from the NeMo Fabric base directory.",
               "minLength": 1,
               "type": "string"
+            },
+            "plugins": {
+              "additionalProperties": false,
+              "description": "Native OpenClaw plugin controls for NeMo Fabric-owned Gateways. Only authored fields are written; attached Gateways reject them.",
+              "properties": {
+                "entries": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "memory-core": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "config": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "dreaming": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "enabled": {
+                                  "description": "Whether the memory-core plugin runs scheduled dreaming.",
+                                  "type": "boolean"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
             },
             "port_range": {
               "additionalProperties": false,
@@ -1523,9 +1823,73 @@
               "exclusiveMinimum": 0,
               "maximum": 75,
               "type": "number"
+            },
+            "tools": {
+              "additionalProperties": false,
+              "description": "Native OpenClaw tools controls for NeMo Fabric-owned Gateways, merged with the allow and deny lists generated from NeMo Fabric's normalized top-level tools. Only authored fields are written; attached Gateways reject them.",
+              "properties": {
+                "codeMode": {
+                  "description": "Whether OpenClaw Code Mode is enabled. Code Mode can take precedence over tool search.",
+                  "type": "boolean"
+                },
+                "exec": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "notifyOnExit": {
+                      "description": "Whether OpenClaw emits a system event and heartbeat when a backgrounded exec process exits.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "toolSearch": {
+                  "description": "Whether OpenClaw compacts large tool catalogs behind search tools.",
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
             }
           },
           "type": "object"
+        },
+        "skills": {
+          "bundled": {
+            "default": "enabled",
+            "supports_disable": true,
+            "supports_enable": true,
+            "supports_exclude": true,
+            "supports_include": true
+          },
+          "directory_loading": {
+            "discovery": {
+              "depth_limit": {
+                "kind": "adapter_defined"
+              },
+              "nested_skills": "stop_at_skill",
+              "traversal": "recursive"
+            },
+            "parsing": {
+              "frontmatter_errors": "reject",
+              "name_fallback": "directory_name",
+              "required_frontmatter_fields": [
+                "description"
+              ]
+            },
+            "skill_file": "SKILL.md",
+            "supported_entries": [
+              "skill",
+              "folder"
+            ]
+          },
+          "duplicates": {
+            "name_source": "frontmatter",
+            "native": "A higher OpenClaw source wins: workspace skills, then state-folder skills, then shipped skills, then skills.directories. Between skills.directories entries the later entry wins.",
+            "supported_policies": [
+              "reject",
+              "first_wins",
+              "last_wins"
+            ]
+          }
         }
       },
       "provenance": [
@@ -2192,8 +2556,8 @@
       ]
     }
   ],
-  "fabric_revision": "316fbdfbd7ac9eb63ffd52023ab4464f2d23e938",
+  "fabric_revision": "b4725580bc709f4efec04d1219cca2b34a172e3c",
   "schema_version": 2,
-  "source_sha256": "7fcf49e29bdabb06eb482d667c6d1d18ee7c4991d7cffcc84ce21623e41ebea0",
+  "source_sha256": "eb3a583c5eeb0b21aeb64e367fae33a06742c463ac8005ab29d380a103192107",
   "targets": []
 }

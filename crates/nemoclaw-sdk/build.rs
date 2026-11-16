@@ -36,9 +36,9 @@ fn main() {
 fn validate_fabric_catalog() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let catalog_path = root.join("image/fabric/catalog.json");
-    let recipe_path = root.join("image/fabric/Dockerfile");
+    let pins_path = root.join("versions.json");
     let manifest_path = root.join("crates/nemoclaw-sdk/Cargo.toml");
-    for path in [&catalog_path, &recipe_path, &manifest_path] {
+    for path in [&catalog_path, &pins_path, &manifest_path] {
         println!("cargo:rerun-if-changed={}", path.display());
     }
     let catalog: serde_json::Value =
@@ -60,18 +60,20 @@ fn validate_fabric_catalog() {
         catalog["fabric_revision"].as_str(),
         "Fabric planner and image catalog revisions must match"
     );
-    let recipe = fs::read_to_string(recipe_path).unwrap();
-    for (field, prefix) in [
-        ("fabric_revision", "ARG FABRIC_REVISION="),
-        ("source_sha256", "ARG FABRIC_SHA256="),
+    // The image records the revision that its source archive holds.
+    let pins: serde_json::Value = serde_json::from_slice(&fs::read(pins_path).unwrap()).unwrap();
+    let source = &pins["imageSources"]["fabric"]["fabric.tar.gz"];
+    let revision = source["url"]
+        .as_str()
+        .and_then(|url| url.strip_prefix("https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/"))
+        .expect("versions.json pins the Fabric source archive of one revision");
+    for (field, pinned) in [
+        ("fabric_revision", Some(revision)),
+        ("source_sha256", source["sha256"].as_str()),
     ] {
-        let pinned = recipe
-            .lines()
-            .find_map(|line| line.strip_prefix(prefix))
-            .expect("Fabric source pin");
         assert_eq!(
             catalog[field].as_str(),
-            Some(pinned),
+            pinned,
             "stale Fabric catalog: regenerate with image/fabric/catalog.py"
         );
     }

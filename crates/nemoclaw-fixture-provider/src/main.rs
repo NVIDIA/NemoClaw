@@ -52,21 +52,26 @@ impl Backend for Fixture {
         let nemoclaw_sdk::services::ServiceDefinition::Vllm(service) = definition else {
             panic!("expected vLLM")
         };
-        use nemoclaw_runtime::{hardware::Capacity, hardware::GIB};
-        let capacity = Capacity {
+        use nemoclaw_runtime::{hardware::Capacity, hardware::GIB, hardware::Gpu};
+        let mut capacity = Capacity {
             architecture: "arm64".into(),
-            gpu: "NVIDIA GB10".into(),
-            compute_capability: 121,
-            driver_major: if self.mode() == "old-driver" {
-                570
-            } else {
-                610
-            },
             total: 128 * GIB,
             available: 120 * GIB,
             disk_free: 500 * GIB,
             ..Default::default()
         };
+        capacity.set_gpus(vec![Gpu {
+            index: 0,
+            uuid: "GPU-00000000-0000-0000-0000-000000000000".into(),
+            name: "NVIDIA GB10".into(),
+            driver_major: if self.mode() == "old-driver" {
+                570
+            } else {
+                610
+            },
+            compute_capability: 121,
+            memory: None,
+        }]);
         nemoclaw_runtime::vllm::hardware_capacity::check_memory(&service, &capacity, false)
             .map_err(Into::into)
     }

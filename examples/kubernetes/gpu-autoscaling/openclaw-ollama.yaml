@@ -51,8 +51,8 @@ spec:
     user-0000:
       harness:
         kind: nvidia.fabric.openclaw
-        execution:
-          timeoutSeconds: 300
+        runtime:
+          timeout_seconds: 300
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -64,8 +64,8 @@ spec:
     user-0001:
       harness:
         kind: nvidia.fabric.openclaw
-        execution:
-          timeoutSeconds: 300
+        runtime:
+          timeout_seconds: 300
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000

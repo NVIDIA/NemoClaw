@@ -14,18 +14,13 @@ use std::borrow::Cow;
 
 pub(crate) fn deployment_questions_for_values(
     values: &Value,
-    active_harness: Option<&str>,
     active_routes: Option<&str>,
 ) -> Result<Vec<SettingQuestion>, Diagnostics> {
     let mut questions = Vec::new();
     collect(values, values, "", &mut questions, 0)?;
     questions.retain(|question| {
-        let shape = shape(&question.path);
-        (!shape.contains("/execution/")
-            || active_harness
-                .is_some_and(|base| question.path.starts_with(&format!("{base}/execution/"))))
-            && (!shape.contains("/routes/")
-                || active_routes.is_some_and(|base| question.path.starts_with(&format!("{base}/"))))
+        !shape(&question.path).contains("/routes/")
+            || active_routes.is_some_and(|base| question.path.starts_with(&format!("{base}/")))
     });
     Ok(questions)
 }
@@ -54,9 +49,7 @@ fn region(path: &str) -> bool {
         || path.starts_with("/spec/sandboxes/*/image/")
         || path.starts_with("/spec/sandboxes/*/network/")
         || path.starts_with("/spec/sandboxes/*/agent/auth/")
-        || path.starts_with("/spec/sandboxes/*/harness/execution/")
         || (path.contains("/routes/") && path.ends_with("/overrides/maxTokens"))
-        || (path.contains("/harnesses/") && path.contains("/execution/"))
 }
 fn excluded(path: &str) -> bool {
     path.ends_with("/management")
@@ -188,7 +181,6 @@ fn interested(path: &str) -> bool {
         "/spec/sandboxes/*/image",
         "/spec/sandboxes/*/network",
         "/spec/sandboxes/*/agent/auth",
-        "/spec/sandboxes/*/harness/execution",
         "/spec/sandboxes/*/agent/inference",
         "/spec/inferences",
         "/spec/sandboxes/*/inferences",

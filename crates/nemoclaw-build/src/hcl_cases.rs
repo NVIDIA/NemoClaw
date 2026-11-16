@@ -32,6 +32,10 @@ pub enum Runner {
     Hosted,
     /// Live / HCL on the NVIDIA GPU runner.
     Gpu,
+    /// An OpenShift cluster, such as OpenShift Local, where the case runs by
+    /// hand: no CI job has one.
+    #[serde(rename = "openshift")]
+    OpenShift,
 }
 
 impl Runner {
@@ -42,14 +46,16 @@ impl Runner {
             Runner::LiveKind => "live-kind",
             Runner::Hosted => "hosted",
             Runner::Gpu => "gpu",
+            Runner::OpenShift => "openshift",
         }
     }
 
-    pub const ALL: [Runner; 4] = [
+    pub const ALL: [Runner; 5] = [
         Runner::LiveDocker,
         Runner::LiveKind,
         Runner::Hosted,
         Runner::Gpu,
+        Runner::OpenShift,
     ];
 }
 
@@ -115,10 +121,12 @@ pub fn runtimes(root: &Path) -> Result<BTreeMap<String, BTreeSet<&'static str>>>
         .collect()
 }
 
-/// What a case document needs from the job that runs it. A Kubernetes or
-/// OpenShift gateway needs the kind cluster; otherwise a managed model
-/// runtime image needs the GPU runner, and reading the NVIDIA API key needs
-/// a hosted job. Every other case runs in the Docker live suite.
+/// What a case document needs from the job that runs it. A Kubernetes
+/// gateway needs the kind cluster. An OpenShift gateway needs OpenShift,
+/// which kind can't stand in for: the gateway gets its fsGroup only from
+/// OpenShift. Otherwise a managed model runtime image needs the GPU runner,
+/// and reading the NVIDIA API key needs a hosted job. Every other case runs
+/// in the Docker live suite.
 pub fn needs(document: &str) -> Result<Needs> {
     let parsed: Value =
         serde_saphyr::from_str(document).map_err(|error| format!("invalid document: {error}"))?;
@@ -128,11 +136,11 @@ pub fn needs(document: &str) -> Result<Needs> {
         .into_iter()
         .flat_map(|providers| providers.values())
         .any(|provider| provider["credential"]["env"] == NVIDIA_KEY);
-    let runner = if matches!(
-        spec["gateway"]["runtime"]["provider"].as_str(),
-        Some("kubernetes" | "openshift")
-    ) {
+    let provider = spec["gateway"]["runtime"]["provider"].as_str();
+    let runner = if provider == Some("kubernetes") {
         Runner::LiveKind
+    } else if provider == Some("openshift") {
+        Runner::OpenShift
     } else if !crate::images::runtime_targets(document)?.is_empty() {
         Runner::Gpu
     } else if nvidia_key {

@@ -39,9 +39,6 @@
     "/spec/sandboxes/*/agent/name": {
       "title": "Name the agent"
     },
-    "/spec/sandboxes/*/harness/execution/timeoutSeconds": {
-      "title": "Agent timeout (seconds)"
-    },
     "/spec/sandboxes/*/harness/kind": {
       "title": "Choose your agent harness",
       "description": "The harness is the agent environment NemoClaw installs and isolates. More harnesses will be offered later."
@@ -54,7 +51,7 @@
     },
     "/spec/sandboxes/*/network/tier": {
       "title": "Network tier",
-      "description": "The agent reaches its inference endpoint and nothing else on the network."
+      "description": "Isolated lets the agent reach only the endpoints this configuration declares."
     },
     "/spec/gateway/runtime/provider": {
       "title": "Where should the sandbox run?",
@@ -260,6 +257,10 @@
     },
     "/spec/sandboxes/*/network/tier": {
       "isolated": "Isolated"
+    },
+    "/spec/integrations/*/provider": {
+      "brave": "Brave",
+      "tavily": "Tavily"
     },
     "/spec/gateway/runtime/provider": {
       "docker": "Docker",

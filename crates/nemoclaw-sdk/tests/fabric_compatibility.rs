@@ -55,26 +55,33 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     use nemoclaw_sdk::config::Document;
     let mut input: serde_json::Value =
         serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
-    input["spec"]["sandboxes"]["assistant"]["harness"]["config"] = json!({
-        "mcp":{"servers":{"custom":{"transport":"stdio","url":"owned-fixture","exposure":"harness_native"}}},
-        "relay":{"plugins":{"dynamic":[{"manifest":"/plugins/example/relay-plugin.toml","config":{"mode":"route"}}]}},
-        "skills":{"paths":["/sandbox/workspace/skills/supplied-skill"]},
-        "runtime":{"max_turns":3}
-    });
+    let agent = &mut input["spec"]["sandboxes"]["assistant"]["agent"];
+    agent["mcp"] = json!({"servers":{"custom":{"transport":"stdio","url":"owned-fixture","exposure":"harness_native"}}});
+    agent["skills"] = json!({"paths":["/sandbox/workspace/skills/supplied-skill"]});
+    agent["tools"] = json!({"enabled":["read"],"blocked":["exec"]});
+    let harness = &mut input["spec"]["sandboxes"]["assistant"]["harness"];
+    harness["relay"] = json!({"plugins":{"dynamic":[{"manifest":"/plugins/example/relay-plugin.toml","config":{"mode":"route"}}]}});
+    harness["telemetry"] = json!({"providers":{"relay":{}}});
+    harness["runtime"] = json!({"max_turns":3,"timeout_seconds":900});
     let doc = Document::parse(input.to_string().as_bytes()).unwrap();
     let actual =
         nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();
     assert_eq!(actual["runtime"]["max_turns"], 3);
+    assert_eq!(actual["runtime"]["timeout_seconds"], 900);
+    assert_eq!(actual["runtime"]["artifacts"], "/sandbox/artifacts");
+    for (owner, section) in [
+        ("agent", "mcp"),
+        ("agent", "tools"),
+        ("harness", "relay"),
+        ("harness", "telemetry"),
+    ] {
+        assert_eq!(
+            actual[section], input["spec"]["sandboxes"]["assistant"][owner][section],
+            "{section} reaches Fabric unchanged"
+        );
+    }
     assert_eq!(
-        actual["mcp"],
-        input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["mcp"]
-    );
-    assert_eq!(
-        actual["relay"],
-        input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["relay"]
-    );
-    assert_eq!(
-        actual["skills"], input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["skills"],
+        actual["skills"], input["spec"]["sandboxes"]["assistant"]["agent"]["skills"],
         "skills must pass through without driverConfig"
     );
     input["spec"]["sandboxes"]["assistant"]["driverConfig"] = json!({"docker": {"mounts": [
@@ -84,14 +91,15 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     let actual =
         nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();
     assert_eq!(
-        actual["skills"], input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["skills"],
+        actual["skills"], input["spec"]["sandboxes"]["assistant"]["agent"]["skills"],
         "workspace mounts must not add or replace skill paths"
     );
-    input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["models"] =
-        json!({"default":{"base_url":"https://substituted.invalid"}});
+    input["spec"]["sandboxes"]["assistant"]["harness"]["runtime"]["artifacts"] =
+        json!("/elsewhere");
     let doc = Document::parse(input.to_string().as_bytes()).unwrap();
     assert!(
-        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).is_err()
+        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).is_err(),
+        "an authored section cannot change a deployment-owned field"
     );
 }
 
@@ -523,12 +531,9 @@ fn the_bundled_adapters_accept_their_p0_interfaces_only() {
         rejected_interfaces(
             &catalog,
             hermes,
-            json!({"dashboard": {"port": 9119, "public_origins": ["https://h.example"]}, "terminal": {}})
+            json!({"dashboard": {"port": 9119, "public_origins": ["https://h.example"]}})
         ),
-        [
-            "harness.settings.interfaces.dashboard.public_origins",
-            "harness.settings.interfaces.terminal"
-        ]
+        ["harness.settings.interfaces.dashboard.public_origins"]
     );
     assert_eq!(
         rejected_interfaces(&catalog, "nvidia.fabric.pi", json!({"terminal": {}})),
@@ -586,6 +591,8 @@ fn agents_keep_their_state_where_the_adapter_accepts_it() {
         openclaw["runtime"].get("keep_state").is_none(),
         "{openclaw}"
     );
+    let remote = project(include_bytes!("../../../examples/fabric-remote-agent.yaml"));
+    assert!(remote["runtime"].get("keep_state").is_none(), "{remote}");
 }
 
 #[test]

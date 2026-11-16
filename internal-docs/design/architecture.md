@@ -58,8 +58,7 @@ The native bundle includes the pinned Helm provider; no Helm CLI is required.
 
 The OpenShell provider does not install or remove the chart, and the Helm release cannot create or adopt the namespace or take ownership of existing resources.
 Before Helm can change the release, NemoClaw verifies retained Kubernetes identities; after installation, it records the StatefulSet identity and observes readiness.
-For OpenShift, authentication preparation reads the owned namespace's UID and group ranges and supplies non-secret chart overrides through a computed resource output.
-Helm waits for that output, and subsequent refresh rejects a changed namespace identity.
+For OpenShift, the chart values leave the gateway's UID and `fsGroup` unset, so OpenShift's security context constraint assigns them from the namespace's range.
 Teardown reverses that order, removes the release before the issuer, and retains the namespace, encryption key, and persistent volumes.
 Before teardown accepts a missing release, the authentication resource must independently confirm that its Helm release records are absent.
 The SDK also checkpoints an established release binding before removal because the pinned Helm provider can forget it after a failed lookup.
@@ -84,7 +83,7 @@ The connected implementation retains the SDK's raw API only for operations or fi
 The Rust SDK uses gRPC; adopting it does not remove the gateway RPC boundary.
 NemoClaw supplies the channel to preserve mutual TLS, lazy connection, and timeout settings that the pinned SDK configuration cannot express.
 
-At the pinned OpenShell revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c`, the SDK has these integration limits:
+At the pinned OpenShell revision `f3d976590d3eb1379690a2abaf0f0e26c21d487d`, the SDK has these integration limits:
 
 | Requirement | SDK limit | Consequence |
 |---|---|---|
@@ -98,7 +97,7 @@ At the pinned OpenShell revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c`, the
 | Bounded exec against a verified identity | High-level exec addresses the sandbox by name, buffers output without a size cap, and does not reject every malformed event sequence | Verify identity before workspace-scoped exec; retain the local deadline, output limits, and event validation |
 | Secret-safe diagnostics | SDK bearer construction does not mark metadata sensitive; SDK errors can retain upstream diagnostic text | Preserve sensitive metadata and NemoClaw's redacted error mapping |
 
-These limits are verified against the pinned [SDK manifest](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk/Cargo.toml), [configuration](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk/src/config.rs), [client](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk/src/client.rs), [types](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk/src/types.rs), and [authentication interceptor](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk/src/auth.rs).
+These limits are verified against the pinned [SDK manifest](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-sdk/Cargo.toml), [configuration](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-sdk/src/config.rs), [client](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-sdk/src/client.rs), [types](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-sdk/src/types.rs), and [authentication interceptor](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-sdk/src/auth.rs).
 The supported raw escape hatch provides an SDK integration point but still exposes protobuf compatibility risk.
 NemoClaw constructs the client without a token refresher; neither the selected high-level operations nor raw calls automatically retry mutations.
 A [telemetry test](../../crates/nemoclaw-sdk/tests/telemetry.rs) proves telemetry remains disabled even when the process environment requests it.

@@ -414,7 +414,7 @@ mod tests {
             publication_authorized: false,
             scanner: Some(ScannerEvidence {
                 name: "grype".into(),
-                version: "0.121.0".into(),
+                version: "0.121.3".into(),
                 sha256: "e".repeat(64),
                 configuration_sha256: "f".repeat(64),
             }),

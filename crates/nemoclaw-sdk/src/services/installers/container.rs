@@ -12,7 +12,6 @@ use crate::{
     services::contract::{InstallPlan, Installer, RemovePlan},
 };
 pub use execution::{ContainerExecution, ContainerReadiness};
-pub(crate) use limits::DEFAULT_MEMORY_LIMIT_GIB;
 pub use limits::{ServiceContainer, ServiceIpc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -226,7 +225,7 @@ impl Installer for Service {
             host_ipc: resources.host_ipc,
             memory_bytes: resources.memory_bytes,
             cpu_limit_millis: resources.cpu_limit_millis,
-            gpu: self.container.gpu,
+            gpus: resources.gpus,
             ..Process::default()
         };
         let spec = base::specification(

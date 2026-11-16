@@ -15,6 +15,15 @@ hash() {
   sha256sum "$1" | cut -d ' ' -f 1
 }
 
+# The commit that a git archive, such as GitHub's source archives, records in
+# its global header.
+archive_commit() {
+  python3 -c 'import sys, tarfile
+archive = tarfile.open(sys.argv[1])
+archive.next()
+print(archive.pax_headers["comment"])' "$1"
+}
+
 case "${1:-}" in
   lock)
     names=
@@ -41,8 +50,9 @@ case "${1:-}" in
     fi
     ;;
   provenance)
+    revision=$(archive_commit /sources/fabric.tar.gz)
     printf '{"harness": "%s", "fabric_revision": "%s", "source_sha256": "%s", "requirements_sha256": "%s", "local_sources": {' \
-      "$HARNESS" "$FABRIC_REVISION" "$FABRIC_SHA256" "$(hash /requirements.txt)"
+      "$HARNESS" "$revision" "$(hash /sources/fabric.tar.gz)" "$(hash /requirements.txt)"
     cd "$2"
     separator=
     find . -type f | sed 's|^\./||' | LC_ALL=C sort > /tmp/inputs

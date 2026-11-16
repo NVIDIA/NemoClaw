@@ -34,10 +34,11 @@ integration:
   wall_seconds: 300
   test_seconds: 90
 
-# live-docker (E2E Docker tests), its four nextest commands together: at most 255 s on
-# linux_amd64 and 210 s on linux_arm64 in 11 v1 runs, which included the
-# runtime rebuild test since removed with the runtime builder; 228 s in one
-# linux_arm64 run without it.
+# The live-docker wall budget covers three nextest commands plus one per
+# selected HCL case, for five commands when both cases are selected.
+# Before the HCL E2E migration, the suite took at most 255 s on linux_amd64
+# and 210 s on linux_arm64 in 11 v1 runs with the runtime rebuild test, and
+# 228 s in one linux_arm64 run without it.
 # After the HCL E2E migration (#14179), the suite's five commands took
 # 118.3 s on linux_amd64 and 92.7 s on linux_arm64; its slowest test, the
 # interface case, 46.0 s and 38.8 s.
@@ -46,24 +47,29 @@ live-docker:
   test_seconds: 180
 
 # live-kind (E2E Kubernetes (kind) tests): at most 199 s on linux_amd64 and 171 s on linux_arm64 in 11 v1
-# runs. The slowest test, the kind OpenShift HCL E2E scenario (now kind-openshift-oidc), took
+# runs. The slowest test, the kind OpenShift HCL E2E scenario (now kind-kubernetes-oidc), took
 # 133 s on linux_amd64 and 138 s on linux_arm64 with three agents (#14097);
-# about 30 s of each test's destroy waits out the sandbox pods' termination
-# grace period (#13959, NVIDIA/OpenShell#5025). Lower test_seconds when that is
-# fixed.
-# Raised for now while #14087 finds why linux_amd64 runs vary: after the test
-# moved to the kind OpenShift HCL case (#14097), hcl_live::case took
-# 130.1-143.3 s on linux_amd64 in four runs, then 163.3 s and 155.6 s on
-# #14124, whose other Kubernetes tests were 10-15% slower too. Return to
-# 150 s and 270 s when #14087 is resolved.
+# about 30 s of each test's destroy waited out the sandbox pods' termination
+# grace period (#13959, NVIDIA/OpenShell#5025) until OpenShell v0.1.8.
+# #14087 tracks why linux_amd64 runs vary: after the test moved to the kind
+# OpenShift HCL case (#14097), hcl_live::case took 130.1-143.3 s on
+# linux_amd64 in four runs, then 163.3 s and 155.6 s on #14124, whose other
+# Kubernetes tests were 10-15% slower too, so the budgets below keep about
+# 30% above the slowest run.
 # Live / Kind runs two HCL cases one after the other (#14176). With the
 # kind module's cleanup no longer waiting for namespace deletion (#14177),
 # the development case, which destroys and redeploys, took 137.9 s on
 # linux_amd64 and 136.9 s on linux_arm64; with the OIDC case (105.1 s and
 # 95.7 s) the step took 243.0 s and 232.6 s.
+# The OIDC case also publishes its gateway through the chart's NodePort
+# Service (#14313), instead of a third case that took 90-99 s on its own.
+# Before OpenShell v0.1.8 the two cases took 138-143 s and 94-100 s, 237 s in
+# all, in two v1 runs. With v0.1.8, whose sandbox deletion no longer waits out
+# the pods' grace period, they took 108.3 s and 69.6 s on linux_arm64 and
+# 98.2 s and 62.0 s on linux_amd64, so 177.9 s and 160.2 s in all (#14480).
 live-kind:
-  wall_seconds: 300
-  test_seconds: 180
+  wall_seconds: 240
+  test_seconds: 140
 
 # Each provider's contract tests, measured on linux_amd64 and linux_arm64 in
 # two runs after providers and the fake OpenShell gateway set TCP_NODELAY.

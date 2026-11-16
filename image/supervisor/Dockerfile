@@ -4,7 +4,7 @@
 # The runtime supervisor that the vLLM and Ollama images run, with the sources
 # they retain. Bake builds it for the host's platform only, so it never
 # compiles under emulation.
-ARG RUST_IMAGE=rust:1.99.1-bookworm@sha256:48b7f435b8fc6378ce43b44f15e3a47fd8919b2825f835c39bd4bd3da50af5b8
+ARG RUST_IMAGE=rust:1.100.0-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea
 
 # The supervisor's Cargo package and its locked dependency sources, with their
 # licenses: the archive the runtime images retain and compile from.
@@ -31,8 +31,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
 # Compile exactly the retained archive, offline, from its vendored sources.
 FROM ${RUST_IMAGE} AS build
 COPY --from=source /out/supervisor-source.tar.gz /out/supervisor-source.tar.gz
-RUN --mount=type=cache,target=/target \
-    set -eu; \
+RUN set -eu; \
     mkdir /workspace; \
     tar -xzf /out/supervisor-source.tar.gz -C /workspace; \
     cd /workspace; \

@@ -12,11 +12,9 @@ pub fn policy_input(
     document: &crate::config::Document,
     sandbox: crate::config::NamedSandbox<'_>,
 ) -> Result<PolicyInput, crate::config::ConfigError> {
-    use crate::config::{ConfigError, NetworkPolicy};
-    let explicit = match &sandbox.network.policy {
-        NetworkPolicy::Isolated => None,
-        NetworkPolicy::Explicit(policy) => Some(policy.clone()),
-    };
+    use crate::config::ConfigError;
+    let network = document.sandbox_network(sandbox)?;
+    let explicit = network.explicit.cloned();
     let mut managed = BTreeMap::new();
     if let Some(search) = document.web_search(sandbox)? {
         if explicit.as_ref().is_some_and(|policy| {
@@ -67,16 +65,16 @@ pub fn policy_input(
             .map_err(|_| ConfigError::new("cannot represent inference policy"))?;
         managed.extend(policy.network_policies);
     }
-    for (name, grant) in &sandbox.network.grants {
+    for (name, grant) in network.grants {
         if managed.contains_key(name) {
             return Err(ConfigError::new(
                 "a network grant name is reserved for inference or web search",
             ));
         }
         managed.insert(
-            name.clone(),
+            name.to_owned(),
             crate::config::PolicyRule {
-                name: name.clone(),
+                name: name.to_owned(),
                 endpoints: grant.endpoints.clone(),
                 binaries: grant.binaries.clone(),
             },

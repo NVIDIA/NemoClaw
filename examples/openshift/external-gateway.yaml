@@ -20,6 +20,8 @@ spec:
     credential: {env: GATEWAY_TOKEN}
     tls:
       ca: {env: GATEWAY_CA}
+      # A client certificate and key authenticate only to a gateway that receives them itself,
+      # such as one behind a pass-through Route; omit both behind an ingress that terminates TLS.
       certificate: {env: GATEWAY_CERT}
       key: {env: GATEWAY_KEY}
   inferenceProviders:

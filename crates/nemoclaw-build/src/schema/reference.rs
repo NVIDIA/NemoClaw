@@ -229,24 +229,35 @@ fn guide(name: &str) -> &'static str {
         "ServicePlacement" | "ServicePublication" => {
             "[SSH model service](../agents-inference/remote-service.md)"
         }
-        "Service" | "Model" | "Serving" | "Memory" | "ServiceHardware" | "ServiceContainer"
-        | "ServiceIpc" | "DedicatedHardware" | "HardwareProfile" => {
+        "Service" | "Model" | "Serving" | "Memory" | "ServiceHardware" | "ServiceIpc"
+        | "DedicatedHardware" | "HardwareProfile" => {
             "[Managed models](../agents-inference/models.md)"
+        }
+        "ServiceContainer" | "ServiceUpdatePolicy" => {
+            "[Container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy)"
+        }
+        "OllamaModel" | "OllamaServing" | "OllamaMemory" => {
+            "[Managed Ollama](../agents-inference/inference.md#run-managed-ollama)"
+        }
+        "ExternalOllama" | "ExternalOllamaModel" => {
+            "[External Ollama through a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy)"
+        }
+        "ServiceAuthentication" => {
+            "[Managed vLLM authentication](../agents-inference/inference.md#authenticate-a-managed-vllm-service)"
         }
         "InferenceProvider"
         | "InlineInferenceProvider"
         | "Inference"
         | "Route"
         | "Overrides"
-        | "OllamaProxy"
-        | "ExternalOllamaModel"
         | "InferenceApi"
         | "ReasoningEffort"
         | "AgentAuth"
         | "AuthMethod" => "[Inference configuration](../agents-inference/inference.md)",
-        "Integration" | "WebSearch" | "SearchProvider" | "Agent" | "AgentExecution"
-        | "AgentObservability" | "OtlpTracing" | "RelayTracing" | "AgentTools" | "AllowedTool"
-        | "ToolDisclosure" => "[Agent runtimes](../agents-inference/agents.md)",
+        "Integration" | "WebSearch" | "SearchProvider" | "Agent" | "AgentObservability"
+        | "OtlpTracing" | "RelayTracing" | "AllowedTool" | "ToolDisclosure" => {
+            "[Agent runtimes](../agents-inference/agents.md)"
+        }
         "ServiceExposure" | "AuthorizationMode" => {
             "[Agent interfaces](../agents-inference/interfaces.md#expose-a-service-through-the-gateway)"
         }

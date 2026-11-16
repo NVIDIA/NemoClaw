@@ -13,14 +13,14 @@ When you change the Fabric pin, check that set; if it changed, pin the digest of
 
 ## Update the Hermes Pin
 
-The agent image installs Hermes Agent from the release source pinned by `HERMES_REVISION` and `HERMES_SHA256` in [the Dockerfile](../../image/fabric/Dockerfile).
+The agent image installs Hermes Agent from the release source archive that `hermes.tar.gz` pins under `imageSources.fabric` in [`versions.json`](../../versions.json), by URL and SHA-256.
 Hermes's dashboard and browser chat need its web assets and TUI bundle built, so the image copies them from Hermes's published image, pinned by digest in `HERMES_IMAGE`.
 The build stops if any file that image shares with the pinned release source differs, apart from the `README.md` its build empties.
-When you move `HERMES_REVISION`, pin the digest of Hermes's published image for the same release, then rebuild and qualify the Hermes image.
+When you move that pin, pin the digest of Hermes's published image for the same release, then rebuild and qualify the Hermes image.
 
 ## Regenerate the Bundled Catalog
 
-The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
+The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric source that `fabric.tar.gz` pins under `imageSources.fabric` in [`versions.json`](../../versions.json).
 Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, such as a freshly built agent image's `/opt/fabric/bin/python`. Pass that revision and checksum, and `--adapter` once for each adapter ID the current catalog lists:
 
 ```sh
@@ -29,7 +29,7 @@ python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM \
   --output image/fabric/catalog.json
 ```
 
-Use the values of `FABRIC_REVISION` and `FABRIC_SHA256` from the [shared agent Dockerfile](../../image/fabric/Dockerfile).
+Use the revision at the end of that pin's URL and its SHA-256.
 The snapshot holds canonical descriptors and provenance only; it does not change any image.
 
 ## Qualify the Reference Contract Image

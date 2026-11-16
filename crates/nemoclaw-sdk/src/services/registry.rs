@@ -73,7 +73,7 @@ const KUBERNETES_FIELDS: [&str; 12] = [
     crate::kubernetes::OIDC_FIELD,
     "running",
 ];
-const KUBERNETES_AUTH_FIELDS: [&str; 14] = [
+const KUBERNETES_AUTH_FIELDS: [&str; 13] = [
     "name",
     "owner",
     "generation",
@@ -87,7 +87,6 @@ const KUBERNETES_AUTH_FIELDS: [&str; 14] = [
     crate::kubernetes::OIDC_FIELD,
     "running",
     "release_present",
-    "gateway_values",
 ];
 pub fn resource_schemas() -> Vec<ResourceSchema> {
     vec![
@@ -104,7 +103,7 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
         ResourceSchema {
             kind: crate::kubernetes::AUTH_KIND,
             fields: &KUBERNETES_AUTH_FIELDS,
-            mutable: &["running", "release_present", "gateway_values"],
+            mutable: &["running", "release_present"],
         },
         ResourceSchema {
             kind: "ollama_proxy_storage",
@@ -233,9 +232,7 @@ impl ServiceDefinition {
             Self::Ollama(service) => (service.container.as_ref(), 0),
             Self::OllamaProxy(_) => (None, 0),
         };
-        if let Some(container) = container {
-            container.validate_memory(preparation_memory)?;
-        }
+        installers::container::ServiceContainer::validate_memory(container, preparation_memory)?;
         let gateway = &document.spec.gateway;
         let local_docker = gateway.as_managed().is_some_and(|gateway| {
             gateway.engine.starts_with("unix:///")
