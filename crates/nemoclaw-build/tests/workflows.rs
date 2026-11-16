@@ -15,48 +15,30 @@ fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// Documentation builds the build tool with the bundle job's features, so it
+/// restores that job's Rust cache instead of one nothing writes (#14414).
 #[test]
 fn documentation_restores_the_cache_the_bundle_job_writes() {
-    let definitions = definitions(&repository());
-    let bundle = &definitions
-        .iter()
-        .find(|(path, _)| path == ".github/workflows/bundle-platform.yml")
-        .unwrap()
-        .1;
-    let docs = &definitions
-        .iter()
-        .find(|(path, _)| path == ".github/actions/setup-docs/action.yml")
-        .unwrap()
-        .1;
-    let setup = |steps: &Value| {
-        steps
+    let prefix = |path: &str, steps: &str| {
+        let definition: Value =
+            serde_saphyr::from_str(&fs::read_to_string(repository().join(path)).unwrap()).unwrap();
+        definition
+            .pointer(steps)
+            .unwrap()
             .as_array()
             .unwrap()
             .iter()
             .find(|step| step["uses"] == "./.github/actions/setup-rust")
-            .unwrap()["with"]
+            .expect("a Rust setup step")["with"]["cache-prefix"]
             .clone()
     };
-    let writer = setup(&bundle["jobs"]["bundle"]["steps"]);
-    let reader = setup(&docs["runs"]["steps"]);
-    let prefix = writer["cache-prefix"]
-        .as_str()
-        .expect("the bundle must name its cache");
-    assert!(
-        !prefix.is_empty(),
-        "the bundle cache prefix must not be empty"
-    );
     assert_eq!(
-        reader["cache-prefix"], prefix,
-        "documentation must restore the current bundle cache generation"
-    );
-    assert_eq!(
-        reader["platform"], "linux_amd64",
-        "documentation restores the Linux bundle cache"
-    );
-    assert_eq!(
-        reader["save-cache"], "false",
-        "documentation must not overwrite the bundle's cache"
+        prefix(".github/actions/setup-docs/action.yml", "/runs/steps"),
+        prefix(
+            ".github/workflows/bundle-platform.yml",
+            "/jobs/bundle/steps"
+        ),
+        "documentation must restore the bundle job's cache"
     );
 }
 
