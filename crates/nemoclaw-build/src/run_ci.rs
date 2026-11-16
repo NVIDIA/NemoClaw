@@ -170,8 +170,17 @@ fn run_step(
 ) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
+    // Nothing in CI reads debug information, and it is most of each test
+    // archive that test jobs download. Local runs keep the developer's
+    // profile, and a setting the caller passes wins.
+    let without_debug = (std::env::var_os("CI").is_some()
+        || std::env::var_os("GITHUB_ACTIONS").is_some())
+        && std::env::var_os("CARGO_PROFILE_DEV_DEBUG").is_none();
     let configure = |command: &mut Command| {
         command.env("PROTOC", &protoc).env("PATH", &path);
+        if without_debug {
+            command.env("CARGO_PROFILE_DEV_DEBUG", "0");
+        }
     };
     let tool = |name: &str| {
         Path::new("target")
@@ -211,13 +220,30 @@ fn run_step(
         _ => {}
     }
     if step == Step::Archive {
+        // Select every layer's tests before writing any archive, so a layer
+        // that selects nothing publishes nothing.
+        let mut selections = Vec::new();
+        for (layer, profiles) in archive::layers(platform) {
+            selections.push((
+                layer,
+                archive::selected_binaries(&configure, layer, profiles)?,
+            ));
+        }
         fs::create_dir_all(".build/ci")?;
+        for (layer, filter) in selections {
+            let mut command = cargo();
+            configure(&mut command);
+            for args in step.cargo_args() {
+                command.args(*args);
+            }
+            command
+                .arg("--archive-file")
+                .arg(archive::file(layer))
+                .args(["--filterset", &filter]);
+            run(&mut command)?;
+        }
+        return archive::package_inputs(tools);
     }
-    let archive_filter = if step == Step::Archive {
-        Some(archive::selected_binaries(&configure, platform)?)
-    } else {
-        None
-    };
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     for args in step.cargo_args() {
         let mut command = match archive_file {
@@ -229,9 +255,6 @@ fn run_step(
                 command
             }
         };
-        if let Some(filter) = &archive_filter {
-            command.args(["--filterset", filter]);
-        }
         if Step::BUNDLED.contains(&step) {
             if std::env::var_os("CI").is_none()
                 && std::env::var_os("GITHUB_ACTIONS").is_none()
@@ -265,9 +288,6 @@ fn run_step(
             command.env("NEMOCLAW_TEST_BUNDLE", &bundle);
         }
         run(&mut command)?;
-    }
-    if step == Step::Archive {
-        archive::package_inputs(tools)?;
     }
     Ok(())
 }

@@ -545,6 +545,97 @@ async fn authenticated_vllm_readiness_rechecks_key_permissions() {
     }
 }
 
+#[tokio::test]
+async fn service_readiness_reports_why_the_runtime_stopped() {
+    let detail = "managed service process exited; its final output follows, and the container log has all of it; correct the cause and reapply:\nValueError: Total number of attention heads (14) must be divisible by tensor parallel size (4).";
+    // More than the SDK can show; the runtime never records this much.
+    let oversized = format!(
+        "{detail}\n{}",
+        "x".repeat(nemoclaw_runtime::EXITED_OUTPUT_LIMIT + 1024)
+    );
+    for source in [
+        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml"),
+        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml"),
+    ] {
+        let document = crate::config::Document::parse(source.as_bytes()).unwrap();
+        let generations: crate::compile::Generations =
+            ["inference_service", "ollama_service", "managed_gateway"]
+                .map(|kind| (kind.into(), "a".repeat(32)))
+                .into();
+        let spec = service_spec(&document, &generations);
+        let readiness = crate::services::Readiness::new(
+            spec.engine(),
+            &spec.name,
+            spec.runtime_configuration().unwrap(),
+        )
+        .unwrap();
+        // The runtime records why it stopped, then exits; readiness can see
+        // either the record or the exited container.
+        for (running, updated, written, expected) in [
+            (true, "2026-09-15T00:00:01Z", detail, Some(detail)),
+            (false, "2026-09-15T00:00:01Z", detail, Some(detail)),
+            (false, "2026-09-14T23:59:59Z", detail, None),
+            (
+                false,
+                "2026-09-15T00:00:01Z",
+                "line\u{1b}[2J\u{202e}cleared",
+                Some("line\\u{1b}[2J\\u{202e}cleared"),
+            ),
+            (false, "2026-09-15T00:00:01Z", oversized.as_str(), None),
+        ] {
+            let name = spec.name.clone();
+            let status = json!({"phase":"stopped","updated":updated,"detail":written,"pid":0});
+            let fixture = Fixture::engine(move |request| {
+                assert_eq!(request.method, "GET");
+                if request.path == "/containers/provider-container/json" {
+                    return Some((
+                        200,
+                        serde_json::to_vec(
+                            &json!({"Id":"provider-container","Name":format!("/{name}"),
+                            "State":{"Running":running,"StartedAt":"2026-09-15T00:00:00Z"}}),
+                        )
+                        .unwrap(),
+                    ));
+                }
+                assert!(request.path.contains("status.json"), "{}", request.path);
+                Some((
+                    200,
+                    crate::docker::archive(&[(
+                        "status.json",
+                        &serde_json::to_vec(&status).unwrap(),
+                        0o600,
+                    )])
+                    .unwrap(),
+                ))
+            })
+            .await;
+            let connections =
+                crate::docker::Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
+            let error = crate::services::wait_service_ready(
+                &connections,
+                &readiness,
+                "provider-container",
+                std::time::Duration::from_secs(2),
+                &crate::CancellationToken::new(),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+            match expected {
+                Some(expected) => assert_eq!(
+                    error,
+                    format!("service runtime stopped: {expected}"),
+                    "running={running}"
+                ),
+                None => assert_eq!(
+                    error, "service stopped during readiness; inspect logs and reapply",
+                    "an earlier container's or oversized record must not explain this one"
+                ),
+            }
+        }
+    }
+}
+
 /// The compiled specification of the document's managed service.
 fn service_spec(
     document: &crate::config::Document,

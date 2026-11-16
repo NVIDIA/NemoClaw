@@ -5,6 +5,7 @@
 // 2026-09-15: represented the export fields as strict Rust types and delegated
 // policy semantics to pinned openshell-policy.
 // 2026-09-28: use owner policy types independently of the transport client.
+// 2026-11-07: accepted OpenShell's network middleware attachments.
 //! Credential-free sandbox policies: the authored model, its schema
 //! constraints, and conversion to and from OpenShell's protocol.
 
@@ -34,6 +35,10 @@ pub struct ExplicitPolicy {
     pub process: Option<PolicyProcess>,
     /// Named egress rules. An empty map grants no general egress.
     pub network_policies: BTreeMap<String, PolicyRule>,
+    /// Supervisor middleware attachments keyed by policy-local names, which OpenShell's logs report. Each names a built-in middleware or a service registered in the gateway's `openshell.supervisor.middleware` configuration, and selects the admitted destination hosts it runs for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "BTreeMap<String, PolicyMiddleware>")]
+    pub network_middlewares: Option<BTreeMap<String, PolicyMiddleware>>,
 }
 
 /// Filesystem access grants inside the sandbox.
@@ -246,6 +251,44 @@ pub struct PolicyMcp {
     pub allow_all_known_mcp_methods: Option<bool>,
 }
 
+/// One supervisor middleware attachment. OpenShell validates the attachment, including unique orders and selectors that avoid `tls: skip` endpoints, and the named middleware validates `config`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyMiddleware {
+    /// Display name; omission uses the attachment's key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String")]
+    pub name: Option<String>,
+    /// A built-in middleware, such as `openshell/regex`, or the `name` of a service registered with the gateway.
+    pub middleware: String,
+    /// Position among attachments that select the same host; lower values run first. Orders must be unique within the policy; omission means 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "i32")]
+    pub order: Option<i32>,
+    /// Settings passed to the middleware, which defines and validates their format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "BTreeMap<String, Value>")]
+    pub config: Option<BTreeMap<String, Value>>,
+    /// fail_closed blocks the affected traffic when the middleware fails; fail_open lets it continue. Omission selects fail_closed. A middleware denial blocks traffic either way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "String")]
+    pub on_error: Option<String>,
+    /// Admitted destination hosts the middleware runs for.
+    pub endpoints: PolicyMiddlewareEndpoints,
+}
+
+/// Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyMiddlewareEndpoints {
+    /// Hosts to run the middleware for; OpenShell requires at least one.
+    pub include: Vec<String>,
+    /// Hosts to skip; exclusions take precedence over inclusions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "Vec<String>")]
+    pub exclude: Option<Vec<String>>,
+}
+
 /// Application protocols a policy endpoint may restrict.
 pub const POLICY_PROTOCOLS: &[&str] = &["rest", "websocket", "json-rpc", "mcp"];
 /// TLS handling a policy endpoint may select.
@@ -256,6 +299,8 @@ pub const POLICY_ENFORCEMENT: &[&str] = &["enforce", "audit"];
 pub const POLICY_ACCESS: &[&str] = &["full", "read-only"];
 /// Largest request body a policy may buffer for inspection.
 pub const POLICY_BODY_MAX: u32 = 1_048_576;
+/// Failure behaviors a middleware attachment may select.
+pub const POLICY_MIDDLEWARE_ON_ERROR: &[&str] = &["fail_closed", "fail_open"];
 
 fn property(schema: &mut Value, field: &str, extra: Value) {
     let Value::Object(extra) = extra else {
@@ -298,6 +343,11 @@ pub fn constrain(defs: &mut serde_json::Map<String, Value>) {
     for field in ["rules", "deny_rules"] {
         property(&mut defs["PolicyEndpoint"], field, json!({"minItems": 1}));
     }
+    property(
+        &mut defs["PolicyMiddleware"],
+        "on_error",
+        json!({"enum": POLICY_MIDDLEWARE_ON_ERROR}),
+    );
     for name in ["PolicyJsonRpc", "PolicyMcp"] {
         property(
             &mut defs[name],
@@ -362,7 +412,7 @@ fn canonical(policy: &proto::SandboxPolicy) -> Result<String, ObservationError> 
                 .or_insert_with(|| serde_json::json!([]));
         }
     }
-    // Refuse fields the SDK cannot retain, including credential bindings and middleware.
+    // Refuse fields the SDK cannot retain, including credential bindings.
     let typed: ExplicitPolicy =
         serde_json::from_value(value.clone()).map_err(|_| ObservationError::Incomplete)?;
     let decoded = typed.to_proto().map_err(|_| ObservationError::Incomplete)?;

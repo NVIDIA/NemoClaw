@@ -4,8 +4,8 @@
 # Two releases render this chart. The `namespaces` part holds what is ready
 # once created; the `workloads` part, what its release waits for.
 {{- if eq .Values.part "namespaces" }}
-# The deployment's namespace, prepared by the operator; with the OpenShift
-# profile, annotated as OpenShift annotates a project.
+# The deployment's namespace, prepared by the operator; with a UID range,
+# annotated as OpenShift annotates a project.
 apiVersion: v1
 kind: Namespace
 metadata:

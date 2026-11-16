@@ -7,13 +7,13 @@ pub(crate) const DEFAULT_MEMORY_LIMIT_GIB: u64 = 104;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Managed inference CPU and memory limits, IPC, and shared-memory settings.
+/// Managed inference CPU and memory limits, GPU selection, IPC, and shared-memory settings.
 pub struct ServiceContainer {
     /// CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "u32", range(min = 1, max = 4294967295_u64))]
     pub cpu_limit_millis: Option<u32>,
-    /// Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container.
+    /// Container memory limit in GiB, independent of the model's GPU budget. Omission sets a 104 GiB limit. Changing the limit replaces the model container.
     #[serde(
         rename = "memoryLimitGiB",
         default,
@@ -27,6 +27,10 @@ pub struct ServiceContainer {
     /// Shared-memory size in GiB, from 1 through 64. Omission uses 8; host IPC uses the host's existing shared-memory mount instead.
     #[serde(default = "default_shm")]
     pub shared_memory_gi_b: u64,
+    /// The GPUs the model container gets on a host with several, as `docker run --gpus device=` names them: each a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index as a string, such as "1", which can change when the host boots. List exactly one: serving one model across several GPUs isn't implemented yet. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing the list replaces the model container.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Vec<String>")]
+    pub gpu_devices: Option<Vec<String>>,
 }
 
 /// Docker resources of a managed model container.
@@ -35,6 +39,7 @@ pub(crate) struct ContainerResources {
     pub host_ipc: bool,
     pub cpu_limit_millis: Option<u32>,
     pub memory_bytes: u64,
+    pub gpus: crate::managed::Gpus,
 }
 
 impl ServiceContainer {
@@ -51,6 +56,9 @@ impl ServiceContainer {
                 .and_then(|container| container.memory_limit_gib)
                 .unwrap_or(DEFAULT_MEMORY_LIMIT_GIB)
                 * gib,
+            gpus: container
+                .and_then(|container| container.gpu_devices.clone())
+                .map_or(crate::managed::Gpus::All, crate::managed::Gpus::Devices),
         }
     }
 

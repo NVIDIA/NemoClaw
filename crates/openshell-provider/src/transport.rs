@@ -54,6 +54,20 @@ pub(super) trait OpenShellGateway: Send + Sync {
         sandbox: &Row,
         name: &str,
     ) -> Result<Option<crate::services::Endpoint>, ObservationError>;
+    /// Expose a service of the bound sandbox, or update its endpoint in place.
+    async fn expose_service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        exposure: &crate::services::Exposure,
+    ) -> Result<(), ObservationError>;
+    /// Delete one of the bound sandbox's service endpoints, if it has it.
+    async fn delete_service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+    ) -> Result<(), ObservationError>;
     async fn delete(&self, kind: &str, workspace: &str, name: &str)
     -> Result<(), ObservationError>;
     async fn gateway_capabilities(&self) -> Result<GatewayCapabilities, ObservationError>;
@@ -309,6 +323,24 @@ impl OpenShellGateway for ConnectedOpenShellGateway {
         name: &str,
     ) -> Result<Option<crate::services::Endpoint>, ObservationError> {
         ConnectedOpenShellGateway::service(self, workspace, sandbox, name).await
+    }
+
+    async fn expose_service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        exposure: &crate::services::Exposure,
+    ) -> Result<(), ObservationError> {
+        ConnectedOpenShellGateway::expose_service(self, workspace, sandbox, exposure).await
+    }
+
+    async fn delete_service(
+        &self,
+        workspace: &str,
+        sandbox: &Row,
+        name: &str,
+    ) -> Result<(), ObservationError> {
+        ConnectedOpenShellGateway::delete_service(self, workspace, sandbox, name).await
     }
 
     async fn delete(
@@ -567,6 +599,24 @@ mod tests {
             _name: &str,
         ) -> Result<Option<crate::services::Endpoint>, ObservationError> {
             Ok(None)
+        }
+
+        async fn expose_service(
+            &self,
+            _workspace: &str,
+            _sandbox: &Row,
+            _exposure: &crate::services::Exposure,
+        ) -> Result<(), ObservationError> {
+            unreachable!()
+        }
+
+        async fn delete_service(
+            &self,
+            _workspace: &str,
+            _sandbox: &Row,
+            _name: &str,
+        ) -> Result<(), ObservationError> {
+            unreachable!()
         }
 
         async fn delete(

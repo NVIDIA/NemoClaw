@@ -7,6 +7,10 @@ use nemoclaw_backend::{Backend, Mutation};
 use nemoclaw_openshell::{OpenShellLifecycle, openshell_lifecycle};
 use std::time::Duration;
 
+/// How long a sandbox has to load its policy: the time Fabric allows the
+/// sandbox to start before it starts the agent.
+const STARTUP_DEADLINE: Duration = Duration::from_secs(120);
+
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
     row.get(field).map(String::as_str).unwrap_or("")
 }
@@ -48,7 +52,118 @@ impl OpenShell {
         row.insert(services::URLS.into(), urls);
         Ok(())
     }
-    async fn reconcile(&self, kind: &str, want: &Row) -> Result<Mutation, ObservationError> {
+    /// Bring a live sandbox's declared endpoints to `want`, as `openshell
+    /// service expose` and `openshell service delete` would: expose those
+    /// missing or different, then delete those the prior binding declared and
+    /// `want` doesn't, so an exposure the gateway rejects removes nothing.
+    /// Endpoints under names neither declares are left alone.
+    async fn update_services(
+        &self,
+        want: &Row,
+        sandbox: &Row,
+        prior: Option<&Row>,
+    ) -> Result<(), ObservationError> {
+        let workspace = value(want, "workspace");
+        let wanted = services::exposures(value(want, services::FIELD))?;
+        for exposure in &wanted {
+            let served = self
+                .gateway
+                .service(workspace, sandbox, &exposure.name)
+                .await?
+                .is_some_and(|endpoint| exposure.served_by(&endpoint));
+            if !served {
+                self.gateway
+                    .expose_service(workspace, sandbox, exposure)
+                    .await?;
+            }
+        }
+        if let Some(prior) = prior {
+            for name in services::names(value(prior, services::FIELD))? {
+                if !wanted.iter().any(|exposure| exposure.name == name) {
+                    self.gateway
+                        .delete_service(workspace, sandbox, &name)
+                        .await?;
+                }
+            }
+        }
+        Ok(())
+    }
+    /// Read a sandbox back after it is created or updated, waiting for it to
+    /// load its policy so the binding records the loaded policy's hash. Without
+    /// one, a policy changed before the next apply would be recorded as the
+    /// baseline.
+    ///
+    /// A sandbox that has not loaded its policy by the deadline is returned as
+    /// observed, as are one that exited and one whose configuration OpenShell
+    /// rejected, which never load one; the agent reports why. A sandbox loading
+    /// its policy reads as incomplete only while it was just created, so a
+    /// policy that differs from the declared one fails at once on an update.
+    ///
+    /// A failure to ask OpenShell for the phase (transport or authentication)
+    /// says nothing about the sandbox, so the wait goes on. If the phase is
+    /// still unavailable at the deadline, the readback fails, and the caller
+    /// records the sandbox as partial rather than complete without a hash.
+    pub(super) async fn read_back_sandbox(
+        &self,
+        bound: &Row,
+        want: &Row,
+        created: bool,
+        patience: Duration,
+    ) -> Result<Option<Row>, ObservationError> {
+        let deadline = tokio::time::Instant::now() + patience;
+        let mut unavailable = None;
+        let observed = loop {
+            let observed = self
+                .observe(
+                    "sandbox",
+                    value(want, "workspace"),
+                    value(want, "name"),
+                    false,
+                )
+                .await;
+            let loading = match &observed {
+                Ok(Some(row)) => value(row, crate::POLICY_HASH).is_empty(),
+                Err(ObservationError::Incomplete) => created,
+                _ => false,
+            };
+            if !loading {
+                break observed;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                if let Some(error) = unavailable {
+                    return Err(nemoclaw_backend::Error::into_observation(error));
+                }
+                break observed;
+            }
+            match self.gateway.sandbox_phase(bound, true).await {
+                Ok(_) => unavailable = None,
+                // A sandbox that exited or whose configuration was rejected
+                // never loads a policy.
+                Err(
+                    nemoclaw_backend::Error::SandboxStartup { .. }
+                    | nemoclaw_backend::Error::Observation(
+                        ObservationError::SandboxConfigurationRejected { .. },
+                    ),
+                ) => break observed,
+                Err(error) => unavailable = Some(error),
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        };
+        match observed {
+            Ok(Some(mut row)) => {
+                self.observe_services(&mut row, want, false).await?;
+                Ok(Some(row))
+            }
+            other => other,
+        }
+    }
+
+    async fn reconcile(
+        &self,
+        kind: &str,
+        want: &Row,
+        prior: Option<&Row>,
+    ) -> Result<Mutation, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         if kind != "workspace" {
@@ -66,10 +181,14 @@ impl OpenShell {
         } else if !value(want, "id").is_empty() {
             return Err(ObservationError::BindingMismatch);
         }
+        let created = live.is_none();
         let established = match live {
             Some(row) => {
                 if kind == "provider" {
                     self.gateway.update_provider(want, &row).await?;
+                }
+                if kind == "sandbox" {
+                    self.update_services(want, &row, prior).await?;
                 }
                 row
             }
@@ -85,12 +204,11 @@ impl OpenShell {
                 row
             }
         };
-        let readback = match self.observe(kind, workspace, name, false).await {
-            Ok(Some(mut row)) if kind == "sandbox" => self
-                .observe_services(&mut row, want, false)
+        let readback = if kind == "sandbox" {
+            self.read_back_sandbox(&established, want, created, STARTUP_DEADLINE)
                 .await
-                .map(|()| Some(row)),
-            other => other,
+        } else {
+            self.observe(kind, workspace, name, false).await
         };
         match readback {
             Ok(Some(row)) => {
@@ -211,6 +329,41 @@ impl Backend for OpenShell {
         Ok(observed)
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
+        self.converge(kind, desired, None).await
+    }
+    /// A sandbox's update needs the exposures its prior binding declared, to
+    /// delete those the desired row no longer declares.
+    async fn update(&self, kind: &str, desired: &Row, prior: &Row) -> Mutation {
+        let prior = nemoclaw_openshell::without_gateway(prior);
+        self.converge(kind, desired, Some(&prior)).await
+    }
+    async fn remove(
+        &self,
+        kind: &str,
+        prior: &Row,
+        destroying: bool,
+    ) -> Result<(), ObservationError> {
+        let prior = &nemoclaw_openshell::without_gateway(prior);
+        if !matches!(
+            openshell_lifecycle(kind),
+            Some(OpenShellLifecycle::Reconstructible)
+        ) && !(destroying
+            && matches!(
+                openshell_lifecycle(kind),
+                Some(OpenShellLifecycle::Retained)
+            ))
+        {
+            return Err(ObservationError::Query);
+        }
+        tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))
+            .await
+            .map_err(|_| ObservationError::Transport)?
+    }
+}
+impl OpenShell {
+    /// Check the desired row, then reconcile it, given the prior binding when
+    /// it updates one in place.
+    async fn converge(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Mutation {
         let desired = &nemoclaw_openshell::without_gateway(desired);
         let fields: &[&str] = match kind {
             "workspace" => &["name", "owner", "generation"],
@@ -235,30 +388,8 @@ impl Backend for OpenShell {
         if kind == "sandbox" && validate_row_policy(desired).is_err() {
             return Mutation::failed(ObservationError::Query);
         }
-        self.reconcile(kind, desired)
+        self.reconcile(kind, desired, prior)
             .await
             .unwrap_or_else(Mutation::failed)
-    }
-    async fn remove(
-        &self,
-        kind: &str,
-        prior: &Row,
-        destroying: bool,
-    ) -> Result<(), ObservationError> {
-        let prior = &nemoclaw_openshell::without_gateway(prior);
-        if !matches!(
-            openshell_lifecycle(kind),
-            Some(OpenShellLifecycle::Reconstructible)
-        ) && !(destroying
-            && matches!(
-                openshell_lifecycle(kind),
-                Some(OpenShellLifecycle::Retained)
-            ))
-        {
-            return Err(ObservationError::Query);
-        }
-        tokio::time::timeout(Duration::from_secs(300), self.delete_bound(kind, prior))
-            .await
-            .map_err(|_| ObservationError::Transport)?
     }
 }

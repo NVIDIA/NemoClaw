@@ -49,9 +49,11 @@ The native safetensors, configuration, tokenizer, license and notice files at th
 Python repository code is not executed.
 Gated repositories, custom remote-code models, GGUF, and nested checkpoint layouts are outside this first generic backend.
 
-`memory.gpuMemoryGiB` budgets the model, runtime and KV cache together; its default is 16 GiB.
-`kvCacheGiB` is part of that budget.
+`memory.gpuMemoryGiB` budgets the model, runtime and KV cache together on each GPU the service selects; its default is 16 GiB.
+`kvCacheGiB` is part of that budget, and vLLM allocates it on each GPU.
 Capacity checks reject snapshots whose weights cannot fit the declared budget.
+The check is a lower bound: each GPU's share of the weights, the safetensors bytes divided by tensor × pipeline parallel size, plus `kvCacheGiB` and 2 GiB, must fit the per-GPU budget.
+vLLM can need more on a GPU than that share, so passing the check doesn't establish that the model loads.
 Declare exactly one of `hardware` or `recipe`; there is no implicit hardware profile.
 For ordinary models on DGX Spark, select the existing Linux ARM64 contract explicitly:
 
@@ -68,11 +70,36 @@ An inline recipe supplies its own compatibility requirements and excludes `hardw
 Backend startup still establishes actual model compatibility.
 
 Optional `serving.toolParser` and `serving.reasoningParser` select native vLLM parsers.
-Unsupported names are rejected.
+NemoClaw checks only the name's form, lowercase letters, digits, and underscores; vLLM rejects an unknown parser when it starts, and the runtime stops with vLLM's error in its [stop detail](#diagnose-and-recover-a-stopped-runtime).
 `serving.mambaBackend: flashinfer` selects the native FlashInfer Mamba backend.
 `serving.enforceEager: false` leaves compilation and CUDA graphs at vLLM's native defaults; omission retains eager execution.
 Inline recipes supply their own model name and execution settings and reject these ordinary-service overrides.
 There are no shell hooks, extra command arguments, or implicit model-specific settings.
+
+### Set the Parallel Layout
+
+`serving.tensorParallelSize` and `serving.pipelineParallelSize` set vLLM's `--tensor-parallel-size` and `--pipeline-parallel-size`. Each is a positive integer; the schema accepts up to 16 as an input bound, not a hardware limit:
+
+```yaml
+# Under spec.services.<name>:
+serving:
+  tensorParallelSize: 2
+  pipelineParallelSize: 1
+```
+
+- Without a recipe, when both are omitted, tensor parallelism defaults to the number of [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy) entries, or 1 without them.
+- When only `pipelineParallelSize` is set, tensor parallelism stays at vLLM's default of 1, so `pipelineParallelSize: 2` with two GPUs uses both GPUs as pipeline stages.
+- Pipeline parallelism defaults to 1.
+- vLLM uses tensor × pipeline parallel size GPUs. Selected GPUs that the layout doesn't use stay reserved but idle.
+- The memory budget, `kvCacheGiB`, and `hardware.minGpuMemoryBytes` apply to each selected GPU, and each selected GPU must match the hardware profile and have room for the budget. Selected GPUs don't need to be identical.
+  - `gpuMemoryUtilization` is a fraction of each GPU's own total, as vLLM's `--gpu-memory-utilization` is.
+  - With a fixed `gpuMemoryGiB`, vLLM sizes the KV cache from `kvCacheGiB` (`--kv-cache-memory-bytes`), and NemoClaw passes the budget over the largest selected GPU's total as `--gpu-memory-utilization`, because vLLM requires that fraction of each GPU's total to be free when it starts. Every GPU then gets the same budget.
+- The host reserve applies once for the service, and the container's memory limit covers all of vLLM's worker processes.
+- NemoClaw passes the layout as written. When vLLM starts, it rejects a layout that needs more GPUs than the container sees, or that the model doesn't support, such as a tensor size that doesn't divide the model's attention heads. The runtime then stops, and the [container log](#diagnose-and-recover-a-stopped-runtime) keeps vLLM's error.
+- [vLLM's parallelism guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/serving/parallelism_scaling.md) recommends pipeline parallelism when the GPU count doesn't divide the model evenly, and when the GPUs have no NVLink.
+- An inline recipe sets its own layout, whose omitted sizes get vLLM's default of 1, and rejects these settings; see [recipes](recipes.md#declaration).
+
+`container.gpuDevices` takes one entry until serving one model across several GPUs is implemented ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)), so vLLM refuses a layout larger than one GPU; the statements above about several selected GPUs apply once that limit is lifted.
 
 ### Retained Model Files
 
@@ -109,9 +136,11 @@ There are no built-in model-specific backends.
 The hosted runtime checks named profiles against its GPU family, CPU architecture, driver, and memory.
 Configuration parsing validates the profile declaration without collecting host measurements.
 They do not choose a model, runtime image, or GPU count.
-Every profile currently requires Linux, driver major 580 or newer, and exactly one GPU reported by the execution host's `nvidia-smi`; multi-GPU and multi-host serving are not implemented.
-The collectors do not filter devices, so a DGX Station with an additional RTX/display GPU is rejected even when `CUDA_VISIBLE_DEVICES` selects only GB300.
-The backend uses tensor parallel size 1.
+Every profile currently requires Linux, driver major 580 or newer, and exactly one GPU visible to `nvidia-smi` in the model container; multi-GPU and multi-host serving are not implemented.
+Without [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy), the model container sees every GPU, so the runtime stops on a host with two or more, such as a DGX Station with an additional RTX or display GPU.
+`CUDA_VISIBLE_DEVICES` doesn't select one, because `nvidia-smi` ignores it.
+`container.gpuDevices` asks Docker for the one GPU it lists, as `docker run --gpus device=` does, so the model container sees only that GPU.
+With one GPU, the [parallel layout](#set-the-parallel-layout) defaults to tensor and pipeline parallel size 1.
 GB200/GB300 profiles describe one observed GPU in a Grace Blackwell system; they do not enable a full compute tray or NVL72 rack.
 
 | Profile | Hardware identity | Host architecture |
@@ -177,8 +206,8 @@ memory:
   gpuMemoryUtilization: 0.75
 ```
 
-This example checks weights against a 48 GiB budget derived from the declared minimum, then uses 75% of observed GPU capacity for serving.
-It rejects GPUs below the declared 64 GiB minimum.
+This example checks weights against a 48 GiB budget derived from the declared minimum, then uses 75% of each selected GPU's observed capacity for serving.
+It rejects a selected GPU below the declared 64 GiB minimum.
 Omit fixed GPU and KV-cache budgets in fractional mode.
 Unified-memory profiles reject both `minGpuMemoryBytes` and fractional allocation and retain host-memory reserve checks.
 All profiles retain the resident host-memory watchdog.
@@ -193,6 +222,9 @@ The managed vLLM supervisor continues checking host memory after the CLI exits.
 It stops its inference process on sustained pressure, failed memory observations, startup timeout, or an operator stop, and does not automatically restart inference.
 The container also stays stopped after a host reboot; see [host reboot recovery](../build-deploy/usage.md#recover-after-a-host-reboot).
 A native process exit also ends supervision of that process.
+When vLLM exits, the stop detail and the apply error include the end of vLLM's output, up to 4 KiB, with the inference key replaced by `[redacted]`.
+When one command's OpenTofu diagnostics together exceed 16 KiB, as several failed services' excerpts can, the apply error lists the whole diagnostics that fit, the next one's summary, and how many it left out; the stop detail stays in `/data/status.json`.
+If the cause isn't in the excerpt, read it in the container log.
 The model volume retains `/data/status.json` with `phase`, `detail`, `updated` (UTC timestamp), and `pid`.
 Phases are `initializing`, `downloading`, `preparing`, `loading`, `ready`, and `stopped`.
 Read `detail` with the timestamp: a `ready` file from an earlier container start does not prove current readiness.
@@ -219,7 +251,7 @@ printf 'Diagnostics: %s\n' "$diagnostic_dir"
 ```
 
 These commands read the selected container, including a stopped container, and write local diagnostic files.
-The container log includes supervisor diagnostics and inherited native process output; inspect it privately before sharing.
+The container log includes supervisor diagnostics and native process output; vLLM's standard output and error both appear on the container's standard error. Inspect the log privately before sharing.
 If status is missing or the engine is unreachable, retain the original apply error and deployment state; failed observation does not prove resource absence.
 
 | Stop detail | Recovery decision |
@@ -227,7 +259,7 @@ If status is missing or the engine is unreachable, retain the original apply err
 | Host memory pressure | Restore host headroom; reduce only workloads you own or ask the host operator; do not disable protection |
 | Memory observation failed or sample stream closed | Restore the host observation prerequisites; increasing a timeout does not fix an unreadable memory source |
 | Loading exceeded startup budget | Inspect backend output for loading/capacity errors before considering a supported startup-budget change |
-| Inference process exited | Diagnose the native error using runtime logs, the selected model and image, and the recipe configuration |
+| Inference process exited | Diagnose the native error in the detail's final vLLM output or the runtime log, using the selected model and image and the recipe configuration |
 | Operator stop or protection trip | Establish why the stop was requested before explicitly resuming inference |
 
 After correcting the conditions, follow [interrupted-operation recovery](../build-deploy/usage.md#recover-an-interrupted-operation) from the client with the original YAML, bundle, and state directory.
@@ -247,7 +279,7 @@ Its source pins and adaptation are recorded in the [vLLM runtime notice](../../i
 It uses ordinary `kind: vllm` serving with no preparation recipe.
 
 The example requires an existing OpenShell gateway and a Linux AMD64 Docker host reached through SSH.
-That host must expose exactly one NVIDIA GPU with compute capability at least 9.0, at least 96,000,000,000 bytes of dedicated GPU memory, and driver major 580 or newer.
+The model container must see exactly one NVIDIA GPU, so the host must have one or the service must select one with [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy); that GPU needs compute capability at least 9.0, at least 96,000,000,000 bytes of dedicated memory, and driver major 580 or newer.
 Follow the [SSH placement prerequisites](remote-service.md), build the [AMD64 runtime image](../build-deploy/build.md#build-a-runtime-image) on a matching host, and load it into the selected Docker daemon.
 Replace the zero image digest, SSH alias, gateway endpoint, private publication address, and deployment UID before applying.
 Build a compatible OpenClaw sandbox image using the [agent image procedure](../build-deploy/build.md#build-agent-images), replace `sandboxes.<name>.image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.

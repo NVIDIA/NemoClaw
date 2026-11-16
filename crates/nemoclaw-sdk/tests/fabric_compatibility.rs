@@ -523,12 +523,9 @@ fn the_bundled_adapters_accept_their_p0_interfaces_only() {
         rejected_interfaces(
             &catalog,
             hermes,
-            json!({"dashboard": {"port": 9119, "public_origins": ["https://h.example"]}, "terminal": {}})
+            json!({"dashboard": {"port": 9119, "public_origins": ["https://h.example"]}})
         ),
-        [
-            "harness.settings.interfaces.dashboard.public_origins",
-            "harness.settings.interfaces.terminal"
-        ]
+        ["harness.settings.interfaces.dashboard.public_origins"]
     );
     assert_eq!(
         rejected_interfaces(&catalog, "nvidia.fabric.pi", json!({"terminal": {}})),
@@ -582,10 +579,9 @@ fn agents_keep_their_state_where_the_adapter_accepts_it() {
     let hermes = project(include_bytes!("../../../examples/fabric-hermes.yaml"));
     assert_eq!(hermes["runtime"]["keep_state"], true, "{hermes}");
     let openclaw = project(include_bytes!("../../../examples/openclaw.yaml"));
-    assert!(
-        openclaw["runtime"].get("keep_state").is_none(),
-        "{openclaw}"
-    );
+    assert_eq!(openclaw["runtime"]["keep_state"], true, "{openclaw}");
+    let remote = project(include_bytes!("../../../examples/fabric-remote-agent.yaml"));
+    assert!(remote["runtime"].get("keep_state").is_none(), "{remote}");
 }
 
 #[test]

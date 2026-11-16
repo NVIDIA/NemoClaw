@@ -71,7 +71,7 @@ pub struct Resources {
     pub prepared_bytes: u64,
     /// Preparation memory requirement in GiB, in addition to the service host reserve.
     pub preparation_memory_gi_b: u64,
-    /// Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.
+    /// Serving GPU budget in bytes for each selected GPU, including its share of the model, caches, and other allocations. Checked against each selected GPU's memory on dedicated-memory GPUs, and against host memory with the host reserve on unified memory.
     pub gpu_memory_bytes: u64,
     /// Host available memory in GiB required at startup, beyond the GPU budget on unified memory or beyond the host reserve on a dedicated-memory GPU.
     pub startup_headroom_gi_b: u64,
@@ -111,6 +111,14 @@ pub struct Settings {
     #[schemars(default)]
     /// VLLM_* variables mapped to paths beneath verified prepared data; . selects its root. Names must not also appear in environment.
     pub prepared_environment: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    /// vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts.
+    pub tensor_parallel_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    /// vLLM's --pipeline-parallel-size: how many GPU stages each hold a range of layers.
+    pub pipeline_parallel_size: Option<u64>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

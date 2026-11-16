@@ -47,7 +47,18 @@ variable "deployment_uid" {
 variable "workspace" {
   description = "Fresh workspace name owned by this HCL deployment."
   type        = string
-  default     = "gtc-dc-kubernetes-cloud"
+  default     = "gtc-dc-k8s-cloud"
+
+  # OpenShell's rule for workspace names, which it checks only when apply
+  # creates the workspace, after the gateway is installed.
+  validation {
+    condition = (
+      length(var.workspace) <= 19
+      && can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", var.workspace))
+      && !strcontains(var.workspace, "--")
+    )
+    error_message = "OpenShell accepts a workspace name of at most 19 lowercase letters, digits and single hyphens, starting and ending with a letter or digit."
+  }
 }
 
 variable "images" {
@@ -193,7 +204,7 @@ resource "helm_release" "gateway" {
     pkiInitJob = { enabled = true }
     resources = {
       requests = { cpu = "250m", memory = "256Mi" }
-      limits   = { cpu = "1", memory = "1Gi" }
+      limits   = { cpu = "1", memory = "2Gi" }
     }
   })]
 }

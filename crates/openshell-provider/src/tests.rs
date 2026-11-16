@@ -208,6 +208,54 @@ fn a_loaded_policy_keeps_the_declared_rules_and_reports_its_hash() {
     assert!(active_policy(response(enriched, "", loaded), &expected).is_err());
 }
 
+/// A declared policy with filesystem grants and one middleware binding.
+fn guarded_policy() -> proto::SandboxPolicy {
+    let declared: nemoclaw_openshell::policy::ExplicitPolicy =
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "filesystem_policy": {"read_only": ["/usr"], "read_write": ["/sandbox"]},
+            "network_policies": {},
+            "network_middlewares": {"guard": {
+                "middleware": "decision-guard", "order": 10, "on_error": "fail_closed",
+                "config": {"mode": "block"},
+                "endpoints": {"include": ["docs.example.com"], "exclude": ["trusted.example.com"]}
+            }}
+        }))
+        .unwrap();
+    declared.to_proto().unwrap()
+}
+
+#[test]
+fn openshell_filesystem_additions_keep_a_loaded_middleware_binding() {
+    let declared = guarded_policy();
+    let mut loaded = declared.clone();
+    let filesystem = loaded.filesystem.as_mut().unwrap();
+    filesystem.read_only.push("/proc".into());
+    assert!(network::loaded_policy_contains(&loaded, &policy_json(&declared).unwrap()).unwrap());
+}
+
+fn guard(policy: &mut proto::SandboxPolicy) -> &mut proto::NetworkMiddlewareConfig {
+    policy.network_middlewares.get_mut("guard").unwrap()
+}
+
+#[test]
+fn any_change_to_a_loaded_middleware_binding_is_drift() {
+    let declared = guarded_policy();
+    let expected = policy_json(&declared).unwrap();
+    let changes: [fn(&mut proto::SandboxPolicy); 5] = [
+        |policy| policy.network_middlewares.clear(),
+        |policy| guard(policy).order = 20,
+        |policy| guard(policy).on_error = "fail_open".into(),
+        |policy| guard(policy).endpoints.as_mut().unwrap().exclude.clear(),
+        |policy| guard(policy).config = Some(Default::default()),
+    ];
+    for change in changes {
+        let mut loaded = declared.clone();
+        change(&mut loaded);
+        assert!(!network::loaded_policy_contains(&loaded, &expected).unwrap());
+    }
+}
+
 #[test]
 fn inference_names_the_variable_sandboxes_see_its_key_in() {
     let row = |pairs: &[(&str, &str)]| -> Row {

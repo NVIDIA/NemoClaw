@@ -36,7 +36,8 @@ KV and SSM cache dtypes use runtime defaults; model output accuracy and tool cal
 
 Ubuntu 24.04 is the assumed Linux environment, including the WSL2 distribution.
 Use [the build prerequisites](../../docs/build-deploy/build.md), Docker with NVIDIA GPU access and the containerd image store, and driver major 580 or newer.
-Each target requires exactly one visible NVIDIA GPU; these configurations provide neither CPU offloading nor multi-GPU serving.
+Each model container must see exactly one NVIDIA GPU; on a host with more, set the service's [`container.gpuDevices`](../../docs/agents-inference/inference.md#set-container-limits-and-update-policy) to the target GPU.
+These configurations provide neither CPU offloading nor multi-GPU serving.
 
 | Target | Hardware requirement | Memory accounting |
 |---|---|---|
@@ -143,6 +144,7 @@ Follow the [deployment workflow](../../docs/build-deploy/usage.md) for apply and
 For HCL, copy `hosted-nvidia.tf` and the repository's `versions.json` into a private working directory.
 The latter supplies the chart and gateway image pins from the same checkout as the native bundle.
 Set a fresh `deployment_uid` and `workspace`, the explicit `context` and `namespace`, and both agent `images` references.
+OpenShell accepts a workspace name of at most 19 characters, which plan checks.
 Export `NEMOCLAW_CLUSTER_KUBECONFIG` as the absolute kubeconfig path for the OpenShell provider, and set `TF_VAR_CLUSTER_KUBECONFIG` to the same path for Helm:
 
 ```sh
