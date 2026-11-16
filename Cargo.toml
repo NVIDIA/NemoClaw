@@ -85,7 +85,7 @@ flate2 = "1.1"
 schemars = "=1.2.3"
 jsonschema = { version = "=0.56.0", default-features = false }
 pulldown-cmark = { version = "=0.13.6", default-features = false }
-pulldown-cmark-to-cmark = "=22.0.1"
+pulldown-cmark-to-cmark = "=23.0.1"
 crossterm = "0.29"
 # Cluster access for Kubernetes gateways; helm is the only cluster subprocess.
 kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "ring", "ws"] }
