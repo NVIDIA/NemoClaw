@@ -11,7 +11,7 @@ Each excerpt is followed by what it does and why.
 
 ```hcl
 required_providers {
-  docker    = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.6.0" }
+  docker    = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.7.0" }
   ollama    = { source = "registry.opentofu.org/nvidia/ollama" }
   openshell = { source = "registry.opentofu.org/nvidia/openshell" }
   fabric    = { source = "registry.opentofu.org/nvidia/fabric" }
