@@ -181,6 +181,52 @@ describe("Spark Express qualification workflow (#14065)", () => {
     expect(validateE2eWorkflow(changed).join("\n")).toContain("Spark Express");
   });
 
+  it.each([
+    ["Check out trusted Spark preparation", "with", { ref: "${{ inputs.checkout_sha }}" }],
+    ["Check out Spark candidate", "with", { ref: "${{ github.workflow_sha }}" }],
+    ["Remove Docker credentials before candidate checkout", "continue-on-error", true],
+    ["Remove Docker credentials before candidate checkout", "if", "failure()"],
+    ["Remove Docker credentials before candidate checkout", "run", "true"],
+  ])("rejects unsafe Spark credential preparation at %s / %s", (name, field, value) => {
+    const changed = structuredClone(workflow);
+    const step = changed.jobs["spark-express-vllm"].steps.find((item: any) => item.name === name);
+    step[field as string] = value;
+    expect(validateE2eWorkflow(changed).join("\n")).toContain("Spark Express");
+  });
+
+  it.each([
+    ["Check out Spark candidate", "Authenticate to Docker Hub"],
+    ["Install OpenShell CLI", "Check out Spark candidate"],
+    [
+      "Remove Docker credentials before candidate checkout",
+      "Run Spark Express and Muse qualification",
+    ],
+  ])("rejects Spark preparation reordered between %s and %s", (first, second) => {
+    const changed = structuredClone(workflow);
+    const steps = changed.jobs["spark-express-vllm"].steps;
+    const a = steps.findIndex((step: any) => step.name === first);
+    const b = steps.findIndex((step: any) => step.name === second);
+    [steps[a], steps[b]] = [steps[b], steps[a]];
+    expect(validateE2eWorkflow(changed).join("\n")).toContain("Spark Express");
+  });
+
+  it.each([
+    "${{ secrets.DOCKERHUB_TOKEN }}",
+    "${{ toJSON(secrets) }}",
+    "${{ sEcReTs['DOCKERHUB_TOKEN'] }}",
+  ])("rejects Spark credentials outside trusted authentication through %s", (value) => {
+    const changed = structuredClone(workflow);
+    changed.jobs["spark-express-vllm"].env.EXTRA_CREDENTIAL = value;
+    expect(validateE2eWorkflow(changed).join("\n")).toContain("Spark Express");
+    delete changed.jobs["spark-express-vllm"].env.EXTRA_CREDENTIAL;
+    changed.jobs["spark-express-vllm"].steps.push({
+      name: "Alternate credential delivery",
+      run: "candidate-command",
+      env: { EXTRA_CREDENTIAL: value },
+    });
+    expect(validateE2eWorkflow(changed).join("\n")).toContain("Spark Express");
+  });
+
   it.each([0, 7])("forwards the workflow Spark selector and propagates exit %i", (exitCode) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "spark-workflow-"));
     try {

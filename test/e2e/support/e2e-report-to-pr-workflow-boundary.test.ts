@@ -1054,6 +1054,31 @@ it.each([
 );
 
 it.each([
+  ["spark-express-vllm", "spark-express-vllm", "catalogue-hosted-inference"],
+  ["catalogue-hosted-inference", "hosted-inference-openrouter", "spark-express-vllm"],
+])("omits unselected skipped jobs when %s alone succeeds", (selected, target, unselected) => {
+  const report = renderE2eReport({
+    context: REPORT_CONTEXT,
+    env: {
+      ...HOSTED_CANDIDATE_ENV,
+      SELECTED_WORKFLOW_JOBS: JSON.stringify([selected]),
+      JOB_TARGETS: target,
+    },
+    apiJobs: [],
+    apiJobsLoaded: true,
+    needs: {
+      "generate-matrix": { result: "success" },
+      [selected]: { result: "success" },
+      [unselected]: { result: "skipped" },
+    },
+  });
+  expect(report.body).toContain(`| ${selected} |`);
+  expect(report.body).not.toContain(`| ${unselected} |`);
+  expect(report.body).toContain("All selected tests passed");
+  expect(report.body).not.toContain("Some selected tests did not run");
+});
+
+it.each([
   ["missing PR", { JOB_PR_NUMBER: "" }],
   ["malformed commit", { JOB_CHECKOUT_SHA: "not-a-sha" }],
   ["foreign candidate repository", { JOB_CHECKOUT_REPOSITORY: "someone/fork" }],

@@ -714,7 +714,14 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.ref === "${{ github.workflow_sha }}" &&
         step.with?.path === ".trusted-ci-actions" &&
         step.with?.["persist-credentials"] === false;
+      const trustedSparkPreparationCheckout =
+        jobName === "spark-express-vllm" &&
+        step.name === "Check out trusted Spark preparation" &&
+        step.with?.repository === "NVIDIA/NemoClaw" &&
+        step.with?.ref === "${{ github.workflow_sha }}" &&
+        step.with?.["persist-credentials"] === false;
       const trustedCheckout =
+        trustedSparkPreparationCheckout ||
         (["llama-cpp-dgx-spark-plan", "llama-cpp-dgx-spark-qualification"].includes(jobName) &&
           step.with?.repository === "NVIDIA/NemoClaw" &&
           step.with?.["persist-credentials"] === false &&

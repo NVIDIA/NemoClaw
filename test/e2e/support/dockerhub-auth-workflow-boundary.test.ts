@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const CLEANUP_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-cleanup.sh");
 const AUTH_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-setup.sh");
@@ -164,6 +165,74 @@ fi
       expect(`${rejectedArgs.stdout}${rejectedArgs.stderr}`).toContain("does not accept arguments");
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("removes authenticated Docker credentials before the Spark candidate can read them", () => {
+    const workflow = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e.yaml"), "utf8"),
+    );
+    const steps = workflow.jobs["spark-express-vllm"].steps;
+    const removal = steps.find(
+      (step: { name?: string }) =>
+        step.name === "Remove Docker credentials before candidate checkout",
+    );
+    const directory = fs.mkdtempSync(path.resolve(os.tmpdir(), "spark-docker-custody-"));
+    try {
+      writeExecutable(path.join(directory, "timeout"), '#!/bin/sh\nshift\nexec "$@"\n');
+      writeExecutable(
+        path.join(directory, "docker"),
+        `#!/bin/sh
+if [ "$1" = login ]; then
+  cat > "$DOCKER_CONFIG/config.json"
+fi
+exit 0
+`,
+      );
+      const githubEnv = path.join(directory, "github-env");
+      const env = {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        RUNNER_TEMP: directory,
+        GITHUB_JOB: "spark-express-vllm",
+        GITHUB_ENV: githubEnv,
+      };
+      const setup = spawnSync(AUTH_HELPER_PATH, [], {
+        encoding: "utf8",
+        env: {
+          ...env,
+          DOCKERHUB_AUTH_REQUIRED: "1",
+          DOCKERHUB_USERNAME: "fixture-user",
+          DOCKERHUB_TOKEN: "fixture-token",
+        },
+      });
+      expect(setup.status, setup.stderr).toBe(0);
+      const dockerConfig = fs.readFileSync(githubEnv, "utf8").trim().split("=")[1];
+      expect(fs.readFileSync(path.join(dockerConfig, "config.json"), "utf8")).toContain(
+        "fixture-token",
+      );
+      const executionEnv = { ...env, DOCKER_CONFIG: dockerConfig };
+      const cleanup = spawnSync("bash", ["-c", removal?.run ?? "true"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: executionEnv,
+      });
+      expect(cleanup.status, cleanup.stderr).toBe(0);
+      const observation = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `
+        const fs = require("node:fs");
+        if (process.env.DOCKERHUB_TOKEN || process.env.DOCKERHUB_USERNAME) process.exit(1);
+        if (fs.existsSync(process.env.DOCKER_CONFIG)) process.exit(2);
+      `,
+        ],
+        { encoding: "utf8", env: executionEnv },
+      );
+      expect(observation.status, observation.stderr).toBe(0);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
     }
   });
 

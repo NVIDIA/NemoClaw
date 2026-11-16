@@ -354,12 +354,35 @@ it.each([
 });
 
 it.each([
-  ["spark-express-vllm", "^spark-express-vllm:", 2, "fresh explicit Muse Glimmer"],
-  ["dgx-station-express", "^dgx-station-express:", 1, "Station Express installs"],
+  [
+    "spark-express-vllm",
+    "^spark-express-vllm:",
+    2,
+    "fresh explicit Muse Glimmer",
+    [
+      expect.objectContaining({
+        name: "spark-express-vllm: DGX Spark Express option 2 materializes the fixed vLLM profile and routes sandbox inference",
+      }),
+      expect.objectContaining({
+        name: "spark-express-vllm: fresh explicit Muse Glimmer enables Tool Search and returns a visible first reply (#14065)",
+      }),
+    ],
+  ],
+  [
+    "dgx-station-express",
+    "^dgx-station-express:",
+    1,
+    "Station Express installs",
+    [
+      expect.objectContaining({
+        name: "dgx-station-express: Station Express installs cached Super VL vLLM and NemoClaw, routes inference, and cleans up runtime",
+      }),
+    ],
+  ],
 ])(
   "collects the %s live cases without loading hardware runtime modules",
   { timeout: 35_000 },
-  (target, selector, count, requiredCase) => {
+  (target, selector, count, requiredCase, expectedCases) => {
     const result = spawnSync(
       process.execPath,
       [
@@ -390,11 +413,7 @@ it.each([
     expect(result.status, result.stderr).toBe(0);
     const tests = JSON.parse(result.stdout);
     expect(tests).toHaveLength(count);
-    expect(tests).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: expect.stringMatching(new RegExp(selector)) }),
-      ]),
-    );
+    expect(tests).toEqual(expect.arrayContaining(expectedCases));
     expect(tests).toContainEqual(
       expect.objectContaining({ name: expect.stringContaining(requiredCase) }),
     );

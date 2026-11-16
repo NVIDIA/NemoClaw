@@ -180,6 +180,72 @@ export function validateSparkExpressWorkflowBoundary(workflow: unknown): string[
   }))
     requireEqual(env[key], value, `must bind ${key}`);
   requireEqual(
+    step("Check out trusted Spark preparation"),
+    {
+      name: "Check out trusted Spark preparation",
+      uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      with: {
+        repository: "NVIDIA/NemoClaw",
+        ref: "${{ github.workflow_sha }}",
+        "persist-credentials": false,
+      },
+    },
+    "must prepare the host from the trusted workflow revision",
+  );
+  requireEqual(
+    step("Remove Docker credentials before candidate checkout"),
+    {
+      name: "Remove Docker credentials before candidate checkout",
+      shell: "bash",
+      run: "bash .github/scripts/docker-auth-cleanup.sh",
+    },
+    "must remove Docker credentials successfully before candidate checkout",
+  );
+  requireEqual(
+    step("Check out Spark candidate"),
+    {
+      name: "Check out Spark candidate",
+      uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      with: {
+        repository: "${{ inputs.checkout_repository || github.repository }}",
+        ref: "${{ inputs.checkout_sha || github.sha }}",
+        "fetch-depth": 0,
+        "persist-credentials": false,
+      },
+    },
+    "must check out the authenticated candidate without stored credentials",
+  );
+  requireEqual(
+    step("Install OpenShell CLI"),
+    { name: "Install OpenShell CLI", run: "bash scripts/install-openshell.sh" },
+    "must install OpenShell from trusted preparation code",
+  );
+  requireEqual(
+    steps.map((entry) => entry.name),
+    [
+      "Check out trusted Spark preparation",
+      "Authenticate to Docker Hub",
+      "Download reviewed OpenShell SDK archive",
+      "Prepare E2E workspace",
+      "Install reviewed OpenShell SDK archive without package credentials",
+      "Install OpenShell CLI",
+      "Remove Docker credentials before candidate checkout",
+      "Check out Spark candidate",
+      "Restore exact-commit CLI artifact",
+      "Run Spark Express and Muse qualification",
+      "Upload Spark Express artifacts",
+      "Clean up Docker auth",
+    ],
+    "must finish trusted preparation and credential removal before candidate checkout or execution",
+  );
+  const withoutAuth = {
+    ...job,
+    steps: steps.filter((entry) => entry.name !== "Authenticate to Docker Hub"),
+  };
+  if (/\bsecrets\b/iu.test(JSON.stringify(withoutAuth))) {
+    errors.push("Spark Express must not expose workflow secrets outside trusted authentication");
+  }
+  requireEqual(
     step("Restore exact-commit CLI artifact").with,
     {
       "provenance-json": "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",

@@ -2439,6 +2439,8 @@ workflow and correlation identities. Select `jobs=spark-express-vllm` or
 `targets=spark-express-vllm` by itself, leaving the other selector empty.
 The existing `approve-dgx-spark-image-qualification` environment requires approval before
 candidate code executes on the protected host. The job shares the protected Spark queue without cancelling active work.
+Host preparation runs from `github.workflow_sha`. The job removes its isolated Docker Hub
+credentials before checking out the candidate or restoring its CLI. Candidate image pulls are anonymous.
 It restores the verified candidate CLI, uses qualified managed images, and publishes
 `e2e-spark-express-vllm` artifacts through the standard E2E reporter.
 The 215-minute job budget contains 165 minutes of serial test deadlines, 30 minutes

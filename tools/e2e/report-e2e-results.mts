@@ -389,7 +389,8 @@ export function renderE2eReport(input: {
     : [];
   const isSelectiveReportEntry = ([name, { result }]: [string, ReportEntry]) =>
     (["catalogue-hosted-inference", "spark-express-vllm"].includes(name) &&
-      validHostedCandidateContext(env, context)) ||
+      validHostedCandidateContext(env, context) &&
+      (JSON.parse(env.SELECTED_WORKFLOW_JOBS || "[]") as string[]).includes(name)) ||
     (result !== "skipped" &&
       (name !== "generate-matrix" || result === "failure" || result === "cancelled"));
   const sparkSelected =
