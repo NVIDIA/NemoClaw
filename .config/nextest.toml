@@ -63,32 +63,16 @@ threads-required = "num-test-threads"
 # bundle, against local fixtures that own temporary state and loopback
 # endpoints. nemoclaw-e2e's integration binary holds only these, so the profile
 # selects it whole; its live tests are in the e2e binary.
-# Selecting the fake ssh relay's ignored test also archives nemoclaw-test-fixtures'
-# executables beside the extracted tests: the relay, which fake engines need on
-# platforms without Unix sockets, and the SSH simulator. The fixture provider's
-# ignored test does the same for the provider protocol tests.
 [profile.integration]
 inherits = "ci"
 test-threads = 4
 slow-timeout = { period = "90s", terminate-after = 2 }
 default-filter = '''
-(package(nemoclaw-test-fixtures) & binary(=ssh_relay))
-| (package(nemoclaw-fixture-provider) & binary(=archive))
-| (package(nemoclaw-e2e) & binary(=integration))
+package(nemoclaw-e2e) & binary(=integration)
 '''
 
 [profile.integration.junit]
 path = "integration.xml"
-
-# Runs nothing in CI: `cargo ci archive` selects these binaries, which the
-# integration profile also selects, so the contract archive holds the fixture
-# executables that the contract tests start.
-[profile.fixtures]
-inherits = "ci"
-default-filter = '''
-(package(nemoclaw-test-fixtures) & binary(=ssh_relay))
-| (package(nemoclaw-fixture-provider) & binary(=archive))
-'''
 
 # The tofu test integration shards share one fixed engine socket.
 [[profile.integration.overrides]]

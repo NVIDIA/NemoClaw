@@ -246,7 +246,7 @@ jobs:
       - if: inputs.tests != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ inputs.tests }}-live
+          name: ${{ inputs.tests }}-e2e
           path: .build/ci
       - if: inputs.tests != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -275,9 +275,8 @@ jobs:
           else
             # As the E2E platform workflow's hosted HCL jobs load them.
             tar -xf .build/ci/bundle.tar
-            mkdir -p .build/hcl
-            zstd -d -c -q .build/ci/live.tar.zst | tar -x -C .build/hcl
-            find .build/hcl -type f -perm -u+x -path '*/deps/e2e-*' -exec ln -s "$PWD/{}" .build/e2e ';'
+            # Artifact transfer drops the executable bit.
+            install -m 755 .build/ci/e2e .build/e2e
             # A case names its images nc-fabric@DIGEST, which Docker resolves
             # only in the repository that holds the image.
             if [[ -n $COMMIT ]]; then

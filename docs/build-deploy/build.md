@@ -3,7 +3,7 @@
 
 # Build Local Artifacts
 
-Build from the repository root with Rust 1.99.1, pinned in [rust-toolchain.toml](../../rust-toolchain.toml).
+Build from the repository root with Rust 1.100.0, pinned in [rust-toolchain.toml](../../rust-toolchain.toml).
 Native bundles also require Protocol Buffers compiler 36.2.
 Native builds also require a C toolchain for TLS dependencies.
 Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.2`; `cargo ci` finds it there.

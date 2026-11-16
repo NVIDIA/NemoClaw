@@ -75,6 +75,12 @@ pub struct State {
     pub sandbox_files: HashMap<String, Vec<u8>>,
     /// Start requests answered as though `serve` were not yet listening.
     pub host_unavailable_starts: usize,
+    /// Start requests refused as Fabric refuses one while another runtime
+    /// still owns the agent's kept state: `state_in_use`, with no effects.
+    pub state_in_use_starts: usize,
+    /// Runtime IDs with a request in flight. Like Fabric, the bridge refuses
+    /// to stop them with `runtime_busy` and keeps them running.
+    pub busy_runtimes: HashSet<String>,
     /// Why a running runtime's check does not pass, as Fabric's reason code,
     /// such as `unsupported_adapter`, `probe_timeout`, or an adapter's own
     /// failure; none passes.
@@ -1347,7 +1353,10 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                         state.host_unavailable_starts -= 1;
                         error = Some(failure("host_unavailable", "transport", "none"));
                     } else if state.fabric_uncertain.contains(&sandbox_id) {
-                        error = Some(failure("runtime_exists", "start", "none"));
+                        error = Some(failure("start_uncertain", "start", "none"));
+                    } else if state.state_in_use_starts > 0 {
+                        state.state_in_use_starts -= 1;
+                        error = Some(failure("state_in_use", "start", "none"));
                     } else if let Some(config) = (flag("--config") == Some("-"))
                         .then(|| serde_json::from_slice::<serde_json::Value>(&request.stdin).ok())
                         .flatten()
@@ -1416,7 +1425,13 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     }
                 }
                 "stop" => {
-                    if let Some(runtime_id) = requested_runtime.filter(|_| running) {
+                    if running
+                        && requested_runtime
+                            .as_ref()
+                            .is_some_and(|id| state.busy_runtimes.contains(id))
+                    {
+                        error = Some(failure("runtime_busy", "stop", "none"));
+                    } else if let Some(runtime_id) = requested_runtime.filter(|_| running) {
                         state.fabric_runtimes.remove(&runtime_id);
                         state.fabric_stopped.insert(sandbox_id.clone());
                         if !state.fabric_runtimes.values().any(|id| id == &sandbox_id) {

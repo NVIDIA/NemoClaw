@@ -179,6 +179,16 @@ jobs:
           compression-level: 1
           retention-days: 1
           if-no-files-found: error
+      # The HCL case jobs run only the e2e test executable.
+      - name: Upload the e2e test executable
+        if: inputs.e2e
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.identity.outputs.artifact }}-e2e
+          path: .build/ci/e2e
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
 
   bundle:
     name: Build bundle

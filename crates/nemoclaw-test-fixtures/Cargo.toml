@@ -3,8 +3,9 @@
 
 # Test fixtures shared by the provider contract tests and the end-to-end
 # tests. Provider crates use them as development dependencies; nemoclaw-e2e
-# depends on the providers, so they cannot live there. The fixture executables
-# in src/bin are found beside the test executables (fixture_executable). The
+# depends on the providers, so they cannot live there. Tests find the fixture
+# executables in src/bin in the directory NEMOCLAW_TEST_FIXTURES names
+# (fixture_executable). The
 # fixture provider, which needs the SDK, is in nemoclaw-fixture-provider so the
 # openshell and fabric provider tests do not compile the SDK.
 [package]

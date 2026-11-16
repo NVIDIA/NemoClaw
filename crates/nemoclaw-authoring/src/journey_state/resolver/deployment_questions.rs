@@ -15,11 +15,9 @@ impl QuestionResolver<'_> {
             .ask_scopes
             .contains(&JourneyScope::DeploymentFields)
         {
-            let active_harness = harness_path(inspect_values);
             let active_routes = routes_path(inspect_values);
             for field in crate::deployment::deployment_questions_for_values(
                 inspect_values,
-                active_harness.as_deref(),
                 active_routes.as_deref(),
             )? {
                 if self.decisions.accepted.contains(&field.path)

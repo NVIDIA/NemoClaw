@@ -9,7 +9,7 @@ pub(super) fn native_value<'a>(
     id: &str,
 ) -> Option<&'a Value> {
     if let Some(path) = id.strip_prefix("workflow:") {
-        values.pointer(&format!("{}/config/workflow{path}", harness_path(values)?))
+        values.pointer(&format!("{}/workflow{path}", agent_path(values)?))
     } else if let Some(path) = id.strip_prefix("model:") {
         values.pointer(&format!(
             "{}/{}/overrides/settings{path}",
@@ -30,6 +30,12 @@ pub(super) fn routes_path(values: &Value) -> Option<String> {
     let reference = agent.get("inferenceRef")?.as_str()?;
     let escaped = reference.replace('~', "~0").replace('/', "~1");
     let path = format!("/spec/inferences/{escaped}/routes");
+    values.pointer(&path).is_some().then_some(path)
+}
+
+/// The selected sandbox's agent, which owns the Fabric workflow section.
+pub(super) fn agent_path(values: &Value) -> Option<String> {
+    let path = format!("{}/agent", sandbox_path(values)?);
     values.pointer(&path).is_some().then_some(path)
 }
 

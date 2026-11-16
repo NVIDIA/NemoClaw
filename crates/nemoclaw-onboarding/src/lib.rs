@@ -38,7 +38,7 @@ pub async fn author(
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err("onboarding requires a terminal on stdin and stderr".into());
     }
-    let Some(yaml) = tui::run(capabilities, state, cancel, discover).await? else {
+    let Some(yaml) = tui::run(capabilities, state, cancel, discover, output).await? else {
         return Ok(false);
     };
     if cancel.is_cancelled() {

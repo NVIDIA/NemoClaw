@@ -158,8 +158,8 @@ pub(super) fn native_questions_for_values(
     else {
         return Ok(Vec::new());
     };
-    let workflow = values
-        .pointer(&format!("{harness_path}/config/workflow"))
+    let workflow = agent_path(values)
+        .and_then(|agent| values.pointer(&format!("{agent}/workflow")))
         .cloned()
         .unwrap_or_else(|| Value::Object(Map::new()));
     let targets = capabilities

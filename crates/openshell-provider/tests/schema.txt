@@ -14,7 +14,7 @@ resource openshell_api (version 2)
   auth_style: string, optional, computed
   binaries: list(string), optional
   credential_env: string, optional, computed
-  endpoint: string, optional, computed
+  endpoints: list(string), optional
   gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
   generation: string, optional, computed
   header_name: string, optional, computed
@@ -23,6 +23,7 @@ resource openshell_api (version 2)
   policy_authority: string, optional, computed
   ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
   registration: string, computed
+  sandbox_env: string, optional, computed
   workspace: object({ name = string, owner = string, type = string }), required
   block mcp: optional
     block rules: list

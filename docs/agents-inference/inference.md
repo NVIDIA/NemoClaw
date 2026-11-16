@@ -130,7 +130,6 @@ These shared fields do not change [platform qualification limits](../resources/l
 The service-level `updatePolicy` defaults to `Preserve`.
 For Docker, this refuses an update that would replace a running managed model container.
 Changing the image, model, serving settings, `cpuLimitMillis`, `memoryLimitGiB`, or `gpuDevices` replaces the container; declaring the omitted 104 GiB default as `memoryLimitGiB: 104` does not.
-Earlier bundles replaced a running Docker model container for image, model, and serving changes without a policy; to keep that behavior, for example when automation updates images, set `spec.services.<name>.updatePolicy: Recreate`.
 Set `updatePolicy: Recreate` only when accepting sequential replacement and possible downtime if the replacement cannot start.
 The opt-in persists for later updates until removed or changed to `Preserve`; changing only this policy does not restart the workload.
 Initial creation, unchanged apply, and recovery of missing or stopped Docker containers remain allowed after ownership checks.
@@ -551,7 +550,7 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 
 | Phase | Current budget and setting |
 |---|---|
-| Fabric runtime request | `harness.execution.timeoutSeconds` maps to public Fabric `runtime.timeout_seconds`; omitted values use Fabric defaults |
+| Fabric runtime request | The harness's `runtime.timeout_seconds`, passed to Fabric; omitted values use Fabric defaults |
 | Managed service loading | `spec.services.<name>.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
 | Managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |

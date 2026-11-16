@@ -63,10 +63,14 @@ Paths:
 | `auth` | [AgentAuth](#agentauth) | No | — | Require API-key authentication through the selected routed provider. The provider must supply a credential. |
 | `inference` | [Inference](#inference) | No | — | Inline inference configuration. Exactly one of inference or inferenceRef is required. |
 | `inferenceRef` | string | No | — | Name of an enclosing inference configuration. Excludes inline inference. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `instructions` | object | No | — | Fabric's instructions section, passed to Fabric unchanged: the agent's system prompt and instruction files. Fabric validates it against the selected adapter. |
 | `integrationRefs` | array of string | No | — | Unique integration names selected from spec.integrations or this sandbox's integrations. Omission selects no enclosing definitions. Constraints: items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions attached directly to this agent. Names must not collide with definitions in enclosing scopes. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `mcp` | object | No | — | Fabric's MCP section, passed to Fabric unchanged. NemoClaw grants no network access or credentials for the servers it names. |
 | `name` | string | Yes | — | Lowercase agent name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `tools` | [AgentTools](#agenttools) | No | — | Explicit native tool identifiers projected into public Fabric configuration. Fabric validates adapter support; this does not change OS-level filesystem permissions. |
+| `skills` | object | No | — | Fabric's skills section, passed to Fabric unchanged, such as directories and duplicates. Paths are absolute sandbox paths. |
+| `tools` | object | No | — | Fabric's tools section, passed to Fabric unchanged, such as enabled, blocked, and definitions. Fabric validates tool identifiers against the selected adapter; this does not change OS-level filesystem permissions. |
+| `workflow` | object | No | — | Fabric's workflow section, passed to Fabric unchanged: the registered workflow target the agent runs. |
 
 ## AgentAuth
 
@@ -81,36 +85,6 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `method` | [AuthMethod](#authmethod) | Yes | — | API-key authentication. Interactive login is not supported. |
-
-## AgentExecution
-
-Execution timeout shared by the sandbox; Fabric owns native execution settings.
-
-Guide: [Agent runtimes](../agents-inference/agents.md).
-
-Paths:
-
-- `spec.harnesses.{key}.execution`
-- `spec.sandboxes.{key}.harness.execution`
-- `spec.sandboxes.{key}.harnesses.{key}.execution`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `timeoutSeconds` | integer | No | — | Invocation timeout in seconds passed to Fabric. Readiness has its own deployment deadline. Constraints: minimum 1; maximum 1000000000. |
-
-## AgentTools
-
-Explicit native tool identifiers forwarded to Fabric.
-
-Guide: [Agent runtimes](../agents-inference/agents.md).
-
-Paths:
-
-- `spec.sandboxes.{key}.agent.tools`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `allow` | array of string | Yes | — | Native tool identifiers. Fabric validates availability and semantics. Constraints: minimum items 1; maximum items 128; items: pattern `^[^\x00-\x1f\x7f]+$`; minimum characters 1; maximum characters 256. |
 
 ## ApfPolicyAuthority
 
@@ -311,6 +285,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.policies.{key}`
 - `spec.sandboxes.{key}.network.policy.explicit`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -468,6 +443,7 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 
 Paths:
 
+- `spec.grants.{key}`
 - `spec.sandboxes.{key}.network.grants.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -503,10 +479,13 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `config` | object | No | — | Public Fabric configuration. Deployment-owned identities and model connections cannot be overridden. |
-| `execution` | [AgentExecution](#agentexecution) | No | — | Public Fabric runtime execution settings. |
+| `discovery` | object | No | — | Fabric's discovery section, passed to Fabric unchanged: additional descriptor discovery paths in the sandbox. |
+| `environment` | object | No | — | Fabric's environment section, passed to Fabric unchanged. The deployment sets provider to local and workspace to /sandbox/workspace; a different authored value fails. |
 | `kind` | string | Yes | — | Fabric harness implementation for the sandbox agent. Constraints: pattern `\S`; minimum characters 1. |
+| `relay` | object | No | — | Fabric's relay section, passed to Fabric unchanged, such as Relay plugins. Relay validates and activates them. |
+| `runtime` | object | No | — | Fabric's runtime section, passed to Fabric unchanged, such as timeout_seconds and max_turns. The deployment sets artifacts and, for adapters that accept it, keep_state; a different authored value fails. |
 | `settings` | object | No | — | Opaque native settings validated by the selected Fabric adapter. |
+| `telemetry` | object | No | — | Fabric's telemetry section, passed to Fabric unchanged, such as providers.relay. NemoClaw grants no network access for its exporters. |
 
 ## Image
 
@@ -671,9 +650,10 @@ A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
 |---|---|---|---|---|
 | `authStyle` | [ApiAuthStyle](#apiauthstyle) | No | — | How the key is sent: bearer, the default, as a bearer token, or header, as the raw value of headerName. |
 | `credential` | [SecretRef](#secretref) | Yes | — | Host environment reference holding the API key. |
-| `endpoint` | string | Yes | — | The API's HTTPS URL. |
+| `endpoints` | array of string | Yes | — | The API's HTTPS URLs. One key reaches each URL's host, port and path subtree. Constraints: minimum items 1. |
 | `headerName` | string | No | — | The header that carries the key. Defaults to Authorization for bearer; required for header. |
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"api"`. |
+| `sandboxEnv` | string | No | — | Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to NEMOCLAW_API_<registration>_KEY. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 
 ## InterceptorTls
 
@@ -820,9 +800,11 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
+| `grantRefs` | array of string | No | — | Names of grants in spec.grants added to the isolated preset, alongside grants. Names must be unique across both. Excluded by policy and policyRef. Constraints: items: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `grants` | map of [Grant](#grant) | No | — | Named grants added to the isolated preset, each like an OpenShell network policy rule without its name. An explicit policy holds its own grants. |
-| `policy` | [ExplicitPolicySelection](#explicitpolicyselection) | No | — | Complete authored OpenShell policy, replacing the isolated preset. |
-| `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy.explicit; omission without policy selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy.explicit. |
+| `policy` | [ExplicitPolicySelection](#explicitpolicyselection) | No | — | Complete authored OpenShell policy, replacing the isolated preset. Excludes tier and policyRef. |
+| `policyRef` | string | No | — | Name of a policy in spec.policies, applied as if written in policy.explicit. Excludes tier and policy. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy or policyRef; omitting all three selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy or policyRef. |
 
 ## OllamaMemory
 
@@ -906,6 +888,8 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.grants.{key}.endpoints[].rules[]`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].rules[]`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[]`
 - `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[]`
 
@@ -921,6 +905,14 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.grants.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.grants.{key}.endpoints[].deny_rules[].tool`
+- `spec.grants.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.grants.{key}.endpoints[].rules[].allow.tool`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].deny_rules[].tool`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].rules[].allow.tool`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].params.{key}`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].tool`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow.params.{key}`
@@ -956,6 +948,8 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.grants.{key}.binaries[]`
+- `spec.policies.{key}.network_policies.{key}.binaries[]`
 - `spec.sandboxes.{key}.network.grants.{key}.binaries[]`
 - `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.binaries[]`
 
@@ -971,6 +965,8 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.grants.{key}.endpoints[]`
+- `spec.policies.{key}.network_policies.{key}.endpoints[]`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[]`
 - `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[]`
 
@@ -1001,6 +997,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.policies.{key}.filesystem_policy`
 - `spec.sandboxes.{key}.network.policy.explicit.filesystem_policy`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -1017,6 +1014,8 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.grants.{key}.endpoints[].json_rpc`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].json_rpc`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].json_rpc`
 - `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].json_rpc`
 
@@ -1032,6 +1031,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.policies.{key}.landlock`
 - `spec.sandboxes.{key}.network.policy.explicit.landlock`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -1046,6 +1046,10 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.grants.{key}.endpoints[].deny_rules[]`
+- `spec.grants.{key}.endpoints[].rules[].allow`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].deny_rules[]`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].rules[].allow`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[]`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow`
 - `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[]`
@@ -1066,6 +1070,8 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.grants.{key}.endpoints[].mcp`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].mcp`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].mcp`
 - `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].mcp`
 
@@ -1084,6 +1090,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.policies.{key}.network_middlewares.{key}`
 - `spec.sandboxes.{key}.network.policy.explicit.network_middlewares.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -1103,6 +1110,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.policies.{key}.network_middlewares.{key}.endpoints`
 - `spec.sandboxes.{key}.network.policy.explicit.network_middlewares.{key}.endpoints`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -1118,6 +1126,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.policies.{key}.process`
 - `spec.sandboxes.{key}.network.policy.explicit.process`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -1133,6 +1142,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.policies.{key}.network_policies.{key}`
 - `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
@@ -1149,6 +1159,14 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
+- `spec.grants.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.grants.{key}.endpoints[].deny_rules[].tool`
+- `spec.grants.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.grants.{key}.endpoints[].rules[].allow.tool`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].deny_rules[].tool`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.policies.{key}.network_policies.{key}.endpoints[].rules[].allow.tool`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].params.{key}`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].tool`
 - `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow.params.{key}`
@@ -1580,10 +1598,12 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `gateway` | [Gateway](#gateway) | Yes | — | OpenShell gateway connection or managed gateway settings. |
+| `grants` | map of [Grant](#grant) | No | — | Named network grants available to sandbox networks through grantRefs. Each selected grant becomes a policy rule with its definition's name; unselected grants are validated but grant nothing. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferenceProviders` | map of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `policies` | map of [ExplicitPolicy](#explicitpolicy) | No | — | Named complete OpenShell sandbox policies available to sandbox networks through policyRef. Unselected policies are validated but apply to no sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `registries` | array of [Registry](#registry) | No | — | Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store. Constraints: maximum items 32. |
 | `sandboxes` | map of [Sandbox](#sandbox) | Yes | — | Named sandboxes: one to 256 with a kubernetes or openshift gateway runtime, whose cluster schedules them, and one to 32 with docker or podman, which run every sandbox on one host. Each runs one agent through its selected Fabric adapter and attaches at most 32 providers, OpenShell's limit per sandbox: its selected inference providers, web search, and api integrations. Declaration order does not select a default sandbox or agent. Constraints: minimum entries 1; keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |

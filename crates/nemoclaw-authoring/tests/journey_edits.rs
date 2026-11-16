@@ -159,7 +159,7 @@ fn accepted_and_omitted_native_settings_can_be_revisited() {
     assert_eq!(
         state
             .values()
-            .pointer("/spec/sandboxes/assistant/harness/config/workflow/settings/region"),
+            .pointer("/spec/sandboxes/assistant/agent/workflow/settings/region"),
         Some(&json!("east"))
     );
     assert_eq!(

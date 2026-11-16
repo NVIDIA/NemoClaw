@@ -473,6 +473,10 @@ impl OpenShell {
         let fields: &[&str] = match kind {
             "workspace" => &["name", "owner", "generation"],
             "provider_profile" => &["name", "owner", "generation", "workspace"],
+            // An API registration records its endpoint list instead of one server.
+            "provider" if value(desired, "provider_type") == "api" => {
+                &["name", "owner", "generation", "workspace", "endpoints_json"]
+            }
             "provider" => &["name", "owner", "generation", "workspace", "endpoint"],
             "sandbox" => &[
                 "name",

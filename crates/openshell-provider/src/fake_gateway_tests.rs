@@ -1315,7 +1315,7 @@ async fn an_apf_governed_api_resource_adopts_the_profile_apf_serves() {
         &client,
         &[
             ("name", "booking"),
-            ("endpoint", "https://booking.example.com/mcp"),
+            ("endpoints_json", r#"["https://booking.example.com/mcp"]"#),
             ("credential_env", "NEMOCLAW_TEST_BOOKING_KEY"),
             ("auth_style", ""),
             ("header_name", ""),
@@ -1336,7 +1336,7 @@ async fn an_apf_governed_api_resource_adopts_the_profile_apf_serves() {
             "id",
             "owner",
             "generation",
-            "endpoint",
+            "endpoints_json",
             "binaries_json",
             "auth_style",
             "header_name",
