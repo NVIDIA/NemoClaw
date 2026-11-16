@@ -328,14 +328,13 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'nemoclaw mcp transient startup recovery (#7958)' "$mcp_reliability_payload"
 	grep -Fq 'nemoClawIsTransientMcpStartFailure' "$mcp_reliability_patch"
 	grep -Fq 'nemoClawCatalogHasStartDiagnostics' "$mcp_reliability_patch"
-	grep -Fq 'COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts' Dockerfile
+	grep -Fq 'COPY scripts/patch-openclaw-mcp-npx.mts scripts/patch-openclaw-mcp-reliability.mts scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/' Dockerfile
 	grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \\' Dockerfile
 	! grep -Fq 'patch-openclaw-mcp-reliability.js' Dockerfile
 	mcp_tools_list_timeout_patch=${JSON.stringify(MCP_TOOLS_LIST_TIMEOUT_PATCH)}
 	grep -Fq 'NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS' "$mcp_tools_list_timeout_patch"
 	grep -Fq 'TOOLS_LIST_TIMEOUT_MIN_MS = 1500' "$mcp_tools_list_timeout_patch"
 	grep -Fq 'TOOLS_LIST_TIMEOUT_MAX_MS = 10_000' "$mcp_tools_list_timeout_patch"
-	grep -Fq 'COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts' Dockerfile
 	grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \\' Dockerfile
 	! grep -Fq 'patch-openclaw-mcp-tools-list-timeout.js' Dockerfile
 

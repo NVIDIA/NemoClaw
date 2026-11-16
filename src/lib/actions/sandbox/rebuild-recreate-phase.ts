@@ -180,6 +180,10 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
           ...(recreateOptions.hostMounts && recreateOptions.hostMounts.length > 0
             ? { hostMounts: cloneSandboxHostMounts(recreateOptions.hostMounts) }
             : {}),
+          // Same for the replayed dashboard origins (#13177).
+          ...(recreateOptions.dashboardOrigins?.length
+            ? { dashboardOrigins: [...recreateOptions.dashboardOrigins] }
+            : {}),
         },
       }),
     );

@@ -16,7 +16,7 @@
 //   NEMOCLAW_TOOL_DISCLOSURE,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
 //   NEMOCLAW_INFERENCE_COMPAT_B64,
-//   NEMOCLAW_DASHBOARD_BIND, NEMOCLAW_WSL_DASHBOARD_EXPOSURE,
+//   NEMOCLAW_DASHBOARD_BIND, NEMOCLAW_WSL_DASHBOARD_EXPOSURE, NEMOCLAW_DASHBOARD_ORIGINS,
 //   NEMOCLAW_DISABLE_DEVICE_AUTH,
 //   NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
@@ -32,6 +32,7 @@ import { nativeLocalCredentialReference } from "../src/lib/inference/native-loca
 
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
 import { managedInferenceApiKey } from "../src/lib/inference-credential.ts";
+import { DASHBOARD_ORIGINS_ENV, parseDashboardOrigins } from "../src/lib/dashboard/url.ts";
 
 import {
   chmodSync,
@@ -156,6 +157,17 @@ function resolveWebSearchProvider(env: Env): WebSearchProvider {
 
 function unique<T>(values: Iterable<T>): T[] {
   return [...new Set(values)];
+}
+
+/** Keep the environment-variable context on the shared parser's value-safe errors. */
+function readDashboardOriginsEnv(env: Env): string[] {
+  try {
+    return parseDashboardOrigins([env[DASHBOARD_ORIGINS_ENV] ?? ""]);
+  } catch (error) {
+    throw new Error(
+      `${DASHBOARD_ORIGINS_ENV}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function expandUser(pathValue: string): string {
@@ -910,7 +922,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
     parsed.scheme && parsed.hostname && parsed.port !== null && !isLoopback(parsed.hostname)
       ? `${parsed.scheme}://${hostForOrigin(parsed.hostname)}`
       : null;
-  const origins = unique([loopbackOrigin, chatOrigin, portlessOrigin].filter(Boolean) as string[]);
+  const origins = unique(
+    [loopbackOrigin, chatOrigin, portlessOrigin, ...readDashboardOriginsEnv(env)].filter(
+      Boolean,
+    ) as string[],
+  );
 
   const isRemote = !isLoopback(parsed.hostname || "");
   const dashboardBind = readOptionalEnumEnv(

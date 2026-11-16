@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord } from "../core/json-types";
+import { readRecordedDashboardOrigins } from "../dashboard/url";
 import type { SandboxEntry } from "./registry/types";
 import { normalizePendingSandboxCreateIdentity } from "./registry/pending-create-identity";
 
-export { normalizePendingSandboxCreateIdentity };
+export { normalizePendingSandboxCreateIdentity, readRecordedDashboardOrigins };
 
 const POLICY_SHADOW_FIELDS = [
   "baselineExclusions",

@@ -74,7 +74,7 @@ export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
  * change; otherwise construction fails before a sandbox is launched.
  */
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
-  openclaw: "b4a3fa7060c7b7f5654c271513398666ccf52e36dcc2ff4ac8064b1d801841cf",
+  openclaw: "3140d68b4842ea3fa865f2c5ca05381376bab17d888ae06ad7c27272aaedfa29",
   hermes: "566904b99ca27b8cb12e3e8929eef6a73d7fd9ab1a0d0f4362939be6f2a912e2",
   "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
   pi: "6302d387182c596fd67ad18577ecf82107bad6271aeeb5e69714115f91557abb",
@@ -650,6 +650,8 @@ function profilePathExists(profile: ManagedStartupProfile, profilePath: string):
 function assertInventoryPathsResolved(profile: ManagedStartupProfile): void {
   for (const affordance of MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent]) {
     if (profile.inference === null && affordance.profilePath.startsWith("inference.")) continue;
+    // Extra dashboard origins are optional; a profile without them omits the field (#13177).
+    if (affordance.profilePath === "dashboard.extraOrigins") continue;
     if (
       affordance.input === HERMES_SWITCHYARD_BINDINGS_ENV &&
       profile.agentConfig.agent === "hermes" &&
