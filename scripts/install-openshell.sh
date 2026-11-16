@@ -96,6 +96,98 @@ fail() {
   exit 1
 }
 
+user_local_executable_directory_safe() {
+  local current="$1" uid owner mode metadata mode_value
+  UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
+  [[ "$current" == /* && "$current" != */../* && "$current" != */.. &&
+    "$current" != */./* && "$current" != */. ]] || return 1
+  uid="$(id -u)" || return 1
+  while :; do
+    UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
+    [[ ! -L "$current" ]] || return 1
+    if [[ -e "$current" ]]; then
+      [[ -d "$current" ]] || return 1
+      if metadata="$(stat -c '%u %a' -- "$current" 2>/dev/null)"; then
+        :
+      elif metadata="$(stat -f '%u %Lp' "$current" 2>/dev/null)"; then
+        :
+      else
+        return 1
+      fi
+      read -r owner mode <<<"$metadata"
+      [[ "$owner" =~ ^[0-9]+$ && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+      mode_value=$((8#$mode))
+      [[ "$owner" == "$uid" || "$owner" == 0 ]] || return 1
+      if ((mode_value & 022)); then
+        [[ "$current" != "$1" && "$owner" == 0 ]] && ((mode_value & 01000)) || return 1
+      fi
+    fi
+    [[ "$current" != / ]] || return 0
+    current="${current%/*}"
+    [[ -n "$current" ]] || current=/
+  done
+}
+
+prepare_openshell_install_directory() {
+  local mode="${1:-install}" active_bin active_dir target_dir
+  target_dir="${_NEMOCLAW_OPENSHELL_INSTALL_DIR:-}"
+  if [[ -n "$target_dir" ]]; then
+    user_local_executable_directory_safe "$target_dir" \
+      || fail "Unsafe prepared executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. The installer left it unchanged."
+    [[ -d "$target_dir" && -w "$target_dir" ]] \
+      || fail "Prepared OpenShell executable directory is not writable: $target_dir"
+    printf '%s\n' "$target_dir"
+    return 0
+  fi
+
+  active_bin="$(command -v openshell 2>/dev/null || true)"
+  if [[ "$active_bin" == /* ]]; then
+    active_dir="$(dirname "$active_bin")"
+    if [[ -d "$active_dir" && -w "$active_dir" ]] \
+      && user_local_executable_directory_safe "$active_dir"; then
+      printf '%s\n' "$active_dir"
+      return 0
+    elif [[ "$active_dir" == /usr/local/bin && "$mode" != upgrade && "${NEMOCLAW_NON_INTERACTIVE:-}" != 1 ]] \
+      && [ -t 0 ] && user_local_executable_directory_safe "$active_dir"; then
+      printf '%s\n' "$active_dir"
+      return 0
+    fi
+  else
+    target_dir=/usr/local/bin
+    if [ -w "$target_dir" ]; then
+      if user_local_executable_directory_safe "$target_dir"; then
+        printf '%s\n' "$target_dir"
+        return 0
+      fi
+    elif [[ "$mode" != upgrade && "${NEMOCLAW_NON_INTERACTIVE:-}" != 1 ]] && [ -t 0 ]; then
+      user_local_executable_directory_safe "$target_dir" \
+        || fail "Unsafe executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. The installer left it unchanged."
+      printf '%s\n' "$target_dir"
+      return 0
+    fi
+  fi
+
+  target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
+  user_local_executable_directory_safe "$target_dir" \
+    || fail "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. The installer left it unchanged."
+  (umask g-w,o-w && mkdir -p "$target_dir") \
+    || fail "Could not create OpenShell executable directory $target_dir."
+  user_local_executable_directory_safe "$target_dir" \
+    || fail "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. The installer left it unchanged."
+  [[ -d "$target_dir" && -w "$target_dir" ]] \
+    || fail "OpenShell executable directory is not writable: $target_dir"
+  printf '%s\n' "$target_dir"
+}
+
+if [[ "${1:-}" == --prepare-install-directory ]]; then
+  if [[ "$(uname -s)" == Darwin && "${_NEMOCLAW_OPENSHELL_INSTALL_METHOD:-auto}" != standalone ]] \
+    && command -v brew >/dev/null 2>&1; then
+    exit 0
+  fi
+  prepare_openshell_install_directory upgrade
+  exit $?
+fi
+
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
@@ -1010,14 +1102,6 @@ for asset_name in "${ASSETS[@]}"; do
   tar xzf "$tmpdir/$asset_name" -C "$tmpdir"
 done
 
-target_dir="/usr/local/bin"
-if [[ -n "$ACTIVE_OPENSHELL_BIN" && "$ACTIVE_OPENSHELL_BIN" = /* ]]; then
-  active_dir="$(dirname "$ACTIVE_OPENSHELL_BIN")"
-  if [ -d "$active_dir" ] && [ -w "$active_dir" ]; then
-    target_dir="$active_dir"
-  fi
-fi
-
 install_bins() {
   local dir="$1"
   install -m 755 "$tmpdir/openshell" "$dir/openshell"
@@ -1033,67 +1117,18 @@ install_bins() {
   fi
 }
 
-user_local_executable_directory_safe() {
-  local current="$1" uid owner mode metadata mode_value
-  UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
-  [[ "$current" == /* && "$current" != */../* && "$current" != */.. &&
-    "$current" != */./* && "$current" != */. ]] || return 1
-  uid="$(id -u)" || return 1
-  while :; do
-    UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
-    [[ ! -L "$current" ]] || return 1
-    if [[ -e "$current" ]]; then
-      [[ -d "$current" ]] || return 1
-      if metadata="$(stat -c '%u %a' -- "$current" 2>/dev/null)"; then
-        :
-      elif metadata="$(stat -f '%u %Lp' "$current" 2>/dev/null)"; then
-        :
-      else
-        return 1
-      fi
-      read -r owner mode <<<"$metadata"
-      [[ "$owner" =~ ^[0-9]+$ && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
-      mode_value=$((8#$mode))
-      [[ "$owner" == "$uid" || "$owner" == 0 ]] || return 1
-      if ((mode_value & 022)); then
-        [[ "$current" != "$1" && "$owner" == 0 ]] && ((mode_value & 01000)) || return 1
-      fi
-    fi
-    [[ "$current" != / ]] || return 0
-    current="${current%/*}"
-    [[ -n "$current" ]] || current=/
-  done
-}
-
-force_user_local=0
-if [ "$target_dir" = "/usr/local/bin" ] && [ -w "$target_dir" ] \
-  && [ -z "$ACTIVE_OPENSHELL_BIN" ] && ! user_local_executable_directory_safe "$target_dir"; then
-  target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
-  force_user_local=1
+# Recheck the prepared destination after downloads and immediately before writes.
+if ! target_dir="$(prepare_openshell_install_directory)"; then
+  exit 1
 fi
-
 if [ -w "$target_dir" ]; then
-  if ! user_local_executable_directory_safe "$target_dir"; then
-    fail "Unsafe executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
-  fi
   install_bins "$target_dir"
-elif [ "$force_user_local" = "1" ] || [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
-  target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
-  if ! user_local_executable_directory_safe "$target_dir"; then
-    fail "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  if [[ "$target_dir" == "${XDG_BIN_HOME:-$HOME/.local/bin}" ]]; then
+    warn "Installed openshell to $target_dir/openshell (user-local path)"
+    warn "For future shells, run: export PATH=\"$target_dir:\$PATH\""
+    warn "Add that export to your shell profile, or open a new shell before using openshell directly."
   fi
-  (umask g-w,o-w && mkdir -p "$target_dir")
-  if ! user_local_executable_directory_safe "$target_dir"; then
-    fail "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
-  fi
-  install_bins "$target_dir"
-  warn "Installed openshell to $target_dir/openshell (user-local path)"
-  warn "For future shells, run: export PATH=\"$target_dir:\$PATH\""
-  warn "Add that export to your shell profile, or open a new shell before using openshell directly."
 else
-  if ! user_local_executable_directory_safe "$target_dir"; then
-    fail "Unsafe executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
-  fi
   sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
   if [ -x "$tmpdir/openshell-gateway" ]; then
     sudo install -m 755 "$tmpdir/openshell-gateway" "$target_dir/openshell-gateway"

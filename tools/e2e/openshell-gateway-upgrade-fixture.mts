@@ -40,9 +40,28 @@ export const REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE = Object.freeze({
   sandboxBaseImageRef: "",
 } as const);
 
+export const REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE = Object.freeze({
+  additionalStoppedSandboxes: 1,
+  expectedAdvisoryAuditCount: 0,
+  installerSha256: "bafd48cd005e11e064e0c4caa0968a4c781453ccebcf4593855f85d28afbdeb8",
+  nemoclawCommit: "b7dcc9bb76197fb28ec673867c35974ac799eb15",
+  nemoclawRef: "v0.0.141",
+  openclawVersion: "2026.9.2",
+  openClawArchive: Object.freeze({
+    expectedIntegrity:
+      "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
+    label: "historical fixture OpenClaw 2026.9.2",
+    packageSpec: "openclaw@2026.9.2",
+    tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
+  }),
+  openShellVersion: "0.0.116",
+  sandboxBaseImageRef: "",
+} as const);
+
 export const REVIEWED_GATEWAY_UPGRADE_FIXTURES = Object.freeze([
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE,
 ] as const);
 
 export type ReviewedGatewayUpgradeFixture = (typeof REVIEWED_GATEWAY_UPGRADE_FIXTURES)[number];

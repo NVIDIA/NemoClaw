@@ -168,7 +168,7 @@ describe("staging Brev Launchable identity workflow boundary", () => {
   it("rejects outer concurrency that lets focused Launchable dispatches replace each other", () => {
     const value = readWorkflow();
     const validationError =
-      "workflow concurrency must isolate each Launchable dispatch with github.run_id";
+      "workflow concurrency must isolate baseline comparisons and each Launchable dispatch";
     expect(validateE2eWorkflow(value)).not.toContain(validationError);
     (value.concurrency as Record<string, unknown>).group =
       "e2e-${{ github.ref }}-${{ inputs.jobs }}";

@@ -11,6 +11,7 @@ export type VitestWatchTriggerPattern = {
 };
 
 const E2E_WORKFLOW_CONTRACTS = [
+  "test/e2e/support/manual-pr-concurrency.test.ts",
   "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
@@ -45,6 +46,14 @@ function runTests(...tests: string[]): () => string[] {
 }
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
+  {
+    pattern: /(?:^|\/)schemas\/network-policy\.schema\.json$/,
+    testsToRun: runTests("test/onboarding/validate-config-schemas.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-e2e\/references\/manual-pr\.md$/,
+    testsToRun: runTests("test/repository/manual-pr-dispatch-checkpoint.test.ts"),
+  },
   {
     pattern: /(?:^|\/)tools\/e2e\/protected-openshell-filesystem\.py$/,
     testsToRun: runTests(
@@ -91,6 +100,26 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
         ? ["test/runtime/messaging/messaging-build-applier-integrity.test.ts"]
         : [];
     },
+  },
+  {
+    pattern:
+      /(?:^|\/)agents\/langchain-deepagents-code\/(?:requirements\.(?:in|lock)|dependency-overrides\.in|Dockerfile(?:\.base)?|patch-dependency-compatibility\.py|validate-runtime-contract\.py|validate-nemotron-ultra-profile\.py|profile-plugin\/.*)$/,
+    testsToRun: runTests(
+      "test/agents/deepagents/langchain-deepagents-code-image.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
+    ),
+  },
+  {
+    pattern:
+      /(?:^|\/)agents\/langchain-deepagents-code\/(?:patch-managed-deepagents-code\.py|dcode-wrapper\.sh|dcode-launcher\.sh|start\.sh)$/,
+    testsToRun: runTests(
+      "test/agents/deepagents/langchain-deepagents-code-managed-entrypoints.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-headless-runtime.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
+      "test/agents/deepagents/dcode-non-interactive-json.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-image.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)test\/e2e\/fixtures\/discord-enrollment-preload\.mts$/,
