@@ -105,6 +105,11 @@ fn validate(kind: &str, desired: &Row) -> Result<(), Error> {
                     "credential_env must name the variable holding the API credential",
                 ));
             }
+            if apf_profile(desired) && !value(desired, MCP_POLICY).is_empty() {
+                return Err(Error::Conflict(
+                    "an API whose profile APF serves must not set an MCP policy: APF's profile sets the endpoint's rules",
+                ));
+            }
         }
         WEB_SEARCH => {
             if SearchProvider::from_name(value(desired, "provider_type")).is_none() {
@@ -147,6 +152,7 @@ pub(crate) fn validate_api(
         "credential_env",
         "binaries_json",
         MCP_POLICY,
+        crate::POLICY_AUTHORITY,
     ]
     .iter()
     .any(|field| unknown.contains(field))

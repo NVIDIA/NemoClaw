@@ -1311,39 +1311,50 @@ async fn adopts_the_apf_profile(
 async fn an_apf_governed_api_resource_adopts_the_profile_apf_serves() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(Keys));
-    let row = apf_credential_row(
-        &client,
-        &[
-            ("name", "booking"),
-            ("endpoints_json", r#"["https://booking.example.com/mcp"]"#),
-            ("credential_env", "NEMOCLAW_TEST_BOOKING_KEY"),
-            ("auth_style", ""),
-            ("header_name", ""),
-        ],
-    )
-    .await;
-    adopts_the_apf_profile(
-        &fixture,
-        &client,
-        "api",
-        &row,
-        (
-            "nemoclaw-api-booking",
-            "NEMOCLAW_API_BOOKING_KEY",
-            "booking",
-        ),
-        &[
-            "id",
-            "owner",
-            "generation",
-            "endpoints_json",
-            "binaries_json",
-            "auth_style",
-            "header_name",
-            "credential_env",
-        ],
-    )
-    .await;
+    // The profile delivers the key in the chosen variable, or the derived one.
+    for (name, sandbox_env, variable) in [
+        ("booking", "", "NEMOCLAW_API_BOOKING_KEY"),
+        ("flights", "FLIGHTS_KEY", "FLIGHTS_KEY"),
+    ] {
+        let row = apf_credential_row(
+            &client,
+            &[
+                ("name", name),
+                ("endpoints_json", r#"["https://booking.example.com/mcp"]"#),
+                ("credential_env", "NEMOCLAW_TEST_BOOKING_KEY"),
+                ("sandbox_env", sandbox_env),
+                ("auth_style", ""),
+                ("header_name", ""),
+            ],
+        )
+        .await;
+        // APF's profile sets the endpoint's rules, so an MCP policy has no effect.
+        let mut mcp = row.clone();
+        mcp.insert(
+            nemoclaw_openshell::api::MCP_POLICY.into(),
+            r#"{"rules":[{"allow":{"method":"tools/call","tool":"get_quote"}}]}"#.into(),
+        );
+        assert!(crate::composite::validate_api(&mcp, &[]).is_err());
+        adopts_the_apf_profile(
+            &fixture,
+            &client,
+            "api",
+            &row,
+            (&format!("nemoclaw-api-{name}"), variable, name),
+            &[
+                "id",
+                "owner",
+                "generation",
+                "endpoints_json",
+                "binaries_json",
+                "auth_style",
+                "header_name",
+                "credential_env",
+                "sandbox_env",
+            ],
+        )
+        .await;
+    }
 }
 
 #[tokio::test]

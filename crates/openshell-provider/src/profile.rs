@@ -234,7 +234,12 @@ pub(super) fn apf_credential_variable(want: &Row) -> Result<String, ObservationE
         });
     }
     if let Some(api) = name.strip_prefix("nemoclaw-api-") {
-        return Ok(nemoclaw_openshell::api::credential_key(api));
+        return Ok(
+            match want.get("sandbox_env").filter(|env| !env.is_empty()) {
+                Some(env) => env.clone(),
+                None => nemoclaw_openshell::api::credential_key(api),
+            },
+        );
     }
     SearchProvider::from_profile(name)
         .map(|provider| sandbox_env(provider, want))

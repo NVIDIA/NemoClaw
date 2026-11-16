@@ -67,8 +67,8 @@ impl Document {
             sandbox.network.validate()?;
             require(
                 gateway.policy_authority().is_none()
-                    || !matches!(sandbox.network.policy, super::NetworkPolicy::Explicit(_)),
-                "a sandbox on a gateway with a policyAuthority must not author an explicit network policy",
+                    || matches!(sandbox.network.policy, super::NetworkPolicy::Isolated),
+                "a sandbox on a gateway with a policyAuthority must not author a network policy or select one with policyRef",
             )?;
             self.validate_sandbox_providers(sandbox)?;
             let web_search = self.web_search(sandbox)?;
