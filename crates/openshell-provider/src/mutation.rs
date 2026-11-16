@@ -39,7 +39,15 @@ fn unproven_policy(mut row: Row, recorded: &Row) -> Row {
 impl OpenShell {
     /// Ask APF to issue its policy to a bound sandbox again, then wait until
     /// the sandbox has loaded a policy with a new token.
-    async fn reissue(&self, want: &Row, live: &Row) -> Result<Mutation, ObservationError> {
+    ///
+    /// The plan leaves the token and hash unknown; a failed reissue keeps the
+    /// hash `recorded` before it, so the next plan asks APF again.
+    async fn reissue(
+        &self,
+        want: &Row,
+        live: &Row,
+        recorded: &Row,
+    ) -> Result<Mutation, ObservationError> {
         self.gateway.reissue_policy(want).await?;
         let issued = |row: &Row| {
             let token = value(row, crate::POLICY_PROVENANCE);
@@ -63,7 +71,7 @@ impl OpenShell {
             Err(error) => error,
         };
         Ok(Mutation::partial(
-            unproven_policy(live.clone(), want),
+            unproven_policy(live.clone(), recorded),
             error,
         ))
     }
@@ -262,7 +270,7 @@ impl OpenShell {
                     && value(want, crate::POLICY_PROVENANCE).is_empty()
                     && !value(want, "id").is_empty()
                 {
-                    return self.reissue(want, &row).await;
+                    return self.reissue(want, &row, prior.unwrap_or(want)).await;
                 }
                 row
             }

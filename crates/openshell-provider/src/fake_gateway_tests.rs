@@ -939,19 +939,77 @@ async fn a_policy_changed_outside_apf_stays_unproven_until_apf_issues_it() {
     assert_eq!(observed[POLICY_HASH], recorded[POLICY_HASH]);
 }
 
+/// What OpenTofu plans for a sandbox read back as `observed`: the prior state
+/// and the desired row the provider receives, without the values planned
+/// unknown.
+fn plan_sandbox(observed: &Row) -> (nemoclaw_tofu::State, Row) {
+    use tf_provider::value::Value;
+    let definition = definitions()
+        .into_iter()
+        .find(|definition| definition.kind == "sandbox")
+        .unwrap();
+    let prior: nemoclaw_tofu::State = observed
+        .iter()
+        .map(|(name, value)| (name.clone(), Value::Value(value.clone())))
+        .collect();
+    let (planned, _) = nemoclaw_tofu::plan_update(&definition, &prior, prior.clone());
+    let desired = planned
+        .iter()
+        .filter_map(|(name, value)| match value {
+            Value::Value(value) => Some((name.clone(), value.clone())),
+            _ => None,
+        })
+        .collect();
+    (planned, desired)
+}
+
+#[tokio::test]
+async fn a_reissue_applies_only_values_its_plan_left_unknown() {
+    use tf_provider::value::Value;
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    change_loaded_policy(&fixture, &key);
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    let (planned, desired) = plan_sandbox(&observed);
+    // APF's reissue loads a new policy, so its hash is unknown until apply.
+    assert_eq!(planned.get(POLICY_HASH), Some(&Value::Unknown));
+    fixture.state.lock().unwrap().config_update = Some(apf_reissue("token-2"));
+    let result = client.update("sandbox", &desired, &observed).await;
+    assert!(result.error().is_none(), "{:?}", result.error());
+    let applied = result.into_parts().0.unwrap();
+    assert_ne!(applied[POLICY_HASH], recorded[POLICY_HASH]);
+    for (name, value) in &planned {
+        if let Value::Value(value) = value {
+            assert_eq!(applied.get(name), Some(value), "{name}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_failed_reissue_leaves_the_policy_unproven() {
     let fixture = Fixture::start().await;
     let client = client(&fixture, Arc::new(EnvironmentSecrets));
     let (recorded, key) = apf_sandbox(&fixture, &client).await;
     change_loaded_policy(&fixture, &key);
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, desired) = plan_sandbox(&observed);
     // The sandbox no longer reads back as the bound one while APF reissues.
     fixture.state.lock().unwrap().config_update = Some(Arc::new(|sandbox: &mut proto::Sandbox| {
         sandbox.metadata.as_mut().unwrap().id = "replaced".into();
     }));
-    let mut desired = recorded.clone();
-    desired.insert(POLICY_PROVENANCE.into(), String::new());
-    let (state, error) = client.ensure("sandbox", &desired).await.into_parts();
+    let (state, error) = client
+        .update("sandbox", &desired, &observed)
+        .await
+        .into_parts();
     assert!(error.is_some());
     let state = state.unwrap();
     assert_eq!(state[POLICY_PROVENANCE], "");
