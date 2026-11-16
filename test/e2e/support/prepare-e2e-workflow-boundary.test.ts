@@ -175,6 +175,7 @@ describe("prepare-e2e workflow boundary", () => {
     "hermes-gpu-startup",
     "cloud-onboard",
     "messaging-providers",
+    "spark-express-vllm",
   ])("reviewed dependency handoff in %s", (jobName) => {
     it.each<[string, (job: Workflow["jobs"][string]) => void]>([
       [

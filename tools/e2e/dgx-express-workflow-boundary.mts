@@ -227,10 +227,10 @@ export function validateSparkExpressWorkflowBoundary(workflow: unknown): string[
       "Authenticate to Docker Hub",
       "Download reviewed OpenShell SDK archive",
       "Prepare E2E workspace",
-      "Install reviewed OpenShell SDK archive without package credentials",
       "Install OpenShell CLI",
       "Remove Docker credentials before candidate checkout",
       "Check out Spark candidate",
+      "Install reviewed OpenShell SDK archive without package credentials",
       "Restore exact-commit CLI artifact",
       "Run Spark Express and Muse qualification",
       "Upload Spark Express artifacts",
@@ -245,6 +245,14 @@ export function validateSparkExpressWorkflowBoundary(workflow: unknown): string[
   if (/\bsecrets\b/iu.test(JSON.stringify(withoutAuth))) {
     errors.push("Spark Express must not expose workflow secrets outside trusted authentication");
   }
+  requireEqual(
+    step("Install reviewed OpenShell SDK archive without package credentials"),
+    {
+      name: "Install reviewed OpenShell SDK archive without package credentials",
+      uses: E2E_ACTION_PROVENANCE.reviewedSdkInstall.reference,
+    },
+    "must install candidate dependencies with the pinned credential-free reviewed SDK action",
+  );
   requireEqual(
     step("Restore exact-commit CLI artifact").with,
     {

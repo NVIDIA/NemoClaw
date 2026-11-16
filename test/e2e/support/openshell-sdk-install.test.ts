@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   readReviewedOpenShellSdkInstallScript,
@@ -53,7 +54,8 @@ describe("reviewed OpenShell SDK E2E boundary", () => {
   });
 
   it.each(["0.0.106", "0.0.116"] as const)(
-    "projects, installs and imports SDK %s without credentials or scripts",
+    "keeps SDK %s available through Spark candidate checkout and CLI restore",
+    { timeout: 30_000 },
     (selectedVersion) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-action-execution-"));
       const trustedRoot = path.join(directory, "trusted");
@@ -272,7 +274,52 @@ export class OpenShellClient { static connect() { return transport; } }
           }),
         );
 
-        execFileSync("bash", ["-c", readReviewedOpenShellSdkInstallScript()], {
+        const installer = readReviewedOpenShellSdkInstallScript();
+        const candidateFiles = {
+          package: fs.readFileSync(path.join(targetRoot, "package.json"), "utf8"),
+          lock: fs.readFileSync(path.join(targetRoot, "package-lock.json"), "utf8"),
+        };
+        fs.writeFileSync(path.join(targetRoot, "package.json"), JSON.stringify(baselinePackage));
+        fs.writeFileSync(path.join(targetRoot, "package-lock.json"), JSON.stringify(baselineLock));
+        fs.writeFileSync(
+          path.join(targetRoot, ".gitignore"),
+          "node_modules/\ndist/\nnemoclaw/dist/\n",
+        );
+        fs.mkdirSync(path.join(targetRoot, "bin"));
+        fs.writeFileSync(
+          path.join(targetRoot, "bin/nemoclaw.js"),
+          'require("../dist/nemoclaw.js");\n',
+        );
+        const git = (...args: string[]) =>
+          execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+            cwd: targetRoot,
+            encoding: "utf8",
+            stdio: "pipe",
+          }).trim();
+        const commit = [
+          "-c",
+          "commit.gpgsign=false",
+          "-c",
+          "user.name=NemoClaw Test",
+          "-c",
+          "user.email=test@localhost",
+          "commit",
+          "--quiet",
+          "--allow-empty",
+          "-m",
+        ];
+        git("init", "--quiet");
+        git("add", ".");
+        git(...commit, "trusted preparation fixture");
+        const trustedSha = git("rev-parse", "HEAD");
+        fs.writeFileSync(path.join(targetRoot, "package.json"), candidateFiles.package);
+        fs.writeFileSync(path.join(targetRoot, "package-lock.json"), candidateFiles.lock);
+        git("add", ".");
+        git(...commit, "candidate dependency fixture");
+        const candidateSha = git("rev-parse", "HEAD");
+        const sourceTree = git("rev-parse", "HEAD^{tree}");
+        git("reset", "--hard", trustedSha);
+        execFileSync("bash", ["-c", installer], {
           cwd: targetRoot,
           env: {
             ...process.env,
@@ -287,6 +334,125 @@ export class OpenShellClient { static connect() { return transport; } }
           },
           stdio: "pipe",
         });
+        expect(fs.existsSync(path.join(targetRoot, "node_modules/@nvidia/openshell-sdk"))).toBe(
+          true,
+        );
+
+        const cliArtifactDirectory = path.join(runnerTemp, "nemoclaw-cli-artifact");
+        const payloadRoot = path.join(directory, "cli-payload");
+        const shared = path.join(payloadRoot, "nemoclaw/dist/shared");
+        const consumerMarker = path.join(directory, "cli-consumed-sdk");
+        fs.mkdirSync(cliArtifactDirectory);
+        fs.mkdirSync(shared, { recursive: true });
+        fs.mkdirSync(path.join(payloadRoot, "dist"));
+        fs.writeFileSync(
+          path.join(payloadRoot, "dist/nemoclaw.js"),
+          `if (!require("node:fs").existsSync("node_modules/@nvidia/openshell-sdk")) {
+            throw new Error("candidate dependencies are missing after checkout");
+          }
+          const sdk = require.resolve("@nvidia/openshell-sdk");
+          if (!sdk.startsWith(require("node:path").join(process.cwd(), "node_modules/"))) {
+            throw new Error("candidate dependencies are missing after checkout");
+          }
+          import("@nvidia/openshell-sdk").then(({ OpenShellClient }) => {
+            if (OpenShellClient.connect() !== true) throw new Error("transport was not resolved");
+            require("node:fs").writeFileSync(${JSON.stringify(consumerMarker)}, "connected");
+          });\n`,
+        );
+        fs.writeFileSync(
+          path.join(payloadRoot, "dist/build-identity.json"),
+          JSON.stringify({
+            nemoclawVersion: "0.0.0",
+            sourceRevision: candidateSha,
+          }),
+        );
+        fs.writeFileSync(path.join(shared, "openshell-gateway-health-sdk.js"), "export {};\n");
+        fs.writeFileSync(
+          path.join(shared, "openshell-observation-boundary.cjs"),
+          "module.exports = {};\n",
+        );
+        fs.writeFileSync(
+          path.join(shared, "openshell-policy-boundary.cjs"),
+          "module.exports = {};\n",
+        );
+        fs.writeFileSync(path.join(shared, "sandbox-name.cjs"), "module.exports = {};\n");
+        const payload = path.join(cliArtifactDirectory, "nemoclaw-cli.tar");
+        execFileSync("tar", ["-cf", payload, "-C", payloadRoot, "dist", "nemoclaw/dist/shared"]);
+        const payloadSha256 = createHash("sha256").update(fs.readFileSync(payload)).digest("hex");
+        const artifactName = `nemoclaw-cli-${candidateSha}-${payloadSha256}`;
+        const workflowSha = "d".repeat(40);
+        fs.writeFileSync(
+          path.join(cliArtifactDirectory, "manifest.json"),
+          JSON.stringify({
+            kind: "nemoclaw-e2e-cli-artifact-v1",
+            artifactName,
+            candidate: {
+              repository: "NVIDIA/NemoClaw",
+              sha: candidateSha,
+              sourceTree,
+              lockfileSha256: createHash("sha256").update(candidateFiles.lock).digest("hex"),
+            },
+            workflow: { sha: workflowSha, runId: "12345", runAttempt: "1" },
+            toolchain: { node: "v24.22.1", npm: "12.0.2", runnerOs: "Linux", runnerArch: "X64" },
+            build: { command: "npm run build:cli", sourceRevision: candidateSha },
+            payload: { file: "nemoclaw-cli.tar", sha256: payloadSha256 },
+          }),
+        );
+        const tools = path.join(directory, "tools");
+        fs.mkdirSync(tools);
+        fs.writeFileSync(
+          path.join(tools, "node"),
+          `#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = --version ]; then echo v24.22.1; exit 0; fi
+exec ${JSON.stringify(process.execPath)} "$@"
+`,
+          { mode: 0o755 },
+        );
+        const checkoutObservation = path.join(directory, "checkout-removed-dependencies");
+        const commands: Record<string, string> = {
+          "Install reviewed OpenShell SDK archive without package credentials": installer,
+          "Check out Spark candidate": `git clean -ffdx
+            git reset --hard "$CANDIDATE_SHA"
+            test ! -e node_modules
+            touch "$CHECKOUT_OBSERVATION"`,
+          "Restore exact-commit CLI artifact": 'bash "$RESTORE_SCRIPT"',
+        };
+        const sparkSteps = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")).jobs[
+          "spark-express-vllm"
+        ].steps;
+        const handoff = sparkSteps
+          .filter((step: { name?: string }) => Object.hasOwn(commands, step.name ?? ""))
+          .map((step: { name: string }) => commands[step.name])
+          .join("\n");
+        execFileSync("bash", ["-euc", handoff], {
+          cwd: targetRoot,
+          env: {
+            ...process.env,
+            ARTIFACT_NAME: artifactName,
+            CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
+            CANDIDATE_SHA: candidateSha,
+            CHECKOUT_OBSERVATION: checkoutObservation,
+            GH_TOKEN: "",
+            GITHUB_TOKEN: "",
+            NODE_AUTH_TOKEN: "",
+            NPM_TOKEN: "",
+            NPM_CONFIG__AUTH_TOKEN: "",
+            NPM_CONFIG_USERCONFIG: "/dev/null",
+            GITHUB_ACTION_PATH: actionPath,
+            GITHUB_ENV: path.join(directory, "github-env"),
+            GITHUB_WORKSPACE: targetRoot,
+            PATH: `${tools}:${process.env.PATH}`,
+            PAYLOAD_SHA256: payloadSha256,
+            PRODUCER_RUN_ATTEMPT: "1",
+            RUN_ID: "12345",
+            RUNNER_TEMP: runnerTemp,
+            RESTORE_SCRIPT: path.resolve("scripts/e2e/restore-cli-artifact.sh"),
+            WORKFLOW_SHA: workflowSha,
+          },
+          stdio: "pipe",
+        });
+        expect(fs.existsSync(checkoutObservation)).toBe(true);
+        expect(fs.readFileSync(consumerMarker, "utf8")).toBe("connected");
 
         expect(fs.existsSync(lifecycleMarker)).toBe(false);
         expect(

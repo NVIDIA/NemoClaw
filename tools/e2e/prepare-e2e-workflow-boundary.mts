@@ -164,6 +164,10 @@ function validateCandidateSdkPreparation(jobName: string, job: WorkflowRecord): 
   );
   const installs = jobSteps.filter((step) => step.name === REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
   const prepareIndex = jobSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
+  const installAfterIndex =
+    jobName === "spark-express-vllm"
+      ? jobSteps.findIndex((step) => step.name === "Check out Spark candidate")
+      : prepareIndex;
   const dependencies = Array.isArray(job.needs) ? job.needs : [job.needs];
   if (
     !dependencies.includes("package-openshell-sdk") ||
@@ -179,10 +183,13 @@ function validateCandidateSdkPreparation(jobName: string, job: WorkflowRecord): 
     }) ||
     !isReviewedOpenShellSdkInstallStep(installs[0]) ||
     jobSteps.indexOf(downloads[0]) !== prepareIndex - 1 ||
-    jobSteps.indexOf(installs[0]) !== prepareIndex + 1
+    installAfterIndex < prepareIndex ||
+    jobSteps.indexOf(installs[0]) !== installAfterIndex + 1
   ) {
     return [
-      `${jobName} must download its reviewed SDK before preparation and install it immediately afterward`,
+      jobName === "spark-express-vllm"
+        ? `${jobName} must download its reviewed SDK before preparation and install it immediately after candidate checkout`
+        : `${jobName} must download its reviewed SDK before preparation and install it immediately afterward`,
     ];
   }
   return [];

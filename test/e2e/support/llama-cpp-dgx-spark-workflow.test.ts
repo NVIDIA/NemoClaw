@@ -187,6 +187,16 @@ describe("Spark Express qualification workflow (#14065)", () => {
     ["Remove Docker credentials before candidate checkout", "continue-on-error", true],
     ["Remove Docker credentials before candidate checkout", "if", "failure()"],
     ["Remove Docker credentials before candidate checkout", "run", "true"],
+    [
+      "Install reviewed OpenShell SDK archive without package credentials",
+      "uses",
+      "./candidate-action",
+    ],
+    [
+      "Install reviewed OpenShell SDK archive without package credentials",
+      "continue-on-error",
+      true,
+    ],
   ])("rejects unsafe Spark credential preparation at %s / %s", (name, field, value) => {
     const changed = structuredClone(workflow);
     const step = changed.jobs["spark-express-vllm"].steps.find((item: any) => item.name === name);
@@ -197,6 +207,14 @@ describe("Spark Express qualification workflow (#14065)", () => {
   it.each([
     ["Check out Spark candidate", "Authenticate to Docker Hub"],
     ["Install OpenShell CLI", "Check out Spark candidate"],
+    [
+      "Install reviewed OpenShell SDK archive without package credentials",
+      "Check out Spark candidate",
+    ],
+    [
+      "Install reviewed OpenShell SDK archive without package credentials",
+      "Restore exact-commit CLI artifact",
+    ],
     [
       "Remove Docker credentials before candidate checkout",
       "Run Spark Express and Muse qualification",

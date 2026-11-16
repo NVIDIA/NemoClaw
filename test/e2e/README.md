@@ -2441,6 +2441,8 @@ The existing `approve-dgx-spark-image-qualification` environment requires approv
 candidate code executes on the protected host. The job shares the protected Spark queue without cancelling active work.
 Host preparation runs from `github.workflow_sha`. The job removes its isolated Docker Hub
 credentials before checking out the candidate or restoring its CLI. Candidate image pulls are anonymous.
+After checkout, the pinned reviewed SDK action installs the candidate's lockfile dependencies without
+package credentials or lifecycle scripts. CLI restoration and execution follow that installation.
 It restores the verified candidate CLI, uses qualified managed images, and publishes
 `e2e-spark-express-vllm` artifacts through the standard E2E reporter.
 The 215-minute job budget contains 165 minutes of serial test deadlines, 30 minutes
