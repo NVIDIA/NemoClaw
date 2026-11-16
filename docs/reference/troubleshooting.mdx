@@ -146,6 +146,24 @@ sudo systemctl start docker
 
 On macOS with Docker Desktop, open the Docker Desktop application and wait for it to finish starting before retrying.
 
+### Docker Readiness Probe Does Not Respond
+
+If onboarding reports that the selected Docker authority did not answer `docker info` or `docker version` within 15 seconds, NemoClaw cannot determine whether the daemon stopped.
+The diagnostic includes the validated selected Docker endpoint when available.
+Confirm that the selected endpoint responds, then restart its Docker runtime if needed.
+
+```bash
+docker info
+```
+
+Rerun onboarding after the command succeeds.
+If the diagnostic does not name an endpoint, check the active Docker context and daemon before you retry.
+
+```bash
+docker context show
+docker info
+```
+
 ### Docker permission denied on Linux
 
 On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group. The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically. Add your user and activate the group in the current shell:
