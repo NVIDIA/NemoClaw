@@ -212,6 +212,9 @@ fn configured_target_prerequisite_blocks_save_until_observed() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .require_target([TargetPrerequisite::EngineAndImageCompatible])
         .start(&capabilities)
@@ -1180,6 +1183,9 @@ fn review_uses_authoring_readiness_for_an_observed_target_conflict() {
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();
@@ -1800,6 +1806,9 @@ fn an_unverified_target_the_journey_requires_blocks_saving_in_the_error_colour()
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
             "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/agents",
+            "adapter:nvidia.fabric.openclaw:/plugins",
+            "adapter:nvidia.fabric.openclaw:/tools",
         ])
         .start(&capabilities)
         .unwrap();

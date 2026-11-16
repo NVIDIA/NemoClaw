@@ -289,7 +289,7 @@ Before apply, the `tests/e2e/hcl/model` module runs a stub model with the bundle
 It lists one model and answers every chat completion with the same reply, streamed when the request asks, and refuses any request without that key.
 Each skill's description is a marker, and the reply ends with the name of each skill whose marker the request holds.
 The `tests/e2e/hcl/volume` module also creates each sandbox's two skills volumes, named for the run's UID, and writes their skills, owned by the agent image's user.
-Each agent's `skills.paths` lists a writable folder of skills on one volume and a folder that is one skill on another, as [Skills on a Mounted Volume](../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes; OpenClaw's skill volume is read-only and Hermes's writable, OpenClaw's folder holds two skills and a file that isn't one, and Hermes's folder is empty.
+Each agent's `skills.directories` lists a writable folder of skills on one volume and one skill on another, and refuses duplicate names, as [Skills on a Mounted Volume](../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes; OpenClaw's skill volume is read-only and Hermes's writable, OpenClaw's folder holds two skills and a file that isn't one, and Hermes's folder is empty.
 Apply must start both agents with them, and report each interface's port, sign-in, and token file.
 A harness offers the model the skills it finds, so each reply below must name the skills on that agent's volumes: `notes` for Hermes, and `digest`, `review`, and `translate` for OpenClaw.
 Whether the agent loads and follows a skill is not checked live; Fabric's tests check what each harness loads.
