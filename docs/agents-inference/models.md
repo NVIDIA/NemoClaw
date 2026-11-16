@@ -96,7 +96,7 @@ serving:
   - With a fixed `gpuMemoryGiB`, vLLM sizes the KV cache from `kvCacheGiB` (`--kv-cache-memory-bytes`), and NemoClaw passes the budget over the largest selected GPU's total as `--gpu-memory-utilization`, because vLLM requires that fraction of each GPU's total to be free when it starts. Every GPU then gets the same budget.
 - The host reserve applies once for the service, and the container's memory limit covers all of vLLM's worker processes.
 - NemoClaw passes the layout as written. When vLLM starts, it rejects a layout that needs more GPUs than the container sees, or that the model doesn't support, such as a tensor size that doesn't divide the model's attention heads. The runtime then stops, and the [container log](#diagnose-and-recover-a-stopped-runtime) keeps vLLM's error.
-- [vLLM's parallelism guide](https://github.com/vllm-project/vllm/blob/v0.33.0/docs/serving/parallelism_scaling.md) recommends pipeline parallelism when the GPU count doesn't divide the model evenly, and when the GPUs have no NVLink.
+- [vLLM's parallelism guide](https://github.com/vllm-project/vllm/blob/v0.34.0/docs/serving/parallelism_scaling.md) recommends pipeline parallelism when the GPU count doesn't divide the model evenly, and when the GPUs have no NVLink.
 - An inline recipe sets its own layout, whose omitted sizes get vLLM's default of 1, and rejects these settings; see [recipes](recipes.md#declaration).
 
 `container.gpuDevices` takes one entry until serving one model across several GPUs is implemented ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)), so vLLM refuses a layout larger than one GPU; the statements above about several selected GPUs apply once that limit is lifted.

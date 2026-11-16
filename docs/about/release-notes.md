@@ -36,7 +36,7 @@ Sandbox policy:
 Inference and models:
 
 - A managed vLLM or Ollama container's `container.cpuLimitMillis` reaches Docker through the Docker provider's `cpus`, without the `nemoclaw.nvidia.com/cpu-limit-millis` label.
-- A managed vLLM service keeps FlashInfer's autotune results on its model volume, in `/data/vllm-cache/flashinfer-autotune`, so a replaced container doesn't tune again; vLLM 0.33.0 otherwise keeps them inside the container.
+- A managed vLLM service keeps FlashInfer's autotune results on its model volume, in `/data/vllm-cache/flashinfer-autotune`, so a replaced container doesn't tune again; vLLM 0.34.0 otherwise keeps them inside the container.
   See [retained model files](../agents-inference/models.md#retained-model-files).
 
 Examples and builds:
@@ -44,9 +44,9 @@ Examples and builds:
 - Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
 - OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
 - [Building from source](../build-deploy/build.md) uses Rust 1.100.0, as do the Rust stages of the agent, supervisor, and Ollama proxy images.
-- The vLLM runtime image builds on vLLM 0.33.0; rebuild it to use it.
+- The vLLM runtime image builds on vLLM 0.34.0; rebuild it to use it.
   Like 0.32.0, it uses CUDA 13.0, so GPU hosts and Kubernetes GPU nodes need NVIDIA driver 580 or newer.
-  With `authentication: bearer`, the supervisor answers vLLM's new `/v1/decisions` endpoint with 404, as it does every request outside its route allowlist; see [authenticating a managed vLLM service](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
+  With `authentication: bearer`, the supervisor answers vLLM's new `/v1/decisions` endpoint, and the `/checkpoint/prepare`, `/checkpoint/restore`, and `/checkpoint/status` routes that `--enable-sleep-mode` adds without the key, with 404, as it does every request outside its route allowlist; see [authenticating a managed vLLM service](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
 
 OpenShell 0.1.8:
 
