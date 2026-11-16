@@ -8,6 +8,12 @@
 # Each sandbox also mounts a skills volume on /sandbox/skills, and each start
 # request lists that path as a folder of skills in the agent's
 # skills.directories, refusing duplicate names.
+#
+# Only one runtime uses the kept state at a time: the old runtime stops before
+# the agent starts in the new sandbox. The agent then records the new sandbox
+# and runtime, Fabric's later checks name that runtime, and the next unchanged
+# apply replaces, stops, and starts nothing. That a replacement leaves
+# other agents alone is kubernetes-external-three-agents.tftest.hcl's.
 
 # Docker is mocked. Its alias follows from the runner's engine socket, and
 # its IDs match what the fixtures module declares to the engine.
@@ -52,7 +58,85 @@ run "replace_hermes" {
   }
 }
 
-# Teardown's plan observes what the replacement left.
+# An unchanged apply after the replacement. It plans after the replacement
+# finished, so its assertions read what the replacement did.
+run "reapply" {
+  module {
+    source = "./cases/docker-hermes-kept-state"
+  }
+
+  assert {
+    condition = [
+      for exec in module.observed.openshell.execs :
+      contains(exec.command, "start") ? "start" : "stop"
+      if contains(exec.command, "start") || contains(exec.command, "stop")
+    ] == ["start", "stop", "start"]
+    error_message = "The old runtime was not stopped before the agent started in the new sandbox."
+  }
+
+  assert {
+    condition     = toset(module.observed.openshell.fabric_stopped) == toset([module.observed.openshell.created_sandboxes[0].id])
+    error_message = "The stop did not reach the runtime in the old sandbox."
+  }
+}
+
+# Reapply changed nothing and found the agent running under the binding the
+# replacement recorded. var.baseline is what reapply observed when it planned.
+run "unchanged" {
+  command = plan
+
+  module {
+    source = "./cases/docker-hermes-kept-state"
+  }
+
+  variables {
+    baseline = run.reapply.baseline
+  }
+
+  assert {
+    condition     = module.observed.openshell.effects == var.baseline.effects
+    error_message = "The apply after the replacement changed the gateway."
+  }
+
+  assert {
+    condition     = module.observed.openshell.sandboxes == var.baseline.sandboxes
+    error_message = "The apply after the replacement replaced the sandbox."
+  }
+
+  assert {
+    condition = (
+      module.observed.openshell.fabric_starts == var.baseline.fabric_starts
+      && toset(module.observed.openshell.fabric_stopped) == toset(var.baseline.fabric_stopped)
+    )
+    error_message = "The apply after the replacement stopped or started the agent."
+  }
+
+  assert {
+    condition     = fabric_agent.hermes.sandbox.id == module.observed.openshell.sandboxes.hermes
+    error_message = "The agent does not record the new sandbox."
+  }
+
+  assert {
+    condition = fabric_agent.hermes.runtime_id != one([
+      for exec in module.observed.openshell.execs :
+      exec.command[index(exec.command, "--runtime-id") + 1] if contains(exec.command, "stop")
+    ])
+    error_message = "The agent still records the runtime that was stopped."
+  }
+
+  assert {
+    condition = toset([
+      for position, exec in module.observed.openshell.execs :
+      exec.command[index(exec.command, "--runtime-id") + 1]
+      if contains(exec.command, "check") && contains(exec.command, "--runtime-id") && position > max([
+        for started, start in module.observed.openshell.execs : started if contains(start.command, "start")
+      ]...)
+    ]) == toset([fabric_agent.hermes.runtime_id])
+    error_message = "Fabric's checks after the replacement do not all name the runtime the agent records."
+  }
+}
+
+# Teardown's plan observes what the replacement and reapply left.
 run "teardown" {
   module {
     source = "./cases/docker-hermes-kept-state"
