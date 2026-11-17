@@ -281,6 +281,7 @@ Budgets fail a run only on the Linux GitHub Actions runners, where `GITHUB_ACTIO
 
 - The `test` step, each contract and integration partition, and each live suite check their step budget when the step ends; a step over its wall budget, or with a test over its limit, fails and names each offender with its time and limit.
 - Each platform's `Contract timing report` and `Integration timing report` jobs check the binary budgets, because a binary's tests run in several partitions.
+  The macOS and Windows reports run on a Linux runner without `GITHUB_ACTIONS`, so they report the budgets without failing, and their `Test / PLATFORM` checks do not wait for them.
   `cargo ci --full`, `cargo ci contract`, and `cargo ci integration` run each whole suite in one step and report them there too.
 - Nextest stops a test on every platform: each profile reports a test as slow at its per-test limit and stops it at a multiple of the limit, three times for the `test` step and twice for the others.
   An override in the binary's step profile does the same for each budgeted binary with that binary's limit.
@@ -391,7 +392,7 @@ Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workf
 
 1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables. On Linux, it runs `docker buildx version` before the tests, so the Bake tests' first Docker call doesn't spend their time limit reading the Docker CLI and Buildx from disk.
 2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
-3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions, and `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets.
+3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions. On Linux, `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets; `CI / Bundle` reports the macOS and Windows suites in `PLATFORM / Contract timing report` and `PLATFORM / Integration timing report`, on Ubuntu, after the platform's jobs finish.
 4. On Linux, when the plan selects the live suites, `E2E build images` runs `cargo ci live-images` at the same time as the build and bundle jobs, because it reads neither job's artifacts. When all three finish, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E Docker tests` and `E2E Kubernetes (kind) tests` from the platform's archive, bundle, and live images. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, and `E2E GPU` for those on the NVIDIA GPU runner, from the same artifacts; see [live suites](#live-suites).
 
 When a pull request changes no image input since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
@@ -481,6 +482,7 @@ Whenever the plan selects a hosted case, Linux AMD64 runs it as `linux_amd64 / E
 On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts, so a pull request never runs them.
 Live / HCL's `Cases` job lists the cases and fetches the model runtime images' pinned sources, and each case's job runs the same test archive, bundle, and live images as the hosted cases, which the GPU runner can run because CI / Bundle builds them on Ubuntu 22.04. Each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services.
 Dispatch Live / HCL to run the hosted or GPU cases alone: without CI / Bundle's artifacts, its `Build` job builds the bundle, test executable, and agent images on Ubuntu 22.04 from the dispatched branch.
+A `dgx-station` dispatch skips `Build`, and the Station case's job builds them on the Station runner before it runs the case: two machines share that runner's label, and Actions artifacts move the 1 GB candidate at 3-8 MB/s there.
 
 To see which live HCL cases a pull request affects, such as before dispatching the GPU cases, which its CI does not run, run from a clean checkout of its commit:
 
@@ -623,7 +625,7 @@ Dependency caches are keyed by platform and the Rust toolchain, manifests, lockf
 The native build-and-test job and `E2E build images` share each platform's dependency cache instead of adding their job names to its key.
 Only the native build-and-test job writes that shared cache; `E2E build images` restores it without uploading a duplicate copy, and the bundle job writes its own.
 The live suites' Docker, Kind, and HCL jobs compile nothing, so they restore no Rust cache.
-Documentation restores the bundle job's cache without saving one; Live / Brev and Live / HCL's `Build` job keep their own prefixes.
+Documentation restores the bundle job's cache without saving one; Live / Brev and Live / HCL's candidate builds keep their own prefixes.
 The shared key causes a one-time cold build when first enabled; old job-specific entries can expire normally.
 
 `E2E build images` keeps BuildKit's layers for the live images in the same cache, through `cargo images build --gha-cache`: about 1.8 GB per Linux platform, mostly the OpenClaw application, the Rust toolchain, and the Fabric runtime's Rust build.
