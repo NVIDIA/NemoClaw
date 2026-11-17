@@ -238,6 +238,24 @@ jobs:
           persist-credentials: false
       - if: needs.cases.outputs.platform == 'linux_amd64'
         uses: ./.github/actions/containerd-store
+      # The runner's Buildx starts a runtime image's FROM pull only after its
+      # supervisor target finishes. Pulling the same digests now overlaps the
+      # pull with the downloads and the supervisor build, and Docker's
+      # containerd image store gives the bake the pulled layers. The bake
+      # waits for this pull and fetches whatever it missed.
+      - name: Start pulling the runtime images' bases
+        env:
+          RUNTIMES: ${{ join(fromJSON(needs.cases.outputs.runtimes)[matrix.case], ' ') }}
+        run: |
+          read -ra names <<< "$RUNTIMES"
+          {
+            for name in "${names[@]}"; do sed -n 's/^FROM \([^ ]*\).*/\1/p' "image/$name/Dockerfile"; done |
+              while read -r base; do
+                if docker pull --quiet "$base"; then echo "Pulled $base after ${SECONDS}s."; fi
+              done
+            touch "$RUNNER_TEMP/base-pull.done"
+          } > "$RUNNER_TEMP/base-pull.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/base-pull.pid"
       - if: inputs.tests == ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -319,7 +337,11 @@ jobs:
               echo "NEMOCLAW_HCL_PERSISTENT=true"
             } >> "$GITHUB_ENV"
           fi
-          if (( ${#runtimes[@]} )); then (umask 022; docker buildx bake "${runtimes[@]}"); fi
+          if (( ${#runtimes[@]} )); then
+            until [[ -e $RUNNER_TEMP/base-pull.done ]] || ! kill -0 "$(< "$RUNNER_TEMP/base-pull.pid")" 2> /dev/null; do sleep 1; done
+            cat "$RUNNER_TEMP/base-pull.log"
+            (umask 022; docker buildx bake "${runtimes[@]}")
+          fi
           docker image inspect nc-fabric:openclaw nc-fabric:hermes > /dev/null
           for runtime in "${runtimes[@]}"; do docker image inspect "nc-prototype-$runtime:rust-v1" > /dev/null; done
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
