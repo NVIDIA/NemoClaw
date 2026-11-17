@@ -78,6 +78,7 @@ export function materializeHostLocalVllmModel(
     maxModelLen: positiveIntegerArgument(recipe, "--max-model-len"),
     revision: recipe.spec.model.revision,
     reviewedCode: recipe.spec.model.reviewedCode,
+    trustRemoteCode: false,
     servedModelId: recipe.spec.model.servedName,
     modelArgs: hostLocalVllmModelArguments(recipe),
     gated: recipe.spec.model.gated,
