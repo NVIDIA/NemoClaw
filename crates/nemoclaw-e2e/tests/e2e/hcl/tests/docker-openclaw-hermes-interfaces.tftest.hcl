@@ -10,7 +10,12 @@
 # it. OpenClaw's terminal UI, opened with the dashboard's token through
 # `openshell sandbox exec --tty`, shows the stub's reply to a prompt and exits
 # on Ctrl-D. The stub refuses requests without the run's key, so the reply
-# also shows NemoClaw sent the configured key. In each sandbox,
+# also shows NemoClaw sent the configured key. In hermes-messages, whose
+# agent reaches the stub through an anthropic provider, Hermes's API server
+# answers a chat completion with the stub's reply too; the stub accepts a
+# Messages request's key only in x-api-key, so the reply shows that Hermes
+# called Anthropic's Messages API with the key where the provider places it.
+# In claw and hermes,
 # the agent's user can write and read a file in the agent's workspace, and
 # the key is not in the environment a command sees. In hermes, a command can
 # open a pseudo-terminal, as browser chat does. In claw, python3 reaches
@@ -28,8 +33,8 @@
 # write to each skill volume except OpenClaw's read-only one, which refuses
 # the write with EROFS.
 #
-# Then each agent's sandbox is replaced in turn, Hermes's first, by a change
-# to only its agent's instructions, as a person edits the document; the
+# Then the hermes sandbox, and after it the claw sandbox, is replaced by a
+# change to only its agent's instructions, as a person edits the document; the
 # sibling's binding stays as it was and it keeps answering. Before the first
 # change, apply records each sandbox's ID and its agent's runtime ID, the
 # agent's user writes a marker in its workspace and artifacts volumes, each
@@ -114,6 +119,7 @@ run "apply" {
       "claw/dashboard/18789/token_in_url_fragment/true",
       "hermes/api/8642/bearer_token/true",
       "hermes/dashboard/9119/none/false",
+      "hermes-messages/api/8642/bearer_token/true",
     ])
     error_message = "Apply must report each interface with its port, sign-in, and token file."
   }
@@ -158,6 +164,18 @@ run "interfaces" {
           messages = [{ role = "user", content = "Reply to this NemoClaw live test." }]
         }
         answer = "nemoclaw-stub-reply notes"
+      }
+      # This agent has no skills, so the reply names none.
+      messages_chat = {
+        sandbox    = "hermes-messages"
+        port       = 8642
+        token_path = one([for access in run.apply.result.interfaces : access.tokenPath if access.sandbox == "hermes-messages"])
+        path       = "/v1/chat/completions"
+        body = {
+          model    = "hermes-agent"
+          messages = [{ role = "user", content = "Reply to this NemoClaw live test." }]
+        }
+        answer = "nemoclaw-stub-reply"
       }
       dashboard = {
         sandbox    = "hermes"
