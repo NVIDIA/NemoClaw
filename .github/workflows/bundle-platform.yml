@@ -63,9 +63,9 @@ on:
         default: true
       split-bundle:
         description: >-
-          Compile the bundle's CLI and its providers on two runners, and assemble
-          them on a third, which shortens the bundle job where one runner compiles
-          them slowly.
+          Compile the bundle's executables in three parts on separate runners, and
+          assemble them on a fourth, which shortens the bundle job where one runner
+          compiles them slowly.
         type: boolean
         default: false
 # The live suites read the per-commit image package for images to reuse.
@@ -81,9 +81,9 @@ env:
 # Each job's name starts with its test layer: Unit, Contract, Integration, or
 # E2E. Unit build and test, and Build bundle, run in parallel on separate
 # runners; the contract, integration, and live jobs start when both have
-# uploaded their artifacts. With split-bundle, the Build bundle CLI and
-# providers jobs compile the bundle's executables in parallel, and Build bundle
-# assembles them. Artifact names carry the run attempt, and consumers
+# uploaded their artifacts. With split-bundle, the other Build bundle jobs
+# compile the bundle's executables in parallel, and Build bundle assembles
+# them. Artifact names carry the run attempt, and consumers
 # read them from the producers' outputs, so rerunning a failed shard reuses an
 # earlier attempt's artifacts. The caller's Test / PLATFORM check requires every
 # job here that runs; a job the plan does not select is skipped.
@@ -199,29 +199,33 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # The CLI and the providers each take most of the release compile, so each
-  # part compiles one of them. The CLI part also builds the debug build tool
-  # that assembles the bundle, because its compile finishes first. Both parts
-  # restore and may save the bundle cache: on a new cache key, the part that
-  # saves second skips its save, and the other part rebuilds the dependencies
-  # that only it changed until the key changes again.
+  # Each part compiles some of the bundle's release executables. Every part
+  # compiles the SDK, but the parts' dependency chains then take about as long
+  # as each other, shorter than one runner compiling them all. The CLI part also
+  # builds the debug build tool that assembles the bundle. All parts restore
+  # and may save the bundle cache: on a new cache key, the first part to save
+  # writes it, and the others rebuild the dependencies that only they changed
+  # until the key changes again.
   bundle-part:
-    name: Build bundle ${{ matrix.part }}
+    name: Build bundle ${{ matrix.name }}
     if: inputs.split-bundle && (inputs.bundle || inputs.lifecycle || inputs.e2e)
     runs-on: ${{ inputs.build-runner || inputs.runner }}
     timeout-minutes: 60
     strategy:
       matrix:
         include:
-          - part: CLI
+          - part: cli
+            name: CLI
             packages: nemoclaw-cli
             executables: nemoclaw
-          - part: providers
-            packages: nemoclaw-provider,openshell-provider,fabric-provider
-            executables: >-
-              terraform-provider-vllm terraform-provider-ollama
-              terraform-provider-host terraform-provider-openshell
-              terraform-provider-fabric
+          - part: nemoclaw-provider
+            name: NemoClaw providers
+            packages: nemoclaw-provider
+            executables: terraform-provider-vllm terraform-provider-ollama terraform-provider-host
+          - part: openshell-provider
+            name: OpenShell and Fabric providers
+            packages: openshell-provider,fabric-provider
+            executables: terraform-provider-openshell terraform-provider-fabric
     outputs:
       artifact: ${{ steps.identity.outputs.artifact }}
     steps:
@@ -242,7 +246,7 @@ jobs:
         run: cargo ci bundle --packages "$PACKAGES"
       # As cargo ci bundle builds it, without debug data.
       - name: Build the build tool
-        if: matrix.part == 'CLI'
+        if: matrix.part == 'cli'
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
         run: cargo build --locked --package nemoclaw-build
@@ -266,10 +270,10 @@ jobs:
           for name in $EXECUTABLES; do
             files+=(target/*/release/"$name$extension")
           done
-          if [ "$PART" = CLI ]; then files+=("target/debug/nemoclaw-build$extension"); fi
+          if [ "$PART" = cli ]; then files+=("target/debug/nemoclaw-build$extension"); fi
           mkdir -p .build/ci
           tar -cf ".build/ci/bundle-$PART.tar" "${files[@]}"
-      # Both parts write the same name prefix, which the bundle job reads.
+      # Every part writes the same name prefix, which the bundle job reads.
       - name: Identify executables artifact
         id: identity
         run: echo "artifact=bundle-part-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
