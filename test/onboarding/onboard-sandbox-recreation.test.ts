@@ -350,10 +350,8 @@ const processRecovery = require(${processRecoveryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
-// The live dcode probe needs a running sandbox: report the drift for the source only (#13897).
 let sourceDeleted = false;
-require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/dcode-selection-drift.ts"))}).createDcodeSelectionDriftReader = () => async () => ({ changed: ${JSON.stringify(drift)} && !sourceDeleted, providerChanged: ${JSON.stringify(drift)} && !sourceDeleted, modelChanged: false, unknown: false });
-
+require(${JSON.stringify(path.join(repoRoot, "test/onboarding/dcode-recreation-identity.fixture.ts"))}).installDcodeRecreationIdentityFixture(require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/dcode-selection-drift.ts"))}), ${JSON.stringify(drift)}, () => sourceDeleted);
 const events = [];
 let nativeConfig = { agents: { defaults: { model: { primary: "openai/gpt-4o" } } }, models: { providers: {} }, custom: { retained: true } };
 let registered = null;
@@ -369,6 +367,10 @@ sandboxConfig.setOpenClawConfigValues = (_name, updates) => {
   }
 };
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
+processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor = async ({ sandboxName, runtimeSelection }) => ({
+  ok: true,
+  window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+});
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => {
   events.push({ kind: "restart", primary: nativeConfig.agents.defaults.model.primary });
   return { ok: true };
@@ -406,16 +408,17 @@ runner.run = (command) => {
 	  name: "my-assistant",
 	  gpuEnabled: false,
 	  ...(${JSON.stringify(agent)} === "openclaw" ? {} : { agent: ${JSON.stringify(agent)} }),
+	  ...(${JSON.stringify(drift)} ? { provider: "nvidia-prod", nativeNvidiaProviderAttachment: { schemaVersion: 1, profileId: "nemoclaw-nvidia-inference-v1", providerName: "nemoclaw-nvidia-prod-v1", providerId: "11111111-2222-4333-8444-555555555555" } } : {}),
 	}, { sandboxId: createdSandbox.state.sandboxId });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
-	  provider: "nvidia-prod",
+	  provider: ${JSON.stringify(drift ? "compatible-endpoint" : "nvidia-prod")},
 	  model: "gpt-5.4",
+      ...(${JSON.stringify(drift)} ? { endpointUrl: "https://api.example/v1", credentialEnv: "COMPATIBLE_API_KEY" } : {}),
 	  getSandbox: registry.getSandbox,
       registerSandbox: (entry) => { registered = entry; },
 	});
-
 let latestBackup = null;
 sandboxState.getLatestBackup = () => latestBackup;
 sandboxState.backupSandboxState = (name) => {
@@ -441,10 +444,8 @@ sandboxState.restoreRecreatedSandboxState = (name, backupPath, options) => {
     failedFiles: [],
   };
 };
-
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
-
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
 	  if (command.includes("sandbox create") && createdSandbox.state.lifecycleState === "deleted") createdSandbox.recreate(args.flat());
@@ -460,17 +461,15 @@ preflight.checkPortAvailable = async () => ({ ok: true });
   });
   return child;
 };
-
 const { createSandbox } = require(${onboardPath});
-
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  process.env.NEMOCLAW_RECREATE_SANDBOX = ${JSON.stringify(force ? "1" : "0")};
+  process.env.NEMOCLAW_RECREATE_SANDBOX = ${JSON.stringify(force || drift ? "1" : "0")};
   const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, ${JSON.stringify(agent)} === "openclaw" ? null : require(${JSON.stringify(path.join(repoRoot, "src/lib/agent/defs.ts"))}).loadAgent(${JSON.stringify(agent)}), null, null, null, []],
+    [null, "gpt-5.4", ${JSON.stringify(drift ? "compatible-endpoint" : "nvidia-prod")}, null, "my-assistant", null, null, null, ${JSON.stringify(agent)} === "openclaw" ? null : require(${JSON.stringify(path.join(repoRoot, "src/lib/agent/defs.ts"))}).loadAgent(${JSON.stringify(agent)}), null, null, null, []],
     createFixture,
   );
-  // Deep Agents rows run as the fresh, non-resumed invocation that opened the journal.
+  if (${JSON.stringify(drift)}) createArgs[15] = { ...createArgs[15], endpointUrl: "https://api.example/v1", credentialEnv: "COMPATIBLE_API_KEY" };
   if (${JSON.stringify(agent)} !== "openclaw") createArgs[15] = { ...createArgs[15], recreateTransaction: { ...createArgs[15].recreateTransaction, freshSelection: true } };
   // Seed the durable checkpoint left by the interrupted invocation. The resumed
   // request carries only its existing transaction identity, never fresh authority.
@@ -537,11 +536,8 @@ const { createSandbox } = require(${onboardPath});
         "restore must use backup path",
       );
       assert.equal(restoreEvent?.options?.targetAgentType, agent);
-      // Deep Agents journals a provider change before deletion and keeps its new config.toml.
-      assert.equal(
-        events.find((event) => event.kind === "delete")?.reconcile,
-        drift || marked || null,
-      );
+      const deleteEvent = events.find((event) => event.kind === "delete");
+      assert.equal(deleteEvent?.reconcile, drift || marked || null);
       assert.equal(restoreEvent?.options?.keepReplacementDeepAgentsConfig, drift || undefined);
       assert.equal(payload.nativeConfig.agents.defaults.model.primary, primary);
       const restart = events.find((event) => event.kind === "restart")?.primary;
@@ -747,6 +743,10 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
+processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor = async ({ sandboxName, runtimeSelection }) => ({
+  ok: true,
+  window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+});
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({

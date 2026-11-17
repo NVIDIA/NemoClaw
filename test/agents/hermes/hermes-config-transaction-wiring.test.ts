@@ -55,7 +55,7 @@ function installMock(filename, exports) {
 const rawConfig = ${JSON.stringify(rawConfig)};
 let captured = null;
 let capturedPrivilegedExec = null;
-installMock(source("runner.js"), { validateName: () => undefined, ROOT: root });
+installMock(source("runner.js"), { validateName: () => undefined, ROOT: root, shellQuote: require(source("core", "shell-quote.js")).shellQuote });
 installMock(source("state", "registry.js"), {
   getSandbox: () => ({ name: "alpha", agent: "hermes" }),
 });
@@ -169,7 +169,7 @@ function installMock(filename, exports) {
 }
 
 let writeAttempts = 0;
-installMock(source("runner.js"), { validateName: () => undefined, ROOT: process.cwd() });
+installMock(source("runner.js"), { validateName: () => undefined, ROOT: process.cwd(), shellQuote: require(source("core", "shell-quote.js")).shellQuote });
 installMock(source("state", "registry.js"), {
   getSandbox: () => ({ name: "alpha", agent: "hermes" }),
 });

@@ -435,13 +435,13 @@ describe("sandbox base security packages", () => {
         expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
         expect(calls).toContain("dpkg-install");
         expect(calls).toContain(
-          `download https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main/e/expat/libexpat1_2.8.3-1_${architecture}.deb`,
+          `download https://snapshot-cloudflare.debian.org/archive/debian/20260811T082421Z/pool/main/e/expat/libexpat1_2.8.3-1_${architecture}.deb`,
         );
         expect(calls).toContain(
-          "download https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main/v/vim/vim-common_9.2.0858-1_all.deb",
+          "download https://deb.debian.org/debian/pool/main/v/vim/vim-common_9.2.0858-1_all.deb",
         );
         expect(calls).toContain(
-          `download https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main/v/vim/vim-tiny_9.2.0858-1_${architecture}.deb`,
+          `download https://deb.debian.org/debian/pool/main/v/vim/vim-tiny_9.2.0858-1_${architecture}.deb`,
         );
         expect(fs.readFileSync(prepared.inventory, "utf-8")).toBe(
           securityInventory(architecture, image.expectedInventory),

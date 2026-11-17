@@ -47,7 +47,9 @@ $$nemoclaw my-assistant channels add googlechat
 Refer to [Set Up Google Chat](set-up-google-chat) before running the command.
 
 `channels add` accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase name.
-It collects the channel inputs, validates or registers the OpenShell bridge provider profile, records the channel, and asks whether to rebuild immediately.
+After the channel inputs pass their configured checks, it validates or registers the OpenShell bridge provider profile, records the channel, and asks whether to rebuild immediately.
+For Discord, rejected, rate-limited, unreachable, or timed-out token verification skips enrollment without changing its provider, registry entry, or rebuild state.
+Correct the token or host access, then follow [Retry Authentication](set-up-discord#retry-authentication) to rerun the complete channel-add command.
 Before provider reuse, NemoClaw validates the complete checked-in profile contract, including endpoints, binaries, credential keys, and refresh settings when applicable.
 For an existing refresh provider with matching metadata, NemoClaw preserves its working credential until OpenShell mints the replacement.
 A later refresh failure can still leave changed gateway refresh material; follow the recovery guidance below.
@@ -171,6 +173,11 @@ If `WECHAT_BOT_TOKEN` is already cached for this sandbox, the command reuses it 
 Use `channels remove wechat` first if you intend to acquire a fresh account.
 
 ## Verify Delivery
+
+<AgentOnly variant="hermes">
+For Hermes Discord, run the authentication status check in [Retry Authentication](set-up-discord#retry-authentication).
+A connected adapter does not prove message delivery.
+</AgentOnly>
 
 Send a message to the configured bot or app after the rebuild.
 For Telegram, a Bot API `sendMessage` proves outbound delivery only.

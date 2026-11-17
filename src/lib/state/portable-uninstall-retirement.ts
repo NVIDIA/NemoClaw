@@ -14,6 +14,7 @@ import {
   releaseProcessBoundLock,
   tryAcquireProcessBoundLockAt,
   type ProcessBoundLockHandle,
+  type RegistryLockDeps,
 } from "./registry/lock";
 
 const NAMES = {
@@ -158,6 +159,7 @@ function releaseFenceReference(owner: FenceOwner): void {
 export async function withPortableHostFence<T>(
   homeDir: string,
   operation: () => Promise<T> | T,
+  lockDeps: RegistryLockDeps = {},
 ): Promise<T> {
   const lockPath = portableHostFencePath(homeDir);
   const inherited = owners.getStore();
@@ -183,7 +185,7 @@ export async function withPortableHostFence<T>(
     const drained = new Promise<void>((resolve) => (resolveDrained = resolve));
     owner = {
       active: true,
-      handle: acquireProcessBoundLockAt(lockPath),
+      handle: acquireProcessBoundLockAt(lockPath, lockDeps),
       path: lockPath,
       references: 1,
       released: false,

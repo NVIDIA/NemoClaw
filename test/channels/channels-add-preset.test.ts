@@ -167,6 +167,10 @@ function setSession(sandboxName: string | null = "test-sb"): void {
 let stdinIsTty: PropertyDescriptor | undefined;
 
 beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ id: "1", bot: true })),
+  );
   for (const key of TEST_ENV_KEYS) delete process.env[key];
   stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
   Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
@@ -445,6 +449,26 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(deleteCredentialSpy).not.toHaveBeenCalled();
     expect(rebuildSpy).not.toHaveBeenCalled();
   });
+
+  it.each([401, 429, 500])(
+    "leaves Hermes Discord unchanged after HTTP %s (#13809)",
+    async (status) => {
+      sandboxAgent = "hermes";
+      registryEntry = makeRegistryEntry([], [], "hermes");
+      process.env.DISCORD_BOT_TOKEN = "invalid-token-for-test";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response("rejected", { status })),
+      );
+      await expectExit(() => addSandboxChannel("test-sb", { channel: "discord" }));
+      expect(providerSpy).not.toHaveBeenCalled();
+      expect(applyPresetSpy).not.toHaveBeenCalled();
+      expect(updateSandboxSpy).not.toHaveBeenCalled();
+      expect(rebuildSpy).not.toHaveBeenCalled();
+      expect(printedText()).toContain("Discord remains inactive");
+      expect(printedText()).not.toContain("invalid-token-for-test");
+    },
+  );
 
   it("applies the tokenless WhatsApp preset for Hermes before triggering rebuild", async () => {
     sandboxAgent = "hermes";
@@ -785,7 +809,7 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
   it("confirms the startup breadcrumb when the bridge logs the starting-provider line", async () => {
     testLog = [
       "[telegram] [default] starting provider",
-      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+      "[telegram] [default] provider ready (Bot API reachable)",
     ].join("\n");
 
     await addSandboxChannel("test-sb", { channel: "telegram" });

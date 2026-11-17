@@ -18,7 +18,7 @@ import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-ima
 import type { ManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { gatewayIdForStateDir } from "../../src/lib/onboard/gateway/process-environment.ts";
 
-const MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS = ["0.0.116", "0.1.3", "0.1.5"] as const;
+const MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS = ["0.0.116", "0.1.3", "0.1.5", "0.1.7"] as const;
 export type ManagedImageHarnessOpenShellVersion =
   (typeof MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS)[number];
 
@@ -63,7 +63,9 @@ export function isManagedImageHarnessWorkload(
     labels?.["openshell.ai/managed-by"] === "openshell" &&
     labels["openshell.ai/sandbox-name"] === expected.sandbox &&
     record?.Image === expected.imageContentId &&
-    (expected.runtimeVersion === "0.1.3" || expected.runtimeVersion === "0.1.5"
+    (expected.runtimeVersion === "0.1.3" ||
+    expected.runtimeVersion === "0.1.5" ||
+    expected.runtimeVersion === "0.1.7"
       ? labels["openshell.ai/isolation-role"] === "sandbox" &&
         labels["openshell.ai/sandbox-namespace"] === gatewayIdForStateDir(expected.stateDir) &&
         record.HostConfig?.NetworkMode === "none"
@@ -406,6 +408,54 @@ export async function waitForLocalInferenceAgentPairing<
   }
 }
 
+function openClawAnswerDiagnostic(envelope: unknown): string {
+  const record = (value: unknown): Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const category = (value: unknown, allowed: readonly string[]) =>
+    typeof value === "string" && allowed.includes(value)
+      ? value
+      : value === undefined
+        ? "absent"
+        : "other";
+  const length = (value: unknown) => (typeof value === "string" ? value.length : null);
+  const flag = (value: unknown) => (typeof value === "boolean" ? value : null);
+  const result = record(record(envelope).result);
+  const meta = record(result.meta);
+  const completion = record(meta.completion);
+  const payloads = Array.isArray(result.payloads) ? result.payloads : null;
+  const sampled = payloads?.slice(0, 32) ?? [];
+  const textLengths = sampled.map((payload) => length(record(payload).text));
+  // Only fixed categories and scalar measurements may leave the agent envelope.
+  return JSON.stringify({
+    payloadCount: payloads?.length ?? null,
+    sampledPayloadCount: sampled.length,
+    payloadTextLengths: textLengths,
+    finalVisibleTextLength: length(meta.finalAssistantVisibleText),
+    finalRawTextLength: length(meta.finalAssistantRawText),
+    stopReason: category(meta.stopReason ?? completion.stopReason, [
+      "stop",
+      "length",
+      "toolUse",
+      "tool_calls",
+      "end_turn",
+      "error",
+      "aborted",
+      "superseded",
+    ]),
+    terminalReplyKind: category(meta.terminalReplyKind, ["silent-empty"]),
+    livenessState: category(meta.livenessState, ["blocked", "working", "paused", "abandoned"]),
+    aborted: flag(meta.aborted),
+    yielded: flag(meta.yielded),
+    continuationPending: flag(meta.continuationPending),
+    refusal: flag(completion.refusal),
+    pendingToolCallCount: Array.isArray(meta.pendingToolCalls)
+      ? meta.pendingToolCalls.length
+      : null,
+  });
+}
+
 export function assertLocalInferenceAgentResponse(
   input: ManagedImageOpenShellE2eInputs,
   stdout: string,
@@ -415,8 +465,10 @@ export function assertLocalInferenceAgentResponse(
   if (!routeCompleted)
     throw new Error(`${input.agent} did not complete a request through its configured local model`);
   let response: unknown = stdout;
+  let openClawDiagnostic: string | undefined;
   if (input.agent === "openclaw") {
     const envelope = JSON.parse(stdout);
+    openClawDiagnostic = openClawAnswerDiagnostic(envelope);
     const result = envelope?.result;
     if (
       envelope?.status !== "ok" ||
@@ -424,7 +476,9 @@ export function assertLocalInferenceAgentResponse(
       result?.meta?.agentMeta?.provider !== "inference" ||
       result?.meta?.agentMeta?.model !== input.model
     )
-      throw new Error("OpenClaw did not complete through its configured local model");
+      throw new Error(
+        `OpenClaw did not complete through its configured local model; diagnostic=${openClawDiagnostic}`,
+      );
     response = result.payloads?.map((payload: { text?: string }) => payload.text ?? "").join("\n");
   } else if (input.agent === "langchain-deepagents-code") {
     const envelope = JSON.parse(stdout);
@@ -437,7 +491,11 @@ export function assertLocalInferenceAgentResponse(
   const answer = typeof response === "string" ? response.trim() : "";
   if (!answer || /reply with exactly one word: pong/iu.test(answer))
     throw new Error(
-      `${input.agent} local inference returned no assistant answer; response=${JSON.stringify(managedImageFailureDetail(response, env).slice(0, 512))}`,
+      `${input.agent} local inference returned no assistant answer; ${
+        openClawDiagnostic === undefined
+          ? `response=${JSON.stringify(managedImageFailureDetail(response, env).slice(0, 512))}`
+          : `diagnostic=${openClawDiagnostic}`
+      }`,
     );
 }
 
@@ -511,7 +569,7 @@ export function managedImageHarnessContainerListArgs(
     "label=openshell.ai/managed-by=openshell",
     "--filter",
     `label=openshell.ai/sandbox-name=${sandbox}`,
-    ...(runtimeVersion === "0.1.3" || runtimeVersion === "0.1.5"
+    ...(runtimeVersion === "0.1.3" || runtimeVersion === "0.1.5" || runtimeVersion === "0.1.7"
       ? ["--filter", "label=openshell.ai/isolation-role=sandbox"]
       : []),
   ];
@@ -520,5 +578,7 @@ export function managedImageHarnessContainerListArgs(
 export function managedImageSandboxListLimitFlag(
   runtimeVersion: ManagedImageHarnessOpenShellVersion,
 ): string {
-  return runtimeVersion === "0.1.3" || runtimeVersion === "0.1.5" ? "--page-size" : "--limit";
+  return runtimeVersion === "0.1.3" || runtimeVersion === "0.1.5" || runtimeVersion === "0.1.7"
+    ? "--page-size"
+    : "--limit";
 }

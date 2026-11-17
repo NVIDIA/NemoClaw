@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+
 import {
   openClawAgentIncompleteTurnSignal,
   openClawAgentResponseRecord,
@@ -155,4 +158,131 @@ export function nativeStateProcessIdentitiesAreValid(
     supervisor[1] === "0" &&
     supervisor[3] === "0"
   );
+}
+
+// Native tool evidence for the pinned OpenClaw 2026.10.5 SQLite transcript.
+export interface NativePluginExpectation {
+  tool: string;
+  plugin: string;
+  args: Record<string, string | boolean>;
+  details: Record<string, string | boolean>;
+}
+
+/** Read actual paired tool results, never an assistant's claimed fixture response. */
+export function nativePluginResultMatches(
+  session: unknown[],
+  expected: NativePluginExpectation,
+): boolean {
+  const record = (value: unknown): Record<string, unknown> | undefined =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  const message = (value: unknown): Record<string, unknown> | undefined => {
+    const root = record(value);
+    return record(root?.message ?? root);
+  };
+  const fieldsMatch = (value: unknown, fields: Record<string, string | boolean>): boolean => {
+    const object = record(value);
+    return object !== undefined && Object.entries(fields).every(([key, v]) => object[key] === v);
+  };
+  const calls = new Map<string, "direct" | "wrapper">();
+  const qualifiedTool = `openclaw:${expected.plugin}:${expected.tool}`;
+  const payloadMatches = (value: unknown): boolean => {
+    const payload = record(value);
+    const details = record(payload?.details);
+    if (details?.persistedDetailsTruncated !== true && fieldsMatch(details, expected.details))
+      return true;
+    if (!Array.isArray(payload?.content)) return false;
+    return payload.content.some((value) => {
+      const block = record(value);
+      if (block?.type !== "text" || typeof block.text !== "string") return false;
+      try {
+        return fieldsMatch(JSON.parse(block.text), expected.details);
+      } catch {
+        return false;
+      }
+    });
+  };
+  for (const value of session) {
+    const msg = message(value);
+    if (msg?.role === "assistant" && Array.isArray(msg.content)) {
+      for (const value of msg.content) {
+        const call = record(value);
+        if (call?.type !== "toolCall" || typeof call.id !== "string") continue;
+        if (call.name === expected.tool && fieldsMatch(call.arguments, expected.args)) {
+          calls.set(call.id, "direct");
+        }
+        const args = record(call.arguments);
+        if (
+          call.name === "tool_call" &&
+          (args?.id === expected.tool || args?.id === qualifiedTool) &&
+          fieldsMatch(args.args, expected.args)
+        )
+          calls.set(call.id, "wrapper");
+      }
+    }
+    if (msg?.role !== "toolResult" || typeof msg.toolCallId !== "string" || msg.isError === true)
+      continue;
+    const kind = calls.get(msg.toolCallId);
+    if (kind === "direct" && msg.toolName === expected.tool && payloadMatches(msg)) return true;
+    if (kind !== "wrapper" || msg.toolName !== "tool_call") continue;
+    const envelope = record(msg.details);
+    const tool = record(envelope?.tool);
+    if (
+      tool?.name === expected.tool &&
+      tool.id === qualifiedTool &&
+      envelope?.persistedDetailsTruncated !== true &&
+      payloadMatches(envelope?.result)
+    )
+      return true;
+  }
+  return false;
+}
+
+export function nativePluginInvocationPrompt(expected: NativePluginExpectation): string {
+  return `Run the local fixture tool ${expected.tool} exactly once with arguments ${JSON.stringify(expected.args)}. After the tool succeeds, reply DONE. Do not call other tools or read files or session history.`;
+}
+
+export const NATIVE_PLUGIN_RESULT_MARKER = "__NEMOCLAW_NATIVE_PLUGIN_RESULT__=";
+
+/** Run one admitted turn and reduce only its native tool evidence inside the sandbox. */
+export function buildNativePluginInvocationScript(
+  expected: NativePluginExpectation,
+  timeoutSeconds = 30,
+): string {
+  const session = `e2e-native-plugin-${randomUUID()}`;
+  // This fresh session has a known owner; keep native routing explicit.
+  const sessionKey = `agent:main:explicit:${session}`;
+  const prompt = nativePluginInvocationPrompt(expected);
+  const reduce = [
+    `const matches = ${nativePluginResultMatches.toString()}`,
+    `const sessionId = ${JSON.stringify(session)}`,
+    'const databasePath = "/sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite"',
+    "let session",
+    'const { DatabaseSync } = require("node:sqlite"); const db = new DatabaseSync(databasePath, { readOnly: true, allowExtension: false, timeout: 2000 }); try { db.exec("PRAGMA query_only = ON"); session = db.prepare("SELECT event_json FROM transcript_events WHERE session_id = ? ORDER BY seq").all(sessionId).map(row => JSON.parse(row.event_json)); } finally { db.close(); }',
+    `const matched = matches(session, ${JSON.stringify(expected)})`,
+    `process.stdout.write(${JSON.stringify(NATIVE_PLUGIN_RESULT_MARKER)} + JSON.stringify({ matched }) + "\\n")`,
+  ].join("; ");
+  return [
+    "set -eu",
+    ". /tmp/nemoclaw-proxy-env.sh",
+    `HOME=/sandbox openclaw agent --agent main --json --thinking off --timeout ${String(timeoutSeconds)} --session-id ${shellQuote(session)} --session-key ${shellQuote(sessionKey)} -m ${shellQuote(prompt)}`,
+    `node -e ${shellQuote(reduce)}`,
+  ].join("\n");
+}
+
+export function nativePluginInvocationSucceeded(stdout: string): boolean {
+  const line = stdout
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(NATIVE_PLUGIN_RESULT_MARKER))
+    .at(-1);
+  if (!line) return false;
+  try {
+    return (
+      (JSON.parse(line.slice(NATIVE_PLUGIN_RESULT_MARKER.length)) as { matched?: unknown })
+        .matched === true
+    );
+  } catch {
+    return false;
+  }
 }

@@ -25,6 +25,7 @@ export type DestroyHarness = {
   assertDestroyIdentitySpy: MockInstance;
   cleanupGatewaySpy: MockInstance;
   captureOpenshellSpy: MockInstance;
+  getActiveSandboxSessionsSpy: MockInstance;
   compareAndSwapSessionSpy: MockInstance;
   destroySandbox: DestroySandbox;
   prepareSandboxDestroy: typeof import("../../src/lib/actions/sandbox/destroy-preflight").prepareSandboxDestroy;
@@ -388,10 +389,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   for (const response of options.promptResponses ?? []) {
     promptSpy.mockResolvedValueOnce(response);
   }
-  vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
-    detected: true,
-    sessions: [{ pid: 1 }],
-  });
+  const getActiveSandboxSessionsSpy = vi
+    .spyOn(sandboxSession, "getActiveSandboxSessions")
+    .mockReturnValue({
+      detected: true,
+      sessions: [{ pid: 1 }],
+    });
   const configuredRegistryEntry = {
     ...sandboxEntry,
     imageTag: options.imageTag === undefined ? sandboxEntry.imageTag : options.imageTag,
@@ -783,6 +786,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     assertDestroyIdentitySpy,
     cleanupGatewaySpy,
     captureOpenshellSpy,
+    getActiveSandboxSessionsSpy,
     compareAndSwapSessionSpy,
     dockerCaptureSpy,
     dockerRunSpy,

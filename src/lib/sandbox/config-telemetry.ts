@@ -12,7 +12,7 @@ import {
   readHermesModelSelectionTuple,
   selectedModelProvenance,
 } from "../domain/telemetry/provenance";
-import { CLI_NAME } from "../cli/branding";
+import { dcodeSelectionChangeGuidance } from "../inference/managed-dcode/selection-guidance";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding/identity";
 import { isConfigObject, type ConfigObject } from "../security/credential-filter";
 import type { AgentConfigTarget } from "./agent-config";
@@ -101,7 +101,6 @@ export function retireNativeConfigurationTelemetry(sandboxName: string, gatewayN
 /** Enforce the existing host config-mutation surface before any write or receipt. */
 export function configSetUnsupportedAgentMessage(
   target: AgentConfigTarget,
-  sandboxName: string,
   configKey: string,
   quote: (value: string) => string,
 ): string | readonly string[] | null {
@@ -111,7 +110,7 @@ export function configSetUnsupportedAgentMessage(
       `  Connect to the sandbox and use the native command instead: openclaw config set ${quote(configKey)} <value>`,
     ];
   if (target.agentName !== "hermes" && target.format === "toml")
-    return `  config set is not available for '${target.agentName}': its config is baked into the sandbox image at build time. To change it, re-onboard with the new selection (e.g. ${CLI_NAME} onboard --agent dcode --name ${quote(sandboxName)} --fresh).`;
+    return `  config set is not available for '${target.agentName}'. ${dcodeSelectionChangeGuidance()}`;
   return target.agentName === "hermes"
     ? null
     : `  config set is available only for Hermes; '${target.agentName}' config was not changed. Use the agent's native configuration command.`;

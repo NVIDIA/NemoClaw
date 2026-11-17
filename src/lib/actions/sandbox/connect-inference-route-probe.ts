@@ -95,7 +95,8 @@ export function buildSandboxInferenceRouteProbeRequest(
   const dcode = agent?.name === "langchain-deepagents-code";
   return {
     sandboxName,
-    target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
+    target:
+      gatewayName === undefined ? selectedOpenShellGateway() : namedOpenShellGateway(gatewayName),
     command: dcode
       ? [DCODE_MANAGED_EXEC_LAUNCHER, "/bin/sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT]
       : ["sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT],

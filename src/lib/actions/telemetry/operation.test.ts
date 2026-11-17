@@ -12,7 +12,7 @@ vi.mock("node:child_process", async (importOriginal) => ({
   spawnSync,
 }));
 
-import { telemetryRuntime, TEST_TELEMETRY_ENDPOINT } from "../../adapters/telemetry/http";
+import { telemetryRuntime } from "../../adapters/telemetry/http";
 import { runAgentsApply } from "../sandbox/agents/apply";
 import {
   beginInstallerTelemetry,
@@ -64,7 +64,10 @@ it("hands one terminal CLI operation to the delivery child (#12859)", async () =
     state: "applied",
   });
   expect(input.context.targets).toHaveLength(1);
-  expect(input.config).toEqual({ endpoint: TEST_TELEMETRY_ENDPOINT, localReceiver: false });
+  expect(input.config).toEqual({
+    endpoint: "https://events.telemetry.data.nvidia.com/v1.1/events/json",
+    localReceiver: false,
+  });
 });
 
 it("waits for the command boundary after an agent apply refusal (#12859)", async () => {

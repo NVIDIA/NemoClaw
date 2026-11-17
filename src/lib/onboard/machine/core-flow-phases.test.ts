@@ -33,6 +33,26 @@ import {
 import { advanceTo, branchTo } from "./result";
 
 describe("core onboard flow phases", () => {
+  it("passes the retained rebuild policy through the provider phase into inference setup", async () => {
+    const rebuildSandboxPolicyDocument = "version: 1\nnetwork_policies: {}\n";
+    const setupInference = vi.fn(async () => ({ ok: true as const }));
+    const phases = createPhases({
+      providerOptions: { rebuildSandboxPolicyDocument },
+      providerDeps: { setupInference },
+    });
+    await phases.providerInference.run(context());
+    expect(setupInference).toHaveBeenCalledWith(
+      "my-sandbox",
+      "nvidia/test",
+      "nim",
+      "https://example.test/v1",
+      "NVIDIA_INFERENCE_API_KEY",
+      null,
+      ["local"],
+      expect.objectContaining({ rebuildSandboxPolicyDocument }),
+    );
+  });
+
   it("keeps a fresh Bedrock route reservation identical through sandbox admission (#9833)", async () => {
     const durableSession = createSession();
     const sandboxName = `hosted-route-${durableSession.sessionId}`;

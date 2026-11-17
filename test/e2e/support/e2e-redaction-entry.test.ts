@@ -200,12 +200,26 @@ describe("fixture redaction entry point", () => {
   });
 
   it("does not let fixture prefixes or overlays bypass the declared-secret channel", () => {
+    const telemetry = {
+      CI: "true",
+      GITHUB_ACTIONS: "true",
+      GITHUB_RUN_ID: "12345678901",
+      GITHUB_RUN_ATTEMPT: "2",
+      NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-handoff:client:attempt-1",
+      NEMOCLAW_DISABLE_TELEMETRY: "1",
+    };
     const childEnv = buildChildEnv(
-      { E2E_TARGET_ID: "target-a", E2E_PROVIDER_TOKEN: "must-not-pass" },
+      {
+        ...telemetry,
+        E2E_TARGET_ID: "target-a",
+        E2E_PROVIDER_TOKEN: "must-not-pass",
+        UNDECLARED_VALUE: "drop",
+      },
       { fixtureOverlay: {} },
     );
-    expect(childEnv).toMatchObject({ E2E_TARGET_ID: "target-a" });
+    expect(childEnv).toMatchObject({ ...telemetry, E2E_TARGET_ID: "target-a" });
     expect(childEnv.E2E_PROVIDER_TOKEN).toBeUndefined();
+    expect(childEnv.UNDECLARED_VALUE).toBeUndefined();
     expect(() =>
       buildChildEnv({}, { fixtureOverlay: { E2E_PROVIDER_TOKEN: "must-not-pass" } }),
     ).toThrow(/fixtureOverlay entry 'E2E_PROVIDER_TOKEN' looks secret-bearing/);

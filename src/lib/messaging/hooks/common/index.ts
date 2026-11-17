@@ -15,7 +15,7 @@ export interface CommonHookOptions extends TokenPasteHookOptions {
 export function createCommonHookRegistrations(
   options: CommonHookOptions = {},
 ): readonly MessagingHookRegistration[] {
-  const resolvedOptions = mergeCommonHookOptions(defaultCommonHookOptions(), options);
+  const resolvedOptions = resolveCommonHookOptions(options);
   const tokenPasteOptions = {
     ...resolvedOptions,
     ...resolvedOptions.tokenPaste,
@@ -51,10 +51,8 @@ function defaultCommonHookOptions(): CommonHookOptions {
   };
 }
 
-function mergeCommonHookOptions(
-  defaults: CommonHookOptions,
-  options: CommonHookOptions,
-): CommonHookOptions {
+export function resolveCommonHookOptions(options: CommonHookOptions = {}): CommonHookOptions {
+  const defaults = defaultCommonHookOptions();
   const base = {
     ...defaults,
     ...options,

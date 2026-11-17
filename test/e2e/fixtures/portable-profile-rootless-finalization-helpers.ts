@@ -16,6 +16,7 @@ import { CLI_ENTRYPOINT } from "./paths.ts";
 const agent = loadAgent("hermes");
 type VerifyChain = { boundary: string };
 type VerificationResult = { healthy: boolean };
+
 export type PortableHermesFinalizationOptions = FinalizationStateOptions<
   typeof agent,
   VerifyChain,

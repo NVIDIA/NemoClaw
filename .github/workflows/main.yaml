@@ -42,6 +42,7 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
             scripts/lib/npm-diagnostics.sh

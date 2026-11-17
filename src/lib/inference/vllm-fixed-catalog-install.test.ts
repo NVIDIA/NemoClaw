@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import assert from "node:assert/strict";
+import type { SpawnSyncOptions } from "node:child_process";
 
 import type { HostLocalVllmSelectionResult } from "./serving/host-local-vllm-selection";
 import type { VllmProfile } from "./vllm";
@@ -11,6 +12,14 @@ type ResolveHostLocalVllmSelection =
   (typeof import("./serving/host-local-vllm-selection"))["resolveHostLocalVllmSelection"];
 
 const mocks = vi.hoisted(() => ({
+  spawnSync: vi.fn((_file: string, _args: readonly string[], _options: SpawnSyncOptions) => ({
+    status: 0,
+    stdout: "default",
+    stderr: "",
+    pid: 1,
+    output: [],
+    signal: null,
+  })),
   dockerCapture: vi.fn(),
   dockerForceRm: vi.fn(),
   dockerImageInspectFormat: vi.fn(),
@@ -33,6 +42,11 @@ const mocks = vi.hoisted(() => ({
   tryInstallManagedClusterManagedVllm: vi.fn(async () => ({
     kind: "not-selected" as const,
   })),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawnSync: mocks.spawnSync,
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
@@ -94,6 +108,7 @@ import {
   resetVllmInstallEnv,
   type VllmInstallSpies,
   vllmInstallTestReadiness,
+  vllmContainerRow,
 } from "./vllm-install.test-support";
 
 type SelectedHostLocalVllm = Extract<HostLocalVllmSelectionResult, { kind: "selected" }>;
@@ -186,7 +201,111 @@ describe("fixed catalog vLLM installs", () => {
 
   afterEach(() => {
     spies.restore();
+    vi.restoreAllMocks();
     process.env = { ...originalEnv };
+  });
+
+  it("recreates bearerless vLLM on the default daemon despite ambient remote Docker routing", async () => {
+    process.env.DOCKER_CONTEXT = "remote-builder";
+    process.env.DOCKER_HOST = "ssh://remote.example.test";
+    process.env.DOCKER_CONFIG = "/tmp/remote-docker-config";
+    process.env.DOCKER_TLS_VERIFY = "1";
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+    expect(profile.defaultModel.managedBearerAuth).toBeFalsy();
+    const id = "a".repeat(64);
+    const owned = () => vllmContainerRow(profile.containerName, { id, state: "exited" });
+    mockSuccessfulVllmInstall(mocks, profile.containerName, [owned, owned]);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
+    expect(mocks.dockerForceRm).toHaveBeenCalledWith(id, expect.any(Object));
+    expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+    const options = [
+      ...mocks.dockerCapture.mock.calls.map((call) => call[1]),
+      ...mocks.dockerImageInspectFormat.mock.calls.map((call) => call[2]),
+      ...mocks.dockerPullWithProgressWatchdog.mock.calls.map((call) => call[1]),
+      ...mocks.dockerSpawn.mock.calls.map((call) => call[1]),
+      ...mocks.dockerForceRm.mock.calls.map((call) => call[1]),
+      ...mocks.dockerRunDetached.mock.calls.map((call) => call[1]),
+    ];
+    expect([...new Set(options.map((option) => option?.env?.DOCKER_CONTEXT))]).toEqual(["default"]);
+    expect(
+      options.flatMap((option) =>
+        ["DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_TLS_VERIFY"].filter(
+          (name) => name in (option?.env ?? {}),
+        ),
+      ),
+    ).toEqual([]);
+    const launchOptions = mocks.dockerRunDetached.mock.calls[0]![1];
+    const realDocker =
+      await vi.importActual<typeof import("../adapters/docker/run")>("../adapters/docker/run");
+    mocks.spawnSync.mockClear();
+    realDocker.dockerRun(["context", "show"], launchOptions);
+    expect(mocks.spawnSync).toHaveBeenCalledOnce();
+    const childEnv = mocks.spawnSync.mock.calls[0]![2]?.env;
+    expect(childEnv?.DOCKER_CONTEXT).toBe("default");
+    expect(childEnv).not.toHaveProperty("DOCKER_HOST");
+    expect(childEnv).not.toHaveProperty("DOCKER_CONFIG");
+    expect(childEnv).not.toHaveProperty("DOCKER_TLS_VERIFY");
+    const pullOptions = mocks.dockerPullWithProgressWatchdog.mock.calls[0]![1];
+    pullOptions.spawnImpl(["pull", profile.image], {
+      env: { DOCKER_HOST: "ssh://remote.example.test" },
+    });
+    expect(mocks.dockerSpawn).toHaveBeenLastCalledWith(
+      ["pull", profile.image],
+      expect.objectContaining({ env: launchOptions.env }),
+    );
+  });
+
+  it("rejects an unsafe bridge before downloads or container replacement (#14083)", async () => {
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+    const capture = mocks.dockerCapture.getMockImplementation()!;
+    mocks.dockerCapture.mockImplementation((args, ...rest) =>
+      args[0] === "network" ? JSON.stringify([{ Gateway: "0.0.0.0" }]) : capture(args, ...rest),
+    );
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.probeHostStorage).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(mocks.dockerForceRm).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(spies.errSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "requires one private OpenShell bridge address",
+    );
+  });
+
+  it("rechecks the bridge after downloads before replacing a host-local container", async () => {
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+    const capture = mocks.dockerCapture.getMockImplementation()!;
+    const bridge = vi.fn().mockReturnValueOnce("172.18.0.1").mockReturnValue("0.0.0.0");
+    mocks.dockerCapture.mockImplementation((args, ...rest) =>
+      args[0] === "network" ? JSON.stringify([{ Gateway: bridge() }]) : capture(args, ...rest),
+    );
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerSpawn).toHaveBeenCalled();
+    expect(mocks.dockerForceRm).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
   });
 
   it("reports automatic GPU memory rejection before install effects", async () => {

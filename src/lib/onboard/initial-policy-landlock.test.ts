@@ -16,6 +16,41 @@ vi.mock("./openshell-version", async (importOriginal) => ({
 
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 
+it.each(
+  ["0.0.116", "0.1.5"].flatMap((version) =>
+    [false, true].map((directGpu) => ({ version, directGpu })),
+  ),
+)(
+  "allows Hermes DRM discovery without sysfs writes on $version with directGpu=$directGpu",
+  ({ version, directGpu }) => {
+    runtime.version = version;
+    const source = path.resolve(
+      import.meta.dirname,
+      "../../../agents/hermes/policy-additions.yaml",
+    );
+    const policy = prepareInitialSandboxCreatePolicy(source, [], {
+      agentName: "hermes",
+      directGpu,
+      stationGb300SysfsReadOnlyPaths: [],
+    });
+    try {
+      const effective = YAML.parse(fs.readFileSync(policy.policyPath, "utf8"));
+      const readOnly: string[] = effective.filesystem_policy.read_only;
+      const readWrite: string[] = effective.filesystem_policy.read_write;
+      expect(
+        readOnly.filter((entry) => entry === "/" || entry === "/sys" || entry.startsWith("/sys/")),
+      ).toEqual(["/sys/class/drm"]);
+      expect(
+        readWrite.filter((entry) => entry === "/" || entry === "/sys" || entry.startsWith("/sys/")),
+      ).toEqual([]);
+      expect(effective.landlock.compatibility).toBe("best_effort");
+    } finally {
+      policy.cleanup?.();
+    }
+    expect(fs.existsSync(policy.policyPath)).toBe(policy.policyPath === source);
+  },
+);
+
 it.each([
   { agent: "langchain-deepagents-code", version: "0.0.116", mode: "strict" },
   { agent: "langchain-deepagents-code", version: "0.1.3", mode: "hard_requirement" },

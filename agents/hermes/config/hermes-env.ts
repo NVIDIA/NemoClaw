@@ -3,6 +3,10 @@
 
 import type { HermesBuildSettings } from "./build-env.ts";
 import {
+  HERMES_RELAY_PLUGINS_ENV,
+  HERMES_RELAY_PLUGINS_FILE,
+} from "../../../src/lib/hermes-switchyard-routing.ts";
+import {
   effectiveManagedToolGatewayPresets,
   loadManagedToolGatewayMatrix,
 } from "./managed-tool-gateway.ts";
@@ -12,6 +16,10 @@ export function buildHermesEnvLines(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const envLines = ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1"];
+
+  if (settings.switchyardRouting) {
+    envLines.push(`${HERMES_RELAY_PLUGINS_ENV}=${HERMES_RELAY_PLUGINS_FILE}`);
+  }
 
   for (const { envKey, placeholder } of settings.messagingCredentialPlaceholders) {
     envLines.push(`${envKey}=${placeholder}`);

@@ -10,6 +10,7 @@ import path from "node:path";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { withDiscordEnrollmentFixture } from "../fixtures/discord-enrollment-env.ts";
 import {
   assertExitZero as expectExitZero,
   resultText,
@@ -460,7 +461,7 @@ export function messagingEnv(): MessagingEnv {
   }
 
   return {
-    env,
+    env: withDiscordEnrollmentFixture(env),
     tokens,
     telegramIds,
     telegramAllowlistKey,

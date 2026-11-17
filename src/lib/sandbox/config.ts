@@ -42,8 +42,7 @@ const path = require("path");
 const { promises: dnsPromises } = require("node:dns");
 const { isIP } = require("node:net");
 const { isErrnoException }: typeof import("../core/errno") = require("../core/errno");
-const { validateName } = require("../runner");
-const { shellQuote } = require("../core/shell-quote");
+const { validateName, shellQuote } = require("../runner");
 const credentialFilter: typeof import("../security/credential-filter") = require("../security/credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue, isCredentialField } = credentialFilter;
 const { appendAuditEntry } = require("../state/audit/operational");
@@ -1078,12 +1077,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   }
 
   const target = resolveAgentConfig(sandboxName);
-  const unsupportedAgent = configSetUnsupportedAgentMessage(
-    target,
-    sandboxName,
-    configKey,
-    shellQuote,
-  );
+  const unsupportedAgent = configSetUnsupportedAgentMessage(target, configKey, shellQuote);
   if (unsupportedAgent) configFail(unsupportedAgent);
   // Read current config
   console.log(`  Reading ${target.agentName} config...`);

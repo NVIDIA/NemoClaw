@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { patchManagedTransportDiagnosticsText } from "../../../scripts/patch-openclaw-managed-transport-diagnostics.mts";
 import {
+  auditOpenClawMcpToolsListTimeout,
   INJECTED_TOOLS_LIST_TIMEOUT_HELPER,
   MARKER,
   patchMcpToolsListTimeoutText,
@@ -20,7 +21,7 @@ import {
   TOOLS_LIST_TIMEOUT_MIN_MS,
 } from "../../../scripts/patch-openclaw-mcp-tools-list-timeout.mts";
 
-/** Mirrors the reviewed OpenClaw 2026.9.1 bundle-mcp timeout boundary. */
+/** Mirrors the reviewed OpenClaw 2026.9.2 bundle-mcp timeout boundary. */
 function bundleMcpRuntimeFixture(): string {
   return [
     'import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";',
@@ -82,16 +83,24 @@ function loadOverride(env: Record<string, string>): { stderr: string[]; value: u
 }
 
 function executePatchedTimeoutResolver(options: {
-  env?: Record<string, string>;
+  source?: string;
+  env?: NodeJS.ProcessEnv;
   rawServer?: Record<string, unknown>;
   requestTimeoutMs: number;
   testOnlyTimeoutMs?: number;
 }): unknown {
-  const patched = patchMcpToolsListTimeoutText(bundleMcpRuntimeFixture(), "fixture.js");
+  const patched = patchMcpToolsListTimeoutText(
+    options.source ?? bundleMcpRuntimeFixture(),
+    "fixture.js",
+  );
   const executable = patched.text.replace(/^(?:import[^\n]*\n)+/u, "");
   const context = vm.createContext({
     Error,
     Number,
+    asOptionalObjectRecord: (value: unknown) =>
+      value && typeof value === "object" ? value : undefined,
+    asPositiveFiniteNumber: (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined,
     process: {
       env: options.env ?? {},
       stderr: { write: () => undefined },
@@ -200,18 +209,17 @@ describe("patchMcpToolsListTimeoutText", () => {
 });
 
 describe("patchOpenClawMcpToolsListTimeout", () => {
-  it.each(["2026.3.11", "2026.4.24"])(
-    "skips the unsupported legacy OpenClaw %s fixture before bundle discovery",
+  it.each(["2026.3.11", "2026.4.24", "2026.9.1"])(
+    "rejects retired OpenClaw %s before bundle discovery",
     (version) => {
       const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-timeout-"));
       const distDir = path.join(packageRoot, "dist");
       fs.mkdirSync(distDir);
       fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ version }));
       try {
-        expect(patchOpenClawMcpToolsListTimeout(distDir)).toEqual({
-          status: "skipped-unsupported-version",
-          version,
-        });
+        expect(() => patchOpenClawMcpToolsListTimeout(distDir)).toThrow("is not reviewed");
+        expect(() => auditOpenClawMcpToolsListTimeout(distDir)).toThrow("is not reviewed");
+        expect(fs.readdirSync(distDir)).toEqual([]);
       } finally {
         fs.rmSync(packageRoot, { recursive: true, force: true });
       }
@@ -219,7 +227,7 @@ describe("patchOpenClawMcpToolsListTimeout", () => {
   );
 
   it("keeps the exact-shape patch enabled for the supported OpenClaw version", () => {
-    expect(SUPPORTED_OPENCLAW_VERSION).toBe("2026.9.2");
+    expect(SUPPORTED_OPENCLAW_VERSION).toBe("2026.9.5");
   });
 
   it("fails closed for an unreviewed OpenClaw version", () => {
@@ -280,4 +288,76 @@ describe("injected MCP tools/list timeout override", () => {
       );
     },
   );
+});
+
+const currentTimeoutFixture = fs.readFileSync(
+  path.join(import.meta.dirname, "fixtures/mcp-tools-list-timeout-10.5.js.txt"),
+  "utf8",
+);
+
+describe("OpenClaw 2026.10.5 catalog timeout", () => {
+  it.each([
+    { name: "native default", expected: 10000 },
+    { name: "configured request budget", rawServer: { requestTimeoutMs: 3000 }, expected: 3000 },
+    { name: "legacy server timeout key", rawServer: { timeout: 3 }, expected: 3000 },
+    { name: "invalid zero", rawServer: { timeout: 0 }, expected: 10000 },
+    { name: "invalid string", rawServer: { requestTimeoutMs: "3000" }, expected: 10000 },
+    { name: "invalid infinity", rawServer: { requestTimeoutMs: Infinity }, expected: 10000 },
+    {
+      name: "sandbox override",
+      env: { OPENSHELL_SANDBOX: "1", [TOOLS_LIST_TIMEOUT_ENV]: "5000" },
+      rawServer: { timeout: 3 },
+      expected: 5000,
+    },
+    { name: "outside sandbox", env: { [TOOLS_LIST_TIMEOUT_ENV]: "5000" }, expected: 10000 },
+    {
+      name: "test setter precedence",
+      env: { OPENSHELL_SANDBOX: "1", [TOOLS_LIST_TIMEOUT_ENV]: "5000" },
+      testOnlyTimeoutMs: 9000,
+      expected: 9000,
+    },
+  ])("preserves $name", (options) => {
+    expect(
+      executePatchedTimeoutResolver({
+        ...options,
+        requestTimeoutMs: 3000,
+        source: currentTimeoutFixture,
+      }),
+    ).toBe(options.expected);
+  });
+
+  it("rejects resolver drift and incomplete helpers", () => {
+    const patched = patchMcpToolsListTimeoutText(currentTimeoutFixture, "current.js").text;
+    expect(patchMcpToolsListTimeoutText(patched, "current.js").text).toBe(patched);
+    expect(() =>
+      patchMcpToolsListTimeoutText(
+        currentTimeoutFixture.replace('"requestTimeoutMs", "timeout"', '"requestTimeoutMs"'),
+        "current.js",
+      ),
+    ).toThrow("boundary");
+    expect(() =>
+      patchMcpToolsListTimeoutText(
+        patched.replace('process.env.OPENSHELL_SANDBOX !== "1"', "false"),
+        "current.js",
+      ),
+    ).toThrow("partial");
+    expect(() =>
+      patchMcpToolsListTimeoutText(currentTimeoutFixture + currentTimeoutFixture, "current.js"),
+    ).toThrow("boundary");
+  });
+
+  it("patches and audits the installed current distribution", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-timeout-current-"));
+    const dist = path.join(root, "dist", "agents");
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "2026.10.5" }));
+    fs.writeFileSync(path.join(dist, "agent-bundle-mcp-runtime.js"), currentTimeoutFixture);
+    try {
+      expect(() => auditOpenClawMcpToolsListTimeout(path.dirname(dist))).toThrow("not applied");
+      expect(patchOpenClawMcpToolsListTimeout(path.dirname(dist)).status).toBe("patched");
+      expect(auditOpenClawMcpToolsListTimeout(path.dirname(dist)).version).toBe("2026.10.5");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

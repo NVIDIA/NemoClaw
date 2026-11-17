@@ -102,5 +102,6 @@ export async function prepareHostedNativeProvider(input: {
 export {
   isHostedCustomEndpoint,
   prepareCustomNativeProvider,
+  readCustomNativeSandboxPolicy,
   usesCustomNativeOnboarding,
 } from "./custom-setup";

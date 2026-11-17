@@ -4,6 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import {
+  assertOpenShellPolicyEndpointPins as assertCanonicalOpenShellPolicyEndpointPins,
   assertPolicyRequirementContainment as assertCanonicalPolicyRequirementContainment,
   buildOpenShellSandboxPolicyInspectionArgs as buildCanonicalOpenShellSandboxPolicyInspectionArgs,
   buildOpenShellSandboxPolicyReadArgs as buildCanonicalOpenShellSandboxPolicyReadArgs,
@@ -33,6 +34,7 @@ import { stripCredentials } from "../../security/credential-filter";
 // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
 // generatedBoundary: build:cli emits the canonical .cjs/.d.cts before this
 // adapter boundary is compiled. Keep this file implementation-free.
+export const assertOpenShellPolicyEndpointPins = assertCanonicalOpenShellPolicyEndpointPins;
 export const parseOpenShellPolicy = parseCanonicalOpenShellPolicy;
 export const classifyOpenShellGlobalPolicyHistory = classifyCanonicalOpenShellGlobalPolicyHistory;
 export const parseActiveGlobalPolicyMetadata = parseCanonicalActiveGlobalPolicyMetadata;

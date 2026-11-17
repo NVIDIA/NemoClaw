@@ -70,6 +70,24 @@ describe("native local provider inference resume (#13540)", () => {
     for (const receipt of recorded.splice(0)) clearNativeLocalProviderAuthority(receipt);
   });
 
+  it.each(["routed", "nvidia-router"])(
+    "rejects retired %s resume before route or credential work",
+    async (provider) => {
+      const session = createSession({ provider, sandboxName: "old-router" });
+      const before = structuredClone(session);
+      const { deps, calls } = createDeps();
+      await expect(
+        handleProviderInferenceState({
+          ...baseOptions(deps, session),
+          resume: true,
+        }),
+      ).rejects.toThrow("Model Router has been removed");
+      expect(calls.setupInference).not.toHaveBeenCalled();
+      expect(calls.reserveRoute).not.toHaveBeenCalled();
+      expect(session).toEqual(before);
+    },
+  );
+
   it("reruns inference setup when no native authority is recorded", async () => {
     const calls = await resumeNativeLocal();
 

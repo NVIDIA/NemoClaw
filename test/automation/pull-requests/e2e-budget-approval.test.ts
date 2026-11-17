@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
+import { performance } from "node:perf_hooks";
+import { inspect } from "node:util";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -186,17 +188,78 @@ describe("Maintainer approval through the production diff loader", () => {
     return { diff: loadGrowthGuardrailDiff(), comments };
   }
 
-  it("identifies a Git fetch deadline with the PR and preparation phase", () => {
+  it.each(["true", "false"])("allows a slow fetch with shallow history %s", async (shallow) => {
+    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+    processReads.execFileSync
+      .mockImplementationOnce(() => shallow)
+      .mockImplementationOnce((_command, _args, options) => {
+        expect(options?.timeout).toBeGreaterThan(70_000);
+        clock.mockReturnValue(70_000);
+        return "";
+      });
+
+    const { diff } = load("pull_request_target");
+    expect((await diff).files).toEqual([{ filename: BUDGET, status: "modified" }]);
+  });
+
+  it("stops deepening when sequential fetches consume the preparation budget", () => {
+    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+    processReads.execFileSync
+      .mockImplementationOnce(() => "true")
+      .mockImplementationOnce(() => {
+        clock.mockReturnValue(70_000);
+        return "";
+      })
+      .mockImplementationOnce(() => {
+        clock.mockReturnValue(140_000);
+        return "";
+      })
+      .mockImplementationOnce(() => HEAD)
+      .mockImplementationOnce((_command, args, options) => {
+        expect(args).toContain("--depth=1024");
+        expect(options?.timeout).toBe(40_000);
+        clock.mockReturnValue(180_000);
+        return "";
+      });
+    processReads.spawnSync.mockReturnValueOnce({ status: 1, stdout: "" });
+
+    expect(() => load("pull_request_target")).toThrow(/PR #123.*PR commit fetch.*budget exhausted/);
+    expect(processReads.execFileSync).toHaveBeenCalledTimes(5);
+    expect(processReads.spawnSync).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { code: "ETIMEDOUT", status: null, signal: "SIGTERM" },
+    { code: undefined, status: 128, signal: null },
+  ])("retains safe fetch diagnostics for $code and exit $status", (failure) => {
+    const stderr =
+      "fatal: https://user:private-password@github.com/repo\nAuthorization: Bearer private-token\n";
     processReads.execFileSync
       .mockImplementationOnce(() => "false")
       .mockImplementationOnce(() => {
-        throw Object.assign(new Error("Git fetch timed out"), { code: "ETIMEDOUT" });
+        throw Object.assign(new Error("private-message"), failure, {
+          stderr: stderr + "x".repeat(10_000),
+          stdout: "private-stdout",
+          cause: new Error("private-cause"),
+        });
       });
+    const failureResult = (() => {
+      try {
+        load("pull_request_target");
+      } catch (error) {
+        return error as Error;
+      }
+      throw new Error("Expected preparation to fail");
+    })();
 
-    expect(() => load("pull_request_target")).toThrow(/PR #123.*PR commit fetch/);
-    const options = processReads.execFileSync.mock.calls.at(-1)?.[2];
-    expect(options?.timeout).toBeGreaterThan(0);
-    expect(options?.timeout).toBeLessThan(5 * 60 * 1000);
+    expect(failureResult.message).toMatch(/PR #123.*PR commit fetch.*depth=32/);
+    expect(failureResult.message).toContain(`code ${failure.code ?? "none"}`);
+    expect(failureResult.message).toContain(`exit ${failure.status ?? "none"}`);
+    expect(failureResult.message).toContain("fatal:");
+    expect(failureResult.message).toContain("<REDACTED>");
+    expect(failureResult.message.length).toBeLessThan(3_000);
+    expect(inspect(failureResult, { depth: null })).not.toMatch(/private-/);
+    expect(failureResult.cause).toBeUndefined();
   });
 
   it.each(["pull_request_target", "issue_comment"])(

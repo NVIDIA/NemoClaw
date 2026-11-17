@@ -172,6 +172,9 @@ export function printAgentPassthroughHelp(): void {
   console.log("  Hermes sandboxes are rejected with a");
   console.log("  redirect to the OpenAI-compatible API inside the sandbox.");
   console.log("  The rejection message names the sandbox's API port.");
-  console.log("  Run `openshell forward list` to read its host bind.");
+  console.log("  Use the OpenAI-compatible API URL printed after onboarding.");
+  console.log(`  Run \`${CLI_NAME} <name> status\` to check sandbox readiness.`);
+  console.log(`  Run \`${CLI_NAME} <name> recover\` to verify or restore its required forwards.`);
+  console.log("  `openshell forward list` can omit the receipt-owned API forward.");
   console.log("");
 }

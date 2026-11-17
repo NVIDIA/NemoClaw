@@ -134,6 +134,8 @@ export function createDeepAgentsCodeBaseImageResolutionOptions(
     inputPaths: [
       path.join(agentRoot, "manifest.yaml"),
       path.join(agentRoot, "requirements.lock"),
+      path.join(agentRoot, "dependency-overrides.in"),
+      path.join(agentRoot, "patch-dependency-compatibility.py"),
       "src/lib/agent/deep-agents-code-runtime-identity.json",
     ],
     validateImage: (imageRef) =>

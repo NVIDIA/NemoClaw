@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Register the v1 SSH smoke test (PR #14244) in GitHub's Actions UI.
+# GitHub requires this workflow path on the default branch for manual dispatch.
+# The executable implementation uses the same path on v1; main remains inert.
+name: E2E / SSH connectivity registration
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  registration:
+    name: Registration only (no SSH check)
+    if: ${{ false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: 'true'

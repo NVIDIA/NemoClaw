@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { withDiscordEnrollmentFixture } from "../fixtures/discord-enrollment-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import {
@@ -49,7 +50,7 @@ export function phase6Env(options: {
   extra?: NodeJS.ProcessEnv;
 }): NodeJS.ProcessEnv {
   validateSandboxName(options.sandboxName);
-  return {
+  return withDiscordEnrollmentFixture({
     ...buildAvailabilityProbeEnv(),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
@@ -61,7 +62,7 @@ export function phase6Env(options: {
     ...(options.agent ? { NEMOCLAW_AGENT: options.agent } : {}),
     ...(options.apiKey ? { NVIDIA_INFERENCE_API_KEY: options.apiKey } : {}),
     ...options.extra,
-  };
+  });
 }
 
 export function redactionValues(apiKey: string | undefined): string[] {

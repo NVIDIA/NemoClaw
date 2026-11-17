@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as providersNs from "./providers";
 import { checkGatewayRouteCompatibility } from "../inference/gateway-route-compatibility";
 import type { SandboxEntry } from "../state/registry";
 import { createSetupInference, type SetupInferenceDeps } from "./setup-inference";
+
+const providers = (providersNs as { default?: unknown }).default ?? providersNs;
+const { REMOTE_PROVIDER_CONFIG } = providers as Pick<SetupInferenceDeps, "REMOTE_PROVIDER_CONFIG">;
 
 const revalidateSandboxIdentity = () => undefined;
 const successfulInferenceRouteMutator = (
@@ -359,126 +363,149 @@ describe("onboard shared gateway route containment", () => {
       expectedError:
         "Cannot capture the published inference route on gateway 'nemoclaw' before replacement.",
     },
-  ])(
-    "handles an unconfigured gateway route when the $scenario (#13897)",
-    async ({ nativeSource, staleAttachment, failVerification, expectedError }) => {
-      let liveRoute: { provider: string; model: string } | null = null;
-      const inferenceRouteMutator = {
-        setInferenceRoute: vi.fn(
-          async (request: { route: { provider: string; model: string } }) => {
-            liveRoute = failVerification ? { provider: "other", model: "other" } : request.route;
-            return { ok: true as const };
-          },
-        ),
-      };
-      const inferenceRouteObserver = {
-        observeInferenceRoute: vi.fn(async () => ({
-          ok: true as const,
-          value: liveRoute
-            ? { state: "configured" as const, route: liveRoute }
-            : { state: "unconfigured" as const },
-        })),
-      };
-      const upsertProvider = vi.fn(async () => ({ ok: true }));
-      const setupInference = createSetupInference({
-        checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
-        withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
-          await operation(),
-        withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
-          await operation(),
-        step: vi.fn(),
-        getGatewayName: () => "nemoclaw",
-        getSandbox: () =>
-          ({
-            provider: nativeSource ? "nvidia-prod" : "compatible-endpoint",
-            model: "old-model",
-            endpointUrl: nativeSource ? "https://old.example/v1" : "https://api.example/v1",
-            credentialEnv: nativeSource ? "NVIDIA_INFERENCE_API_KEY" : "COMPATIBLE_API_KEY",
-            pendingRouteReservation: false,
-            ...(nativeSource || staleAttachment
-              ? { nativeNvidiaProviderAttachment: { providerName: "nemoclaw-nvidia-prod-v1" } }
-              : {}),
-          }) as unknown as SandboxEntry,
-        localInference: {
-          loadPendingOllamaModelCleanup: vi.fn(() => []),
-          loadPersistedOllamaHost: vi.fn(() => null),
+    ...["nvidia-prod", "vllm-local"].map((sourceProvider) => ({
+      scenario: `${sourceProvider} source has a malformed attachment`,
+      sourceProvider,
+      malformedAttachment: true,
+      nativeSource: false,
+      staleAttachment: false,
+      failVerification: false,
+      expectedError:
+        "Cannot capture the published inference route on gateway 'nemoclaw' before replacement.",
+    })),
+  ])("handles an unconfigured gateway route when the $scenario (#13897)", async (row) => {
+    const { nativeSource, staleAttachment, failVerification, expectedError } = row;
+    const sourceProvider = "sourceProvider" in row ? row.sourceProvider : undefined;
+    const malformedAttachment = "malformedAttachment" in row;
+    let liveRoute: { provider: string; model: string } | null = null;
+    const inferenceRouteMutator = {
+      setInferenceRoute: vi.fn(async (request: { route: { provider: string; model: string } }) => {
+        liveRoute = failVerification ? { provider: "other", model: "other" } : request.route;
+        return { ok: true as const };
+      }),
+    };
+    const inferenceRouteObserver = {
+      observeInferenceRoute: vi.fn(async () => ({
+        ok: true as const,
+        value: liveRoute
+          ? { state: "configured" as const, route: liveRoute }
+          : { state: "unconfigured" as const },
+      })),
+    };
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "nemoclaw",
+      getSandbox: () =>
+        ({
+          provider: sourceProvider ?? (nativeSource ? "nvidia-prod" : "compatible-endpoint"),
+          model: "old-model",
+          endpointUrl: nativeSource ? "https://old.example/v1" : "https://api.example/v1",
+          credentialEnv: nativeSource ? "NVIDIA_INFERENCE_API_KEY" : "COMPATIBLE_API_KEY",
+          pendingRouteReservation: false,
+          ...(nativeSource || staleAttachment || sourceProvider === "nvidia-prod"
+            ? {
+                nativeNvidiaProviderAttachment: {
+                  schemaVersion: 1,
+                  profileId: "nemoclaw-nvidia-inference-v1",
+                  providerName: "nemoclaw-nvidia-prod-v1",
+                  ...(!malformedAttachment
+                    ? { providerId: "11111111-2222-4333-8444-555555555555" }
+                    : {}),
+                },
+              }
+            : {}),
+          ...(sourceProvider === "vllm-local"
+            ? {
+                nativeLocalProviderAttachment: { provider: "vllm-local" },
+                endpointUrl: "http://host.docker.internal:8000/v1",
+              }
+            : {}),
+        }) as unknown as SandboxEntry,
+      localInference: {
+        loadPendingOllamaModelCleanup: vi.fn(() => []),
+        loadPersistedOllamaHost: vi.fn(() => null),
+      },
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      inferenceRouteMutator,
+      inferenceRouteObserver,
+      updateSandbox: vi.fn(() => true),
+      upsertProvider,
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      REMOTE_PROVIDER_CONFIG: {
+        custom: {
+          label: "Compatible endpoint",
+          providerName: "compatible-endpoint",
+          providerType: "openai",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          endpointUrl: "https://api.example/v1",
+          helpUrl: null,
+          modelMode: "input",
+          defaultModel: "new-model",
         },
-        runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
-        inferenceRouteMutator,
-        inferenceRouteObserver,
-        updateSandbox: vi.fn(() => true),
-        upsertProvider,
-        verifyInferenceRoute: vi.fn(),
-        verifyOnboardInferenceSmoke: vi.fn(),
-        isNonInteractive: () => true,
-        hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-        REMOTE_PROVIDER_CONFIG: {
-          custom: {
-            label: "Compatible endpoint",
-            providerName: "compatible-endpoint",
-            providerType: "openai",
-            credentialEnv: "COMPATIBLE_API_KEY",
-            endpointUrl: "https://api.example/v1",
-            helpUrl: null,
-            modelMode: "input",
-            defaultModel: "new-model",
-          },
-        },
-        hydrateCredentialEnv: vi.fn(() => "secret"),
-        promptValidationRecovery: vi.fn(),
-        classifyApplyFailure: vi.fn(),
-        localInferenceTimeoutSecs: 60,
-        bedrockRuntimeOnboard: {
-          setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
-        },
-        openrouterRuntimeOnboard: {
-          setupOpenRouterRuntimeInference: vi.fn(async () => ({ handled: false as const })),
-        },
-        redact: (value: string) => value,
-        compactText: (value: string) => value,
-        log: vi.fn(),
-        error: vi.fn(),
-        exitProcess: vi.fn((code: number): never => {
-          throw new Error(`exit ${code}`);
-        }),
-      } as unknown as SetupInferenceDeps);
+      },
+      hydrateCredentialEnv: vi.fn(() => "secret"),
+      promptValidationRecovery: vi.fn(),
+      classifyApplyFailure: vi.fn(),
+      localInferenceTimeoutSecs: 60,
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
 
-      const result = await setupInference(
-        "sandbox-a",
-        "new-model",
-        "compatible-endpoint",
-        "https://api.example/v1",
-        "COMPATIBLE_API_KEY",
-        null,
-        [],
-        { deferPublishedRouteReservation: true, onboardEndpointUrl: "https://api.example/v1" },
-      );
-      expect(result).toMatchObject({ ok: true });
-      expect(inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
-      expect(upsertProvider).not.toHaveBeenCalled();
-      const deferredRoute = (
-        result as { deferredInferenceRoute?: (reserve: () => void) => Promise<void> }
-      ).deferredInferenceRoute;
-      const reserve = vi.fn();
-      await expect(
-        deferredRoute!(reserve).then(
-          () => null,
-          (error: Error) => error.message,
-        ),
-      ).resolves.toBe(expectedError);
-      expect(upsertProvider).toHaveBeenCalledTimes(nativeSource ? 1 : 0);
-      // An unconfigured source route has nothing to restore after a failure.
-      expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledTimes(nativeSource ? 1 : 0);
-      expect(reserve).toHaveBeenCalledTimes(nativeSource && !failVerification ? 1 : 0);
-      expect(liveRoute).toEqual(
-        !nativeSource
-          ? null
-          : failVerification
-            ? { provider: "other", model: "other" }
-            : { provider: "compatible-endpoint", model: "new-model" },
-      );
-    },
-  );
+    const result = await setupInference(
+      "sandbox-a",
+      "new-model",
+      "compatible-endpoint",
+      "https://api.example/v1",
+      "COMPATIBLE_API_KEY",
+      null,
+      [],
+      { deferPublishedRouteReservation: true, onboardEndpointUrl: "https://api.example/v1" },
+    );
+    expect(result).toMatchObject({ ok: true });
+    expect(inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+    expect(upsertProvider).not.toHaveBeenCalled();
+    const deferredRoute = (
+      result as { deferredInferenceRoute?: (reserve: () => void) => Promise<void> }
+    ).deferredInferenceRoute;
+    const reserve = vi.fn();
+    await expect(
+      deferredRoute!(reserve).then(
+        () => null,
+        (error: Error) => error.message,
+      ),
+    ).resolves.toBe(expectedError);
+    expect(upsertProvider).toHaveBeenCalledTimes(nativeSource ? 1 : 0);
+    // An unconfigured source route has nothing to restore after a failure.
+    expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledTimes(nativeSource ? 1 : 0);
+    expect(reserve).toHaveBeenCalledTimes(nativeSource && !failVerification ? 1 : 0);
+    expect(liveRoute).toEqual(
+      !nativeSource
+        ? null
+        : failVerification
+          ? { provider: "other", model: "other" }
+          : { provider: "compatible-endpoint", model: "new-model" },
+    );
+  });
 
   it.each([
     {
@@ -634,12 +661,12 @@ describe("onboard shared gateway route containment", () => {
         ok: false as const,
         gatewayName: "nemoclaw-9090",
         sandboxName: "new-sandbox",
-        route: { provider: "router-b", model: "model-b" },
+        route: { provider: "nvidia-nim", model: "model-b" },
         conflicts: [
           {
             sandboxName: "stopped-sandbox",
             reason: "provider-model" as const,
-            recordedRoute: { provider: "router-a", model: "model-a" },
+            recordedRoute: { provider: "nvidia-nim", model: "model-a" },
           },
         ],
       };
@@ -655,14 +682,14 @@ describe("onboard shared gateway route containment", () => {
         events.push("lock");
         return await operation();
       },
-      withModelRouterPortLifecycleLock: async <T>(
-        port: number,
-        operation: () => Promise<T> | T,
-      ) => {
-        events.push(`router-port-lock:${String(port)}`);
-        return await operation();
+
+      REMOTE_PROVIDER_CONFIG,
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: async () => ({ handled: false as const }),
       },
-      getModelRouterPort: () => 4100,
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: async () => ({ handled: false as const }),
+      },
       step: () => events.push("step"),
       getGatewayName,
       runOpenshell,
@@ -674,15 +701,7 @@ describe("onboard shared gateway route containment", () => {
       verifyOnboardInferenceSmoke,
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-      isRoutedInferenceProvider: () => true,
-      reconcileModelRouter: vi.fn(async () => undefined),
-      routedInference: {
-        upsertRoutedProvider: vi.fn(() => ({
-          ok: true,
-          endpointUrl: "http://router-b.test/v1",
-          result: { ok: true },
-        })),
-      },
+
       hydrateCredentialEnv: vi.fn(() => "secret"),
       redact: (value: string) => value,
       compactText: (value: string) => value,
@@ -695,7 +714,7 @@ describe("onboard shared gateway route containment", () => {
       setupInference(
         "new-sandbox",
         "model-b",
-        "router-b",
+        "nvidia-nim",
         "http://router-b.test/v1",
         "ROUTER_KEY",
         null,
@@ -704,9 +723,8 @@ describe("onboard shared gateway route containment", () => {
       ),
     ).resolves.toEqual({ ok: true });
 
-    expect(events.slice(0, 5)).toEqual([
+    expect(events.slice(0, 4)).toEqual([
       "lock",
-      "router-port-lock:4100",
       "guard",
       expect.stringContaining("error:  Warning: Onboarding 'new-sandbox' will re-point"),
       "step",
@@ -716,15 +734,20 @@ describe("onboard shared gateway route containment", () => {
       expect.objectContaining({ gatewayName: "nemoclaw-9090" }),
     );
     expect(runOpenshell).toHaveBeenCalledWith(
-      expect.arrayContaining(["inference", "set", "--provider", "router-b", "--model", "model-b"]),
+      expect.arrayContaining([
+        "inference",
+        "set",
+        "--provider",
+        "nvidia-nim",
+        "--model",
+        "model-b",
+      ]),
       { ignoreError: true },
     );
-    expect(verifyInferenceRoute).toHaveBeenCalledWith("nemoclaw-9090", "router-b", "model-b");
+    expect(verifyInferenceRoute).toHaveBeenCalledWith("nemoclaw-9090", "nvidia-nim", "model-b");
     expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
     expect(updateSandbox).toHaveBeenCalledOnce();
-    expect(events.indexOf("router-port-lock:4100")).toBeLessThan(
-      events.indexOf("registry-published"),
-    );
+    expect(events.indexOf("lock")).toBeLessThan(events.indexOf("registry-published"));
     expect(error).toHaveBeenCalledWith(expect.stringContaining("stopped-sandbox"));
     expect(exitProcess).not.toHaveBeenCalled();
   });
@@ -886,9 +909,9 @@ describe("onboard shared gateway route containment", () => {
       withSandboxMutationLock: async <T>(_sandboxName: string, operation: () => Promise<T> | T) =>
         await operation(),
       withGatewayRouteMutationLock,
-      withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
-        await operation(),
-      getModelRouterPort: () => 4000,
+
+      REMOTE_PROVIDER_CONFIG,
+
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
       runOpenshell,
@@ -900,15 +923,7 @@ describe("onboard shared gateway route containment", () => {
       verifyOnboardInferenceSmoke,
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-      isRoutedInferenceProvider: () => true,
-      reconcileModelRouter: vi.fn(async () => undefined),
-      routedInference: {
-        upsertRoutedProvider: vi.fn(() => ({
-          ok: true,
-          endpointUrl: "http://router.test/v1",
-          result: { ok: true },
-        })),
-      },
+
       hydrateCredentialEnv: vi.fn(() => "secret"),
       bedrockRuntimeOnboard: {
         setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
@@ -926,7 +941,7 @@ describe("onboard shared gateway route containment", () => {
     const firstSetup = setupInference(
       "alpha",
       "model-a",
-      "router-a",
+      "nvidia-nim",
       "http://router-a.test/v1",
       "ROUTER_KEY",
       null,
@@ -938,7 +953,7 @@ describe("onboard shared gateway route containment", () => {
       expect.objectContaining({
         name: "alpha",
         pendingRouteReservation: true,
-        provider: "router-a",
+        provider: "nvidia-nim",
         model: "model-a",
       }),
     ]);
@@ -947,7 +962,7 @@ describe("onboard shared gateway route containment", () => {
     const secondSetup = setupInference(
       "beta",
       "model-b",
-      "router-b",
+      "nvidia-nim",
       "http://router-b.test/v1",
       "ROUTER_KEY",
       null,
@@ -965,7 +980,7 @@ describe("onboard shared gateway route containment", () => {
     ]);
     expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(updateSandbox).toHaveBeenCalledWith("alpha", {
-      provider: "router-a",
+      provider: "nvidia-nim",
       model: "model-a",
       endpointUrl: "http://router-a.test/v1",
       endpointSource: "inference-set",
@@ -981,7 +996,7 @@ describe("onboard shared gateway route containment", () => {
       expect.stringContaining("Affected registered sandboxes: 'alpha'"),
     );
     expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("Inference route set: router-b / model-b"),
+      expect.stringContaining("Inference route set: nvidia-nim / model-b"),
     );
     expect(exitProcess).not.toHaveBeenCalled();
   });
@@ -1000,9 +1015,14 @@ describe("onboard shared gateway route containment", () => {
         await operation(),
       withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
-      withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
-        await operation(),
-      getModelRouterPort: () => 4000,
+
+      REMOTE_PROVIDER_CONFIG,
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: async () => ({ handled: false as const }),
+      },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: async () => ({ handled: false as const }),
+      },
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
       runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -1014,15 +1034,7 @@ describe("onboard shared gateway route containment", () => {
       verifyOnboardInferenceSmoke: vi.fn(),
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-      isRoutedInferenceProvider: () => true,
-      reconcileModelRouter: vi.fn(async () => undefined),
-      routedInference: {
-        upsertRoutedProvider: vi.fn(() => ({
-          ok: true,
-          endpointUrl: "http://router.test/v1",
-          result: { ok: true },
-        })),
-      },
+
       hydrateCredentialEnv: vi.fn(() => "secret"),
       redact: (value: string) => value,
       compactText: (value: string) => value,
@@ -1037,7 +1049,7 @@ describe("onboard shared gateway route containment", () => {
       setupInference(
         "gamma",
         "model-c",
-        "router-c",
+        "nvidia-nim",
         "http://router-c.test/v1",
         "ROUTER_KEY",
         null,
@@ -1099,9 +1111,14 @@ describe("onboard shared gateway route containment", () => {
         await operation(),
       withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
-      withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
-        await operation(),
-      getModelRouterPort: () => 4000,
+
+      REMOTE_PROVIDER_CONFIG,
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: async () => ({ handled: false as const }),
+      },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: async () => ({ handled: false as const }),
+      },
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
       runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -1113,15 +1130,7 @@ describe("onboard shared gateway route containment", () => {
       verifyOnboardInferenceSmoke: vi.fn(),
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-      isRoutedInferenceProvider: () => true,
-      reconcileModelRouter: vi.fn(async () => undefined),
-      routedInference: {
-        upsertRoutedProvider: vi.fn(() => ({
-          ok: true,
-          endpointUrl: "http://router.test/v1",
-          result: { ok: true },
-        })),
-      },
+
       hydrateCredentialEnv: vi.fn(() => "secret"),
       redact: (value: string) => value,
       compactText: (value: string) => value,
@@ -1135,7 +1144,7 @@ describe("onboard shared gateway route containment", () => {
       setupInference(
         "alpha",
         "model-a",
-        "router-a",
+        "nvidia-nim",
         "http://router.test/v1",
         "ROUTER_KEY",
         null,
@@ -1174,9 +1183,14 @@ describe("onboard shared gateway route containment", () => {
         await operation(),
       withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
-      withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
-        await operation(),
-      getModelRouterPort: () => 4000,
+
+      REMOTE_PROVIDER_CONFIG,
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: async () => ({ handled: false as const }),
+      },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: async () => ({ handled: false as const }),
+      },
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
       runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -1188,15 +1202,7 @@ describe("onboard shared gateway route containment", () => {
       verifyOnboardInferenceSmoke: vi.fn(),
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-      isRoutedInferenceProvider: () => true,
-      reconcileModelRouter: vi.fn(async () => undefined),
-      routedInference: {
-        upsertRoutedProvider: vi.fn(() => ({
-          ok: true,
-          endpointUrl: "http://router.test/v1",
-          result: { ok: true },
-        })),
-      },
+
       hydrateCredentialEnv: vi.fn(() => "secret"),
       redact: (value: string) => value,
       compactText: (value: string) => value,
@@ -1211,7 +1217,7 @@ describe("onboard shared gateway route containment", () => {
       setupInference(
         "delta",
         "model-d",
-        "router-d",
+        "nvidia-nim",
         "http://router-d.test/v1",
         "ROUTER_KEY",
         null,

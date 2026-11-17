@@ -19,6 +19,7 @@ NemoClaw v0.0.73 improves custom endpoint safety, Linux GPU onboarding, agent-aw
 - Pre-upgrade backups can skip a running sandbox whose in-sandbox SSH endpoint is unreachable when `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` is set.
   Installer-driven upgrades restore skipped sandboxes from the latest validated backup, while standalone `backup-all` runs only skip the failure and do not schedule a restore.
   Any uncommitted state since the latest successful backup is not preserved.
+  Later releases supersede the installer behavior: the installer's strict pre-upgrade backup does not accept this skip and stops the upgrade, and the variable applies only to a standalone `nemoclaw backup-all`.
   For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Host Files and State](/user-guide/openclaw/reference/host-files-and-state).
 - LangChain Deep Agents Code now reaches `inference.local` through the managed OpenShell proxy across interactive, login-shell, direct-exec, and connect-probe paths.
   The runtime normalizes proxy environment state, clears inherited bypass settings, and keeps credential-shaped values out of persisted proxy configuration.

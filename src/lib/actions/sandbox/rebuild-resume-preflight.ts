@@ -72,8 +72,6 @@ function providerRecordedCredentialEnv(
       return envName === "COMPATIBLE_API_KEY" ? envName : null;
     case "compatible-anthropic-endpoint":
       return envName === "COMPATIBLE_ANTHROPIC_API_KEY" ? envName : null;
-    case "nvidia-router":
-      return envName;
     default:
       return null;
   }

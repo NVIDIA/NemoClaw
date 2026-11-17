@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Shared setup for the source tests that exercise installVllm:
-// vllm.test.ts, vllm-install-storage.test.ts, and
-// vllm-compute-capability.test.ts (#8351). vi.hoisted and
-// vi.mock are hoisted per file, so each suite still declares and owns its own
+// vllm.test.ts, vllm-install-storage.test.ts,
+// vllm-compute-capability.test.ts (#8351), and vllm-dual-station.test.ts.
+// vi.hoisted and vi.mock are hoisted per file, so each suite still declares and owns its own
 // mocks. Exports that configure suite mocks take that suite's `mocks` object
 // as a parameter. The setup helpers replace probe results and Docker ownership
 // responses for each setup. This is not a *.test.ts file, so Vitest does not
@@ -79,7 +79,7 @@ export function vllmHostCommandCapture(options: {
         }
         return options.gpuMemory[Math.min(gpuMemorySample++, options.gpuMemory.length - 1)] ?? "";
       case "curl":
-        return options.curl ?? '{"data":[]}';
+        return options.curl ?? '{"data":[]}\n200';
       default:
         return "";
     }
@@ -268,6 +268,19 @@ export function mockDockerSpawnSuccess(): SpawnedProcessStub {
   return proc;
 }
 
+export function mockDockerSpawnWithLogs(output: string) {
+  return (args: readonly string[]): SpawnedProcessStub => {
+    // Download progress must not satisfy the startup-diagnostic assertions.
+    if (args[0] !== "logs") return mockDockerSpawnSuccess();
+    const proc = spawnedProcessStub();
+    process.nextTick(() => {
+      proc.stderr.emit("data", Buffer.from(output));
+      proc.emit("close", 0);
+    });
+    return proc;
+  };
+}
+
 export function mockDockerSpawnFailure(
   chunks: readonly { stream: "stdout" | "stderr"; data: string | Buffer }[],
   exitCode = 1,
@@ -283,24 +296,14 @@ export function mockDockerSpawnFailure(
   return proc;
 }
 
-/**
- * Prepare a successful vLLM setup response with prerequisite and readiness
- * probe responses plus Docker ownership responses. Each
- * `dockerCapture(["container", ...])` call alternates between two outcomes:
- * the first call and every other call after it (0, 2, 4, ...) unconditionally
- * return an empty row; the second call and every other call after that
- * (1, 3, 5, ...) consume the next entry from `ownershipResponses`. Only every
- * other container inspection reads the queue. Exhausting the queue throws so
- * an install that inspects ambient ownership more often than the test
- * intends fails loudly instead of reading an empty row.
- */
+/** Prepare successful probes and one ownership response per local inspection. */
 export function mockSuccessfulVllmInstall(
   mocks: VllmInstallMocks,
   containerName: string,
   ownershipResponses: readonly (() => string)[] = [() => "", () => ""],
 ): void {
   const runCaptureByCommand: Record<string, string> = {
-    curl: '{"data":[]}',
+    curl: '{"data":[]}\n200',
     sh: "/usr/bin/tool\n",
   };
   mocks.runCapture.mockImplementation((cmd: readonly string[]) => {
@@ -321,19 +324,18 @@ export function mockSuccessfulVllmInstall(
   mocks.dockerSpawn.mockImplementation(() => mockDockerSpawnSuccess());
   mocks.dockerRunDetached.mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
   const ownershipQueue = [...ownershipResponses];
-  let ownershipCallIndex = 0;
-  const ownershipHandlers = [
-    (): string => "",
-    (): string =>
-      (
-        ownershipQueue.shift() ??
-        (() => {
-          throw new Error("No ambient Docker ownership response remains");
-        })
-      )(),
-  ];
   const dockerCaptureByCommand = new Map<string, () => string>([
-    ["container", () => ownershipHandlers[ownershipCallIndex++ % ownershipHandlers.length]()],
+    ["network", () => JSON.stringify([{ Gateway: "172.18.0.1" }])],
+    [
+      "container",
+      () =>
+        (
+          ownershipQueue.shift() ??
+          (() => {
+            throw new Error("No local Docker ownership response remains");
+          })
+        )(),
+    ],
     ["ps", () => `${containerName}\n`],
   ]);
   mocks.dockerCapture.mockImplementation((args: readonly string[]) =>

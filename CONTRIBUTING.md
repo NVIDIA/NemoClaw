@@ -189,7 +189,7 @@ owns the automated publication and review-follow-up workflow. The root
 
 Every PR includes a collapsed opening [authoring-session report](.agents/skills/nemoclaw-contributor-create-pr/SKILL.md#session-report) comment, including existing and automated PRs.
 Post the report when opening a PR, or on the next update to an existing PR.
-The metadata job checks the PR author's posted comment and the shared template. Use unavailable fields when historical evidence is missing; preserve existing evidence and cutoffs. After posting, rerun a failed metadata job for the current PR revision. Comment events alone do not refresh this check.
+The PR author or a repository maintainer may post the report, including when taking over an existing or automated PR. CI verifies maintainer eligibility through repository `maintain` or `admin` permission. Use unavailable fields when historical evidence is missing; preserve existing evidence and cutoffs. After posting, rerun a failed metadata job for the current PR revision. Comment events alone do not refresh this check.
 
 After each revision, follow CI and review to completion. Address valid findings with a change, or
 explain why they do not apply. Keep the PR description and validation evidence current.

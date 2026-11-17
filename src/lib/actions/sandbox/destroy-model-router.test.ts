@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import type { GatewayRegistryEntry } from "../../state/gateway-registry";
@@ -67,6 +68,47 @@ describe("resolveDestroyedSandboxRouterPort", () => {
 });
 
 describe("stopModelRouterForDestroyedSandbox", () => {
+  it.each([
+    [true, []],
+    [false, [[4242, 4100]]],
+  ] as const)(
+    "recognizes configured legacy router names during cleanup (same-port peer=%s)",
+    async (peerRemains, expectedCalls) => {
+      const read = vi
+        .spyOn(fs, "readFileSync")
+        .mockReturnValue(
+          "components:\n  inference:\n    profiles:\n      routed:\n        provider_name: legacy-router\n",
+        );
+      try {
+        const { deps } = createDeps({
+          isRoutedProvider: undefined,
+          listHostRegistryEntries: () =>
+            peerRemains
+              ? [
+                  {
+                    entry: {
+                      name: "peer",
+                      provider: "legacy-router",
+                      endpointUrl: routedSandbox.endpointUrl,
+                    } as GatewayRegistryEntry,
+                    gatewayPort: 8081,
+                    registryFile: "/tmp/peer/registry.json",
+                    stateRoot: "/tmp/peer",
+                  },
+                ]
+              : [],
+        });
+        await stopModelRouterForDestroyedSandbox(
+          { ...routedSandbox, provider: peerRemains ? "nvidia-router" : "legacy-router" },
+          deps,
+        );
+        expect(vi.mocked(deps.stopProcess!).mock.calls).toEqual(expectedCalls);
+      } finally {
+        read.mockRestore();
+      }
+    },
+  );
+
   it("stops the tracked router and clears its session identity for the last routed sandbox (#9098)", async () => {
     const { deps, session } = createDeps();
 

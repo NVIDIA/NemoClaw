@@ -223,20 +223,23 @@ nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents sandboxes, prefer a fresh recreate when you need to change the provider or model. The managed `dcode` configuration is written under `/sandbox/.deepagents` during onboarding, so the recreate path keeps the OpenShell route and the sandbox config aligned while the Deep Agents runtime switch path is still being hardened.
-
-```bash
-nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox
-```
+Deep Agents has no runtime `inference set` path.
+Named recreation restores saved `/sandbox/.deepagents/config.toml` preferences.
+If those preferences conflict with the requested selection, validation stops before NemoClaw updates the registry.
+To validate a different provider or model, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
 
 </AgentOnly>
+<AgentOnly variant="openclaw,hermes">
+
 For a build-time agent setting change, rerun onboarding so the sandbox configuration is recreated consistently:
 
 ```bash
 $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
-Verify either path with:
+</AgentOnly>
+
+Verify the change with:
 
 ```bash
 $$nemoclaw <name> status

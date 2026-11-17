@@ -5,7 +5,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 import { test as base, expect } from "vitest";
-import { appendRunnerComparisonSample } from "../../../tools/e2e/runner-comparison.mts";
+import {
+  appendRunnerComparisonSample,
+  initializeLiveUpgradeRunnerComparison,
+} from "../../../tools/e2e/runner-comparison.mts";
 import {
   appendResourcePhaseBaseline,
   collectResourceSnapshot,
@@ -170,6 +173,7 @@ export const test = base.extend<E2ETargetFixtures>({
       );
       const declaredPhasePlan = phasePlan ?? SUPPORT_PHASES;
       const declaredFinalPhase = declaredPhasePlan.at(-1) as string;
+      const finalizeRunnerComparison = initializeLiveUpgradeRunnerComparison();
       const progress = startTestProgress(task.name, declaredPhasePlan, {
         targetId,
         terminalPhase: E2E_TEARDOWN_PHASE,
@@ -210,6 +214,7 @@ export const test = base.extend<E2ETargetFixtures>({
         if (!progress.isComplete()) progress.phase(E2E_TEARDOWN_PHASE);
         const phaseOutcome = outcome === "passed" && !completedPhasePlan ? "failed" : outcome;
         progress.stop(phaseOutcome);
+        finalizeRunnerComparison();
         await artifacts.writeJson("test-progress.json", {
           ...progress.summary(),
           ...(targetId ? { targetId } : {}),

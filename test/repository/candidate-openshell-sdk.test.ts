@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  auditWithApprovedOpenShellSdk,
   readApprovedOpenShellSdkConfig,
   readCandidateSdkPackageDecision,
 } from "../../scripts/checks/candidate-openshell-sdk.mts";
@@ -14,7 +15,11 @@ import {
   packageCandidateOpenShellSdkIfRequired,
 } from "../../scripts/checks/package-openshell-sdk-for-pr.mts";
 import { requiresCandidateSdkAdmission } from "../../scripts/checks/prepare-ci-npm-install.mts";
-import { candidateSdkFixture, sdkCandidateIdentity } from "../support/candidate-openshell-sdk.ts";
+import {
+  candidateSdkCheckout,
+  candidateSdkFixture,
+  sdkCandidateIdentity,
+} from "../support/candidate-openshell-sdk.ts";
 import type { ReviewedNpmArchiveRequest } from "../../scripts/lib/reviewed-npm-archive.mts";
 
 const roots: string[] = [];
@@ -292,5 +297,116 @@ describe("admitted candidate SDK packages", () => {
     ).rejects.toThrow(/new absolute/);
     expect(f.request).not.toHaveBeenCalled();
     expect(readFileSync(join(output, "retained"), "utf8")).toBe("preserve");
+  });
+});
+
+describe("candidate SDK audit admission", () => {
+  function checkout(f: ReturnType<typeof candidateSdkFixture>) {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-audit-"));
+    roots.push(root);
+    candidateSdkCheckout(root, f);
+    return root;
+  }
+
+  it("audits the admitted SDK with trusted policy and rechecks approval before success", async () => {
+    const f = candidateSdkFixture();
+    f.change("ci/reviewed-npm-audit.json", (config) => {
+      config.severityThreshold = "critical";
+      config.registryOrigin = "https://attacker.invalid";
+      config.exceptionFile = "candidate-exceptions.json";
+    });
+    const audit = vi.fn();
+    await auditWithApprovedOpenShellSdk(
+      checkout(f),
+      sdkCandidateIdentity,
+      f.request,
+      f.trustedSource,
+      audit,
+    );
+    const { sourceRegistryPackageReplacement: _old, ...trusted } = f.trusted;
+    expect(audit).toHaveBeenCalledExactlyOnceWith({ ...trusted, sourceRegistryPackage: f.sdk });
+    expect(
+      f.request.mock.calls.filter(([route]) => route.includes("/reviews?")).length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps known SDK audits offline without requiring candidate approval", async () => {
+    const f = candidateSdkFixture();
+    f.records.length = 0;
+    const config = { ...f.trusted, sourceRegistryPackage: f.sdk };
+    const audit = vi.fn();
+    await auditWithApprovedOpenShellSdk(
+      checkout(f),
+      sdkCandidateIdentity,
+      f.request,
+      JSON.stringify(config),
+      audit,
+    );
+    expect(audit).toHaveBeenCalledExactlyOnceWith(config);
+    expect(f.request).not.toHaveBeenCalled();
+  });
+
+  const invalidations: {
+    failure: string;
+    change: (fixture: ReturnType<typeof candidateSdkFixture>, root: string) => void;
+  }[] = [
+    {
+      failure: "approval",
+      change: (fixture) => {
+        fixture.records.length = 0;
+      },
+    },
+    {
+      failure: "checkout",
+      change: (_fixture, root) => {
+        writeFileSync(join(root, "package.json"), "{}");
+      },
+    },
+  ];
+
+  it.each(invalidations)(
+    "rejects invalid $failure before running the audit",
+    async ({ change }) => {
+      const f = candidateSdkFixture();
+      const root = checkout(f);
+      change(f, root);
+      const audit = vi.fn();
+      await expect(
+        auditWithApprovedOpenShellSdk(
+          root,
+          sdkCandidateIdentity,
+          f.request,
+          f.trustedSource,
+          audit,
+        ),
+      ).rejects.toThrow();
+      expect(audit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(invalidations)("rejects $failure changes during the audit", async ({ change }) => {
+    const f = candidateSdkFixture();
+    const root = checkout(f);
+    const audit = vi.fn(() => change(f, root));
+    await expect(
+      auditWithApprovedOpenShellSdk(root, sdkCandidateIdentity, f.request, f.trustedSource, audit),
+    ).rejects.toThrow();
+    expect(audit).toHaveBeenCalledOnce();
+  });
+
+  it("preserves an audit failure instead of accepting admission as a pass", async () => {
+    const f = candidateSdkFixture();
+    const error = new Error("fixture audit threshold failure");
+    await expect(
+      auditWithApprovedOpenShellSdk(
+        checkout(f),
+        sdkCandidateIdentity,
+        f.request,
+        f.trustedSource,
+        () => {
+          throw error;
+        },
+      ),
+    ).rejects.toBe(error);
   });
 });

@@ -64,7 +64,8 @@ const CREDENTIAL_FREE_TEST_COVERAGE = {
   },
   "vllm-docker-storage": {
     agentRuntime: "none",
-    observableOutcome: "vLLM storage gate accepts and rejects the intended host states",
+    observableOutcome:
+      "vLLM storage gate handles host capacity and startup errors survive Docker restarts",
     environmentOrInferenceEndpoint: "Native Linux Docker host; no inference endpoint",
     unresolvedReason: "",
     gatewayRuntimes: ["docker"],

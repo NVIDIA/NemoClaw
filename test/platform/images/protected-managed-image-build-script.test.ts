@@ -143,6 +143,13 @@ printf '%s\n' "$*" >>"$NEMOCLAW_TEST_SEED_LOG"
 if [[ "$1" == */scripts/checks/protected-dcode-base-receipt.mts ]]; then
   exec "$NEMOCLAW_TEST_REAL_NODE" "$@"
 fi
+if [[ "$1" == */scripts/checks/protected-openclaw-image-handoff.mts ]]; then
+  if [[ "\${NEMOCLAW_TEST_IMAGE_HANDOFF:-}" == invalid ]]; then exit 47; fi
+  if [[ "$2" == restore && "\${NEMOCLAW_TEST_IMAGE_HANDOFF:-}" == current ]]; then
+    printf '{"containerimage.digest":"sha256:${DIGEST}"}\\n' >"$9"
+  fi
+  exit 0
+fi
 if [[ "$*" == *"/scripts/lib/npm-audit-receipt.mts"* ]]; then
   while (($# > 0)); do
     if [[ "$1" == "--result" && "$NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS" == 0 ]]; then
@@ -211,6 +218,7 @@ function completeImportedAgentCaches(cacheRoot: string): void {
 
 function completeImportedCache(cacheRoot: string): void {
   completeImportedAgentCaches(cacheRoot);
+  mkdirSync(path.join(cacheRoot, "openclaw-runtime"));
   writeFileSync(path.join(cacheRoot, "prepared-inputs"), `${PREPARED_IDENTITY}\n`);
   mkdirSync(path.join(cacheRoot, "npm-cache-seed"));
   writeFileSync(path.join(cacheRoot, "npm-cache-seed", "manifest.json"), "{}\n", "utf8");
@@ -964,7 +972,99 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("imports locked seeds, reuses safe agent caches, and disables RUN network access", () => {
+  it("rebuilds all agents offline when an older producer has no OpenClaw handoff", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
+    completeImportedCache(cacheRoot);
+    rmSync(path.join(cacheRoot, "openclaw-runtime"), { recursive: true });
+    completeAuditEvidence(auditRoot);
+    stubBuildInvocation();
+    const result = runBuild(
+      REPO_ROOT,
+      ["--cache-from", cacheRoot, "--audit-evidence-from", auditRoot],
+      "linux/amd64",
+      { NEMOCLAW_TEST_IMAGE_HANDOFF: "invalid" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(3);
+    expect(recordedBuildInvocations().every((line) => line.includes("--network none"))).toBe(true);
+    expect(recordedBuildInvocation("openclaw")).toContain("--no-cache");
+    expect(readFileSync(seedLog, "utf8")).not.toContain(
+      "protected-openclaw-image-handoff.mts restore",
+    );
+  });
+
+  it("loads the verified current OpenClaw image while retaining the other offline builds", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
+    completeImportedCache(cacheRoot);
+    completeAuditEvidence(auditRoot);
+    stubBuildInvocation();
+    const result = runBuild(
+      REPO_ROOT,
+      ["--cache-from", cacheRoot, "--audit-evidence-from", auditRoot],
+      "linux/amd64",
+      {
+        NEMOCLAW_TEST_IMAGE_HANDOFF: "current",
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(2);
+    expect(
+      recordedBuildInvocations().every(
+        (line) => !line.includes("io.nvidia.nemoclaw.agent=openclaw"),
+      ),
+    ).toBe(true);
+    expect(recordedBuildInvocation("hermes")).toContain("--network none");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--network none");
+    expect(readFileSync(dockerLog, "utf8")).toContain(
+      `pull --platform linux/amd64 localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${DIGEST}`,
+    );
+    expect(readFileSync(seedLog, "utf8")).toContain("protected-openclaw-image-handoff.mts restore");
+  });
+
+  it("stops before building when the OpenClaw handoff fails verification", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
+    completeImportedCache(cacheRoot);
+    completeAuditEvidence(auditRoot);
+    stubBuildInvocation();
+    const result = runBuild(
+      REPO_ROOT,
+      ["--cache-from", cacheRoot, "--audit-evidence-from", auditRoot],
+      "linux/amd64",
+      {
+        NEMOCLAW_TEST_IMAGE_HANDOFF: "invalid",
+      },
+    );
+    expect(result.status).toBe(47);
+    expect(recordedBuildInvocations()).toEqual([]);
+  });
+
+  it("retains the offline OpenClaw build for root runtime contracts", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
+    completeImportedCache(cacheRoot);
+    completeAuditEvidence(auditRoot);
+    stubBuildInvocation();
+    imageUser = "root";
+    const result = runBuild(
+      REPO_ROOT,
+      ["--runtime-user", "root", "--cache-from", cacheRoot, "--audit-evidence-from", auditRoot],
+      "linux/amd64",
+      {
+        NEMOCLAW_TEST_IMAGE_HANDOFF: "current",
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(3);
+    expect(recordedBuildInvocation("openclaw")).toContain("--no-cache");
+    expect(readFileSync(seedLog, "utf8")).not.toContain(
+      "protected-openclaw-image-handoff.mts restore",
+    );
+  });
+
+  it("imports locked seeds and rebuilds an earlier-attempt OpenClaw image without RUN network access", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
     const sourceSeed = path.join(REPO_ROOT, "tools/mcp-tool-discovery-runtime/npm-cache-seed");
     const sourceMessagingSeed = path.join(

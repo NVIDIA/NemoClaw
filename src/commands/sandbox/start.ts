@@ -11,7 +11,7 @@ export default class SandboxStartCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Restart a stopped sandbox container";
   static description =
-    "Start a sandbox container that was stopped with 'stop' (or by a host reboot), then repair the in-sandbox gateway and host forwards the same way 'recover' does.";
+    "Start a sandbox container stopped with 'stop' or by a host reboot, then verify agent runtime readiness. For gateway-based agents, check gateway health and restore host forwards.";
   static usage = ["<name>"];
   static examples = ["<%= config.bin %> sandbox start alpha"];
   static args = {

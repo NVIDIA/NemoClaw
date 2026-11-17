@@ -70,7 +70,9 @@ function startupSection(startMarker: string, endMarker: string, region: string):
 function doctorBlock(kind: "non-root" | "root" = "root"): string {
   return startupSection(
     kind === "root" ? "configure_messaging_channels\n" : "  apply_messaging_runtime_env_aliases\n",
-    "refresh_openclaw_provider_placeholders\n",
+    kind === "root"
+      ? "\nrefresh_openclaw_provider_placeholders\n"
+      : "\n  refresh_openclaw_provider_placeholders\n",
     kind === "root" ? "# ── Root path" : "# ── Non-root fallback",
   );
 }
@@ -110,12 +112,24 @@ function runStartupCredentialBoundary(
       "_step_down_extract_function",
       "run_step_down_as_sandbox",
       "setup_auth_profile_as_sandbox",
+      "_nemoclaw_capture_epoch_realtime",
+      "needs_gateway_token_for_current_command",
+      "prepare_gateway_token_for_current_command",
       "run_oneshot_command",
-    ].map((name) => extractShellFunctionFromSource(START_SOURCE, name)),
+    ].map((name) =>
+      extractShellFunctionFromSource(START_SOURCE, name).replaceAll(
+        // Keep transient step-down scripts inside this fixture's private HOME.
+        "/tmp/nemoclaw-step-down-XXXXXX.sh",
+        '"$HOME/nemoclaw-step-down-XXXXXX.sh"',
+      ),
+    ),
     'NEMOCLAW_CMD=("$AUTH_TEST_COMMAND")',
     '_RUNTIME_SHELL_ENV_FILE="$HOME/no-runtime-env"',
     "STEP_DOWN_PREFIX_SANDBOX=(env)",
     "apply_messaging_runtime_env_aliases() { :; }",
+    // Gateway configuration has separate startup coverage; keep this fixture on auth custody.
+    "export_gateway_token() { :; }",
+    "write_runtime_shell_env() { :; }",
     `write_auth_profile() { ${credentialProbe}; return ${failCleanup ? 41 : 0}; }`,
     "harden_auth_profiles() { :; }",
     "install_messaging_runtime_preloads() { :; }",
@@ -123,6 +137,8 @@ function runStartupCredentialBoundary(
     "normalize_mutable_config_perms() { :; }",
     "configure_messaging_channels() { :; }",
     "run_requested_openclaw_post_upgrade_doctor() { :; }",
+    "refresh_openclaw_provider_placeholders() { :; }",
+    "consume_openclaw_post_upgrade_release_before_gateway() { :; }",
     bootstrap,
     credentialProbe,
     startupCredentialBoundaryBlock(kind),

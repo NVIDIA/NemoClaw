@@ -30,7 +30,37 @@ export async function stageRebuildMessagingPlanOrBail(
   bail: RebuildBail,
 ): Promise<SandboxMessagingPlan | null> {
   try {
-    return await stageMessagingManifestPlanForRebuild(sandboxName, sandboxEntry, rebuildAgent, log);
+    const plan = await stageMessagingManifestPlanForRebuild(
+      sandboxName,
+      sandboxEntry,
+      rebuildAgent,
+      log,
+    );
+    const recordedPlan = sandboxEntry.messaging?.plan;
+    const previouslyActive = new Set(
+      (recordedPlan?.channels ?? [])
+        .filter(
+          (channel) =>
+            channel.active === true &&
+            !channel.disabled &&
+            !channel.pendingRemoval &&
+            !recordedPlan?.disabledChannels?.includes(channel.channelId),
+        )
+        .map((channel) => channel.channelId),
+    );
+    const newlyDisabled = (plan?.channels ?? [])
+      .filter(
+        (channel) =>
+          previouslyActive.has(channel.channelId) && (!channel.active || channel.disabled),
+      )
+      .map((channel) => channel.channelId);
+    if (newlyDisabled.length > 0) {
+      MessagingSetupApplier.clearPlanEnv();
+      throw new Error(
+        `Rebuild would disable active messaging channels: ${newlyDisabled.join(", ")}. The existing sandbox was not changed.`,
+      );
+    }
+    return plan;
   } catch (err) {
     // Source boundary: persisted registry messaging plans and current channel
     // manifests are host-side inputs. If they drift or become invalid, rebuild
@@ -38,9 +68,7 @@ export async function stageRebuildMessagingPlanOrBail(
     // staging becomes total over all persisted registry states.
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
-    console.error(
-      `  ${_RD}Rebuild preflight failed:${R} messaging manifest plan could not be staged.`,
-    );
+    console.error(`  ${_RD}Rebuild preflight failed:${R} messaging plan validation failed.`);
     console.error(`  ${message}`);
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");

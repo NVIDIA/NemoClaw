@@ -49,6 +49,7 @@ export function readReviewedOpenShellSdkInstallScript(actionPath = DEFAULT_ACTIO
   return typeof install?.run === "string" ? install.run : "";
 }
 
+/** Reject installer actions that differ from the immutable source or expand credential access. */
 export function validateReviewedOpenShellSdkInstallAction(
   actionPath = DEFAULT_ACTION_PATH,
 ): string[] {
@@ -85,13 +86,19 @@ export function validateReviewedOpenShellSdkInstallAction(
 
   const install = actionSteps[0]!;
   if (
-    !isDeepStrictEqual(Object.keys(install).sort(), ["name", "run", "shell"]) ||
+    !isDeepStrictEqual(Object.keys(install).sort(), ["env", "name", "run", "shell"]) ||
+    !isDeepStrictEqual(record(install.env), {
+      GITHUB_TOKEN:
+        "${{ github.event_name == 'workflow_dispatch' && env.UPGRADE_PR_NUMBER != '' && env.CANDIDATE_SHA != '' && env.UPGRADE_BASE_SHA != '' && env.CANDIDATE_SHA != env.UPGRADE_BASE_SHA && github.token || '' }}",
+    }) ||
     install.name !== REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP ||
     install.shell !== "bash" ||
     typeof install.run !== "string" ||
     install.run.length === 0
   ) {
-    errors.push("reviewed OpenShell SDK install action must own the fixed credential-free script");
+    errors.push(
+      "reviewed OpenShell SDK install action must confine API access to trusted preparation",
+    );
   }
   return errors;
 }

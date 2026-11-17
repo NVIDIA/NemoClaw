@@ -38,6 +38,7 @@ import {
 } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
 import {
   type OperationsWorkflow,
+  MANUAL_PR_CANCEL_IN_PROGRESS,
   validateE2eOperationsWorkflow,
 } from "./operations-workflow-boundary.mts";
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
@@ -214,7 +215,6 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "staging-brev-launchable-identity",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
-const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set(["model-router-provider-routed-inference"]);
 const NO_IMAGE_E2E_JOBS = new Set([
   "llama-cpp-dgx-spark-qualification",
   "dgx-station-express",
@@ -1388,7 +1388,7 @@ function validateHostedCompatibleInferenceFlag(
   jobName: string,
   jobEnv: WorkflowRecord,
 ): void {
-  if (PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName) || ADAPTER_MANAGED_INFERENCE_JOBS.has(jobName)) {
+  if (ADAPTER_MANAGED_INFERENCE_JOBS.has(jobName)) {
     return;
   }
   if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
@@ -1740,7 +1740,9 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
         : -1;
     const sharedBoundaryBuildIndex =
       jobName === "managed-image-multiarch-startup"
-        ? workflowSteps.findIndex((step) => step.name === "Build shared policy boundary")
+        ? workflowSteps.findIndex(
+            (step) => step.name === "Build candidate CLI and shared policy boundary",
+          )
         : -1;
     const pinnedV1ToolchainIndex =
       jobName === "live" || jobName === "hermes-e2e"
@@ -2126,15 +2128,16 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ inputs.jobs == 'llama-cpp-dgx-spark-qualification' && format('spark-{0}', github.run_id) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && (inputs.checkout_sha == inputs.base_sha && format('pr-{0}-base-{1}-jobs-{2}-targets-{3}', inputs.pr_number, inputs.base_sha, toJSON(inputs.jobs), toJSON(inputs.targets)) || format('pr-{0}-candidate', inputs.pr_number)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
   if (concurrency.group !== expectedGroup) {
-    errors.push("workflow concurrency must isolate each Launchable dispatch with github.run_id");
+    errors.push(
+      "workflow concurrency must isolate baseline comparisons and each Launchable dispatch",
+    );
   }
-  if (
-    concurrency["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
-  ) {
-    errors.push("workflow concurrency must not cancel an active Jetson or Launchable dispatch");
+  if (concurrency["cancel-in-progress"] !== MANUAL_PR_CANCEL_IN_PROGRESS) {
+    errors.push(
+      "workflow concurrency must not cancel an active baseline, Jetson, or Launchable dispatch",
+    );
   }
 }
 
@@ -3490,6 +3493,17 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_LIVE_E2E_INFERENCE_KEY) {
     errors.push(
       "live E2E step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main run or an authorized NVIDIA-owned PR dispatch",
+    );
+  }
+  if (
+    [asRecord(workflow.env), jobEnv, runVitestEnv].some((env) =>
+      ["TAVILY_API_KEY", "NEMOCLAW_E2E_TAVILY_AUTHENTICATED"].some((key) =>
+        Object.hasOwn(env, key),
+      ),
+    )
+  ) {
+    errors.push(
+      "hosted live E2E must not define TAVILY_API_KEY or NEMOCLAW_E2E_TAVILY_AUTHENTICATED",
     );
   }
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");

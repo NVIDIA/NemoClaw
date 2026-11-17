@@ -43,6 +43,7 @@ describe("installer plan actions", () => {
     const plan = buildInstallerPlan({ env: { NEMOCLAW_PROVIDER: "bad-provider" } });
 
     expect(plan.installRef).toBe("lkg");
+    expect(plan.installerVersion).toBe("0.0.0");
     expect(plan.provider).toMatchObject({ normalized: null, raw: "bad-provider", valid: false });
     expect(plan.runtime).toBeNull();
     expect(plan.npm).toBeNull();

@@ -4,7 +4,7 @@
 import { HostCliClient } from "../fixtures/clients/host.ts";
 
 const MINUTE = 60_000;
-export const PROTECTED_RUNTIME_JOB_MINUTES = 75;
+export const PROTECTED_RUNTIME_JOB_MINUTES = 90;
 export const PROTECTED_RUNTIME_CLEANUP_MS = 5 * MINUTE;
 export const PROTECTED_RUNTIME_EVIDENCE_MS = 8 * MINUTE;
 export const PROTECTED_RUNTIME_RUNNER_HEADROOM_MS = 2 * MINUTE;

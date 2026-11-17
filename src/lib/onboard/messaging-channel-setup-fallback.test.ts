@@ -121,7 +121,9 @@ describe("setupMessagingChannels selector fallback", () => {
     expect(readline.createInterface).toHaveBeenCalledOnce();
     expect(questions).toEqual(["  Messaging channel numbers/IDs: "]);
     expect(result).toEqual(["telegram"]);
-    expect(logs.join("\n")).toContain("telegram — already configured");
+    expect(logs.join("\n")).toContain(
+      "telegram token available from the environment or credential store",
+    );
   });
 
   it("uses line-mode fallback and clears seeded channels for none", async () => {

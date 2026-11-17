@@ -9,7 +9,10 @@
  */
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
-import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+} from "../adapters/openshell/sandbox-observer";
 
 const SANDBOX_EXEC_TIMEOUT_MS = 15000;
 
@@ -17,19 +20,21 @@ export function executeSandboxCommandForVerification(
   sandboxName: string,
   script: string,
   executor: OpenShellSandboxBufferedCommandExecutor,
+  gatewayName?: string,
 ): Promise<{ status: number; stdout: string; stderr: string } | null> {
-  return executeSandboxVerification(executor, sandboxName, script);
+  return executeSandboxVerification(executor, sandboxName, script, gatewayName);
 }
 
 async function executeSandboxVerification(
   executor: OpenShellSandboxBufferedCommandExecutor,
   sandboxName: string,
   script: string,
+  gatewayName?: string,
 ): Promise<{ status: number; stdout: string; stderr: string } | null> {
   try {
     const result = await executor.runBuffered({
       sandboxName,
-      target: selectedOpenShellGateway(),
+      target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
       command: ["sh", "-c", script],
       timeoutMilliseconds: SANDBOX_EXEC_TIMEOUT_MS,
     });

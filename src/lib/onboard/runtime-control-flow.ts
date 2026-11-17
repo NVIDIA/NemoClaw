@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type Session, updateSession } from "../state/onboard-session";
-import { resolveLegacyModelRouterPort } from "../core/model-router-port";
+import { rejectRetiredModelRouterSession } from "../inference/provider-key/contract";
 import { clearAgentScopedResumeState } from "./agent-resume-state";
 import { isDcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
-import { stopTrackedModelRouterForAgentChange } from "./model-router-process";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { formatSandboxAgentName, normalizeSandboxAgentName } from "./sandbox-agent";
 import { applyOnboardToolDisclosureRequest } from "./tool-disclosure-flow";
@@ -25,7 +24,6 @@ export interface RuntimeControlAgentDeps {
 
 export interface SelectedAgentTransitionDeps extends RuntimeControlAgentDeps {
   note(message: string): void;
-  stopTrackedModelRouterForAgentChange(session: Session, routerPort: number): Promise<void>;
   clearAgentScopedResumeState(session: Session, selectedAgentName: string): Session;
   updateSession(mutator: (session: Session) => Session | void): Session;
 }
@@ -100,14 +98,12 @@ export function planSelectedAgentTransition(
     resume: boolean;
     session: Session | null;
     selectedAgentName: string | null | undefined;
-    routerPort: number;
     note(message: string): void;
   },
   overrides: SelectedAgentTransitionOverrides = {},
 ): SelectedAgentTransitionPlan {
   const deps: SelectedAgentTransitionDeps = {
     note: input.note,
-    stopTrackedModelRouterForAgentChange,
     clearAgentScopedResumeState,
     updateSession,
     error: console.error,
@@ -117,12 +113,12 @@ export function planSelectedAgentTransition(
   validateSessionAgentObservability(input.session, input.selectedAgentName, deps);
   if (!input.session) throw new Error("Agent transition requires an active onboarding session.");
 
+  rejectRetiredModelRouterSession(input.session);
   const selectedAgentName = normalizeSandboxAgentName(input.selectedAgentName);
   const recordedAgentName = normalizeSandboxAgentName(input.session?.agent);
   const resumeAgentChanged = Boolean(
     input.resume && input.session && recordedAgentName !== selectedAgentName,
   );
-  const originalSession = structuredClone(input.session);
   let projectedSession = structuredClone(input.session);
   if (resumeAgentChanged) {
     projectedSession = deps.clearAgentScopedResumeState(projectedSession, selectedAgentName);
@@ -137,12 +133,6 @@ export function planSelectedAgentTransition(
         if (resumeAgentChanged) {
           deps.note(
             `  Agent changed from ${formatSandboxAgentName(recordedAgentName)} to ${formatSandboxAgentName(selectedAgentName)}; refreshing provider selection.`,
-          );
-          await deps.stopTrackedModelRouterForAgentChange(
-            originalSession,
-            originalSession.routerPort ??
-              resolveLegacyModelRouterPort(originalSession) ??
-              input.routerPort,
           );
         }
         return deps.updateSession((current) => {

@@ -35,6 +35,13 @@ Do not add or retain the live assertion when these facts do not identify a disti
 
 ## Add Live Coverage
 
+For long-running scenarios, compare the effective runner, job, harness, and subprocess deadlines before execution.
+Include setup, validation, cleanup, and artifact-upload time in that budget. Do not rely on a job timeout exceeding the runner's limit.
+Use the existing phase and resource telemetry to expose where the budget is spent.
+Retain partial progress and cleanup receipts on failure where the execution boundary permits it; distinguish missing receipts from successful cleanup.
+If shared setup can starve later scenarios, use measured costs to select isolation or phase reservations without weakening required coverage.
+Do not increase deadlines as a substitute for diagnosing unexplained runtime growth.
+
 Before adding or extending E2E coverage, name the semantic coverage dimension
 that is missing. Existing migrated examples show the intended granularity:
 catalogue targets pair environment, onboarding profile, expected state, optional

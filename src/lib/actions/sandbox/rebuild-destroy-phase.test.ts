@@ -186,6 +186,7 @@ describe("rebuild destroy phase", () => {
       const recheck = vi.fn().mockRejectedValue(new Error("Teams webhook port became occupied"));
       const recreateJournal = stubRecreateJournal();
       const onDeleted = vi.fn();
+      const onMcpRecoveryFailed = vi.fn();
       const input = {
         sandboxName: "alpha",
         sandboxEntry: { name: "alpha", agent: "openclaw" },
@@ -198,6 +199,7 @@ describe("rebuild destroy phase", () => {
           throw new Error(message);
         },
         onDeleted,
+        onMcpRecoveryFailed,
       };
 
       await expect(runRebuildDestroyPhase(input)).rejects.toThrow(
@@ -209,6 +211,7 @@ describe("rebuild destroy phase", () => {
       expect(recreateJournal.beginDelete).not.toHaveBeenCalled();
       expectNoSandboxDelete(mocks.runOpenshell);
       expect(onDeleted).not.toHaveBeenCalled();
+      expect(onMcpRecoveryFailed).toHaveBeenCalledTimes(recoveryFailure ? 1 : 0);
     },
   );
 

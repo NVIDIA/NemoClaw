@@ -415,7 +415,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       providerAdapter,
     });
 
-    await runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps);
+    await runInferenceSet({ provider: "nvidia-nim", model: "gpt-5.4", noVerify: true }, deps);
 
     expect(detachProvider).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
@@ -473,10 +473,10 @@ describe("runInferenceSet OpenClaw routing", () => {
       resolveCredentialValue: () => "",
     });
 
-    await runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps);
+    await runInferenceSet({ provider: "nvidia-nim", model: "gpt-5.4", noVerify: true }, deps);
 
     expect(entry).toMatchObject({
-      provider: "nvidia-router",
+      provider: "nvidia-nim",
     });
     expect(entry.nativeNvidiaProviderAttachment).toBeUndefined();
     expect(entry).not.toHaveProperty("nativeNvidiaProviderAuthority");
@@ -585,7 +585,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps),
+      runInferenceSet({ provider: "nvidia-nim", model: "gpt-5.4", noVerify: true }, deps),
     ).rejects.toThrow("Could not detach native NVIDIA provider from sandbox 'alpha'");
 
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();

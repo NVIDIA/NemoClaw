@@ -793,8 +793,8 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(project).toContain('license = "Apache-2.0"');
     expect(project).toContain('[project.entry-points."deepagents.harness_profiles"]');
     expect(project).toContain('nemoclaw-managed-aliases = "nemoclaw_deepagents_profile:register"');
-    expect(project).toContain('"deepagents-code==0.1.71"');
-    expect(project).toContain('"deepagents==0.7.15"');
+    expect(project).toContain('"deepagents-code==0.1.87"');
+    expect(project).toContain('"deepagents==0.7.29"');
   });
 
   it.each(
@@ -990,7 +990,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
       const validator = fs.readFileSync(validatorPath, "utf8");
       const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
 
-      expect(requirements).toMatch(/^langchain-core==1\.6\.6(?:[ \t]|$)/m);
+      expect(requirements).toMatch(/^langchain-core==1\.7\.0(?:[ \t]|$)/m);
       const source = ({ validator: validator, "E2E check": e2eCheck } as const)[scenario]!;
       expect(source).toContain("isinstance(sync_result.content, str)");
       expect(source).toContain("isinstance(async_result.content, str)");
@@ -1013,8 +1013,8 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
   });
 
   it.each([
-    ["Deep Agents Code", { dcode: "0.1.54" }, "deepagents-code==0.1.71"],
-    ["Deep Agents", { deepagents: "0.7.0a7" }, "deepagents==0.7.15"],
+    ["Deep Agents Code", { dcode: "0.1.54" }, "deepagents-code==0.1.87"],
+    ["Deep Agents", { deepagents: "0.7.0a7" }, "deepagents==0.7.29"],
   ] as const)("fails closed on %s version drift", (_label, versions, message) => {
     const fixture = makePluginFixture(versions);
     const result = runPlugin(fixture);

@@ -4,6 +4,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
+import { stripVTControlCharacters } from "node:util";
+
+import { redactFullWithUrls } from "../../src/lib/security/redact";
 
 import { hasMaintainerBudgetApproval } from "./e2e-budget-approval";
 
@@ -176,20 +180,56 @@ function preparePullRequestTree(
 ): string {
   const initialDepth = 32;
   const historyDepth = 1024;
-  const timeout = 30_000;
+  const started = performance.now();
+  const preparationLimit = 180_000;
+  const commandTimeout = (phase: string, limit: number): number => {
+    const remaining = Math.floor(preparationLimit - (performance.now() - started));
+    if (remaining <= 0)
+      throw new Error(
+        `PR #${prNumber}: ${phase}: preparation budget exhausted (${preparationLimit}ms).`,
+      );
+    return Math.min(limit, remaining);
+  };
+  const failure = (
+    phase: string,
+    timeout: number,
+    depth: string,
+    result: {
+      code?: string;
+      status?: number | null;
+      signal?: string | null;
+      stderr?: string | Buffer | null;
+    },
+  ): Error => {
+    const details = redactFullWithUrls(stripVTControlCharacters(String(result.stderr ?? ""))).slice(
+      0,
+      2048,
+    );
+    return new Error(
+      `PR #${prNumber}: growth comparison preparation failed during ${phase} ` +
+        `(${depth}, history limit ${historyDepth}, command limit ${timeout}ms, ` +
+        `elapsed ${Math.round(performance.now() - started)}ms, ` +
+        `code ${result.code ?? "none"}, exit ${result.status ?? "none"}, signal ${result.signal ?? "none"}).` +
+        (details ? `\n${details}` : ""),
+    );
+  };
   const git = (phase: string, args: string[]): string => {
+    const timeout = commandTimeout(phase, args[0] === "fetch" ? 90_000 : 30_000);
     try {
       return execFileSync("git", args, {
         cwd: repoRoot,
         encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: 64 * 1024,
         timeout,
       }).trim();
     } catch (cause) {
-      throw new Error(
-        `PR #${prNumber}: growth comparison preparation failed during ${phase} ` +
-          `(history limit ${historyDepth} commits, command limit ${timeout}ms).`,
-        { cause },
+      // Raw subprocess errors retain unredacted output and must not reach Vitest's serializer.
+      throw failure(
+        phase,
+        timeout,
+        args.find((arg) => arg.startsWith("--depth=")) ?? "local",
+        cause as Parameters<typeof failure>[3],
       );
     }
   };
@@ -216,19 +256,19 @@ function preparePullRequestTree(
       throw new Error(`PR #${prNumber}: Fetched PR head does not match HEAD_SHA`);
   };
   fetchHistory(initialDepth);
+  const timeout = commandTimeout("merge base inspection", 30_000);
   const mergeBase = spawnSync("git", ["merge-base", baseSha, expectedHeadSha], {
     cwd: repoRoot,
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 64 * 1024,
     timeout,
   });
   if (mergeBase.error || (mergeBase.status !== 0 && mergeBase.status !== 1)) {
-    throw new Error(
-      `PR #${prNumber}: growth comparison preparation failed during merge base inspection.`,
-      {
-        cause: mergeBase.error,
-      },
-    );
+    throw failure("merge base inspection", timeout, "local", {
+      ...mergeBase,
+      code: (mergeBase.error as NodeJS.ErrnoException | undefined)?.code,
+    });
   }
   // Deepen once before rejecting a branch whose merge base is beyond the shallow fetch.
   if (mergeBase.status === 1) fetchHistory(historyDepth);

@@ -394,19 +394,26 @@ export function settleCreatedOpenShellSandboxId(input: {
 export function createOpenshellSandboxIdReader(
   openshellBinary: string,
   runCommand: (binary: string, args: string[]) => { status: number | null; stdout: string },
-): (sandboxName: string) => string | null {
+): (sandboxName: string, gatewayName?: string | null) => string | null {
   const cache = new Map<string, string | null>();
-  return (sandboxName: string): string | null => {
-    const cached = cache.get(sandboxName);
+  return (sandboxName: string, gatewayName?: string | null): string | null => {
+    const gateway = gatewayName?.trim();
+    const cacheKey = JSON.stringify([gateway ?? null, sandboxName]);
+    const cached = cache.get(cacheKey);
     if (cached !== undefined) return cached;
     let resolved: string | null = null;
     try {
-      const result = runCommand(openshellBinary, ["sandbox", "get", sandboxName]);
+      const result = runCommand(openshellBinary, [
+        "sandbox",
+        "get",
+        ...(gateway ? ["-g", gateway] : []),
+        sandboxName,
+      ]);
       resolved = result.status === 0 ? parseOpenShellSandboxId(result.stdout || "") : null;
     } catch {
       resolved = null;
     }
-    cache.set(sandboxName, resolved);
+    cache.set(cacheKey, resolved);
     return resolved;
   };
 }

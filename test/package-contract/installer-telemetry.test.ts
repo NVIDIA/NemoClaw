@@ -41,7 +41,14 @@ it("skips telemetry for Station validation without onboarding (#12859)", () => {
 });
 
 it.each([
-  { name: "shell exit 0", exitCode: 0, outcome: "completed", state: "applied", lifecycle: false },
+  {
+    name: "GitHub Actions installer lifecycle",
+    exitCode: 0,
+    outcome: "completed",
+    state: "applied",
+    lifecycle: true,
+    ci: true,
+  },
   {
     name: "shell exit 10",
     exitCode: 10,
@@ -74,12 +81,18 @@ it.each([
   },
 ])(
   "delivers one installer record for $name (#12859)",
-  async ({ exitCode, outcome, state, lifecycle, testLabel = "qa-telemetry:client:attempt-1" }) => {
+  async ({
+    exitCode,
+    outcome,
+    state,
+    lifecycle,
+    testLabel = "qa-telemetry:client:attempt-1",
+    ci = false,
+  }) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-telemetry-"));
     const receipts = path.join(root, "received.ndjson");
     const sourceRoot = path.join(import.meta.dirname, "../..");
     const entry = path.join(sourceRoot, "dist/lib/cli/installer-telemetry-entry.js");
-    const adapter = path.join(sourceRoot, "dist/lib/adapters/telemetry/http.js");
     const identity = JSON.parse(
       fs.readFileSync(path.join(sourceRoot, "dist/build-identity.json"), "utf8"),
     ) as { nemoclawVersion: string };
@@ -94,12 +107,11 @@ it.each([
     fs.writeFileSync(
       preload,
       `const fs = require('node:fs');
-const { TEST_TELEMETRY_ENDPOINT } = require(${JSON.stringify(adapter)});
 fs.appendFileSync(process.env.NEMOCLAW_TEST_TRACE, 'loaded ' + process.argv[1] + '\\n');
 const fetchOriginal = globalThis.fetch;
 globalThis.fetch = (input, init) => {
   fs.appendFileSync(process.env.NEMOCLAW_TEST_TRACE, 'fetch ' + String(input) + '\\n');
-  if (String(input) !== TEST_TELEMETRY_ENDPOINT) throw new Error('Unexpected network request');
+  if (String(input) !== "https://events.telemetry.data.nvidia.com/v1.1/events/json") throw new Error('Unexpected network request');
   return fetchOriginal(process.env.NEMOCLAW_TEST_RECEIVER_URL, init);
 };
 `,
@@ -148,6 +160,7 @@ spin() { :; }
 command_exists() { [[ "$1" == git ]]; }
 resolve_repo_root() { printf '%s\\n' "$NEMOCLAW_SOURCE_ROOT"; }
 is_source_checkout() { return 0; }
+link_nemoclaw_cli() { :; }
 verify_nemoclaw() { _NEMOCLAW_VERIFIED_VERSION="$EXPECTED_VERSION"; _CLI_PATH="$TEST_CLI_PATH"; }
 maybe_install_openshell_during_install() { :; }
 ensure_nemoclaw_shim() { :; }
@@ -169,8 +182,10 @@ exit ${exitCode}`;
         encoding: "utf8",
         env: {
           ...process.env,
-          CI: "",
-          GITHUB_ACTIONS: "",
+          CI: ci ? "true" : "",
+          GITHUB_ACTIONS: ci ? "true" : "",
+          GITHUB_RUN_ID: ci ? "12345678901" : "",
+          GITHUB_RUN_ATTEMPT: ci ? "2" : "",
           VITEST: "",
           NODE_ENV: "",
           NEMOCLAW_DISABLE_TELEMETRY: "",
@@ -203,7 +218,7 @@ exit ${exitCode}`;
       expect(envelope.events).toHaveLength(1);
       expect(isOperationEvent(envelope.events[0])).toBe(true);
       const parameters = envelope.events[0].parameters;
-      expect(parameters.testLabel).toBe(testLabel);
+      expect(parameters.testLabel).toBe(ci ? "qa-ci:gh-12345678901:attempt-2" : testLabel);
       expect(parameters).toMatchObject({
         operation: "install",
         outcome,

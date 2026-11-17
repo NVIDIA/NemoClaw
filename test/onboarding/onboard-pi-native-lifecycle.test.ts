@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 import {
   createOnboardProcessWorkspace,
   minimalSpawnEnv,
@@ -15,25 +16,37 @@ import {
 } from "../../src/lib/agent/candidate-test-fixture";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
-it("creates Pi native routing through public onboarding and preserves it on recovery (#12589)", async (context) => {
-  const workspace = createOnboardProcessWorkspace("pi-native-onboard-");
-  const contract = candidateQualificationContract(
-    "pi",
-    process.arch === "arm64" ? "linux/arm64" : "linux/amd64",
-  );
-  const receipt = candidateQualificationEnvironment({ contract });
-  const catalog = workspace.path("catalog.json");
-  fs.writeFileSync(catalog, JSON.stringify({ pi: contract }));
-  const root = path.join(import.meta.dirname, "../..");
-  const hook = path.join(root, "test/helpers/onboard-script-mocks.cjs");
-  const script = workspace.path("scenario.cjs");
-  writeOkOpenshell(workspace.binDir);
-  workspace.writeExecutable("brew", "#!/bin/sh\nexit 1\n");
-  fs.writeFileSync(
-    script,
-    `
+it(
+  "creates Pi native routing through public onboarding and preserves it on recovery (#12589)",
+  testTimeoutOptions(execTimeout(30_000) + 10_000),
+  async (context) => {
+    const workspace = createOnboardProcessWorkspace("pi-native-onboard-");
+    const contract = candidateQualificationContract(
+      "pi",
+      process.arch === "arm64" ? "linux/arm64" : "linux/amd64",
+    );
+    const receipt = candidateQualificationEnvironment({ contract });
+    const catalog = workspace.path("catalog.json");
+    fs.writeFileSync(catalog, JSON.stringify({ pi: contract }));
+    const root = path.join(import.meta.dirname, "../..");
+    const hook = path.join(root, "test/helpers/onboard-script-mocks.cjs");
+    const script = workspace.path("scenario.cjs");
+    const phaseTrace = workspace.path("phase-timing.log");
+    writeOkOpenshell(workspace.binDir);
+    workspace.writeExecutable("brew", "#!/bin/sh\nexit 1\n");
+    fs.writeFileSync(
+      script,
+      `
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const phaseTracePath = ${JSON.stringify(phaseTrace)};
+const scriptStarted = process.hrtime.bigint();
+const recordPhase = (phase) => require("node:fs").appendFileSync(
+  phaseTracePath,
+  phase + " " + Number((process.hrtime.bigint() - scriptStarted) / 1000000n) + "ms\\n",
+  { mode: 0o600 },
+);
+recordPhase("script-start");
 const load = (name) => require(path.join(${JSON.stringify(root)}, "src/lib", name));
 const policyCli = load("adapters/openshell/sandbox-policy-cli.ts");
 let basePolicy = "version: 1\\n";
@@ -163,13 +176,22 @@ childProcess.spawn = (command, args, options) => {
 };
 const registry = load("state/registry.ts");
 const { onboard } = load("onboard.ts");
+recordPhase("fixtures-ready");
+const runOnboardPhase = async (phase, options) => {
+  recordPhase(phase + ":start");
+  try {
+    return await onboard(options);
+  } finally {
+    recordPhase(phase + ":end");
+  }
+};
 (async () => {
   const options = { agent: "pi", sandboxName: "my-assistant", nonInteractive: true,
     tempManagedRuntime: true, tempManagedRuntimeCatalog: ${JSON.stringify(catalog)}, autoYes: true,
     acceptThirdPartySoftware: true, noGpu: true, deferProcessExit: true };
   // The runtime reports a wrong version after creation. Recovery must consume
   // the attachment and profile produced by onboarding, never a seeded entry.
-  await assert.rejects(onboard(options), { name: "OnboardDeferredExitError" });
+  await assert.rejects(runOnboardPhase("initial", options), { name: "OnboardDeferredExitError" });
   const session = load("state/onboard-session.ts").loadSession();
   assert.equal(session.steps.sandbox.status, "complete");
   assert.equal(session.steps.agent_setup.status, "failed");
@@ -187,14 +209,14 @@ const { onboard } = load("onboard.ts");
   const updatesBeforeResume = updated.length;
   const nativeProvider = providers.get("nemoclaw-openai-api-v1");
   providers.set(nativeProvider.name, { ...nativeProvider, revision: { ...nativeProvider.revision, id: "replacement-provider" } });
-  await assert.rejects(onboard({ ...options, resume: true }), /changed identity/);
+  await assert.rejects(runOnboardPhase("changed-identity", { ...options, resume: true }), /changed identity/);
   assert.deepEqual(registry.getSandbox("my-assistant").nativeHostedProviderAttachment, entry.nativeHostedProviderAttachment);
   providers.delete(nativeProvider.name);
-  await assert.rejects(onboard({ ...options, resume: true }), /is missing/);
+  await assert.rejects(runOnboardPhase("missing-provider", { ...options, resume: true }), /is missing/);
   assert.deepEqual(registry.getSandbox("my-assistant").nativeHostedProviderAttachment, entry.nativeHostedProviderAttachment);
   providers.set(nativeProvider.name, nativeProvider);
   recovering = true;
-  await onboard({ ...options, resume: true });
+  await runOnboardPhase("recovery", { ...options, resume: true });
   const recovered = registry.getSandbox("my-assistant");
   assert.deepEqual(recovered.nativeHostedProviderAttachment, entry.nativeHostedProviderAttachment);
   assert.equal(recovered.workload.encodedProfile, entry.workload.encodedProfile);
@@ -207,24 +229,34 @@ const { onboard } = load("onboard.ts");
   console.log("PI_NATIVE_ONBOARDED");
 })().catch((error) => { console.error(error.stack); process.exitCode = 1; }).finally(() => clearInterval(keepAlive));
 `,
-  );
-  try {
-    const result = await runOnboardProcessAsync(["--require", hook, script], {
-      context,
-      timeoutMs: 12_000,
-      env: minimalSpawnEnv(workspace.homeDir, {
-        ...receipt.env,
-        TMPDIR: workspace.root,
-        OPENAI_API_KEY: "synthetic-pi-openai-key",
-        NEMOCLAW_PROVIDER: "openai",
-        NEMOCLAW_MODEL: "gpt-5.4",
-        PATH: `${workspace.binDir}${path.delimiter}${process.env.PATH}`,
-      }),
-    });
-    expect(result.status, result.output).toBe(0);
-    expect(result.stdout).toContain("PI_NATIVE_ONBOARDED");
-  } finally {
-    receipt.cleanup();
-    workspace.remove();
-  }
-});
+    );
+    try {
+      const childStarted = process.hrtime.bigint();
+      const result = await runOnboardProcessAsync(["--require", hook, script], {
+        context,
+        timeoutMs: execTimeout(30_000),
+        env: minimalSpawnEnv(workspace.homeDir, {
+          ...receipt.env,
+          TMPDIR: workspace.root,
+          OPENAI_API_KEY: "synthetic-pi-openai-key",
+          NEMOCLAW_PROVIDER: "openai",
+          NEMOCLAW_MODEL: "gpt-5.4",
+          PATH: `${workspace.binDir}${path.delimiter}${process.env.PATH}`,
+        }),
+      });
+      const childElapsedMs = Number((process.hrtime.bigint() - childStarted) / 1000000n);
+      const timings = fs.existsSync(phaseTrace)
+        ? fs.readFileSync(phaseTrace, "utf8").trim()
+        : "missing";
+      const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code ?? "none";
+      expect(
+        result.status,
+        `${result.output}\nPhase timings:\n${timings}\nChild wall time: ${childElapsedMs}ms; error: ${errorCode}; signal: ${result.signal ?? "none"}`,
+      ).toBe(0);
+      expect(result.stdout).toContain("PI_NATIVE_ONBOARDED");
+    } finally {
+      receipt.cleanup();
+      workspace.remove();
+    }
+  },
+);

@@ -20,6 +20,7 @@ import type {
   ContainerRuntime as PlatformContainerRuntime,
   DockerHostProbe,
   DockerHostProbeResult,
+  DockerHostDetectionOptions,
 } from "../../platform";
 import { detectDockerHost, inferContainerRuntime, probeDockerHost } from "../../platform";
 import {
@@ -42,6 +43,8 @@ export interface FixCoreDnsDeps {
   log?: (message: string) => void;
   platform?: NodeJS.Platform;
   probeDockerHost?: DockerHostProbe;
+  inspectCurrentDockerContext?: DockerHostDetectionOptions["inspectCurrentDockerContext"];
+  resolveSocketRealPath?: DockerHostDetectionOptions["resolveSocketRealPath"];
   readFile?: (filePath: string) => string;
   run?: (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => CommandResult;
   runDocker?: (args: string[], options?: { env?: NodeJS.ProcessEnv }) => CommandResult;
@@ -146,6 +149,8 @@ function resolveDockerAuthority(env: NodeJS.ProcessEnv, deps: FixCoreDnsDeps): D
     home: env.HOME || os.tmpdir(),
     platform: deps.platform,
     probeDockerHost: probeOnce,
+    inspectCurrentDockerContext: deps.inspectCurrentDockerContext,
+    resolveSocketRealPath: deps.resolveSocketRealPath,
     uid: parseUid(deps.uid?.()),
   });
 

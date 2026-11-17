@@ -16,6 +16,7 @@ import {
 function findActiveSandboxSessions(
   sandboxName: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  registeredGatewayName?: string,
 ): SandboxSession[] {
   const opsBin = resolveOpenshell();
   if (!opsBin) return [];
@@ -23,6 +24,7 @@ function findActiveSandboxSessions(
     const result = getActiveSandboxSessions(
       sandboxName,
       createSessionDeps(opsBin, runtimeSelection ? { runtimeSelection } : {}),
+      registeredGatewayName ?? runtimeSelection?.gatewayName,
     );
     return result.detected ? result.sessions : [];
   } catch {
@@ -40,10 +42,10 @@ function printActiveSessionWarning(sessions: SandboxSession[]): void {
       ? `PID ${sessions[0]?.pid}`
       : `PIDs ${sessions.map((session) => session.pid).join(", ")}`;
   console.log(
-    `  ${YW}⚠  Active SSH ${plural} detected (${sessions.length} connection${sessions.length > 1 ? "s" : ""}, ${pids})${R}`,
+    `  ${YW}⚠  Active ${plural} detected (${sessions.length} connection${sessions.length > 1 ? "s" : ""}, ${pids})${R}`,
   );
   console.log(
-    `  Destroying will terminate ${sessions.length === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
+    `  Destroying will terminate ${sessions.length === 1 ? "the" : "all"} active ${plural}; running commands will be interrupted.`,
   );
 }
 
@@ -55,12 +57,16 @@ export async function confirmSandboxDestroy(
   sandboxName: string,
   options: DestroySandboxOptions,
   runtimeSelection?: OpenShellRuntimeSelection,
+  registeredGatewayName?: string,
 ): Promise<boolean> {
-  const activeSessions = findActiveSandboxSessions(sandboxName, runtimeSelection);
+  const activeSessions = findActiveSandboxSessions(
+    sandboxName,
+    runtimeSelection,
+    registeredGatewayName,
+  );
   // #9855: --yes/--force waives the confirmation prompt, not the notice that
-  // this destroy is about to break somebody else's live SSH session. Without
-  // this the operator sees no warning and the connected terminal just gets a
-  // Broken pipe.
+  // this destroy is about to interrupt somebody else's live session. Without
+  // this the operator sees no warning and the connected terminal is cut off.
   if (options.yes === true || options.force === true) {
     printActiveSessionWarning(activeSessions);
     return true;

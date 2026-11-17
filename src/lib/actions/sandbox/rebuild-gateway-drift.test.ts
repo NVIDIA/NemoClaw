@@ -491,7 +491,7 @@ describe("rebuild owning registry routing", () => {
       ),
     ).resolves.toBe(true);
 
-    expect(confirmInteractiveRebuild).toHaveBeenCalledWith("alpha", undefined);
+    expect(confirmInteractiveRebuild).toHaveBeenCalledWith("alpha", undefined, "nemoclaw-9000");
     expect(runWorker).toHaveBeenCalledWith(
       {
         operation: "rebuild",

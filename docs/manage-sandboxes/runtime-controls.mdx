@@ -69,6 +69,9 @@ Rebuild restores the complete native configuration captured immediately before r
 It replaces the complete native file instead of reconstructing selected keys.
 During rebuild, NemoClaw then reapplies the entries owned by the current host-side messaging plan, so restored native channel values do not replace that plan.
 Before the final gateway start, NemoClaw refreshes restored scoped credential handles for native NVIDIA and OpenRouter inference when the endpoint and credential key match the current runtime binding.
+Before gateway startup, the entrypoint also sets `plugins.entries.nemoclaw.hooks.allowConversationAccess` to `true` in restored configuration.
+This grant lets an enabled NemoClaw plugin enforce disabled search.
+It preserves other plugin settings, including an explicitly disabled NemoClaw plugin.
 It preserves user-managed credentials and unrelated native configuration.
 Rebuild does not change OpenShell policy, credential bindings, or the host-side inference route.
 After restoring configuration that depends on different host resources, reconcile those resources with the matching NemoClaw commands and restart the gateway when OpenClaw requires it.

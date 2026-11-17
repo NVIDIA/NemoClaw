@@ -11,8 +11,10 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import {
   applyHermesManagedRoute,
+  refreshHermesNativeLocalCredential,
   type HermesManagedRouting,
 } from "../../src/lib/hermes-managed-route.ts";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../src/lib/inference/native-nvidia/contract.ts";
 import { useOrderedNativeCapture } from "../support/native-snapshot.ts";
 
 const ORIGINAL_HOME = process.env.HOME;
@@ -52,85 +54,219 @@ function writeSandboxRegistry(sandboxName: string, agent: "hermes" | null = null
 
 describe("complete native-home machine authority", () => {
   type ManagedHermesConfig = Record<string, unknown> & HermesManagedRouting;
-  it.each([
-    { name: "managed route", change: (_config: ManagedHermesConfig) => {}, retained: true },
+  describe.each([
     {
-      name: "mismatched endpoint",
-      change: (config: ManagedHermesConfig) => {
-        config.model.base_url = "https://other.example/v1";
-      },
-      retained: false,
+      provider: "openrouter-api",
+      baseUrl: "https://openrouter.ai/api/v1",
+      template: "${OPENROUTER_API_KEY}",
     },
     {
-      name: "mismatched provider",
-      change: (config: ManagedHermesConfig) => {
-        config._nemoclaw_upstream.provider = "openai-api";
-      },
-      retained: false,
+      provider: "nvidia-prod",
+      baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+      template: "${NVIDIA_INFERENCE_API_KEY}",
     },
-    {
-      name: "partial credential reference",
-      change: (config: ManagedHermesConfig) => {
-        config.providers["openrouter-api"]!.api_key = "${OPENROUTER_API_KEY}-extra";
+  ])("Hermes $provider archive references", ({ provider, baseUrl, template }) => {
+    it.each([
+      {
+        name: "managed route with Discord",
+        change: (_config: ManagedHermesConfig) => {},
+        retained: true,
       },
-      retained: false,
-    },
-    {
-      name: "duplicate custom provider",
-      change: (config: ManagedHermesConfig) => {
-        config.custom_providers.push({ ...config.custom_providers[0]! });
+      {
+        name: "managed route without Discord",
+        change: (config: ManagedHermesConfig) => {
+          delete config.discord;
+        },
+        retained: true,
       },
-      retained: false,
-    },
-    {
-      name: "raw credential",
-      change: (config: ManagedHermesConfig) => {
-        config.model.api_key = "raw-openrouter-fixture-secret";
+      {
+        name: "mismatched endpoint",
+        change: (config: ManagedHermesConfig) => {
+          config.model.base_url = "https://other.example/v1";
+        },
+        retained: false,
       },
-      retained: false,
-    },
-  ])(
-    "preserves only the validated Hermes OpenRouter reference in a native archive: $name (#13759)",
-    ({ change, retained }) => {
-      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-openrouter-archive-"));
+      {
+        name: "mismatched provider",
+        change: (config: ManagedHermesConfig) => {
+          config._nemoclaw_upstream.provider = "openai-api";
+        },
+        retained: false,
+      },
+      {
+        name: "partial credential reference",
+        change: (config: ManagedHermesConfig) => {
+          config.providers[provider]!.api_key = `${template}-extra`;
+        },
+        retained: false,
+      },
+      {
+        name: "duplicate custom provider",
+        change: (config: ManagedHermesConfig) => {
+          config.custom_providers.push({ ...config.custom_providers[0]! });
+        },
+        retained: false,
+      },
+      {
+        name: "raw credential",
+        change: (config: ManagedHermesConfig) => {
+          config.model.api_key = "raw-provider-fixture-secret";
+        },
+        retained: false,
+      },
+    ])(
+      "preserves only the validated managed reference: $name (#13759, #14020)",
+      ({ change, retained }) => {
+        const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-managed-archive-"));
+        try {
+          const nativeRoot = path.join(fixture, "native-home");
+          const configPath = ".hermes/config.yaml";
+          const archivedConfigPath = ".hermes/backups/config/config.yaml.saved";
+          const alternateConfigPath = ".hermes/config.yml";
+          fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+          const config: Record<string, unknown> = {
+            unrelated: { api_key: "raw-unrelated-fixture-secret", token: template },
+            discord: { require_mention: true },
+            settings: { max_turns: 12 },
+          };
+          const route = {
+            model: "nvidia/nemotron-3-ultra-550b-a55b",
+            upstreamProvider: provider,
+            baseUrl,
+            inferenceApi: "openai-completions",
+          };
+          applyHermesManagedRoute(config, route);
+          change(config);
+          const source = JSON.stringify(config);
+          fs.writeFileSync(path.join(nativeRoot, configPath), source);
+          fs.mkdirSync(path.dirname(path.join(nativeRoot, archivedConfigPath)), {
+            recursive: true,
+          });
+          fs.writeFileSync(path.join(nativeRoot, archivedConfigPath), source);
+          fs.writeFileSync(path.join(nativeRoot, alternateConfigPath), source);
+          writeSandboxRegistry("hermes-managed-archive", "hermes");
+
+          const backup = sandboxState.backupSandboxState("hermes-managed-archive", {
+            nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+          });
+
+          expect(backup.success, backup.error).toBe(true);
+          sandboxState.inspectNativeSandboxState(backup.manifest!.backupPath, (root: string) => {
+            const restored = parseYaml(fs.readFileSync(path.join(root, configPath), "utf8"));
+            const expected = retained ? template : "[STRIPPED_BY_MIGRATION]";
+            expect(restored.model.api_key).toBe(expected);
+            expect(restored.providers[provider].api_key).toBe(expected);
+            expect(restored.custom_providers[0].api_key).toBe(expected);
+            expect(restored.unrelated).toEqual({
+              api_key: "[STRIPPED_BY_MIGRATION]",
+              token: "[STRIPPED_BY_MIGRATION]",
+            });
+            expect(restored.discord).toEqual(config.discord);
+            expect(restored.settings).toEqual(config.settings);
+            const strippedSlots = {
+              model: { api_key: "[STRIPPED_BY_MIGRATION]" },
+              providers: { [provider]: { api_key: "[STRIPPED_BY_MIGRATION]" } },
+              custom_providers: expect.arrayContaining([
+                expect.objectContaining({ api_key: "[STRIPPED_BY_MIGRATION]" }),
+              ]),
+            };
+            const saved = parseYaml(fs.readFileSync(path.join(root, archivedConfigPath), "utf8"));
+            expect(saved).toMatchObject(strippedSlots);
+            const alternate = parseYaml(
+              fs.readFileSync(path.join(root, alternateConfigPath), "utf8"),
+            );
+            expect(alternate).toMatchObject(strippedSlots);
+          });
+          expect(fs.readFileSync(path.join(nativeRoot, configPath), "utf8")).toBe(source);
+          expect(fs.readFileSync(path.join(nativeRoot, archivedConfigPath), "utf8")).toBe(source);
+          expect(fs.readFileSync(path.join(nativeRoot, alternateConfigPath), "utf8")).toBe(source);
+        } finally {
+          fs.rmSync(fixture, { recursive: true, force: true });
+        }
+      },
+    );
+
+    it("rejects an opaque secret beside an approved managed reference (#14020)", () => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-archive-secret-"));
       try {
-        const nativeRoot = path.join(fixture, "native-home");
-        const configPath = ".hermes/config.yaml";
-        const archivedConfigPath = ".hermes/backups/config/config.yaml.saved";
-        fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
-        const config: Record<string, unknown> = {
-          unrelated: { api_key: "raw-unrelated-fixture-secret" },
-        };
+        const config: Record<string, unknown> = { notes: "PASSWORD=abc12345" };
         applyHermesManagedRoute(config, {
-          model: "nvidia/nemotron-3-ultra-550b-a55b",
-          upstreamProvider: "openrouter-api",
-          baseUrl: "https://openrouter.ai/api/v1",
+          model: "m",
+          upstreamProvider: provider,
+          baseUrl,
           inferenceApi: "openai-completions",
         });
-        change(config);
+        const nativeRoot = path.join(fixture, "native-home");
+        fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+        const configPath = path.join(nativeRoot, ".hermes/config.yaml");
         const source = JSON.stringify(config);
-        fs.writeFileSync(path.join(nativeRoot, configPath), source);
-        fs.mkdirSync(path.dirname(path.join(nativeRoot, archivedConfigPath)), { recursive: true });
-        fs.writeFileSync(path.join(nativeRoot, archivedConfigPath), source);
-        writeSandboxRegistry("hermes-openrouter-archive", "hermes");
-
-        const backup = sandboxState.backupSandboxState("hermes-openrouter-archive", {
+        fs.writeFileSync(configPath, source);
+        writeSandboxRegistry("hermes-archive-secret", "hermes");
+        const backup = sandboxState.backupSandboxState("hermes-archive-secret", {
           nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
         });
+        expect(backup.success).toBe(false);
+        expect(backup.error).toContain("credential-bearing or uninspectable content");
+        expect(backup.error).not.toContain("abc12345");
+        expect(fs.readFileSync(configPath, "utf8")).toBe(source);
+        const backupRoot = path.join(TMP_HOME, ".nemoclaw/rebuild-backups/hermes-archive-secret");
+        expect(fs.existsSync(backupRoot) ? fs.readdirSync(backupRoot) : []).toEqual([]);
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    });
+  });
 
+  it.each([
+    { name: "fresh route without Discord", settings: {}, nativeCredentialHandle: undefined },
+    {
+      name: "fresh route with Discord",
+      settings: { discord: { require_mention: true } },
+      nativeCredentialHandle: undefined,
+    },
+    {
+      name: "issued route with Discord",
+      settings: { discord: { require_mention: true } },
+      nativeCredentialHandle: "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
+    },
+  ])(
+    "rebinds an archived NVIDIA $name without changing settings (#14020)",
+    ({ settings, nativeCredentialHandle }) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-nvidia-rebind-"));
+      try {
+        const config: Record<string, unknown> = { ...settings, max_turns: 12 };
+        const route = {
+          model: "nvidia/nemotron-3-ultra-550b-a55b",
+          upstreamProvider: "nvidia-prod",
+          baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+          inferenceApi: "openai-completions",
+          contextWindow: 131072,
+        };
+        applyHermesManagedRoute(config, { ...route, nativeCredentialHandle });
+        const nativeRoot = path.join(fixture, "native-home");
+        fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+        const configPath = path.join(nativeRoot, ".hermes/config.yaml");
+        const source = JSON.stringify(config);
+        fs.writeFileSync(configPath, source);
+        writeSandboxRegistry("hermes-nvidia-rebind", "hermes");
+        const backup = sandboxState.backupSandboxState("hermes-nvidia-rebind", {
+          nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+        });
         expect(backup.success, backup.error).toBe(true);
         sandboxState.inspectNativeSandboxState(backup.manifest!.backupPath, (root: string) => {
-          const restored = parseYaml(fs.readFileSync(path.join(root, configPath), "utf8"));
-          const expected = retained ? "${OPENROUTER_API_KEY}" : "[STRIPPED_BY_MIGRATION]";
-          expect(restored.model.api_key).toBe(expected);
-          expect(restored.providers["openrouter-api"].api_key).toBe(expected);
-          expect(restored.custom_providers[0].api_key).toBe(expected);
-          expect(restored.unrelated.api_key).toBe("[STRIPPED_BY_MIGRATION]");
-          const saved = parseYaml(fs.readFileSync(path.join(root, archivedConfigPath), "utf8"));
-          expect(saved.model.api_key).toBe("[STRIPPED_BY_MIGRATION]");
+          const restored = parseYaml(
+            fs.readFileSync(path.join(root, ".hermes/config.yaml"), "utf8"),
+          );
+          expect(restored).toEqual(config);
+          const fresh = "openshell:resolve:env:v8_NVIDIA_INFERENCE_API_KEY";
+          refreshHermesNativeLocalCredential(restored, { ...route, nativeCredentialHandle: fresh });
+          const expected = structuredClone(config);
+          expected.model.api_key = fresh;
+          expected.providers["nvidia-prod"]!.api_key = fresh;
+          expected.custom_providers[0]!.api_key = fresh;
+          expect(restored).toEqual(expected);
         });
-        expect(fs.readFileSync(path.join(nativeRoot, configPath), "utf8")).toBe(source);
-        expect(fs.readFileSync(path.join(nativeRoot, archivedConfigPath), "utf8")).toBe(source);
+        expect(fs.readFileSync(configPath, "utf8")).toBe(source);
       } finally {
         fs.rmSync(fixture, { recursive: true, force: true });
       }

@@ -138,6 +138,18 @@ export function resolveCpuModel(
 
 // ── Implementation ───────────────────────────────────────────────
 
+const BINARY_MEMORY_UNITS = ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei"];
+
+/** Convert the kubelet's allocatable memory from bytes or binary units to MiB. */
+function parseAllocatableMemoryMB(quantity: string): number | undefined {
+  const match = /^(\d+)([A-Za-z]*)$/.exec(quantity);
+  if (!match) return undefined;
+  const unitPower = BINARY_MEMORY_UNITS.indexOf(match[2]);
+  if (unitPower < 0) return undefined;
+  const bytes = Number(match[1]) * 1024 ** unitPower;
+  return Number.isFinite(bytes) ? Math.round(bytes / 1024 ** 2) : undefined;
+}
+
 /**
  * Query system hardware resources. Returns CPU, memory, and GPU info.
  * Also attempts to read Kubernetes node allocatable capacity from the
@@ -179,9 +191,7 @@ export function getHardwareResources(): HardwareResources {
       const alloc = nodes.items?.[0]?.status?.allocatable;
       if (alloc) {
         allocatableCpu = alloc.cpu;
-        const memStr: string = alloc.memory || "";
-        const kiMatch = memStr.match(/^(\d+)Ki$/);
-        if (kiMatch) allocatableMemMB = Math.round(parseInt(kiMatch[1], 10) / 1024);
+        allocatableMemMB = parseAllocatableMemoryMB(alloc.memory ?? "");
       }
     }
   } catch {

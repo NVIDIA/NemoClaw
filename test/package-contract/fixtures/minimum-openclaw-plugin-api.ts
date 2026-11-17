@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const MINIMUM_OPENCLAW_PLUGIN_API_VERSION = "2026.5.22";
+export const MINIMUM_OPENCLAW_PLUGIN_API_VERSION = "2026.9.2";
 
 type RegistrationState = {
   commands: unknown[];

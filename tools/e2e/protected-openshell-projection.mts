@@ -6,6 +6,7 @@ import {
   validateOpenShellFeatureGateSource,
   type OpenShellReleaseTrust,
 } from "../../scripts/checks/extract-installer-pins.mts";
+import type { ReviewedSourceRegistryPackage } from "../../scripts/lib/reviewed-ci-npm-install.mts";
 import { isDeepStrictEqual } from "node:util";
 import { parseAuditConfig } from "../../scripts/audit-reviewed-npm-graph.mts";
 import { reviewedNpmDependencyLocations } from "../../scripts/lib/reviewed-npm-archive.mts";
@@ -111,6 +112,7 @@ export function projectProtectedOpenShellSdk(
   candidate: { packageSource: string; lockSource: string },
   trusted: { packageSource: string; lockSource: string; auditSource: string },
   releaseVersion: string,
+  admittedSdk?: ReviewedSourceRegistryPackage,
 ): { sdkVersion: string; sdkIntegrity: string; files: Record<string, string> } {
   const selected = sdkManifest(candidate.packageSource);
   if (selected.version !== releaseVersion)
@@ -122,8 +124,11 @@ export function projectProtectedOpenShellSdk(
   const identities = [config.sourceRegistryPackage, config.sourceRegistryPackageReplacement].filter(
     Boolean,
   );
-  for (const { sdk } of [current, next]) {
-    const identity = identities.find(
+  for (const [sdk, allowed] of [
+    [current.sdk, identities],
+    [next.sdk, [...identities, admittedSdk]],
+  ] as const) {
+    const identity = allowed.find(
       (entry) => entry?.packageSpec === `${SDK_NAME}@${String(sdk.version)}`,
     );
     if (!identity || sdk.resolved !== identity.tarballUrl || sdk.integrity !== identity.integrity) {

@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 import YAML from "yaml";
+import { writeLocalHookConfig } from "./hook-config";
 
 it.each([
   {
@@ -101,7 +102,7 @@ it.each([
     fs.copyFileSync("oxlint.config.ts", path.join(root, "oxlint.config.ts"));
     fs.copyFileSync("oxc.ignore-patterns.ts", path.join(root, "oxc.ignore-patterns.ts"));
     fs.copyFileSync("tsconfig.cli.json", path.join(root, "tsconfig.cli.json"));
-    fs.copyFileSync(".pre-commit-config.yaml", path.join(root, ".pre-commit-config.yaml"));
+    writeLocalHookConfig(root);
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.copyFileSync(
       "src/lib/adapters/tsconfig.json",
@@ -119,7 +120,11 @@ it.each([
     const result = spawnSync(
       path.resolve("node_modules/.bin/prek"),
       ["run", "oxlint-type-aware", "--files", file],
-      { cwd: root, encoding: "utf8" },
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, PREK_HOME: path.join(root, ".cache/prek") },
+      },
     );
     expect(result.status, result.stdout + result.stderr).toBe(rule ? 1 : 0);
     expect(fs.readFileSync(path.join(root, file), "utf8") !== source).toBe(fixes ?? false);

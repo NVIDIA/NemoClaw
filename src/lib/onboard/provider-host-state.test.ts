@@ -140,7 +140,7 @@ describe("detectInferenceProviderHostState", () => {
       hostCommandExists: vi.fn((command) => command === "ollama" || command === "docker"),
       findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
       runCapture: vi.fn((command) =>
-        command.join(" ").includes(`http://127.0.0.1:8000/v1/models`) ? "{}" : "",
+        command.join(" ").includes(`http://127.0.0.1:8000/v1/models`) ? '{"data":[]}\n200' : "",
       ),
       dockerCapture,
       detectVllmProfile: vi.fn<DetectInferenceProviderHostStateDeps["detectVllmProfile"]>(() => ({
@@ -170,6 +170,20 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.ollamaHost).toBe("127.0.0.1");
     expect(state.isWindowsHostOllama).toBe(false);
     expect(state.vllmRunning).toBe(true);
+    expect(deps.runCapture).toHaveBeenCalledWith(
+      [
+        "curl",
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        "--write-out",
+        "\\n%{http_code}",
+        "http://127.0.0.1:8000/v1/models",
+      ],
+      { ignoreError: true },
+    );
     expect(state.hasVllmImage).toBe(true);
     expect(state.vllmEntries.map((entry) => entry.key)).toEqual(["vllm"]);
     expect(deps.hostCommandExists).toHaveBeenCalledWith("docker");

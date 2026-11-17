@@ -7,6 +7,13 @@
 const Module = require("node:module");
 const path = require("node:path");
 
+// Onboarding fixtures use synthetic Discord tokens and must not contact Discord.
+const fixtureFetch = global.fetch;
+global.fetch = (url, options) =>
+  String(url) === "https://discord.com/api/v10/users/@me"
+    ? Promise.resolve(Response.json({ id: "1", bot: true }))
+    : fixtureFetch(url, options);
+
 function installForwardAdapterReachabilityFixture(forwardCli, isReachable) {
   const originalCreate = forwardCli.createCliOpenShellForwardAdapter;
   if (typeof originalCreate !== "function") {

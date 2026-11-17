@@ -43,6 +43,8 @@ import type { AgentMcpAdapter } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
+import { NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential.js";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract.js";
 import { shellQuote } from "../runner.js";
 import {
   createTempSshConfig,
@@ -74,7 +76,14 @@ import type {
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
-import { inspectExtractedDcodeSessionsDatabase } from "./snapshot/dcode-session-credential-scan.js";
+import {
+  DCODE_QUICKJS_DIAGNOSTIC,
+  formatDcodeScanDiagnostic,
+  type NativeScanDiagnostic,
+  inspectExtractedDcodeSessionsDatabase,
+  inspectExtractedOpenClawDatabase,
+  normalizeDcodeSessionDiagnostic,
+} from "./snapshot/sqlite-credential-scan.js";
 import { withoutOpenClawSqliteMachineAuthority } from "./snapshot/openclaw-sqlite-sanitizer.js";
 import { nemoclawStateRoot } from "./state-root.js";
 import {
@@ -101,6 +110,10 @@ const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
 // These paths are NemoClaw control-plane state, not native agent state. The
 // target image regenerates config.json and its root-owned blueprint cache. The
 // OpenClaw doctor marker and warm-up sessions are transient lifecycle state.
+// Native doctor/update captures are private rollback snapshots, explicitly
+// excluded by OpenClaw from backups and support exports. They may contain
+// pre-sanitization credentials; preserve the active state through its normal
+// sanitization path instead of exporting these generation-local snapshots.
 // Hermes' PID and lock files identify processes in one sandbox generation;
 // restoring them over the replacement gateway makes a healthy process appear
 // stale to authenticated lifecycle commands.
@@ -108,6 +121,8 @@ const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/config.json'",
   "--exclude='./.nemoclaw/blueprints'",
   "--exclude='./.openclaw/.nemoclaw-post-upgrade-doctor'",
+  "--exclude='./.openclaw.update-captures'",
+  "--exclude='./.openclaw-data.update-captures'",
   "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
   "--exclude='./.openclaw/state/openclaw.sqlite'",
   "--exclude='./.openclaw/state/openclaw.sqlite-journal'",
@@ -1347,7 +1362,7 @@ function nativeStructuredAuthorityKind(
   return null;
 }
 
-const HERMES_OPENROUTER_CONFIG = ".hermes/config.yaml";
+const HERMES_MANAGED_CONFIG = ".hermes/config.yaml";
 const HERMES_OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1";
 const HERMES_OPENROUTER_TEMPLATE = "${OPENROUTER_API_KEY}";
 
@@ -1355,7 +1370,7 @@ const HERMES_OPENROUTER_TEMPLATE = "${OPENROUTER_API_KEY}";
 function stripNativeStructuredCredentials(config: unknown, normalized: string): unknown {
   const sanitized = stripCredentials(config);
   if (
-    normalized !== HERMES_OPENROUTER_CONFIG ||
+    normalized !== HERMES_MANAGED_CONFIG ||
     !isObjectRecord(config) ||
     !isObjectRecord(sanitized)
   ) {
@@ -1365,31 +1380,36 @@ function stripNativeStructuredCredentials(config: unknown, normalized: string): 
   const model = config.model;
   const providers = config.providers;
   const custom = config.custom_providers;
-  const managed = isObjectRecord(providers) ? providers["openrouter-api"] : null;
+  if (!isObjectRecord(upstream)) return sanitized;
+  const provider = upstream.provider;
+  if (provider !== "openrouter-api" && provider !== "nvidia-prod") return sanitized;
+  const endpoint =
+    provider === "nvidia-prod" ? NVIDIA_HOSTED_NATIVE_ENDPOINT : HERMES_OPENROUTER_ENDPOINT;
+  const template =
+    provider === "nvidia-prod" ? NVIDIA_INFERENCE_PLACEHOLDER : HERMES_OPENROUTER_TEMPLATE;
+  const managed = isObjectRecord(providers) ? providers[provider] : null;
   const matches = Array.isArray(custom)
-    ? custom.filter((entry) => isObjectRecord(entry) && entry.name === "openrouter-api")
+    ? custom.filter((entry) => isObjectRecord(entry) && entry.name === provider)
     : [];
   if (
-    !isObjectRecord(upstream) ||
     !isObjectRecord(model) ||
     !isObjectRecord(managed) ||
     !Array.isArray(custom) ||
-    upstream.provider !== "openrouter-api" ||
-    upstream.provider_key !== "openrouter-api" ||
+    upstream.provider_key !== provider ||
     typeof upstream.model !== "string" ||
     !upstream.model ||
     upstream.model !== model.default ||
     model.provider !== "custom" ||
-    model.base_url !== HERMES_OPENROUTER_ENDPOINT ||
-    model.api_key !== HERMES_OPENROUTER_TEMPLATE ||
-    managed.name !== "openrouter-api" ||
-    managed.api !== HERMES_OPENROUTER_ENDPOINT ||
+    model.base_url !== endpoint ||
+    model.api_key !== template ||
+    managed.name !== provider ||
+    managed.api !== endpoint ||
     managed.default_model !== model.default ||
-    managed.api_key !== HERMES_OPENROUTER_TEMPLATE ||
+    managed.api_key !== template ||
     matches.length !== 1 ||
     !isObjectRecord(matches[0]) ||
-    matches[0].base_url !== HERMES_OPENROUTER_ENDPOINT ||
-    matches[0].api_key !== HERMES_OPENROUTER_TEMPLATE
+    matches[0].base_url !== endpoint ||
+    matches[0].api_key !== template
   ) {
     return sanitized;
   }
@@ -1398,9 +1418,7 @@ function stripNativeStructuredCredentials(config: unknown, normalized: string): 
   const sanitizedModel = sanitized.model;
   const sanitizedProviders = sanitized.providers;
   const sanitizedCustom = sanitized.custom_providers;
-  const sanitizedManaged = isObjectRecord(sanitizedProviders)
-    ? sanitizedProviders["openrouter-api"]
-    : null;
+  const sanitizedManaged = isObjectRecord(sanitizedProviders) ? sanitizedProviders[provider] : null;
   const matchIndex = custom.indexOf(matches[0]);
   if (
     isObjectRecord(sanitizedModel) &&
@@ -1408,9 +1426,9 @@ function stripNativeStructuredCredentials(config: unknown, normalized: string): 
     Array.isArray(sanitizedCustom) &&
     isObjectRecord(sanitizedCustom[matchIndex])
   ) {
-    sanitizedModel.api_key = HERMES_OPENROUTER_TEMPLATE;
-    sanitizedManaged.api_key = HERMES_OPENROUTER_TEMPLATE;
-    sanitizedCustom[matchIndex].api_key = HERMES_OPENROUTER_TEMPLATE;
+    sanitizedModel.api_key = template;
+    sanitizedManaged.api_key = template;
+    sanitizedCustom[matchIndex].api_key = template;
   }
   return sanitized;
 }
@@ -1678,6 +1696,11 @@ function dcodeSessionsDatabaseEntryRole(entry: string): DcodeSessionsDatabaseEnt
   return null;
 }
 
+function isOpenClawDatabaseEntry(entry: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  return OPENCLAW_SQLITE_CAPTURE_TARGETS.some(({ archivePath }) => archivePath === normalized);
+}
+
 function isBundledProviderProfileSchema(entry: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
   return /^\.nemoclaw\/blueprints\/[^/]+\/provider-profiles\/[^/]+\.(?:json|ya?ml)$/u.test(
@@ -1716,13 +1739,14 @@ function scanNativeTarFilePayload(
   descriptor: number,
   position: number,
   size: number,
-  opaqueAssignments: boolean,
+  credentialOptions: { opaqueAssignments: boolean; sqlBindParameters: boolean },
   npmConfig: boolean,
   providerProfileSchema: boolean,
   openclawConfig: boolean,
-  hermesOpenRouterConfig: boolean,
+  hermesManagedConfig: boolean,
   privateKeyHeader: boolean,
   dependencyBinary: boolean,
+  dcodeSidecar: boolean,
   deadlineMs: number | undefined,
 ): boolean | null | "deadline" {
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
@@ -1737,7 +1761,17 @@ function scanNativeTarFilePayload(
     if (dependencyBinary && offset === position && chunk.subarray(0, count).includes(0)) {
       return false;
     }
-    const raw = overlap + chunk.subarray(0, count).toString("utf8");
+    let raw = overlap + chunk.subarray(0, count).toString("utf8");
+    if (dcodeSidecar) raw = normalizeDcodeSessionDiagnostic(raw);
+    // Carry normalized diagnostics so an overlap cannot retain only their token assignment.
+    const nextOverlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
+    if (dcodeSidecar && remaining > count) {
+      const diagnosticStart = raw.lastIndexOf("\0");
+      if (diagnosticStart >= 0 && DCODE_QUICKJS_DIAGNOSTIC.startsWith(raw.slice(diagnosticStart))) {
+        // The next chunk completes this possible diagnostic. At EOF, scan incomplete bytes normally.
+        raw = raw.slice(0, diagnosticStart);
+      }
+    }
     if (npmConfig && npmConfigContainsCredentialDirective(raw)) return true;
     // Provider profiles describe whether injected material is secret with a
     // boolean schema field. Mask only that declaration; an opaque string in
@@ -1749,20 +1783,23 @@ function scanNativeTarFilePayload(
         )
       : openclawConfig
         ? raw.replace(/("apiKey"\s*:\s*")\$\{NVIDIA_INFERENCE_API_KEY\}(")/gu, "$1unused$2")
-        : hermesOpenRouterConfig
-          ? // The structured scan admits this literal only in the three
+        : hermesManagedConfig
+          ? // The structured scan admits these literals only in the three
             // validated managed slots; raw scanning still catches other secrets.
-            raw.replaceAll(HERMES_OPENROUTER_TEMPLATE, "unused")
+            raw
+              .replaceAll(HERMES_OPENROUTER_TEMPLATE, "unused")
+              .replaceAll(NVIDIA_INFERENCE_PLACEHOLDER, "unused")
           : raw;
     if (
       textContainsCredential(credentialScanInput, {
-        opaqueAssignments,
+        ...credentialOptions,
         privateKeyHeader,
+        scannedPrefixLength: overlap.length,
       })
     ) {
       return true;
     }
-    overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
+    overlap = nextOverlap;
     offset += count;
     remaining -= count;
   }
@@ -2162,6 +2199,7 @@ function nativeArchiveRawCredentialViolation(
   archivePath: string,
   deadlineMs: number | undefined,
   rawEntries?: string[],
+  reportDiagnostic: (diagnostic: NativeScanDiagnostic) => void = () => {},
 ): NativeArchiveCredentialViolation {
   let descriptor: number | null = null;
   try {
@@ -2176,7 +2214,8 @@ function nativeArchiveRawCredentialViolation(
         // SQLite inspection of the main database does not cover unused sidecar bytes.
         if (
           shouldSkipNativeRawCredentialScan(fileName) ||
-          dcodeSessionsDatabaseRole === "database"
+          dcodeSessionsDatabaseRole === "database" ||
+          isOpenClawDatabaseEntry(entry)
         ) {
           return null;
         }
@@ -2190,24 +2229,30 @@ function nativeArchiveRawCredentialViolation(
             path.posix.normalize(entry.replace(/^\.\//u, "")),
             fileName,
           ) === "openclaw-config";
-        const hermesOpenRouterConfig =
-          path.posix.normalize(entry.replace(/^\.\//u, "")) === HERMES_OPENROUTER_CONFIG;
+        const hermesManagedConfig =
+          path.posix.normalize(entry.replace(/^\.\//u, "")) === HERMES_MANAGED_CONFIG;
         const violation = scanNativeTarFilePayload(
           descriptor!,
           dataOffset,
           size,
-          dcodeSessionsDatabaseRole === "sidecar" ||
-            shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+          {
+            opaqueAssignments:
+              dcodeSessionsDatabaseRole === "sidecar" ||
+              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+            sqlBindParameters: dcodeSessionsDatabaseRole === "sidecar",
+          },
           fileName === ".npmrc",
           providerProfileSchema,
           openclawConfig,
-          hermesOpenRouterConfig,
+          hermesManagedConfig,
           !dependencyTree,
           dependencyTree,
+          dcodeSessionsDatabaseRole === "sidecar",
           deadlineMs,
         );
         if (violation === "deadline") return { entry, deadlineExpired: true };
         if (violation === null) return "native state credential scan";
+        if (violation) reportDiagnostic({ kind: "credential-content" });
         return violation ? entry : null;
       },
       deadlineMs,
@@ -2223,9 +2268,15 @@ function nativeArchiveCredentialViolation(
   archivePath: string,
   entries: readonly string[],
   deadlineMs: number | undefined,
+  reportDiagnostic: (diagnostic: NativeScanDiagnostic) => void = () => {},
 ): NativeArchiveCredentialViolation {
   const rawEntries: string[] = [];
-  const rawViolation = nativeArchiveRawCredentialViolation(archivePath, deadlineMs, rawEntries);
+  const rawViolation = nativeArchiveRawCredentialViolation(
+    archivePath,
+    deadlineMs,
+    rawEntries,
+    reportDiagnostic,
+  );
   if (rawViolation) return rawViolation;
   if (rawEntries.length !== entries.length) return "native state credential scan";
   const candidates: Array<{
@@ -2233,6 +2284,7 @@ function nativeArchiveCredentialViolation(
     fileName: string;
     isDependencyPackage: boolean;
     dcodeSessionsDatabaseRole: DcodeSessionsDatabaseEntryRole;
+    isOpenClawDatabase: boolean;
     isEnv: boolean;
     isLockfile: boolean;
   }> = [];
@@ -2243,21 +2295,23 @@ function nativeArchiveCredentialViolation(
     const segments = path.posix.normalize(entry.replace(/^\.\//u, "")).split("/");
     const isDependencyPackage = fileName === "package.json" && segments.includes("node_modules");
     const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
+    const isOpenClawDatabase = isOpenClawDatabaseEntry(entry);
     const isSensitive = isSensitiveFile(fileName);
     const isOpenClawConfig =
       nativeStructuredAuthorityKind(path.posix.normalize(entry.replace(/^\.\//u, "")), fileName) ===
       "openclaw-config";
-    const isHermesOpenRouterConfig =
-      path.posix.normalize(entry.replace(/^\.\//u, "")) === HERMES_OPENROUTER_CONFIG;
+    const isHermesManagedConfig =
+      path.posix.normalize(entry.replace(/^\.\//u, "")) === HERMES_MANAGED_CONFIG;
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
     if (
       !isLockfile &&
       !isDependencyPackage &&
       dcodeSessionsDatabaseRole === null &&
+      !isOpenClawDatabase &&
       !isEnv &&
       !isSensitive &&
       !isOpenClawConfig &&
-      !isHermesOpenRouterConfig
+      !isHermesManagedConfig
     ) {
       continue;
     }
@@ -2266,6 +2320,7 @@ function nativeArchiveCredentialViolation(
       fileName,
       isDependencyPackage,
       dcodeSessionsDatabaseRole,
+      isOpenClawDatabase,
       isEnv,
       isLockfile,
     });
@@ -2278,6 +2333,7 @@ function nativeArchiveCredentialViolation(
     ({ dcodeSessionsDatabaseRole }) => dcodeSessionsDatabaseRole === "sidecar",
   );
   if (!dcodeSessionsDatabase && orphanedDcodeSessionsDatabaseSidecar) {
+    reportDiagnostic({ kind: "sqlite-inspection", reason: "file-access" });
     return orphanedDcodeSessionsDatabaseSidecar.entry;
   }
 
@@ -2304,7 +2360,8 @@ function nativeArchiveCredentialViolation(
           deadlineExpired: true,
         };
       }
-      throw error;
+      reportDiagnostic({ kind: "extraction" });
+      return candidates[0]?.entry ?? "native state credential scan";
     }
     if ((extracted.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
       return {
@@ -2313,6 +2370,7 @@ function nativeArchiveCredentialViolation(
       };
     }
     if (extracted.status !== 0 || extracted.error || extracted.signal) {
+      reportDiagnostic({ kind: "extraction" });
       return candidates[0]?.entry ?? "native state credential scan";
     }
     for (const candidate of candidates) {
@@ -2321,20 +2379,37 @@ function nativeArchiveCredentialViolation(
         const containsCredential = inspectExtractedDcodeSessionsDatabase(
           scanRoot,
           candidate.entry,
-          (reason) => console.error(`DCode session database inspection failed (${reason}).`),
+          (reason) => reportDiagnostic({ kind: "sqlite-inspection", reason }),
+          (finding) => reportDiagnostic({ kind: "credential-content", finding }),
         );
         if (containsCredential !== false) return candidate.entry;
         continue;
       }
+      if (candidate.isOpenClawDatabase) {
+        const containsCredential = inspectExtractedOpenClawDatabase(
+          scanRoot,
+          candidate.entry,
+          (reason) => {
+            console.error(`OpenClaw database inspection failed (${reason}).`);
+            reportDiagnostic({ kind: "sqlite-inspection", reason });
+          },
+        );
+        if (containsCredential !== false) {
+          if (containsCredential) reportDiagnostic({ kind: "credential-content" });
+          return candidate.entry;
+        }
+        continue;
+      }
       const extractedCandidate = readExtractedNativeCredentialCandidate(scanRoot, candidate.entry);
       if (!extractedCandidate) {
+        reportDiagnostic({ kind: "extraction" });
         return candidate.entry;
       }
       if (extractedCandidate.kind === "oversize") {
         if (
           candidate.isLockfile ||
           candidate.isDependencyPackage ||
-          path.posix.normalize(candidate.entry.replace(/^\.\//u, "")) === HERMES_OPENROUTER_CONFIG
+          path.posix.normalize(candidate.entry.replace(/^\.\//u, "")) === HERMES_MANAGED_CONFIG
         )
           return candidate.entry;
         continue;
@@ -2349,6 +2424,7 @@ function nativeArchiveCredentialViolation(
           !candidate.isEnv &&
           !structuredContentIsCredentialFree(candidate.entry, raw))
       ) {
+        reportDiagnostic({ kind: "credential-content" });
         return candidate.entry;
       }
     }
@@ -2709,6 +2785,7 @@ function capturePreparedNativeState(
           '  rm -f -- "$stage/.nemoclaw/config.json"',
           '  rm -rf -- "$stage/.nemoclaw/blueprints"',
           '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
+          '  rm -rf -- "$stage/.openclaw.update-captures" "$stage/.openclaw-data.update-captures"',
           '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
           '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite"*',
           '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite"*',
@@ -2893,7 +2970,9 @@ function backupNativeSandboxState(
           'ancestors=" $self "',
           "cursor=$PPID",
           'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; { while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$cursor/status" || break; cursor=$parent; [ -n "$cursor" ] || break; done',
-          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
+          // A foreign or vanished final PID is normal; do not let its failed UID
+          // comparison become the function status under set -e.
+          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; return 0; }',
           'stopped=""',
           'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; rm -rf -- "$db_stage"; }',
           "trap resume EXIT HUP INT TERM",
@@ -2993,7 +3072,9 @@ function backupNativeSandboxState(
     if (rawArchiveViolation && typeof rawArchiveViolation !== "string") {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(
-        `Native archive credential scan exceeded the backup deadline at '${rawArchiveViolation.entry}'`,
+        agentName === "langchain-deepagents-code"
+          ? formatDcodeScanDiagnostic(rawArchiveViolation.entry, { kind: "deadline-expiry" })
+          : `Native archive credential scan exceeded the backup deadline at '${rawArchiveViolation.entry}'`,
       );
     }
     if (rawArchiveViolation === "native state sparse archive entry") {
@@ -3048,26 +3129,38 @@ function backupNativeSandboxState(
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive sanitation failed: ${sanitationFailure}`);
     }
+    let scanDiagnostic: NativeScanDiagnostic = { kind: "archive-inspection" };
     const credentialViolation = nativeArchiveCredentialViolation(
       archivePath,
       validation.entries,
       options.deadlineMs,
+      (diagnostic) => {
+        scanDiagnostic = diagnostic;
+      },
     );
     if (credentialViolation) {
       rmSync(backupPath, { recursive: true, force: true });
       if (typeof credentialViolation !== "string") {
         return nativeStateFailure(
-          `Native archive credential scan exceeded the backup deadline at '${credentialViolation.entry}'`,
+          agentName === "langchain-deepagents-code"
+            ? formatDcodeScanDiagnostic(credentialViolation.entry, { kind: "deadline-expiry" })
+            : `Native archive credential scan exceeded the backup deadline at '${credentialViolation.entry}'`,
         );
       }
       return nativeStateFailure(
-        `Rebuild was aborted because the native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
+        agentName === "langchain-deepagents-code"
+          ? formatDcodeScanDiagnostic(credentialViolation, scanDiagnostic)
+          : `Rebuild was aborted because the native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
       );
     }
     if (backupDeadlineExpired(options.deadlineMs)) {
+      const deadlineFailure =
+        agentName === "langchain-deepagents-code"
+          ? formatDcodeScanDiagnostic("native state archive", { kind: "deadline-expiry" })
+          : "Native archive validation exceeded the backup deadline";
       if (!options.deferSanitizationDeadlineCleanup) {
         rmSync(backupPath, { recursive: true, force: true });
-        return nativeStateFailure("Native archive validation exceeded the backup deadline");
+        return nativeStateFailure(deadlineFailure);
       }
       const incompleteManifest: RebuildManifest = {
         version: MANIFEST_VERSION,
@@ -3088,7 +3181,7 @@ function backupNativeSandboxState(
       };
       writeManifest(backupPath, incompleteManifest);
       return {
-        ...nativeStateFailure("Native archive validation exceeded the backup deadline"),
+        ...nativeStateFailure(deadlineFailure),
         manifest: incompleteManifest,
       };
     }
@@ -3433,7 +3526,12 @@ async function restoreNativeSandboxState(
         'tar --no-same-owner -xf - -C "$stage"',
         'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
         'mkdir -p -- "$stage/.nemoclaw" "$stage/.openclaw/agents/main/sessions" "$stage/.hermes/runtime"',
-        'if [ "$keep_dcode_config" = 1 ]; then rm -f -- "$stage/.deepagents/config.toml"; fi',
+        'if [ "$keep_dcode_config" = 1 ]; then',
+        // The archive may contain standalone symlinks. Never remove a file through one.
+        '  if [ -L "$stage/.deepagents" ] || [ -L "$root/.deepagents" ]; then echo "cannot preserve Deep Agents config through a symbolic link" >&2; exit 23; fi',
+        '  mkdir -p -- "$stage/.deepagents"',
+        '  rm -f -- "$stage/.deepagents/config.toml"',
+        "fi",
         'uid="$(id -u)"',
         "preserve_replacement_path() {",
         '  case "$1" in',

@@ -76,20 +76,21 @@ describe("standard E2E execution profile", () => {
     { field: "with", value: { "python-version": "3.14" } },
     { field: "env", value: { UNREVIEWED_INPUT: "present" } },
     { field: "run", value: "python3 --version" },
-  ])("rejects unreviewed Model Router Python $field", ({ field, value }) => {
+  ])("rejects reintroduced Model Router Python $field", ({ field, value }) => {
     const profile = YAML.parse(
       fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
     ) as { jobs: { run: { steps: Array<Record<string, unknown>> } } };
-    const python = profile.jobs.run.steps.find(
-      (step) => step.name === "Set up supported Model Router Python",
-    )!;
-    python[field] = value;
+    const python: Record<string, unknown> = {
+      name: "Set up supported Model Router Python",
+      [field]: value,
+    };
+    profile.jobs.run.steps.push(python);
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-router-python-"));
     const profilePath = path.join(directory, "profile.yaml");
     try {
       fs.writeFileSync(profilePath, YAML.stringify(profile));
       expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
-        "standard E2E profile must provision reviewed Python only for Model Router",
+        "standard E2E profile must keep its reviewed step set and order",
       );
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
@@ -210,15 +211,18 @@ describe("standard E2E execution profile", () => {
 
   it("requires the SDK producer to include an available reviewed transition replacement", () => {
     const workflow = readWorkflow() as {
-      jobs: Record<string, { steps: Array<{ env?: Record<string, string>; name?: string }> }>;
+      jobs: Record<string, { steps: Array<{ run?: string; name?: string }> }>;
     };
     const packageStep = workflow.jobs["package-openshell-sdk"]!.steps.find(
       (step) => step.name === "Download and verify reviewed OpenShell SDK packages",
     )!;
-    delete packageStep.env!.NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT;
+    packageStep.run = packageStep.run!.replace(
+      "packageReviewedOpenShellSdk(output, 'if-present'",
+      "packageReviewedOpenShellSdk(output, 'exclude'",
+    );
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
-      "catalogue SDK packaging must include an available reviewed transition replacement",
+      "catalogue SDK packaging must admit candidate identities and retain reviewed main and exact-base packages",
     );
   });
 

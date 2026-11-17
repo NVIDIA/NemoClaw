@@ -94,14 +94,16 @@ fn check(args: &[String]) -> Result<(), &'static str> {
         }
         let comments = args[2..]
             .iter()
-            .map(|path| fs::read_to_string(path).map_err(|_| "cannot read PR-author comment file"))
+            .map(|path| fs::read_to_string(path).map_err(|_| "cannot read report comment file"))
             .collect::<Result<Vec<_>, _>>()?;
         let mut openings = comments.iter().filter(|body| body.contains(OPENING));
         let opening = openings
             .next()
-            .ok_or("PR author must post an opening report comment")?;
+            .ok_or("PR author or repository maintainer must post an opening report comment")?;
         if openings.next().is_some() {
-            return Err("PR author must have exactly one opening report comment");
+            return Err(
+                "PR must have exactly one opening report from its author or a repository maintainer",
+            );
         }
         return validate(opening);
     }

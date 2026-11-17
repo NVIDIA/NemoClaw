@@ -210,7 +210,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
 describe.skipIf(process.platform === "win32")(
   "Hermes restored native credential transaction",
   () => {
-    it.each(["local", "nvidia"])(
+    it.each(["local", "nvidia", "nvidia-stripped"])(
       "bounds restored %s adoption and preserves denials and recovery fences",
       (provider) => {
         const result = spawnSync(
@@ -232,7 +232,8 @@ class GatewayConfig:
 sys.modules['gateway.config']=types.SimpleNamespace(GatewayConfig=GatewayConfig)
 # Model an admitted managed nonroot topology; do not alter any hash/digest/path/race predicates.
 guard._managed_nonroot_reconciliation_is_allowed=lambda:True
-nvidia = sys.argv[2] == 'nvidia'
+nvidia = sys.argv[2].startswith('nvidia')
+stripped = sys.argv[2] == 'nvidia-stripped'
 
 
 def sha(b):return hashlib.sha256(b).hexdigest()
@@ -247,7 +248,7 @@ def run(case):
   def body(ref):
    data=local_body(ref)
    return data.replace(b'compatible-endpoint',b'nvidia-prod').replace(b'http://host.openshell.internal:8000/v1',b'https://integrate.api.nvidia.com/v1').replace(b'NEMOCLAW_LOCAL_INFERENCE_TOKEN',b'NVIDIA_INFERENCE_API_KEY') if nvidia else data
-  old=body('openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN');fresh=body('openshell:resolve:env:v8_NEMOCLAW_LOCAL_INFERENCE_TOKEN')
+  old=body('[STRIPPED_BY_MIGRATION]' if stripped else 'openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN');fresh=body('openshell:resolve:env:v8_NEMOCLAW_LOCAL_INFERENCE_TOKEN')
   oldenv=b'SAFE_SETTING=trusted\nAPI_SERVER_KEY='+b'a'*64+b'\n';freshenv=b'SAFE_SETTING=trusted\nAPI_SERVER_KEY='+b'b'*64+b'\n'
   config.write_bytes(old);env.write_bytes(oldenv);os.chmod(config,0o640);os.chmod(env,0o600)
   oldhash=guard._hash_text(str(config),str(env))[0]

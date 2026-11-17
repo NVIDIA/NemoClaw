@@ -10,6 +10,16 @@ References use stable symbols and modules rather than line numbers.
 
 Related guides: [`README.md`](README.md) describes package placement, [`machine/README.md`](machine/README.md) describes the FSM, and [`../messaging/AGENTS.md`](../messaging/AGENTS.md) describes manifest-first messaging.
 
+## Native Model Router resume
+
+Ready OpenClaw Model Router reuse restores the recorded native provider attachment through
+`ensureNativeLocalProviderAttached` before recording sandbox success. The sandbox handler holds
+its existing sandbox and gateway mutation locks, requires matching endpoint and provider authority,
+and revalidates the registered live sandbox identity before provider commands and completion.
+A changed profile, provider identity, sandbox identity, or attachment receipt stops resume.
+An already-attached provider is verified without another attach command. Fresh creation retains
+its post-create attachment owner. `sandbox-native-router-resume.test.ts` covers this recovery seam.
+
 ## Shared vocabulary
 
 | Term | Contract | Current artifact |

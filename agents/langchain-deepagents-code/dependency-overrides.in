@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The managed build verifies and records these exact metadata substitutions.
+# Preserve the reviewed FileLock compatibility override for Deep Agents Code 0.1.87.
+filelock==4.2.1
+# Fix the image parser advisories reported against the transitive 12.2.0 pin.
+pillow==13.0.0

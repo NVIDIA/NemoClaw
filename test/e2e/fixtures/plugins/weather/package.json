@@ -40,7 +40,9 @@
   },
   "overrides": {
     "openclaw": {
-      "fast-uri": "3.1.7"
-    }
+      "fast-uri": "3.1.9"
+    },
+    "proxy-addr": "2.0.8",
+    "undici@>=8.0.0 <8.12.2": "8.12.2"
   }
 }

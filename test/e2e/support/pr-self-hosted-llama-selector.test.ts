@@ -347,6 +347,16 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     },
   );
 
+  it.for(["test/e2e/live/gpu-e2e-helpers.ts", "test/e2e/live/gpu-e2e-ollama.ts"])(
+    "selects the generic GPU E2E when only shared helper %s changes",
+    async (changedFile, { expect }) => {
+      const result = await selectGenericGpuLane([changedFile]);
+      expect(result).toBe(
+        `base_sha=${BASE_SHA}\nhead_sha=${CANDIDATE_SHA}\npr_number=8748\nselected=true`,
+      );
+    },
+  );
+
   it.for(SHARED_ADMIN_APPROVAL_PATHS)(
     "selects the generic GPU E2E when shared admin approval owner %s changes",
     async (changedFile, { expect }) => {

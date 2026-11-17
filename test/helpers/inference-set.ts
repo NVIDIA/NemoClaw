@@ -495,6 +495,12 @@ export function createDeps(options: {
     );
   return {
     requireNativeProviderPolicy: async () => {},
+    sandboxPolicyReader: {
+      readSandboxPolicy: async () => ({
+        ok: true,
+        value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: 1 },
+      }),
+    },
     readNativeLocalCredentialHandle: vi.fn(
       async () => "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
     ),

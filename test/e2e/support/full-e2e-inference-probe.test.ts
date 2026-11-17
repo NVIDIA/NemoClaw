@@ -200,6 +200,7 @@ describe("full E2E sandbox inference probe", () => {
         const [, ...args] = buildSandboxInferenceChatCommand("{}", "nvidia-prod");
         const denied = spawnSync("/bin/bash", args, {
           env: {
+            HOME: directory,
             PATH: `${directory}:/usr/bin:/bin`,
             NVIDIA_INFERENCE_API_KEY: invalid,
             CURL_MARKER: marker,

@@ -22,14 +22,14 @@ permissions:
 
 jobs:
   codeql:
-    name: CodeQL (${{ matrix.language }})
+    # Keep Python independent and preserve its original analysis identity.
+    name: CodeQL (python)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        language: [javascript-typescript, python]
-
+        language: [python]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,6 +44,132 @@ jobs:
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+
+  codeql-javascript-report:
+    name: CodeQL JS combined report
+    needs: [codeql-javascript]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require complete JavaScript query evidence
+        env:
+          PARTITION_RESULT: ${{ needs.codeql-javascript.result }}
+        run: test "$PARTITION_RESULT" = success
+
+      - name: Download first JavaScript query report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codeql-javascript-sarif-${{ github.run_id }}-a-m
+          path: codeql-sarif/a-m
+          digest-mismatch: error
+
+      - name: Download complementary JavaScript query report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codeql-javascript-sarif-${{ github.run_id }}-other
+          path: codeql-sarif/other
+          digest-mismatch: error
+
+      - name: Prepare complete JavaScript report identity
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          category = ".github/workflows/code-scanning.yaml:codeql/language:javascript-typescript/"
+          reports = []
+          for partition in ("a-m", "other"):
+              source = Path("codeql-sarif") / partition / "javascript.sarif"
+              report = json.loads(source.read_text())
+              assert report["version"] == "2.1.0" and len(report["runs"]) == 1
+              run = report["runs"][0]
+              assert run["tool"]["driver"]["name"] == "CodeQL"
+              assert run["automationDetails"]["id"] == f"/language:javascript-typescript/partition:{partition}/"
+              run["automationDetails"]["id"] = category
+              reports.append((source, report))
+          # Validate both reports before changing either downloaded copy.
+          for source, report in reports:
+              source.write_text(json.dumps(report))
+          PY
+
+      - name: Publish complete JavaScript report in the former category
+        # The pinned action supports an explicit key for non-standard publishers.
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/code-scanning.yaml:codeql
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        with:
+          sarif_file: codeql-sarif
+          category: .github/workflows/code-scanning.yaml:codeql/language:javascript-typescript
+          matrix: '{"language":"javascript-typescript"}'
+
+  # The complete security-and-quality suite is partitioned by one predicate and
+  # its complement. Both jobs still extract the complete source tree; neither
+  # query coverage nor the existing 15-minute job deadline is reduced.
+  codeql-javascript:
+    name: CodeQL JS partition (${{ matrix.partition }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - partition: a-m
+            config: >-
+              {"query-filters":[{"include":{"id":"/^js\\/[a-m]/"}}]}
+          - partition: other
+            config: >-
+              {"query-filters":[{"exclude":{"id":"/^js\\/[a-m]/"}}]}
+    env:
+      QUERY_SUITE: security-and-quality
+      QUERY_LANGUAGE: javascript-typescript
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        with:
+          languages: ${{ env.QUERY_LANGUAGE }}
+          queries: ${{ env.QUERY_SUITE }}
+          config: ${{ matrix.config }}
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        with:
+          # Retain each partition locally; publish only the complete report.
+          upload: false
+          category: /language:javascript-typescript/partition:${{ matrix.partition }}
+        id: analyze
+      - name: Retain JavaScript query report for complete publication
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # A failed-job rerun retains successful partitions from the prior attempt.
+          name: codeql-javascript-sarif-${{ github.run_id }}-${{ matrix.partition }}
+          overwrite: true
+          path: ${{ steps.analyze.outputs.sarif-output }}/javascript.sarif
+          if-no-files-found: error
+          retention-days: 1
+
+  codeql-javascript-complete:
+    # Keep the existing check name. A partial suite can never satisfy it.
+    name: CodeQL (javascript-typescript)
+    needs: [codeql-javascript, codeql-javascript-report]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Require every query partition to succeed
+        env:
+          PARTITION_RESULT: ${{ needs.codeql-javascript.result }}
+          REPORT_RESULT: ${{ needs.codeql-javascript-report.result }}
+        run: test "$PARTITION_RESULT" = success && test "$REPORT_RESULT" = success
 
   shellcheck:
     name: ShellCheck SARIF

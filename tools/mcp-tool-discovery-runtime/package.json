@@ -23,7 +23,7 @@
   "overrides": {
     "@hono/node-server": "2.0.12",
     "body-parser": "2.4.0",
-    "fast-uri": "3.1.7",
+    "fast-uri": "3.1.9",
     "hono": "4.12.34",
     "ip-address": "10.3.1",
     "proxy-addr": "2.0.8",

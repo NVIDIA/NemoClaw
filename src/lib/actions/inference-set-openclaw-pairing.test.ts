@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { OpenClawPairingQualificationError } from "./sandbox/launch-readiness/openclaw-pairing-qualification";
 
 import {
   completeInferencePostCommit,
@@ -123,6 +124,23 @@ describe("settleInferenceSetOpenClawPairing", () => {
       ok: false,
       failureLayer: "approval-rejected",
     });
+  });
+
+  it("retains the safe observation failure code without publishing another request", () => {
+    const failure = new OpenClawPairingQualificationError("client-auth");
+    failure.message = "token=do-not-report";
+    const deps = pairingDeps({
+      observePairing: () => {
+        throw failure;
+      },
+    });
+
+    expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
+      ok: false,
+      failureLayer: "initial-state-unavailable:client-auth",
+    });
+    expect(deps.publishScopeRequest).not.toHaveBeenCalled();
+    expect(deps.approveScopeRequest).not.toHaveBeenCalled();
   });
 
   it("rejects approved scope state that does not settle (#9527)", () => {

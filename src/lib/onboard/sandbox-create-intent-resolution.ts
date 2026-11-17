@@ -33,6 +33,7 @@ export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   nativeHostedProviderAttachment?: NativeProviderAttachment;
+  hermesSwitchyard?: import("../hermes-switchyard-routing").SwitchyardBindingState;
   hostLocalInferenceRouteOnly?: boolean;
   enabledChannels: readonly string[] | null;
   webSearchConfig: WebSearchConfig | null;
@@ -154,6 +155,7 @@ export function createSandboxCreateIntentResolver<
       nativeLocalProviderAttachment: input.nativeLocalProviderAttachment,
       nativeNvidiaProviderAttachment: input.nativeNvidiaProviderAttachment,
       nativeHostedProviderAttachment: input.nativeHostedProviderAttachment,
+      hermesSwitchyard: input.hermesSwitchyard,
       hostLocalInferenceRouteOnly: input.hostLocalInferenceRouteOnly === true,
       channels: deps.channels,
       enabledChannels: resolveSelectedChannels(input),

@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeAgent } from "../../../test/helpers/base-image-test-harness";
+import { createDeepAgentsCodeBaseImageResolutionOptions } from "../agent/deep-agents-code-base-image";
 
 const dockerMocks = vi.hoisted(() => ({
   infoFormat: vi.fn(),
@@ -91,18 +93,26 @@ describe("sandbox base-image resolution key", () => {
     expect(createSandboxBaseImageResolutionKey(options(root))).not.toBe(before);
   });
 
-  it("changes when an agent-specific dependency lock changes (#6456)", () => {
-    const root = fixture();
-    const lockfile = path.join(root, "agents", "langchain-deepagents-code", "requirements.lock");
-    fs.mkdirSync(path.dirname(lockfile), { recursive: true });
-    fs.writeFileSync(lockfile, "deepagents-code==0.1.55\n");
-    const keyedOptions = { ...options(root), inputPaths: [lockfile] };
-    const before = createSandboxBaseImageResolutionKey(keyedOptions);
+  it.each(["requirements.lock", "dependency-overrides.in", "patch-dependency-compatibility.py"])(
+    "changes when the DCode dependency input %s changes (#6456)",
+    (inputName) => {
+      const root = fixture();
+      const agentRoot = path.join(root, "agents", "langchain-deepagents-code");
+      fs.mkdirSync(agentRoot, { recursive: true });
+      const inputPath = path.join(agentRoot, inputName);
+      fs.writeFileSync(inputPath, "original dependency input\n");
+      const resolution = createDeepAgentsCodeBaseImageResolutionOptions(
+        makeAgent({ name: "langchain-deepagents-code", expectedVersion: "9.8.7" }),
+        path.join(agentRoot, "Dockerfile.base"),
+      );
+      const keyedOptions = { ...options(root), ...resolution };
+      const before = createSandboxBaseImageResolutionKey(keyedOptions);
 
-    fs.writeFileSync(lockfile, "deepagents-code==0.1.55\ntransitive-dependency==2.0.0\n");
+      fs.writeFileSync(inputPath, "changed dependency input\n");
 
-    expect(createSandboxBaseImageResolutionKey(keyedOptions)).not.toBe(before);
-  });
+      expect(createSandboxBaseImageResolutionKey(keyedOptions)).not.toBe(before);
+    },
+  );
 
   it("isolates explicit base-image overrides (#4680)", () => {
     const root = fixture();

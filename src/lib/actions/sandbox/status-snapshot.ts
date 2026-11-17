@@ -37,7 +37,11 @@ import {
   type DcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  GATEWAY_PORT,
+  resolveGatewayName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding/identity";
 import { redact } from "../../security/redact";
 import * as registry from "../../state/registry";
 import {
@@ -288,6 +292,12 @@ export function resolveSandboxStatusDcodeAutoApprovalMode(
   return normalizeDcodeAutoApprovalMode(sandbox.dcodeAutoApprovalMode);
 }
 
+export function resolveSandboxStatusSessionGatewayName(sandbox: registry.SandboxEntry): string {
+  return sandbox.gatewayName != null || sandbox.gatewayPort != null
+    ? resolveSandboxGatewayName(sandbox)
+    : resolveGatewayName(GATEWAY_PORT);
+}
+
 export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatusAgentInfo {
   let agentDisplayName = agentName === "openclaw" ? "OpenClaw" : agentName;
   let agentRuntime: SandboxStatusAgentInfo["agentRuntime"] = "gateway";
@@ -443,9 +453,7 @@ async function refreshPreflightAfterDockerRecovery(
 
 function reportInferenceProbeError(error: unknown, writer: (message: string) => void): void {
   const detail = sanitizedStatusDetail(error);
-  writer(
-    `  Warning: the authoritative inference.local probe could not run: ${detail || "unknown error"}`,
-  );
+  writer(`  Warning: the sandbox inference probe could not run: ${detail || "unknown error"}`);
 }
 
 function reportInferenceProbeRetry(

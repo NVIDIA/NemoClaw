@@ -10,6 +10,7 @@ import {
   assertNoOpenShellGatewayEndpointOverride,
   scopeGatewayOpenshellArgs,
 } from "./gateway-scope";
+import { OperatorRefusalError } from "../../domain/operator-refusal";
 import { captureSanitizedResolvedOpenshellAsync } from "./sanitized-capture";
 
 type PolicyCommandResult = {
@@ -115,15 +116,13 @@ export async function requireNativeProviderPolicy(
     Array.isArray(settings) ||
     (settings as Record<string, unknown>).providers_v2_enabled !== "true"
   ) {
-    throw new Error(
-      // Keep each line short: onboard bounds every displayed diagnostic line.
-      [
-        `Native local inference requires providers_v2_enabled=true on gateway '${gatewayName}'.`,
-        "NemoClaw does not activate it on existing gateways. Ask its administrator to review attached providers and enable composition with:",
-        `  openshell settings set -g ${gatewayName} --global --key providers_v2_enabled --value true --yes`,
-        "Then retry.",
-      ].join("\n"),
-    );
+    // Keep each line short: onboard bounds every displayed diagnostic line.
+    throw new OperatorRefusalError([
+      `Native local inference requires providers_v2_enabled=true on gateway '${gatewayName}'.`,
+      "NemoClaw does not activate it on existing gateways. Ask its administrator to review attached providers and enable composition with:",
+      `  openshell settings set -g ${gatewayName} --global --key providers_v2_enabled --value true --yes`,
+      "Then retry.",
+    ]);
   }
   await requireSandboxPolicyAuthority(run);
 }

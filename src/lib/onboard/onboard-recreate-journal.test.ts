@@ -23,6 +23,12 @@ import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import {
+  createHermesSwitchyardRoutingIntent,
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+} from "../hermes-switchyard-routing";
+import { hermesSwitchyardRoutingCreateIntentFields } from "./sandbox-reuse";
+import {
   fingerprintOnboardRecreateTargetIntent,
   type OnboardRecreateTargetIntent,
   openOnboardRecreateJournal,
@@ -161,11 +167,56 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
   function open(intent: OnboardRecreateTargetIntent = BASE_INTENT, target = NON_DEFAULT_TARGET) {
     return openOnboardRecreateJournal({
       target,
-      agentName: "openclaw",
+      agentName: intent.agent ?? "openclaw",
       intent,
       note: vi.fn(),
     });
   }
+
+  it("rejects changed routing after a Hermes replacement was accepted (#13862)", () => {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "efficient-model" },
+      capable: { provider: "openai-api", model: "capable-model" },
+    });
+    const intent = {
+      ...BASE_INTENT,
+      agent: "hermes",
+      ...hermesSwitchyardRoutingCreateIntentFields("hermes", {
+        [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+      }),
+    };
+    const first = open(intent);
+    first.advance("deleting");
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+    first.confirmDeleted();
+    first.advance("creating");
+    mocks.captureOpenshell.mockReturnValue(replacementProbe());
+    first.recordCreated({ state: "ready", liveIdentityFingerprint: REPLACEMENT_FINGERPRINT });
+    first.advance("registry_committing");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "hermes",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      ...first.registrationFields,
+    } as registry.SandboxEntry);
+    session = JSON.parse(JSON.stringify(session));
+    const saved = structuredClone(session);
+    expect(open(intent).acceptedTarget).toBe(true);
+    expect(() => open({ ...BASE_INTENT, agent: "hermes" })).toThrow(
+      "different recreate transaction",
+    );
+    expect(() =>
+      open({
+        ...intent,
+        switchyardRouting: createHermesSwitchyardRoutingIntent({
+          efficient: { provider: "nvidia-prod", model: "changed-efficient-model" },
+          capable: { provider: "openai-api", model: "capable-model" },
+        }),
+      }),
+    ).toThrow("different recreate transaction");
+    expect(session.checkpoint?.sandboxRecreate).toEqual(saved.checkpoint?.sandboxRecreate);
+  });
 
   it("retains explicit OpenClaw selection reconciliation when resuming its journal (#12667)", () => {
     openOnboardRecreateJournal({

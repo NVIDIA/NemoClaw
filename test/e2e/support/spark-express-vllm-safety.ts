@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { networkInterfaces } from "node:os";
+
 import type { CommandExitResult } from "../fixtures/clients/command.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 
@@ -26,6 +28,32 @@ export function assertLocalDockerEnvironment(env: NodeJS.ProcessEnv): void {
       `DGX Spark qualification requires the default local Docker context; got DOCKER_CONTEXT=${context}`,
     );
   }
+}
+
+export function vllmPublicationProbeUrls(
+  bridgeHost: string,
+  interfaces = networkInterfaces(),
+): { allowed: string[]; denied: string[]; ipv6: "configured" | "unconfigured" } {
+  const allowedHosts = new Set(["127.0.0.1", bridgeHost]);
+  const addresses = Object.entries(interfaces).flatMap(([name, entries]) =>
+    (entries ?? []).map((entry) => ({ ...entry, name })),
+  );
+  const unintended = addresses.filter(({ address }) => !allowedHosts.has(address));
+  if (!unintended.some(({ family, internal }) => family === "IPv4" && !internal)) {
+    throw new Error("vLLM publication proof requires an unintended non-loopback IPv4 address.");
+  }
+  const denied = unintended.map((entry) => {
+    const host =
+      entry.family === "IPv6"
+        ? `[${entry.address}${entry.scopeid ? `%25${encodeURIComponent(entry.name)}` : ""}]`
+        : entry.address;
+    return `http://${host}:8000/health`;
+  });
+  return {
+    allowed: [...allowedHosts].map((host) => `http://${host}:8000/health`),
+    denied: [...new Set(denied)],
+    ipv6: addresses.some(({ family }) => family === "IPv6") ? "configured" : "unconfigured",
+  };
 }
 
 export function classifyDockerContainerInspection(result: CommandExitResult): "absent" | "present" {

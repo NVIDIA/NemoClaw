@@ -120,6 +120,11 @@ export const CHECKS: readonly CheckCommand[] = [
       /^\.github\/(?:workflows\/codebase-growth-guardrails\.yaml|actions\/ci-static-checks\/action\.yaml)$/,
     args: ["scripts/checks/growth-guardrails-workflow-boundary.mts"],
   },
+  {
+    name: "managed-image-discord-workflow-boundary",
+    inputs: /^\.github\/workflows\/managed-images\.yaml$/,
+    args: ["scripts/checks/managed-image-discord-workflow-boundary.mts"],
+  },
 ];
 
 type RunChecksOptions = {

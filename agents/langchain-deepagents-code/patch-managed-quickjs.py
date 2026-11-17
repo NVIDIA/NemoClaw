@@ -8,7 +8,7 @@ import importlib.metadata
 import importlib.util
 from pathlib import Path
 
-EXPECTED_QUICKJS_RS_VERSION = "0.2.5"
+EXPECTED_QUICKJS_RS_VERSION = "0.2.6"
 PATCH_MARKER = "# NemoClaw-managed OpenShell memfd compatibility."
 ENGINE_MARKER = "                _SHARED_ENGINE = wasmtime.Engine()\n"
 ENGINE_PATCH = f"""                {PATCH_MARKER}
@@ -29,14 +29,14 @@ def _package_root() -> Path:
 
 
 def patch_wasmtime_engine(source: str) -> str:
-    """Return the exact quickjs-rs 0.2.5 engine source with CoW disabled."""
+    """Return the exact quickjs-rs 0.2.6 engine source with CoW disabled."""
     if PATCH_MARKER in source:
         if source.count(ENGINE_PATCH) != 1 or ENGINE_MARKER in source:
             raise RuntimeError("Installed quickjs-rs Wasmtime patch is inconsistent")
         return source
     if source.count(ENGINE_MARKER) != 1:
         raise RuntimeError(
-            "Expected one quickjs-rs 0.2.5 default Wasmtime engine constructor"
+            "Expected one quickjs-rs 0.2.6 default Wasmtime engine constructor"
         )
     patched = source.replace(ENGINE_MARKER, ENGINE_PATCH)
     compile(patched, "quickjs_rs/_wasmtime.py", "exec")
