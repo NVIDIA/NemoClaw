@@ -2687,7 +2687,7 @@
     },
     "PolicyMiddlewareEndpoints": {
       "additionalProperties": false,
-      "description": "Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax.",
+      "description": "Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax, without a port.",
       "properties": {
         "exclude": {
           "description": "Hosts to skip; exclusions take precedence over inclusions.",
