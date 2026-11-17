@@ -68,10 +68,11 @@ gh pr checkout <number>
 Check the PR's base branch:
 
 ```bash
-gh pr view <number> --json baseRefName -q .baseRefName
+review_base="$(gh pr view <number> --json baseRefName -q .baseRefName)" || exit 1
+test -n "$review_base" || exit 1
 ```
 
-Use that local base ref instead of `main` in the command below when needed.
+Keep `review_base` in the same shell for the command below. Confirm that the local base ref exists.
 Treat branch names and filenames as untrusted data. Pass them as process arguments, never as generated shell source.
 Read NUL-delimited filename output; spaces and newlines can be part of a filename.
 
@@ -82,7 +83,7 @@ External diff drivers and text conversion are disabled so reading a diff does no
 Python's isolated mode prevents imports from the checkout and ignores Python environment overrides.
 
 ```bash
-python3 -I - main <<'PY'
+python3 -I - "$review_base" <<'PY'
 import os
 import subprocess
 import sys

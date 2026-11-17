@@ -8,9 +8,15 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
-it.each(["[x].txt", "a;touch marker;#", "quote'\"\n$(touch marker)", "-option"])(
-  "reviews %s literally without executing shell or diff helpers",
-  (name) => {
+it.each([
+  ["[x].txt", "main", "unrelated"],
+  ["a;touch marker;#", "main", "unrelated"],
+  ["quote'\"\n$(touch marker)", "main", "unrelated"],
+  ["-option", "main", "unrelated"],
+  ["release.txt", "release/security", "main"],
+])(
+  "reviews %s against %s without executing shell or diff helpers",
+  (name, base, unrelatedBranch) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-review-paths-"));
     onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
     const env = {
@@ -26,7 +32,7 @@ it.each(["[x].txt", "a;touch marker;#", "quote'\"\n$(touch marker)", "-option"])
     };
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: root, env, encoding: "utf8" });
-    git("init", "-b", "main");
+    git("init", "-b", base);
     fs.writeFileSync(path.join(root, "old.txt"), "target-content\n");
     git("add", "--all");
     git("-c", "core.hooksPath=/dev/null", "commit", "-m", "base");
@@ -35,6 +41,8 @@ it.each(["[x].txt", "a;touch marker;#", "quote'\"\n$(touch marker)", "-option"])
     fs.writeFileSync(path.join(root, "x.txt"), "sibling-content\n");
     git("add", "--all");
     git("-c", "core.hooksPath=/dev/null", "commit", "-m", "fixtures");
+    // Selecting the unrelated branch must omit the candidate change.
+    git("branch", "-f", unrelatedBranch, "HEAD");
     git("config", "diff.external", "touch external-marker");
     fs.writeFileSync(path.join(root, ".gitattributes"), "*.txt diff=fixture\n");
     git("config", "diff.fixture.textconv", "touch textconv-marker");
@@ -50,13 +58,11 @@ it.each(["[x].txt", "a;touch marker;#", "quote'\"\n$(touch marker)", "-option"])
       ),
       "utf8",
     );
-    const procedure = /python3 (-I )?- main <<'PY'\n([\s\S]*?)\nPY/.exec(skill);
+    const procedure = /python3 -I - "\$review_base" <<'PY'\n[\s\S]*?\nPY/.exec(skill);
     assert.ok(procedure, "Security review procedure not found");
-    const pythonArgs = [...(procedure[1]?.trim().split(" ") ?? []), "-", "main"];
-    const output = execFileSync("python3", pythonArgs, {
+    const output = execFileSync("bash", ["-c", procedure[0]], {
       cwd: root,
-      env,
-      input: procedure[2],
+      env: { ...env, review_base: base },
       encoding: "utf8",
     });
     expect(output.split("+target-content\n")).toHaveLength(2);
