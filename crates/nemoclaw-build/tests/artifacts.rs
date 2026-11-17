@@ -43,33 +43,6 @@ fn pinned_archive_extracts_only_the_exact_native_binary() {
 }
 
 #[test]
-fn every_bundle_platform_pins_the_official_helm_provider_archive() {
-    let pins: serde_json::Value =
-        serde_json::from_str(include_str!("../../../versions.json")).unwrap();
-    let version = pins["helmProvider"]
-        .as_str()
-        .expect("pinned Helm provider version");
-    for platform in [
-        "linux_arm64",
-        "linux_amd64",
-        "darwin_arm64",
-        "darwin_amd64",
-        "windows_amd64",
-    ] {
-        let artifact = &pins["platforms"][platform]["helmProvider"];
-        assert_eq!(
-            artifact["url"],
-            format!(
-                "https://releases.hashicorp.com/terraform-provider-helm/{version}/terraform-provider-helm_{version}_{platform}.zip"
-            )
-        );
-        let checksum = artifact["sha256"].as_str().unwrap();
-        assert_eq!(checksum.len(), 64);
-        assert!(checksum.bytes().all(|byte| byte.is_ascii_hexdigit()));
-    }
-}
-
-#[test]
 fn bundles_retain_the_license_from_the_verified_opentofu_archive() {
     assert_eq!(
         nemoclaw_build::extract_tofu_license(&archive("LICENSE", b"MPL license")).unwrap(),

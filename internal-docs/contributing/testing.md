@@ -520,7 +520,7 @@ A denied license or source requires reviewing the dependency and policy; do not 
 
 ## Image Source Checks
 
-Use the [agent image build prerequisites](../../docs/build-deploy/build.md#build-agent-images); the target-selection test needs Docker Buildx but no host Python.
+Use the [agent image build prerequisites](../../docs/build-deploy/build.md#build-agent-images); the Bake tests need Docker Buildx but no host Python.
 For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
@@ -530,7 +530,7 @@ AGENT_PLATFORM=linux/arm64 docker buildx bake --check dummy agents ollama-proxy
 AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
-The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
+The first command checks, without a Docker daemon or prebuilt source tree, that Bake defaults to the host platform and rejects others, and that Dockerfiles copy remote files only from pinned sources.
 `cargo images fetch` places the remote files that `versions.json` pins under `imageSources` in `.build/image-sources`, where Bake reads them, even to check the Dockerfiles.
 Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, reference-backend tests without Fabric, and generic runtime behavior tests against Fabric's installed fixture adapter.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
