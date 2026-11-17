@@ -159,6 +159,10 @@ fn export_to_github(tools: &Tools<'_>) -> Result<()> {
 }
 
 /// Run one step with the pinned tools, without inheriting stdin.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each option applies to a different step"
+)]
 fn run_step(
     tools: &Tools<'_>,
     platform: &str,
@@ -167,6 +171,7 @@ fn run_step(
     archive_file: Option<&Path>,
     images: live_images::Source<'_>,
     hcl_cases: Option<&[String]>,
+    executables: Option<&[&str]>,
 ) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
@@ -210,6 +215,11 @@ fn run_step(
         Step::LiveImages => return live_images::build(platform),
         Step::LiveKind => unreachable!("live-kind runs asynchronously"),
         Step::Schema | Step::Bundle => {
+            if let (Step::Bundle, Some(executables)) = (step, executables) {
+                // One part of a bundle, which CI compiles on its own runner;
+                // the job that assembles the bundle brings the build tool.
+                return build(executables, target(platform)?, &configure);
+            }
             if step == Step::Bundle {
                 // CI builds the bundle in its own job, without the build step.
                 let mut build = cargo();
@@ -512,6 +522,7 @@ pub(super) async fn run_steps(
     archive_file: Option<&Path>,
     live: LiveInputs<'_>,
     plan: Option<&nemoclaw_build::changes::Plan>,
+    executables: Option<&[&str]>,
 ) -> Result<()> {
     let hcl_cases = live.hcl_cases;
     let images = match (live.images, live.images_commit) {
@@ -577,6 +588,7 @@ pub(super) async fn run_steps(
                     archive_file,
                     images,
                     hcl_cases,
+                    executables,
                 ),
                 Err(error) => Err(error),
             }
@@ -589,6 +601,7 @@ pub(super) async fn run_steps(
                 archive_file,
                 images,
                 None,
+                executables,
             )
         };
         let elapsed = begun.elapsed().as_secs();

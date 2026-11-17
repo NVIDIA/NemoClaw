@@ -311,7 +311,7 @@ They fail when a step that writes a JUnit report has no budget, a provider's con
 The bundle's Rust compilation uses `cargo build --locked --release --target TARGET --timings` for the CLI and three providers.
 Neither command changes the package graph or features for measurement.
 
-In `CI / Bundle`, download `build-workspace-PLATFORM-ATTEMPT` or `build-bundle-PLATFORM-ATTEMPT` from the workflow run's artifacts and open `cargo-timing.html` in a browser.
+In `CI / Bundle`, download `build-workspace-PLATFORM-ATTEMPT` or `build-bundle-PLATFORM-ATTEMPT` from the workflow run's artifacts and open `cargo-timing.html` in a browser; Windows uploads one `build-bundle-windows_amd64-PART-ATTEMPT` per bundle part instead.
 CI retains these artifacts for 14 days, including any reports Cargo writes before a build fails.
 Each job clears cached timing reports before building, so an early failure cannot upload an older build's report.
 The jobs upload separately, before later commands can replace a report; timestamped HTML copies are retained too.
@@ -392,7 +392,7 @@ The other jobs run on Ubuntu 24.04: executables built against an older glibc run
 Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners, whose job names start with their test layer:
 
 1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables. On Linux, it runs `docker buildx version` before the tests, so the Bake tests' first Docker call doesn't spend their time limit reading the Docker CLI and Buildx from disk.
-2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
+2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time. On Windows, where one runner compiles the bundle slower than the unit job runs, three `Build bundle` jobs for the CLI, the NemoClaw providers, and the OpenShell and Fabric providers instead compile their release executables in parallel with `cargo ci bundle --executables`, and the CLI job also builds the build tool. `Build bundle` then assembles them with `nemoclaw-build bundle --prebuilt`, which compiles nothing.
 3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions. On Linux, `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets; `CI / Bundle` reports the macOS and Windows suites in `PLATFORM / Contract timing report` and `PLATFORM / Integration timing report`, on Ubuntu, after the platform's jobs finish.
 4. On Linux, when the plan selects the live suites, `E2E build images` runs `cargo ci live-images` at the same time as the build and bundle jobs, because it reads neither job's artifacts. When all three finish, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E Docker tests` and `E2E Kubernetes (kind) tests` from the platform's archive, bundle, and live images. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, and `E2E GPU` for those on the NVIDIA GPU runner, from the same artifacts; see [live suites](#live-suites).
 
@@ -615,7 +615,7 @@ Profiles live in `.cargo/config.toml`, whose hash and the current month are part
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
 Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
 Within a month, manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
-The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v4` cache keeps those of its debug build tool and the target-specific release profile.
+The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v4` cache keeps those of its debug build tool and the target-specific release profile. On Windows, every `Build bundle` part restores that cache and may save it; when a manifest change creates a new key, the first part to finish saves it, and the others rebuild the dependencies that only they changed until the next key.
 On Linux, those jobs run on Ubuntu 22.04 and write the platform's caches, which the Ubuntu 24.04 `E2E build images` job restores.
 A cache written on a newer Ubuntu would carry its glibc headers' requirements into the bundle, because Cargo does not rebuild C objects when the system headers change; `native-deps-v5` and `native-bundle-v4` started fresh for that reason.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
