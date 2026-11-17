@@ -31,22 +31,44 @@ function sortKeysDeep(value: unknown): unknown {
   );
 }
 
-/** Re-encode a stored profile with its pre-2026.10.5 Teams render converted, or return null. */
+const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+
+/**
+ * Re-encode a stored profile with its pre-2026.10.5 Teams render converted, or return null.
+ *
+ * The stored input must be exactly as canonical as the profile reader requires:
+ * a canonical unpadded base64url string, strict UTF-8, and sorted compact JSON.
+ * Only the one known render difference is converted, so no other malformed
+ * transport form can become a valid receipt through this path.
+ */
 function upgradeStoredTeamsRender(encoded: string): string | null {
   if (
+    typeof encoded !== "string" ||
     encoded.length === 0 ||
-    Buffer.byteLength(encoded, "ascii") > MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES
+    Buffer.byteLength(encoded, "ascii") > MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES ||
+    !BASE64URL_RE.test(encoded) ||
+    encoded.length % 4 === 1
   ) {
     return null;
   }
   const bytes = Buffer.from(encoded, "base64url");
-  if (bytes.length === 0 || bytes.length > MANAGED_STARTUP_PROFILE_MAX_BYTES) return null;
+  if (
+    bytes.length === 0 ||
+    bytes.length > MANAGED_STARTUP_PROFILE_MAX_BYTES ||
+    bytes.toString("base64url") !== encoded
+  ) {
+    return null;
+  }
+  let raw: string;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(bytes.toString("utf8"));
+    raw = UTF8_DECODER.decode(bytes);
+    parsed = JSON.parse(raw);
   } catch {
     return null;
   }
+  if (JSON.stringify(sortKeysDeep(parsed)) !== raw) return null;
   if (!isRecord(parsed) || !isRecord(parsed.messaging) || !isRecord(parsed.messaging.plan)) {
     return null;
   }

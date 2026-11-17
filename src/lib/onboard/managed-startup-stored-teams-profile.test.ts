@@ -17,6 +17,7 @@ import {
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
+  MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
   type ManagedStartupProfile,
   readStoredManagedStartupProfileMetadata,
 } from "./managed-startup/profile";
@@ -165,5 +166,81 @@ describe("stored Teams managed startup profiles (#14540)", () => {
     const encoded = encodeWithRender({ ...PRE_10_5_VALUE, ...overrides }, identity);
     expect(() => readStoredWorkloadProfile(encoded)).toThrow(/credential-shaped field name/);
     expect(cloneSandboxWorkloadReceipt(receiptFor(encoded))).toBeUndefined();
+  });
+
+  describe("noncanonical encodings of the old profile", () => {
+    const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+    /** The old profile's canonical JSON text, with an app id long enough to leave spare base64 bits. */
+    function legacyTextWith(appIdSuffix: string): string {
+      return Buffer.from(
+        encodeWithRender({ ...PRE_10_5_VALUE, appId: `teams-app${appIdSuffix}` }),
+        "base64url",
+      ).toString("utf8");
+    }
+
+    function legacyText(): string {
+      const plain = legacyTextWith("");
+      // One extra character moves a multiple-of-three byte length off the boundary.
+      return legacyTextWith("x".repeat(Number(Buffer.byteLength(plain, "utf8") % 3 === 0)));
+    }
+
+    const encode = (bytes: Buffer): string => bytes.toString("base64url");
+
+    function variants(): Array<[string, string]> {
+      const text = legacyText();
+      const canonical = encode(Buffer.from(text, "utf8"));
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const last = canonical[canonical.length - 1];
+      const spareBitsAlias = canonical.slice(0, -1) + ALPHABET[ALPHABET.indexOf(last) ^ 1];
+      return [
+        ["padding", canonical + "=".repeat((4 - (canonical.length % 4)) % 4 || 1)],
+        ["the standard alphabet", canonical.slice(0, 8) + "+/" + canonical.slice(10)],
+        [
+          "a remainder of one character",
+          canonical + "A".repeat((((1 - canonical.length) % 4) + 4) % 4 || 4),
+        ],
+        ["spare trailing bits", spareBitsAlias],
+        ["whitespace in the JSON", encode(Buffer.from(JSON.stringify(parsed, null, 1), "utf8"))],
+        [
+          "unsorted keys",
+          encode(Buffer.from(JSON.stringify(Object.fromEntries(Object.entries(parsed).reverse())))),
+        ],
+        [
+          "a duplicate key",
+          encode(Buffer.from(text.replace('"agent":', '"agent":"hermes","agent":'), "utf8")),
+        ],
+        [
+          "invalid UTF-8 inside a string",
+          encode(
+            Buffer.concat([
+              Buffer.from(text.slice(0, text.indexOf("teams-app")), "utf8"),
+              Buffer.from([0xff]),
+              Buffer.from(text.slice(text.indexOf("teams-app")), "utf8"),
+            ]),
+          ),
+        ],
+      ];
+    }
+
+    it("builds a canonical legacy profile that converts, so each variant below is the only change", () => {
+      const text = legacyText();
+      expect(Buffer.byteLength(text, "utf8") % 3).not.toBe(0);
+      expect(readStoredWorkloadProfile(encode(Buffer.from(text, "utf8"))).agent).toBe("openclaw");
+    });
+
+    it.each(variants())(
+      "rejects %s in the profile reader and in the receipt loader",
+      (_label, encoded) => {
+        expect(() => readStoredWorkloadProfile(encoded)).toThrow();
+        expect(cloneSandboxWorkloadReceipt(receiptFor(encoded))).toBeUndefined();
+      },
+    );
+
+    it("rejects an encoded profile past the size limit", () => {
+      const encoded = "A".repeat(MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES + 4);
+      expect(() => readStoredWorkloadProfile(encoded)).toThrow();
+      expect(cloneSandboxWorkloadReceipt(receiptFor(encoded))).toBeUndefined();
+    });
   });
 });
