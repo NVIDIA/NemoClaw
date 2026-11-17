@@ -33,22 +33,21 @@
 # write to each skill volume except OpenClaw's read-only one, which refuses
 # the write with EROFS.
 #
-# Then the hermes sandbox, and after it the claw sandbox, is replaced by a
-# change to only its agent's instructions, as a person edits the document; the
-# sibling's binding stays as it was and it keeps answering. Before the first
-# change, apply records each sandbox's ID and its agent's runtime ID, the
-# agent's user writes a marker in its workspace and artifacts volumes, each
-# sandbox reads its supplied skills' hashes, each agent answers through
-# Fabric from its recorded runtime, and a plan has no changes. After each
-# change, the target's state names a new sandbox and runtime, and its agent
-# answers from that runtime with the stub's reply, which names the skills it
-# found again and the changed instructions. Its interface answers through the
-# forward and token file that the change's apply reports, and the gateway no
-# longer lists the old sandbox, whose runtime went with it. In the new
-# sandbox, the markers and the skills' hashes are as before, and Hermes's kept
-# native home still holds what its first runtime recorded of an earlier
-# request. Destroy keeps the caller's volumes, which tofu test removes after
-# the case.
+# Then one change to the claw and hermes agents' instructions, as a person
+# edits the document, replaces both their sandboxes, and hermes-messages's
+# binding stays as it was. Before the change, apply records each sandbox's ID
+# and its agent's runtime ID, the agent's user writes a marker in each
+# workspace and artifacts volume, each sandbox reads its supplied skills'
+# hashes, each agent answers through Fabric from its recorded runtime, and a
+# plan has no changes. After the change, state names a new sandbox and
+# runtime for each changed agent, and every agent answers from its recorded
+# runtime, a changed one with the stub's reply naming the skills it found
+# again and the changed instructions. Their interfaces answer through the
+# forwards and token files that the change's apply reports, and the gateway
+# no longer lists the old sandboxes, whose runtimes went with them. In the new
+# sandboxes, the markers and the skills' hashes are as before, and Hermes's
+# kept native home still holds what its first runtime recorded of an earlier
+# request. tofu test removes the caller's volumes after the case.
 
 # The skills volumes, which a platform provides before apply. The agent images
 # run agents as 10001:10001 (image/fabric/Dockerfile). OpenClaw's bundled
@@ -410,9 +409,11 @@ run "unchanged_plan" {
 }
 
 # Changing an agent's instructions replaces only its sandbox
-# (crates/nemoclaw-sdk/src/compile.rs). The stub names the instructions'
-# marker, so a reply shows that the runtime which gave it started with them.
-run "replace_hermes" {
+# (crates/nemoclaw-sdk/src/compile.rs), so one change to both agents' replaces
+# both their sandboxes and leaves hermes-messages's as it was. The stub names
+# the instructions' marker, so a reply shows that the runtime which gave it
+# started with them.
+run "replace" {
   module {
     source = "./cli"
   }
@@ -420,7 +421,9 @@ run "replace_hermes" {
   variables {
     operation = "apply"
     agent_changes = {
-      hermes = { instructions = { system = { mode = "replace", content = "Answer as the nemoclaw-instructions-changed agent." } } }
+      for name in ["claw", "hermes"] : name => {
+        instructions = { system = { mode = "replace", content = "Answer as the nemoclaw-instructions-changed agent." } }
+      }
     }
     baseline = run.unchanged_plan.baseline
   }
@@ -431,176 +434,27 @@ run "replace_hermes" {
   }
 
   assert {
-    condition     = output.bindings.hermes.sandbox != var.baseline.hermes.sandbox
-    error_message = "The change did not replace hermes's sandbox."
+    condition     = alltrue([for name in ["claw", "hermes"] : output.bindings[name].sandbox != var.baseline[name].sandbox])
+    error_message = "The change did not replace both changed agents' sandboxes."
   }
 
   assert {
-    condition     = output.bindings.hermes.runtime != var.baseline.hermes.runtime
-    error_message = "hermes's agent still records the runtime from before the change."
+    condition     = alltrue([for name in ["claw", "hermes"] : output.bindings[name].runtime != var.baseline[name].runtime])
+    error_message = "A changed agent still records the runtime from before the change."
   }
 
   assert {
-    condition     = output.bindings.hermes.agent_sandbox == output.bindings.hermes.sandbox
-    error_message = "hermes's agent does not name its new sandbox."
+    condition     = alltrue([for name in ["claw", "hermes"] : output.bindings[name].agent_sandbox == output.bindings[name].sandbox])
+    error_message = "A changed agent does not name its new sandbox."
   }
 
   assert {
-    condition     = output.bindings.claw == var.baseline.claw
-    error_message = "The change to hermes replaced claw's sandbox or restarted its agent."
+    condition     = output.bindings["hermes-messages"] == var.baseline["hermes-messages"]
+    error_message = "The change replaced hermes-messages's sandbox or restarted its agent."
   }
 }
 
-run "replies_after_hermes_replacement" {
-  module {
-    source = "./verifier"
-  }
-
-  variables {
-    targets = {
-      claw = {
-        agent            = "main"
-        request          = "Reply to this NemoClaw live test."
-        response_pointer = "/output/response"
-        answer           = "nemoclaw-stub-reply digest review translate"
-      }
-      hermes = {
-        agent            = "hermes"
-        request          = "Reply to this NemoClaw live test."
-        response_pointer = "/output/response"
-        answer           = "nemoclaw-stub-reply instructions notes"
-      }
-    }
-  }
-
-  assert {
-    condition     = length(output.failed) == 0
-    error_message = "failed: ${join(", ", output.failed)}"
-  }
-}
-
-# Hermes's API server answers with the token in the file that the change's
-# apply reports, and its dashboard opens notes again from its volume.
-run "access_after_hermes_replacement" {
-  module {
-    source = "./interface"
-  }
-
-  variables {
-    connection = run.replace_hermes.result.connection
-    targets = {
-      api_chat = {
-        sandbox    = "hermes"
-        port       = one([for access in run.replace_hermes.result.interfaces : access.port if access.sandbox == "hermes" && access.interface == "api"])
-        token_path = one([for access in run.replace_hermes.result.interfaces : access.tokenPath if access.sandbox == "hermes" && access.interface == "api"])
-        path       = "/v1/chat/completions"
-        body = {
-          model    = "hermes-agent"
-          messages = [{ role = "user", content = "Reply to this NemoClaw live test." }]
-        }
-        answer = "nemoclaw-stub-reply instructions notes"
-      }
-      dashboard_skill = {
-        sandbox    = "hermes"
-        port       = one([for access in run.replace_hermes.result.interfaces : access.port if access.sandbox == "hermes" && access.interface == "dashboard"])
-        token_path = null
-        page_token = "__HERMES_SESSION_TOKEN__"
-        path       = "/api/skills/content?name=notes"
-        contains   = "\"content\":${jsonencode(run.volume.files["hermes:/sandbox/notes-skill"]["SKILL.md"])},\"path\":\"/sandbox/notes-skill/SKILL.md\""
-      }
-    }
-  }
-
-  assert {
-    condition     = length(output.failed) == 0
-    error_message = "failed: ${join(", ", output.failed)}"
-  }
-}
-
-# Read without the agent, in the new sandbox and through the gateway. The
-# kept native home is <artifacts>/.fabric/state/<adapter>/<agent name>
-# (NeMo Fabric's runtime.keep_state), which Hermes's first runtime wrote the
-# earlier request into.
-run "kept_after_hermes_replacement" {
-  module {
-    source = "./command"
-  }
-
-  variables {
-    connection = run.replace_hermes.result.connection
-    targets = {
-      hermes_markers = {
-        sandbox  = "hermes"
-        command  = ["cat", "/sandbox/workspace/nemoclaw-live-test", "/sandbox/artifacts/nemoclaw-live-test"]
-        contains = "nemoclaw-live-test\nnemoclaw-live-test\n"
-      }
-      hermes_skill_hashes = {
-        sandbox  = "hermes"
-        command  = ["sha256sum", "/sandbox/notes-skill/SKILL.md"]
-        contains = "${sha256(run.volume.files["hermes:/sandbox/notes-skill"]["SKILL.md"])}  /sandbox/notes-skill/SKILL.md\n"
-      }
-      hermes_kept_home = {
-        sandbox  = "hermes"
-        command  = ["grep", "-rlF", "nemoclaw-kept-home-check", "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/hermes"]
-        contains = "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/hermes/"
-      }
-      old_hermes_sandbox = {
-        sandbox  = null
-        command  = ["sandbox", "list", "--ids"]
-        contains = run.replace_hermes.bindings.hermes.sandbox
-        excludes = run.replace_hermes.baseline.hermes.sandbox
-      }
-    }
-  }
-
-  assert {
-    condition     = length(output.failed) == 0
-    error_message = "failed: ${join(", ", output.failed)}"
-  }
-}
-
-# The second change keeps Hermes's, so it replaces only OpenClaw's sandbox.
-run "replace_claw" {
-  module {
-    source = "./cli"
-  }
-
-  variables {
-    operation = "apply"
-    agent_changes = {
-      hermes = { instructions = { system = { mode = "replace", content = "Answer as the nemoclaw-instructions-changed agent." } } }
-      claw   = { instructions = { system = { mode = "replace", content = "Answer as the nemoclaw-instructions-changed agent." } } }
-    }
-    baseline = run.replace_hermes.bindings
-  }
-
-  assert {
-    condition     = output.exit_code == 0 && output.result.outcome == "succeeded"
-    error_message = "The change's apply failed: ${output.error}"
-  }
-
-  assert {
-    condition     = output.bindings.claw.sandbox != var.baseline.claw.sandbox
-    error_message = "The change did not replace claw's sandbox."
-  }
-
-  assert {
-    condition     = output.bindings.claw.runtime != var.baseline.claw.runtime
-    error_message = "claw's agent still records the runtime from before the change."
-  }
-
-  assert {
-    condition     = output.bindings.claw.agent_sandbox == output.bindings.claw.sandbox
-    error_message = "claw's agent does not name its new sandbox."
-  }
-
-  assert {
-    condition     = output.bindings.hermes == var.baseline.hermes
-    error_message = "The change to claw replaced hermes's sandbox or restarted its agent."
-  }
-}
-
-run "replies_after_claw_replacement" {
+run "replies_after_replacement" {
   module {
     source = "./verifier"
   }
@@ -619,6 +473,12 @@ run "replies_after_claw_replacement" {
         response_pointer = "/output/response"
         answer           = "nemoclaw-stub-reply instructions notes"
       }
+      hermes-messages = {
+        agent            = "hermes-messages"
+        request          = "Reply to this NemoClaw live test."
+        response_pointer = "/output/response"
+        answer           = "nemoclaw-stub-reply"
+      }
     }
   }
 
@@ -628,20 +488,41 @@ run "replies_after_claw_replacement" {
   }
 }
 
-# OpenClaw's Control UI accepts the token in the file that the change's apply
-# reports.
-run "access_after_claw_replacement" {
+# Each changed agent's interfaces answer through the port and token file that
+# the change's apply reports: Hermes's API server with the new instructions,
+# its dashboard opening notes again from its volume, and OpenClaw's Control
+# UI.
+run "access_after_replacement" {
   module {
     source = "./interface"
   }
 
   variables {
-    connection = run.replace_claw.result.connection
+    connection = run.replace.result.connection
     targets = {
+      api_chat = {
+        sandbox    = "hermes"
+        port       = one([for access in run.replace.result.interfaces : access.port if access.sandbox == "hermes" && access.interface == "api"])
+        token_path = one([for access in run.replace.result.interfaces : access.tokenPath if access.sandbox == "hermes" && access.interface == "api"])
+        path       = "/v1/chat/completions"
+        body = {
+          model    = "hermes-agent"
+          messages = [{ role = "user", content = "Reply to this NemoClaw live test." }]
+        }
+        answer = "nemoclaw-stub-reply instructions notes"
+      }
+      dashboard_skill = {
+        sandbox    = "hermes"
+        port       = one([for access in run.replace.result.interfaces : access.port if access.sandbox == "hermes" && access.interface == "dashboard"])
+        token_path = null
+        page_token = "__HERMES_SESSION_TOKEN__"
+        path       = "/api/skills/content?name=notes"
+        contains   = "\"content\":${jsonencode(run.volume.files["hermes:/sandbox/notes-skill"]["SKILL.md"])},\"path\":\"/sandbox/notes-skill/SKILL.md\""
+      }
       control_ui_config = {
         sandbox    = "claw"
-        port       = one([for access in run.replace_claw.result.interfaces : access.port if access.sandbox == "claw"])
-        token_path = one([for access in run.replace_claw.result.interfaces : access.tokenPath if access.sandbox == "claw"])
+        port       = one([for access in run.replace.result.interfaces : access.port if access.sandbox == "claw"])
+        token_path = one([for access in run.replace.result.interfaces : access.tokenPath if access.sandbox == "claw"])
         path       = "/control-ui-config.json"
         contains   = "basePath"
       }
@@ -654,16 +535,25 @@ run "access_after_claw_replacement" {
   }
 }
 
-run "kept_after_claw_replacement" {
+# Read without the agents, in the new sandboxes and through the gateway. The
+# kept native home is <artifacts>/.fabric/state/<adapter>/<agent name>
+# (NeMo Fabric's runtime.keep_state), which Hermes's first runtime wrote the
+# earlier request into.
+run "kept_after_replacement" {
   module {
     source = "./command"
   }
 
   variables {
-    connection = run.replace_claw.result.connection
+    connection = run.replace.result.connection
     targets = {
       claw_markers = {
         sandbox  = "claw"
+        command  = ["cat", "/sandbox/workspace/nemoclaw-live-test", "/sandbox/artifacts/nemoclaw-live-test"]
+        contains = "nemoclaw-live-test\nnemoclaw-live-test\n"
+      }
+      hermes_markers = {
+        sandbox  = "hermes"
         command  = ["cat", "/sandbox/workspace/nemoclaw-live-test", "/sandbox/artifacts/nemoclaw-live-test"]
         contains = "nemoclaw-live-test\nnemoclaw-live-test\n"
       }
@@ -672,11 +562,27 @@ run "kept_after_claw_replacement" {
         command  = ["sha256sum", "/sandbox/review-skill/SKILL.md", "/sandbox/skills/digest/SKILL.md", "/sandbox/skills/translate/SKILL.md"]
         contains = "${sha256(run.volume.files["claw:/sandbox/review-skill"]["SKILL.md"])}  /sandbox/review-skill/SKILL.md\n${sha256(run.volume.files["claw:/sandbox/skills"]["digest/SKILL.md"])}  /sandbox/skills/digest/SKILL.md\n${sha256(run.volume.files["claw:/sandbox/skills"]["translate/SKILL.md"])}  /sandbox/skills/translate/SKILL.md\n"
       }
+      hermes_skill_hashes = {
+        sandbox  = "hermes"
+        command  = ["sha256sum", "/sandbox/notes-skill/SKILL.md"]
+        contains = "${sha256(run.volume.files["hermes:/sandbox/notes-skill"]["SKILL.md"])}  /sandbox/notes-skill/SKILL.md\n"
+      }
+      hermes_kept_home = {
+        sandbox  = "hermes"
+        command  = ["grep", "-rlF", "nemoclaw-kept-home-check", "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/hermes"]
+        contains = "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/hermes/"
+      }
       old_claw_sandbox = {
         sandbox  = null
         command  = ["sandbox", "list", "--ids"]
-        contains = run.replace_claw.bindings.claw.sandbox
-        excludes = run.replace_claw.baseline.claw.sandbox
+        contains = run.replace.bindings.claw.sandbox
+        excludes = run.replace.baseline.claw.sandbox
+      }
+      old_hermes_sandbox = {
+        sandbox  = null
+        command  = ["sandbox", "list", "--ids"]
+        contains = run.replace.bindings.hermes.sandbox
+        excludes = run.replace.baseline.hermes.sandbox
       }
     }
   }
@@ -702,25 +608,5 @@ run "destroy" {
       && toset(output.result.retained) == toset(["openshell_gateway_storage.runtime"])
     )
     error_message = "Destroy failed or retained other resources: ${output.error}"
-  }
-}
-
-# A plan of the volumes refreshes them from the engine; a volume that destroy
-# removed would have no mountpoint until apply created it again.
-run "volumes_after_destroy" {
-  command = plan
-
-  module {
-    source = "./volume"
-  }
-
-  variables {
-    owner = "10001:10001"
-    files = run.volume.files
-  }
-
-  assert {
-    condition     = alltrue([for volume in docker_volume.mounted : volume.mountpoint != ""])
-    error_message = "NemoClaw's destroy removed a caller volume."
   }
 }

@@ -55,7 +55,7 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 
    Result: two `match` lines, `skill read exit 0`, and the mounts name `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`.
    A missing or changed marker, or a missing skill, is Failed. Changed skill bytes alone do not fail retention; keep the snapshot for diagnosis. This check doesn't need the runtime, so run it even when the runtime is unusable. Native discovery, loading, and fresh skill output remain separate checks.
-   After config change has no `retention` check: for both harnesses, the live `docker-openclaw-hermes-interfaces` scenario replaces the sandbox with a change to only its agent, then reads the workspace and artifacts markers and the supplied skills' hashes from the caller's volumes in the new sandbox ([Agent Interfaces](../../../../internal-docs/contributing/live-tests.md#agent-interfaces)).
+   After config change has no `retention` check: for both harnesses, the live `docker-openclaw-hermes-interfaces` scenario replaces each harness's sandbox with a change to its agent's instructions, then reads the workspace and artifacts markers and the supplied skills' hashes from the caller's volumes in the new sandbox ([Agent Interfaces](../../../../internal-docs/contributing/live-tests.md#agent-interfaces)).
 3. **Before a transition:** set `PHASE` to the transition's directory and `CASE` to its check, then record what it should keep or replace:
 
    ```sh
