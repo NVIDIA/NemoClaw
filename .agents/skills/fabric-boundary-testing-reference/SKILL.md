@@ -59,7 +59,7 @@ For each behavior:
    NemoClaw's fast layer is its unit suite, integration is its contract and integration suites, and end to end is live E2E; see [test layers](../../../internal-docs/contributing/testing.md#test-layers).
 6. **Justify each live assertion** by what needs real images, mounts, forwarding, an engine or cluster, or the deployment lifecycle.
    Extend a small existing journey, keep permutations at lower layers, and keep deployed failure and recovery evidence that no fixture can produce.
-   Don't build a harness, model, and lifecycle-phase matrix, or raise a time budget.
+   Don't build a harness, model, and lifecycle-phase matrix, or raise a time budget; each live case adds to [CI wall-clock time](../../../internal-docs/contributing/testing.md#ci-wall-clock-time).
 7. **Separate what tests can't prove**, using [manual evidence](#manual-evidence).
 
 ## Evidence Strength
