@@ -145,6 +145,10 @@ spec:
               port: 8642
             dashboard:
               port: 9119
+            # Fabric's experimental terminal interface shares the dashboard's
+            # backend process when it has the dashboard's port.
+            terminal:
+              port: 9119
       agent:
         name: hermes
         skills:
