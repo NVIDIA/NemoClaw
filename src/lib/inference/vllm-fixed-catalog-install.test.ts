@@ -585,6 +585,7 @@ describe("fixed catalog vLLM installs", () => {
       expect(command).toContain("--gpu-memory-utilization 0.5");
       expect(command).toContain("--safetensors-load-strategy lazy");
       expect(command).not.toContain("--load-format fastsafetensors");
+      expect(command).not.toContain("--trust-remote-code");
       expect(command).toMatch(/--max-num-seqs 1 .*--max-num-seqs 2 --disable-log-requests/u);
     },
   );
