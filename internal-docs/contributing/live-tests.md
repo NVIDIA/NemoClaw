@@ -324,6 +324,8 @@ Rejected interfaces, refused tokens, and a killed interface process are not chec
 - NeMo Fabric's `tests/adapters/test_hermes_interfaces.py`, at the pinned revision: `test_hermes_serves_api_and_dashboard_with_the_configured_model` checks that Hermes's API server refuses a request without its token with 401, `test_terminal_backend_authentication_and_cleanup` that the terminal backend refuses a wrong token, and `test_sdk_invocation_preserves_native_runtime_health` that the runtime stays healthy after Hermes's API server process is killed.
 
 Hermes and OpenClaw own their token checks, such as `/api/pty`'s 4401, so NemoClaw doesn't test them again.
+OpenClaw's Control UI chat is not checked live either: NemoClaw has no client for OpenClaw's Gateway protocol, and [NVIDIA/NeMo-Fabric#655](https://github.com/NVIDIA/NeMo-Fabric/issues/655) runs OpenClaw's native interface tests, Control UI chat among them, in Fabric's CI.
+[NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656) tracks Fabric's own test of Hermes's browser chat through the real `/api/pty`.
 
 Next, one change to the `instructions` of the `claw` and `hermes` agents, which the `tests/e2e/hcl/cli` module applies as a copy of the case's document, replaces both their sandboxes; a changed agent replaces its sandbox.
 Before the change, the `command` module also writes a marker in each sandbox's artifacts volume and reads the SHA-256 of each supplied skill; the `tests/e2e/hcl/verifier` module invokes each agent through Fabric, and the answer must come from the runtime that state records.
