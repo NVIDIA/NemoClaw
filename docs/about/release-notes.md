@@ -207,6 +207,8 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
   A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
 - With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
   An endpoint host written as an IPv4-mapped IPv6 address, such as `::ffff:203.0.113.7`, no longer matches; write the IPv4 address.
+- With Fabric at NVIDIA/NeMo-Fabric `main` `135147a0`, an OpenClaw agent's `skills.bundled` also selects the skills that OpenClaw's own extensions ship, such as `canvas`; an extension skill that the selection leaves out no longer loads.
+  An agent doesn't start when `nvidia.fabric.nooa` has no `workflow.target_id`, or when the Deep Agents `local_shell` backend has neither `tools.enabled` nor `execute` in `tools.blocked`.
 - The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
 
 ### Breaking Changes in v0.1.0-rc10
