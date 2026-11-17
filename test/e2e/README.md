@@ -2486,13 +2486,16 @@ E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SAND
 A passing Spark target establishes that option 2 selects the fixed vLLM preset and recipe.
 The extra-arguments case invokes the candidate CLI with `NEMOCLAW_PROVIDER=install-vllm` and `["--max-num-seqs","2"]`.
 It requires the selected-profile output and 32,768-token context, then inspects the real container command for the bounded recipe and the appended sequence override.
-Each case keeps the existing 65-minute test deadline and identity-bound cleanup. These hardware targets have no automatic PR workflow. Qualify the repair separately on a 60 GB to 64 GB Spark using the command below and retain its receipt for the candidate commit.
+Each case keeps the existing 65-minute test deadline and identity-bound cleanup. These hardware targets have no hosted PR workflow or supported Advisor selector.
+The standalone command below requires a physical Spark reporting at least 60 GB and less than 64 GB.
+Retain its candidate-bound receipt, but keep hosted Spark qualification unresolved until a trusted workflow supports this scenario.
 
 ```bash
 E2E_JOB=1 E2E_TARGET_ID=spark-vllm-extra-arguments NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-vllm-extra-arguments:'
 ```
 
-The managed container carries catalog provenance and the catalog-derived serve command.
+The fixed-profile container carries catalog provenance labels and the catalog-derived serve command.
+The extra-arguments recipe has no catalog receipt; both cases require the managed-vLLM ownership label.
 Health requests succeed on loopback and the private OpenShell bridge; connections to every other discovered host address are refused.
 The target also requires a chat response through `inference.local` and an HTTP `403` response for unrelated sandbox egress.
 

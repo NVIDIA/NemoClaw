@@ -271,7 +271,7 @@ test.for([
       e2ePhases: [
         "qualify the physical DGX Spark host",
         "install the selected Spark vLLM profile",
-        "verify catalog-owned vLLM runtime configuration",
+        "verify selected vLLM runtime configuration",
         "prove sandbox inference and unrelated egress denial",
       ],
     },
@@ -428,7 +428,7 @@ test.for([
       ? captureOnboardFailureDiagnostics(host, SANDBOX_NAME)
       : Promise.resolve());
 
-    progress.phase("verify catalog-owned vLLM runtime configuration");
+    progress.phase("verify selected vLLM runtime configuration");
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     expect(
       createdSandboxId,
@@ -453,12 +453,16 @@ test.for([
       : undefined;
     expect(inspection.Config.Labels).toMatchObject({
       "com.nvidia.nemoclaw.managed-vllm": "true",
-      "com.nvidia.nemoclaw.serving-catalog-digest": plan.catalogDigest,
-      "com.nvidia.nemoclaw.serving-preset": plan.preset.metadata.id,
-      "com.nvidia.nemoclaw.serving-preset-digest": plan.presetDigest,
-      "com.nvidia.nemoclaw.serving-recipe": plan.recipe.metadata.id,
-      "com.nvidia.nemoclaw.serving-recipe-digest": plan.recipeDigest,
     });
+    extraArguments
+      ? undefined
+      : expect(inspection.Config.Labels).toMatchObject({
+          "com.nvidia.nemoclaw.serving-catalog-digest": plan.catalogDigest,
+          "com.nvidia.nemoclaw.serving-preset": plan.preset.metadata.id,
+          "com.nvidia.nemoclaw.serving-preset-digest": plan.presetDigest,
+          "com.nvidia.nemoclaw.serving-recipe": plan.recipe.metadata.id,
+          "com.nvidia.nemoclaw.serving-recipe-digest": plan.recipeDigest,
+        });
     expect(inspection.HostConfig.NetworkMode).toBe(plan.recipe.spec.runtime.networkMode);
     expect(inspection.HostConfig.IpcMode).toBe(plan.recipe.spec.runtime.ipcMode);
     expect(inspection.HostConfig.ShmSize).toBe(plan.recipe.spec.runtime.sharedMemoryBytes);
