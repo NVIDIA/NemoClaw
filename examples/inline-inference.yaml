@@ -16,6 +16,8 @@ spec:
     endpoint: http://127.0.0.1:17681
   sandboxes:
     assistant:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: nvidia.fabric.openclaw
       agent:

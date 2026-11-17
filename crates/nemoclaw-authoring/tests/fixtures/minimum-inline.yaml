@@ -15,6 +15,8 @@ spec:
         env: NVIDIA_API_KEY
   sandboxes:
     assistant:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness: {}
       agent:
         inference:

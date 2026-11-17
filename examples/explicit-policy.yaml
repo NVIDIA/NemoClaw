@@ -19,6 +19,8 @@ spec:
       endpoint: http://172.20.0.1:11436/v1
   sandboxes:
     assistant:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         policy:
           explicit:

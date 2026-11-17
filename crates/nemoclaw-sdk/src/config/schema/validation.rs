@@ -1,10 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Shared structural contract for authored input and normalized SDK values.
-use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, constraints as c};
+use crate::config::{API_VERSION, constraints as c};
 use serde_json::{Value, json};
 
 pub(crate) use nemoclaw_runtime::schema::{at, forbid, property};
+fn require(schema: &mut Value, field: &str) {
+    let required = schema
+        .as_object_mut()
+        .unwrap()
+        .entry("required")
+        .or_insert(json!([]))
+        .as_array_mut()
+        .unwrap();
+    if !required.contains(&json!(field)) {
+        required.push(json!(field));
+    }
+}
 fn optional_string(
     schema: &mut Value,
     field: &str,
@@ -13,14 +25,7 @@ fn optional_string(
     normalized: bool,
 ) {
     if normalized {
-        schema
-            .as_object_mut()
-            .unwrap()
-            .entry("required")
-            .or_insert(json!([]))
-            .as_array_mut()
-            .unwrap()
-            .push(json!(field));
+        require(schema, field);
     }
     property(
         schema,
@@ -237,19 +242,19 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         json!({"minProperties":1,"propertyNames": {"pattern": c::SLUG}}),
     );
     defs["Sandbox"]["allOf"] = json!([]);
-    optional_string(
+    // No agent image is published for every host, so each sandbox names one.
+    let image_error = "image.ref must name the sandbox's agent image by digest; docs/build-deploy/build.md#build-agent-images shows how to build one";
+    require(&mut defs["Sandbox"], "image");
+    property(
+        &mut defs["Sandbox"],
+        "image",
+        json!({"x-nemoclaw-error": image_error}),
+    );
+    require(&mut defs["Image"], "ref");
+    property(
         &mut defs["Image"],
         "ref",
-        DEFAULT_AGENT_IMAGE,
-        &json!({"pattern": c::IMAGE}),
-        normalized,
-    );
-    defs["Image"]["properties"]["ref"]
-        .as_object_mut()
-        .unwrap()
-        .remove("default");
-    defs["Image"]["properties"]["ref"]["x-nemoclaw-default-rule"] = json!(
-        "Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter."
+        json!({"pattern": c::IMAGE, "x-nemoclaw-error": image_error}),
     );
     property(
         &mut defs["Runtime"],
@@ -485,11 +490,11 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "then": at("spec/gateway/endpoint", json!({"not": {"pattern": r"^https://[0-9]+(?:\.[0-9]+){3}:[0-9]+$"}}), true),
         "x-nemoclaw-error": "kubernetes.expose.route needs an endpoint with a DNS name, because the Route's host is the endpoint's and clients send no SNI host name for an IP address; kubernetes.expose.service accepts an IP address"
     }));
-    // Cluster sandboxes need an explicit image, since no local engine supplies
-    // a default; image metadata stands in for engine inspection only there.
+    // Image metadata stands in for engine inspection only on clusters, where no
+    // local engine can be inspected.
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
-        "then": at("spec/sandboxes/*/image", json!({"required": ["ref", "metadata"], "properties": {"ref": {"pattern": c::IMAGE}}}), true),
+        "then": at("spec/sandboxes/*/image", json!({"required": ["metadata"]}), true),
         "else": at("spec/sandboxes/*/image", forbid(&["metadata"]), false)
     }));
     root["allOf"].as_array_mut().unwrap().push(json!({

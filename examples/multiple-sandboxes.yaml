@@ -19,6 +19,8 @@ spec:
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
     alice:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
       harness:
@@ -27,6 +29,8 @@ spec:
         name: alice
         inferenceRef: chat
     bob:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
       harness:

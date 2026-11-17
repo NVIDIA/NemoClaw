@@ -115,7 +115,7 @@ fn review_scroll_reveals_later_yaml_without_changing_the_document() {
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
     for _ in 0..40 {
-        wizard.advance();
+        wizard.step();
         if wizard.accepted {
             break;
         }
@@ -382,7 +382,7 @@ fn optional_question_can_be_omitted_through_the_new_wizard() {
             );
             return;
         }
-        wizard.advance();
+        wizard.step();
         assert!(wizard.error.is_none(), "{:?}", wizard.error);
     }
     panic!("the default journey has no optional question");
@@ -394,7 +394,7 @@ fn default_path_reaches_a_valid_document_through_the_new_wizard() {
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
     for _ in 0..40 {
-        wizard.advance();
+        wizard.step();
         if wizard.accepted {
             break;
         }
@@ -419,15 +419,41 @@ fn default_path_reaches_a_valid_document_through_the_new_wizard() {
     assert!(wizard.document().is_ok());
 }
 
-/// Accept every suggestion and return the questions in the order asked.
+/// The image a test types when onboarding has none to suggest.
+const AGENT_IMAGE: &str =
+    "nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+/// One step of a user who accepts each suggestion.
+trait Step {
+    /// Accept the current suggestion, or type [`AGENT_IMAGE`] when the image
+    /// question has none.
+    fn step(&mut self);
+}
+
+impl Step for JourneyWizard {
+    fn step(&mut self) {
+        match self.question().unwrap() {
+            Some(question)
+                if question.id().ends_with("/image/ref") && question.suggestion().is_none() =>
+            {
+                self.submit(Some(serde_json::json!(AGENT_IMAGE))).unwrap();
+            }
+            _ => self.advance(),
+        }
+    }
+}
+
+/// Accept every suggestion, typing [`AGENT_IMAGE`] when the image question has
+/// none, and return the questions in the order asked.
 fn questions_until_review(wizard: &mut JourneyWizard) -> Vec<String> {
     wizard.started = true;
     let mut asked = Vec::new();
     for _ in 0..40 {
-        if let Some(question) = wizard.question().unwrap() {
+        let question = wizard.question().unwrap();
+        if let Some(question) = &question {
             asked.push(question.id().to_owned());
         }
-        wizard.advance();
+        wizard.step();
         assert!(wizard.error.is_none(), "{asked:?}: {:?}", wizard.error);
         if wizard.accepted {
             return asked;
@@ -448,9 +474,9 @@ fn default_journey_asks_route_choices_and_leaves_adapter_settings_at_their_defau
             "/metadata/name",
             "/spec/gateway/runtime/provider",
             "inference:preset",
+            "/spec/sandboxes/assistant/image/ref",
             "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
             "/spec/gateway/engine",
-            "/spec/sandboxes/assistant/image/ref",
         ]
     );
 }
@@ -607,7 +633,8 @@ fn at_120x40_the_review_shows_the_agent_model_and_image_without_scrolling() {
         "Model nvidia/nemotron-3.5-super-vl-120b-a12b · NVIDIA Endpoints",
         "API key NVIDIA_API_KEY",
         "Runs on Docker on this machine",
-        "Image default image · not checked",
+        "Image nc-fabric@sha256:",
+        "0 · not checked",
         "Network Isolated: only the model endpoint",
         "File deployment.yaml",
         "Configuration file",
@@ -615,7 +642,7 @@ fn at_120x40_the_review_shows_the_agent_model_and_image_without_scrolling() {
         assert!(text.contains(row), "{row:?} is not on screen: {screen}");
     }
     assert!(
-        text.find("Image default image") < text.find("Configuration file"),
+        text.find("Image nc-fabric@sha256:").unwrap() < text.find("Configuration file").unwrap(),
         "{screen}"
     );
     // The saved file's details stay in the YAML, not the summary.
@@ -705,7 +732,7 @@ fn the_runtime_menu_names_each_runtime_and_offers_no_omit() {
         {
             break;
         }
-        wizard.advance();
+        wizard.step();
     }
     let question = wizard.question().unwrap().unwrap();
     assert_eq!(question.id(), "/spec/gateway/runtime/provider");
@@ -990,7 +1017,7 @@ fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
     let state = load_journey(Source::Template(&path), &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
     for _ in 0..80 {
-        wizard.advance();
+        wizard.step();
         if wizard.accepted {
             break;
         }
@@ -1062,7 +1089,7 @@ fn example_reaches_review(relative: &str) {
         {
             missing_text.insert(format!("{} has no {missing}", question.id()));
         }
-        wizard.advance();
+        wizard.step();
         if wizard.accepted || wizard.error.is_some() {
             break;
         }
@@ -1160,7 +1187,7 @@ fn offline_vendor_menu_selects_a_catalog_alternative() {
         {
             break;
         }
-        wizard.advance();
+        wizard.step();
     }
     let question = wizard.question().unwrap().unwrap();
     let model = serde_json::json!("nvidia/nemotron-3-ultra-550b-a55b");
@@ -1202,7 +1229,7 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
         {
             break;
         }
-        wizard.advance();
+        wizard.step();
     }
     let document = wizard
         .state()
@@ -1259,7 +1286,7 @@ fn tui_preserves_podman_as_an_authored_target_choice() {
         {
             break;
         }
-        wizard.advance();
+        wizard.step();
     }
     let question = wizard.question().unwrap().unwrap();
     wizard.selected = question
@@ -1324,7 +1351,7 @@ async fn enter_accepts_the_runtime_this_machine_can_run_and_targets_its_engine()
         {
             break;
         }
-        wizard.advance();
+        wizard.step();
     }
     wizard.advance();
     assert!(wizard.error.is_none(), "{:?}", wizard.error);
@@ -1477,7 +1504,7 @@ async fn the_model_catalog_is_asked_when_the_model_question_comes_and_only_once(
         {
             break;
         }
-        wizard.advance();
+        wizard.step();
     }
     let document = wizard
         .state()
@@ -1531,10 +1558,7 @@ async fn credentials_are_checked_when_review_opens_and_only_once() {
 fn a_target_onboarding_did_not_read_is_not_checked_without_asking_for_action() {
     let wizard = reviewing_wizard_with("nvidia.fabric.hermes");
     assert!(wizard.resolution().unwrap().target_assessment().is_none());
-    assert_eq!(
-        foreground_after(&wizard, "default image · "),
-        super::view::MUTED
-    );
+    assert_eq!(foreground_after(&wizard, "0 · "), super::view::MUTED);
 }
 
 #[test]
@@ -1548,7 +1572,7 @@ fn questions_do_not_check_credentials() {
             return;
         }
         assert!(credential_probe(&wizard).is_empty());
-        wizard.advance();
+        wizard.step();
     }
     panic!("the journey did not reach review");
 }
@@ -1585,7 +1609,7 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
                 let text = flat(&screen(&wizard, width, height));
                 assert!(!text.contains("NVIDIA_API_KEY ·"), "{text}");
             }
-            wizard.advance();
+            wizard.step();
         }
         assert!(wizard.question().unwrap().is_none(), "review");
         for (width, height) in [(160, 35), (72, 24)] {
@@ -1779,7 +1803,7 @@ async fn wizard_at_engine_question(
         {
             return wizard;
         }
-        wizard.advance();
+        wizard.step();
         assert!(wizard.error.is_none(), "{:?}", wizard.error);
     }
     panic!("the journey never asked for the engine");
@@ -1811,13 +1835,14 @@ async fn engine_question_says_why_it_has_no_suggestion_when_no_engine_answered()
 fn reviewing_wizard(engine: EngineObservation) -> JourneyWizard {
     let capabilities = Capabilities::available();
     let mut state = load_journey(Source::Defaults, &capabilities).unwrap();
-    // The document is complete once the agent and its name are chosen.
+    // The document is complete once the agent, its name, and its image are chosen.
     for (id, answer) in [
         (
             "/spec/sandboxes/assistant/harness/kind",
             "nvidia.fabric.openclaw",
         ),
         ("/metadata/name", "openclaw"),
+        ("/spec/sandboxes/assistant/image/ref", AGENT_IMAGE),
     ] {
         state
             .answer(&capabilities, id, Some(serde_json::json!(answer)))
@@ -1844,7 +1869,7 @@ fn reviewing_wizard(engine: EngineObservation) -> JourneyWizard {
         if wizard.question().unwrap().is_none() {
             return wizard;
         }
-        wizard.advance();
+        wizard.step();
         assert!(wizard.error.is_none(), "{:?}", wizard.error);
     }
     panic!("the journey did not reach review");
@@ -1936,7 +1961,8 @@ fn review_opens_with_the_unverified_target_and_every_reason_above_the_yaml() {
         let screen = screen(&wizard, width, height);
         let text = flat(&screen);
         for expected in [
-            "Image default image · not checked",
+            "Image nc-fabric@sha256:",
+            "0 · not checked",
             "No docker engine answered on this machine.",
             "The selected engine remains unverified.",
             "The selected image's Fabric capabilities have not been observed.",
@@ -1966,7 +1992,10 @@ fn a_target_conflict_blocks_saving_and_says_why_on_the_review() {
             text.find("Target: Conflict") < text.find("Agent OpenClaw"),
             "{screen}"
         );
-        assert!(text.contains("Image default image · conflict"), "{screen}");
+        assert!(
+            text.contains("Image nc-fabric@sha256:") && text.contains("0 · conflict"),
+            "{screen}"
+        );
         assert!(
             text.contains("The selected engine does not meet gateway prerequisites."),
             "{screen}"
@@ -2149,7 +2178,7 @@ fn wizard_at(id: &str) -> JourneyWizard {
         {
             return wizard;
         }
-        wizard.advance();
+        wizard.step();
         assert!(wizard.error.is_none(), "{:?}", wizard.error);
     }
     panic!("the default journey never asked {id}");

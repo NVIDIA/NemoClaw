@@ -95,7 +95,7 @@ Choose an external endpoint when its operator owns availability, or a managed se
 
 Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.
 The [harness matrix](../references/fabric-harnesses.md) distinguishes accepted configurations from live qualification.
-Examples use the SDK default image or an explicit image digest, plus deployment identities and environment-specific endpoints.
+Examples use placeholder image digests, deployment identities, and environment-specific endpoints.
 Build/select your own matching images and replace those values before use.
 An accepted example is a configuration contract, not evidence that the combination completes live inference.
 
