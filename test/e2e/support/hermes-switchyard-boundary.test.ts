@@ -128,7 +128,7 @@ payload = json.loads(base64.b64decode(sys.argv[1]))
 fault = os.environ['TEST_PROBE_FAULT']
 canary = '${SWITCHYARD_BODY_CANARY}' * 10000
 class Runtime:
-    def managed_execution_enabled(self): return payload['mode'] != 'unmanaged'
+    def managed_execution_enabled(self): return bool(os.environ.get('TEST_RELAY_CONFIG'))
     def shutdown(self):
         if fault == 'shutdown': raise RuntimeError(canary)
 class Response:

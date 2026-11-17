@@ -196,7 +196,11 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
     config.write_text('' if payload['mode'] == 'unmanaged' else
         payload['plugins'].replace('${HERMES_SWITCHYARD_DEPLOYMENT_FILE}', str(deployment)))
     (root / '.dynamic-plugins.json').write_text(payload['state'])
-    os.environ[relay_runtime.RELAY_PLUGINS_CONFIG_ENV] = str(config)
+    if payload['mode'] == 'unmanaged':
+        # Hermes treats even an empty selected config as activation consent.
+        os.environ.pop(relay_runtime.RELAY_PLUGINS_CONFIG_ENV, None)
+    else:
+        os.environ[relay_runtime.RELAY_PLUGINS_CONFIG_ENV] = str(config)
     for key in ('NVIDIA_INFERENCE_API_KEY', 'OPENAI_API_KEY'):
         os.environ[key] = os.environ[payload['credentialEnv']]
     runtime = relay_runtime.RelayRuntime()
