@@ -286,12 +286,14 @@ describe("existing MCP target preflight", () => {
     policyName: "mcp-bridge-tools",
   };
 
-  it("replays recorded public pins during update and rollback after fresh DNS validation", async () => {
+  it("replays sorted public pins without mutating recorded order after fresh DNS validation", async () => {
+    const pins = ["8.8.8.8", "1.1.1.1"];
     const lookup = vi
       .spyOn(dns, "lookup")
-      .mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
-    const targets = await preflightMcpEntryTargets([entry]);
-    expect(targets.get("tools")).toEqual({ addresses: ["8.8.8.8"] });
+      .mockResolvedValue([{ address: "9.9.9.9", family: 4 }] as never);
+    const targets = await preflightMcpEntryTargets([{ ...entry, allowedIps: pins }]);
+    expect(targets.get("tools")).toEqual({ addresses: ["1.1.1.1", "8.8.8.8"] });
+    expect(pins).toEqual(["8.8.8.8", "1.1.1.1"]);
     expect(lookup).toHaveBeenCalled();
   });
 

@@ -522,7 +522,9 @@ export async function preflightMcpEntryTargets(
       const resolved = await preflightMcpServerUrlResolvedTarget(new URL(normalized));
       // Existing registrations replay policy pins; changing them requires an
       // explicit public-pin refresh, including during teardown rollback.
-      const target = entry.allowedIps?.length ? { addresses: [...entry.allowedIps] } : resolved;
+      const target = entry.allowedIps?.length
+        ? { addresses: [...entry.allowedIps].sort() }
+        : resolved;
       parseMcpUrlWithValidatedTarget(normalized, target);
       return [entry.server, target] as const;
     }),

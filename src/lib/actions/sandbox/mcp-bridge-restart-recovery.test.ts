@@ -253,7 +253,7 @@ describe("OpenClaw MCP partial-mutation recovery", () => {
     const shared = entries.map((entry) => ({
       ...entry,
       url: `https://mcp.example.test/${entry.server}`,
-      allowedIps: ["8.8.8.8"],
+      allowedIps: ["8.8.8.8", "1.1.1.1"],
     }));
     const { preflightMcpEntryTargets } = await vi.importActual<
       typeof import("./mcp-bridge-provider-inspection")
@@ -274,10 +274,14 @@ describe("OpenClaw MCP partial-mutation recovery", () => {
           .mocked(applyGeneratedPolicy)
           .mock.calls.map((call) => [call[1].server, call[2].addresses]),
       ).toEqual([
-        ["first", ["8.8.8.8"]],
-        ["first", ["8.8.8.8"]],
-        ["second", ["8.8.8.8"]],
-        ["second", ["8.8.8.8"]],
+        ["first", ["1.1.1.1", "8.8.8.8"]],
+        ["first", ["1.1.1.1", "8.8.8.8"]],
+        ["second", ["1.1.1.1", "8.8.8.8"]],
+        ["second", ["1.1.1.1", "8.8.8.8"]],
+      ]);
+      expect(shared.map((entry) => entry.allowedIps)).toEqual([
+        ["8.8.8.8", "1.1.1.1"],
+        ["8.8.8.8", "1.1.1.1"],
       ]);
     } finally {
       lookup.mockRestore();

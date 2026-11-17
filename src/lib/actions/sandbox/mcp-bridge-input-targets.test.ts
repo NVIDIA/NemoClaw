@@ -398,6 +398,7 @@ const expectFailure = phase === "policy-url-mismatch" || stableUnauthorized || u
 let authorizationProbe;
 if (phase === "provider-hostless") delete process.env.GITHUB_TOKEN;
 const providerId = "11111111-2222-4333-8444-555555555555";
+const recordedPins = ["8.8.8.8", "1.1.1.1"];
 const state = {
   policy: ["policy", "policy-url-mismatch", "provider", "provider-hostless", "attachment"].includes(seedPhase) ? "capability" : seedPhase === "bound-policy" || seedPhase === "adapter" ? "bound" : "absent",
   provider: ["provider", "provider-hostless", "attachment", "bound-policy", "adapter"].includes(seedPhase),
@@ -419,7 +420,7 @@ const commandTransport = require("./src/lib/adapters/sandbox/command-transport.j
 const entry = () => ({
   server: "github", agent: "openclaw", adapter: "openclaw-config",
   url: "https://8.8.8.8/mcp", env: ["GITHUB_TOKEN"],
-  allowedIps: ["8.8.8.8"], providerName: "alpha-mcp-github",
+  allowedIps: recordedPins, providerName: "alpha-mcp-github",
   ...(state.provider ? { providerId } : {}),
   policyName: "mcp-bridge-github", source: "native",
 });
@@ -462,7 +463,7 @@ replace(policies, "getPresetContentGatewayState", (_sandbox, content) => {
   if (state.policy === "absent") return "absent";
   if (phase === "policy-url-mismatch") return "drift";
   const expected = content.includes("credential_binding") ? "bound" : "capability";
-  return state.policy === expected && content.includes("8.8.8.8") ? "match" : "drift";
+  return state.policy === expected && content.includes("8.8.8.8") && content.includes("1.1.1.1") ? "match" : "drift";
 });
 replace(policies, "applyPresetContent", (_sandbox, _name, content) => {
   state.policy = content.includes("credential_binding") ? "bound" : "capability";
@@ -490,7 +491,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   server: "github", url: "https://8.8.8.8/mcp", env: [{ name: "GITHUB_TOKEN" }],
 }).then(() => {
   if (expectFailure) process.exit(2);
-  process.stdout.write(JSON.stringify({ state }), () => process.exit(0));
+  process.stdout.write(JSON.stringify({ state, recordedPins }), () => process.exit(0));
 }, async (error) => {
   if (!expectFailure) {
     process.stderr.write(String(error && error.stack || error), () => process.exit(1));
@@ -502,7 +503,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   }
   process.stdout.write(JSON.stringify({
     message: String(error && error.message || error),
-    state, authorizationProbe, beforeOrdinaryRemoval,
+    state, authorizationProbe, beforeOrdinaryRemoval, recordedPins,
   }), () => process.exit(0));
 });
 `;
@@ -524,7 +525,9 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
         const outcome = trailingJsonPayload<{
           message?: string;
           state: Record<string, unknown>;
+          recordedPins: string[];
         }>(result.stdout);
+        expect(outcome.recordedPins).toEqual(["8.8.8.8", "1.1.1.1"]);
         expect(outcome).toMatchObject(
           phase === "policy-url-mismatch"
             ? {

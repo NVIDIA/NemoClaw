@@ -96,6 +96,9 @@ import {
 import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
 
 function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): boolean {
+  const existingPins = existing.trustedPrivateHost
+    ? (existing.allowedIps ?? [])
+    : [...(existing.allowedIps ?? [])].sort();
   return (
     existing.server === requested.server &&
     existing.agent === requested.agent &&
@@ -106,10 +109,8 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
     existing.trustedPrivateHost === requested.trustedPrivateHost &&
     (existing.denyTools?.length ?? 0) === (requested.denyTools?.length ?? 0) &&
     (existing.denyTools ?? []).every((tool, index) => tool === requested.denyTools?.[index]) &&
-    (existing.allowedIps?.length ?? 0) === (requested.allowedIps?.length ?? 0) &&
-    (existing.allowedIps ?? []).every(
-      (address, index) => address === requested.allowedIps?.[index],
-    ) &&
+    existingPins.length === (requested.allowedIps?.length ?? 0) &&
+    existingPins.every((address, index) => address === requested.allowedIps?.[index]) &&
     existing.env.length === requested.env.length &&
     existing.env.every((name, index) => name === requested.env[index])
   );
@@ -149,7 +150,7 @@ function replayMcpAddTarget(
       );
     }
   }
-  const target = { addresses: [...recordedPins] };
+  const target = { addresses: [...recordedPins].sort() };
   // Public policy pins are part of the committed transaction. Validate them
   // again, but do not replace them with a later DNS answer during an exact
   // retry; OpenShell must continue enforcing the originally admitted set.
