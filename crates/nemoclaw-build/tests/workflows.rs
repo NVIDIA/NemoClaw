@@ -354,6 +354,74 @@ fn live_images_build_alongside_the_build_and_bundle_jobs() {
     );
 }
 
+/// The GPU runner downloads artifacts slowly, so a GPU HCL case that runs
+/// only OpenClaw downloads `E2E build images`' OpenClaw-only archive, which
+/// that job uploads only when CI / Bundle runs the GPU cases, and a case
+/// that also runs Hermes downloads every live image.
+#[test]
+fn gpu_cases_without_hermes_download_only_the_openclaw_image() {
+    let read = |path: &str| -> Value {
+        serde_saphyr::from_str(&fs::read_to_string(repository().join(path)).unwrap()).unwrap()
+    };
+    let steps = |workflow: &Value, job: &str| -> Vec<Value> {
+        workflow["jobs"][job]["steps"].as_array().unwrap().clone()
+    };
+    let platform = read(".github/workflows/bundle-platform.yml");
+    let upload = steps(&platform, "live-images")
+        .into_iter()
+        .find(|step| step["with"]["path"] == ".build/ci/live-images-openclaw.tar.zst")
+        .expect("E2E build images uploads the OpenClaw-only archive");
+    assert_eq!(upload["if"], "inputs.hcl-gpu");
+    assert_eq!(
+        upload["with"]["name"],
+        "${{ steps.identity.outputs.artifact }}-openclaw"
+    );
+
+    let live = read(".github/workflows/hcl-e2e.yml");
+    let e2e = steps(&live, "e2e");
+    let download = e2e
+        .iter()
+        .find(|step| step["if"] == "inputs.tests != '' && inputs.live-images-commit == ''")
+        .expect("the case job downloads the live images");
+    assert_eq!(
+        download["with"]["name"],
+        "${{ inputs.live-images }}${{ steps.agents.outputs.suffix }}"
+    );
+    let select = e2e
+        .iter()
+        .find(|step| step["id"] == "agents")
+        .expect("the case job selects its agent images")["run"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for (case, expected) in [
+        ("docker-openclaw-vllm", "names=openclaw\nsuffix=-openclaw\n"),
+        (
+            "docker-openclaw-vllm-shared",
+            "names=openclaw\nsuffix=-openclaw\n",
+        ),
+        (
+            "docker-openclaw-hermes-ollama",
+            "names=openclaw hermes\nsuffix=\n",
+        ),
+    ] {
+        let output = tempfile::NamedTempFile::new().unwrap();
+        let status = std::process::Command::new("bash")
+            .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", &select])
+            .current_dir(repository())
+            .env("NEMOCLAW_HCL_CASE", case)
+            .env("GITHUB_OUTPUT", output.path())
+            .status()
+            .unwrap();
+        assert!(status.success(), "{case}");
+        assert_eq!(
+            fs::read_to_string(output.path()).unwrap(),
+            expected,
+            "{case}"
+        );
+    }
+}
+
 /// The organization allows GitHub's and NVIDIA's actions and verified
 /// creators' at any version, and other actions only at the commits it lists;
 /// any other action stops its whole workflow from starting (#13612).

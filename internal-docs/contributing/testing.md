@@ -178,6 +178,7 @@ It deletes the cluster and its image tag whether or not the tests pass; set `NEM
 
 To build the live images once for both suites, run `cargo ci live-images`.
 It builds the OpenClaw and Hermes agent images and the reference dummy image under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
+It also saves the OpenClaw image alone to `.build/ci/live-images-openclaw.tar.zst`, which CI uploads for the GPU HCL cases that run only OpenClaw, since the GPU runner downloads artifacts slowly.
 The command exports directly from Docker's local containerd store before compression.
 This requires Docker to report its containerd address and namespace, `sudo -n ctr` access, and temporary disk space for the uncompressed archive.
 The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.

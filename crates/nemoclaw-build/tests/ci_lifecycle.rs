@@ -686,6 +686,31 @@ fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed(
     );
 }
 
+/// The GPU HCL cases that run only OpenClaw download a smaller archive.
+#[test]
+fn live_images_also_save_the_agent_image_alone() {
+    let fixture = Fixture::new();
+    fixture.fake_container_tools();
+    fixture.seed_image_sources();
+    let output = fixture.run(&["live-images"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let archive = fs::read_to_string(
+        fixture
+            .0
+            .path()
+            .join(".build/ci/live-images-openclaw.tar.zst"),
+    )
+    .unwrap();
+    assert_eq!(
+        archive.trim(),
+        "exported docker.io/library/nc-live-images:openclaw"
+    );
+}
+
 /// CI saves the live images' layers on v1 only; every build imports them.
 #[test]
 fn live_images_import_cached_layers_and_save_them_only_when_ci_asks() {
