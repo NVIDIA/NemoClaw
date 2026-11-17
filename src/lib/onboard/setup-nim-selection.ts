@@ -9,7 +9,10 @@ import {
   MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
   parsePositiveInteger,
 } from "../inference/ollama-runtime-context";
-import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
+import {
+  applyCompatibleEndpointContextWindow,
+  isAutoDetectedCompatibleContextWindow,
+} from "../inference/compatible-endpoint-context";
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import { getProbeExtraHeaders } from "../inference/onboard-probes";
@@ -423,7 +426,9 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
             contextWindow !== null &&
             contextWindow < floor
           ) {
-            const message = `${selectedModel} has a ${contextWindow}-token context window, below the ${floor} this agent requires. Choose a larger model.`;
+            const message = isAutoDetectedCompatibleContextWindow()
+              ? `${selectedModel} has a ${contextWindow}-token context window, below the ${floor} this agent requires. Choose a larger model.`
+              : `NEMOCLAW_CONTEXT_WINDOW=${contextWindow} is below the ${floor} tokens this agent requires. Raise or unset NEMOCLAW_CONTEXT_WINDOW.`;
             if (state.nonInteractive) throw new Error(message);
             (deps.log ?? console.log)(`  ✗ ${message}`);
             return "retry-model";

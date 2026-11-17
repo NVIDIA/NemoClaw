@@ -6,6 +6,11 @@ import assert from "node:assert/strict";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { requireValue } from "../core/require-value";
+import {
+  applyCompatibleEndpointContextWindow,
+  applyDetectedEndpointContextWindow,
+  resetCompatibleEndpointContextWindowAutoState,
+} from "../inference/compatible-endpoint-context";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import {
   abortFailedNimStartup,
@@ -14,6 +19,14 @@ import {
   resolveCompatibleEndpointSelection,
   type SetupNimSelectionState,
 } from "./setup-nim-selection";
+
+vi.mock("../inference/compatible-endpoint-context", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../inference/compatible-endpoint-context")>();
+  return {
+    ...actual,
+    applyCompatibleEndpointContextWindow: vi.fn(actual.applyCompatibleEndpointContextWindow),
+  };
+});
 
 function makeState(): SetupNimSelectionState {
   return {
@@ -388,7 +401,11 @@ describe("createRemoteModelValidator", () => {
     },
   );
   describe("agent context window floor on custom endpoints (#14067)", () => {
-    afterEach(() => vi.unstubAllEnvs());
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+      resetCompatibleEndpointContextWindowAutoState();
+    });
 
     async function validateCustom(floor: number, nonInteractive = false) {
       const state = makeState();
@@ -425,12 +442,27 @@ describe("createRemoteModelValidator", () => {
       vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
       const { result, logLines } = await validateCustom(64_000);
       assert.equal(result, "retry-model");
-      expect(logLines.join("\n")).toContain("32768-token context window, below the 64000");
+      expect(logLines.join("\n")).toContain(
+        "NEMOCLAW_CONTEXT_WINDOW=32768 is below the 64000 tokens this agent requires. Raise or unset NEMOCLAW_CONTEXT_WINDOW.",
+      );
+    });
+
+    it("blames the model when the endpoint reported the context window", async () => {
+      vi.mocked(applyCompatibleEndpointContextWindow).mockImplementationOnce(async () => {
+        applyDetectedEndpointContextWindow(32768);
+      });
+      const { result, logLines } = await validateCustom(64_000);
+      assert.equal(result, "retry-model");
+      expect(logLines.join("\n")).toContain(
+        "model-a has a 32768-token context window, below the 64000 this agent requires. Choose a larger model.",
+      );
     });
 
     it("fails without a prompt in non-interactive mode", async () => {
       vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
-      await expect(validateCustom(64_000, true)).rejects.toThrow("below the 64000");
+      await expect(validateCustom(64_000, true)).rejects.toThrow(
+        "Raise or unset NEMOCLAW_CONTEXT_WINDOW",
+      );
     });
 
     it("keeps a window at or above the floor, and agents without a higher floor", async () => {

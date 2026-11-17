@@ -168,6 +168,16 @@ export function applyDetectedEndpointContextWindow(
   autoDetectedCompatibleContextWindow = value;
 }
 
+/** True when `NEMOCLAW_CONTEXT_WINDOW` holds a value this probe auto-detected, not a user override. */
+export function isAutoDetectedCompatibleContextWindow(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    !!autoDetectedCompatibleContextWindow &&
+    env.NEMOCLAW_CONTEXT_WINDOW === autoDetectedCompatibleContextWindow
+  );
+}
+
 /** Test-only: forget any tracked auto value without touching the environment. */
 export function resetCompatibleEndpointContextWindowAutoState(): void {
   autoDetectedCompatibleContextWindow = null;
