@@ -143,7 +143,6 @@
   "nextest": "0.9.152",
   "openshellRevision": "f3d976590d3eb1379690a2abaf0f0e26c21d487d",
   "images": {
-    "agent": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
     "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:d66352a54c680b652e5ddd7d19b9c1189568d18016f360b9b8c64014f13d89c4",
     "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:deadeacfdba6d12ca27e538d0002696369d4de5a4fcad075ab503495503af9d1",
     "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:f0fe7dbf18d833acb5da99c405231124718f23b524aa8e3c0108e6f37530033b",

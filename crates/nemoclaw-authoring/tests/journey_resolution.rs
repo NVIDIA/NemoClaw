@@ -4332,6 +4332,10 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
             "/spec/sandboxes/assistant/harness/kind",
             json!("nvidia.fabric.openclaw"),
         ),
+        (
+            "/spec/sandboxes/assistant/image/ref",
+            json!(format!("nc-fabric@sha256:{}", "0".repeat(64))),
+        ),
         ("/spec/sandboxes/assistant/agent/name", json!("primary")),
         (
             "/spec/sandboxes/assistant/agent/inference/routes/0/name",

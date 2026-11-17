@@ -514,7 +514,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `metadata` | [FileRef](#fileref) | No | — | Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead. |
-| `ref` | string | For Kubernetes sandboxes | — | Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. Constraints: `""` or pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
+| `ref` | string | Yes | — | Immutable image reference, pinned by SHA-256 digest. Required on every runtime; build one as described in the agent image build instructions. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 
 ## ImagePullPolicy
 
@@ -1290,7 +1290,7 @@ Paths:
 | `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation. |
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `image` | [Image](#image) | For Kubernetes sandboxes | — | Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
+| `image` | [Image](#image) | Yes | — | Immutable agent image that contains the selected Fabric adapter and, on Kubernetes, is compatible with the gateway's runtime user and group IDs. Required: no default image is published. |
 | `inferenceProviders` | map of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes through providerRef. Names must not shadow deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
