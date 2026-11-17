@@ -187,6 +187,72 @@ Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or 
 Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, and reference images that a `v1` commit pushed to `ghcr.io/nvidia/nemoclaw/v1-ci`, after `docker login ghcr.io`.
 `cargo run -p nemoclaw-build -- changes live-images --base REV` names such a commit: the newest of the latest 30 on `REV`'s first-parent history that pushed all three images for both architectures, provided the image rules find no change between it and `HEAD`.
 
+## CI Wall-Clock Time
+
+The cost of CI is the time engineers wait for it.
+An engineer waiting for checks costs about $200 to $300 an hour, while GitHub's standard hosted runners are free for this public repository.
+Spend runner capacity to shorten the wait: more parallel jobs, more partitions, and more caching are worth it whenever they make results arrive sooner.
+Never lengthen the critical path without measuring the change.
+
+### Push-to-Green and the Critical Path
+
+Measure push-to-green: the time from a push to every [required check](#how-ci-runs-the-tests) passing, across `CI / Bundle`, `CI / Images`, `CI / Dependencies`, and `CD / Documentation`.
+Each `Test / PLATFORM` check waits for all four platforms, so every one of them reports after the slowest platform's last job.
+The critical path is the chain of jobs, linked by their `needs`, that ends last.
+Time spent off that path doesn't change push-to-green; time added on it does.
+
+For example, over 22 pull request runs and 15 `v1` pushes in November 2026, a pull request took a median of about 15 minutes to turn green and about 41 at the 90th percentile; a `v1` push took about 27 and 53.
+A pull request's critical path was split almost evenly among three branches of about 14 minutes each: Windows' bundle build and integration partitions; Linux's bundle, live images, and kind tests; and macOS's bundle and integration partitions with their runner queue.
+Shortening one of these branches alone therefore barely moved push-to-green.
+A `v1` push's critical path ran through Linux AMD64's GPU cases, which finished 8 to 12 minutes after every other job.
+
+### Causes to Watch
+
+The slowest of those runs lost their time outside any test step:
+
+- Concurrency queuing on `v1` pushes: `CI / Bundle` doesn't cancel `v1` push runs, so a push's run waits for the previous push's run to finish, up to 39 minutes in those measurements; a newer push replaces a waiting run, and `CI / Bundle` never runs on that commit. `CI / Images` cancels superseded push runs, so an intermediate `v1` commit gets no `Build` result. Each GPU case also waits for the same case's job in any earlier run.
+- Runner queues: a job starts only when a runner picks it up. The macOS runners queued for 5 to 7 minutes at the 90th percentile and up to about 15, and the self-hosted GPU runner up to about 13; hosted Ubuntu and Windows runners rarely queued.
+- GPU runtime image builds: each GPU case builds its model runtime images on the GPU runner, in every run, which took about 4 minutes at the median.
+- Cold caches: a new month, a toolchain change, or a profile change in `.cargo/config.toml` starts a fresh [dependency cache](#ci-caches), and pull requests restore only `v1`'s caches; the first runs after a change spent 20 to 30 minutes in a single build.
+- Flaky reruns: a rerun repeats the failed job's wait and the time before it starts, and after its producers' artifacts expire, the [whole workflow's](#archives).
+- Serial `needs` chains: a job waits for every job it needs, even when it uses none of their outputs. `E2E build images` downloads no artifacts but waits for `Build bundle`, because the E2E workflow that contains it needs the build and bundle jobs.
+
+### Shorten It
+
+- Partition and parallelize: split a long job or step across runners instead of adding to it, as Windows runs a third integration partition.
+- Cache what a job would otherwise rebuild or download; see [CI caches](#ci-caches).
+- Keep `needs` chains short: a job should need only the jobs whose outputs it uses, and independent work should start in parallel.
+- Move a check to the cheapest [layer](#test-layers) that observes it, and keep live suites, whose Docker tests and kind scenarios run one at a time, to what needs a real engine or cluster.
+- Fix a flaky test or job when you see it, or file a `v1` issue with the failing run; don't rerun until it passes.
+
+### Measure a Workflow Change
+
+Compare several runs of the same kind before and after the change, since queues vary: pull requests or `v1` pushes, with the same selected checks and warm caches.
+List a run's times and each job's with the GitHub API:
+
+```sh
+gh api repos/NVIDIA/NemoClaw/actions/runs/RUN_ID --jq '.created_at, .updated_at'
+gh api "repos/NVIDIA/NemoClaw/actions/runs/RUN_ID/jobs?per_page=100" --paginate \
+  --jq '.jobs[] | "\(.created_at) \(.started_at) \(.completed_at) \(.name)"'
+```
+
+- The run's `created_at` is when the push created it; the time until its first job's `created_at` is spent waiting in a concurrency group.
+- A job's `created_at` to `started_at` is its runner queue, and `started_at` to `completed_at` its work; each job's `steps` carry `started_at` and `completed_at` too.
+- The last required check's `completed_at` ends push-to-green; repeat for each workflow that reports a required check.
+
+Follow the latest-finishing job back through its `needs` to find the critical path.
+Within a `cargo ci` step, the [build and test timing reports](#timing-reports) show where its time goes.
+Report the before-and-after push-to-green and critical-path times in the pull request.
+
+[Test budgets](#budgets-and-per-test-limits) bound only the test steps, measured from their JUnit reports.
+Compilation, image builds, cluster setup, artifact transfers, and runner and concurrency waits are in no budget, and no check fails when push-to-green grows: a change can pass every budget and still lengthen the wait.
+
+### Local Waiting Time
+
+Waiting for local checks costs the same as waiting for CI.
+Run the narrowest checks that [local validation](#choose-local-validation) allows.
+Plain `cargo ci` skips the bundle, contract, and integration steps that its plan doesn't select, and `cargo ci --dry-run` shows the selection before you wait for it; it runs the selected steps one after another, while CI runs each platform's layers in parallel.
+
 ## Budgets and Per-Test Limits
 
 [`.config/test-budgets.yaml`](../../.config/test-budgets.yaml) gives each test step a wall-clock budget and a limit for any one test, in seconds:
@@ -207,7 +273,7 @@ Its `binaries` section budgets each provider's contract binary by its nextest na
 | `nemoclaw-provider::contract` | 82 s | 12 s | 24 s |
 | `openshell-provider::contract` | 180 s | 12 s | 24 s |
 
-Budgets are measured from each step's JUnit report, so compilation, image builds, and cluster setup do not count.
+Budgets are measured from each step's JUnit report, so compilation, image builds, and cluster setup do not count; see [CI wall-clock time](#ci-wall-clock-time) for the rest of the wait.
 
 ### Where Budgets Are Enforced
 
