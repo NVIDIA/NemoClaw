@@ -151,7 +151,7 @@ gateway:
 
 With either registration:
 
-- Each sandbox runs APF's policy, so it can't set `network.policy` or `network.policyRef`. Apply refuses a sandbox that APF admitted without its provenance annotations.
+- Each sandbox runs APF's policy, so plan rejects a sandbox that sets `network.policy`, `network.policyRef`, `network.grants`, or `network.grantRefs`. Apply refuses a sandbox that APF admitted without its provenance annotations.
 - Apply records each sandbox's loaded policy hash and APF's provenance token. The next apply records a policy that arrives with a new token. A policy that changes under the same token, or a sandbox that loses APF's provenance, plans an in-place update that asks OpenShell for the sandbox's configuration without a policy, so that APF issues its policy again.
 - Inference, web search, and API integrations use the profile that APF serves under the name NemoClaw would give it, once NemoClaw has checked that the profile delivers the credential in the variable the agent reads. NemoClaw creates the provider registrations but never imports or deletes these profiles. An API integration can't set `mcp`, because APF's profile sets the endpoint's rules.
 - NemoClaw doesn't verify the provenance token's signature; APF and OpenShell decide which policies a sandbox loads.

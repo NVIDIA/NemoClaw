@@ -31,6 +31,7 @@ Agents and interfaces:
 Sandbox policy:
 
 - `spec.gateway.policyAuthority.apf` lets NVIDIA Agent Policy Fabric (APF) author each sandbox's policy and serve the inference, web search, and API profiles, and `registration: managed` has NemoClaw register APF with a managed Docker gateway.
+  A sandbox on such a gateway can't set `network.policy`, `network.policyRef`, `network.grants`, or `network.grantRefs`.
   See [let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
 
 Inference and models:
