@@ -574,6 +574,7 @@ async function rebuildSandboxUnlocked(
           observabilityEnabled: recreateOptions.observabilityEnabled,
         },
         staleRecovery,
+        requestedDcodeAutoApprovalMode: durableConfig.dcodeAutoApprovalMode,
         preparedRecoveryManifest: recoveryManifest,
         ...(activeRecoveryTransaction?.sandboxName === sandboxName
           ? { recoveryTransactionId: activeRecoveryTransaction.id }

@@ -19,11 +19,6 @@ async function main(): Promise<void> {
   let stage: string | undefined = "configuration";
   try {
     const trusted = readTrustedAuditConfig();
-    if (!process.env.UPGRADE_PR_NUMBER) {
-      stage = undefined;
-      auditReviewedNpmGraphs(trusted);
-      return;
-    }
     stage = "sdk-admission";
     await auditWithApprovedOpenShellSdk(
       process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT ?? resolve(import.meta.dirname, "../.."),
