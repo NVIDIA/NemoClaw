@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { writeSnapshotRegistry } from "../support/native-snapshot";
 import { prepareDcodeConfigRestoreFixture } from "./snapshot-dcode-config-reconcile.fixture";
 
@@ -15,6 +15,9 @@ process.env.HOME = TMP_HOME;
 const sandboxState = await import(
   pathToFileURL(path.join(import.meta.dirname, "../..", "src", "lib", "state", "sandbox.ts")).href
 );
+
+const { createSandboxRecreateProtection } =
+  await import("../../src/lib/onboard/sandbox-recreate-protection");
 
 function restoreEnv(name: string, value: string | undefined): void {
   value === undefined
@@ -33,6 +36,7 @@ describe("native Deep Agents config restore", () => {
     { keep: false, layout: "directory", expected: "archived selection" },
     { keep: true, layout: "absent", expected: "replacement selection" },
     { keep: true, layout: "archive symlink", expected: "replacement selection" },
+    { keep: false, layout: "archive symlink", expected: "external selection" },
     { keep: true, layout: "replacement symlink", expected: "replacement selection" },
   ])(
     "preserves Deep Agents config safely with keep=$keep and $layout state (#13897)",
@@ -56,6 +60,35 @@ describe("native Deep Agents config restore", () => {
         writeSnapshotRegistry(TMP_HOME, "alpha", "langchain-deepagents-code");
         const backup = sandboxState.backupSandboxState("alpha");
         expect(backup.success, backup.error).toBe(true);
+        const beginDelete = vi.fn();
+        const protection = createSandboxRecreateProtection({
+          sandboxName: "alpha",
+          sandboxEntry: null,
+          getSandbox: () => null,
+          note: () => {},
+        });
+        const preflight = (() => {
+          try {
+            protection.preflightDeepAgentsConfigPreservation(backup.manifest!.backupPath, {
+              agentName: "langchain-deepagents-code",
+              customImage: false,
+              freshSelection: keep,
+              selectionChanged: keep,
+              recordedSelection: false,
+            });
+            beginDelete();
+            return "allowed";
+          } catch (error) {
+            return (error as Error).message;
+          }
+        })();
+        const blockedSource = keep && layout === "archive symlink";
+        expect(preflight).toBe(
+          blockedSource
+            ? "Cannot preserve Deep Agents config through a symbolic link. Source sandbox was not deleted."
+            : "allowed",
+        );
+        expect(beginDelete).toHaveBeenCalledTimes(blockedSource ? 0 : 1);
         state.createReplacement();
 
         const restore = await sandboxState.restoreRecreatedSandboxState(
@@ -67,7 +100,7 @@ describe("native Deep Agents config restore", () => {
           },
         );
 
-        const unsafeLayout = layout.endsWith("symlink");
+        const unsafeLayout = keep && layout.endsWith("symlink");
         expect(restore.success, restore.error).toBe(!unsafeLayout);
         expect(restore.error ?? "").toContain(
           unsafeLayout ? "cannot preserve Deep Agents config through a symbolic link" : "",

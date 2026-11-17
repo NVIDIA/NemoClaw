@@ -2762,6 +2762,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingStateRestore = result.backup;
       }
 
+      recreateProtection.preflightDeepAgentsConfigPreservation(
+        pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath,
+        {
+          agentName: getRequestedSandboxAgentName(agent),
+          customImage: Boolean(fromDockerfile || fromImage),
+          freshSelection: createIntent?.recreateTransaction?.freshSelection === true,
+          selectionChanged: reconcileOpenClawInference,
+          recordedSelection:
+            onboardSession.loadSession()?.checkpoint?.sandboxRecreate
+              ?.reconcileOpenClawInference === true,
+        },
+      );
+
       // Parse and freeze the rebuild policy while the source sandbox is still
       // intact. A malformed or raced policy must not fail after deletion.
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);

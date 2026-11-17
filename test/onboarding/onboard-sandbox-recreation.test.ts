@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, it } from "vitest";
+import { RECREATION_RESTORE_CASES } from "./dcode-recreation-identity.fixture";
 import { runOnboardProcessAsync } from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
@@ -296,23 +297,7 @@ const { createSandbox } = require(${onboardPath});
       );
     },
   );
-  it.for([
-    { scenario: "forced recreation", force: true, marked: false, primary: "openai/gpt-4o" },
-    {
-      scenario: "marked recreation resume",
-      force: false,
-      marked: true,
-      primary: "inference/gpt-5.4",
-    },
-    {
-      scenario: "unmarked recreation resume",
-      force: false,
-      marked: false,
-      primary: "openai/gpt-4o",
-    },
-    { scenario: "Deep Agents provider change", agent: "langchain-deepagents-code", drift: true },
-    { scenario: "unchanged Deep Agents selection", agent: "langchain-deepagents-code" },
-  ])(
+  it.for(RECREATION_RESTORE_CASES)(
     "$scenario restores native state with its recorded selection authority (#12667)",
     {
       timeout: 60_000,
@@ -351,7 +336,7 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
 let sourceDeleted = false;
-require(${JSON.stringify(path.join(repoRoot, "test/onboarding/dcode-recreation-identity.fixture.ts"))}).installDcodeRecreationIdentityFixture(require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/dcode-selection-drift.ts"))}), ${JSON.stringify(drift)}, () => sourceDeleted);
+const dcodeFixture = require(${JSON.stringify(path.join(repoRoot, "test/onboarding/dcode-recreation-identity.fixture.ts"))}).installDcodeRecreationIdentityFixture(require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/dcode-selection-drift.ts"))}), ${JSON.stringify(drift)}, () => sourceDeleted, sandboxState, ${JSON.stringify(tmpDir)});
 const events = [];
 let nativeConfig = { agents: { defaults: { model: { primary: "openai/gpt-4o" } } }, models: { providers: {} }, custom: { retained: true } };
 let registered = null;
@@ -383,7 +368,7 @@ runner.run = (command) => {
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") {
     sourceDeleted = true;
-    events.push({ kind: "delete", reconcile: sessions.loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference ?? null });
+    events.push({ kind: "delete", preflight: dcodeFixture.preflight, reconcile: sessions.loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference ?? null });
     createdSandbox.delete();
   }
   events.push({ kind: "run", cmd });
@@ -470,7 +455,7 @@ const { createSandbox } = require(${onboardPath});
     createFixture,
   );
   if (${JSON.stringify(drift)}) createArgs[15] = { ...createArgs[15], endpointUrl: "https://api.example/v1", credentialEnv: "COMPATIBLE_API_KEY" };
-  if (${JSON.stringify(agent)} !== "openclaw") createArgs[15] = { ...createArgs[15], recreateTransaction: { ...createArgs[15].recreateTransaction, freshSelection: true } };
+  if (${JSON.stringify(agent)} !== "openclaw" && !${JSON.stringify(marked)}) createArgs[15] = { ...createArgs[15], recreateTransaction: { ...createArgs[15].recreateTransaction, freshSelection: true } };
   // Seed the durable checkpoint left by the interrupted invocation. The resumed
   // request carries only its existing transaction identity, never fresh authority.
   const interrupted = sessions.loadSession();
@@ -517,6 +502,7 @@ const { createSandbox } = require(${onboardPath});
         options?: { targetAgentType?: string; keepReplacementDeepAgentsConfig?: boolean };
         primary?: string;
         reconcile?: true | null;
+        preflight?: boolean;
       }>;
       const backupIndex = events.findIndex((e) => e.kind === "backup");
       const deleteIndex = events.findIndex(
@@ -538,7 +524,12 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(restoreEvent?.options?.targetAgentType, agent);
       const deleteEvent = events.find((event) => event.kind === "delete");
       assert.equal(deleteEvent?.reconcile, drift || marked || null);
-      assert.equal(restoreEvent?.options?.keepReplacementDeepAgentsConfig, drift || undefined);
+      const keepDcodeConfig = agent === "langchain-deepagents-code" && (drift || marked);
+      assert.equal(deleteEvent?.preflight, keepDcodeConfig);
+      assert.equal(
+        restoreEvent?.options?.keepReplacementDeepAgentsConfig,
+        keepDcodeConfig || undefined,
+      );
       assert.equal(payload.nativeConfig.agents.defaults.model.primary, primary);
       const restart = events.find((event) => event.kind === "restart")?.primary;
       assert.equal(restart, agent === "openclaw" ? primary : undefined);
