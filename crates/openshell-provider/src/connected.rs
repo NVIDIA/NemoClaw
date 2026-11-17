@@ -30,7 +30,13 @@ pub(super) fn create_sandbox_request(
             (agent::LAUNCH.into(), value(want, "launch_json").into()),
             (agent::POLICY.into(), value(want, "policy_json").into()),
         ]
-        .into(),
+        .into_iter()
+        .chain(
+            Some(value(want, crate::POLICY_AUTHORITY))
+                .filter(|authority| !authority.is_empty())
+                .map(|authority| (crate::POLICY_AUTHORITY_ANNOTATION.into(), authority.into())),
+        )
+        .collect(),
         spec: Some(proto::SandboxSpec {
             template: Some(proto::SandboxTemplate {
                 image: value(want, "image").into(),
@@ -68,7 +74,7 @@ impl ConnectedOpenShellGateway {
                     == format!("nemoclaw-api-{}", value(want, "name"))
                     && !value(want, "credential_env").is_empty() =>
             {
-                ("api", "NEMOCLAW_API_ENDPOINT", "")
+                ("api", nemoclaw_openshell::api::ENDPOINTS_CONFIG, "")
             }
             "" => ("openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
             "anthropic" => ("anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
@@ -94,12 +100,26 @@ impl ConnectedOpenShellGateway {
         };
         let native = search.is_none() && !api;
         let source = value(want, "credential_source");
-        let profile = if api {
+        let profile = if value(want, crate::POLICY_AUTHORITY) == "apf" {
+            // The registration takes APF's profile as its type and gives the
+            // credential to it; the resource checked that the profile delivers
+            // it in the variable NemoClaw tells the agent to read.
+            let id = if native {
+                format!("nemoclaw-inference-{}", value(want, "name"))
+            } else {
+                value(want, "profile_name").into()
+            };
+            Some(
+                self.apf_profile(value(want, "workspace"), &id)
+                    .await?
+                    .ok_or(ObservationError::BindingMismatch)?,
+            )
+        } else if api {
             let bound = self
                 .observe_profile(value(want, "workspace"), value(want, "profile_name"), false)
                 .await?
                 .ok_or(ObservationError::BindingMismatch)?;
-            if ["owner", "generation", "endpoint"]
+            if ["owner", "generation", "endpoints_json", "sandbox_env"]
                 .iter()
                 .any(|field| value(&bound, field) != value(want, field))
                 || !source.is_empty()
@@ -180,7 +200,9 @@ impl ConnectedOpenShellGateway {
             config: if endpoint_key.is_empty() {
                 Default::default()
             } else {
-                [(endpoint_key.into(), value(want, "endpoint").into())].into()
+                // An API records its endpoint list; inference its server.
+                let endpoint = if api { "endpoints_json" } else { "endpoint" };
+                [(endpoint_key.into(), value(want, endpoint).into())].into()
             },
             credentials: match profile {
                 Some(profile) => profile
@@ -374,6 +396,22 @@ impl ConnectedOpenShellGateway {
                 .await
                 .map_err(|error| remote_error(&error))?;
         }
+        Ok(())
+    }
+
+    /// Update the bound sandbox's configuration without a policy. A gateway
+    /// whose admission interceptor governs the sandbox's policy, as APF does,
+    /// fills it with the policy it issues.
+    pub(crate) async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError> {
+        self.client
+            .raw_grpc()
+            .update_config(self.request(proto::UpdateConfigRequest {
+                sandbox: value(want, "name").into(),
+                workspace_scope: Some(proto::workspace_selector(value(want, "workspace"))),
+                ..Default::default()
+            }))
+            .await
+            .map_err(|error| remote_error(&error))?;
         Ok(())
     }
 

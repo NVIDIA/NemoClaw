@@ -57,6 +57,14 @@ pub struct Spec {
     #[schemars(default)]
     /// Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef.
     pub services: std::collections::BTreeMap<String, ServiceDefinition>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named complete OpenShell sandbox policies available to sandbox networks through policyRef. Unselected policies are validated but apply to no sandbox.
+    pub policies: std::collections::BTreeMap<String, super::ExplicitPolicy>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[schemars(default)]
+    /// Named network grants available to sandbox networks through grantRefs. Each selected grant becomes a policy rule with its definition's name; unselected grants are validated but grant nothing.
+    pub grants: std::collections::BTreeMap<String, super::Grant>,
     #[serde(rename = "gateway")]
     /// OpenShell gateway connection or managed gateway settings.
     pub gateway: Gateway,
@@ -184,6 +192,70 @@ pub struct ManagedGateway {
     #[schemars(default, extend("additionalProperties" = {"anyOf": [{"type": "object"}, {"type": "array", "items": {"type": "object"}}]}))]
     /// OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets.
     pub config: Option<crate::managed::gateway_config::GatewayConfig>,
+    #[serde(rename = "policyAuthority", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "PolicyAuthority")]
+    /// Who authors sandbox policy on this gateway; omission means NemoClaw does.
+    pub policy_authority: Option<PolicyAuthority>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// The component that authors every sandbox's policy on a gateway, instead of NemoClaw.
+pub struct PolicyAuthority {
+    #[serde(rename = "apf")]
+    /// APF's admission interceptor replaces each sandbox's policy with its signed bundle's, and APF serves the provider profiles. Sandboxes must not set a policy or policyRef, and API integrations must not set mcp. NemoClaw requires APF's provenance on each sandbox, records each policy APF issues with a new provenance token, and asks APF to issue its policy again when the loaded policy changes without one.
+    pub apf: ApfPolicyAuthority,
+}
+
+impl PolicyAuthority {
+    /// APF's connection settings, when NemoClaw registers APF with the gateway.
+    pub fn managed(&self) -> Option<&ManagedApf> {
+        match &self.apf {
+            ApfPolicyAuthority::Managed(apf) => Some(apf),
+            ApfPolicyAuthority::External(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "registration", rename_all = "lowercase")]
+/// Who registers APF with the gateway as its interceptor and provider-profile source.
+pub enum ApfPolicyAuthority {
+    /// NemoClaw registers APF in a managed Docker gateway's configuration file.
+    #[schemars(title = "Registered by NemoClaw")]
+    Managed(ManagedApf),
+    /// The gateway's operator registers APF, such as in spec.gateway.config. Required on an external gateway.
+    #[schemars(title = "Registered by the gateway's operator")]
+    External(ExternalApf),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// APF's connection settings, which NemoClaw writes into the gateway's configuration. spec.gateway.config must not register interceptors or provider-profile sources.
+pub struct ManagedApf {
+    #[serde(rename = "endpoint")]
+    /// APF's gRPC origin as the gateway reaches it: `https://HOST[:PORT]`, without a path.
+    pub endpoint: String,
+    #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "InterceptorTls")]
+    /// The CA certificate that verifies APF; omission uses the gateway's system roots.
+    pub tls: Option<InterceptorTls>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// No settings: the operator's registration holds APF's connection.
+pub struct ExternalApf {}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(!default)]
+#[serde(default, deny_unknown_fields)]
+/// TLS file reference for a service the gateway dials.
+pub struct InterceptorTls {
+    #[serde(rename = "ca")]
+    /// Environment variable whose value names the local CA certificate file. NemoClaw copies the certificate into the gateway's storage.
+    pub ca: FileRef,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -209,6 +281,10 @@ pub struct ExternalGateway {
     #[schemars(default, with = "TLS")]
     /// Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS.
     pub tls: Option<TLS>,
+    #[serde(rename = "policyAuthority", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "PolicyAuthority")]
+    /// Who authors sandbox policy on this gateway; omission means NemoClaw does.
+    pub policy_authority: Option<PolicyAuthority>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -412,10 +488,29 @@ pub struct Agent {
     /// Require API-key authentication through the selected routed provider. The provider must supply a credential.
     pub auth: Option<super::AgentAuth>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::AgentTools")]
-    /// Explicit native tool identifiers projected into public Fabric configuration. Fabric validates adapter support; this does not change OS-level filesystem permissions.
-    pub tools: Option<super::AgentTools>,
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's instructions section, passed to Fabric unchanged: the agent's system prompt and instruction files. Fabric validates it against the selected adapter.
+    pub instructions: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's tools section, passed to Fabric unchanged, such as enabled, blocked, and definitions. Fabric validates tool identifiers against the selected adapter; this does not change OS-level filesystem permissions.
+    pub tools: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's skills section, passed to Fabric unchanged, such as directories and duplicates. Paths are absolute sandbox paths.
+    pub skills: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's MCP section, passed to Fabric unchanged. NemoClaw grants no network access or credentials for the servers it names.
+    pub mcp: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's workflow section, passed to Fabric unchanged: the registered workflow target the agent runs.
+    pub workflow: Option<FabricSection>,
 }
+
+/// One section of Fabric's agent configuration, passed to Fabric unchanged.
+pub type FabricSection = serde_json::Map<String, serde_json::Value>;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
@@ -491,17 +586,28 @@ pub struct Overrides {
 pub struct Harness {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
-    /// Public Fabric configuration. Deployment-owned identities and model connections cannot be overridden.
-    pub config: Option<serde_json::Map<String, serde_json::Value>>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     /// Opaque native settings validated by the selected Fabric adapter.
     pub settings: Option<serde_json::Map<String, serde_json::Value>>,
     /// Fabric harness implementation for the sandbox agent.
     pub kind: super::HarnessKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "super::AgentExecution")]
-    /// Public Fabric runtime execution settings.
-    pub execution: Option<super::AgentExecution>,
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's runtime section, passed to Fabric unchanged, such as timeout_seconds and max_turns. The deployment sets artifacts and, for adapters that accept it, keep_state; a different authored value fails.
+    pub runtime: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's environment section, passed to Fabric unchanged. The deployment sets provider to local and workspace to /sandbox/workspace; a different authored value fails.
+    pub environment: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's discovery section, passed to Fabric unchanged: additional descriptor discovery paths in the sandbox.
+    pub discovery: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's telemetry section, passed to Fabric unchanged, such as providers.relay. NemoClaw grants no network access for its exporters.
+    pub telemetry: Option<FabricSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FabricSection")]
+    /// Fabric's relay section, passed to Fabric unchanged, such as Relay plugins. Relay validates and activates them.
+    pub relay: Option<FabricSection>,
 }

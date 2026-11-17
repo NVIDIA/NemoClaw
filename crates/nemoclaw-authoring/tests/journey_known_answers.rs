@@ -284,7 +284,7 @@ fn an_optional_choice_whose_default_is_offered_cannot_also_be_omitted() {
 }
 
 #[test]
-fn an_omitted_field_reports_the_value_the_sdk_fills_in() {
+fn an_omitted_field_is_neither_asked_nor_authored() {
     let capabilities = Capabilities::available();
     let state = JourneyDefinition::new("defaults", base(&example()))
         .ask([JourneyScope::DeploymentFields])
@@ -294,11 +294,4 @@ fn an_omitted_field_reports_the_value_the_sdk_fills_in() {
     let resolution = state.resolve(&capabilities).unwrap();
     assert!(resolution.question(TIER).is_none());
     assert!(state.values().pointer(TIER).is_none());
-    assert!(
-        resolution
-            .defaults()
-            .contains(&(TIER.to_owned(), json!("isolated"))),
-        "{:?}",
-        resolution.defaults()
-    );
 }

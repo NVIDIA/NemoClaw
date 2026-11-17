@@ -23,9 +23,15 @@ pub trait SandboxExecution: Send + Sync {
     fn exec(&self, request: &p::ExecSandboxRequest) -> Result<std::process::Output, Status>;
 }
 
+/// Rewrites a sandbox as a gateway admission interceptor does.
+pub type SandboxAdmission = Arc<dyn Fn(&mut p::Sandbox) + Send + Sync>;
+
 #[derive(Default)]
 pub struct State {
     pub sandbox_execution: Option<Arc<dyn SandboxExecution>>,
+    /// Rewrites each sandbox as CreateSandbox stores it, as a gateway
+    /// admission interceptor such as APF does.
+    pub sandbox_admission: Option<SandboxAdmission>,
     pub driver: Option<String>,
     pub gateway_info: Option<p::GetGatewayInfoResponse>,
     pub gateway_reads: usize,
@@ -35,6 +41,11 @@ pub struct State {
     pub providers: HashMap<String, p::Provider>,
     pub sandboxes: HashMap<String, p::Sandbox>,
     pub active_policy: Option<p::SandboxPolicy>,
+    /// Sandbox-scoped UpdateConfig requests, in order.
+    pub config_updates: Vec<p::UpdateConfigRequest>,
+    /// Rewrites a sandbox as an UpdateConfig without a policy reaches it, as
+    /// APF does by injecting its bundle's policy.
+    pub config_update: Option<SandboxAdmission>,
     pub sandbox_phase: Option<p::SandboxPhase>,
     pub sandbox_conditions: Vec<p::SandboxCondition>,
     pub configuration_admission: Option<p::SandboxConfigurationAdmission>,
@@ -62,6 +73,12 @@ pub struct State {
     pub sandbox_files: HashMap<String, Vec<u8>>,
     /// Start requests answered as though `serve` were not yet listening.
     pub host_unavailable_starts: usize,
+    /// Start requests refused as Fabric refuses one while another runtime
+    /// still owns the agent's kept state: `state_in_use`, with no effects.
+    pub state_in_use_starts: usize,
+    /// Runtime IDs with a request in flight. Like Fabric, the bridge refuses
+    /// to stop them with `runtime_busy` and keeps them running.
+    pub busy_runtimes: HashSet<String>,
     /// Why a running runtime's check does not pass, as Fabric's reason code,
     /// such as `unsupported_adapter`, `probe_timeout`, or an adapter's own
     /// failure; none passes.
@@ -610,6 +627,12 @@ impl tower::Service<http::Request<Body>> for Service {
                     })
                     .await
                 }
+                "/openshell.v1.OpenShell/UpdateConfig" => {
+                    unary(request, state, |state, request| {
+                        update_config(state, request)
+                    })
+                    .await
+                }
                 "/openshell.v1.OpenShell/GetWorkspace" => {
                     unary(request, state, |state, request| {
                         get_workspace(state, &request)
@@ -931,7 +954,7 @@ fn create_sandbox(
         exposure_mode(exposure.target_port, exposure.authorization_mode)?;
     }
     state.sandbox_exposures.push(q.service_exposures.clone());
-    let sandbox = p::Sandbox {
+    let mut sandbox = p::Sandbox {
         metadata: Some(p::ObjectMeta {
             annotations: q.annotations,
             ..state.metadata(q.name, workspace(&q.workspace_scope)?, q.labels)
@@ -945,6 +968,9 @@ fn create_sandbox(
         }),
         ..Default::default()
     };
+    if let Some(admission) = &state.sandbox_admission {
+        admission(&mut sandbox);
+    }
     if let Some(execution) = &state.sandbox_execution {
         let mut credentials = HashMap::new();
         for name in &sandbox.spec.as_ref().unwrap().providers {
@@ -1067,6 +1093,27 @@ fn get_service(
         .ok_or_else(|| Status::not_found("service endpoint not found"))?
         .clone();
     Ok(service_response(endpoint))
+}
+/// A sandbox-scoped configuration update. Only an update without a policy is
+/// modelled: the configured rewrite stands in for the interceptor that fills it.
+fn update_config(
+    state: &mut State,
+    q: p::UpdateConfigRequest,
+) -> Result<p::UpdateConfigResponse, Status> {
+    let key = format!("{}/{}", workspace(&q.workspace_scope)?, q.sandbox);
+    if q.global || q.policy.is_some() || !q.merge_operations.is_empty() {
+        return Err(Status::unimplemented("only a policy-less sandbox update"));
+    }
+    state.config_updates.push(q);
+    let rewrite = state.config_update.clone();
+    let sandbox = state
+        .sandboxes
+        .get_mut(&key)
+        .ok_or_else(|| Status::not_found("absent"))?;
+    let rewrite = rewrite.ok_or_else(|| Status::failed_precondition("no policy to apply"))?;
+    rewrite(sandbox);
+    state.active_policy = None;
+    Ok(p::UpdateConfigResponse::default())
 }
 /// The gateway exposes a live sandbox's service, or updates an exposed one in
 /// place.
@@ -1298,7 +1345,10 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                         state.host_unavailable_starts -= 1;
                         error = Some(failure("host_unavailable", "transport", "none"));
                     } else if state.fabric_uncertain.contains(&sandbox_id) {
-                        error = Some(failure("runtime_exists", "start", "none"));
+                        error = Some(failure("start_uncertain", "start", "none"));
+                    } else if state.state_in_use_starts > 0 {
+                        state.state_in_use_starts -= 1;
+                        error = Some(failure("state_in_use", "start", "none"));
                     } else if let Some(config) = (flag("--config") == Some("-"))
                         .then(|| serde_json::from_slice::<serde_json::Value>(&request.stdin).ok())
                         .flatten()
@@ -1367,7 +1417,13 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     }
                 }
                 "stop" => {
-                    if let Some(runtime_id) = requested_runtime.filter(|_| running) {
+                    if running
+                        && requested_runtime
+                            .as_ref()
+                            .is_some_and(|id| state.busy_runtimes.contains(id))
+                    {
+                        error = Some(failure("runtime_busy", "stop", "none"));
+                    } else if let Some(runtime_id) = requested_runtime.filter(|_| running) {
                         state.fabric_runtimes.remove(&runtime_id);
                         state.fabric_stopped.insert(sandbox_id.clone());
                         if !state.fabric_runtimes.values().any(|id| id == &sandbox_id) {

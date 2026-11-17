@@ -246,7 +246,7 @@ jobs:
       - if: inputs.tests != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ inputs.tests }}-live
+          name: ${{ inputs.tests }}-e2e
           path: .build/ci
       - if: inputs.tests != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -275,9 +275,8 @@ jobs:
           else
             # As the E2E platform workflow's hosted HCL jobs load them.
             tar -xf .build/ci/bundle.tar
-            mkdir -p .build/hcl
-            zstd -d -c -q .build/ci/live.tar.zst | tar -x -C .build/hcl
-            find .build/hcl -type f -perm -u+x -path '*/deps/e2e-*' -exec ln -s "$PWD/{}" .build/e2e ';'
+            # Artifact transfer drops the executable bit.
+            install -m 755 .build/ci/e2e .build/e2e
             # A case names its images nc-fabric@DIGEST, which Docker resolves
             # only in the repository that holds the image.
             if [[ -n $COMMIT ]]; then
@@ -297,7 +296,6 @@ jobs:
           tar -xf "$RUNNER_TEMP/image-sources.tar"
           read -ra runtimes <<< "$RUNTIMES"
           NEMOCLAW_HCL_RUN="$RUNNER_TEMP/hcl"
-          bake_args=()
           bindings=()
           document="crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
           if [[ $TARGET == dgx-station ]]; then
@@ -313,7 +311,6 @@ jobs:
               -e 's#ff433f5493e25d631c9f12b5d55c674229923d02#da5b2650a835292c678994a1fa3fb653250fb508#'
               -e 's#nemotron-3-super#nemotron-3.5-super-vl#g'
             )
-            bake_args+=(--set vllm.args.VLLM_IMAGE=vllm/vllm-openai@sha256:0d69205f3227e47b750b05789f117abbd929b67eccc46060e0d22ce4021c0318)
             cp -a "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_HCL_RUN/bundle"
             cp -L .build/e2e "$NEMOCLAW_HCL_RUN/e2e"
             {
@@ -322,7 +319,7 @@ jobs:
               echo "NEMOCLAW_HCL_PERSISTENT=true"
             } >> "$GITHUB_ENV"
           fi
-          if (( ${#runtimes[@]} )); then (umask 022; docker buildx bake "${runtimes[@]}" "${bake_args[@]}"); fi
+          if (( ${#runtimes[@]} )); then (umask 022; docker buildx bake "${runtimes[@]}"); fi
           docker image inspect nc-fabric:openclaw nc-fabric:hermes > /dev/null
           for runtime in "${runtimes[@]}"; do docker image inspect "nc-prototype-$runtime:rust-v1" > /dev/null; done
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }

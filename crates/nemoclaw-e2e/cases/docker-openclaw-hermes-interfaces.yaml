@@ -71,18 +71,17 @@ spec:
               read_only: true
       harness:
         kind: nvidia.fabric.openclaw
-        config:
-          skills:
-            directories:
-              - folder: /sandbox/skills
-              - skill: /sandbox/review-skill
-            duplicates: reject
         settings:
           interfaces:
             dashboard:
               port: 18789
       agent:
         name: main
+        skills:
+          directories:
+            - folder: /sandbox/skills
+            - skill: /sandbox/review-skill
+          duplicates: reject
         inference:
           routes:
             - name: primary
@@ -107,12 +106,6 @@ spec:
               read_only: false
       harness:
         kind: nvidia.fabric.hermes
-        config:
-          skills:
-            directories:
-              - folder: /sandbox/skills
-              - skill: /sandbox/notes-skill
-            duplicates: reject
         settings:
           interfaces:
             api:
@@ -121,6 +114,11 @@ spec:
               port: 9119
       agent:
         name: hermes
+        skills:
+          directories:
+            - folder: /sandbox/skills
+            - skill: /sandbox/notes-skill
+          duplicates: reject
         inference:
           routes:
             - name: primary

@@ -72,6 +72,7 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
             let mcp = schemars::schema_for!(crate::api::McpPolicy).to_value();
             vec![
                 input("binaries", "binaries_json", strings()),
+                input("endpoints", "endpoints_json", strings()),
                 input(
                     "mcp",
                     crate::api::MCP_POLICY,

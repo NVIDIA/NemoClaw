@@ -13,13 +13,15 @@ const CLUSTER_ADDRESSES: &str = "nemoclaw.nvidia.com/cluster-addresses";
 const AUTH_STYLE: &str = "nemoclaw.nvidia.com/auth-style";
 const HEADER_NAME: &str = "nemoclaw.nvidia.com/header-name";
 const SANDBOX_ENV: &str = "nemoclaw.nvidia.com/sandbox-env";
+const ENDPOINTS: &str = "nemoclaw.nvidia.com/endpoints";
 
 /// Each ownership and definition field, and the profile annotation that carries it.
-const FIELDS: [(&str, &str); 12] = [
+const FIELDS: [(&str, &str); 13] = [
     ("owner", OWNER),
     ("generation", GENERATION),
     ("binaries_json", BINARIES),
     ("endpoint", ENDPOINT),
+    ("endpoints_json", ENDPOINTS),
     ("provider_type", PROVIDER_TYPE),
     ("authenticated", AUTHENTICATED),
     ("cluster_source", CLUSTER_SOURCE),
@@ -205,23 +207,68 @@ fn native_definition(
     Ok(profile)
 }
 
+/// The observed field holding the variable an APF-served profile's credential
+/// reaches the sandbox in.
+pub(super) const APF_CREDENTIAL_VARIABLE: &str = "credential_variable";
+
+/// The variable a profile's credential reaches the sandbox in, or empty for a
+/// profile without one.
+pub(super) fn credential_variable(profile: &proto::ProviderProfile) -> &str {
+    profile
+        .credentials
+        .first()
+        .and_then(|c| c.env_vars.first())
+        .map(String::as_str)
+        .unwrap_or_default()
+}
+
+/// The variable NemoClaw tells the agent to read the credential of the profile
+/// half `want` from: the inference key when authenticated, the API key, or the
+/// search key's sandbox variable. Empty when the profile needs no credential.
+pub(super) fn apf_credential_variable(want: &Row) -> Result<String, ObservationError> {
+    let name = want.get("name").map(String::as_str).unwrap_or_default();
+    if let Some(registration) = name.strip_prefix("nemoclaw-inference-") {
+        return Ok(match want.get("authenticated").map(String::as_str) {
+            Some("true") => nemoclaw_openshell::profile::inference_key_env(registration),
+            _ => String::new(),
+        });
+    }
+    if let Some(api) = name.strip_prefix("nemoclaw-api-") {
+        return Ok(
+            match want.get("sandbox_env").filter(|env| !env.is_empty()) {
+                Some(env) => env.clone(),
+                None => nemoclaw_openshell::api::credential_key(api),
+            },
+        );
+    }
+    SearchProvider::from_profile(name)
+        .map(|provider| sandbox_env(provider, want))
+        .ok_or(ObservationError::Query)
+}
+
 pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationError> {
     let name = want["name"]
         .strip_prefix("nemoclaw-api-")
         .ok_or(ObservationError::Query)?;
     let mcp = want.get(MCP_POLICY).map(String::as_str).unwrap_or_default();
+    let sandbox_env = want
+        .get("sandbox_env")
+        .map(String::as_str)
+        .unwrap_or_default();
     let mut profile = nemoclaw_openshell::api::definition(
         name,
-        &want["endpoint"],
+        &nemoclaw_openshell::api::endpoints(&want["endpoints_json"])?,
         &want["auth_style"],
         &want["header_name"],
         mcp,
+        sandbox_env,
     )?;
     profile.binaries = binaries(want)?;
+    // A default variable name is recorded as no annotation at all.
     let metadata = [
         "owner",
         "generation",
-        "endpoint",
+        "endpoints_json",
         "binaries_json",
         "auth_style",
         "header_name",
@@ -229,6 +276,7 @@ pub(super) fn api_definition(want: &Row) -> Result<proto::ProviderProfile, Obser
     .into_iter()
     .map(|field| (field.into(), want[field].clone()))
     .chain((!mcp.is_empty()).then(|| (MCP_POLICY.into(), mcp.into())))
+    .chain((!sandbox_env.is_empty()).then(|| ("sandbox_env".into(), sandbox_env.into())))
     .collect();
     profile.annotations = annotations(metadata)?;
     Ok(profile)
@@ -300,7 +348,13 @@ fn row(
         if let Some(mcp) = metadata.get(MCP_POLICY) {
             fields.insert(MCP_POLICY.into(), mcp.clone());
         }
-        for field in ["endpoint", "auth_style", "header_name"] {
+        // Empty means the derived variable name.
+        fields.insert(
+            "sandbox_env".into(),
+            metadata.get("sandbox_env").cloned().unwrap_or_default(),
+        );
+        fields.remove("endpoint");
+        for field in ["endpoints_json", "auth_style", "header_name"] {
             fields.insert(
                 field.into(),
                 metadata
@@ -479,13 +533,13 @@ impl ConnectedOpenShellGateway {
         .await
     }
 
-    pub(super) async fn observe_profile(
+    /// The profile OpenShell holds under `name`, if any.
+    async fn fetch_profile(
         &self,
         workspace: &str,
         name: &str,
-        removing: bool,
-    ) -> Result<Option<Row>, ObservationError> {
-        let response = authoritative(
+    ) -> Result<Option<proto::ProviderProfile>, ObservationError> {
+        authoritative(
             self.client
                 .raw_grpc()
                 .get_provider_profile(self.request(proto::GetProviderProfileRequest {
@@ -493,21 +547,68 @@ impl ConnectedOpenShellGateway {
                     workspace_scope: Some(proto::workspace_selector(workspace)),
                 }))
                 .await,
-        )?;
-        match response {
-            Some(response) => self
-                .checked_profile_row(
-                    response.profile.ok_or(ObservationError::Incomplete)?,
-                    workspace,
-                    name,
-                    true,
-                    removing,
-                )
+        )?
+        .map(|response| response.profile.ok_or(ObservationError::Incomplete))
+        .transpose()
+    }
+
+    pub(super) async fn observe_profile(
+        &self,
+        workspace: &str,
+        name: &str,
+        removing: bool,
+    ) -> Result<Option<Row>, ObservationError> {
+        match self.fetch_profile(workspace, name).await? {
+            Some(profile) => self
+                .checked_profile_row(profile, workspace, name, true, removing)
                 .await
                 .map(Some),
             None => Ok(None),
         }
     }
+    /// The profile APF's interceptor serves under `name`. OpenShell sets a
+    /// profile's source, so an interceptor source means the gateway took it
+    /// from an interceptor's snapshot, not from an import. Its content is
+    /// APF's, verified by APF; NemoClaw reads at most one credential from it,
+    /// which [`apf_credential_variable`] says where to find.
+    pub(super) async fn apf_profile(
+        &self,
+        workspace: &str,
+        name: &str,
+    ) -> Result<Option<proto::ProviderProfile>, ObservationError> {
+        let Some(profile) = self.fetch_profile(workspace, name).await? else {
+            return Ok(None);
+        };
+        if profile.id != name
+            || !profile.source.starts_with("interceptor/")
+            || profile.credentials.len() > 1
+            || profile.credentials.iter().any(|c| c.env_vars.len() != 1)
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        Ok(Some(profile))
+    }
+
+    /// [`Self::apf_profile`] as the profile half of a credential resource.
+    pub(super) async fn observe_apf_profile(
+        &self,
+        workspace: &str,
+        name: &str,
+    ) -> Result<Option<Row>, ObservationError> {
+        Ok(self.apf_profile(workspace, name).await?.map(|profile| {
+            [
+                ("id".into(), format!("{}/{}", profile.source, profile.id)),
+                ("name".into(), profile.id.clone()),
+                ("workspace".into(), workspace.into()),
+                (
+                    APF_CREDENTIAL_VARIABLE.into(),
+                    credential_variable(&profile).into(),
+                ),
+            ]
+            .into()
+        }))
+    }
+
     pub(super) async fn create_profile(&self, want: &Row) -> Result<String, ObservationError> {
         let search = SearchProvider::from_profile(&want["name"]);
         let api = want["name"].starts_with("nemoclaw-api-");
@@ -791,7 +892,10 @@ mod tests {
     fn api_profiles_round_trip_legacy_rest_and_enforced_mcp() {
         let mut want = native_fields("", true);
         want.insert("name".into(), "nemoclaw-api-booking".into());
-        want.insert("endpoint".into(), "http://10.42.0.7:8080/mcp/".into());
+        want.insert(
+            "endpoints_json".into(),
+            r#"["http://10.42.0.7:8080/mcp/"]"#.into(),
+        );
         want.insert("auth_style".into(), String::new());
         want.insert("header_name".into(), String::new());
 
@@ -807,6 +911,18 @@ mod tests {
             !row(legacy, "workspace", &want["name"], true, &DockerServices)
                 .unwrap()
                 .contains_key(MCP_POLICY)
+        );
+
+        // A chosen variable name survives the round trip; the default reads back empty.
+        let mut named = want.clone();
+        named.insert("sandbox_env".into(), "NVIDIA_API_KEY".into());
+        let mut chosen = api_definition(&named).unwrap();
+        chosen.resource_version = 1;
+        chosen.source = "user".into();
+        chosen.scope = "workspace".into();
+        assert_eq!(
+            row(chosen, "workspace", &want["name"], true, &DockerServices).unwrap()["sandbox_env"],
+            "NVIDIA_API_KEY"
         );
 
         want.insert(MCP_POLICY.into(), r#"{"rules":[]}"#.into());

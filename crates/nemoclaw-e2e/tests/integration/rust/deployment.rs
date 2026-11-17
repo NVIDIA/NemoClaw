@@ -226,13 +226,13 @@ async fn shell_restriction_and_restore_replace_only_the_target_sandbox() {
         .get_mut("assistant")
         .unwrap()
         .agent
-        .tools = Some(nemoclaw_sdk::config::AgentTools {
-        allow: vec![
-            "fixture.file-read".into(),
-            "fixture.shell-launch".into(),
-            "fixture.lookup".into(),
-        ],
-    });
+        .tools = serde_json::json!({"enabled": [
+        "fixture.file-read",
+        "fixture.shell-launch",
+        "fixture.lookup",
+    ]})
+    .as_object()
+    .cloned();
     let mut reader = document.spec.sandboxes["assistant"].clone();
     reader.agent.name = "reader".into();
     // An exposure on the unrelated sandbox gives the gateway a service endpoint
@@ -251,8 +251,9 @@ async fn shell_restriction_and_restore_replace_only_the_target_sandbox() {
         .agent
         .tools
         .as_mut()
+        .and_then(|tools| tools.get_mut("enabled"))
+        .and_then(serde_json::Value::as_array_mut)
         .unwrap()
-        .allow
         .retain(|tool| tool != "fixture.shell-launch");
     let target = format!("{}/assistant", lifecycle.document.workspace());
 
@@ -367,9 +368,10 @@ async fn shell_restriction_and_restore_replace_only_the_target_sandbox() {
 /// One document carries the authored settings that export must reproduce:
 /// web search and API integrations, an authored inference API, native harness
 /// settings, network grants, service exposures, and a second sandbox's tool
-/// limit. The bundle's CLI exports what the SDK applied, and reapplying the
-/// export changes nothing. Each kind of observed drift then stops plan and
-/// export without gateway effects or a change to saved state.
+/// limit and middleware binding. The bundle's CLI exports what the SDK
+/// applied, and reapplying the export changes nothing. Each kind of observed
+/// drift stops plan and export without gateway effects or a change to saved
+/// state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() {
@@ -378,7 +380,7 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
             .unwrap();
     document.spec.integrations = serde_json::from_value(serde_json::json!({
         "search": {"kind":"webSearch", "provider":"tavily", "credential":{"env":"SEARCH_KEY"}},
-        "bookings": {"kind":"api", "endpoint":"https://bookings.example.com/mcp",
+        "bookings": {"kind":"api", "endpoints":["https://bookings.example.com/mcp"],
             "credential":{"env":"BOOKINGS_API_KEY"}}
     }))
     .unwrap();
@@ -390,9 +392,27 @@ async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() 
         .api = Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
     let mut reader = document.spec.sandboxes["assistant"].clone();
     reader.agent.name = "reader".into();
-    reader.agent.tools = Some(nemoclaw_sdk::config::AgentTools {
-        allow: vec!["read".into()],
-    });
+    reader.agent.tools = serde_json::json!({"enabled": ["read"]})
+        .as_object()
+        .cloned();
+    reader.network = serde_json::from_value(serde_json::json!({
+        "policy": {"explicit": {
+            "version": 1,
+            "network_policies": {"docs": {"name": "docs", "endpoints": [{
+                "host": "docs.example.com", "port": 443,
+                "protocol": "rest", "enforcement": "enforce",
+                "rules": [{"allow": {"method": "GET", "path": "/**"}}]
+            }], "binaries": [{"path": "/usr/bin/curl"}]}},
+            "network_middlewares": {"guard": {
+                "name": "Authored guard", "middleware": "decision-guard",
+                "order": 10, "on_error": "fail_closed",
+                "config": {"mode": "block", "terms": ["forbidden"]},
+                "endpoints": {"include": ["docs.example.com"],
+                    "exclude": ["trusted.example.com"]}
+            }}
+        }}
+    }))
+    .unwrap();
     let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
     sandbox.agent.integration_refs = vec!["search".into(), "bookings".into()];
     sandbox.harness.as_mut().unwrap().settings = Some(

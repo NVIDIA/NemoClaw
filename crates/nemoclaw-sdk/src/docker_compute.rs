@@ -297,18 +297,15 @@ fn container(target: &Target) -> Result<Value, Error> {
     if let Some(limit) = process.cpu_limit_millis {
         attrs["cpus"] = json!(cpus(limit));
     }
-    // A label forces replacement because Docker provider v4.7.0 lowers memory
-    // on a running container in place, which can OOM-kill the model.
-    // Containers created before memory limits were configurable used the
-    // default and have no label; keep them unchanged.
-    let memory_gib = process.memory_bytes / nemoclaw_runtime::hardware::GIB;
-    if memory_gib != crate::services::installers::container::DEFAULT_MEMORY_LIMIT_GIB {
-        push_label(
-            &mut attrs,
-            "nemoclaw.nvidia.com/memory-limit-gib",
-            memory_gib,
-        );
-    }
+    // The Docker provider updates memory in place, but a change must restart
+    // the container: Docker applies a lower limit to the running server and
+    // the kernel OOM-kills it, and Ollama and NemoClaw's supervisor size from
+    // the limit only at start. A label change forces the replacement.
+    push_label(
+        &mut attrs,
+        "nemoclaw.nvidia.com/memory-limit-gib",
+        process.memory_bytes / nemoclaw_runtime::hardware::GIB,
+    );
     Ok(attrs)
 }
 /// Runtime contract settings with the number of GPUs the service selects,
@@ -482,19 +479,36 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
                         .map_err(|_| { Error::State("cannot encode gateway config") })?
                 );
             }
+            let apf = gateway.managed_apf();
+            if let Some(apf) = apf {
+                settings["apf_endpoint"] = json!(apf.endpoint);
+                if let Some(tls) = &apf.tls {
+                    settings["apf_ca_env"] = json!(tls.ca.env);
+                }
+            }
             literal(&mut settings);
             settings["data_path"] = json!("${openshell_gateway_storage.runtime.data_path}");
             graph["data"][&source][&logical] = settings;
             for attribute in ["entrypoint", "command", "env"] {
                 attrs[attribute] = json!(format!("${{data.{source}.{logical}.{attribute}}}"));
             }
-            // Each new container receives the configuration file before it
-            // starts. Docker replaces the container when the file changes and
-            // keeps the storage.
-            attrs["upload"] = json!([{
+            // Each new container receives the configuration file, and APF's
+            // CA when one verifies APF, before it starts. Docker replaces the
+            // container when either changes and keeps the storage.
+            let mut upload = vec![json!({
                 "file": "${openshell_gateway_storage.runtime.data_path}/gateway.toml",
                 "content": format!("${{data.{source}.{logical}.config_file}}"),
-            }]);
+            })];
+            if apf.is_some_and(|apf| apf.tls.is_some()) {
+                upload.push(json!({
+                    "file": format!(
+                        "${{openshell_gateway_storage.runtime.data_path}}/{}",
+                        crate::managed::APF_CA_FILE
+                    ),
+                    "content": format!("${{data.{source}.{logical}.apf_ca}}"),
+                }));
+            }
+            attrs["upload"] = json!(upload);
             fn storage_path(value: &mut Value) {
                 match value {
                     Value::String(text) => {
@@ -942,7 +956,10 @@ mod tests {
         );
         assert_eq!(
             container["labels"],
-            json!([{ "label":crate::managed::OWNER_LABEL,"value":document.metadata.uid }])
+            json!([
+                { "label": crate::managed::OWNER_LABEL, "value": document.metadata.uid },
+                { "label": "nemoclaw.nvidia.com/memory-limit-gib", "value": "104" }
+            ])
         );
         assert!(container.get("lifecycle").is_none());
         assert_eq!(

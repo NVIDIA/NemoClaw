@@ -44,7 +44,11 @@ impl Document {
             super::validate_engine_endpoint(&gateway.engine)?;
         }
         validate_endpoint(gateway.endpoint(), true)?;
+        if let Some(apf) = gateway.managed_apf() {
+            validate_managed_apf(gateway, apf)?;
+        }
         self.validate_harness_references()?;
+        self.validate_network_references()?;
         let selected_providers = self.selected_providers()?;
         crate::services::validate(self)?;
         self.validate_inference_references()?;
@@ -61,6 +65,11 @@ impl Document {
                 schema::validate_definition("FileRef", metadata)?;
             }
             sandbox.network.validate()?;
+            require(
+                gateway.policy_authority().is_none()
+                    || matches!(sandbox.network.policy, super::NetworkPolicy::Isolated),
+                "a sandbox on a gateway with a policyAuthority must not author a network policy or select one with policyRef",
+            )?;
             self.validate_sandbox_providers(sandbox)?;
             let web_search = self.web_search(sandbox)?;
             crate::image_runtime::policy_input(self, sandbox)?;
@@ -74,10 +83,7 @@ impl Document {
                     }),
                     "brave-search and tavily-search names are reserved for web search",
                 )?;
-                search.validate(std::iter::once((
-                    sandbox.agent.name.as_str(),
-                    sandbox.agent.tools.as_ref(),
-                )))?;
+                search.validate(std::iter::once(sandbox.agent.name.as_str()))?;
             }
             let image_scope = self.image_scope(sandbox)?;
             for api in self.apis(sandbox)? {
@@ -100,9 +106,6 @@ impl Document {
             }
             let agent = &sandbox.agent;
 
-            if let Some(tools) = &agent.tools {
-                tools.validate()?;
-            }
             let inference = self.scoped_inference(sandbox)?;
             for route in &inference.inference.routes {
                 let selected = self.route_provider(route, &inference)?;
@@ -125,6 +128,47 @@ impl Document {
         Ok(())
     }
 }
+/// NemoClaw registers APF only in a configuration file it writes: a managed
+/// Docker gateway's.
+fn validate_managed_apf(gateway: &Gateway, apf: &super::ManagedApf) -> Result<(), ConfigError> {
+    let Gateway::Managed(managed) = gateway else {
+        return Err(ConfigError::new(
+            "an external gateway's operator registers its interceptors; set spec.gateway.policyAuthority.apf.registration to external",
+        ));
+    };
+    require(
+        managed.kubernetes.is_none() && managed.runtime.provider == super::ComputeDriver::Docker,
+        "spec.gateway.policyAuthority.apf.registration managed requires a local Docker gateway; register APF in spec.gateway.config and set registration to external",
+    )?;
+    if let Some(key) = managed.config.as_ref().and_then(|config| {
+        crate::managed::gateway_config::APF_KEYS
+            .into_iter()
+            .find(|key| crate::managed::gateway_config::sets(config, key))
+    }) {
+        return Err(ConfigError(format!(
+            "spec.gateway.config sets {key}, which NemoClaw writes when spec.gateway.policyAuthority.apf.registration is managed; remove it"
+        )));
+    }
+    let url = url::Url::parse(&apf.endpoint).ok();
+    require(
+        url.as_ref().is_some_and(|url| {
+            url.scheme() == "https"
+                && url.host_str().is_some_and(|host| !host.is_empty())
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.path() == "/"
+                && url.query().is_none()
+                && url.fragment().is_none()
+                && !apf.endpoint.ends_with('/')
+        }),
+        "spec.gateway.policyAuthority.apf.endpoint must be an https://HOST[:PORT] origin without a path",
+    )?;
+    if let Some(tls) = &apf.tls {
+        schema::validate_definition("FileRef", &tls.ca)?;
+    }
+    Ok(())
+}
+
 impl super::ManagedGateway {
     pub fn validate_managed(&self) -> Result<(), ConfigError> {
         schema::validate_definition("Gateway", &Gateway::Managed(self.clone()))?;

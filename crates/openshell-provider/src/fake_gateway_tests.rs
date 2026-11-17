@@ -736,6 +736,633 @@ fn image_policy() -> proto::SandboxPolicy {
     policy.to_proto().unwrap()
 }
 
+/// What APF's admission interceptor does to a sandbox it governs: replace its
+/// policy with the bundle's and record the bundle's provenance.
+fn apf_admission(provenance: bool) -> Arc<dyn Fn(&mut proto::Sandbox) + Send + Sync> {
+    Arc::new(move |sandbox: &mut proto::Sandbox| {
+        let policy = sandbox.spec.as_mut().unwrap().policy.as_mut().unwrap();
+        policy.network_policies.insert(
+            "apf-bundle".into(),
+            proto::NetworkPolicyRule {
+                name: "apf-bundle".into(),
+                endpoints: vec![proto::NetworkEndpoint {
+                    host: "policy.example".into(),
+                    port: 443,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        );
+        if provenance {
+            let annotations = &mut sandbox.metadata.as_mut().unwrap().annotations;
+            for (key, value) in [
+                ("bundle-id", "bundle"),
+                ("signer-identity", "signer"),
+                ("document-digest", "digest"),
+                ("policy-version", "10"),
+                ("provenance-token", "token"),
+            ] {
+                annotations.insert(format!("apf.nvidia.com/{key}"), value.into());
+            }
+        }
+    })
+}
+
+/// The fixture's rows, with the sandbox APF-governed.
+fn apf_rows() -> Vec<(&'static str, Row)> {
+    let mut rows = fixture_rows("explicit-policy");
+    for (kind, row) in &mut rows {
+        if *kind == "sandbox" {
+            row.insert(POLICY_AUTHORITY.into(), "apf".into());
+        }
+    }
+    rows
+}
+
+#[tokio::test]
+async fn an_apf_governed_sandbox_keeps_the_policy_apf_admitted() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    // Without APF's provenance, a replaced policy is not APF's.
+    fixture.state.lock().unwrap().sandbox_admission = Some(apf_admission(false));
+    let (sandbox, others): (Vec<_>, Vec<_>) = apf_rows()
+        .into_iter()
+        .partition(|(kind, _)| *kind == "sandbox");
+    create(&client, &others).await;
+    assert!(
+        client
+            .ensure("sandbox", &sandbox[0].1)
+            .await
+            .error()
+            .is_some()
+    );
+    fixture.state.lock().unwrap().sandboxes.clear();
+    // With it, the sandbox binds and records the loaded policy's hash.
+    let (recorded, _) = apf_sandbox(&fixture, &client).await;
+    assert_eq!(recorded[POLICY_AUTHORITY], "apf");
+    assert_eq!(recorded[POLICY_PROVENANCE], "token");
+    assert!(client.read("sandbox", &recorded, false).await.is_ok());
+}
+
+/// An APF-governed sandbox, bound with its loaded policy recorded, and the key
+/// the fake gateway stores it under.
+async fn apf_sandbox(fixture: &Fixture, client: &OpenShell) -> (Row, String) {
+    let rows = apf_rows();
+    fixture.state.lock().unwrap().sandbox_admission = Some(apf_admission(true));
+    let sandbox = create(client, &rows)
+        .await
+        .into_iter()
+        .zip(&rows)
+        .find(|(_, (kind, _))| *kind == "sandbox")
+        .unwrap()
+        .0;
+    let recorded = client
+        .read("sandbox", &sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!recorded[POLICY_HASH].is_empty());
+    let key = format!("{}/{}", recorded["workspace"], recorded["name"]);
+    (recorded, key)
+}
+
+/// What APF does when it issues its current bundle's policy to a sandbox: a
+/// new policy and new provenance.
+fn apf_reissue(token: &'static str) -> Arc<dyn Fn(&mut proto::Sandbox) + Send + Sync> {
+    Arc::new(move |sandbox: &mut proto::Sandbox| {
+        let policy = sandbox.spec.as_mut().unwrap().policy.as_mut().unwrap();
+        policy.network_policies.insert(
+            "apf-bundle-update".into(),
+            proto::NetworkPolicyRule {
+                name: "apf-bundle-update".into(),
+                endpoints: vec![proto::NetworkEndpoint {
+                    host: "update.example".into(),
+                    port: 443,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        );
+        let annotations = &mut sandbox.metadata.as_mut().unwrap().annotations;
+        annotations.insert("apf.nvidia.com/provenance-token".into(), token.into());
+        annotations.insert("apf.nvidia.com/policy-version".into(), "11".into());
+    })
+}
+
+/// Load a changed policy into the sandbox as a direct update would, leaving its
+/// provenance as it was.
+fn change_loaded_policy(fixture: &Fixture, key: &str) {
+    let mut changed = fixture.state.lock().unwrap().sandboxes[key]
+        .spec
+        .clone()
+        .unwrap()
+        .policy
+        .unwrap();
+    changed.network_policies.remove("apf-bundle");
+    fixture.state.lock().unwrap().active_policy = Some(changed);
+}
+
+#[tokio::test]
+async fn a_policy_apf_issues_to_a_governed_sandbox_is_adopted() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    apf_reissue("token-2")(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .sandboxes
+            .get_mut(&key)
+            .unwrap(),
+    );
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(observed[POLICY_HASH], recorded[POLICY_HASH]);
+    assert_eq!(observed[POLICY_PROVENANCE], "token-2");
+}
+
+#[tokio::test]
+async fn a_policy_changed_outside_apf_is_reissued_in_place() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    change_loaded_policy(&fixture, &key);
+    // The change is not APF's: the observation asks for APF's policy again.
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed[POLICY_PROVENANCE], "");
+    // The update asks OpenShell for the sandbox's configuration without a
+    // policy, so APF issues its bundle's policy to the same sandbox.
+    fixture.state.lock().unwrap().config_update = Some(apf_reissue("token-2"));
+    let created = fixture.state.lock().unwrap().created_sandboxes.len();
+    let mut desired = recorded.clone();
+    desired.insert(POLICY_PROVENANCE.into(), String::new());
+    let result = client.ensure("sandbox", &desired).await;
+    assert!(result.error().is_none(), "{:?}", result.error());
+    let reissued = result.into_parts().0.unwrap();
+    assert_eq!(reissued["id"], recorded["id"]);
+    assert_eq!(reissued[POLICY_PROVENANCE], "token-2");
+    assert_ne!(reissued[POLICY_HASH], recorded[POLICY_HASH]);
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.created_sandboxes.len(), created);
+    assert_eq!(state.config_updates.len(), 1);
+    assert_eq!(state.config_updates[0].sandbox, recorded["name"]);
+}
+
+#[tokio::test]
+async fn a_policy_changed_outside_apf_stays_unproven_until_apf_issues_it() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    change_loaded_policy(&fixture, &key);
+    // A refresh records the observation; the next one must not accept the
+    // changed policy because it was recorded.
+    let refreshed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed[POLICY_HASH], recorded[POLICY_HASH]);
+    let observed = client
+        .read("sandbox", &refreshed, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed[POLICY_PROVENANCE], "");
+    assert_eq!(observed[POLICY_HASH], recorded[POLICY_HASH]);
+}
+
+/// What OpenTofu plans for a sandbox read back as `observed`: the prior state
+/// and the desired row the provider receives, without the values planned
+/// unknown.
+fn plan_sandbox(observed: &Row) -> (nemoclaw_tofu::State, Row) {
+    use tf_provider::value::Value;
+    let definition = definitions()
+        .into_iter()
+        .find(|definition| definition.kind == "sandbox")
+        .unwrap();
+    let prior: nemoclaw_tofu::State = observed
+        .iter()
+        .map(|(name, value)| (name.clone(), Value::Value(value.clone())))
+        .collect();
+    let (planned, _) = nemoclaw_tofu::plan_update(&definition, &prior, prior.clone());
+    let desired = planned
+        .iter()
+        .filter_map(|(name, value)| match value {
+            Value::Value(value) => Some((name.clone(), value.clone())),
+            _ => None,
+        })
+        .collect();
+    (planned, desired)
+}
+
+#[tokio::test]
+async fn a_reissue_applies_only_values_its_plan_left_unknown() {
+    use tf_provider::value::Value;
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    change_loaded_policy(&fixture, &key);
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    let (planned, desired) = plan_sandbox(&observed);
+    // APF's reissue loads a new policy, so its hash is unknown until apply.
+    assert_eq!(planned.get(POLICY_HASH), Some(&Value::Unknown));
+    fixture.state.lock().unwrap().config_update = Some(apf_reissue("token-2"));
+    let result = client.update("sandbox", &desired, &observed).await;
+    assert!(result.error().is_none(), "{:?}", result.error());
+    let applied = result.into_parts().0.unwrap();
+    assert_ne!(applied[POLICY_HASH], recorded[POLICY_HASH]);
+    for (name, value) in &planned {
+        if let Value::Value(value) = value {
+            assert_eq!(applied.get(name), Some(value), "{name}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_failed_reissue_leaves_the_policy_unproven() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    change_loaded_policy(&fixture, &key);
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, desired) = plan_sandbox(&observed);
+    // The sandbox no longer reads back as the bound one while APF reissues.
+    fixture.state.lock().unwrap().config_update = Some(Arc::new(|sandbox: &mut proto::Sandbox| {
+        sandbox.metadata.as_mut().unwrap().id = "replaced".into();
+    }));
+    let (state, error) = client
+        .update("sandbox", &desired, &observed)
+        .await
+        .into_parts();
+    assert!(error.is_some());
+    let state = state.unwrap();
+    assert_eq!(state[POLICY_PROVENANCE], "");
+    assert_eq!(state[POLICY_HASH], recorded[POLICY_HASH]);
+}
+
+#[tokio::test]
+async fn a_governed_sandbox_without_provenance_is_reissued() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let (recorded, key) = apf_sandbox(&fixture, &client).await;
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key)
+        .unwrap()
+        .metadata
+        .as_mut()
+        .unwrap()
+        .annotations
+        .retain(|key, _| !key.starts_with("apf.nvidia.com/"));
+    let observed = client
+        .read("sandbox", &recorded, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed[POLICY_AUTHORITY], "apf");
+    assert_eq!(observed[POLICY_PROVENANCE], "");
+}
+
+#[test]
+fn a_governed_sandbox_whose_policy_is_not_apfs_plans_an_update() {
+    use tf_provider::value::Value;
+    let definition = definitions()
+        .into_iter()
+        .find(|definition| definition.kind == "sandbox")
+        .unwrap();
+    let state = |authority: &str, provenance: &str| -> nemoclaw_tofu::State {
+        [
+            (POLICY_AUTHORITY, authority),
+            (POLICY_PROVENANCE, provenance),
+            (POLICY_HASH, "sha256:recorded"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), Value::Value(value.to_owned())))
+        .collect()
+    };
+    // APF's reissue loads a new policy, so the plan knows neither its token
+    // nor its hash.
+    let (planned, replacements) =
+        nemoclaw_tofu::plan_update(&definition, &state("apf", ""), state("apf", ""));
+    assert_eq!(planned.get(POLICY_PROVENANCE), Some(&Value::Unknown));
+    assert_eq!(planned.get(POLICY_HASH), Some(&Value::Unknown));
+    assert!(replacements.is_empty());
+    for (authority, provenance) in [("apf", "token"), ("", "")] {
+        let (planned, _) = nemoclaw_tofu::plan_update(
+            &definition,
+            &state(authority, provenance),
+            state(authority, provenance),
+        );
+        assert_eq!(
+            planned.get(POLICY_PROVENANCE),
+            Some(&Value::Value(provenance.to_owned()))
+        );
+        assert_eq!(
+            planned.get(POLICY_HASH),
+            Some(&Value::Value("sha256:recorded".to_owned()))
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_apf_governed_inference_resource_adopts_the_profile_apf_serves() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(Keys));
+    let row = apf_credential_row(
+        &client,
+        &[
+            ("api", "openai-completions"),
+            ("credential_env", "NEMOCLAW_TEST_INFERENCE_KEY"),
+        ],
+    )
+    .await;
+    let name = row["name"].clone();
+    adopts_the_apf_profile(
+        &fixture,
+        &client,
+        "inference",
+        &row,
+        (
+            &format!("nemoclaw-inference-{name}"),
+            &nemoclaw_openshell::profile::inference_key_env(&name),
+            &name,
+        ),
+        &[
+            "id",
+            "owner",
+            "generation",
+            "endpoint",
+            "binaries_json",
+            "credential_env",
+        ],
+    )
+    .await;
+}
+
+/// A profile APF's interceptor serves under `id`, whose one credential the
+/// sandbox sees in `variable`.
+fn apf_served(id: &str, variable: &str, source: &str) -> proto::ProviderProfile {
+    proto::ProviderProfile {
+        id: id.into(),
+        credentials: vec![proto::ProviderProfileCredential {
+            name: variable.into(),
+            env_vars: vec![variable.into()],
+            required: true,
+            ..Default::default()
+        }],
+        binaries: vec![proto::NetworkBinary {
+            path: "/usr/local/bin/python3.99".into(),
+        }],
+        source: source.into(),
+        ..Default::default()
+    }
+}
+
+/// A credential resource's row under APF, after creating its workspace: the
+/// fixture's inference registration, its kind-specific fields replaced by
+/// `fields`.
+async fn apf_credential_row(client: &OpenShell, fields: &[(&str, &str)]) -> Row {
+    let rows = fixture_rows("explicit-policy");
+    let row = |kind: &str| rows.iter().find(|(k, _)| *k == kind).unwrap().1.clone();
+    create(client, &[("workspace", row("workspace"))]).await;
+    let mut credential = row("provider");
+    for field in [
+        "api",
+        "credential_source",
+        "cluster_source",
+        "provider_type",
+        "id",
+    ] {
+        credential.remove(field);
+    }
+    credential.insert(
+        "binaries_json".into(),
+        row("provider_profile")["binaries_json"].clone(),
+    );
+    credential.insert("policy_authority".into(), "apf".into());
+    credential.extend(fields.iter().map(|(k, v)| ((*k).into(), (*v).into())));
+    credential
+}
+
+/// NemoClaw adopts the profile APF serves for a credential resource of `kind`
+/// and never imports or deletes one.
+async fn adopts_the_apf_profile(
+    fixture: &Fixture,
+    client: &OpenShell,
+    kind: &str,
+    row: &Row,
+    (profile_id, variable, registration): (&str, &str, &str),
+    read_back: &[&str],
+) {
+    let profile_key = format!("{}/{profile_id}", row["workspace"]);
+    let set_profile = |profile: proto::ProviderProfile| {
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .profiles
+            .insert(profile_key.clone(), profile);
+    };
+    let fails = || async {
+        crate::composite::ensure(client, kind, row)
+            .await
+            .error()
+            .is_some()
+    };
+    assert!(fails().await, "{kind}: nothing to adopt");
+    set_profile(apf_served(profile_id, variable, "user"));
+    assert!(fails().await, "{kind}: an imported profile is not APF's");
+    set_profile(apf_served(
+        profile_id,
+        "OTHER_KEY",
+        "interceptor/apf-policy-adapter",
+    ));
+    assert!(
+        fails().await,
+        "{kind}: the sandbox would not find its credential"
+    );
+    set_profile(apf_served(
+        profile_id,
+        variable,
+        "interceptor/apf-policy-adapter",
+    ));
+    let mutation = crate::composite::ensure(client, kind, row).await;
+    assert!(mutation.error().is_none(), "{kind}: {:?}", mutation.error());
+    let bound = mutation.into_parts().0.unwrap();
+    let provider_key = format!("{}/{registration}", row["workspace"]);
+    {
+        let state = fixture.state.lock().unwrap();
+        assert!(
+            !state
+                .rpcs
+                .iter()
+                .any(|rpc| rpc.contains("ImportProviderProfiles")),
+            "{kind}"
+        );
+        assert_eq!(state.providers[&provider_key].r#type, profile_id, "{kind}");
+        assert!(
+            state.providers[&provider_key]
+                .credentials
+                .contains_key(variable),
+            "{kind}"
+        );
+    }
+    let observed = crate::composite::read(client, kind, &bound, false)
+        .await
+        .unwrap()
+        .unwrap();
+    for field in read_back {
+        assert_eq!(observed[*field], bound[*field], "{kind}: {field}");
+    }
+    // APF changing the variable is drift NemoClaw reports, not adopts.
+    set_profile(apf_served(
+        profile_id,
+        "OTHER_KEY",
+        "interceptor/apf-policy-adapter",
+    ));
+    assert!(
+        crate::composite::read(client, kind, &bound, false)
+            .await
+            .is_err(),
+        "{kind}"
+    );
+    set_profile(apf_served(
+        profile_id,
+        variable,
+        "interceptor/apf-policy-adapter",
+    ));
+    crate::composite::remove(client, kind, &bound, false)
+        .await
+        .unwrap();
+    let state = fixture.state.lock().unwrap();
+    assert!(!state.providers.contains_key(&provider_key), "{kind}");
+    assert!(state.profiles.contains_key(&profile_key), "{kind}");
+}
+
+#[tokio::test]
+async fn an_apf_governed_api_resource_adopts_the_profile_apf_serves() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(Keys));
+    // The profile delivers the key in the chosen variable, or the derived one.
+    for (name, sandbox_env, variable) in [
+        ("booking", "", "NEMOCLAW_API_BOOKING_KEY"),
+        ("flights", "FLIGHTS_KEY", "FLIGHTS_KEY"),
+    ] {
+        let row = apf_credential_row(
+            &client,
+            &[
+                ("name", name),
+                ("endpoints_json", r#"["https://booking.example.com/mcp"]"#),
+                ("credential_env", "NEMOCLAW_TEST_BOOKING_KEY"),
+                ("sandbox_env", sandbox_env),
+                ("auth_style", ""),
+                ("header_name", ""),
+            ],
+        )
+        .await;
+        // APF's profile sets the endpoint's rules, so an MCP policy has no effect.
+        let mut mcp = row.clone();
+        mcp.insert(
+            nemoclaw_openshell::api::MCP_POLICY.into(),
+            r#"{"rules":[{"allow":{"method":"tools/call","tool":"get_quote"}}]}"#.into(),
+        );
+        assert!(crate::composite::validate_api(&mcp, &[]).is_err());
+        adopts_the_apf_profile(
+            &fixture,
+            &client,
+            "api",
+            &row,
+            (&format!("nemoclaw-api-{name}"), variable, name),
+            &[
+                "id",
+                "owner",
+                "generation",
+                "endpoints_json",
+                "binaries_json",
+                "auth_style",
+                "header_name",
+                "credential_env",
+                "sandbox_env",
+            ],
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn an_apf_governed_web_search_resource_adopts_the_profile_apf_serves() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(Keys));
+    let row = apf_credential_row(
+        &client,
+        &[
+            ("name", "brave"),
+            ("provider_type", "brave"),
+            ("credential_env", "NEMOCLAW_TEST_BRAVE_KEY"),
+            ("sandbox_env", "BRAVE_SEARCH_API_KEY"),
+        ],
+    )
+    .await;
+    let (profile, registration) = nemoclaw_openshell::search::web_search_names(
+        nemoclaw_openshell::search::SearchProvider::Brave,
+        "NEMOCLAW_TEST_BRAVE_KEY",
+        "brave",
+    );
+    adopts_the_apf_profile(
+        &fixture,
+        &client,
+        "web_search",
+        &row,
+        (&profile, "BRAVE_SEARCH_API_KEY", &registration),
+        &[
+            "id",
+            "owner",
+            "generation",
+            "binaries_json",
+            "sandbox_env",
+            "credential_env",
+        ],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_sandbox_without_apf_authority_refuses_an_apf_policy() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    fixture.state.lock().unwrap().sandbox_admission = Some(apf_admission(true));
+    let rows = fixture_rows("explicit-policy");
+    let (sandbox_rows, others): (Vec<_>, Vec<_>) =
+        rows.into_iter().partition(|(kind, _)| *kind == "sandbox");
+    create(&client, &others).await;
+    assert!(
+        client
+            .ensure("sandbox", &sandbox_rows[0].1)
+            .await
+            .error()
+            .is_some()
+    );
+}
+
 #[tokio::test]
 async fn explicit_policy_reaches_the_gateway_and_detects_drift() {
     let fixture = Fixture::start().await;
@@ -939,6 +1566,9 @@ impl crate::transport::OpenShellGateway for PhaseUnavailable {
     }
     async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
         self.inner.delete_bound_sandbox(want).await
+    }
+    async fn reissue_policy(&self, want: &Row) -> Result<(), ObservationError> {
+        self.inner.reissue_policy(want).await
     }
     async fn service(
         &self,

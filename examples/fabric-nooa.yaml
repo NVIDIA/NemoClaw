@@ -27,11 +27,10 @@ spec:
         tier: isolated
       harness:
         kind: nvidia.fabric.nooa
-        config:
-          workflow:
-            target_id: nvidia.nooa.coding-agent
       agent:
         name: main
+        workflow:
+          target_id: nvidia.nooa.coding-agent
         inference:
           routes:
             - name: primary

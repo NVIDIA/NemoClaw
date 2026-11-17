@@ -20,6 +20,15 @@ fn common(row: &Row) -> Row {
         .collect()
 }
 
+/// Who owns the pair's profile: NemoClaw, or APF's interceptor when it
+/// governs the gateway's policy. Both halves carry it.
+fn authority(row: &Row, profile: &mut Row, registration: &mut Row) {
+    if let Some(authority) = row.get("policy_authority").filter(|a| !a.is_empty()) {
+        profile.insert("policy_authority".into(), authority.clone());
+        registration.insert("policy_authority".into(), authority.clone());
+    }
+}
+
 /// The registration row's binding to the object it established.
 fn bind(registration: &mut Row, row: &Row) {
     if let Some(id) = row.get("id").filter(|id| !id.is_empty()) {
@@ -33,7 +42,13 @@ pub fn api_rows(row: &Row) -> (Row, Row) {
     let profile = format!("nemoclaw-api-{}", value(row, "name"));
     let mut profile_row = common(row);
     profile_row.insert("name".into(), profile.clone());
-    for field in ["endpoint", "binaries_json", "auth_style", "header_name"] {
+    for field in [
+        "endpoints_json",
+        "binaries_json",
+        "auth_style",
+        "header_name",
+        "sandbox_env",
+    ] {
         profile_row.insert(field.into(), value(row, field).into());
     }
     let mcp = value(row, crate::api::MCP_POLICY);
@@ -45,10 +60,13 @@ pub fn api_rows(row: &Row) -> (Row, Row) {
         ("name".into(), value(row, "name").into()),
         ("profile_name".into(), profile),
         ("provider_type".into(), "api".into()),
-        ("endpoint".into(), value(row, "endpoint").into()),
+        ("endpoints_json".into(), value(row, "endpoints_json").into()),
         ("credential_env".into(), value(row, "credential_env").into()),
+        // The profile holds it; the registration checks its profile against it.
+        ("sandbox_env".into(), value(row, "sandbox_env").into()),
     ]);
     bind(&mut registration, row);
+    authority(row, &mut profile_row, &mut registration);
     (profile_row, registration)
 }
 
@@ -74,6 +92,7 @@ pub fn web_search_rows(row: &Row) -> Option<(Row, Row)> {
         ("profile_name".into(), profile),
     ]);
     bind(&mut registration_row, row);
+    authority(row, &mut profile_row, &mut registration_row);
     Some((profile_row, registration_row))
 }
 
@@ -118,5 +137,6 @@ pub fn inference_rows(row: &Row) -> Option<(Row, Row)> {
         ("provider_type".into(), provider_type.into()),
     ]);
     bind(&mut registration_row, row);
+    authority(row, &mut profile_row, &mut registration_row);
     Some((profile_row, registration_row))
 }

@@ -9,7 +9,7 @@ Complete the [build prerequisites](../../docs/build-deploy/build.md) first.
 
 ## OpenTofu and Bundle Lifecycle
 
-The contract and integration tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle such as the `dist/PLATFORM` directory that `cargo ci bundle` writes.
+The contract and integration tests take two inputs: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle such as the `dist/PLATFORM` directory that `cargo ci bundle` writes, and `NEMOCLAW_TEST_FIXTURES`, the absolute path of the directory that holds the fixture executables, which `cargo ci` sets to `target/debug`.
 The bundle supplies the OpenTofu version pinned in `versions.json`, the CLI, and the providers.
 Each provider's contract tests run instead the provider Cargo built with them, so they test the checkout without a new bundle; the other providers they need come from the bundle.
 Integration tests run the bundle's CLI and providers, so rebuild the bundle after changing either.
@@ -22,18 +22,18 @@ cargo ci contract
 cargo ci integration
 ```
 
-To run one binary or module with Cargo, build the fixture executables first; tests find them beside the test executables:
+To run one binary or module with Cargo, build the fixture executables first and name their directory:
 
 ```sh
 cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle NEMOCLAW_TEST_FIXTURES=$PWD/target/debug \
   cargo test -p nemoclaw-provider --test contract provider_protocol:: -- --ignored
 ```
 
-Nextest builds every workspace target, including the fixture executables; after `cargo ci tools`, put `.tools/nextest-0.9.152` on `PATH` and narrow the `contract` or `integration` profile with a filter:
+To run them with nextest, put `.tools/nextest-0.9.152` on `PATH` after `cargo ci tools`, build the fixture executables the same way, and narrow the `contract` or `integration` profile with a filter:
 
 ```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle NEMOCLAW_TEST_FIXTURES=$PWD/target/debug \
   cargo nextest run --workspace --all-targets --profile contract --run-ignored only \
   -E 'binary_id(=openshell-provider::contract)'
 ```
@@ -265,7 +265,7 @@ Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM
 | `docker-openclaw-vllm-bearer` | A vLLM service with bearer authentication. The credential storage is created on the engine and mounted by the container, and readiness reads the status file and the generated key. The registration holds that key under the sandbox's name for it, and the agent gets its model, address, and key name. |
 | `docker-openclaw-ollama` | A managed Ollama service. The container's Docker inputs come from the Ollama runtime launch, the runtime image is found on the engine, and readiness comes from the container's status file. The registration is at the service address without a credential, the sandbox's policy allows that address, and the agent gets its model and address. |
 | `docker-hosted-ollama-two-agents` | An OpenClaw agent on hosted inference and a Hermes agent on Ollama. There are two registrations, and each sandbox is bound to and may reach only its own provider. Each agent starts once in its own sandbox with its own harness and configuration. |
-| `docker-hermes-kept-state` | A Hermes agent whose sandbox mounts a volume on `/sandbox/artifacts` and one on `/sandbox/skills`, which its `skills.directories` lists as a folder of skills that refuses duplicate names. Replacing the sandbox gives the new one the same mounts, and the agent starts again under the same name with kept state and the same skills, so Fabric hands it the same state folder. Whether Hermes finds its sessions and skills there needs real Hermes. |
+| `docker-hermes-kept-state` | A Hermes agent whose sandbox mounts a volume on `/sandbox/artifacts` and one on `/sandbox/skills`, which its `skills.directories` lists as a folder of skills that refuses duplicate names. Replacing the sandbox gives the new one the same mounts, and the agent starts again under the same name with kept state and the same skills, so Fabric hands it the same state folder. The old runtime stops before the new one starts; the agent records the new sandbox and runtime, and Fabric's later checks name that runtime; and the next unchanged apply replaces, stops, and starts nothing. Whether Hermes finds its sessions and skills there needs real Hermes. |
 | `docker-ollama-proxy` | An authenticating proxy in front of an existing Ollama daemon, which the fixture upstream lists the model for. The registration reads the key from the proxy's retained `/data` volume, and no resource or readiness check keeps it in OpenTofu state. An unchanged apply changes nothing; replacing the proxy container keeps the volume, the key's registration, and the agent's sandbox. |
 | `docker-vllm-shared-two-agents` | One authenticated vLLM service shared by OpenClaw and Hermes agents. Each harness has its own registration holding the generated key under its own sandbox name. Each sandbox names only its own registration, and each agent starts with that key name. |
 | `openshift-external-two-providers` | An OpenShift gateway with an Anthropic Messages provider and an NVIDIA provider. Each registration has its own API, base URL, and credential. The OpenClaw agent has both routes, the Hermes agent has one, and their sandboxes share no binding. An unchanged apply keeps every sandbox, registration, and agent start. |

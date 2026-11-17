@@ -32,6 +32,30 @@ spec:
       endpoint: https://integrate.api.nvidia.com/v1
       credential:
         env: NVIDIA_INFERENCE_API_KEY
+  # Every sandbox selects this policy; it replaces the isolated preset.
+  policies:
+    isolated-agents:
+      version: 1
+      process:
+        run_as_user: "10001"
+        run_as_group: "10001"
+      network_policies:
+        hosted-inference:
+          name: hosted-inference
+          endpoints:
+            - host: integrate.api.nvidia.com
+              port: 443
+          binaries:
+            - path: /usr/bin/openclaw
+      filesystem_policy:
+        include_workdir: true
+        read_only:
+          - /usr
+          - /opt/fabric
+          - /opt/nemoclaw
+          - /app
+        read_write:
+          - /sandbox
   # Each sandbox runs one independent agent using the shared inference profile.
   sandboxes:
     assistant:
@@ -41,29 +65,7 @@ spec:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        policy:
-          explicit:
-            version: 1
-            process:
-              run_as_user: "10001"
-              run_as_group: "10001"
-            network_policies:
-              hosted-inference:
-                name: hosted-inference
-                endpoints:
-                  - host: integrate.api.nvidia.com
-                    port: 443
-                binaries:
-                  - path: /usr/bin/openclaw
-            filesystem_policy:
-              include_workdir: true
-              read_only:
-                - /usr
-                - /opt/fabric
-                - /opt/nemoclaw
-                - /app
-              read_write:
-                - /sandbox
+        policyRef: isolated-agents
       agent:
         name: primary
         inferenceRef: chat
@@ -74,29 +76,7 @@ spec:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        policy:
-          explicit:
-            version: 1
-            process:
-              run_as_user: "10001"
-              run_as_group: "10001"
-            network_policies:
-              hosted-inference:
-                name: hosted-inference
-                endpoints:
-                  - host: integrate.api.nvidia.com
-                    port: 443
-                binaries:
-                  - path: /usr/bin/openclaw
-            filesystem_policy:
-              include_workdir: true
-              read_only:
-                - /usr
-                - /opt/fabric
-                - /opt/nemoclaw
-                - /app
-              read_write:
-                - /sandbox
+        policyRef: isolated-agents
       agent:
         name: researcher
         inferenceRef: chat
@@ -107,29 +87,7 @@ spec:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        policy:
-          explicit:
-            version: 1
-            process:
-              run_as_user: "10001"
-              run_as_group: "10001"
-            network_policies:
-              hosted-inference:
-                name: hosted-inference
-                endpoints:
-                  - host: integrate.api.nvidia.com
-                    port: 443
-                binaries:
-                  - path: /usr/bin/openclaw
-            filesystem_policy:
-              include_workdir: true
-              read_only:
-                - /usr
-                - /opt/fabric
-                - /opt/nemoclaw
-                - /app
-              read_write:
-                - /sandbox
+        policyRef: isolated-agents
       agent:
         name: reviewer
         inferenceRef: chat

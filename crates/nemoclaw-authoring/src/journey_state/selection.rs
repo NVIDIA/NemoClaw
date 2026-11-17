@@ -53,14 +53,11 @@ impl SelectionView<'_> {
         let kind: InferenceProviderKind =
             serde_json::from_value(provider.get("provider")?.clone()).ok()?;
         let endpoint = provider.get("endpoint")?.as_str()?;
-        ProviderPreset::ALL
-            .into_iter()
-            .find(|preset| preset.profile().kind == kind && preset.profile().endpoint == endpoint)
-            .or_else(|| {
-                ProviderPreset::ALL.into_iter().find(|preset| {
-                    preset.profile().kind == kind && preset.profile().custom_endpoint
-                })
-            })
+        ProviderPreset::for_endpoint(kind, endpoint).or_else(|| {
+            ProviderPreset::ALL
+                .into_iter()
+                .find(|preset| preset.profile().kind == kind && preset.profile().custom_endpoint)
+        })
     }
 
     /// The current preset when it names a vendor's fixed endpoint and the

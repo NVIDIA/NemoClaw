@@ -14,7 +14,67 @@ const STARTUP_DEADLINE: Duration = Duration::from_secs(120);
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
     row.get(field).map(String::as_str).unwrap_or("")
 }
+/// Whether the observed sandbox's loaded policy is the one recorded. Until a
+/// loaded policy is observed, no hash is recorded and nothing is compared.
+fn policy_unchanged(prior: &Row, row: &Row) -> bool {
+    let (recorded, observed) = (
+        value(prior, crate::POLICY_HASH),
+        value(row, crate::POLICY_HASH),
+    );
+    recorded.is_empty() || observed.is_empty() || recorded == observed
+}
+
+/// A sandbox observation whose loaded policy APF did not issue: no token, and
+/// the hash recorded before the change, so the next observation still sees the
+/// change and plans APF to issue its policy again.
+fn unproven_policy(mut row: Row, recorded: &Row) -> Row {
+    row.insert(crate::POLICY_PROVENANCE.into(), String::new());
+    row.insert(
+        crate::POLICY_HASH.into(),
+        value(recorded, crate::POLICY_HASH).to_owned(),
+    );
+    row
+}
+
 impl OpenShell {
+    /// Ask APF to issue its policy to a bound sandbox again, then wait until
+    /// the sandbox has loaded a policy with a new token.
+    ///
+    /// The plan leaves the token and hash unknown; a failed reissue keeps the
+    /// hash `recorded` before it, so the next plan asks APF again.
+    async fn reissue(
+        &self,
+        want: &Row,
+        live: &Row,
+        recorded: &Row,
+    ) -> Result<Mutation, ObservationError> {
+        self.gateway.reissue_policy(want).await?;
+        let issued = |row: &Row| {
+            let token = value(row, crate::POLICY_PROVENANCE);
+            !token.is_empty()
+                && token != value(live, crate::POLICY_PROVENANCE)
+                && !value(row, crate::POLICY_HASH).is_empty()
+        };
+        // The new revision is pending until the sandbox loads it; a replaced
+        // sandbox ends the wait.
+        let settled = |row: &Row| issued(row) || verify_identity(live, row).is_err();
+        let error = match self
+            .read_back_sandbox_until(live, want, true, STARTUP_DEADLINE, settled)
+            .await
+        {
+            Ok(Some(row)) => match verify_identity(live, &row) {
+                Ok(()) if issued(&row) => return Ok(Mutation::complete(row)),
+                Ok(()) => ObservationError::Incomplete,
+                Err(error) => error,
+            },
+            Ok(None) => ObservationError::Incomplete,
+            Err(error) => error,
+        };
+        Ok(Mutation::partial(
+            unproven_policy(live.clone(), recorded),
+            error,
+        ))
+    }
     /// Add a sandbox's declared service endpoints and their URLs to its
     /// observation, written as the reference row writes them. A sandbox being
     /// removed keeps the reference's: its endpoints go with it.
@@ -110,6 +170,21 @@ impl OpenShell {
         created: bool,
         patience: Duration,
     ) -> Result<Option<Row>, ObservationError> {
+        self.read_back_sandbox_until(bound, want, created, patience, |row| {
+            !value(row, crate::POLICY_HASH).is_empty()
+        })
+        .await
+    }
+
+    /// [`Self::read_back_sandbox`], waiting until `loaded` holds instead.
+    async fn read_back_sandbox_until(
+        &self,
+        bound: &Row,
+        want: &Row,
+        created: bool,
+        patience: Duration,
+        loaded: impl Fn(&Row) -> bool,
+    ) -> Result<Option<Row>, ObservationError> {
         let deadline = tokio::time::Instant::now() + patience;
         let mut unavailable = None;
         let observed = loop {
@@ -122,7 +197,7 @@ impl OpenShell {
                 )
                 .await;
             let loading = match &observed {
-                Ok(Some(row)) => value(row, crate::POLICY_HASH).is_empty(),
+                Ok(Some(row)) => !loaded(row),
                 Err(ObservationError::Incomplete) => created,
                 _ => false,
             };
@@ -190,6 +265,13 @@ impl OpenShell {
                 if kind == "sandbox" {
                     self.update_services(want, &row, prior).await?;
                 }
+                if kind == "sandbox"
+                    && value(want, crate::POLICY_AUTHORITY) == "apf"
+                    && value(want, crate::POLICY_PROVENANCE).is_empty()
+                    && !value(want, "id").is_empty()
+                {
+                    return self.reissue(want, &row, prior.unwrap_or(want)).await;
+                }
                 row
             }
             None => {
@@ -220,11 +302,26 @@ impl OpenShell {
                 }
                 // The ID and the computed URLs and policy hash come from the
                 // gateway; every other field must read back as written.
+                // A provider records no policy authority; its profile does.
                 if want.iter().any(|(key, v)| {
-                    !["id", services::URLS, crate::POLICY_HASH].contains(&key.as_str())
+                    ![
+                        "id",
+                        services::URLS,
+                        crate::POLICY_HASH,
+                        crate::POLICY_PROVENANCE,
+                    ]
+                    .contains(&key.as_str())
+                        && !(kind == "provider" && key == crate::POLICY_AUTHORITY)
                         && row.get(key) != Some(v)
                 }) {
                     return Ok(Mutation::partial(row, ObservationError::Incomplete));
+                }
+                // An APF-governed sandbox binds only with APF's provenance.
+                if kind == "sandbox"
+                    && value(&row, crate::POLICY_AUTHORITY) == "apf"
+                    && value(&row, crate::POLICY_PROVENANCE).is_empty()
+                {
+                    return Ok(Mutation::partial(row, ObservationError::BindingMismatch));
                 }
                 Ok(Mutation::complete(row))
             }
@@ -287,21 +384,25 @@ impl Backend for OpenShell {
         }
         // Why OpenShell reports the sandbox exited, if it did.
         let mut exited = String::new();
+        // Whether the loaded policy is not the one APF issued.
+        let mut unproven = false;
         if kind == "sandbox"
             && !removing
             && let Some(row) = &observed
         {
             verify_identity(prior, row)?;
             // The loaded policy, as recorded when it was applied, must not
-            // have changed since.
-            if let Some(recorded) = prior
-                .get(crate::POLICY_HASH)
-                .filter(|hash| !hash.is_empty())
-                && row
-                    .get(crate::POLICY_HASH)
-                    .is_some_and(|observed| !observed.is_empty() && observed != recorded)
-            {
-                return Err(ObservationError::BindingMismatch);
+            // have changed since, unless APF issued the change.
+            if !policy_unchanged(prior, row) {
+                if value(row, crate::POLICY_AUTHORITY) != "apf" {
+                    return Err(ObservationError::BindingMismatch);
+                }
+                // APF issues a policy with a new token. A change under the
+                // token it recorded is not APF's, so APF is asked again, and
+                // a change already found unproven stays so until APF's
+                // reissue records its policy.
+                let recorded = value(prior, crate::POLICY_PROVENANCE);
+                unproven = recorded.is_empty() || value(row, crate::POLICY_PROVENANCE) == recorded;
             }
             match self.check_sandbox_phase(row).await {
                 Ok(()) => {}
@@ -316,6 +417,9 @@ impl Backend for OpenShell {
         if kind == "sandbox"
             && let Some(row) = &mut observed
         {
+            if unproven {
+                *row = unproven_policy(std::mem::take(row), prior);
+            }
             row.insert(crate::EXITED.into(), exited);
             // Teardown, or a sandbox that isn't ready yet, doesn't observe the
             // loaded policy, so the recorded hash still stands.
@@ -368,6 +472,10 @@ impl OpenShell {
         let fields: &[&str] = match kind {
             "workspace" => &["name", "owner", "generation"],
             "provider_profile" => &["name", "owner", "generation", "workspace"],
+            // An API registration records its endpoint list instead of one server.
+            "provider" if value(desired, "provider_type") == "api" => {
+                &["name", "owner", "generation", "workspace", "endpoints_json"]
+            }
             "provider" => &["name", "owner", "generation", "workspace", "endpoint"],
             "sandbox" => &[
                 "name",

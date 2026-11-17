@@ -130,7 +130,7 @@
       }
     }
   },
-  "rust": "1.99.1",
+  "rust": "1.100.0",
   "protobuf": "36.2",
   "nextest": "0.9.152",
   "openshellRevision": "f3d976590d3eb1379690a2abaf0f0e26c21d487d",

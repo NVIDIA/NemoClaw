@@ -71,6 +71,7 @@ Select the adapter and image together, then verify its integrations and native r
 | OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
 | Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| OpenShell refuses new connections to an address its policy DNS answered once the answer's TTL has passed, so a client that reconnects to the address it kept fails, as OpenClaw's Node.js does. For an OpenClaw agent, the model request fails and its runtime stops; the next apply starts a new runtime without the conversation | [NVIDIA/OpenShell#4674](https://github.com/NVIDIA/OpenShell/issues/4674) |
 
 ## Access and Diagnostics
 
@@ -79,11 +80,11 @@ Access paths and diagnostic signals depend on the gateway and harness in use.
 | Limit | Issue |
 |---|---|
 | The OpenClaw request walkthrough, rehearsed once OpenClaw starts in a sandbox | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
-| A live rehearsal against an external gateway that requires an issuer or mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| A live rehearsal against an external gateway that requires mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | An error holds at most 16 KiB of a command's OpenTofu diagnostics, such as several managed services' [stop details](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime): it lists the whole diagnostics that fit, then the next one's summary and a count of the rest; a diagnostic longer than 16 KiB keeps as much of its detail as fits | By design: bounds the error's size |
 | An error shows `child output exceeds the supported limit` in place of a command's output when OpenTofu writes more than 16 KiB to standard error, as a provider crash can, or more than 64 MiB to standard output: cut output can end inside a credential that redaction no longer recognizes | By design: keeps credentials out of errors |
 | A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli), which no automated test covers | By design: the development issuer serves only NemoClaw |
-| [Service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) on a managed Kubernetes or OpenShift gateway name `openshell.localhost` and the gateway pod's port, 8080, so they don't open as printed; reach them through a port forward to the gateway, sending the URL's host name and the gateway's client certificate | [#14316](https://github.com/NVIDIA/NemoClaw/issues/14316) |
+| [Service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) on a managed Kubernetes or OpenShift gateway name `openshell.localhost` and the gateway pod's port, 8080, so they don't open as printed; reach them through a port forward to the gateway, sending the URL's host name | [#14316](https://github.com/NVIDIA/NemoClaw/issues/14316) |
 
 ## Data and Cleanup
 
