@@ -4,7 +4,6 @@
 import {
   authorizeTeamsOpenClawWebhookField,
   type TeamsManagedStartupFieldAuthorization,
-  type TeamsManagedStartupFieldOptions,
 } from "./channels/teams/contract.ts";
 import {
   authorizeWechatAccountFilePlaceholders,
@@ -19,9 +18,8 @@ export type MessagingManagedStartupFieldAuthorization =
 export function authorizeMessagingManagedStartupFields(
   entry: unknown,
   section: "buildSteps" | "agentRender",
-  options: TeamsManagedStartupFieldOptions = {},
 ): readonly MessagingManagedStartupFieldAuthorization[] {
-  if (section === "agentRender") return authorizeTeamsOpenClawWebhookField(entry, options);
+  if (section === "agentRender") return authorizeTeamsOpenClawWebhookField(entry);
   if (!isPlainDataObject(entry)) return [];
   const contract = WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT;
   if (

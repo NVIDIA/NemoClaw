@@ -14,6 +14,7 @@ import {
   type ManagedStartupProfile,
   readStoredManagedStartupProfileMetadata,
 } from "./managed-startup/profile";
+import { readStoredWorkloadProfileMetadata } from "./managed-startup/stored-profile";
 
 const TEAMS_RENDER_IDENTITY = {
   channelId: "teams",
@@ -65,8 +66,12 @@ function encodeWithRender(value: unknown, identity: Record<string, unknown> = {}
 describe("stored Teams managed startup profiles (#14540)", () => {
   it("reads a profile written before the webhook port moved", () => {
     const encoded = encodeWithRender(PRE_10_5_VALUE);
-    expect(readStoredManagedStartupProfileMetadata(encoded).agent).toBe("openclaw");
+    expect(readStoredWorkloadProfileMetadata(encoded).agent).toBe("openclaw");
+    // The validators that managed startup runs stay strict.
     expect(() => decodeManagedStartupProfile(encoded)).toThrow(/credential-shaped field name/);
+    expect(() => readStoredManagedStartupProfileMetadata(encoded)).toThrow(
+      /credential-shaped field name/,
+    );
     expect(
       cloneSandboxWorkloadReceipt({
         schemaVersion: 1,
@@ -88,7 +93,9 @@ describe("stored Teams managed startup profiles (#14540)", () => {
   it("still reads the current render", () => {
     const encoded = encodeManagedStartupProfile(currentProfile());
     expect(decodeManagedStartupProfile(encoded).agent).toBe("openclaw");
-    expect(readStoredManagedStartupProfileMetadata(encoded).agent).toBe("openclaw");
+    expect(readStoredWorkloadProfileMetadata(encoded)).toEqual(
+      readStoredManagedStartupProfileMetadata(encoded),
+    );
   });
 
   it.each([
@@ -105,7 +112,7 @@ describe("stored Teams managed startup profiles (#14540)", () => {
     ["another render id", {}, { renderId: "teams-other" }],
   ] as const)("rejects a stored profile with %s", (_label, overrides, identity) => {
     const encoded = encodeWithRender({ ...PRE_10_5_VALUE, ...overrides }, identity);
-    expect(() => readStoredManagedStartupProfileMetadata(encoded)).toThrow(
+    expect(() => readStoredWorkloadProfileMetadata(encoded)).toThrow(
       /credential-shaped field name/,
     );
   });

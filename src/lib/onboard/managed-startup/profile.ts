@@ -1625,10 +1625,7 @@ function requireSampleRate(value: unknown, where: string): number {
   return value;
 }
 
-function assertPayloadStructureAndCredentialShapes(
-  root: unknown,
-  allowStoredLegacy: boolean,
-): void {
+function assertPayloadStructureAndCredentialShapes(root: unknown): void {
   const pending: Array<{
     value: unknown;
     depth: number;
@@ -1744,7 +1741,6 @@ function assertPayloadStructureAndCredentialShapes(
         for (const authorization of authorizeMessagingManagedStartupFields(
           current.value,
           messagingPlanSection,
-          { allowStoredLegacyWebhook: allowStoredLegacy },
         )) {
           const authorizedPath = [...current.path, ...authorization.path];
           allowedMessagingCredentialFields.add(messagingAuthorizedFieldKey(authorizedPath));
@@ -2281,9 +2277,9 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
 
 function validateManagedStartupProfileValue(
   value: unknown,
-  allowStoredLegacy: boolean,
+  allowStoredLegacyRouting: boolean,
 ): ManagedStartupProfile {
-  assertPayloadStructureAndCredentialShapes(value, allowStoredLegacy);
+  assertPayloadStructureAndCredentialShapes(value);
   const ownedValue = cloneJsonValue(value, "profile", {
     nullPrototypeObjects: true,
   });
@@ -2324,7 +2320,7 @@ function validateManagedStartupProfileValue(
     invalid("corporateCa.bundleSha256 must be null or a lowercase SHA-256 digest");
   }
 
-  const agentConfig = validateAgentConfig(profile.agentConfig, agent, allowStoredLegacy);
+  const agentConfig = validateAgentConfig(profile.agentConfig, agent, allowStoredLegacyRouting);
   const dashboard = validateDashboard(profile.dashboard, agent);
 
   return {
@@ -2433,7 +2429,7 @@ export function decodeManagedStartupProfile(encoded: string): ManagedStartupProf
 
 function decodeManagedStartupProfileValue(
   encoded: string,
-  allowStoredLegacy: boolean,
+  allowStoredLegacyRouting: boolean,
 ): ManagedStartupProfile {
   if (
     typeof encoded !== "string" ||
@@ -2466,7 +2462,7 @@ function decodeManagedStartupProfileValue(
     invalid("payload is not valid JSON");
   }
   const migration = migrateDecodedManagedStartupProfile(parsed);
-  const profile = validateManagedStartupProfileValue(migration.value, allowStoredLegacy);
+  const profile = validateManagedStartupProfileValue(migration.value, allowStoredLegacyRouting);
   const canonicalPayload = migration.migratedLegacyProfile
     ? JSON.stringify(canonicalizeJson(parsed))
     : serializeValidatedManagedStartupProfile(profile);

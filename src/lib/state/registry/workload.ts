@@ -6,10 +6,10 @@ import { createHash } from "node:crypto";
 
 import { MANAGED_IMAGE_REPOSITORIES } from "../../onboard/managed-image/contract";
 import {
-  readStoredManagedStartupProfileMetadata,
   MANAGED_STARTUP_PROFILE_MAX_BYTES,
   MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
 } from "../../onboard/managed-startup/profile";
+import { readStoredWorkloadProfileMetadata } from "../../onboard/managed-startup/stored-profile";
 import { parseNativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
 import type { SandboxWorkloadReceipt } from "./types";
 
@@ -141,9 +141,9 @@ export function cloneSandboxWorkloadReceipt(
   ) {
     return undefined;
   }
-  let profile: ReturnType<typeof readStoredManagedStartupProfileMetadata>;
+  let profile: ReturnType<typeof readStoredWorkloadProfileMetadata>;
   try {
-    profile = readStoredManagedStartupProfileMetadata(value.encodedProfile);
+    profile = readStoredWorkloadProfileMetadata(value.encodedProfile);
   } catch {
     return undefined;
   }

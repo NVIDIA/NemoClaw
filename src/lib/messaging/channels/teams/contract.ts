@@ -19,19 +19,8 @@ export interface TeamsManagedStartupFieldAuthorization {
   readonly value: Record<string, unknown>;
 }
 
-export interface TeamsManagedStartupFieldOptions {
-  /**
-   * Also accept the render shipped before OpenClaw 2026.10.5, which kept the
-   * listener port inside `webhook`. Only stored receipts need this: those
-   * profiles are read for identity, never executed, and cannot be rewritten
-   * without breaking the digest the registry recorded for them.
-   */
-  readonly allowStoredLegacyWebhook?: boolean;
-}
-
 export function authorizeTeamsOpenClawWebhookField(
   entry: unknown,
-  options: TeamsManagedStartupFieldOptions = {},
 ): readonly TeamsManagedStartupFieldAuthorization[] {
   if (!isPlainDataObject(entry)) return [];
   const contract = TEAMS_OPENCLAW_WEBHOOK_RENDER_CONTRACT;
@@ -51,16 +40,6 @@ export function authorizeTeamsOpenClawWebhookField(
   const value = ownDataPropertyValue(entry, "value");
   if (!isPlainDataObject(value)) return [];
   const webhook = ownDataPropertyValue(value, "webhook");
-  if (
-    options.allowStoredLegacyWebhook === true &&
-    !Object.hasOwn(value, "legacyWebhook") &&
-    isPlainDataObject(webhook) &&
-    hasExactlyOwnDataProperties(webhook, ["path", "port"]) &&
-    isTcpPort(ownDataPropertyValue(webhook, "port")) &&
-    ownDataPropertyValue(webhook, "path") === contract.webhookPath
-  ) {
-    return [{ path: ["value", "webhook"], value: webhook }];
-  }
   const legacyWebhook = ownDataPropertyValue(value, "legacyWebhook");
   if (
     !isPlainDataObject(webhook) ||
