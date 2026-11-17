@@ -4,6 +4,7 @@
 import { expect, it, vi } from "vitest";
 import { handleOnboardCommandError } from "./error-reporting";
 import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
+import { unownedNativeProviderRefusal } from "../../inference/native-provider/lifecycle";
 // Exercise the retained legacy refusal producer independently of the migrated runtime pin.
 vi.mock("../openshell-version", async (original) => ({
   ...(await original<typeof import("../openshell-version")>()),
@@ -97,3 +98,20 @@ it("prints the legacy providers_v2 refusal with the administrator command on its
     "  Native local inference requires providers_v2_enabled=true on gateway 'selected'.",
   );
 });
+
+it.each(["selected", "token", "my-token", "secret", "api-key"])(
+  "prints the full provider removal command for gateway %s (#14079)",
+  (gatewayName) => {
+    const refusal = unownedNativeProviderRefusal("nemoclaw-nvidia-prod-v1", {
+      kind: "named",
+      gatewayName,
+    });
+    const error = vi.fn();
+    expect(handleOnboardCommandError(refusal, { error }, null)).toBe(1);
+    const lines = (error.mock.calls.flat() as string[]).join("\n").split("\n");
+    expect(lines).toContain(
+      `    openshell provider delete 'nemoclaw-nvidia-prod-v1' -g '${gatewayName}'`,
+    );
+    expect(lines).toContain("  Then run onboarding again.");
+  },
+);
