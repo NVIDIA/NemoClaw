@@ -309,7 +309,6 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
 
     let platform = read(".github/workflows/e2e-platform.yml");
     let gpu = &platform["jobs"]["gpu"];
-    assert!(needs(gpu).contains(&"live-images".to_owned()));
     assert_eq!(
         gpu["with"],
         serde_json::json!({
@@ -317,7 +316,7 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
             "cases": "${{ inputs.hcl-cases }}",
             "tests": "${{ inputs.tests }}",
             "bundle": "${{ inputs.bundle }}",
-            "live-images": "${{ needs.live-images.outputs.artifact }}",
+            "live-images": "${{ inputs.images }}",
             "live-images-commit": "${{ inputs.live-images-commit }}",
         })
     );
@@ -332,6 +331,26 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
     assert!(
         build.contains("inputs.tests == ''"),
         "Live / HCL builds a candidate only without CI / Bundle's artifacts: {build}"
+    );
+}
+
+/// `E2E build images` reads no build or bundle artifact, so it starts with
+/// the platform's build and bundle jobs instead of after both, and the live
+/// jobs that load its images wait for all three.
+#[test]
+fn live_images_build_alongside_the_build_and_bundle_jobs() {
+    let platform: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/bundle-platform.yml")).unwrap(),
+    )
+    .unwrap();
+    let images = &platform["jobs"]["live-images"];
+    assert_eq!(images["name"], "E2E build images");
+    assert!(needs(images).is_empty(), "it needs {:?}", needs(images));
+    let e2e = &platform["jobs"]["e2e"];
+    assert_eq!(needs(e2e), ["build", "bundle", "live-images"]);
+    assert_eq!(
+        e2e["with"]["images"],
+        "${{ needs.live-images.outputs.artifact }}"
     );
 }
 
