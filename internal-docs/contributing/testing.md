@@ -392,14 +392,15 @@ Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workf
 1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables. On Linux, it runs `docker buildx version` before the tests, so the Bake tests' first Docker call doesn't spend their time limit reading the Docker CLI and Buildx from disk.
 2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
 3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions, and `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets.
-4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E build images` with `cargo ci live-images`, and `E2E Docker tests` and `E2E Kubernetes (kind) tests`, from the platform's archive and bundle. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, and `E2E GPU` for those on the NVIDIA GPU runner, from the same artifacts; see [live suites](#live-suites).
+4. On Linux, when the plan selects the live suites, `E2E build images` runs `cargo ci live-images` at the same time as the build and bundle jobs, because it reads neither job's artifacts. When all three finish, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E Docker tests` and `E2E Kubernetes (kind) tests` from the platform's archive, bundle, and live images. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, and `E2E GPU` for those on the NVIDIA GPU runner, from the same artifacts; see [live suites](#live-suites).
 
 When a pull request changes no image input since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
 
 Each platform starts its jobs after its own build; it does not wait for the other platforms.
 Superseded pull request runs are cancelled, and their checks report as cancelled rather than failed.
-Push runs finish, because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
-The image workflow cancels superseded pull request runs and pushes, but not manual runs; documentation and dependency pushes finish.
+In CI / Bundle and the image workflow, each `v1` push runs in its own concurrency group: it starts without waiting for an earlier push and is never cancelled, so every `v1` commit gets its checks and pushed images.
+GPU case jobs from several pushes wait in the GPU runner queue; none cancels another.
+Manual runs are not cancelled; documentation and dependency pushes finish.
 
 ### Partitions
 
