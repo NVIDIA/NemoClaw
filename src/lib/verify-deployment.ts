@@ -468,6 +468,9 @@ async function verifyInferenceRoute(
       detail:
         result?.detail ?? "Switchyard verification is unavailable; no inference request was sent.",
       httpCode: result?.ok ? 200 : 0,
+      hint: result?.ok
+        ? undefined
+        : "Inspect the Hermes gateway log and recorded Switchyard routing inputs, provider bindings, and model access, then rerun status.",
     };
   }
   const nativeLocal =

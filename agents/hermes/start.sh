@@ -2776,15 +2776,6 @@ hermes_dashboard_healthy() {
 # Supervised recovery keeps this entrypoint alive, so each gateway launch must qualify.
 unset HERMES_SWITCHYARD_LOCK_FD
 qualify_hermes_switchyard_judge() {
-  if [ -z "${NEMOCLAW_HERMES_SWITCHYARD_SHA256:-}" ] \
-    && [ ! -e /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
-    && [ ! -L /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
-    && [ ! -e /usr/local/share/nemoclaw/.dynamic-plugins.json ] \
-    && [ ! -L /usr/local/share/nemoclaw/.dynamic-plugins.json ] \
-    && [ ! -e /usr/local/share/nemoclaw/hermes-switchyard-v1.toml ] \
-    && [ ! -L /usr/local/share/nemoclaw/hermes-switchyard-v1.toml ]; then
-    return 0
-  fi
   # Keep the shared lock in this supervisor and its children. A root publisher
   # cannot replace routing inputs while this startup/recovery lifecycle is live.
   # Reuse the descriptor on recovery; never accumulate descriptors per launch.
@@ -2795,6 +2786,15 @@ qualify_hermes_switchyard_judge() {
       unset HERMES_SWITCHYARD_LOCK_FD
       return 1
     fi
+  fi
+  if [ -z "${NEMOCLAW_HERMES_SWITCHYARD_SHA256:-}" ] \
+    && [ ! -e /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
+    && [ ! -L /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
+    && [ ! -e /usr/local/share/nemoclaw/.dynamic-plugins.json ] \
+    && [ ! -L /usr/local/share/nemoclaw/.dynamic-plugins.json ] \
+    && [ ! -e /usr/local/share/nemoclaw/hermes-switchyard-v1.toml ] \
+    && [ ! -L /usr/local/share/nemoclaw/hermes-switchyard-v1.toml ]; then
+    return 0
   fi
   local prefix=()
   [ "$(id -u)" -ne 0 ] || prefix=("${STEP_DOWN_PREFIX_GATEWAY[@]}")

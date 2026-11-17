@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { bashPrintfQ, extractShellFunction } from "../../support/hermes-shell-harness";
 import {
   createHermesSwitchyardRoutingIntent,
   fingerprintHermesSwitchyardRouting,
@@ -56,6 +57,9 @@ if case in ("partial", "mixed", "replay", "symlink", "hardlink", "writable", "pa
     if case == "hardlink": os.link(first, directory / "alias")
     if case == "writable": first.chmod(0o666)
     if case == "parent-writable": directory.chmod(0o777)
+if case == "restrictive-umask": os.umask(0o077)
+if case == "untrusted-lock":
+    m.LOCK_PATH.touch(mode=0o400)
 if case == "live-gateway": m.gateway_pids = lambda: {123}
 if case == "concurrent-startup":
     m.LOCK_PATH.touch(mode=0o444)
@@ -109,6 +113,60 @@ describe("protected Switchyard publication", () => {
       fingerprint: fingerprintHermesSwitchyardRouting(files),
     });
   });
+  it("publishes under a restrictive umask without repairing an existing untrusted lock (#13864)", () => {
+    expect(run("restrictive-umask")).toMatchObject({ accepted: true, published: 3 });
+    expect(run("untrusted-lock")).toMatchObject({ accepted: false, published: 0 });
+  });
+  it.each([false, true])(
+    "excludes publication while the actual startup function holds its lock, routed=%s (#13864)",
+    (routed) => {
+      const directory = fs.mkdtempSync(path.resolve(".switchyard-preflight-test-"));
+      try {
+        const lock = path.join(directory, "routing.lock");
+        fs.writeFileSync(lock, "", { mode: 0o444 });
+        const startup = extractShellFunction(
+          fs.readFileSync("agents/hermes/start.sh", "utf8"),
+          "qualify_hermes_switchyard_judge",
+        )
+          .replaceAll("/usr/local/share/nemoclaw/hermes-switchyard.lock", lock)
+          .replaceAll("/usr/local/share/nemoclaw/", `${directory}/`);
+        const probe = String.raw`
+import importlib.util, json, os, pathlib, sys
+spec=importlib.util.spec_from_file_location('preflight',sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+m.ROOT_UID=os.getuid();m.LOCK_PATH=pathlib.Path(sys.argv[2]);m.DIRECTORY=m.LOCK_PATH.parent
+m.PATHS={key:m.DIRECTORY/path.name for key,path in m.PATHS.items()}
+m.gateway_pids=lambda:set()
+try:
+    m.publish(json.loads(sys.argv[3]))
+except BlockingIOError:
+    assert not any(path.exists() for path in m.PATHS.values())
+    print('excluded')
+else: raise AssertionError('publisher acquired startup lock')
+`;
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            [
+              "set -euo pipefail",
+              `flock() { ${bashPrintfQ(python)} -I -c 'import fcntl,sys; fcntl.flock(int(sys.argv[1]), fcntl.LOCK_SH | fcntl.LOCK_NB)' "$3"; }`,
+              "id() { printf 1000; }; judge_python() { :; }",
+              `HERMES_DIR=${bashPrintfQ(directory)}; _HERMES_PYTHON=judge_python`,
+              `NEMOCLAW_HERMES_SWITCHYARD_SHA256=${routed ? "requested" : ""}`,
+              startup,
+              "qualify_hermes_switchyard_judge",
+              `${bashPrintfQ(python)} -I -c ${bashPrintfQ(probe)} ${bashPrintfQ(helper)} ${bashPrintfQ(lock)} ${bashPrintfQ(JSON.stringify(files))}`,
+            ].join("\n"),
+          ],
+          { encoding: "utf8", timeout: 10000 },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toBe("excluded\n");
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
   it("accepts an exact replay without replacing files (#13864)", () => {
     expect(run("replay")).toMatchObject({ accepted: true, native: 0, published: 3 });
   });

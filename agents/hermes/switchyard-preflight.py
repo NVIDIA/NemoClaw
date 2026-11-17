@@ -281,8 +281,15 @@ def read_gateway_inputs(pid, files):
 def publication_lock():
     parent = protected_parent(LOCK_PATH)
     try:
-        fd = os.open(LOCK_PATH.name, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
-                     0o444, dir_fd=parent)
+        try:
+            fd = os.open(LOCK_PATH.name,
+                         os.O_RDONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         0o444, dir_fd=parent)
+        except FileExistsError:
+            fd = os.open(LOCK_PATH.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         dir_fd=parent)
+        else:
+            os.fchmod(fd, 0o444)
         try:
             metadata = os.fstat(fd)
             if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != ROOT_UID

@@ -676,9 +676,6 @@ describe("managed startup image runtime", () => {
           paths.switchyardDeploymentSource,
           { contents: serialized.switchyardDeploymentToml, mode: 0o600 },
         ],
-        [paths.relayPluginsTarget, { contents: "previous relay activation", mode: 0o444 }],
-        [paths.relayPluginStateTarget, { contents: "previous relay state", mode: 0o444 }],
-        [paths.switchyardDeploymentTarget, { contents: "previous deployment", mode: 0o444 }],
       ]),
     );
     const publish = vi.fn((files) => {

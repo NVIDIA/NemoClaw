@@ -17,7 +17,7 @@ describe("Switchyard verification gate", () => {
     "gates status without a shared-route or upstream probe, ready=%s (#13864)",
     async (ready) => {
       const { routedEntry, observe, f } = await createSwitchyardReadinessFixture(
-        "gateway",
+        "nemoclaw",
         "sandbox",
       );
       f.names.length *= Number(ready);
@@ -72,6 +72,41 @@ describe("Switchyard verification gate", () => {
         probeOnboardInferenceInvocation(context.invocation, request, observe),
       ).resolves.toMatchObject({ ok: ready });
       expect(request).toHaveBeenCalledTimes(Number(ready));
+    },
+  );
+  it("withholds status observations and requests for conflicting gateway identity (#13864)", async () => {
+    const { routedEntry, observe } = await createSwitchyardReadinessFixture("gateway", "sandbox");
+    const observed = vi.fn(observe);
+    const request = vi.fn(async () => ({ ok: true as const }));
+    const snapshot = await collectSandboxStatusSnapshot("sandbox", {
+      deps: {
+        getSandbox: () => ({ ...routedEntry, gatewayPort: 9123 }),
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        listPublishedSandboxesAcrossGatewayRoots: () => [routedEntry],
+        switchyardPreflight: observed,
+        probeSandboxInferenceInvocationImpl: request,
+      },
+    });
+    expect(snapshot.inferenceHealth?.ok).toBe(false);
+    expect(observed).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+  });
+  it.each([false, true])(
+    "rechecks evidence after a request exception, changed=%s (#13864)",
+    async (changed) => {
+      const { routedEntry } = await createSwitchyardReadinessFixture("gateway", "sandbox");
+      const observe = vi
+        .fn()
+        .mockResolvedValueOnce("before")
+        .mockResolvedValueOnce(changed ? "after" : "before");
+      const request = vi.fn(async () => {
+        throw new Error("private-request-error");
+      });
+      const result = await verifySwitchyardRequest(routedEntry, "sandbox", request, observe);
+      expect(result).toMatchObject({ ok: false, preflightOk: !changed, requestSent: true });
+      expect(observe).toHaveBeenCalledTimes(2);
+      expect(request).toHaveBeenCalledOnce();
+      expect(result.detail).not.toContain("private-request-error");
     },
   );
   it("keeps routing-disabled entries out of preflight (#13864)", () => {

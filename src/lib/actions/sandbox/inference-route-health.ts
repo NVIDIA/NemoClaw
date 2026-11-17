@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  SwitchyardPreflightError,
   switchyardStateForEntry,
   verifySwitchyardRequest,
-  type observeSwitchyardPreflight,
+  observeSwitchyardPreflight,
 } from "../../onboard/switchyard/preflight";
 
 import {
@@ -731,7 +732,11 @@ export async function probeSwitchyardStatusInference(input: {
         },
         input.probe,
       ),
-    input.observe,
+    async (entry, sandboxName) => {
+      if (!input.gatewayName || input.gatewayName !== entry.gatewayName)
+        throw new SwitchyardPreflightError("configuration");
+      return (input.observe ?? observeSwitchyardPreflight)(entry, sandboxName);
+    },
   );
   return {
     ok: result.ok,

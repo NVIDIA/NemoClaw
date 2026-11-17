@@ -238,7 +238,11 @@ export async function verifySwitchyardRequest(
       sandboxName,
       async () => {
         sent = true;
-        return request();
+        try {
+          return await request();
+        } catch {
+          return { ok: false };
+        }
       },
       observe,
     );

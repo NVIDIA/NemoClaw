@@ -138,7 +138,6 @@ COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 COPY agents/hermes/validate-cli-adapter.py /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py
 COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json
 
-
 # Fetch the managed capability wheels outside RUN instructions so
 # both the standard build and the protected --network none rebuild install the
 # reviewed union from immutable inputs rather than a reusable networked layer.
@@ -861,7 +860,8 @@ COPY --from=hermes-wrapper-payload / /
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }; \
     /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py compatibility-retirement
+        /opt/nemoclaw-hermes-config/image-build-probes.py compatibility-retirement \
+    && install -o root -g root -m 0444 /dev/null /usr/local/share/nemoclaw/hermes-switchyard.lock
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \
