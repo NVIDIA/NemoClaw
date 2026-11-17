@@ -176,34 +176,3 @@ fn an_installer_that_differs_from_the_pin_is_not_run() {
     assert_eq!(runner.log("rustup-init"), None);
     assert!(!runner.path("github-path").exists());
 }
-
-#[test]
-fn rustup_is_installed_before_the_cache_step_runs_rustc() {
-    let steps = action();
-    let position = |found: &dyn Fn(&Value) -> bool| steps.iter().position(found).unwrap();
-    assert!(
-        position(&|step| step["name"] == STEP)
-            < position(&|step| step["uses"]
-                .as_str()
-                .is_some_and(|uses| uses.starts_with("Swatinem/rust-cache@")))
-    );
-}
-
-#[test]
-fn each_linux_platform_pins_its_own_rustup_init() {
-    let pins: Value =
-        serde_json::from_slice(&fs::read(repository().join("versions.json")).unwrap()).unwrap();
-    for (platform, target) in [
-        ("linux_arm64", "aarch64-unknown-linux-gnu"),
-        ("linux_amd64", "x86_64-unknown-linux-gnu"),
-    ] {
-        let pin = &pins["platforms"][platform]["rustupInit"];
-        let url = pin["url"].as_str().unwrap();
-        assert!(
-            url.starts_with("https://static.rust-lang.org/rustup/archive/"),
-            "{url}"
-        );
-        assert!(url.ends_with(&format!("/{target}/rustup-init")), "{url}");
-        assert_eq!(pin["sha256"].as_str().unwrap().len(), 64);
-    }
-}
