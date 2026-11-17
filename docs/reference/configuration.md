@@ -19,7 +19,7 @@ Empty or zero selects a default only where stated.
 
 - Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
 - The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
-- Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without kubernetes.expose, its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path; with it, the endpoint names a lowercase DNS name or IPv4 address and an explicit port, which the chart's NodePort Service publishes; Kubernetes checks that the port is in the cluster's node-port range. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.
+- Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Without kubernetes.expose, its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path; with it, the endpoint names a lowercase DNS name or IPv4 address and an explicit port. kubernetes.expose.service has the chart's NodePort Service publish that port, which Kubernetes checks against the cluster's node-port range; kubernetes.expose.route, only with gateway.runtime.provider openshift, has the chart's pass-through Route publish the host, which must be a DNS name, at the port the cluster's router serves. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.
 - The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.
@@ -85,6 +85,38 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `method` | [AuthMethod](#authmethod) | Yes | — | API-key authentication. Interactive login is not supported. |
+
+## ApfPolicyAuthority
+
+Who registers APF with the gateway as its interceptor and provider-profile source.
+
+Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+
+Paths:
+
+- `spec.gateway.policyAuthority.apf`
+
+Accepted input: object.
+
+### Alternative 1
+
+NemoClaw registers APF in a managed Docker gateway's configuration file.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `endpoint` | string | Yes | — | APF's gRPC origin as the gateway reaches it: `https://HOST[:PORT]`, without a path. Constraints: pattern `^https://[^/?#@]+$`. |
+| `registration` | string | Yes | — | Who registers APF with the gateway: managed means NemoClaw does, external means the gateway's operator does. Constraints: `"managed"`. |
+| `tls` | [InterceptorTls](#interceptortls) | No | — | The CA certificate that verifies APF; omission uses the gateway's system roots. |
+
+### Alternative 2
+
+The gateway's operator registers APF, such as in spec.gateway.config. Required on an external gateway.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `registration` | string | Yes | — | Who registers APF with the gateway: managed means NemoClaw does, external means the gateway's operator does. Constraints: `"external"`. |
 
 ## ApiAuthStyle
 
@@ -279,6 +311,20 @@ Paths:
 |---|---|---|---|---|
 | `explicit` | [ExplicitPolicy](#explicitpolicy) | Yes | — | Complete sandbox policy in OpenShell YAML field names. |
 
+## ExposureRoute
+
+The OpenShift Route that publishes a managed gateway.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.gateway.kubernetes.expose.route`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `annotations` | map of string | No | — | Annotations on the Route, such as `haproxy.router.openshift.io/timeout`. OpenShift checks them; changing them updates the Route in place. |
+
 ## ExposureService
 
 The Service that publishes a managed Kubernetes gateway.
@@ -348,6 +394,7 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 Paths:
 
 - `spec.gateway.kubernetes.kubeconfig`
+- `spec.gateway.policyAuthority.apf.tls.ca`
 - `spec.gateway.tls.ca`
 - `spec.gateway.tls.certificate`
 - `spec.gateway.tls.key`
@@ -384,6 +431,7 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 | `kubernetes` | [ManagedKubernetes](#managedkubernetes) | No | — | Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
 | `networkCIDR` | string | No | — | Canonical private IPv4 /24 for a managed local gateway. Excluded by kubernetes. Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes. |
+| `policyAuthority` | [PolicyAuthority](#policyauthority) | No | — | Who authors sandbox policy on this gateway; omission means NemoClaw does. |
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the gateway runs every sandbox with; omission selects Docker. |
 
 ### Alternative 2
@@ -397,6 +445,7 @@ An existing gateway managed outside this deployment.
 | `endpoint` | string | Yes | — | Gateway HTTP(S) origin, without a path. Constraints: pattern `^https?://`. |
 | `engine` | string | No | — | Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
+| `policyAuthority` | [PolicyAuthority](#policyauthority) | No | — | Who authors sandbox policy on this gateway; omission means NemoClaw does. |
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports. |
 | `tls` | [TLS](#tls) | No | — | Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS. |
 
@@ -620,6 +669,20 @@ A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
 | `kind` | string | Yes | — | Integration implementation selected by this definition. Constraints: `"api"`. |
 | `sandboxEnv` | string | No | — | Variable name the sandbox sees for the key, such as NVIDIA_API_KEY for tools that read it. Defaults to NEMOCLAW_API_<registration>_KEY. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 
+## InterceptorTls
+
+TLS file reference for a service the gateway dials.
+
+Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+
+Paths:
+
+- `spec.gateway.policyAuthority.apf.tls`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `ca` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local CA certificate file. NemoClaw copies the certificate into the gateway's storage. |
+
 ## KubernetesAuthentication
 
 Authentication provisioned for a managed Kubernetes gateway.
@@ -638,7 +701,7 @@ Paths:
 
 ## KubernetesExpose
 
-Publication of a managed Kubernetes gateway's endpoint.
+Publication of a managed Kubernetes gateway's endpoint, through exactly one of `service` and `route`.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
@@ -648,7 +711,8 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `service` | [ExposureService](#exposureservice) | Yes | — | The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged. |
+| `route` | [ExposureRoute](#exposureroute) | No | — | The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's host is a DNS name, since clients send no SNI host name for an IP address, and its port is the one the router serves. Requires `runtime.provider: openshift`. |
+| `service` | [ExposureService](#exposureservice) | No | — | The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged. |
 
 ## ManagedKubernetes
 
@@ -665,7 +729,7 @@ Paths:
 | `authentication` | [KubernetesAuthentication](#kubernetesauthentication) | Yes | — | How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer. |
 | `context` | string | No | — | Exact kubeconfig context used for every cluster operation. Requires kubeconfig. Constraints: pattern `^[^\x00-\x20\x7f]+$`; minimum characters 1; maximum characters 253. |
 | `environment` | array of string | No | — | Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Requires kubeconfig. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state. Constraints: maximum items 32; items: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
-| `expose` | [KubernetesExpose](#kubernetesexpose) | No | — | How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host. NemoClaw's own commands still forward a free local port to the gateway pod. Its Service type is fixed after the first successful plan. |
+| `expose` | [KubernetesExpose](#kubernetesexpose) | No | — | How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host. NemoClaw's own commands still forward a free local port to the gateway pod. Whether a Service or a Route publishes the gateway, and the Service's type, are fixed after the first successful plan. |
 | `imagePullSecrets` | array of string | No | — | Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them in the namespace before the first apply, or after the SDK creates it, before its pods need to pull images. Constraints: maximum items 32; items: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`; minimum characters 1; maximum characters 253. |
 | `kubeconfig` | [FileRef](#fileref) | No | — | Environment reference whose value is the local kubeconfig file path. Requires context; omit both to use the pod's service account. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
 | `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. An existing namespace is bound by UID and never changed; a missing one is created. A namespace another NemoClaw deployment created is refused. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`; minimum characters 1; maximum characters 63. |
@@ -876,6 +940,20 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `any` | array of string | Yes | — | Nonempty list of nonempty glob strings. |
+
+## PolicyAuthority
+
+The component that authors every sandbox's policy on a gateway, instead of NemoClaw.
+
+Guide: [Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+
+Paths:
+
+- `spec.gateway.policyAuthority`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `apf` | [ApfPolicyAuthority](#apfpolicyauthority) | Yes | — | APF's admission interceptor replaces each sandbox's policy with its signed bundle's, and APF serves the provider profiles. Sandboxes must not set a policy, policyRef, grants, or grantRefs, and API integrations must not set mcp. NemoClaw requires APF's provenance on each sandbox, records each policy APF issues with a new provenance token, and asks APF to issue its policy again when the loaded policy changes without one. |
 
 ## PolicyBinary
 

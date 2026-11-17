@@ -60,10 +60,45 @@ struct Prepared {
     engine_socket: bool,
 }
 
-/// Scenarios are dealt round-robin across shards, so each test stays within
-/// the lifecycle per-test budget; nextest runs the shards one at a time on a
-/// runner, because they share the fixed engine socket.
+/// Scenarios are dealt across shards by estimated time, so each test stays
+/// within the integration per-test budget; nextest runs the shards one at a
+/// time on a runner, because they share the fixed engine socket.
 const SHARDS: usize = 4;
+
+/// A scenario's estimated time in milliseconds: the gateway delays its test
+/// file declares, which a faster runner doesn't shorten, plus its OpenTofu
+/// work, which took 1-6 s for each scenario on linux_arm64.
+fn estimate(text: &str) -> u64 {
+    const WORK_MS: u64 = 4_000;
+    let delays: u64 = text
+        .lines()
+        .filter_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            if !key.trim().ends_with("_delay_ms") {
+                return None;
+            }
+            value.trim().parse::<u64>().ok()
+        })
+        .sum();
+    WORK_MS + delays
+}
+
+/// The shard that runs each scenario, given their estimates: the longest
+/// first, each to the shard with the least estimated time so far, and equal
+/// estimates in name order.
+fn deal(estimates: &[u64]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..estimates.len()).collect();
+    order.sort_by_key(|&index| std::cmp::Reverse(estimates[index]));
+    let mut totals = [0; SHARDS];
+    let mut shards = vec![0; estimates.len()];
+    for index in order {
+        // The first of the least-loaded shards.
+        let shard = (0..SHARDS).min_by_key(|&shard| totals[shard]).unwrap();
+        totals[shard] += estimates[index];
+        shards[index] = shard;
+    }
+    shards
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
@@ -122,6 +157,26 @@ fn every_scenario_test_names_its_inputs() {
         }
     }
     assert!(missing.is_empty(), "missing scenario inputs: {missing:?}");
+}
+
+/// A scenario that waits out a long gateway delay, such as a sandbox deletion
+/// slower than a request's usual deadline, shares its shard with no other, so
+/// the delay can't push that shard over the per-test budget.
+#[test]
+fn a_scenario_with_a_long_gateway_delay_runs_in_a_shard_of_its_own() {
+    let slow = estimate("  variables {\n    sandbox_delete_delay_ms = 31000\n  }\n");
+    let mut estimates = vec![estimate("run \"deploy\" {}\n"); 19];
+    estimates.insert(16, slow);
+    let shards = deal(&estimates);
+    for shard in 0..SHARDS {
+        assert!(shards.contains(&shard), "shard {shard} runs no scenario");
+    }
+    assert_eq!(
+        shards.iter().filter(|&&shard| shard == shards[16]).count(),
+        1,
+        "the slow scenario shares shard {} with others: {shards:?}",
+        shards[16]
+    );
 }
 
 /// Each integration test file's name and text, sorted by name.
@@ -311,6 +366,12 @@ async fn run_shard(shard: usize) {
     let root = Path::new(ROOT).to_path_buf();
     let tests = test_files();
     assert!(tests.len() >= SHARDS, "every shard needs a scenario");
+    let shards = deal(
+        &tests
+            .iter()
+            .map(|(_, text)| estimate(text))
+            .collect::<Vec<_>>(),
+    );
 
     let fixtures = Fixtures::start().await;
     let directory = tempfile::tempdir().unwrap();
@@ -432,7 +493,11 @@ async fn run_shard(shard: usize) {
         .unwrap_or_else(|| directory.path().join("evidence"));
     let mut failed = Vec::new();
     // OpenTofu loads every test file, so every scenario is compiled; this shard runs its own.
-    for scenario in scenarios.iter().skip(shard).step_by(SHARDS) {
+    for (scenario, _) in scenarios
+        .iter()
+        .zip(&shards)
+        .filter(|(_, dealt)| **dealt == shard)
+    {
         // The skip shows in the output and the CI summary, not only as an absence.
         if cfg!(not(unix)) && scenario.engine_socket {
             println!(
@@ -453,26 +518,21 @@ async fn run_shard(shard: usize) {
                 .join(format!("{}.tftest.hcl", scenario.name))
                 .display()
         );
+        let started = std::time::Instant::now();
         let (_, output) = tofu(&bundle, &work, &environment, ["test", "-no-color", &filter]).await;
         let problem = check(&output, &scenario.credentials, &diagnostics)
             .or_else(|| fixtures.teardown_problem());
-        println!(
-            "scenario {}: {}",
-            scenario.name,
-            if problem.is_none() {
-                "passed"
-            } else {
-                "failed"
-            }
-        );
-        record(
-            &scenario.name,
+        let result = format!(
+            "{} in {:.1} s",
             if problem.is_none() {
                 "passed"
             } else {
                 "failed"
             },
+            started.elapsed().as_secs_f64()
         );
+        println!("scenario {}: {result}", scenario.name);
+        record(&scenario.name, &result);
         if let Some(problem) = problem {
             let evidence = evidence_root.join(&scenario.name);
             fs::create_dir_all(&evidence).unwrap();

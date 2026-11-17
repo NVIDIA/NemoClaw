@@ -9,7 +9,10 @@ use nemoclaw_authoring::{
 use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{config::Document, discovery::DiscoveryRequest};
 use serde_json::Value;
-use std::cell::{Cell, RefCell};
+use std::{
+    cell::{Cell, RefCell},
+    path::PathBuf,
+};
 
 pub(crate) struct JourneyWizard {
     pub(super) capabilities: Capabilities,
@@ -39,6 +42,10 @@ pub(crate) struct JourneyWizard {
     /// The furthest the review can scroll, as of its last render: the view
     /// alone knows how its wrapped text fits.
     pub(super) review_scroll_limit: Cell<u16>,
+    /// Where saving writes, named on the review.
+    pub(super) output: Option<PathBuf>,
+    /// Whether the review shows the saved YAML under its summary.
+    pub(super) show_configuration: bool,
 }
 
 impl JourneyWizard {
@@ -62,7 +69,15 @@ impl JourneyWizard {
             accepted: false,
             review_scroll: 0,
             review_scroll_limit: Cell::new(0),
+            output: None,
+            show_configuration: false,
         }
+    }
+
+    /// Name `output` on the review as the file saving writes.
+    pub(crate) fn with_output(mut self, output: PathBuf) -> Self {
+        self.output = Some(output);
+        self
     }
 
     /// Read `candidates` as this machine's engines.
@@ -235,6 +250,13 @@ impl JourneyWizard {
         }
     }
 
+    /// Show or hide the saved YAML on the review.
+    pub(super) fn toggle_configuration(&mut self) {
+        if self.reviewing() {
+            self.show_configuration = !self.show_configuration;
+        }
+    }
+
     // A resolver failure has no choices to move through; the view shows it.
     pub(super) fn previous(&mut self) {
         match self.question() {
@@ -369,6 +391,7 @@ impl JourneyWizard {
         match key.code {
             KeyCode::Char('o') if control => self.omit(),
             KeyCode::Char('a') if control => self.input.clear(),
+            KeyCode::Tab if self.reviewing() => self.toggle_configuration(),
             KeyCode::Tab => self.edit_suggestion(),
             KeyCode::Enter => self.advance(),
             KeyCode::Left => self.back(),

@@ -8,7 +8,10 @@
 //! a kind case's fixtures, from the bundle. A kind case's `tests/e2e/hcl/kind`
 //! module runs `issuer` once for its existing OIDC issuer, and
 //! `tests/e2e/hcl/admission` runs `admission` to refuse, then allow,
-//! StatefulSets in a kind case's namespace. The caller
+//! StatefulSets in a kind case's namespace. For `docker-dummy`, `case` also
+//! serves the external middleware and HTTP effect recorder that the case's
+//! gateway and sandbox reach, which write the requests they see to
+//! `middleware-effects.json` in the run's reports. The caller
 //! destroys the deployment, so cleanup also runs after a failed, cancelled, or
 //! timed-out job: `nemoclaw destroy --state-dir "$NEMOCLAW_HCL_RUN/deployment"`.
 //! After `tofu test`, `case` reports how long each run block took, on stderr
@@ -27,9 +30,9 @@ use std::{
     env::var, fs, io::Write as _, path::PathBuf, process::Command, sync::Arc, time::Duration,
 };
 
-#[test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "live: needs NEMOCLAW_TEST_BUNDLE, NEMOCLAW_HCL_CASE, NEMOCLAW_HCL_RUN, Docker, and the case's images and credentials"]
-fn case() {
+async fn case() {
     let bundle = Bundle::from_env();
     let case = var("NEMOCLAW_HCL_CASE").unwrap();
     let run = PathBuf::from(var("NEMOCLAW_HCL_RUN").unwrap());
@@ -80,6 +83,28 @@ fn case() {
         fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
         fs::write(reports.join("identity.json"), json!({"candidate":var("GITHUB_SHA").unwrap(),"uid":document["metadata"]["uid"],"case":case}).to_string()).unwrap();
     }
+    // The dummy case's middleware and effect recorder listen on the ports its
+    // document names until the case ends, including after a failed run block.
+    let _middleware = if case == "docker-dummy" {
+        let document: Value =
+            serde_saphyr::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+        let grpc = &document["spec"]["gateway"]["config"]["openshell.supervisor.middleware"][0]["grpc_endpoint"];
+        let recorder = &document["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]
+            ["network_policies"]["fixture"]["endpoints"][0]["port"];
+        Some(
+            nemoclaw_test_fixtures::middleware::Fixture::start(
+                url::Url::parse(grpc.as_str().unwrap())
+                    .unwrap()
+                    .port()
+                    .unwrap(),
+                recorder.as_u64().unwrap().try_into().unwrap(),
+                reports.join("middleware-effects.json"),
+            )
+            .await,
+        )
+    } else {
+        None
+    };
     let context = json!({
         "config": fs::canonicalize(config).unwrap(),
         "state_dir": run.join("deployment"),
@@ -397,11 +422,12 @@ fn sandbox_exec(sandbox: &str, command: &[&str]) -> Command {
 
 /// Run one command in a sandbox with `openshell sandbox exec`, or on a managed
 /// Kubernetes gateway with the gateway's exec, through the port-forward that
-/// `probe` uses. The published report holds its exit status and whether its
-/// output contains the expected text and none of the forbidden text: standard
-/// output and error together from the CLI, standard output alone from the
-/// gateway's exec, which keeps no standard error. The output stays in the
-/// private work directory.
+/// `probe` uses. Without a sandbox, run the OpenShell CLI itself with the
+/// command as its arguments, on the gateway and workspace apply reports. The
+/// published report holds its exit status and whether its output contains the
+/// expected text and none of the forbidden text: standard output and error
+/// together from the CLI, standard output alone from the gateway's exec, which
+/// keeps no standard error. The output stays in the private work directory.
 #[tokio::test]
 #[ignore = "run by tests/e2e/hcl/command for one target"]
 async fn command() {
@@ -412,6 +438,7 @@ async fn command() {
     let document = Document::parse(fs::File::open(input("CONFIG")).unwrap()).unwrap();
     let (exit_code, text) = match kubernetes_operations(&document, &state).await {
         Some(operations) => {
+            assert!(!sandbox.is_empty(), "a Kubernetes target names its sandbox");
             let binding = sandbox_binding(&state, &sandbox);
             let (_forward, client) = kubernetes_gateway(&operations, &binding, None).await;
             let (code, output) = client
@@ -422,7 +449,11 @@ async fn command() {
         }
         None => {
             let command: Vec<&str> = command.iter().map(String::as_str).collect();
-            let output = sandbox_exec(&sandbox, &command).output().unwrap();
+            let output = if sandbox.is_empty() {
+                openshell().args(&command).output().unwrap()
+            } else {
+                sandbox_exec(&sandbox, &command).output().unwrap()
+            };
             let mut text = output.stdout;
             text.extend_from_slice(&output.stderr);
             (output.status.code(), text)

@@ -28,20 +28,33 @@ Agents and interfaces:
   OpenShell reports, during apply, a sandbox whose attached registrations put keys in the same variable.
   See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
 
+Sandbox policy:
+
+- `spec.gateway.policyAuthority.apf` lets NVIDIA Agent Policy Fabric (APF) author each sandbox's policy and serve the inference, web search, and API profiles, and `registration: managed` has NemoClaw register APF with a managed Docker gateway.
+  A sandbox on such a gateway can't set `network.policy`, `network.policyRef`, `network.grants`, or `network.grantRefs`.
+  See [let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy).
+
 Inference and models:
 
 - A managed vLLM or Ollama container's `container.cpuLimitMillis` reaches Docker through the Docker provider's `cpus`, without the `nemoclaw.nvidia.com/cpu-limit-millis` label.
-- A managed vLLM service keeps FlashInfer's autotune results on its model volume, in `/data/vllm-cache/flashinfer-autotune`, so a replaced container doesn't tune again; vLLM 0.33.0 otherwise keeps them inside the container.
+- A managed vLLM service keeps FlashInfer's autotune results on its model volume, in `/data/vllm-cache/flashinfer-autotune`, so a replaced container doesn't tune again; vLLM 0.34.0 otherwise keeps them inside the container.
   See [retained model files](../agents-inference/models.md#retained-model-files).
+
+Kubernetes and OpenShift:
+
+- `gateway.kubernetes.expose.route` publishes a managed OpenShift gateway at `gateway.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI; its optional `annotations` reach the Route.
+  The gateway certificate names the endpoint's host, and NemoClaw's own commands keep their port forward.
+  Plan refuses `expose.route` unless `gateway.runtime.provider` is `openshift` and the endpoint's host is a DNS name.
+  See [publishing through an OpenShift Route](../build-deploy/kubernetes.md#through-an-openshift-route).
 
 Examples and builds:
 
 - Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
 - OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
 - [Building from source](../build-deploy/build.md) uses Rust 1.100.0, as do the Rust stages of the agent, supervisor, and Ollama proxy images.
-- The vLLM runtime image builds on vLLM 0.33.0; rebuild it to use it.
+- The vLLM runtime image builds on vLLM 0.34.0; rebuild it to use it.
   Like 0.32.0, it uses CUDA 13.0, so GPU hosts and Kubernetes GPU nodes need NVIDIA driver 580 or newer.
-  With `authentication: bearer`, the supervisor answers vLLM's new `/v1/decisions` endpoint with 404, as it does every request outside its route allowlist; see [authenticating a managed vLLM service](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
+  With `authentication: bearer`, the supervisor answers vLLM's new `/v1/decisions` endpoint, and the `/checkpoint/prepare`, `/checkpoint/restore`, and `/checkpoint/status` routes that `--enable-sleep-mode` adds without the key, with 404, as it does every request outside its route allowlist; see [authenticating a managed vLLM service](../agents-inference/inference.md#authenticate-a-managed-vllm-service).
 
 OpenShell 0.1.8:
 
@@ -155,7 +168,7 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
   Write `endpoint: https://bookings.example.com/mcp` as `endpoints: [https://bookings.example.com/mcp]`.
   An `openshell_api` with an `mcp` block takes exactly one URL.
 
-- The intent record is now version 23, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
+- The intent record is now version 25, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
   `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up.
@@ -194,6 +207,8 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
   A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
 - With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
   An endpoint host written as an IPv4-mapped IPv6 address, such as `::ffff:203.0.113.7`, no longer matches; write the IPv4 address.
+- With Fabric at NVIDIA/NeMo-Fabric `main` `135147a0`, an OpenClaw agent's `skills.bundled` also selects the skills that OpenClaw's own extensions ship, such as `canvas`; an extension skill that the selection leaves out no longer loads.
+  An agent doesn't start when `nvidia.fabric.nooa` has no `workflow.target_id`, or when the Deep Agents `local_shell` backend has neither `tools.enabled` nor `execute` in `tools.blocked`.
 - The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.
 
 ### Breaking Changes in v0.1.0-rc10

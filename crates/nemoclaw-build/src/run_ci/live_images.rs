@@ -11,6 +11,12 @@ pub(super) const SHARED: &str = "nc-live-images";
 /// Where `ci live-images` writes the shared archive.
 const ARCHIVE: &str = ".build/ci/live-images.tar.zst";
 
+/// Where `ci live-images` writes the agent image alone, which the GPU HCL
+/// cases that run only it download instead of the shared archive.
+fn agent_archive() -> String {
+    format!(".build/ci/live-images-{}.tar.zst", agent().0)
+}
+
 fn docker() -> Command {
     let mut command = Command::new("docker");
     command.stdin(Stdio::null());
@@ -134,6 +140,19 @@ pub(super) fn build(platform: &str) -> Result<()> {
             start.elapsed().as_secs_f64()
         );
     }
+    // names() starts with the agent image.
+    let saved = saved.and_then(|()| {
+        let start = Instant::now();
+        let archive = agent_archive();
+        save(&export_tags[..1], Path::new(&archive))?;
+        eprintln!(
+            "Saved the {} live image: {} bytes in {:.1}s",
+            agent().0,
+            fs::metadata(&archive)?.len(),
+            start.elapsed().as_secs_f64()
+        );
+        Ok(())
+    });
     let cleanup = Instant::now();
     // The archive holds them; the local names would only take space.
     for tag in &tags {

@@ -11,7 +11,10 @@
 # runs. The agent image comes from a private registry with the operator's
 # pull Secret, and the CLI and the probe reach the gateway with a token from
 # an existing OIDC issuer, so apply and the replies show that the gateway
-# accepts that issuer's tokens.
+# accepts that issuer's tokens. The chart's pass-through Route publishes the
+# gateway: apply goes through the port-forward, and the probe dials the
+# endpoint's host through the cluster's router with the gateway's client
+# certificate and the token.
 
 run "cluster" {
   module {

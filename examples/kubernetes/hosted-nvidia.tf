@@ -370,8 +370,12 @@ resource "openshell_sandbox" "agent" {
           host = "integrate.api.nvidia.com"
           port = 443
         }
-        binaries {
-          path = each.key == "hermes" ? "/usr/local/bin/hermes" : "/usr/bin/openclaw"
+        # The executables the image declares, as in the managed grant below.
+        dynamic "binaries" {
+          for_each = local.binaries[each.key]
+          content {
+            path = binaries.value
+          }
         }
       }
     }

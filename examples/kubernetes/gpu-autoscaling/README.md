@@ -204,7 +204,7 @@ Then, as in [Invoke an Agent](#invoke-an-agent), keep the gateway's port forward
 PROMPTS=40 CONCURRENCY=8 ../../examples/kubernetes/gpu-autoscaling/load.sh apply.json
 ```
 
-A service URL names the gateway's own port, `8080`, under `openshell.localhost`; the script connects to the port forward instead, at `GATEWAY_ADDRESS`, `127.0.0.1:17671` by default, and presents the client certificate from `MTLS_DIR`, by default the directory where you copied it for the OpenShell CLI.
+A service URL names the gateway's own port, `8080`, under `openshell.localhost`; the script connects to the port forward instead, at `GATEWAY_ADDRESS`, `127.0.0.1:17671` by default, and verifies the gateway with `ca.crt` from `MTLS_DIR`, by default the directory where you copied it for the OpenShell CLI.
 `PROMPT_FILE` replaces the built-in prompts with one prompt per line, `TIMEOUT` limits each request, 300 seconds by default, and `RESULTS` names a file for one JSON line per request.
 The script prints how many prompts it sent and how many replied, the median, 95th-percentile and longest latency of replies, overall and per sandbox, up to 10 failures, and one reply per sandbox.
 It exits nonzero if any request failed.
@@ -213,7 +213,7 @@ A request that reaches `TIMEOUT` counts as failed; the script stops waiting for 
 - Each apply that starts a new runtime changes its runtime ID and Hermes's token: apply again with `-o json`, then rerun the script.
 - Each `fabric-agent-ctl invoke` is one `openshell sandbox exec` through the gateway, which NemoClaw limits to one CPU ([limits](../../../docs/resources/limits.md)), and Fabric runs one invocation at a time per runtime, so concurrent prompts to one such sandbox wait in the sandbox, not on the GPUs.
 - Hermes's API server runs at most 10 requests at once per sandbox by default and answers `429` beyond that.
-- A service URL skips the gateway's sign-in: anyone who can reach the gateway's listener with its client certificate can reach Hermes's API, which only its token protects; see [who can use an interface](../../../docs/agents-inference/interfaces.md#who-can-use-an-interface).
+- A service URL skips the gateway's sign-in: anyone who can reach the gateway's listener can reach Hermes's API, which only its token protects; see [who can use an interface](../../../docs/agents-inference/interfaces.md#who-can-use-an-interface).
 - The OpenShell CLI renews a token it got through client credentials only while `OPENSHELL_OIDC_CLIENT_SECRET` is set; keep it set for the whole run.
 
 ## Remove the Deployment

@@ -301,7 +301,16 @@ fn prepare(
         let document = match case.as_str() {
             // The dummy reports native health, so its whole HCL E2E lifecycle
             // completes.
-            DUMMY_CASE => dummy_case(&template, &uid, &endpoint, &subnet, &dummy)?,
+            DUMMY_CASE => {
+                let bridge = docker_output(&[
+                    "network",
+                    "inspect",
+                    "bridge",
+                    "--format",
+                    "{{(index .IPAM.Config 0).Gateway}}",
+                ])?;
+                dummy_case(&template, &uid, &endpoint, &subnet, &dummy, &bridge)?
+            }
             INTERFACES_CASE => {
                 let host = subnet
                     .strip_suffix(".0/24")
@@ -356,18 +365,32 @@ fn prepare(
 const DUMMY_CASE: &str = "docker-dummy";
 
 /// The dummy case bound to one run's UID, gateway endpoint, subnet, and image,
-/// and a workspace volume named for the UID, so runs never share one.
+/// a workspace volume named for the UID, so runs never share one, and free
+/// ports for the middleware and effect recorder that `hcl_live::case` serves.
+/// The sandbox reaches the recorder at the gateway network's host address,
+/// which the middleware binding selects, and at `bridge`, the default Docker
+/// bridge's gateway, which it excludes.
 fn dummy_case(
     template: &str,
     uid: &str,
     endpoint: &str,
     subnet: &str,
     image: &str,
+    bridge: &str,
 ) -> Result<String> {
     let zero = format!("nc-live-dummy@sha256:{}", "0".repeat(64));
+    let host = subnet
+        .strip_suffix(".0/24")
+        .map(|prefix| format!("{prefix}.1"))
+        .ok_or("a gateway subnet is a /24")?;
+    // The ports go first, before a random UID or digest could hold one.
     Ok(live::bind_case(
         template,
         &[
+            ("17701", &live::free_port()?.to_string()),
+            ("17702", &live::free_port()?.to_string()),
+            ("172.30.122.1", &host),
+            ("172.17.0.1", bridge),
             ("0b3f1c52-7d0e-4c6a-9a51-2f6c8e4d7a10", uid),
             ("http://127.0.0.1:17697", endpoint),
             ("172.30.122.0/24", subnet),
@@ -568,6 +591,7 @@ mod tests {
             "http://127.0.0.1:1",
             "172.30.9.0/24",
             "i@1",
+            "172.17.9.1",
         )
         .unwrap();
         for line in [
@@ -575,6 +599,7 @@ mod tests {
             "    networkCIDR: 172.30.9.0/24",
             "        ref: i@1",
             "              source: hcl-dummy-workspace-u-1",
+            "                  include: [172.30.9.1, 172.17.9.1]",
         ] {
             assert!(bound.lines().any(|bound| bound == line), "{line}");
         }

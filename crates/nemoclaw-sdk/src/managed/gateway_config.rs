@@ -182,18 +182,35 @@ fn insert(
 /// Whether the authored tables define `table`, in either the dotted or the
 /// nested form.
 pub fn defines(config: &GatewayConfig, table: &str) -> bool {
+    lookup(config, table, toml::Value::is_table)
+}
+
+/// Whether the authored tables set `key` to any value, in either the dotted
+/// or the nested form.
+pub fn sets(config: &GatewayConfig, key: &str) -> bool {
+    lookup(config, key, |_| true)
+}
+
+/// Whether the authored tables hold a value at `key` that satisfies `test`.
+fn lookup(config: &GatewayConfig, key: &str, test: impl FnOnce(&toml::Value) -> bool) -> bool {
     let Ok(root) = render(toml::Table::new(), config) else {
         return false;
     };
     let mut value = &toml::Value::Table(root);
-    for segment in table.split('.') {
+    for segment in key.split('.') {
         match value.get(segment) {
             Some(child) => value = child,
             None => return false,
         }
     }
-    value.is_table()
+    test(value)
 }
+
+/// The keys that register APF, which NemoClaw writes when it registers APF.
+pub const APF_KEYS: [&str; 2] = [
+    "openshell.gateway.interceptors",
+    "openshell.gateway.provider_profile_sources",
+];
 
 /// Merge authored tables into a gateway file's owned keys.
 ///

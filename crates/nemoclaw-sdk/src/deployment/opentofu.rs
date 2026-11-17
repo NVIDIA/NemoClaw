@@ -251,6 +251,10 @@ pub(super) fn gateway_environment(
         names.extend(tls.certificate.iter().map(|file| file.env.as_str()));
         names.extend(tls.key.iter().map(|file| file.env.as_str()));
     }
+    // The gateway's runtime reads APF's CA into its configuration.
+    if let Some(tls) = gateway.managed_apf().and_then(|apf| apf.tls.as_ref()) {
+        names.insert(tls.ca.env.as_str());
+    }
     credential_environment(names, secrets, directory)
 }
 
