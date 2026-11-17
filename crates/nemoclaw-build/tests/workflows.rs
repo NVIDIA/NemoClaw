@@ -225,9 +225,10 @@ fn colossus_bundle_runs_linux_arm64_ci_without_writing_shared_caches() {
         for step in job["steps"].as_array().into_iter().flatten() {
             if step["uses"] == "./.github/actions/setup-rust" {
                 setups += 1;
-                assert_eq!(
-                    step["with"]["save-cache"], "${{ inputs.save-cache }}",
-                    "{name} must honor save-cache"
+                let save = &step["with"]["save-cache"];
+                assert!(
+                    save == "${{ inputs.save-cache }}" || save == "false",
+                    "{name} must honor save-cache or never save: {save}"
                 );
             }
         }

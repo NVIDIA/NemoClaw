@@ -23,6 +23,10 @@ on:
         description: The Bundle platform run's bundle artifact.
         type: string
         required: true
+      images:
+        description: The Bundle platform run's live images artifact, or empty when the live suites pull live-images-commit's images.
+        type: string
+        default: ""
       live-images-commit:
         description: A v1 commit whose pushed images the live suites pull instead of building, or empty to build them.
         type: string
