@@ -120,6 +120,49 @@ fn jobs_say_what_happens_when_a_job_they_need_is_skipped() {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
+/// Station dispatches must reach the shared route after the pilot alias is removed.
+#[cfg(unix)]
+#[test]
+fn station_dispatch_selects_the_shared_colossus_route() {
+    let workflow: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/hcl-e2e.yml")).unwrap(),
+    )
+    .unwrap();
+    let step = workflow["jobs"]["cases"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"] == "target")
+        .expect("the cases job selects a target");
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("output");
+    let output = std::process::Command::new("bash")
+        .args(["-e", "-o", "pipefail", "-c", step["run"].as_str().unwrap()])
+        .env("TARGET", "dgx-station")
+        .env("TESTS", "")
+        .env("GITHUB_EVENT_NAME", "workflow_dispatch")
+        .env("GITHUB_OUTPUT", &output_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Station target selection failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let selected = fs::read_to_string(output_path).unwrap();
+    let colossus = colossus_workflow();
+    let shared_route = colossus["jobs"]["bundle"]["with"]["runner"]
+        .as_str()
+        .unwrap();
+    assert!(
+        selected
+            .lines()
+            .any(|line| line == format!("runner={shared_route}")),
+        "Station must select the shared Colossus route {shared_route}: {selected}"
+    );
+    assert!(selected.lines().any(|line| line == "platform=linux_arm64"));
+}
+
 fn colossus_workflow() -> Value {
     serde_saphyr::from_str(
         &fs::read_to_string(repository().join(".github/workflows/colossus-connectivity.yml"))
