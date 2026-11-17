@@ -2496,6 +2496,22 @@ The managed container carries catalog provenance and the catalog-derived serve c
 Health requests succeed on loopback and the private OpenShell bridge; connections to every other discovered host address are refused.
 The target also requires a chat response through `inference.local` and an HTTP `403` response for unrelated sandbox egress.
 
+The separate `spark-vllm-extra-args` case requires a physical Spark whose real usable memory is at least 60 GB and below 64 GB.
+It invokes candidate onboarding with `NEMOCLAW_PROVIDER=install-vllm`, no explicit serving preset or model, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--gpu-memory-utilization","0.45"]'`.
+It checks Docker's launched command for the smaller recipe's 32,768-token context and the 0.5 baseline followed by the operator's effective 0.45 override, then requires a completed OpenClaw inference turn using that model in the sandbox.
+It captures resource identities even after an onboarding failure and uses the existing identity-bound cleanup, including container and sandbox absence checks.
+It reads actual host memory and fails qualification outside that tier. Run it separately from the fixed-profile case.
+
+```bash
+E2E_JOB=1 E2E_TARGET_ID=spark-vllm-extra-args NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-extra-args npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-vllm-extra-args:'
+```
+
+Source tests own selection, rejection, fallback, model intent, and argument construction.
+This live case owns the real CLI-to-Docker-to-sandbox inference boundary.
+The existing 55-minute onboarding and 65-minute test limits apply; the runner must reserve time for cleanup and artifact upload.
+Spark vLLM cases currently use this physical-host runner; the hosted workflow has no Spark vLLM dispatch target.
+The protected llama.cpp Spark job does not run these cases and cannot supply their qualification evidence.
+
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.
 Live modules import `fixtures/e2e-test.ts`; selected integration modules import
