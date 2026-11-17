@@ -100,7 +100,7 @@ jobs:
             rtx-pro-6000) runner=linux-amd64-gpu-rtxpro6000-latest-1 platform=linux_amd64 ;;
             dgx-station)
               [[ -z $TESTS && $GITHUB_EVENT_NAME == workflow_dispatch ]] || exit 1
-              runner=colossus-gb300-pilot platform=linux_arm64 ;;
+              runner=colossus-gb300 platform=linux_arm64 ;;
             dgx-spark) echo 'DGX Spark is not qualified yet.' >&2; exit 1 ;;
             *) echo "Unknown target: $TARGET" >&2; exit 1 ;;
           esac
