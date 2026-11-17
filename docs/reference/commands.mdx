@@ -495,6 +495,17 @@ The clients do not forward caller credentials.
 The capable client uses the same settings when reused as the routing judge.
 These fixed settings are not user overrides and do not define a whole-turn deadline or response-byte limit.
 
+Hermes stops when its protected Switchyard routing configuration does not match the sandbox image.
+Do not edit the protected routing files to bypass that check.
+Create a fresh sandbox with an unused name and the routing JSON file.
+This does not recover data from the failed sandbox.
+Use an independently maintained backup to restore data.
+Do not delete the failed sandbox while data recovery remains unresolved.
+
+```bash
+$$nemoclaw onboard --fresh --agent hermes --name <new-name> --switchyard-config <routing-config.json>
+```
+
 Configuration generation and package validation do not prove runtime deadline enforcement, cancellation, or interception of every Hermes request.
 Adaptive routing remains opt-in and is disabled by default.
 

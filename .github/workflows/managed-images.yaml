@@ -104,7 +104,16 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
+      pull-requests: read
     steps:
+      - name: Checkout trusted npm audit controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-npm-audit
+          persist-credentials: false
+
       - name: Checkout commit under review
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -113,8 +122,12 @@ jobs:
           persist-credentials: false
 
       - name: Audit exact PR production npm graphs
-        uses: ./candidate/.github/actions/ci-reviewed-npm-audit
+        uses: ./.trusted-npm-audit/.github/actions/ci-reviewed-npm-audit
         with:
+          sdk-admission-token: ${{ github.token }}
+          sdk-admission-pr-number: ${{ github.event.pull_request.number }}
+          sdk-admission-candidate-sha: ${{ github.event.pull_request.head.sha }}
+          sdk-admission-base-sha: ${{ github.event.pull_request.base.sha }}
           target-root: ${{ github.workspace }}/candidate
           report-dir: artifacts/reviewed-npm-audit
           cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
