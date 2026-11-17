@@ -1,14 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# A stub OpenAI-compatible model for a Docker case, run with the bundled
-# Docker provider on the case's engine before its first apply: the pinned
-# nginx-unprivileged image the development issuer runs, on the host network
-# at the port the case's `model` provider names. It lists one model and
-# answers every chat completion with `reply`, streamed when the request asks,
-# followed by the name of each of `markers` that the request holds, so a
-# test can see what an agent sent the model. It refuses any request without
-# `Authorization: Bearer KEY`. The test runner removes it after the case.
+# A stub model for a Docker case, run with the bundled Docker provider on the
+# case's engine before its first apply: the pinned nginx-unprivileged image
+# the development issuer runs, on the host network at the port the case's
+# `model` provider names. It lists one model and answers every OpenAI chat
+# completion, and every Anthropic Messages request at /anthropic/v1/messages
+# as Anthropic-compatible gateways serve them, with `reply`, streamed when the
+# request asks, followed by the name of each of `markers` that the request
+# holds, so a test can see what an agent sent the model. It refuses a
+# Messages request without `x-api-key: KEY`, where Anthropic's API takes the
+# key, and any other request without `Authorization: Bearer KEY`. The test
+# runner removes it after the case.
 
 terraform {
   required_version = "= 1.13.9"
@@ -33,7 +36,7 @@ variable "key" {
 }
 
 variable "reply" {
-  description = "The text that starts every completion."
+  description = "The text that starts every completion and message."
   type        = string
   # nginx puts the reply in a header and in the completion's JSON unescaped.
   validation {
@@ -43,7 +46,7 @@ variable "reply" {
 }
 
 variable "markers" {
-  description = "By name, text to look for in each chat completion request. The completion names each marker its request holds, in name order, after the reply."
+  description = "By name, text to look for in each chat completion or Messages request. The completion or message names each marker its request holds, in name order, after the reply."
   type        = map(string)
   default     = {}
   # nginx matches the text as a regular expression and puts the name in the
@@ -94,7 +97,41 @@ locals {
       choices = [{ index = 0, delta = chunk.delta, finish_reason = chunk.finish }]
     }, chunk.usage == null ? {} : { usage = chunk.usage }))}\\n\\n"
   ], ["data: [DONE]\\n\\n"]))
-  # The request body selects a streamed reply and the completion's text. nginx
+  # A Messages reply, and the events that stream it.
+  message = jsonencode({
+    id            = "msg_nemoclaw_stub"
+    type          = "message"
+    role          = "assistant"
+    model         = "fixture-model"
+    content       = [{ type = "text", text = "$http_x_reply" }]
+    stop_reason   = "end_turn"
+    stop_sequence = null
+    usage         = { input_tokens = 1, output_tokens = 1 }
+  })
+  events = [
+    {
+      type = "message_start"
+      message = {
+        id            = "msg_nemoclaw_stub"
+        type          = "message"
+        role          = "assistant"
+        model         = "fixture-model"
+        content       = []
+        stop_reason   = null
+        stop_sequence = null
+        usage         = { input_tokens = 1, output_tokens = 0 }
+      }
+    },
+    { type = "content_block_start", index = 0, content_block = { type = "text", text = "" } },
+    { type = "content_block_delta", index = 0, delta = { type = "text_delta", text = "$http_x_reply" } },
+    { type = "content_block_stop", index = 0 },
+    { type = "message_delta", delta = { stop_reason = "end_turn", stop_sequence = null }, usage = { output_tokens = 1 } },
+    { type = "message_stop" },
+  ]
+  message_stream = join("", [
+    for event in local.events : "event: ${event.type}\\ndata: ${jsonencode(event)}\\n\\n"
+  ])
+  # The request body selects a streamed reply and the reply's text. nginx
   # reads the body before it sends the proxied request, so the second server
   # sees both as headers.
   config = <<-EOT
@@ -116,7 +153,9 @@ locals {
     ${local.marker_maps}
         server {
             listen ${local.port};
-            if ($http_authorization != "Bearer ${var.key}") { return 401; }
+            set $credential $http_authorization;
+            if ($uri = /anthropic/v1/messages) { set $credential "Bearer $http_x_api_key"; }
+            if ($credential != "Bearer ${var.key}") { return 401; }
             location = /v1/models {
                 default_type application/json;
                 return 200 '${local.models}';
@@ -127,6 +166,13 @@ locals {
                 proxy_set_header X-Reply-Kind $reply_kind;
                 proxy_set_header X-Reply "${local.text}";
                 proxy_pass http://unix:/tmp/stub.sock:/completion;
+            }
+            location = /anthropic/v1/messages {
+                client_body_buffer_size 1m;
+                client_body_in_single_buffer on;
+                proxy_set_header X-Reply-Kind $reply_kind;
+                proxy_set_header X-Reply "${local.text}";
+                proxy_pass http://unix:/tmp/stub.sock:/message;
             }
             location / { return 404; }
         }
@@ -140,6 +186,15 @@ locals {
             location = /stream {
                 default_type text/event-stream;
                 return 200 '${local.stream}';
+            }
+            location = /message {
+                if ($http_x_reply_kind = stream) { rewrite ^ /message-stream last; }
+                default_type application/json;
+                return 200 '${local.message}';
+            }
+            location = /message-stream {
+                default_type text/event-stream;
+                return 200 '${local.message_stream}';
             }
         }
     }
