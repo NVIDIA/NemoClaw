@@ -588,7 +588,9 @@ describe("MCP tool discovery image contract", () => {
         "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
       );
       expect(dockerfile).toContain(
-        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+        relativePath === "agents/hermes/Dockerfile"
+          ? "COPY agents/hermes/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs"
+          : "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
       );
       expect(dockerfile).toContain(
         `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,

@@ -59,7 +59,7 @@ it("rejects a runtime without a reviewed container identity contract", () => {
   );
 });
 
-it.each(["0.1.3", "0.1.5"] as const)(
+it.each(["0.1.3", "0.1.5", "0.1.7"] as const)(
   "requires the native isolation identity for a %s workload",
   (runtimeVersion) => {
     expect(requireManagedImageHarnessOpenShellVersion(runtimeVersion)).toBe(runtimeVersion);

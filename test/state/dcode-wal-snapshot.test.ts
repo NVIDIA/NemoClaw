@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { inspectExtractedDcodeSessionsDatabase } from "../../src/lib/state/snapshot/sqlite-credential-scan.js";
 
 const ORIGINAL_HOME = process.env.HOME;
@@ -14,8 +14,43 @@ const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-snaps
 process.env.HOME = TMP_HOME;
 
 const sandboxState = await import("../../src/lib/state/sandbox.js");
+beforeEach(() => {
+  fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
+  fs.writeFileSync(
+    path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
+    JSON.stringify({
+      defaultSandbox: "alpha",
+      sandboxes: {
+        alpha: {
+          name: "alpha",
+          agent: "langchain-deepagents-code",
+          model: "m",
+          provider: "p",
+          gpuEnabled: false,
+        },
+      },
+    }),
+  );
+});
+
 const QUICKJS_DIAGNOSTIC = "\0unexpected token: '%.*s'\0";
 const ADJACENT_DIAGNOSTICS = QUICKJS_DIAGNOSTIC + QUICKJS_DIAGNOSTIC.slice(1);
+
+function createConversationDatabase(content: string): { root: string; databasePath: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-diagnostic-"));
+  const databasePath = path.join(root, ".deepagents/.state/sessions.db");
+  fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+  const database = new DatabaseSync(databasePath);
+  try {
+    database.exec("CREATE TABLE checkpoints (thread_id TEXT, checkpoint BLOB)");
+    database
+      .prepare("INSERT INTO checkpoints VALUES (?, ?)")
+      .run("019ab234-5678-7abc-8def-0123456789ab", Buffer.from(content));
+  } finally {
+    database.close();
+  }
+  return { root, databasePath };
+}
 
 function captureSidecar(entry: string, content: string) {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-sidecar-"));
@@ -65,6 +100,167 @@ afterAll(() => {
 });
 
 describe("DCode WAL snapshot persistence", () => {
+  it("identifies a native conversation through the enforcing archive path", () => {
+    const fixture = createConversationDatabase('password="private-test-value"');
+    try {
+      const before = fs.readFileSync(fixture.databasePath);
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: fixture.root,
+          assertCurrent: () => undefined,
+        },
+      });
+      expect(backup.success).toBe(false);
+      expect(backup.manifest).toBeFalsy();
+      expect(fs.readFileSync(fixture.databasePath)).toEqual(before);
+      expect(backup.error).not.toContain("private-test-value");
+      expect(backup.error).toContain("rule: credential-assignment");
+      expect(backup.error).toContain(
+        "First affected conversation: 019ab234-5678-7abc-8def-0123456789ab",
+      );
+      expect(backup.error).toContain("#resolve-a-deep-agents-code-backup-refusal");
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("distinguishes corrupt SQLite state from a credential finding", () => {
+    const fixture = createConversationDatabase("ordinary conversation");
+    try {
+      fs.writeFileSync(fixture.databasePath, "private corrupt database content");
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: fixture.root,
+          assertCurrent: () => undefined,
+        },
+      });
+      expect(backup.success).toBe(false);
+      expect(backup.manifest).toBeFalsy();
+      expect(backup.error).toContain("SQLite inspection failed (sqlite-query)");
+      expect(backup.error).toContain("Conversation identification unavailable");
+      expect(backup.error).not.toContain("private corrupt");
+      expect(backup.error).not.toContain("019ab234-5678-7abc-8def-0123456789ab");
+      expect(fs.readFileSync(fixture.databasePath, "utf8")).toBe(
+        "private corrupt database content",
+      );
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("distinguishes failed extraction without exposing its stderr", () => {
+    const fixture = createConversationDatabase("ordinary conversation");
+    const priorPath = process.env.PATH;
+    try {
+      const systemTar = spawnSync("which", ["tar"], { encoding: "utf8" }).stdout.trim();
+      const bin = path.join(fixture.root, "test-bin");
+      fs.mkdirSync(bin);
+      fs.writeFileSync(
+        path.join(bin, "tar"),
+        `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.some(arg => arg.includes(".native-scan-"))) {
+  process.stderr.write("private extraction error");
+  process.exit(2);
+}
+const result = require("node:child_process").spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
+process.exit(result.status ?? 1);
+`,
+        { mode: 0o755 },
+      );
+      process.env.PATH = `${bin}${path.delimiter}${priorPath ?? ""}`;
+      const before = fs.readFileSync(fixture.databasePath);
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: fixture.root,
+          assertCurrent: () => undefined,
+        },
+      });
+      expect(backup.success).toBe(false);
+      expect(backup.manifest).toBeFalsy();
+      expect(backup.error).toContain("Archive extraction failed");
+      expect(backup.error).toContain("Conversation identification unavailable");
+      expect(backup.error).not.toContain("private extraction");
+      expect(backup.error).not.toContain("019ab234-5678-7abc-8def-0123456789ab");
+      expect(fs.readFileSync(fixture.databasePath)).toEqual(before);
+    } finally {
+      priorPath === undefined
+        ? Reflect.deleteProperty(process.env, "PATH")
+        : Reflect.set(process.env, "PATH", priorPath);
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([false, true])(
+    "categorizes extraction deadline expiry with deferred cleanup %s without exposing history",
+    (deferCleanup) => {
+      const fixture = createConversationDatabase("private-deadline-test-value");
+      const priorPath = process.env.PATH;
+      const marker = path.join(fixture.root, "deadline-marker");
+      const start = Date.now();
+      const clock = vi
+        .spyOn(Date, "now")
+        .mockImplementation(() => (fs.existsSync(marker) ? start + 60_001 : start));
+      try {
+        const systemTar = spawnSync("which", ["tar"], { encoding: "utf8" }).stdout.trim();
+        const bin = path.join(fixture.root, "test-bin");
+        fs.mkdirSync(bin);
+        fs.writeFileSync(
+          path.join(bin, "tar"),
+          `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.some(arg => arg.includes(".native-scan-"))) {
+  require("node:fs").writeFileSync(${JSON.stringify(marker)}, "expired");
+}
+const result = require("node:child_process").spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
+process.exit(result.status ?? 1);
+`,
+          { mode: 0o755 },
+        );
+        process.env.PATH = `${bin}${path.delimiter}${priorPath ?? ""}`;
+        const before = fs.readFileSync(fixture.databasePath);
+        const backup = sandboxState.backupSandboxState("alpha", {
+          deadlineMs: start + 60_000,
+          deferSanitizationDeadlineCleanup: deferCleanup,
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: fixture.root,
+            assertCurrent: () => undefined,
+          },
+        });
+        expect(fs.existsSync(marker)).toBe(true);
+        expect(backup.success).toBe(false);
+        expect(Boolean(backup.manifest)).toBe(deferCleanup);
+        expect(backup.manifest?.backupComplete).toBe(deferCleanup ? false : undefined);
+        expect(backup.error).toContain("category: deadline-expiry");
+        expect(backup.error).toContain("Conversation identification unavailable");
+        expect(backup.error).toContain("#resolve-a-deep-agents-code-backup-refusal");
+        expect(backup.error).not.toContain("private-deadline-test-value");
+        expect(fs.readFileSync(fixture.databasePath)).toEqual(before);
+      } finally {
+        clock.mockRestore();
+        priorPath === undefined
+          ? Reflect.deleteProperty(process.env, "PATH")
+          : Reflect.set(process.env, "PATH", priorPath);
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("does not guess a conversation from a raw WAL finding", () => {
+    const { backup } = captureSidecar(
+      ".deepagents/.state/sessions.db-wal",
+      'password="private-test-value"',
+    );
+    expect(backup.success).toBe(false);
+    expect(backup.error).toContain("credential-bearing content");
+    expect(backup.error).toContain("Conversation identification unavailable");
+    expect(backup.error).not.toContain("private-test-value");
+  });
+
   it.each(["-journal", "-shm", "-wal"])(
     "accepts only the complete diagnostic in a sessions.db%s sidecar",
     (suffix) =>
@@ -187,6 +383,42 @@ describe("DCode WAL snapshot persistence", () => {
       ),
   );
 
+  it("rejects a bind marker without SQL context in the first chunk", () => {
+    expectRejectedSidecar(".deepagents/.state/sessions.db-shm", "password=?\nordinary state");
+  });
+
+  it.each([
+    ...["-journal", "-shm", "-wal", ".env"].map((suffix) => ({
+      name: "credential-shaped text",
+      suffix,
+      content:
+        "db.execute('UPDATE users SET name=? WHERE ((password=?))', (user, pw))" +
+        (suffix === ".env"
+          ? ""
+          : `\n${suffix === "-shm" ? "password=opaque-value-for-snapshot" : `ghp_${"a".repeat(36)}`}`),
+    })),
+    {
+      name: "a bind marker that becomes a credential in the next chunk",
+      suffix: "-shm",
+      content: "x".repeat(65_318) + "'SELECT " + " ".repeat(200) + "password=?private-value'",
+    },
+    {
+      name: "a new assignment after normalized overlap fixtures",
+      suffix: "-shm",
+      content: "[STRIPPED_BY_MIGRATION]".repeat(3_000).slice(0, 65_536) + "\npassword=?",
+    },
+    {
+      name: "a provider credential split across chunks",
+      suffix: "-shm",
+      content: "x".repeat(65_534) + `ghp_${"a".repeat(36)}`,
+    },
+  ])("rejects $name in sessions.db$suffix", ({ suffix, content }) => {
+    expectRejectedSidecar(
+      suffix === ".env" ? ".env" : `.deepagents/.state/sessions.db${suffix}`,
+      content,
+    );
+  });
+
   it("stops a sidecar scan at the deadline and removes the unpublished backup", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-sidecar-deadline-"));
     const backupsRoot = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups", "alpha");
@@ -219,6 +451,9 @@ describe("DCode WAL snapshot persistence", () => {
 
       expect(backup.success).toBe(false);
       expect(backup.error).toContain("credential scan exceeded the backup deadline");
+      expect(backup.error).toContain("category: deadline-expiry");
+      expect(backup.error).toContain("Conversation identification unavailable");
+      expect(backup.error).toContain("#resolve-a-deep-agents-code-backup-refusal");
       expect(backup.error).toContain(".deepagents/.state/sessions.db-wal");
       expect(fs.readdirSync(backupsRoot)).toEqual(before);
     } finally {
@@ -227,88 +462,120 @@ describe("DCode WAL snapshot persistence", () => {
   });
 
   it.each([
-    ["ordinary interpreter state", Buffer.from("ordinary interpreter state")],
-    ["the accepted QuickJS diagnostic", Buffer.from("\0unexpected token: '%.*s'\0")],
-    ["adjacent QuickJS diagnostics sharing a NUL delimiter", Buffer.from(ADJACENT_DIAGNOSTICS)],
-  ])("preserves %s from an active WAL through archive readback", (_label, payload) => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-state-"));
-    let database: DatabaseSync | null = null;
-    try {
-      const nativeRoot = path.join(fixture, "native-home");
-      const databasePath = path.join(nativeRoot, ".deepagents", ".state", "sessions.db");
-      fs.mkdirSync(path.dirname(databasePath), { recursive: true });
-      database = new DatabaseSync(databasePath);
-      database.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;");
-      database.exec("CREATE TABLE sessions (content TEXT)");
-      database
-        .prepare("INSERT INTO sessions VALUES (?)")
-        .run('Example configuration: {"model":"not-a-secret-marker"}');
-      database.exec("CREATE TABLE writes (value BLOB)");
-      database.prepare("INSERT INTO writes VALUES (?)").run(payload);
-      expect(fs.readFileSync(`${databasePath}-wal`).includes(payload)).toBe(true);
-      fs.mkdirSync(path.join(nativeRoot, "workspace"));
-      fs.writeFileSync(path.join(nativeRoot, "workspace", "marker"), "preserved workspace");
-
-      fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
-      fs.writeFileSync(
-        path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
-        JSON.stringify({
-          defaultSandbox: "alpha",
-          sandboxes: {
-            alpha: {
-              name: "alpha",
-              model: "m",
-              provider: "p",
-              gpuEnabled: false,
-              agent: null,
-            },
-          },
-        }),
-      );
-
-      const backup = sandboxState.backupSandboxState("alpha", {
-        nativeStateSource: {
-          root: "/sandbox",
-          directory: nativeRoot,
-          assertCurrent: () => undefined,
-        },
-      });
-
-      expect(backup.success, backup.error).toBe(true);
-      const archivedPaths = spawnSync("tar", [
-        "-tf",
-        path.join(backup.manifest!.backupPath, "native-home.tar"),
-      ]).stdout.toString();
-      expect(archivedPaths).toContain(".deepagents/.state/sessions.db");
-      expect(archivedPaths).toContain(".deepagents/.state/sessions.db-wal");
-      const restoredRoot = path.join(fixture, "restored");
-      fs.mkdirSync(restoredRoot);
-      const extraction = spawnSync("tar", [
-        "-xf",
-        path.join(backup.manifest!.backupPath, "native-home.tar"),
-        "-C",
-        restoredRoot,
-      ]);
-      expect(extraction.status, extraction.stderr.toString()).toBe(0);
-      const restored = new DatabaseSync(path.join(restoredRoot, ".deepagents/.state/sessions.db"), {
-        readOnly: true,
-      });
+    [
+      "ordinary conversation",
+      4_096,
+      'Example configuration: {"model":"not-a-secret-marker"}',
+      Buffer.from("ordinary interpreter state"),
+    ],
+    [
+      "the accepted QuickJS diagnostic",
+      4_096,
+      "ordinary conversation",
+      Buffer.from(QUICKJS_DIAGNOSTIC),
+    ],
+    [
+      "SQL conversation",
+      4_096,
+      [
+        "db.execute('SELECT id FROM users WHERE name=? AND pass=?', (user, pw))",
+        "db.execute('SELECT id FROM users WHERE password=?')",
+        "db.execute('UPDATE users SET password=? WHERE id=?', (pw, user_id))",
+        "db.execute('SELECT id FROM users WHERE (password = ?)', (pw,))",
+        'db.execute("SELECT id FROM users WHERE ((password = ?))", (pw,))',
+        "Do not use tools or execute SQL. Keep these examples as conversation context: " +
+          "'SELECT id FROM users WHERE (password = ?)' and " +
+          "'SELECT id FROM users WHERE ((password = ?))'. Reply with exactly one word: PONG",
+      ].join("\n"),
+    ],
+    [
+      "SQL near the chunk overlap",
+      65_536,
+      "'SELECT " + " ".repeat(200) + "password=?' " + "x".repeat(4_050),
+    ],
+  ] as const)(
+    "preserves a live database and its %s",
+    (_name, pageSize, content, payload = Buffer.from(ADJACENT_DIAGNOSTICS)) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wal-state-"));
+      let database: DatabaseSync | null = null;
       try {
-        expect(
-          Buffer.from(restored.prepare("SELECT value FROM writes").get()!.value as Uint8Array),
-        ).toEqual(payload);
-        expect(restored.prepare("SELECT content FROM sessions").get()!.content).toBe(
-          'Example configuration: {"model":"not-a-secret-marker"}',
+        const nativeRoot = path.join(fixture, "native-home");
+        const databasePath = path.join(nativeRoot, ".deepagents", ".state", "sessions.db");
+        fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+        database = new DatabaseSync(databasePath);
+        database.exec(
+          `PRAGMA page_size = ${pageSize}; PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;`,
+        );
+        database.exec("CREATE TABLE sessions (content TEXT)");
+        database.prepare("INSERT INTO sessions VALUES (?)").run(content);
+        database.exec("CREATE TABLE writes (value BLOB)");
+        database.prepare("INSERT INTO writes VALUES (?)").run(payload);
+        expect(fs.readFileSync(`${databasePath}-wal`).includes(payload)).toBe(true);
+        fs.mkdirSync(path.join(nativeRoot, "workspace"));
+        fs.writeFileSync(path.join(nativeRoot, "workspace", "marker"), "preserved workspace");
+
+        fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
+        fs.writeFileSync(
+          path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
+          JSON.stringify({
+            defaultSandbox: "alpha",
+            sandboxes: {
+              alpha: {
+                name: "alpha",
+                model: "m",
+                provider: "p",
+                gpuEnabled: false,
+                agent: null,
+              },
+            },
+          }),
+        );
+
+        const backup = sandboxState.backupSandboxState("alpha", {
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: nativeRoot,
+            assertCurrent: () => undefined,
+          },
+        });
+
+        expect(backup.success, backup.error).toBe(true);
+        const archivedPaths = spawnSync("tar", [
+          "-tf",
+          path.join(backup.manifest!.backupPath, "native-home.tar"),
+        ]).stdout.toString();
+        expect(archivedPaths).toContain(".deepagents/.state/sessions.db");
+        expect(archivedPaths).toContain(".deepagents/.state/sessions.db-wal");
+        const restoredRoot = path.join(fixture, "restored");
+        fs.mkdirSync(restoredRoot);
+        const extraction = spawnSync("tar", [
+          "-xf",
+          path.join(backup.manifest!.backupPath, "native-home.tar"),
+          "-C",
+          restoredRoot,
+        ]);
+        expect(extraction.status, extraction.stderr.toString()).toBe(0);
+        const restored = new DatabaseSync(
+          path.join(restoredRoot, ".deepagents/.state/sessions.db"),
+          {
+            readOnly: true,
+          },
+        );
+        try {
+          expect(
+            Buffer.from(restored.prepare("SELECT value FROM writes").get()!.value as Uint8Array),
+          ).toEqual(payload);
+          expect(restored.prepare("SELECT content FROM sessions").all()).toEqual([{ content }]);
+        } finally {
+          restored.close();
+        }
+        expect(fs.readFileSync(path.join(restoredRoot, "workspace", "marker"), "utf8")).toBe(
+          "preserved workspace",
         );
       } finally {
-        restored.close();
+        database?.close();
+        fs.rmSync(fixture, { recursive: true, force: true });
       }
-      expect(fs.readFileSync(path.join(restoredRoot, "workspace", "marker"), "utf8")).toBe(
-        "preserved workspace",
-      );
-    } finally {
-      database?.close();
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 });

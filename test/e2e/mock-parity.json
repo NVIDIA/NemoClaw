@@ -736,7 +736,6 @@
       "live": "test/e2e/live/hermes-e2e.test.ts",
       "liveSources": [
         "test/e2e/fixtures/hermes-switchyard-boundary.ts",
-        "test/e2e/fixtures/provider-profiles/nemoclaw-e2e-switchyard-peer-v1.yaml",
         "test/e2e/live/hermes-cli-adapter-live.ts",
         "test/e2e/live/hermes-e2e-phases.ts",
         "test/e2e/live/hermes-skill-lifecycle.ts"

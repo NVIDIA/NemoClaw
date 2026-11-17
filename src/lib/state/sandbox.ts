@@ -78,6 +78,8 @@ import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
 import {
   DCODE_QUICKJS_DIAGNOSTIC,
+  formatDcodeScanDiagnostic,
+  type NativeScanDiagnostic,
   inspectExtractedDcodeSessionsDatabase,
   inspectExtractedOpenClawDatabase,
   normalizeDcodeSessionDiagnostic,
@@ -1734,7 +1736,7 @@ function scanNativeTarFilePayload(
   descriptor: number,
   position: number,
   size: number,
-  opaqueAssignments: boolean,
+  credentialOptions: { opaqueAssignments: boolean; sqlBindParameters: boolean },
   npmConfig: boolean,
   providerProfileSchema: boolean,
   openclawConfig: boolean,
@@ -1759,7 +1761,7 @@ function scanNativeTarFilePayload(
     let raw = overlap + chunk.subarray(0, count).toString("utf8");
     if (dcodeSidecar) raw = normalizeDcodeSessionDiagnostic(raw);
     // Carry normalized diagnostics so an overlap cannot retain only their token assignment.
-    overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
+    const nextOverlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
     if (dcodeSidecar && remaining > count) {
       const diagnosticStart = raw.lastIndexOf("\0");
       if (diagnosticStart >= 0 && DCODE_QUICKJS_DIAGNOSTIC.startsWith(raw.slice(diagnosticStart))) {
@@ -1787,12 +1789,14 @@ function scanNativeTarFilePayload(
           : raw;
     if (
       textContainsCredential(credentialScanInput, {
-        opaqueAssignments,
+        ...credentialOptions,
         privateKeyHeader,
+        scannedPrefixLength: overlap.length,
       })
     ) {
       return true;
     }
+    overlap = nextOverlap;
     offset += count;
     remaining -= count;
   }
@@ -2192,6 +2196,7 @@ function nativeArchiveRawCredentialViolation(
   archivePath: string,
   deadlineMs: number | undefined,
   rawEntries?: string[],
+  reportDiagnostic: (diagnostic: NativeScanDiagnostic) => void = () => {},
 ): NativeArchiveCredentialViolation {
   let descriptor: number | null = null;
   try {
@@ -2227,8 +2232,12 @@ function nativeArchiveRawCredentialViolation(
           descriptor!,
           dataOffset,
           size,
-          dcodeSessionsDatabaseRole === "sidecar" ||
-            shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+          {
+            opaqueAssignments:
+              dcodeSessionsDatabaseRole === "sidecar" ||
+              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+            sqlBindParameters: dcodeSessionsDatabaseRole === "sidecar",
+          },
           fileName === ".npmrc",
           providerProfileSchema,
           openclawConfig,
@@ -2240,6 +2249,7 @@ function nativeArchiveRawCredentialViolation(
         );
         if (violation === "deadline") return { entry, deadlineExpired: true };
         if (violation === null) return "native state credential scan";
+        if (violation) reportDiagnostic({ kind: "credential-content" });
         return violation ? entry : null;
       },
       deadlineMs,
@@ -2255,9 +2265,15 @@ function nativeArchiveCredentialViolation(
   archivePath: string,
   entries: readonly string[],
   deadlineMs: number | undefined,
+  reportDiagnostic: (diagnostic: NativeScanDiagnostic) => void = () => {},
 ): NativeArchiveCredentialViolation {
   const rawEntries: string[] = [];
-  const rawViolation = nativeArchiveRawCredentialViolation(archivePath, deadlineMs, rawEntries);
+  const rawViolation = nativeArchiveRawCredentialViolation(
+    archivePath,
+    deadlineMs,
+    rawEntries,
+    reportDiagnostic,
+  );
   if (rawViolation) return rawViolation;
   if (rawEntries.length !== entries.length) return "native state credential scan";
   const candidates: Array<{
@@ -2314,6 +2330,7 @@ function nativeArchiveCredentialViolation(
     ({ dcodeSessionsDatabaseRole }) => dcodeSessionsDatabaseRole === "sidecar",
   );
   if (!dcodeSessionsDatabase && orphanedDcodeSessionsDatabaseSidecar) {
+    reportDiagnostic({ kind: "sqlite-inspection", reason: "file-access" });
     return orphanedDcodeSessionsDatabaseSidecar.entry;
   }
 
@@ -2340,7 +2357,8 @@ function nativeArchiveCredentialViolation(
           deadlineExpired: true,
         };
       }
-      throw error;
+      reportDiagnostic({ kind: "extraction" });
+      return candidates[0]?.entry ?? "native state credential scan";
     }
     if ((extracted.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
       return {
@@ -2349,6 +2367,7 @@ function nativeArchiveCredentialViolation(
       };
     }
     if (extracted.status !== 0 || extracted.error || extracted.signal) {
+      reportDiagnostic({ kind: "extraction" });
       return candidates[0]?.entry ?? "native state credential scan";
     }
     for (const candidate of candidates) {
@@ -2357,7 +2376,8 @@ function nativeArchiveCredentialViolation(
         const containsCredential = inspectExtractedDcodeSessionsDatabase(
           scanRoot,
           candidate.entry,
-          (reason) => console.error(`DCode session database inspection failed (${reason}).`),
+          (reason) => reportDiagnostic({ kind: "sqlite-inspection", reason }),
+          (finding) => reportDiagnostic({ kind: "credential-content", finding }),
         );
         if (containsCredential !== false) return candidate.entry;
         continue;
@@ -2366,13 +2386,20 @@ function nativeArchiveCredentialViolation(
         const containsCredential = inspectExtractedOpenClawDatabase(
           scanRoot,
           candidate.entry,
-          (reason) => console.error(`OpenClaw database inspection failed (${reason}).`),
+          (reason) => {
+            console.error(`OpenClaw database inspection failed (${reason}).`);
+            reportDiagnostic({ kind: "sqlite-inspection", reason });
+          },
         );
-        if (containsCredential !== false) return candidate.entry;
+        if (containsCredential !== false) {
+          if (containsCredential) reportDiagnostic({ kind: "credential-content" });
+          return candidate.entry;
+        }
         continue;
       }
       const extractedCandidate = readExtractedNativeCredentialCandidate(scanRoot, candidate.entry);
       if (!extractedCandidate) {
+        reportDiagnostic({ kind: "extraction" });
         return candidate.entry;
       }
       if (extractedCandidate.kind === "oversize") {
@@ -2394,6 +2421,7 @@ function nativeArchiveCredentialViolation(
           !candidate.isEnv &&
           !structuredContentIsCredentialFree(candidate.entry, raw))
       ) {
+        reportDiagnostic({ kind: "credential-content" });
         return candidate.entry;
       }
     }
@@ -3041,7 +3069,9 @@ function backupNativeSandboxState(
     if (rawArchiveViolation && typeof rawArchiveViolation !== "string") {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(
-        `Native archive credential scan exceeded the backup deadline at '${rawArchiveViolation.entry}'`,
+        agentName === "langchain-deepagents-code"
+          ? formatDcodeScanDiagnostic(rawArchiveViolation.entry, { kind: "deadline-expiry" })
+          : `Native archive credential scan exceeded the backup deadline at '${rawArchiveViolation.entry}'`,
       );
     }
     if (rawArchiveViolation === "native state sparse archive entry") {
@@ -3096,26 +3126,38 @@ function backupNativeSandboxState(
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive sanitation failed: ${sanitationFailure}`);
     }
+    let scanDiagnostic: NativeScanDiagnostic = { kind: "archive-inspection" };
     const credentialViolation = nativeArchiveCredentialViolation(
       archivePath,
       validation.entries,
       options.deadlineMs,
+      (diagnostic) => {
+        scanDiagnostic = diagnostic;
+      },
     );
     if (credentialViolation) {
       rmSync(backupPath, { recursive: true, force: true });
       if (typeof credentialViolation !== "string") {
         return nativeStateFailure(
-          `Native archive credential scan exceeded the backup deadline at '${credentialViolation.entry}'`,
+          agentName === "langchain-deepagents-code"
+            ? formatDcodeScanDiagnostic(credentialViolation.entry, { kind: "deadline-expiry" })
+            : `Native archive credential scan exceeded the backup deadline at '${credentialViolation.entry}'`,
         );
       }
       return nativeStateFailure(
-        `Rebuild was aborted because the native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
+        agentName === "langchain-deepagents-code"
+          ? formatDcodeScanDiagnostic(credentialViolation, scanDiagnostic)
+          : `Rebuild was aborted because the native state archive contains credential-bearing or uninspectable content at '${credentialViolation}'. Move credentials to supported OpenShell credential storage and retry.`,
       );
     }
     if (backupDeadlineExpired(options.deadlineMs)) {
+      const deadlineFailure =
+        agentName === "langchain-deepagents-code"
+          ? formatDcodeScanDiagnostic("native state archive", { kind: "deadline-expiry" })
+          : "Native archive validation exceeded the backup deadline";
       if (!options.deferSanitizationDeadlineCleanup) {
         rmSync(backupPath, { recursive: true, force: true });
-        return nativeStateFailure("Native archive validation exceeded the backup deadline");
+        return nativeStateFailure(deadlineFailure);
       }
       const incompleteManifest: RebuildManifest = {
         version: MANIFEST_VERSION,
@@ -3136,7 +3178,7 @@ function backupNativeSandboxState(
       };
       writeManifest(backupPath, incompleteManifest);
       return {
-        ...nativeStateFailure("Native archive validation exceeded the backup deadline"),
+        ...nativeStateFailure(deadlineFailure),
         manifest: incompleteManifest,
       };
     }
