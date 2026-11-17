@@ -878,10 +878,16 @@ fn bundle_builds_its_build_tool_so_it_can_run_without_the_build_step() {
     assert_eq!(bundled, "bundle\n--platform\nlinux_arm64\n");
 }
 
+/// A part of a split bundle resolves features for every bundle package, as the
+/// whole bundle build does, so all parts share its cached dependencies.
 #[test]
-fn bundle_packages_compile_only_their_release_executables_without_the_build_tool() {
+fn bundle_executables_compile_only_those_with_the_whole_bundles_features() {
     let fixture = Fixture::new();
-    let output = fixture.run(&["bundle", "--packages", "nemoclaw-provider,fabric-provider"]);
+    let output = fixture.run(&[
+        "bundle",
+        "--executables",
+        "terraform-provider-vllm,terraform-provider-fabric",
+    ]);
     assert!(
         output.status.success(),
         "{}",
@@ -889,22 +895,27 @@ fn bundle_packages_compile_only_their_release_executables_without_the_build_tool
     );
     assert_eq!(
         fixture.invocations(),
-        [
-            "build\n--locked\n--release\n--target\naarch64-unknown-linux-gnu\n--timings\n-p\nnemoclaw-provider\n-p\nfabric-provider\n"
-        ]
+        [concat!(
+            "build\n--locked\n--release\n--target\naarch64-unknown-linux-gnu\n--timings\n",
+            "-p\nnemoclaw-cli\n-p\nnemoclaw-provider\n-p\nopenshell-provider\n-p\nfabric-provider\n",
+            "--bin\nterraform-provider-vllm\n--bin\nterraform-provider-fabric\n",
+        )]
     );
     assert!(!fixture.0.path().join("bundled").exists());
 }
 
 #[test]
-fn bundle_packages_name_bundle_packages_for_the_bundle_step_only() {
-    let step = "--packages requires ci bundle";
-    let package = "--packages takes only the bundle's packages";
+fn bundle_executables_name_bundle_executables_for_the_bundle_step_only() {
+    let step = "--executables requires ci bundle";
+    let executable = "--executables takes only the bundle's executables";
     for (args, expected) in [
-        (vec!["build", "--packages", "nemoclaw-cli"], step),
-        (vec!["--packages", "nemoclaw-cli"], step),
-        (vec!["bundle", "--packages", "nemoclaw-build"], package),
-        (vec!["bundle", "--packages", ""], package),
+        (vec!["build", "--executables", "nemoclaw"], step),
+        (vec!["--executables", "nemoclaw"], step),
+        (
+            vec!["bundle", "--executables", "nemoclaw-build"],
+            executable,
+        ),
+        (vec!["bundle", "--executables", ""], executable),
     ] {
         let fixture = Fixture::new();
         let output = fixture.run(&args);

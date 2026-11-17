@@ -97,7 +97,7 @@ enum Action {
         #[arg(long)]
         platform: Option<String>,
         /// Assemble the release executables already in `target/TARGET/release`,
-        /// such as those `cargo ci bundle --packages` compiled, without
+        /// such as those `cargo ci bundle --executables` compiled, without
         /// compiling them; this needs neither the pinned toolchain nor protoc.
         #[arg(long)]
         prebuilt: bool,
@@ -139,12 +139,11 @@ enum Action {
         /// every case placed on it.
         #[arg(long, value_name = "CASES")]
         hcl_cases: Option<String>,
-        /// With `bundle`, compile only the release executables of these
-        /// comma-separated bundle packages, without the build tool or assembly,
-        /// so that CI can compile parts of a bundle on separate runners for
-        /// `bundle --prebuilt` to assemble.
-        #[arg(long, value_name = "PACKAGES")]
-        packages: Option<String>,
+        /// With `bundle`, compile only these comma-separated bundle executables,
+        /// without the build tool or assembly, so that CI can compile parts of
+        /// a bundle on separate runners for `bundle --prebuilt` to assemble.
+        #[arg(long, value_name = "EXECUTABLES")]
+        executables: Option<String>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
@@ -378,6 +377,15 @@ const BUNDLE_PACKAGES: [&str; 4] = [
     "openshell-provider",
     "fabric-provider",
 ];
+/// The bundle's executables, which those packages build.
+const BUNDLE_EXECUTABLES: [&str; 6] = [
+    "nemoclaw",
+    "terraform-provider-openshell",
+    "terraform-provider-fabric",
+    "terraform-provider-vllm",
+    "terraform-provider-ollama",
+    "terraform-provider-host",
+];
 fn target(platform: &str) -> Result<&'static str> {
     Ok(match platform {
         "linux_arm64" => "aarch64-unknown-linux-gnu",
@@ -388,7 +396,11 @@ fn target(platform: &str) -> Result<&'static str> {
         _ => return Err("unsupported platform".into()),
     })
 }
-fn build(packages: &[&str], target: &str, configure: &dyn Fn(&mut Command)) -> Result<()> {
+/// Compile the bundle's release executables, or only those named. Cargo
+/// resolves features for every bundle package either way, so that a part of
+/// the bundle compiles its dependencies as the whole bundle does and reuses
+/// their cached builds.
+fn build(executables: &[&str], target: &str, configure: &dyn Fn(&mut Command)) -> Result<()> {
     let root = std::env::current_dir()?;
     let mut command = cargo();
     configure(&mut command);
@@ -400,8 +412,11 @@ fn build(packages: &[&str], target: &str, configure: &dyn Fn(&mut Command)) -> R
         target,
         "--timings",
     ]);
-    for package in packages {
+    for package in BUNDLE_PACKAGES {
         command.args(["-p", package]);
+    }
+    for executable in executables {
+        command.args(["--bin", executable]);
     }
     command
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
@@ -449,7 +464,7 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
     if !prebuilt {
-        build(&BUNDLE_PACKAGES, target, &|_| {})?;
+        build(&[], target, &|_| {})?;
     }
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     fs::create_dir_all("dist")?;
@@ -810,30 +825,30 @@ async fn main() -> Result<()> {
         base,
         full,
         dry_run,
-        packages,
+        executables,
     } = &cli.command
     {
         if hcl_cases.is_some() && !matches!(step.as_deref(), Some("live-docker" | "live-kind")) {
             return Err("--hcl-cases requires ci live-docker or live-kind".into());
         }
-        let packages: Option<Vec<&str>> = match packages.as_deref() {
+        let executables: Option<Vec<&str>> = match executables.as_deref() {
             None => None,
             Some(_) if step.as_deref() != Some("bundle") => {
-                return Err("--packages requires ci bundle".into());
+                return Err("--executables requires ci bundle".into());
             }
             Some(list) => {
-                let packages: Vec<&str> = list.split(',').map(str::trim).collect();
-                if !packages
+                let executables: Vec<&str> = list.split(',').map(str::trim).collect();
+                if !executables
                     .iter()
-                    .all(|package| BUNDLE_PACKAGES.contains(package))
+                    .all(|executable| BUNDLE_EXECUTABLES.contains(executable))
                 {
                     return Err(format!(
-                        "--packages takes only the bundle's packages: {}",
-                        BUNDLE_PACKAGES.join(", ")
+                        "--executables takes only the bundle's executables: {}",
+                        BUNDLE_EXECUTABLES.join(", ")
                     )
                     .into());
                 }
-                Some(packages)
+                Some(executables)
             }
         };
         let hcl_cases: Option<Vec<String>> = hcl_cases.as_deref().map(|cases| {
@@ -920,7 +935,7 @@ async fn main() -> Result<()> {
                 hcl_cases: hcl_cases.as_deref(),
             },
             plan.as_ref(),
-            packages.as_deref(),
+            executables.as_deref(),
         )
         .await;
     }

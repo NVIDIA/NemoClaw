@@ -199,13 +199,14 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # Each part compiles some of the bundle's release executables. Every part
-  # compiles the SDK, but the parts' dependency chains then take about as long
-  # as each other, shorter than one runner compiling them all. The CLI part also
-  # builds the debug build tool that assembles the bundle. All parts restore
-  # and may save the bundle cache: on a new cache key, the first part to save
-  # writes it, and the others rebuild the dependencies that only they changed
-  # until the key changes again.
+  # Each part compiles some of the bundle's release executables, with the
+  # features of the whole bundle, so every part reuses the bundle cache. Every
+  # part compiles the SDK, but the parts' dependency chains then take about as
+  # long as each other, shorter than one runner compiling them all. The CLI part
+  # also builds the debug build tool that assembles the bundle. All parts
+  # restore and may save the bundle cache: on a new cache key, the first part to
+  # save writes it, and the others rebuild the dependencies that only they
+  # changed until the key changes again.
   bundle-part:
     name: Build bundle ${{ matrix.name }}
     if: inputs.split-bundle && (inputs.bundle || inputs.lifecycle || inputs.e2e)
@@ -216,16 +217,13 @@ jobs:
         include:
           - part: cli
             name: CLI
-            packages: nemoclaw-cli
             executables: nemoclaw
           - part: nemoclaw-provider
             name: NemoClaw providers
-            packages: nemoclaw-provider
-            executables: terraform-provider-vllm terraform-provider-ollama terraform-provider-host
+            executables: terraform-provider-vllm,terraform-provider-ollama,terraform-provider-host
           - part: openshell-provider
             name: OpenShell and Fabric providers
-            packages: openshell-provider,fabric-provider
-            executables: terraform-provider-openshell terraform-provider-fabric
+            executables: terraform-provider-openshell,terraform-provider-fabric
     outputs:
       artifact: ${{ steps.identity.outputs.artifact }}
     steps:
@@ -242,8 +240,8 @@ jobs:
         run: rm -rf target/cargo-timings
       - name: Build release executables
         env:
-          PACKAGES: ${{ matrix.packages }}
-        run: cargo ci bundle --packages "$PACKAGES"
+          EXECUTABLES: ${{ matrix.executables }}
+        run: cargo ci bundle --executables "$EXECUTABLES"
       # As cargo ci bundle builds it, without debug data.
       - name: Build the build tool
         if: matrix.part == 'cli'
@@ -267,7 +265,7 @@ jobs:
           extension=
           if [ "$RUNNER_OS" = Windows ]; then extension=.exe; fi
           files=()
-          for name in $EXECUTABLES; do
+          for name in ${EXECUTABLES//,/ }; do
             files+=(target/*/release/"$name$extension")
           done
           if [ "$PART" = cli ]; then files+=("target/debug/nemoclaw-build$extension"); fi
