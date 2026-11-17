@@ -7,14 +7,21 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import type { SandboxWorkloadReceipt } from "../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
+import {
+  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_REPOSITORIES,
+  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+} from "./managed-image/contract";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
   type ManagedStartupProfile,
   readStoredManagedStartupProfileMetadata,
 } from "./managed-startup/profile";
-import { readStoredWorkloadProfileMetadata } from "./managed-startup/stored-profile";
+import { readStoredWorkloadProfile } from "./managed-startup/stored-profile";
+import { readManagedWorkloadAuthority } from "./workload/authority";
 
 const TEAMS_RENDER_IDENTITY = {
   channelId: "teams",
@@ -63,39 +70,83 @@ function encodeWithRender(value: unknown, identity: Record<string, unknown> = {}
   return Buffer.from(JSON.stringify(profile), "utf8").toString("base64url");
 }
 
+type ManagedReceipt = Extract<SandboxWorkloadReceipt, { readonly kind: "managed-image" }>;
+
+function receiptFor(encodedProfile: string): ManagedReceipt {
+  return {
+    schemaVersion: 1,
+    kind: "managed-image",
+    reference: `${MANAGED_IMAGE_REPOSITORIES.openclaw}@sha256:${"a".repeat(64)}`,
+    platform: "linux/amd64",
+    release: "v0.0.130",
+    sourceRevision: "d".repeat(40),
+    sourceCohort: "ghrun-100-1",
+    capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+    startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+    encodedProfile,
+    startupProfileSha256: sha256(encodedProfile),
+    credentialProxyReplayRequired: false,
+    shared: true,
+  };
+}
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
 describe("stored Teams managed startup profiles (#14540)", () => {
-  it("reads a profile written before the webhook port moved", () => {
+  it("converts a profile written before the webhook port moved to the current form", () => {
     const encoded = encodeWithRender(PRE_10_5_VALUE);
-    expect(readStoredWorkloadProfileMetadata(encoded).agent).toBe("openclaw");
+    const current = encodeManagedStartupProfile(currentProfile());
+    expect(readStoredWorkloadProfile(encoded)).toMatchObject({
+      encodedProfile: current,
+      agent: "openclaw",
+    });
     // The validators that managed startup runs stay strict.
     expect(() => decodeManagedStartupProfile(encoded)).toThrow(/credential-shaped field name/);
     expect(() => readStoredManagedStartupProfileMetadata(encoded)).toThrow(
       /credential-shaped field name/,
     );
-    expect(
-      cloneSandboxWorkloadReceipt({
-        schemaVersion: 1,
-        kind: "managed-image",
-        reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"1".repeat(64)}`,
-        release: "v0.0.130",
-        sourceRevision: "2".repeat(40),
-        sourceCohort: "ghrun-1-1",
-        capabilityContractVersion: 1,
-        startupProfileContractVersion: 1,
-        encodedProfile: encoded,
-        startupProfileSha256: createHash("sha256").update(encoded).digest("hex"),
-        credentialProxyReplayRequired: false,
-        shared: true,
-      }),
-    ).toMatchObject({ kind: "managed-image", encodedProfile: encoded });
   });
 
-  it("still reads the current render", () => {
+  it("loads the old receipt as a current-form receipt with a matching digest", () => {
+    const encoded = encodeWithRender(PRE_10_5_VALUE);
+    const current = encodeManagedStartupProfile(currentProfile());
+    const loaded = cloneSandboxWorkloadReceipt(receiptFor(encoded));
+    expect(loaded).toMatchObject({
+      kind: "managed-image",
+      encodedProfile: current,
+      startupProfileSha256: sha256(current),
+    });
+    // Saving and loading again keeps the converted form.
+    expect(cloneSandboxWorkloadReceipt(loaded)).toEqual(loaded);
+  });
+
+  it("lets managed workload authority read the old receipt for rebuild, clone and snapshot", () => {
+    const encoded = encodeWithRender(PRE_10_5_VALUE);
+    const current = encodeManagedStartupProfile(currentProfile());
+    const receipt = receiptFor(encoded);
+    const authority = readManagedWorkloadAuthority({
+      agent: "openclaw",
+      fromDockerfile: null,
+      imageTag: receipt.reference,
+      workload: receipt,
+    });
+    expect(authority?.receipt).toMatchObject({
+      encodedProfile: current,
+      startupProfileSha256: sha256(current),
+    });
+    expect(authority?.profile).toEqual(decodeManagedStartupProfile(current));
+    expect(() => decodeManagedStartupProfile(encoded)).toThrow(/credential-shaped field name/);
+  });
+
+  it("still reads the current render unchanged", () => {
     const encoded = encodeManagedStartupProfile(currentProfile());
     expect(decodeManagedStartupProfile(encoded).agent).toBe("openclaw");
-    expect(readStoredWorkloadProfileMetadata(encoded)).toEqual(
-      readStoredManagedStartupProfileMetadata(encoded),
-    );
+    expect(readStoredWorkloadProfile(encoded)).toEqual({
+      encodedProfile: encoded,
+      ...readStoredManagedStartupProfileMetadata(encoded),
+    });
   });
 
   it.each([
@@ -112,8 +163,7 @@ describe("stored Teams managed startup profiles (#14540)", () => {
     ["another render id", {}, { renderId: "teams-other" }],
   ] as const)("rejects a stored profile with %s", (_label, overrides, identity) => {
     const encoded = encodeWithRender({ ...PRE_10_5_VALUE, ...overrides }, identity);
-    expect(() => readStoredWorkloadProfileMetadata(encoded)).toThrow(
-      /credential-shaped field name/,
-    );
+    expect(() => readStoredWorkloadProfile(encoded)).toThrow(/credential-shaped field name/);
+    expect(cloneSandboxWorkloadReceipt(receiptFor(encoded))).toBeUndefined();
   });
 });
