@@ -427,6 +427,18 @@ jobs:
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
+      # The GPU runner downloads artifacts slowly, so the GPU HCL cases that run
+      # only OpenClaw download its image alone, about a third smaller.
+      - name: Upload the OpenClaw live image
+        if: inputs.hcl-gpu
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.identity.outputs.artifact }}-openclaw
+          path: .build/ci/live-images-openclaw.tar.zst
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
 
   # The Docker and Kubernetes live suites and the HCL E2E cases, from this
   # platform's test archive, bundle, and live images, or in place of the live

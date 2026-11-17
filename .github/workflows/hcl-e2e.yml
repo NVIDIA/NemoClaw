@@ -216,6 +216,18 @@ jobs:
           persist-credentials: false
       - if: needs.cases.outputs.platform == 'linux_amd64'
         uses: ./.github/actions/containerd-store
+      # The agent images the case binds: Hermes only when its document names
+      # it. A case without Hermes downloads CI / Bundle's OpenClaw-only live
+      # images artifact, the live-images input's name plus -openclaw, which is
+      # about a third smaller: the GPU runner downloads artifacts slowly.
+      - name: Select the case's agent images
+        id: agents
+        run: |
+          if grep -qs 'nc-fabric-hermes@' "crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"; then
+            printf 'names=openclaw hermes\nsuffix=\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'names=openclaw\nsuffix=-openclaw\n' >> "$GITHUB_OUTPUT"
+          fi
       - name: Check the Station runner
         if: inputs.target == 'dgx-station'
         run: |
@@ -246,7 +258,7 @@ jobs:
       - if: inputs.tests != '' && inputs.live-images-commit == ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ inputs.live-images }}
+          name: ${{ inputs.live-images }}${{ steps.agents.outputs.suffix }}
           path: .build/ci
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -258,7 +270,10 @@ jobs:
           COMMIT: ${{ inputs.live-images-commit }}
           PULL_TOKEN: ${{ github.token }}
           RUNTIMES: ${{ join(fromJSON(needs.cases.outputs.runtimes)[matrix.case], ' ') }}
+          AGENTS: ${{ steps.agents.outputs.names }}
+          SUFFIX: ${{ steps.agents.outputs.suffix }}
         run: |
+          read -ra agent_names <<< "$AGENTS"
           if [[ -z $TESTS ]]; then
             # A Station case built the candidate in this job.
             if [[ $TARGET != dgx-station ]]; then
@@ -274,14 +289,14 @@ jobs:
             # only in the repository that holds the image.
             if [[ -n $COMMIT ]]; then
               printf '%s\n' "$PULL_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-              for name in openclaw hermes; do
+              for name in "${agent_names[@]}"; do
                 docker pull --quiet "ghcr.io/nvidia/nemoclaw/v1-ci:$name-$COMMIT-${TEST_PLATFORM#linux_}"
                 docker tag "ghcr.io/nvidia/nemoclaw/v1-ci:$name-$COMMIT-${TEST_PLATFORM#linux_}" "nc-fabric:$name"
               done
               docker logout ghcr.io
             else
-              zstd -d -c -q .build/ci/live-images.tar.zst | docker load
-              for name in openclaw hermes; do docker tag "nc-live-images:$name" "nc-fabric:$name"; done
+              zstd -d -c -q ".build/ci/live-images$SUFFIX.tar.zst" | docker load
+              for name in "${agent_names[@]}"; do docker tag "nc-live-images:$name" "nc-fabric:$name"; done
             fi
           fi
           # A case builds the model runtime images its services run, from the
@@ -313,7 +328,7 @@ jobs:
             } >> "$GITHUB_ENV"
           fi
           if (( ${#runtimes[@]} )); then (umask 022; docker buildx bake "${runtimes[@]}"); fi
-          docker image inspect nc-fabric:openclaw nc-fabric:hermes > /dev/null
+          for name in "${agent_names[@]}"; do docker image inspect "nc-fabric:$name" > /dev/null; done
           for runtime in "${runtimes[@]}"; do docker image inspect "nc-prototype-$runtime:rust-v1" > /dev/null; done
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
           # Pin this run's images and give it a fresh deployment identity; plan rejects an unbound image.
