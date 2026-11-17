@@ -296,7 +296,6 @@ jobs:
           tar -xf "$RUNNER_TEMP/image-sources.tar"
           read -ra runtimes <<< "$RUNTIMES"
           NEMOCLAW_HCL_RUN="$RUNNER_TEMP/hcl"
-          bake_args=()
           bindings=()
           document="crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
           if [[ $TARGET == dgx-station ]]; then
@@ -312,7 +311,6 @@ jobs:
               -e 's#ff433f5493e25d631c9f12b5d55c674229923d02#da5b2650a835292c678994a1fa3fb653250fb508#'
               -e 's#nemotron-3-super#nemotron-3.5-super-vl#g'
             )
-            bake_args+=(--set vllm.args.VLLM_IMAGE=vllm/vllm-openai@sha256:0d69205f3227e47b750b05789f117abbd929b67eccc46060e0d22ce4021c0318)
             cp -a "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_HCL_RUN/bundle"
             cp -L .build/e2e "$NEMOCLAW_HCL_RUN/e2e"
             {
@@ -321,7 +319,7 @@ jobs:
               echo "NEMOCLAW_HCL_PERSISTENT=true"
             } >> "$GITHUB_ENV"
           fi
-          if (( ${#runtimes[@]} )); then (umask 022; docker buildx bake "${runtimes[@]}" "${bake_args[@]}"); fi
+          if (( ${#runtimes[@]} )); then (umask 022; docker buildx bake "${runtimes[@]}"); fi
           docker image inspect nc-fabric:openclaw nc-fabric:hermes > /dev/null
           for runtime in "${runtimes[@]}"; do docker image inspect "nc-prototype-$runtime:rust-v1" > /dev/null; done
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
