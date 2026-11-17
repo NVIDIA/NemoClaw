@@ -9,8 +9,9 @@
 # with a session token that then opens the notes skill as its volume holds
 # it. OpenClaw's terminal UI, opened with the dashboard's token through
 # `openshell sandbox exec --tty`, shows the stub's reply to a prompt and exits
-# on Ctrl-D. The stub refuses requests without the run's key, so the reply
-# also shows NemoClaw sent the configured key. In hermes-messages, whose
+# on Ctrl-D, and so does Hermes's, opened with the command apply reports for
+# its terminal interface. The stub refuses requests without the run's key, so
+# the reply also shows NemoClaw sent the configured key. In hermes-messages, whose
 # agent reaches the stub through an anthropic provider, Hermes's API server
 # answers a chat completion with the stub's reply too; the stub accepts a
 # Messages request's key only in x-api-key, so the reply shows that Hermes
@@ -47,7 +48,8 @@
 # no longer lists the old sandboxes, whose runtimes went with them. In the new
 # sandboxes, the markers and the skills' hashes are as before, and Hermes's
 # kept native home still holds what its first runtime recorded of an earlier
-# request. tofu test removes the caller's volumes after the case.
+# request and of the prompt typed in its terminal UI. tofu test removes the
+# caller's volumes after the case.
 
 # The skills volumes, which a platform provides before apply. The agent images
 # run agents as 10001:10001 (image/fabric/Dockerfile). OpenClaw's bundled
@@ -92,6 +94,7 @@ run "model" {
       notes        = "nemoclaw-skill-notes"
       review       = "nemoclaw-skill-review"
       translate    = "nemoclaw-skill-translate"
+      tui          = "nemoclaw-tui-turn"
     }
   }
 }
@@ -118,6 +121,7 @@ run "apply" {
       "claw/dashboard/18789/token_in_url_fragment/true",
       "hermes/api/8642/bearer_token/true",
       "hermes/dashboard/9119/none/false",
+      "hermes/terminal//terminal_command/false",
       "hermes-messages/api/8642/bearer_token/true",
     ])
     error_message = "Apply must report each interface with its port, sign-in, and token file."
@@ -206,6 +210,11 @@ run "interfaces" {
 # UI, at the dashboard's port and with its token; its status line reads
 # "connected | idle" once it can take a prompt. OpenClaw offers three skills:
 # review, on its own volume, and digest and translate, in its folder.
+# Hermes's terminal UI opens with the command apply reports, Fabric's attach
+# helper, which reads the backend's token itself; its status line reads
+# "ready" once the agent has started. The prompt's marker makes the stub name
+# it, so the reply answers this prompt, and the kept native home must hold it
+# after the replacement below.
 run "terminal" {
   module {
     source = "./terminal"
@@ -221,6 +230,13 @@ run "terminal" {
         ready      = "connected | idle"
         prompt     = "Reply to this NemoClaw live test."
         reply      = "nemoclaw-stub-reply digest review translate"
+      }
+      hermes_tui = {
+        sandbox = "hermes"
+        command = split(" ", one([for access in run.apply.result.interfaces : access.terminal if access.sandbox == "hermes" && access.interface == "terminal"]))
+        ready   = "ready"
+        prompt  = "Reply to nemoclaw-tui-turn."
+        reply   = "nemoclaw-stub-reply notes tui"
       }
     }
   }
@@ -538,7 +554,8 @@ run "access_after_replacement" {
 # Read without the agents, in the new sandboxes and through the gateway. The
 # kept native home is <artifacts>/.fabric/state/<adapter>/<agent name>
 # (NeMo Fabric's runtime.keep_state), which Hermes's first runtime wrote the
-# earlier request into.
+# earlier request and the terminal UI's prompt into; the prompt there shows
+# that the terminal UI's turn ran on the runtime's Hermes home.
 run "kept_after_replacement" {
   module {
     source = "./command"
@@ -570,6 +587,11 @@ run "kept_after_replacement" {
       hermes_kept_home = {
         sandbox  = "hermes"
         command  = ["grep", "-rlF", "nemoclaw-kept-home-check", "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/hermes"]
+        contains = "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/hermes/"
+      }
+      hermes_tui_home = {
+        sandbox  = "hermes"
+        command  = ["grep", "-rlF", "nemoclaw-tui-turn", "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/hermes"]
         contains = "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/hermes/"
       }
       old_claw_sandbox = {

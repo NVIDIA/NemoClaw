@@ -189,7 +189,7 @@ async fn hermes_terminal_reports_the_attach_command_for_its_kept_attachment_file
             token_path: None,
             sign_in: SignIn::TerminalCommand,
             terminal: Some(
-                "python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/tui.json"
+                "/opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/tui.json"
                     .into()
             ),
         }

@@ -77,10 +77,15 @@ fn openclaw_tui(port: Option<u16>, _: Option<&str>) -> Option<String> {
 /// Fabric's Hermes attach helper, part of its experimental `terminal`
 /// interface, reads the TUI backend's port and token from the runtime's
 /// `tui.json` and `tui.token`, and starts Hermes's terminal UI on that
-/// backend; it never starts one of its own.
+/// backend; it never starts one of its own. It runs with the interpreter
+/// that Fabric runs the adapter with, the agent images' `ADAPTER_PYTHON`
+/// (image/fabric/Dockerfile); `openshell sandbox exec` doesn't put it on
+/// `PATH`.
 fn hermes_terminal(_: Option<u16>, interfaces: Option<&str>) -> Option<String> {
     interfaces.map(|directory| {
-        format!("python -m nemo_fabric_adapters.hermes.terminal --connection {directory}/tui.json")
+        format!(
+            "/opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection {directory}/tui.json"
+        )
     })
 }
 

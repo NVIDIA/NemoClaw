@@ -970,7 +970,7 @@ mod tests {
              "signIn": "bearer_token"},
             {"sandbox": "reviewer", "interface": "dashboard", "port": 9119, "signIn": "none"},
             {"sandbox": "reviewer", "interface": "terminal", "signIn": "terminal_command",
-             "terminal": "python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/tui.json"}
+             "terminal": "/opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/tui.json"}
         ])
     }
 
@@ -998,7 +998,7 @@ mod tests {
             "Forward: openshell forward service reviewer --target-port 9119 --local 127.0.0.1:9119",
             "Sign in: none; anyone who can reach the forward can use it",
             // Hermes's attach helper reads its token itself.
-            "Terminal: openshell sandbox exec -n reviewer --tty -- python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/tui.json",
+            "Terminal: openshell sandbox exec -n reviewer --tty -- /opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/tui.json",
         ] {
             assert!(
                 lines
