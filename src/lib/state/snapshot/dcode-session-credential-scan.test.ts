@@ -7,7 +7,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { inspectExtractedDcodeSessionsDatabase } from "./sqlite-credential-scan.js";
+import {
+  inspectExtractedDcodeSessionsDatabase,
+  type SqliteCredentialFinding,
+} from "./sqlite-credential-scan.js";
 
 const fixtures: string[] = [];
 
@@ -26,6 +29,81 @@ function createDatabase(): { database: DatabaseSync; fixture: string; path: stri
 }
 
 describe("DCode session database credential scan", () => {
+  it.each(["TEXT", "BLOB"])(
+    "attributes a %s finding to its native thread without changing either conversation",
+    (storage) => {
+      const fixture = createDatabase();
+      const affected = "019ab234-5678-7abc-8def-0123456789ab";
+      const unrelated = "019ab234-5678-7abc-8def-0123456789ac";
+      fixture.database.exec(`CREATE TABLE checkpoints (thread_id TEXT, checkpoint ${storage})`);
+      const content = 'DB_PASSWORD="private-test-value"';
+      const value = storage === "BLOB" ? Buffer.from(content) : content;
+      fixture.database
+        .prepare("INSERT INTO checkpoints VALUES (?, ?)")
+        .run(unrelated, "ordinary conversation");
+      fixture.database.prepare("INSERT INTO checkpoints VALUES (?, ?)").run(affected, value);
+      fixture.database.close();
+      const before = fs.readFileSync(fixture.path);
+      const findings: SqliteCredentialFinding[] = [];
+      expect(
+        inspectExtractedDcodeSessionsDatabase(
+          fixture.fixture,
+          ".deepagents/.state/sessions.db",
+          () => {},
+          (finding) => findings.push(finding),
+        ),
+      ).toBe(true);
+      expect(findings).toEqual([{ rule: "credential-assignment", threadId: affected }]);
+      expect(fs.readFileSync(fixture.path)).toEqual(before);
+      expect(JSON.stringify(findings)).not.toContain("private-test-value");
+    },
+  );
+
+  it.each([
+    ["writes", "019ab234-5678-7abc-8def-0123456789ab", true],
+    ["unknown_table", "019ab234-5678-7abc-8def-0123456789ab", false],
+    ["checkpoints", "private-test-value", false],
+    ["checkpoints", "019ab234-5678-7abc-8def-0123456789ab\n", false],
+    ["checkpoints", null, false],
+  ])("bounds attribution for table %s and thread ID %j", (table, thread, attributable) => {
+    const fixture = createDatabase();
+    fixture.database.exec(`CREATE TABLE ${table} (thread_id TEXT, value TEXT)`);
+    fixture.database
+      .prepare(`INSERT INTO ${table} VALUES (?, ?)`)
+      .run(thread, 'password="private-test-value"');
+    fixture.database.close();
+    const findings: SqliteCredentialFinding[] = [];
+    expect(
+      inspectExtractedDcodeSessionsDatabase(
+        fixture.fixture,
+        ".deepagents/.state/sessions.db",
+        () => {},
+        (finding) => findings.push(finding),
+      ),
+    ).toBe(true);
+    expect(findings).toEqual([
+      { rule: "credential-assignment", ...(attributable ? { threadId: thread } : {}) },
+    ]);
+  });
+
+  it("reports schema findings without printing schema content or guessing a thread", () => {
+    const fixture = createDatabase();
+    fixture.database.exec(
+      `CREATE TABLE checkpoints (thread_id TEXT, value TEXT DEFAULT 'password=private-test-value')`,
+    );
+    fixture.database.close();
+    const findings: SqliteCredentialFinding[] = [];
+    expect(
+      inspectExtractedDcodeSessionsDatabase(
+        fixture.fixture,
+        ".deepagents/.state/sessions.db",
+        () => {},
+        (finding) => findings.push(finding),
+      ),
+    ).toBe(true);
+    expect(findings).toEqual([{ rule: "credential-assignment" }]);
+  });
+
   it("inspects logical values instead of token-shaped SQLite page framing", () => {
     const fixture = createDatabase();
     fixture.database.exec("CREATE TABLE sessions (prefix TEXT, content TEXT)");

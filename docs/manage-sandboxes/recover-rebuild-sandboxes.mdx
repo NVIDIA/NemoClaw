@@ -687,6 +687,54 @@ Then rerun the original rebuild or onboarding command with the same settings.
 
 Refer to [`$$nemoclaw <name> rebuild`](../../reference/commands#$$nemoclaw-name-rebuild) for flag details.
 
+<AgentOnly variant="deepagents">
+
+## Resolve a Deep Agents Code Backup Refusal
+
+A failed backup stops rebuild before sandbox replacement. Requested capability changes, including
+`--dcode-auto-approval disabled`, do not take effect. The previous Auto capability remains configured.
+If you need immediate containment, stop the sandbox and verify its stopped state:
+
+```bash
+$$nemoclaw <sandbox-name> stop
+$$nemoclaw <sandbox-name> status
+```
+
+Restarting the sandbox does not remove the blocking content or disable its previous Auto capability.
+Do not restart it solely to retry revocation if you need it to remain stopped.
+
+The backup diagnostic distinguishes credential-shaped content from extraction, SQLite inspection,
+and deadline failures. Credential-shaped content can include ordinary conversation examples.
+The diagnostic reports a fixed rule identifier without printing matched text.
+When the first finding belongs to a known native session row with a validated thread identifier,
+it also reports that conversation identifier. Other findings report that conversation identification
+is unavailable. Schema findings and raw database-sidecar findings do not identify a conversation.
+Only the first finding is reported; another finding can appear after you address it.
+
+If a conversation identifier is available, inspect that conversation in Deep Agents Code.
+If you choose to discard it, close every client using that thread and use the native thread
+selector's deletion control. Deletion loses the selected conversation. NemoClaw does not delete it
+for you. Native deletion is a possible next step, not a verified history-preserving repair:
+sidecars or other retained state can still block backup. Preserve unrelated conversations and files.
+Do not edit SQLite rows or remove the entire session database to bypass the refusal.
+
+For extraction or inspection failures, preserve the fixed failure category and ask a NemoClaw
+maintainer to investigate. Do not assume that those failures establish the presence of a credential.
+Do not share database contents, conversation text, or credentials in a public report.
+Waiting, repeated retries, and `--force` do not bypass the credential scanner.
+
+As an alternative, keep the source stopped and create a separate sandbox with
+`--dcode-auto-approval disabled`. Use the
+[manual transfer workflow](../state-and-backups/transfer-state-manually) to copy only reviewed,
+credential-free user files from an independently maintained backup. Do not transfer the complete
+native session database. This alternative does not preserve conversation history.
+
+After correcting the reported cause, rerun the original rebuild command with the intended settings.
+A successful generic rebuild does not establish Auto revocation. Check `status` for `disabled`
+and verify native Manual startup and denied Auto activation before relying on the restriction.
+
+</AgentOnly>
+
 ## Use the Canonical Configuration Workflows
 
 - Use [Switch Inference Providers](../../inference/manage-inference/switch-providers) to change a model or provider.
