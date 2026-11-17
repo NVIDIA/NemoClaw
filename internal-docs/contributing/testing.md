@@ -481,6 +481,7 @@ Whenever the plan selects a hosted case, Linux AMD64 runs it as `linux_amd64 / E
 On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts, so a pull request never runs them.
 Live / HCL's `Cases` job lists the cases and fetches the model runtime images' pinned sources, and each case's job runs the same test archive, bundle, and live images as the hosted cases, which the GPU runner can run because CI / Bundle builds them on Ubuntu 22.04. Each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services.
 Dispatch Live / HCL to run the hosted or GPU cases alone: without CI / Bundle's artifacts, its `Build` job builds the bundle, test executable, and agent images on Ubuntu 22.04 from the dispatched branch.
+A `dgx-station` dispatch skips `Build`, and the Station case's job builds them on the Station runner before it runs the case: two machines share that runner's label, and Actions artifacts move the 1 GB candidate at 3-8 MB/s there.
 
 To see which live HCL cases a pull request affects, such as before dispatching the GPU cases, which its CI does not run, run from a clean checkout of its commit:
 
@@ -623,7 +624,7 @@ Dependency caches are keyed by platform and the Rust toolchain, manifests, lockf
 The native build-and-test job and `E2E build images` share each platform's dependency cache instead of adding their job names to its key.
 Only the native build-and-test job writes that shared cache; `E2E build images` restores it without uploading a duplicate copy, and the bundle job writes its own.
 The live suites' Docker, Kind, and HCL jobs compile nothing, so they restore no Rust cache.
-Documentation restores the bundle job's cache without saving one; Live / Brev and Live / HCL's `Build` job keep their own prefixes.
+Documentation restores the bundle job's cache without saving one; Live / Brev and Live / HCL's candidate builds keep their own prefixes.
 The shared key causes a one-time cold build when first enabled; old job-specific entries can expire normally.
 
 `E2E build images` keeps BuildKit's layers for the live images in the same cache, through `cargo images build --gha-cache`: about 1.8 GB per Linux platform, mostly the OpenClaw application, the Rust toolchain, and the Fabric runtime's Rust build.
