@@ -236,13 +236,15 @@ jobs:
           test "$ID:$VERSION_ID" = ubuntu:24.04
           nvidia-smi --query-gpu=name --format=csv,noheader | grep -q GB300
           docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter.v1
-      # The runner's Buildx starts a runtime image's base pull only after the
-      # supervisor target finishes. A build of just the base, started here,
-      # pulls the same digest into BuildKit while the job downloads its inputs
-      # and the bake builds the supervisor; its RUN makes BuildKit unpack the
-      # layers too. The bake's FROM then finds the base in BuildKit's cache, or
-      # joins the pull still in progress. A docker pull would leave BuildKit
-      # to unpack the base again after the supervisor, about 95 s for vLLM.
+      # Since v0.37.0, Buildx starts a runtime image's base pull only after the
+      # supervisor target finishes (https://github.com/docker/buildx/issues/4216).
+      # A build of just the base, started here, pulls the same digest into
+      # BuildKit while the job downloads its inputs and the bake builds the
+      # supervisor; its RUN makes BuildKit unpack the layers too. The bake's
+      # FROM then finds the base in BuildKit's cache, or joins the pull still in
+      # progress. A docker pull would leave BuildKit to unpack the base again
+      # after the supervisor, about 95 s for vLLM. Remove this step and the wait
+      # after the bake once a Buildx release overlaps linked targets again.
       - name: Start pulling the runtime images' bases
         env:
           RUNTIMES: ${{ join(fromJSON(needs.cases.outputs.runtimes)[matrix.case], ' ') }}
