@@ -58,6 +58,7 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { createMcpProviderAdapterBoundary } from "./mcp-bridge-provider-inspection";
+import { alignMcpAddTargetWithSharedHostPins } from "./mcp-bridge/shared-host-pins";
 import {
   assertNoAmbiguousMcpCredentialTarget,
   assertNoAmbiguousMcpCredentialTargets,
@@ -778,6 +779,23 @@ async function addMcpBridgeUnlocked(
       trustedPrivateHosts: matchingTrustedPrivateHosts,
       requireTrustedPrivateEndpoint: explicitTrustedPrivateHosts.length > 0,
     });
+    // A host that publishes several addresses can answer each add differently,
+    // and OpenShell rejects endpoints that share a host and port but list
+    // different allowed IPs. Keep a new server's pins equal to its siblings'.
+    const aligned = alignMcpAddTargetWithSharedHostPins({
+      sandboxName,
+      server: options.server,
+      url: normalizedUrl,
+      target,
+      bridges: observed.bridges,
+    });
+    if (!aligned.ok) throw new McpBridgeError(aligned.message, 2);
+    target = aligned.target;
+    if (aligned.reusedFrom.length > 0) {
+      console.log(
+        `  Reusing the address pins already recorded for MCP server ${aligned.reusedFrom.map((name) => `'${name}'`).join(", ")} on ${urlHost}.`,
+      );
+    }
   }
 
   const envNames = uniqueEnvNames(options.env);

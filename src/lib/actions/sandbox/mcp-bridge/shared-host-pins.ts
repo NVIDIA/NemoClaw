@@ -1,0 +1,117 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import type { McpSourceEntry } from "../mcp-bridge-contracts";
+import {
+  parseMcpUrlWithValidatedTarget,
+  type McpBridgeTargetValidation,
+} from "../mcp-bridge-url-validation";
+
+export type McpSharedHostPinAlignment =
+  | {
+      ok: true;
+      target: McpBridgeTargetValidation;
+      /** Servers whose recorded pins the new server reuses; empty when nothing changed. */
+      reusedFrom: string[];
+    }
+  | {
+      ok: false;
+      /** Operator-facing reason the add cannot proceed; the caller reports it as a usage error. */
+      message: string;
+    };
+
+interface PinGroup {
+  pins: string[];
+  servers: string[];
+  trustedPrivate: boolean;
+}
+
+function endpointAuthority(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(rawUrl);
+    return `${parsed.hostname.toLowerCase()}:${parsed.port || "443"}`;
+  } catch {
+    return null;
+  }
+}
+
+function sortedPins(addresses: readonly string[]): string[] {
+  return [...new Set(addresses.map((address) => address.toLowerCase()))].sort();
+}
+
+function describePins(pins: readonly string[]): string {
+  return pins.join(", ");
+}
+
+function describeServers(servers: readonly string[]): string {
+  return servers.map((server) => `'${server}'`).join(", ");
+}
+
+/**
+ * OpenShell rejects a sandbox policy when two endpoints share a host and port
+ * but list different `allowed_ips`. A host that publishes several DNS addresses
+ * can answer each `mcp add` differently, so a second server on the same host
+ * and port would be pinned to an address set that disagrees with the first.
+ *
+ * Keep the new server's pins identical to the ones already recorded for that
+ * host and port. Fail before any mutation when the recorded pins already
+ * disagree with each other, or when they cannot be reused safely.
+ */
+export function alignMcpAddTargetWithSharedHostPins(options: {
+  sandboxName: string;
+  server: string;
+  url: string;
+  target: McpBridgeTargetValidation;
+  bridges: Readonly<Record<string, McpSourceEntry>>;
+}): McpSharedHostPinAlignment {
+  const { sandboxName, server, url, target, bridges } = options;
+  const authority = endpointAuthority(url);
+  if (!authority) return { ok: true, target, reusedFrom: [] };
+
+  const groups = new Map<string, PinGroup>();
+  for (const entry of Object.values(bridges)) {
+    if (
+      entry.server === server ||
+      entry.policyConflict ||
+      !entry.allowedIps?.length ||
+      endpointAuthority(entry.url) !== authority
+    ) {
+      continue;
+    }
+    const pins = sortedPins(entry.allowedIps);
+    const key = pins.join(",");
+    const group = groups.get(key) ?? { pins, servers: [], trustedPrivate: false };
+    group.servers.push(entry.server);
+    group.trustedPrivate ||= Boolean(entry.trustedPrivateHost);
+    groups.set(key, group);
+  }
+  if (groups.size === 0) return { ok: true, target, reusedFrom: [] };
+
+  const [firstGroup, ...otherGroups] = [...groups.values()];
+  if (otherGroups.length > 0) {
+    const recorded = [firstGroup, ...otherGroups]
+      .map((group) => `${describeServers(group.servers)}: ${describePins(group.pins)}`)
+      .join("; ");
+    return {
+      ok: false,
+      message: `MCP server '${server}' was not added: managed servers on ${authority} already record different address pins (${recorded}). OpenShell rejects endpoints that share a host and port but list different allowed IPs. Remove the servers whose pins differ with \`nemoclaw ${sandboxName} mcp remove <server>\`, then add them again so they record the same pins.`,
+    };
+  }
+
+  const requested = sortedPins(target.addresses);
+  if (requested.join(",") === firstGroup.pins.join(","))
+    return { ok: true, target, reusedFrom: [] };
+
+  if (firstGroup.trustedPrivate || target.trustedPrivateHost) {
+    return {
+      ok: false,
+      message: `MCP server '${server}' was not added: it resolves to ${describePins(requested)} on ${authority}, but ${describeServers(firstGroup.servers)} record${firstGroup.servers.length === 1 ? "s" : ""} ${describePins(firstGroup.pins)}, and OpenShell rejects endpoints that share a host and port but list different allowed IPs. NemoClaw does not reuse or replace trusted-private pins on its own. Remove ${describeServers(firstGroup.servers)} with \`nemoclaw ${sandboxName} mcp remove <server>\`, then add the servers on this host again.`,
+    };
+  }
+
+  const reused = { addresses: [...firstGroup.pins] };
+  // The recorded pins were validated when they were written; check them again
+  // so a tampered or hand-edited policy cannot widen a new server's egress.
+  parseMcpUrlWithValidatedTarget(url, reused);
+  return { ok: true, target: reused, reusedFrom: [...firstGroup.servers] };
+}
