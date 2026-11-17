@@ -879,6 +879,43 @@ fn bundle_builds_its_build_tool_so_it_can_run_without_the_build_step() {
 }
 
 #[test]
+fn bundle_packages_compile_only_their_release_executables_without_the_build_tool() {
+    let fixture = Fixture::new();
+    let output = fixture.run(&["bundle", "--packages", "nemoclaw-provider,fabric-provider"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fixture.invocations(),
+        [
+            "build\n--locked\n--release\n--target\naarch64-unknown-linux-gnu\n--timings\n-p\nnemoclaw-provider\n-p\nfabric-provider\n"
+        ]
+    );
+    assert!(!fixture.0.path().join("bundled").exists());
+}
+
+#[test]
+fn bundle_packages_name_bundle_packages_for_the_bundle_step_only() {
+    let step = "--packages requires ci bundle";
+    let package = "--packages takes only the bundle's packages";
+    for (args, expected) in [
+        (vec!["build", "--packages", "nemoclaw-cli"], step),
+        (vec!["--packages", "nemoclaw-cli"], step),
+        (vec!["bundle", "--packages", "nemoclaw-build"], package),
+        (vec!["bundle", "--packages", ""], package),
+    ] {
+        let fixture = Fixture::new();
+        let output = fixture.run(&args);
+        assert!(!output.status.success(), "{args:?}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(expected), "{args:?}: {error}");
+        assert!(fixture.invocations().is_empty(), "{args:?}");
+    }
+}
+
+#[test]
 fn archive_rejects_a_layer_that_selects_no_tests_instead_of_publishing_none() {
     let fixture = Fixture::new();
     let output = fixture

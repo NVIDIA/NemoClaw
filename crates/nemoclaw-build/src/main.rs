@@ -96,6 +96,11 @@ enum Action {
     Bundle {
         #[arg(long)]
         platform: Option<String>,
+        /// Assemble the release executables already in `target/TARGET/release`,
+        /// such as those `cargo ci bundle --packages` compiled, without
+        /// compiling them; this needs neither the pinned toolchain nor protoc.
+        #[arg(long)]
+        prebuilt: bool,
     },
     /// Run this platform's `CI / Bundle` steps, or one named step.
     ///
@@ -134,6 +139,12 @@ enum Action {
         /// every case placed on it.
         #[arg(long, value_name = "CASES")]
         hcl_cases: Option<String>,
+        /// With `bundle`, compile only the release executables of these
+        /// comma-separated bundle packages, without the build tool or assembly,
+        /// so that CI can compile parts of a bundle on separate runners for
+        /// `bundle --prebuilt` to assemble.
+        #[arg(long, value_name = "PACKAGES")]
+        packages: Option<String>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
@@ -360,7 +371,13 @@ fn run(command: &mut Command) -> Result<()> {
 fn sources() -> Result<Vec<(String, Vec<u8>)>> {
     Ok(nemoclaw_build::source_inputs(Path::new("."))?)
 }
-#[cfg(feature = "sdk")]
+/// The packages whose release executables a bundle ships.
+const BUNDLE_PACKAGES: [&str; 4] = [
+    "nemoclaw-cli",
+    "nemoclaw-provider",
+    "openshell-provider",
+    "fabric-provider",
+];
 fn target(platform: &str) -> Result<&'static str> {
     Ok(match platform {
         "linux_arm64" => "aarch64-unknown-linux-gnu",
@@ -371,10 +388,10 @@ fn target(platform: &str) -> Result<&'static str> {
         _ => return Err("unsupported platform".into()),
     })
 }
-#[cfg(feature = "sdk")]
-fn build(packages: &[&str], target: &str) -> Result<()> {
+fn build(packages: &[&str], target: &str, configure: &dyn Fn(&mut Command)) -> Result<()> {
     let root = std::env::current_dir()?;
     let mut command = cargo();
+    configure(&mut command);
     command.args([
         "build",
         "--locked",
@@ -406,7 +423,7 @@ fn executable(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 #[cfg(feature = "sdk")]
-async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
+async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
     let artifact = pins
         .platforms
         .get(platform)
@@ -431,15 +448,9 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
-    build(
-        &[
-            "nemoclaw-cli",
-            "nemoclaw-provider",
-            "openshell-provider",
-            "fabric-provider",
-        ],
-        target,
-    )?;
+    if !prebuilt {
+        build(&BUNDLE_PACKAGES, target, &|_| {})?;
+    }
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     fs::create_dir_all("dist")?;
     let temporary = tempfile::tempdir_in("dist")?;
@@ -799,11 +810,32 @@ async fn main() -> Result<()> {
         base,
         full,
         dry_run,
+        packages,
     } = &cli.command
     {
         if hcl_cases.is_some() && !matches!(step.as_deref(), Some("live-docker" | "live-kind")) {
             return Err("--hcl-cases requires ci live-docker or live-kind".into());
         }
+        let packages: Option<Vec<&str>> = match packages.as_deref() {
+            None => None,
+            Some(_) if step.as_deref() != Some("bundle") => {
+                return Err("--packages requires ci bundle".into());
+            }
+            Some(list) => {
+                let packages: Vec<&str> = list.split(',').map(str::trim).collect();
+                if !packages
+                    .iter()
+                    .all(|package| BUNDLE_PACKAGES.contains(package))
+                {
+                    return Err(format!(
+                        "--packages takes only the bundle's packages: {}",
+                        BUNDLE_PACKAGES.join(", ")
+                    )
+                    .into());
+                }
+                Some(packages)
+            }
+        };
         let hcl_cases: Option<Vec<String>> = hcl_cases.as_deref().map(|cases| {
             cases
                 .split(',')
@@ -888,8 +920,20 @@ async fn main() -> Result<()> {
                 hcl_cases: hcl_cases.as_deref(),
             },
             plan.as_ref(),
+            packages.as_deref(),
         )
         .await;
+    }
+    // Assembling compiles nothing, so it needs neither the pinned toolchain
+    // nor protoc; CI assembles split bundles on a runner that has neither.
+    #[cfg(feature = "sdk")]
+    if let Action::Bundle {
+        platform,
+        prebuilt: true,
+    } = cli.command
+    {
+        let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
+        return bundle(&pins, &platform::select(platform, bundle::platform)?, true).await;
     }
     let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
 
@@ -918,7 +962,7 @@ async fn main() -> Result<()> {
             unreachable!("CI, image, change, and timing commands returned before build tool checks")
         }
         #[cfg(feature = "sdk")]
-        Action::Bundle { platform } => {
+        Action::Bundle { platform, .. } => {
             if !run_ci::protoc_matches(&run_ci::protoc_command(&pins.protobuf), &pins.protobuf) {
                 return Err(
                     "build requires the pinned Protocol Buffers compiler; run cargo ci tools"
@@ -926,7 +970,7 @@ async fn main() -> Result<()> {
                 );
             }
 
-            bundle(&pins, &platform::select(platform, bundle::platform)?).await
+            bundle(&pins, &platform::select(platform, bundle::platform)?, false).await
         }
     }
 }
