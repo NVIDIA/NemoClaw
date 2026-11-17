@@ -238,21 +238,24 @@ jobs:
           persist-credentials: false
       - if: needs.cases.outputs.platform == 'linux_amd64'
         uses: ./.github/actions/containerd-store
-      # The runner's Buildx starts a runtime image's FROM pull only after its
-      # supervisor target finishes. Pulling the same digests now overlaps the
-      # pull with the downloads and the supervisor build, and Docker's
-      # containerd image store gives the bake the pulled layers. The bake
-      # waits for this pull and fetches whatever it missed.
+      # The runner's Buildx starts a runtime image's base pull only after the
+      # supervisor target finishes. A build of just the base, started here,
+      # pulls the same digest into BuildKit while the job downloads its inputs
+      # and the bake builds the supervisor; its RUN makes BuildKit unpack the
+      # layers too. The bake's FROM then finds the base in BuildKit's cache, or
+      # joins the pull still in progress. A docker pull would leave BuildKit
+      # to unpack the base again after the supervisor, about 95 s for vLLM.
       - name: Start pulling the runtime images' bases
         env:
           RUNTIMES: ${{ join(fromJSON(needs.cases.outputs.runtimes)[matrix.case], ' ') }}
         run: |
           read -ra names <<< "$RUNTIMES"
           {
-            for name in "${names[@]}"; do sed -n 's/^FROM \([^ ]*\).*/\1/p' "image/$name/Dockerfile"; done |
-              while read -r base; do
-                if docker pull --quiet "$base"; then echo "Pulled $base after ${SECONDS}s."; fi
-              done
+            for name in "${names[@]}"; do
+              { sed -n '1{/^# syntax=/p}; /^FROM /p' "image/$name/Dockerfile"; echo 'RUN true'; } |
+                docker buildx build --quiet --output type=cacheonly - &&
+                echo "Pulled the $name base after ${SECONDS}s."
+            done
             touch "$RUNNER_TEMP/base-pull.done"
           } > "$RUNNER_TEMP/base-pull.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/base-pull.pid"
@@ -338,9 +341,9 @@ jobs:
             } >> "$GITHUB_ENV"
           fi
           if (( ${#runtimes[@]} )); then
+            (umask 022; docker buildx bake "${runtimes[@]}")
             until [[ -e $RUNNER_TEMP/base-pull.done ]] || ! kill -0 "$(< "$RUNNER_TEMP/base-pull.pid")" 2> /dev/null; do sleep 1; done
             cat "$RUNNER_TEMP/base-pull.log"
-            (umask 022; docker buildx bake "${runtimes[@]}")
           fi
           docker image inspect nc-fabric:openclaw nc-fabric:hermes > /dev/null
           for runtime in "${runtimes[@]}"; do docker image inspect "nc-prototype-$runtime:rust-v1" > /dev/null; done
