@@ -61,7 +61,7 @@ export function alignMcpTargetWithSharedHostPins(options: {
   const authority = endpointAuthority(url);
   if (!authority) return { ok: true, target, reusedFrom: [] };
 
-  const recovery = `Before removing registrations with \`nemoclaw ${sandboxName} mcp remove <server>\`, re-export the affected credential variables. Removal preserves providers. Perform explicit provider cleanup only after confirming no other sandbox uses them. Follow https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential before adding the servers again.`;
+  const recovery = `Before removing registrations with \`nemoclaw ${sandboxName} mcp remove <server>\`, follow https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential to record current denied-tool selectors and re-export the affected credential variables. Removal preserves providers. Perform explicit provider cleanup only after confirming no other sandbox uses them. Re-add with the recorded selectors.`;
   const groups = new Map<string, PinGroup>();
   for (const entry of Object.values(bridges)) {
     if (

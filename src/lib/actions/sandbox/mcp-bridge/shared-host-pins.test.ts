@@ -163,7 +163,10 @@ describe("MCP shared-host address pins", () => {
     expect(message).toContain("Removal preserves providers");
     expect(message).toContain("explicit provider cleanup");
     expect(message).toContain("no other sandbox uses them");
-    expect(message).toContain("manage-mcp-servers#rotate-a-credential");
+    expect(message).toMatch(
+      /Before removing.*follow .*manage-mcp-servers#rotate-a-credential to record current denied-tool selectors/,
+    );
+    expect(message).toContain("Re-add with the recorded selectors");
   });
 
   it("accepts trusted-private siblings whose pins already match", () => {

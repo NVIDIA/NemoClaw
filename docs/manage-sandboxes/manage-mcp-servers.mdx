@@ -139,6 +139,11 @@ The bare `mcp list` and `mcp status` forms never probe, so they stay fast. Endpo
 
 ## Rotate a Credential
 
+Before removal, inspect the live policy with `openshell policy get --full my-sandbox`.
+Record the server's current denied-tool selectors from the `tool` fields of its `tools/call` deny rules.
+These selectors can differ from the original add options after `mcp update`.
+Keep the URL, credential variable name, and reviewed `--trusted-private-host` declaration.
+
 Export the replacement under the same host environment name used by `mcp add`, then remove the native registration:
 
 ```bash
@@ -148,8 +153,8 @@ $$nemoclaw my-sandbox mcp remove github
 
 `remove` deletes the agent-native registration and detaches the exact managed provider, but preserves the provider object.
 Confirm that no sandbox uses that provider before you delete it with `openshell provider delete <provider-name>`.
-Keep the original URL, credential variable name, and any denied-tool or trusted-private options for the replacement.
-Then add the server again to create a fresh provider binding:
+Add the server again to create a fresh provider binding.
+Append one `--deny-tool '<selector>'` option for each recorded selector to this command:
 
 ```bash
 $$nemoclaw my-sandbox mcp add github \
@@ -157,6 +162,9 @@ $$nemoclaw my-sandbox mcp add github \
   --env GITHUB_MCP_TOKEN
 unset GITHUB_MCP_TOKEN
 ```
+
+Inspect the live policy again and confirm that its denied-tool selectors match your record.
+Tool discovery does not verify denied-tool enforcement.
 
 For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`.
 For a public entry, `add` validates current DNS but reuses revalidated sibling pins when another managed server uses the same hostname and port.
@@ -220,10 +228,12 @@ A per-server refresh stops before mutation if its new DNS answers differ from a 
 Adding or re-adding one public registration reuses the sibling pins instead of refreshing them.
 
 To change the shared pin set, plan an interruption for every affected registration.
-Keep each server's original add options and re-export its credential from your secret manager before removal.
+Before the first removal, record every server's endpoint options and current denied-tool selectors from live policy.
+Re-export each credential from your secret manager.
 Remove every registration on that hostname and port, and complete the [retained-provider cleanup](#rotate-a-credential) for each one.
-Add the servers again with their original options.
+Add the servers again with their endpoint options and recorded selectors, passing one `--deny-tool` option per selector.
 The first public add records current validated DNS addresses; later adds reuse that set.
+Confirm that each restored live denied-tool list matches your record.
 Run `mcp status <server> --tools` for each server and confirm readiness and successful discovery.
 If DNS still differs from the recorded pins, coordinate the endpoint's DNS before repeating the procedure.
 
@@ -231,26 +241,10 @@ If DNS still differs from the recorded pins, coordinate the endpoint's DNS befor
 
 For a trusted-private server, review every destination change before NemoClaw records new pins. Neither status, restart, rebuild, nor restore changes the recorded address set.
 
-If the endpoint moves to another address, remove and re-add the server:
-
-```bash
-export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
-$$nemoclaw my-sandbox mcp remove local-tools
-```
-
-Complete the [retained-provider cleanup](#rotate-a-credential), then re-add the server:
-
-```bash
-$$nemoclaw my-sandbox mcp add local-tools \
-  --url https://mcp-host.corp.example/mcp \
-  --env LOCAL_MCP_TOKEN \
-  --trusted-private-host mcp-host.corp.example
-unset LOCAL_MCP_TOKEN
-```
-
-Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. Complete the [retained-provider cleanup](#rotate-a-credential) before re-adding.
-The re-add performs a new DNS preflight and records the reviewed exact address set.
-For registrations sharing a hostname and port, coordinate removal and re-addition for all of them so their reviewed pins agree.
+If the endpoint moves, follow [Rotate a Credential](#rotate-a-credential) to preserve current denied-tool selectors and replace the registration.
+Pass the reviewed `--trusted-private-host` declaration and every recorded `--deny-tool` selector on re-add.
+The re-add performs a new DNS preflight and records the reviewed address set.
+For registrations sharing a hostname and port, follow [Refresh Shared-Host Registrations](#refresh-shared-host-registrations) so their reviewed pins agree.
 
 ## Remove a Server
 
