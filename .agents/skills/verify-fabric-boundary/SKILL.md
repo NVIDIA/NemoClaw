@@ -20,14 +20,14 @@ The feature files retain native discovery, registration, fresh use, and physical
 Keep the configuration and identity needed to drive a run as prerequisites, not separate proof of native behavior.
 
 The SDK tests [`public_fabric_configuration_passes_through_without_overriding_deployment_bindings`](../../../crates/nemoclaw-sdk/tests/fabric_compatibility.rs) and [`sandboxes_pass_driver_configuration_through`](../../../crates/nemoclaw-sdk/tests/compile.rs) cover skills passthrough with and without mounts and preservation of caller-owned writable mount payloads, respectively.
-Fabric owns adapter-native path mapping; its [OpenClaw test](https://github.com/NVIDIA/NeMo-Fabric/blob/e5b5ebf2b81cc3c6325301ea419ebf2453dab12e/tests/adapters/test_openclaw.py#L530) asserts `skills.load.extraDirs`.
+Fabric owns adapter-native path mapping; its [OpenClaw test](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/tests/adapters/test_openclaw.py#L553) asserts `skills.load.extraDirs`.
 
 ## Scope
 
 - **Gateway:** a managed Docker gateway on the DGX Spark running the skill, as in [verify-yaml-deployment's scope](../verify-yaml-deployment/SKILL.md#scope).
 - **Agent:** one sandbox named `assistant` with one Fabric agent from the [agent table](#choose-the-agent-and-target).
 - **Target:** [dgx-spark](../verify-yaml-deployment/targets/dgx-spark.md) only. Another host type needs its own target file and proof first.
-- **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 136 checks for `hermes`, 134 for `openclaw`.
+- **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 135 checks for `hermes`, 133 for `openclaw`.
 
 [Completed Runs](#completed-runs) lists the agent–target pairs run to completion, with the revision, date, and counts by outcome; a completed run doesn't prove the pair.
 A pair that isn't listed has no completed run: say so with the result.
@@ -230,7 +230,7 @@ Before the first check, write every selected check to `checks.md` with an empty 
 grep -c '^| [a-z-]* | [A-Z]' "$EVIDENCE/checks.md"
 ```
 
-The count must be 136 for `hermes`, 134 for `openclaw`.
+The count must be 135 for `hermes`, 133 for `openclaw`.
 Fill in each row's outcome, finding ID, and evidence path as the check finishes; leave no row empty at the end.
 Write each finding in `findings.md` as:
 

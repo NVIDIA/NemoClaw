@@ -422,11 +422,12 @@ fn sandbox_exec(sandbox: &str, command: &[&str]) -> Command {
 
 /// Run one command in a sandbox with `openshell sandbox exec`, or on a managed
 /// Kubernetes gateway with the gateway's exec, through the port-forward that
-/// `probe` uses. The published report holds its exit status and whether its
-/// output contains the expected text and none of the forbidden text: standard
-/// output and error together from the CLI, standard output alone from the
-/// gateway's exec, which keeps no standard error. The output stays in the
-/// private work directory.
+/// `probe` uses. Without a sandbox, run the OpenShell CLI itself with the
+/// command as its arguments, on the gateway and workspace apply reports. The
+/// published report holds its exit status and whether its output contains the
+/// expected text and none of the forbidden text: standard output and error
+/// together from the CLI, standard output alone from the gateway's exec, which
+/// keeps no standard error. The output stays in the private work directory.
 #[tokio::test]
 #[ignore = "run by tests/e2e/hcl/command for one target"]
 async fn command() {
@@ -437,6 +438,7 @@ async fn command() {
     let document = Document::parse(fs::File::open(input("CONFIG")).unwrap()).unwrap();
     let (exit_code, text) = match kubernetes_operations(&document, &state).await {
         Some(operations) => {
+            assert!(!sandbox.is_empty(), "a Kubernetes target names its sandbox");
             let binding = sandbox_binding(&state, &sandbox);
             let (_forward, client) = kubernetes_gateway(&operations, &binding, None).await;
             let (code, output) = client
@@ -447,7 +449,11 @@ async fn command() {
         }
         None => {
             let command: Vec<&str> = command.iter().map(String::as_str).collect();
-            let output = sandbox_exec(&sandbox, &command).output().unwrap();
+            let output = if sandbox.is_empty() {
+                openshell().args(&command).output().unwrap()
+            } else {
+                sandbox_exec(&sandbox, &command).output().unwrap()
+            };
             let mut text = output.stdout;
             text.extend_from_slice(&output.stderr);
             (output.status.code(), text)

@@ -146,6 +146,8 @@ COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/sour
 COPY --from=switchyard-assets /opt/nemo-relay /opt/nemo-relay
 # Hermes owns its dependencies: its own lock, with the mcp extra, settles the
 # packages it shares with Fabric, as Fabric installs into Hermes's environment.
+# Hermes needs the anthropic extra's SDK to call a model through an anthropic
+# provider, and can't install it later because lazy installs are disabled.
 # From the messaging extra, only aiohttp, which Hermes's API server needs, is
 # installed; the messaging platform clients are pruned.
 # Hermes's lock overrides some dependencies' requirements, such as
@@ -154,7 +156,7 @@ COPY --from=switchyard-assets /opt/nemo-relay /opt/nemo-relay
 # check failures those overrides cause, as Hermes's installer does.
 # Hermes resolves bundled assets relative to its source checkout.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv --mount=type=cache,target=/root/.cache/uv \
-    uv export --project /opt/hermes --frozen --no-dev --extra mcp --extra messaging \
+    uv export --project /opt/hermes --frozen --no-dev --extra anthropic --extra mcp --extra messaging \
         --prune discord-py --prune python-telegram-bot --prune slack-bolt --prune slack-sdk --prune qrcode --prune brotlicffi \
         --no-emit-project --format requirements-txt --output-file /opt/nemoclaw/source/hermes-requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --require-hashes --no-deps -r /opt/nemoclaw/source/hermes-requirements.txt \

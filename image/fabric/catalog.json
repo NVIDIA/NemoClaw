@@ -876,6 +876,83 @@
             "replace"
           ]
         },
+        "config_schema": {
+          "description": "The local_shell backend requires an explicit tools.enabled allowlist (including an empty list) or execute in tools.blocked.",
+          "if": {
+            "properties": {
+              "harness": {
+                "properties": {
+                  "settings": {
+                    "properties": {
+                      "deepagents": {
+                        "properties": {
+                          "backend": {
+                            "properties": {
+                              "type": {
+                                "const": "local_shell"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "backend"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "deepagents"
+                    ]
+                  }
+                },
+                "required": [
+                  "settings"
+                ]
+              }
+            },
+            "required": [
+              "harness"
+            ]
+          },
+          "then": {
+            "properties": {
+              "tools": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "enabled": {
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "blocked": {
+                        "contains": {
+                          "const": "execute"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "blocked"
+                    ]
+                  }
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "tools"
+            ]
+          },
+          "type": "object"
+        },
         "contract_version": "fabric.adapter/v1alpha2",
         "model_schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1280,6 +1357,21 @@
             "skills",
             "mcp"
           ]
+        },
+        "config_schema": {
+          "description": "The shared NOOA adapter requires a registered workflow target.",
+          "properties": {
+            "workflow": {
+              "required": [
+                "target_id"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "workflow"
+          ],
+          "type": "object"
         },
         "contract_version": "fabric.adapter/v1alpha2",
         "model_schema": {
@@ -2556,8 +2648,8 @@
       ]
     }
   ],
-  "fabric_revision": "b4725580bc709f4efec04d1219cca2b34a172e3c",
+  "fabric_revision": "135147a0fe6ce6bc2ebf21fa1068d1bd5af71780",
   "schema_version": 2,
-  "source_sha256": "eb3a583c5eeb0b21aeb64e367fae33a06742c463ac8005ab29d380a103192107",
+  "source_sha256": "ef8d058019151e4d51f456020432005d46b632cf4b8bda1f431559298bf92e84",
   "targets": []
 }

@@ -3,10 +3,11 @@
 
 # Runs one fixed command in each target's sandbox: hcl_live::command runs it
 # with the pinned OpenShell CLI's `sandbox exec`, as a person would, or on a
-# managed Kubernetes gateway through the SDK's port-forward. Reports hold the
-# exit status and whether the output contained the expected text and not the
-# forbidden text; the output stays private, and the module's output names
-# only the targets that failed.
+# managed Kubernetes gateway through the SDK's port-forward. A target without
+# a sandbox runs the OpenShell CLI itself on a Docker case's gateway, such as
+# `sandbox list`. Reports hold the exit status and whether the output
+# contained the expected text and not the forbidden text; the output stays
+# private, and the module's output names only the targets that failed.
 
 terraform {
   required_version = "= 1.13.9"
@@ -33,7 +34,7 @@ variable "connection" {
 }
 
 variable "targets" {
-  description = "By name: the sandbox, the command and its arguments, and optionally text the output must contain and text it must not contain, which may be sensitive."
+  description = "By name: the sandbox, or null to run the OpenShell CLI itself, the command and its arguments, and optionally text the output must contain and text it must not contain, which may be sensitive."
   type        = any
 }
 
@@ -49,7 +50,7 @@ resource "terraform_data" "command" {
       NEMOCLAW_HCL_STATE     = var.context.state_dir
       NEMOCLAW_HCL_ENDPOINT  = var.connection == null ? "" : var.connection.gatewayEndpoint
       NEMOCLAW_HCL_WORKSPACE = var.connection == null ? "" : var.connection.workspace
-      NEMOCLAW_HCL_SANDBOX   = each.value.sandbox
+      NEMOCLAW_HCL_SANDBOX   = try(each.value.sandbox, null) == null ? "" : each.value.sandbox
       NEMOCLAW_HCL_COMMAND   = jsonencode(each.value.command)
       NEMOCLAW_HCL_CONTAINS  = try(each.value.contains, null) == null ? "" : each.value.contains
       NEMOCLAW_HCL_EXCLUDES  = try(each.value.excludes, null) == null ? "" : each.value.excludes

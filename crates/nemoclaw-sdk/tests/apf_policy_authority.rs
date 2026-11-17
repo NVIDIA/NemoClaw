@@ -83,7 +83,10 @@ fn either_gateway_mode_accepts_apf_as_the_policy_authority() {
 fn apf_serves_every_credential_profile_on_a_governed_gateway() {
     let source = include_str!("../../../examples/travel-team.yaml");
     let kinds = ["inference", "web_search", "api"];
-    let document = parse(&governed(example(source))).unwrap();
+    let mut value = governed(example(source));
+    // APF's policy, not the sandbox, grants the buyer its bookings endpoint.
+    value["spec"]["sandboxes"]["buyer"]["network"] = json!({"tier": "isolated"});
+    let document = parse(&value).unwrap();
     for kind in kinds {
         assert_eq!(values(&document, kind)["policy_authority"], "apf", "{kind}");
     }
@@ -239,7 +242,7 @@ fn nemoclaw_registers_apf_only_where_it_owns_the_gateway_file() {
 }
 
 #[test]
-fn an_apf_governed_sandbox_cannot_author_or_select_its_own_policy() {
+fn an_apf_governed_sandbox_cannot_author_select_or_extend_its_own_policy() {
     let policy = json!({"explicit": {
         "version": 1,
         "filesystem_policy": {"include_workdir": false, "read_only": ["/usr"], "read_write": ["/tmp"]},
@@ -247,13 +250,20 @@ fn an_apf_governed_sandbox_cannot_author_or_select_its_own_policy() {
         "process": {"run_as_user": "10001", "run_as_group": "10001"},
         "network_policies": {}
     }});
-    for network in [json!({"policy": policy}), json!({"policyRef": "own"})] {
+    let grant = json!({"endpoints": [{"host": "docs.example.com", "port": 443}]});
+    for network in [
+        json!({"policy": policy}),
+        json!({"policyRef": "own"}),
+        json!({"grants": {"docs": grant}}),
+        json!({"grantRefs": ["own"]}),
+    ] {
         let mut value = governed(example(include_str!("../../../examples/local.yaml")));
         value["spec"]["policies"] = json!({"own": policy["explicit"]});
+        value["spec"]["grants"] = json!({"own": grant});
         value["spec"]["sandboxes"]["assistant"]["network"] = network.clone();
         let error = parse(&value).unwrap_err();
         assert!(
-            error.to_string().contains("policyAuthority"),
+            error.to_string().contains("APF authors"),
             "{network}: {error}"
         );
         value["spec"]["gateway"]

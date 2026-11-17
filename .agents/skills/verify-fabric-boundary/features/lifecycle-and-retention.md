@@ -10,7 +10,7 @@ Teardown removes the deployment's compute and leaves the caller volumes, model d
 
 ## Sub-features
 
-- `retention`: the seeded workspace and artifacts markers keep their seeded hashes, and the supplied `capability-probe` skill remains readable at its seeded path on the same caller volume, without reseeding. Phases: Initial, After stop/start, After recreate, After config change, After restore.
+- `retention`: the seeded workspace and artifacts markers keep their seeded hashes, and the supplied `capability-probe` skill remains readable at its seeded path on the same caller volume, without reseeding. Phases: Initial, After stop/start, After recreate, After restore.
 - `extension-runtime-restart`: stopping only the managed Fabric runtime through `fabric-agent-ctl stop`, then an unchanged plan/apply, gives the same sandbox and container a new runtime that answers. Phases: Runtime restart.
 - `stop-start`: stopping the sandbox through OpenShell's supported control stops it and access to it, starting it brings back the same sandbox and container, and after an unchanged plan/apply its runtime answers. Phases: Stop/start.
 - `recreate`: destroying the deployment through NemoClaw keeps the state and caller volumes, and plan/apply of the baseline YAML creates a new sandbox. Phases: Recreate.
@@ -55,6 +55,7 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 
    Result: two `match` lines, `skill read exit 0`, and the mounts name `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`.
    A missing or changed marker, or a missing skill, is Failed. Changed skill bytes alone do not fail retention; keep the snapshot for diagnosis. This check doesn't need the runtime, so run it even when the runtime is unusable. Native discovery, loading, and fresh skill output remain separate checks.
+   After config change has no `retention` check: for both harnesses, the live `docker-openclaw-hermes-interfaces` scenario replaces each harness's sandbox with a change to its agent's instructions, then reads the workspace and artifacts markers and the supplied skills' hashes from the caller's volumes in the new sandbox ([Agent Interfaces](../../../../internal-docs/contributing/live-tests.md#agent-interfaces)).
 3. **Before a transition:** set `PHASE` to the transition's directory and `CASE` to its check, then record what it should keep or replace:
 
    ```sh
@@ -111,8 +112,10 @@ Each transition uses steps 3, 4, and 5 around its own commands.
    Result: the stop and the start succeed; while stopped, OpenShell shows the sandbox stopped, the container keeps its ID and isn't `running`, and the exec exits nonzero; after the start, `assistant` returns to `Ready`.
    Wait for `Ready` before step 4; the gateway, model service, and Docker daemon keep running throughout.
    Run step 4 with the YAML unchanged.
-   Pass when the container IDs match, the plan doesn't replace the sandbox, and the request in step 4 succeeds.
-   The desired contract is that the same sandbox recovers with a usable runtime after unchanged plan/apply; anything else is Failed, including a recovery that replaces the sandbox.
+   Pass when the container IDs match and the fresh request in step 4 succeeds after unchanged plan/apply.
+   Anything else is Failed, including a recovery that replaces the sandbox.
+   Provider recovery is covered by `crates/fabric-provider/tests/contract/hcl/agent/tests/runtime_changes.tftest.hcl` (`stop_runtime`/`restart`).
+   The fixture cannot establish supported sandbox stop/start or fresh native use.
    If OpenShell offers no supported stop or start, mark the check Failed with a missing-implementation finding; if the runner can't run them safely, mark it Not tested.
    Then run step 5 with `PHASE=after-stop-start`.
 8. **`recreate`:** with `PHASE=recreate` and `CASE=recreate`, run step 3, then preview and destroy the deployment through NemoClaw, keeping the state directory, bundle, and caller volumes:
@@ -189,7 +192,12 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 
 - Never reseed a marker, the supplied skill, or anything else after a transition. A missing or changed file is evidence; evaluate skill changes under [the skill content rules](skills.md#evolving-skill-contents).
 - Retained files prove neither discovery, registration, fresh execution, nor conversation resume. [skills](skills.md) tracks rediscovery of a generated skill separately; don't infer conversation resume from `retention`.
-- After runtime replacement, the old `RUNTIME_ID` fails with `runtime_unavailable`; old entry points or tokens must not grant access to that runtime. A leftover launcher file alone proves neither access nor cleanup. Step 4 reads the current runtime and entry points again.
+- After runtime replacement, the old `RUNTIME_ID` fails with `runtime_unavailable`.
+  Old entry points or tokens must not grant access to that runtime.
+  A leftover launcher file alone proves neither access nor cleanup.
+  Step 4 reads the current runtime and entry points again.
+- Not every token path changes: adapter-specific kept-state tokens remain in the agent directory.
+  `apply_reports_current_runtime_access_after_binding_changes` covers post-apply runtime-scoped path selection separately from kept-state paths.
 - Stop only what the check names. `extension-runtime-restart` stops the Fabric runtime, not the sandbox; `stop-start` stops the sandbox, not the gateway, model service, or Docker daemon.
 - Don't substitute `docker stop`, `docker restart`, or killing the runtime's process for the supported controls; a killed runtime can leave interface markers behind.
 - An explicit `fabric-agent-ctl start`, or a runtime started by hand, is at most a separately recorded diagnostic. Never put its handle in state, and stop it before teardown.
