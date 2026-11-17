@@ -307,6 +307,50 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
     );
 }
 
+/// Two machines share the Station runner label, and Actions artifacts move at
+/// 3-8 MB/s there, so a Station dispatch builds its candidate in the case's
+/// own job instead of uploading it from one job and downloading it in another.
+#[test]
+fn a_station_dispatch_builds_its_candidate_in_the_case_job() {
+    let live: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/hcl-e2e.yml")).unwrap(),
+    )
+    .unwrap();
+    let build = live["jobs"]["build"]["if"].as_str().unwrap_or_default();
+    assert!(
+        build.contains("inputs.target != 'dgx-station'"),
+        "the Build job skips a Station dispatch: {build}"
+    );
+    let case = &live["jobs"]["e2e"];
+    let runs = case["if"].as_str().unwrap_or_default();
+    assert!(
+        runs.contains("needs.build.result == 'skipped'")
+            && runs.contains("inputs.target == 'dgx-station'"),
+        "a Station case runs without the Build job: {runs}"
+    );
+    let steps = case["steps"].as_array().unwrap();
+    let builds: Vec<_> = steps
+        .iter()
+        .filter(|step| step["uses"] == "./.github/actions/hcl-candidate")
+        .map(|step| step["if"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        builds,
+        ["inputs.target == 'dgx-station'"],
+        "a Station case builds its candidate"
+    );
+    for step in steps
+        .iter()
+        .filter(|step| step["with"]["name"] == "${{ env.CANDIDATE }}")
+    {
+        let condition = step["if"].as_str().unwrap_or_default();
+        assert!(
+            condition.contains("inputs.target != 'dgx-station'"),
+            "a Station case downloads no candidate: {condition}"
+        );
+    }
+}
+
 /// The GPU runner downloads artifacts slowly, so a GPU HCL case whose
 /// document names no Hermes image loads CI / Bundle's OpenClaw-only live
 /// images artifact, and a case that also runs Hermes loads every live image.
