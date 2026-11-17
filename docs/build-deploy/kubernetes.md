@@ -183,17 +183,24 @@ nemoclaw apply --state-dir .local/kubernetes deployment.yaml
 
 When the token expires, get a new one and rerun.
 OpenShell accepts a token for up to 60 seconds after its `exp`, the default leeway of the JWT library it uses, so a revoked token can keep working for that long.
-The gateway still requires its client certificate; the token adds user identity on top.
+With NemoClaw's chart values, the gateway authenticates each request by its token: it accepts a client without a certificate, and refuses the client certificate from `<release>-client-tls` without a token, with `missing authorization header`.
 With this profile, the namespace holds no development issuer, and the state directory holds no issuer keys.
 
 ### Publish the Gateway Outside the Cluster
 
 Like a Docker gateway's published port, `gateway.kubernetes.expose` publishes the gateway at `gateway.endpoint`, where other clients, such as the OpenShell CLI, dial it without a port forward.
 NemoClaw's own plan, apply and destroy still reach the gateway through port forwards, so they still need `pods/portforward`; [#14422](https://github.com/NVIDIA/NemoClaw/issues/14422) tracks letting them dial the endpoint instead.
-NemoClaw sets the OpenShell chart's own gateway Service to `NodePort` at the endpoint's port, which forwards to the gateway's TLS listener, so TLS and client certificates pass through unchanged.
-The gateway certificate names the endpoint's host.
+Set one of `expose.service` and `expose.route`.
+Either forwards to the gateway's TLS listener, so TLS and client certificates pass through unchanged, and the gateway certificate names the endpoint's host.
+
+- **The address must be known before apply,** because plan binds the endpoint and the chart writes its host into the certificate.
+- **Fixed after the first plan:** `expose`, whether a Service or a Route publishes the gateway, and the Service's type select the address the endpoint names. Like the endpoint, changing them needs a new deployment.
+
+#### Through a NodePort Service
+
+`expose.service` sets the OpenShell chart's own gateway Service to `NodePort` at the endpoint's port.
 The Service doesn't publish the gateway's plaintext metrics port, and the gateway then serves no metrics.
-CI publishes a gateway with the `oidc` profile on kind, where two agents reply to a client that dials the node's address with the gateway's client certificate.
+CI publishes a gateway with the `oidc` profile on kind, where two agents reply to a client that dials the node's address with the issuer's token and the gateway's client certificate.
 [The NodePort example](../../examples/kubernetes/published-nodeport.yaml) publishes one with the `oidc` profile.
 
 ```yaml
@@ -207,11 +214,34 @@ spec:
           type: NodePort
 ```
 
-- **Endpoint:** `https://`, a lowercase DNS name or IPv4 address, and a port in the cluster's node-port range, 30000 through 32767 by default; ports 30000 through 30085 are the least likely to be taken. Apply fails if Kubernetes refuses the port or another Service holds it.
-- **The address must be known before apply,** because plan binds the endpoint and the chart writes its host into the certificate: a node's address, or a DNS name for the nodes.
-- **Fixed after the first plan:** `expose` and its Service type select the address the endpoint names. Like the endpoint, changing them needs a new deployment.
-- **The port is open on every node.** Restrict who can reach it with your network's own controls; the gateway still requires its client certificate.
+- **Endpoint:** `https://`, a node's address or a lowercase DNS name for the nodes, and a port in the cluster's node-port range, 30000 through 32767 by default; ports 30000 through 30085 are the least likely to be taken. Apply fails if Kubernetes refuses the port or another Service holds it.
+- **The port is open on every node.** Restrict who can reach it with your network's own controls; the gateway's API requires a token from its issuer, not a client certificate.
 - **No `LoadBalancer` yet:** the pinned chart's Service takes no annotations or source ranges, and listens on the gateway's own port ([#14421](https://github.com/NVIDIA/NemoClaw/issues/14421)).
+
+#### Through an OpenShift Route
+
+On OpenShift, `expose.route` has the chart create a Route for the endpoint's host with `passthrough` TLS termination: the cluster's router forwards each encrypted connection, by the host name the client sends, to the chart's gateway Service, which stays inside the cluster.
+Plan refuses `expose.route` unless `gateway.runtime.provider` is `openshift`; on other clusters, use `expose.service`.
+[The Route example](../../examples/kubernetes/published-route.yaml) publishes one with the `oidc` profile.
+No automated test runs a Route, because CI has no OpenShift cluster; CI checks the Route that the pinned chart renders from NemoClaw's values.
+
+```yaml
+spec:
+  gateway:
+    runtime:
+      provider: openshift
+    endpoint: https://nemoclaw-gateway.apps.example.com:443
+    kubernetes:
+      # ...the target and authentication above...
+      expose:
+        route:
+          annotations:
+            haproxy.router.openshift.io/timeout: 1h
+```
+
+- **Endpoint:** `https://`, a lowercase DNS name that reaches the cluster's router, such as one under its apps domain, and the port the router serves, usually 443; NemoClaw doesn't check the port. Plan refuses an IP address, because the Route's host is the endpoint's and clients send no host name for an IP address, so the router can't match one; `expose.service` accepts one.
+- **`annotations`** are optional and reach the Route unchanged, such as the router's `haproxy.router.openshift.io` settings; changing them updates the Route in place.
+- **Creating the Route:** Helm creates it with the identity that applies, which needs `create`, `update` and `delete` on `routes` in the `route.openshift.io` API group, and OpenShift sets a Route's host only for an identity that can create `routes/custom-host`. OpenShift's `admin` and `edit` roles grant both.
 
 Sandbox [service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) skip the gateway's sign-in, so anyone who reaches the endpoint with a service's host name reaches that service, which must authenticate its own clients.
 The URLs that apply prints don't open remotely yet ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
@@ -222,9 +252,10 @@ A new deployment with the same `metadata.uid` in the same namespace reuses the r
 ### Reach the Gateway from the OpenShell CLI
 
 With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](../agents-inference/interfaces.md#invoke-an-agent) and run other `openshell` commands.
-It needs three things: a port forward to the gateway pod, the gateway's client certificate, and an OpenShell gateway entry that signs in through your identity provider.
-A [published gateway](#publish-the-gateway-outside-the-cluster) needs no forward: skip the first step, and add the gateway at `gateway.endpoint` instead of `https://127.0.0.1:17671`.
+It needs three things: a port forward to the gateway pod, the CA certificate that verifies the gateway, and an OpenShell gateway entry that signs in through your identity provider.
+A [published gateway](#publish-the-gateway-outside-the-cluster) needs no forward: set the variables in the first step but skip its `port-forward` command, and add the gateway at `gateway.endpoint` instead of `https://127.0.0.1:17671`.
 No automated test covers these steps. [#14131](https://github.com/NVIDIA/NemoClaw/issues/14131) records a manual run of the browser sign-in against a bare-metal single-node OpenShift 4.22 cluster, and [#14192](https://github.com/NVIDIA/NemoClaw/pull/14192) one of the client-credentials sign-in on kind; both used Keycloak as the issuer.
+[#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) records the client-credentials sign-in on kind and k3d with only the CA certificate, through the forward and at a published endpoint.
 
 In one terminal, forward the port in `gateway.endpoint` to the gateway, which listens on port 8080 in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets.
 Leave the forward running:
@@ -238,19 +269,16 @@ kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
   port-forward "pod/$deployment_release-0" 17671:8080
 ```
 
-In another terminal, with the same variables set, copy the client certificate from the Secret `<release>-client-tls` to where the OpenShell CLI looks for a gateway's certificates.
+In another terminal, with the same variables set, copy the CA certificate from the Secret `<release>-client-tls` to where the OpenShell CLI looks for a gateway's certificates.
 The gateway's certificate names `127.0.0.1`, so keep that address:
 
 ```sh
 gateway_name=nemoclaw-development
 mtls="${XDG_CONFIG_HOME:-$HOME/.config}/openshell/gateways/$gateway_name/mtls"
-(umask 077 && mkdir -p "$mtls")
-for file in ca.crt tls.crt tls.key; do
-  kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
-    get secret "$deployment_release-client-tls" -o "go-template={{index .data \"$file\"}}" \
-    | base64 -d > "$mtls/$file"
-done
-chmod 600 "$mtls/tls.key"
+mkdir -p "$mtls"
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  get secret "$deployment_release-client-tls" -o 'go-template={{index .data "ca.crt"}}' \
+  | base64 -d > "$mtls/ca.crt"
 ```
 
 Then add the gateway with the issuer and audience from `openshell.gateway.oidc`, and the client ID your identity provider registered for the OpenShell CLI.
@@ -258,7 +286,7 @@ The CLI receives the sign-in on `http://127.0.0.1` at a free port, path `/callba
 The CLI checks the issuer's certificate against the client host's trusted CAs.
 If the host doesn't trust the CA that signed it, such as the CA in `caConfigMap`, save that CA's certificate in a PEM file and set `SSL_CERT_FILE` to its path for every `openshell` command; the CLI then trusts only the certificates in that file, and it contacts the issuer whenever it refreshes your token.
 The browser that opens for the sign-in must trust that CA too, or it warns about the issuer's certificate.
-The CLI opens a browser to sign in, and presents the client certificate together with your token:
+The CLI opens a browser to sign in, then sends your token with each request:
 
 ```sh
 openshell gateway add https://127.0.0.1:17671 \
@@ -290,7 +318,6 @@ Then [select the gateway and workspace](../agents-inference/interfaces.md#select
 A token with the role `admin_role` names reaches the deployment's workspace.
 A token with only the role `user_role` names reaches it once a platform admin adds the token's subject to the workspace; until then, sandbox commands fail with `not a member of workspace` and print the `openshell workspace member add` command to run.
 With only that role, `openshell status` also reports `authorization denied`, because its check reads gateway details that only an admin may read.
-The client certificate's key grants transport access to the gateway; keep it private and delete the `mtls` directory when you no longer need access.
 See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
 ### Reference Registry Credentials
@@ -450,9 +477,11 @@ Sandboxes still need `image.metadata`.
 
 ### Reach an External Gateway Through an Ingress
 
-NemoClaw doesn't put a managed gateway behind an ingress or an OpenShift Route; it passes none of the chart's `grpcRoute` or `openshiftRoute` values ([current limits](../resources/limits.md#platforms-models-and-placement)).
+NemoClaw doesn't put a managed gateway behind a Gateway API ingress, because TLS would end at the Gateway, which conflicts with NemoClaw's mTLS ([current limits](../resources/limits.md#platforms-models-and-placement)).
+On OpenShift, [a pass-through Route](#through-an-openshift-route) can publish a managed gateway instead.
 Instead, the platform operator installs the OpenShell chart behind a Gateway API ingress with OpenShell's [Kubernetes ingress guide](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/kubernetes/ingress.mdx), and the deployment connects to it with `management: external`.
-Nobody has followed these steps behind an ingress; [#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) tracks a run.
+No automated test covers this setup.
+[#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) records runs of these steps behind Envoy Gateway v1.8.1 with a Keycloak issuer, with OpenShell 0.1.7 on single-node kind and k3d clusters and with OpenShell 0.1.8 on kind: an agent replied through the ingress in each, and requests longer than 15 seconds failed until the request timeout below was disabled.
 
 The operator follows the guide with these choices:
 
@@ -461,6 +490,29 @@ The operator follows the guide with these choices:
   Its `server.disableTls=true` setup sends bearer tokens unencrypted from the ingress to the gateway pod.
   Its plaintext setup can't serve NemoClaw, which accepts an `http://` gateway endpoint only on a literal loopback address.
 - **Authentication:** configure an OIDC issuer, as the guide's HTTPS setups do; the ingress terminates TLS and forwards no client certificate, so clients authenticate with bearer tokens.
+  If a private CA signed the issuer's certificate, also set the chart's `server.oidc.caConfigMapName` to a ConfigMap in the release's namespace whose `ca.crt` verifies it; create the ConfigMap before the install.
+- **Request timeout:** by default, Envoy Gateway ends any request longer than 15 seconds, including a whole `exec` stream.
+  In the recorded runs, a 20-second `openshell sandbox exec`, the command that sends agent requests, failed at 15 seconds, and starting an agent runtime, which runs through `exec`, took 12 to 13 seconds.
+  Disable the timeout with a `BackendTrafficPolicy` on the chart's `GRPCRoute`, named `openshell` in the guide's `openshell` namespace; for another release, find the route with `kubectl get grpcroutes`:
+
+  ```sh
+  kubectl --context my-cluster --namespace openshell apply -f - <<'EOF'
+  apiVersion: gateway.envoyproxy.io/v1alpha1
+  kind: BackendTrafficPolicy
+  metadata:
+    name: openshell-timeouts
+  spec:
+    targetRefs:
+      - group: gateway.networking.k8s.io
+        kind: GRPCRoute
+        name: openshell
+    timeout:
+      http:
+        requestTimeout: 0s
+  EOF
+  ```
+
+  Other Gateway API implementations may set a different default, or none; check yours before the first apply.
 
 Then give the deployment the ingress's host name, a token, and the CA that signed the listener certificate:
 
@@ -491,7 +543,7 @@ spec:
   If the gateway sets `scopes_claim`, the token also needs `config:read`, `workspace:read`, `workspace:write`, `sandbox:read`, `sandbox:write`, `provider:read` and `provider:write`, or `openshell:all`.
 - **Service URLs:** [service exposure](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) URLs skip the gateway's authentication, so prefer [`openshell forward service`](../agents-inference/interfaces.md#forward-a-native-service).
   The chart routes only gRPC, so the URLs need the operator's own route, as the guide's [Route Sandbox Service Traffic](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/kubernetes/ingress.mdx#route-sandbox-service-traffic) section describes.
-  OpenShell builds them with the gateway pod's port, 8080, so behind an ingress on port 443 the URLs that apply prints name a port the ingress doesn't serve.
+  OpenShell builds them with the gateway pod's port, 8080, so behind an ingress on port 443 the URLs that apply prints name a port the ingress doesn't serve; with the chart's default service domain, the recorded runs printed `https://<workspace>--<sandbox>--<service>.openshell.localhost:8080/`.
 
 ## Use a Model Server in the Cluster
 

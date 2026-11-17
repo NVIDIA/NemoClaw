@@ -94,9 +94,16 @@ impl Fixture {
     }
     /// Serve on an ephemeral loopback port; `endpoint` is `http://127.0.0.1:PORT`.
     pub async fn start_tcp(
+        handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
+    ) -> Self {
+        Self::start_tcp_at("127.0.0.1:0", handler).await
+    }
+    /// Serve on a caller-owned address, including a live case's host port.
+    pub async fn start_tcp_at(
+        address: &str,
         mut handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
     ) -> Self {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = tokio::net::TcpListener::bind(address).await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let task = tokio::spawn(async move {
             loop {

@@ -86,6 +86,16 @@ fn render(test: &str) {
     exposed.settings.kubernetes.as_mut().unwrap().expose =
         Some(serde_json::from_value(json!({"service": {"type": "NodePort"}})).unwrap());
     write("exposed.json", &values(&exposed));
+    let mut routed = spec();
+    routed.settings.runtime.provider = ComputeDriver::OpenShift;
+    routed.settings.endpoint = "https://gateway.apps.example.com:443".into();
+    routed.settings.kubernetes.as_mut().unwrap().expose = Some(
+        serde_json::from_value(json!({"route": {
+            "annotations": {"haproxy.router.openshift.io/timeout": "1h"}
+        }}))
+        .unwrap(),
+    );
+    write("routed.json", &values(&routed));
     // The objects NemoClaw creates before the release, which Helm must not own.
     let auth = tempfile::tempdir().unwrap();
     let material = Development::new(
@@ -123,6 +133,12 @@ fn pull_secret_names_reach_pods_and_the_sandbox_driver() {
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; pulls the pinned chart"]
 fn an_exposed_gateway_is_published_by_the_charts_own_node_port_service() {
     render("tests/exposed.tftest.hcl");
+}
+
+#[test]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; pulls the pinned chart"]
+fn an_exposed_openshift_gateway_is_published_by_the_charts_pass_through_route() {
+    render("tests/routed.tftest.hcl");
 }
 
 #[test]

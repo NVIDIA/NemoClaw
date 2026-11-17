@@ -35,7 +35,8 @@ fn text() -> &'static Text {
 
 /// Map keys for a question ID, most specific first: the ID itself, then with
 /// array indices, sandbox, service, and inference provider names, and a
-/// service's environment variable names replaced by `*`, then also the
+/// service's environment variable and a Route's annotation names replaced by
+/// `*`, then also the
 /// adapter ID.
 fn keys(id: &str) -> [String; 3] {
     let parts = id.split('/').collect::<Vec<_>>();
@@ -50,8 +51,11 @@ fn keys(id: &str) -> [String; 3] {
                 );
             let variable =
                 index > 2 && parts[index - 1] == "environment" && parts[index - 3] == "services";
+            let annotation =
+                index > 1 && parts[index - 1] == "annotations" && parts[index - 2] == "route";
             if named
                 || variable
+                || annotation
                 || (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
             {
                 "*"
@@ -105,18 +109,6 @@ pub(super) fn choice(question: &JourneyQuestion, value: &Value) -> String {
                 .flatten()
         })
         .unwrap_or_else(|| display_value(value))
-}
-
-/// A field's title from the map, else one derived from its ID.
-pub(super) fn field_title(id: &str) -> String {
-    question_text(id)
-        .and_then(|text| text.title.clone())
-        .unwrap_or_else(|| readable(id))
-}
-
-/// A field's description from the map.
-pub(super) fn field_description(id: &str) -> Option<String> {
-    question_text(id).and_then(|text| text.description.clone())
 }
 
 /// A field's value as its mapped choice label, else as written.

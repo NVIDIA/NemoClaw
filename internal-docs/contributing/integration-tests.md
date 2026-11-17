@@ -249,11 +249,11 @@ Docker scenarios mock the Docker provider by its generated alias and give mocked
 On Unix, one fixed engine socket, `/tmp/nemoclaw-integration/engine.sock`, gives every scenario the same alias and image addresses.
 On Windows, the engine is `ssh://127.0.0.1:PORT`, which the `nemoclaw-fixture-ssh` relay that the integration step puts on `PATH` forwards. Managed Docker gateway storage takes only a local engine socket, so Windows skips scenarios with a managed Docker gateway and runs the others.
 
-The runner deals the scenarios round-robin across four tests, `scenarios_in_shard_1` to `scenarios_in_shard_4`, so each stays within the integration per-test budget. They share the fixed engine socket, so nextest's `hcl-integration` test group runs one at a time on a runner, and `cargo test` needs `--test-threads=1`.
+The runner deals the scenarios across four tests, `scenarios_in_shard_1` to `scenarios_in_shard_4`, so each stays within the integration per-test budget. It estimates each scenario as 4 seconds of OpenTofu work plus the gateway delays its test file declares in `*_delay_ms` variables, then gives the longest first to the shard with the least estimated time; `kubernetes-slow-sandbox-delete`, which waits out a 31-second deletion, runs in a shard of its own. The shards share the fixed engine socket, so nextest's `hcl-integration` test group runs one at a time on a runner, and `cargo test` needs `--test-threads=1`.
 Each shard runs `tofu init` once and then `tofu test -filter=tests/<scenario>.tftest.hcl` for each scenario, resetting the fixtures between scenarios.
 After each scenario it checks that at least one run passed and that teardown failed only on storage NemoClaw retains. It also checks that the gateway holds no objects or Fabric runtimes, naming any it finds, that the engine deleted no storage and received no unrecognized request, and that no fixture credential appears in output or diagnostics.
 When a scenario fails, the runner keeps its work directory and writes redacted OpenTofu output and observations to `evidence/<scenario>`, or under `NEMOCLAW_INTEGRATION_EVIDENCE` when it is set.
-In CI / Bundle, each `Integration` job sets `NEMOCLAW_INTEGRATION_EVIDENCE`. The runner records each scenario's result there, and the job summary lists the results. A failed job uploads that directory as `hcl-integration-evidence-PLATFORM-SHARD-ATTEMPT`, kept for 7 days.
+In CI / Bundle, each `Integration` job sets `NEMOCLAW_INTEGRATION_EVIDENCE`. The runner records each scenario's result and time there, and the job summary lists them. A failed job uploads that directory as `hcl-integration-evidence-PLATFORM-SHARD-ATTEMPT`, kept for 7 days.
 An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/integration/tofu_test/fixtures.rs`.
 
 Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM or Ollama provider where it applies:
@@ -378,7 +378,7 @@ The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibi
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/b4725580bc709f4efec04d1219cca2b34a172e3c/tests), alongside the implementation.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 

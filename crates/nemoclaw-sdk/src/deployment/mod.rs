@@ -284,8 +284,8 @@ impl Deployment {
                 "state is bound to a different deployment UID or gateway",
             ));
         }
-        // Like the endpoint, the Service type selects the address clients
-        // dial and the names the gateway certificate covers.
+        // Like the endpoint, what publishes the gateway selects the address
+        // clients dial and the names the gateway certificate covers.
         let exposure = |document: &Document| {
             let expose = document
                 .spec
@@ -295,11 +295,11 @@ impl Deployment {
                 .as_ref()?
                 .expose
                 .as_ref()?;
-            Some(expose.service.service_type)
+            Some(expose.publisher())
         };
         if exposure(&record.document) != exposure(&document) {
             return Err(Error::Conflict(
-                "state is bound to a different gateway exposure: kubernetes.expose and its Service type stay as first planned; create a separate deployment to change them",
+                "state is bound to a different gateway exposure: kubernetes.expose, its Service type, and whether a Route publishes the gateway stay as first planned; create a separate deployment to change them",
             ));
         }
         record.allocate_missing_generations(&document)?;

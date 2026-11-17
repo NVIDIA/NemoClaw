@@ -5,8 +5,9 @@
 # test archive, bundle, and live images; NVIDIA's GPU runners refuse pull
 # request jobs. CI / Bundle builds those on Ubuntu 22.04, whose glibc the GPU
 # runner can run. A dispatch has no such artifacts, so it builds a candidate
-# of its own there. Linux AMD64's E2E jobs run the selected hosted cases
-# themselves, except on a fork's pull request.
+# of its own there; a Station dispatch builds it in the case's job instead.
+# Linux AMD64's E2E jobs run the selected hosted cases themselves, except on a
+# fork's pull request.
 name: Live / HCL
 
 on:
@@ -157,48 +158,25 @@ jobs:
           if-no-files-found: error
 
   # A run without CI / Bundle's artifacts, such as a dispatch, builds a
-  # candidate here, which unpacks where those artifacts would.
+  # candidate here, which unpacks where those artifacts would. Two machines
+  # share the Station runner label, and Actions artifacts move at 3-8 MB/s
+  # there, so a Station case's job builds its own candidate instead.
   build:
     name: Build
     needs: cases
-    if: github.repository == 'NVIDIA/NemoClaw' && needs.cases.result == 'success' && inputs.tests == ''
+    if: github.repository == 'NVIDIA/NemoClaw' && needs.cases.result == 'success' && inputs.tests == '' && inputs.target != 'dgx-station'
     # Like CI / Bundle, build against Ubuntu 22.04's glibc, which every case's runner can run.
-    runs-on: ${{ needs.cases.outputs.platform == 'linux_arm64' && needs.cases.outputs.runner || 'ubuntu-22.04' }}
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
-    env:
-      TEST_PLATFORM: ${{ needs.cases.outputs.platform }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/hcl-candidate
         with:
-          platform: ${{ needs.cases.outputs.platform }}
-          cache-prefix: hcl-deps-v1
-          save-cache: ${{ needs.cases.outputs.platform == 'linux_amd64' }}
-      # The image builds' pinned sources, as CI / Images saved them.
-      - name: Restore the verified image sources
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .build/downloads
-          key: image-sources-v1-${{ hashFiles('versions.json') }}
-      - if: needs.cases.outputs.platform == 'linux_amd64'
-        uses: ./.github/actions/containerd-store
-      - name: Build the bundle, test executable, and agent images
+          platform: ${{ env.TEST_PLATFORM }}
+      - name: Pack the candidate
         run: |
-          if [[ $TARGET == dgx-station ]]; then
-            test "$(uname -m)" = aarch64
-            . /etc/os-release
-            test "$ID:$VERSION_ID" = ubuntu:24.04
-            nvidia-smi --query-gpu=name --format=csv,noheader | grep -q GB300
-            docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter.v1
-          fi
-          cargo ci bundle
-          executable=$(cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json |
-            jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test) | .executable' | tail -1)
-          mkdir -p .build
-          cp "$executable" .build/e2e
-          cargo images build --platform "linux/${TEST_PLATFORM#linux_}" openclaw hermes
           docker save nc-fabric:openclaw nc-fabric:hermes -o .build/agents.tar
           # Tar keeps the executable bits that artifact transfer drops.
           tar -cf "$RUNNER_TEMP/candidate.tar" "dist/$TEST_PLATFORM" .build/e2e .build/agents.tar
@@ -212,11 +190,12 @@ jobs:
   e2e:
     name: ${{ matrix.case }}
     needs: [cases, build]
-    # Runs when the cases job selected a case, from CI / Bundle's artifacts or
-    # this run's build.
+    # Runs when the cases job selected a case, from CI / Bundle's artifacts,
+    # this run's build, or, on Station, its own build.
     if: >-
       ${{ !cancelled() && needs.cases.result == 'success' && needs.cases.outputs.matrix != '[]' &&
-      (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.tests != '')) }}
+      (needs.build.result == 'success' ||
+      (needs.build.result == 'skipped' && (inputs.tests != '' || inputs.target == 'dgx-station'))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -224,10 +203,9 @@ jobs:
     # The cases with model runtime images need this NVIDIA GPU runner, which the main E2E workflow also uses.
     runs-on: ${{ contains(fromJSON(needs.cases.outputs.cases).runners.gpu, matrix.case) && needs.cases.outputs.runner || 'ubuntu-24.04' }}
     timeout-minutes: 60
-    # These cases use fixed gateway ports; finish cleanup before another run starts.
-    concurrency:
-      group: live-hcl-${{ matrix.case }}
-      cancel-in-progress: false
+    # The cases use fixed gateway ports. Each job has a runner and Docker engine
+    # to itself, so runs of one case don't collide; a job waits in the runner
+    # queue. A concurrency group would let a newer run cancel a waiting job.
     env:
       TEST_PLATFORM: ${{ needs.cases.outputs.platform }}
       NEMOCLAW_HCL_CASE: ${{ matrix.case }}
@@ -238,7 +216,52 @@ jobs:
           persist-credentials: false
       - if: needs.cases.outputs.platform == 'linux_amd64'
         uses: ./.github/actions/containerd-store
-      - if: inputs.tests == ''
+      # The agent images the case binds: Hermes only when its document names
+      # it. A case without Hermes downloads CI / Bundle's OpenClaw-only live
+      # images artifact, the live-images input's name plus -openclaw, which is
+      # about a third smaller: the GPU runner downloads artifacts slowly.
+      - name: Select the case's agent images
+        id: agents
+        run: |
+          if grep -qs 'nc-fabric-hermes@' "crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"; then
+            printf 'names=openclaw hermes\nsuffix=\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'names=openclaw\nsuffix=-openclaw\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check the Station runner
+        if: inputs.target == 'dgx-station'
+        run: |
+          test "$(uname -m)" = aarch64
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = ubuntu:24.04
+          nvidia-smi --query-gpu=name --format=csv,noheader | grep -q GB300
+          docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter.v1
+      # The runner's Buildx starts a runtime image's base pull only after the
+      # supervisor target finishes. A build of just the base, started here,
+      # pulls the same digest into BuildKit while the job downloads its inputs
+      # and the bake builds the supervisor; its RUN makes BuildKit unpack the
+      # layers too. The bake's FROM then finds the base in BuildKit's cache, or
+      # joins the pull still in progress. A docker pull would leave BuildKit
+      # to unpack the base again after the supervisor, about 95 s for vLLM.
+      - name: Start pulling the runtime images' bases
+        env:
+          RUNTIMES: ${{ join(fromJSON(needs.cases.outputs.runtimes)[matrix.case], ' ') }}
+        run: |
+          read -ra names <<< "$RUNTIMES"
+          {
+            for name in "${names[@]}"; do
+              { sed -n '1{/^# syntax=/p}; /^FROM /p' "image/$name/Dockerfile"; echo 'RUN true'; } |
+                docker buildx build --quiet --output type=cacheonly - &&
+                echo "Pulled the $name base after ${SECONDS}s."
+            done
+            touch "$RUNNER_TEMP/base-pull.done"
+          } > "$RUNNER_TEMP/base-pull.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/base-pull.pid"
+      - if: inputs.target == 'dgx-station'
+        uses: ./.github/actions/hcl-candidate
+        with:
+          platform: ${{ needs.cases.outputs.platform }}
+      - if: inputs.tests == '' && inputs.target != 'dgx-station'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.CANDIDATE }}
@@ -256,7 +279,7 @@ jobs:
       - if: inputs.tests != '' && inputs.live-images-commit == ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ inputs.live-images }}
+          name: ${{ inputs.live-images }}${{ steps.agents.outputs.suffix }}
           path: .build/ci
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -268,10 +291,16 @@ jobs:
           COMMIT: ${{ inputs.live-images-commit }}
           PULL_TOKEN: ${{ github.token }}
           RUNTIMES: ${{ join(fromJSON(needs.cases.outputs.runtimes)[matrix.case], ' ') }}
+          AGENTS: ${{ steps.agents.outputs.names }}
+          SUFFIX: ${{ steps.agents.outputs.suffix }}
         run: |
+          read -ra agent_names <<< "$AGENTS"
           if [[ -z $TESTS ]]; then
-            tar -xf "$RUNNER_TEMP/candidate.tar"
-            docker load -i .build/agents.tar
+            # A Station case built the candidate in this job.
+            if [[ $TARGET != dgx-station ]]; then
+              tar -xf "$RUNNER_TEMP/candidate.tar"
+              docker load -i .build/agents.tar
+            fi
           else
             # As the E2E platform workflow's hosted HCL jobs load them.
             tar -xf .build/ci/bundle.tar
@@ -281,14 +310,14 @@ jobs:
             # only in the repository that holds the image.
             if [[ -n $COMMIT ]]; then
               printf '%s\n' "$PULL_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-              for name in openclaw hermes; do
+              for name in "${agent_names[@]}"; do
                 docker pull --quiet "ghcr.io/nvidia/nemoclaw/v1-ci:$name-$COMMIT-${TEST_PLATFORM#linux_}"
                 docker tag "ghcr.io/nvidia/nemoclaw/v1-ci:$name-$COMMIT-${TEST_PLATFORM#linux_}" "nc-fabric:$name"
               done
               docker logout ghcr.io
             else
-              zstd -d -c -q .build/ci/live-images.tar.zst | docker load
-              for name in openclaw hermes; do docker tag "nc-live-images:$name" "nc-fabric:$name"; done
+              zstd -d -c -q ".build/ci/live-images$SUFFIX.tar.zst" | docker load
+              for name in "${agent_names[@]}"; do docker tag "nc-live-images:$name" "nc-fabric:$name"; done
             fi
           fi
           # A case builds the model runtime images its services run, from the
@@ -296,7 +325,6 @@ jobs:
           tar -xf "$RUNNER_TEMP/image-sources.tar"
           read -ra runtimes <<< "$RUNTIMES"
           NEMOCLAW_HCL_RUN="$RUNNER_TEMP/hcl"
-          bake_args=()
           bindings=()
           document="crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
           if [[ $TARGET == dgx-station ]]; then
@@ -312,7 +340,6 @@ jobs:
               -e 's#ff433f5493e25d631c9f12b5d55c674229923d02#da5b2650a835292c678994a1fa3fb653250fb508#'
               -e 's#nemotron-3-super#nemotron-3.5-super-vl#g'
             )
-            bake_args+=(--set vllm.args.VLLM_IMAGE=vllm/vllm-openai@sha256:0d69205f3227e47b750b05789f117abbd929b67eccc46060e0d22ce4021c0318)
             cp -a "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_HCL_RUN/bundle"
             cp -L .build/e2e "$NEMOCLAW_HCL_RUN/e2e"
             {
@@ -321,8 +348,12 @@ jobs:
               echo "NEMOCLAW_HCL_PERSISTENT=true"
             } >> "$GITHUB_ENV"
           fi
-          if (( ${#runtimes[@]} )); then (umask 022; docker buildx bake "${runtimes[@]}" "${bake_args[@]}"); fi
-          docker image inspect nc-fabric:openclaw nc-fabric:hermes > /dev/null
+          if (( ${#runtimes[@]} )); then
+            (umask 022; docker buildx bake "${runtimes[@]}")
+            until [[ -e $RUNNER_TEMP/base-pull.done ]] || ! kill -0 "$(< "$RUNNER_TEMP/base-pull.pid")" 2> /dev/null; do sleep 1; done
+            cat "$RUNNER_TEMP/base-pull.log"
+          fi
+          for name in "${agent_names[@]}"; do docker image inspect "nc-fabric:$name" > /dev/null; done
           for runtime in "${runtimes[@]}"; do docker image inspect "nc-prototype-$runtime:rust-v1" > /dev/null; done
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
           # Pin this run's images and give it a fresh deployment identity; plan rejects an unbound image.

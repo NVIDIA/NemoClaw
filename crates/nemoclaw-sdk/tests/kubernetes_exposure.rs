@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! A managed Kubernetes gateway published through its chart's own NodePort
-//! Service, at the endpoint clients dial.
+//! A managed Kubernetes gateway published at the endpoint clients dial,
+//! through its chart's own NodePort Service or, on OpenShift, its chart's
+//! pass-through Route.
 
 use nemoclaw_sdk::{
     compile::{Generations, compile_runtime},
@@ -9,7 +10,15 @@ use nemoclaw_sdk::{
 };
 use serde_json::{Value, json};
 
-fn input(endpoint: &str, expose: bool) -> Value {
+fn node_port() -> Option<Value> {
+    Some(json!({"service": {"type": "NodePort"}}))
+}
+
+fn route() -> Option<Value> {
+    Some(json!({"route": {}}))
+}
+
+fn input(endpoint: &str, expose: Option<Value>) -> Value {
     let document =
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut input = serde_json::to_value(document).unwrap();
@@ -24,11 +33,17 @@ fn input(endpoint: &str, expose: bool) -> Value {
             "authentication": {"profile": "development"}
         }
     });
-    if expose {
-        input["spec"]["gateway"]["kubernetes"]["expose"] = json!({"service": {"type": "NodePort"}});
+    if let Some(expose) = expose {
+        input["spec"]["gateway"]["kubernetes"]["expose"] = expose;
     }
     input["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         json!({"env": "TEST_IMAGE_METADATA"});
+    input
+}
+
+/// The same input with a managed OpenShift gateway.
+fn openshift(mut input: Value) -> Value {
+    input["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
     input
 }
 
@@ -39,12 +54,17 @@ fn parse(input: &Value) -> Result<Document, String> {
 #[test]
 fn an_exposed_endpoint_names_the_host_and_port_clients_dial() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
-    // Kubernetes checks the port against the cluster's node-port range.
-    for endpoint in [
-        "https://gateway.agents.example.com:30851",
-        "https://192.0.2.10:443",
+    // Kubernetes checks the port against the cluster's node-port range, and
+    // an OpenShift Route serves at whatever port the cluster's router does.
+    for accepted in [
+        input("https://gateway.agents.example.com:30851", node_port()),
+        input("https://192.0.2.10:443", node_port()),
+        openshift(input("https://gateway.apps.example.com:443", route())),
+        openshift(input(
+            "https://gateway.apps.example.com:8443",
+            Some(json!({"route": {"annotations": {"haproxy.router.openshift.io/timeout": "1h"}}})),
+        )),
     ] {
-        let accepted = input(endpoint, true);
         assert!(validator.is_valid(&accepted), "schema refused {accepted}");
         let document = parse(&accepted).unwrap();
         assert_eq!(
@@ -59,36 +79,56 @@ fn an_exposed_endpoint_names_the_host_and_port_clients_dial() {
 #[test]
 fn exposure_rules_refuse_documents_with_the_rule_they_break() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
-    let mut load_balancer = input("https://gateway.agents.example.com:443", true);
+    let mut load_balancer = input("https://gateway.agents.example.com:443", node_port());
     load_balancer["spec"]["gateway"]["kubernetes"]["expose"]["service"]["type"] =
         json!("LoadBalancer");
     for (refused, rule) in [
         // Without exposure, providers forward a loopback port.
         (
-            input("https://gateway.agents.example.com:30851", false),
+            input("https://gateway.agents.example.com:30851", None),
             "127.0.0.1",
         ),
         (
-            input("http://gateway.agents.example.com:30851", true),
+            input("http://gateway.agents.example.com:30851", node_port()),
             "lowercase host",
         ),
         (
-            input("https://gateway.agents.example.com", true),
+            input("https://gateway.agents.example.com", node_port()),
             "lowercase host",
         ),
         (
-            input("https://Gateway.example.com:30851", true),
+            input("https://Gateway.example.com:30851", node_port()),
             "lowercase host",
         ),
         // The chart's Service can't take a load balancer's settings yet.
         (load_balancer, "expose.service.type"),
+        // Only OpenShift serves Routes; other clusters publish through the
+        // Service.
+        (
+            input("https://gateway.apps.example.com:443", route()),
+            "expose.service",
+        ),
+        // The Route's host is the endpoint's, and clients send no SNI host
+        // name for an IP address.
+        (
+            openshift(input("https://192.0.2.10:443", route())),
+            "DNS name",
+        ),
+        // One exposure publishes the gateway.
+        (
+            openshift(input(
+                "https://gateway.apps.example.com:443",
+                Some(json!({"service": {"type": "NodePort"}, "route": {}})),
+            )),
+            "kubernetes.expose",
+        ),
     ] {
         assert!(!validator.is_valid(&refused), "schema accepted {refused}");
         let error = parse(&refused).expect_err("parser accepted an input the schema refuses");
         assert!(error.contains(rule), "{error}");
     }
     // The endpoint's address policy refuses hosts no client may dial.
-    parse(&input("https://169.254.169.254:30851", true)).unwrap_err();
+    parse(&input("https://169.254.169.254:30851", node_port())).unwrap_err();
 }
 
 fn chart_values(document: &Value) -> Value {
@@ -123,17 +163,39 @@ fn the_chart_publishes_an_exposed_gateway_at_its_endpoint() {
             443,
         ),
     ] {
-        let values = chart_values(&input(endpoint, true));
+        let values = chart_values(&input(endpoint, node_port()));
         assert_eq!(
             values["service"],
             json!({"type": "NodePort", "nodePort": port, "metricsPort": 0})
         );
         assert_eq!(values["pkiInitJob"][field], json!([host]));
+        assert!(values.get("openshiftRoute").is_none(), "{values}");
     }
     // The chart's certificate always names 127.0.0.1.
-    let values = chart_values(&input("https://127.0.0.1:30851", true));
+    let values = chart_values(&input("https://127.0.0.1:30851", node_port()));
     assert_eq!(values["pkiInitJob"], json!({"enabled": true}));
     // Without exposure, the chart keeps its ClusterIP Service and metrics.
-    let values = chart_values(&input("https://127.0.0.1:17671", false));
+    let values = chart_values(&input("https://127.0.0.1:17671", None));
+    assert!(values.get("service").is_none(), "{values}");
+}
+
+/// On OpenShift, the chart's pass-through Route publishes the gateway at the
+/// endpoint's host with the authored annotations, and the certificate names
+/// that host. The chart's Service stays in the cluster.
+#[test]
+fn the_chart_routes_an_exposed_openshift_gateway_at_its_endpoint() {
+    let annotations = json!({"haproxy.router.openshift.io/timeout": "1h"});
+    let values = chart_values(&openshift(input(
+        "https://gateway.apps.example.com:443",
+        Some(json!({"route": {"annotations": annotations}})),
+    )));
+    assert_eq!(
+        values["openshiftRoute"],
+        json!({"enabled": true, "host": "gateway.apps.example.com", "annotations": annotations})
+    );
+    assert_eq!(
+        values["pkiInitJob"]["serverDnsNames"],
+        json!(["gateway.apps.example.com"])
+    );
     assert!(values.get("service").is_none(), "{values}");
 }

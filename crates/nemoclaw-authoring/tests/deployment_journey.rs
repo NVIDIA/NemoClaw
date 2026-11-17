@@ -290,5 +290,5 @@ fn single_sandbox_examples_offer_existing_sdk_values_without_changing_them() {
         );
         covered += 1;
     }
-    assert_eq!(covered, 43);
+    assert_eq!(covered, 44);
 }

@@ -64,25 +64,38 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             "limits": {"cpu": "1", "memory": "2Gi"},
         },
     });
-    // An exposed gateway's own Service publishes the endpoint's port on every
-    // node and forwards it to the gateway's TLS listener, so TLS and client
-    // certificates pass through unchanged. The plaintext metrics port stays
-    // unpublished: at 0, the chart serves no metrics. The certificate names
-    // the endpoint host clients dial; the chart's always names 127.0.0.1 and
-    // in-cluster names.
+    // An exposed gateway's own Service or Route publishes the endpoint and
+    // forwards to the gateway's TLS listener, so TLS and client certificates
+    // pass through unchanged. The certificate names the endpoint host clients
+    // dial; the chart's always names 127.0.0.1 and in-cluster names.
     if let Some(expose) = &target.expose {
         let endpoint = url::Url::parse(&spec.settings.endpoint)
             .map_err(|_| Error::State("invalid managed Kubernetes endpoint"))?;
-        let port = endpoint
-            .port_or_known_default()
-            .ok_or(Error::State("managed Kubernetes endpoint has no port"))?;
-        values["service"] = json!({
-            "type": expose.service.service_type.as_str(),
-            "nodePort": port,
-            // NVIDIA/OpenShell#5478 replaces this with metrics.enabled: false;
-            // the chart contract's exposed scenario catches the pin bump.
-            "metricsPort": 0,
-        });
+        // The Service publishes the endpoint's port on every node. The
+        // plaintext metrics port stays unpublished: at 0, the chart serves no
+        // metrics.
+        if let Some(service) = &expose.service {
+            let port = endpoint
+                .port_or_known_default()
+                .ok_or(Error::State("managed Kubernetes endpoint has no port"))?;
+            values["service"] = json!({
+                "type": service.service_type.as_str(),
+                "nodePort": port,
+                // NVIDIA/OpenShell#5478 replaces this with metrics.enabled:
+                // false; the chart contract's exposed scenario catches the pin
+                // bump.
+                "metricsPort": 0,
+            });
+        }
+        // The Route passes TLS through the cluster's router by SNI to the
+        // chart's ClusterIP Service, at whatever port the router serves.
+        if let Some(route) = &expose.route {
+            values["openshiftRoute"] = json!({
+                "enabled": true,
+                "host": endpoint.host_str(),
+                "annotations": route.annotations,
+            });
+        }
         match endpoint.host() {
             Some(url::Host::Domain(name)) => {
                 values["pkiInitJob"]["serverDnsNames"] = json!([name]);

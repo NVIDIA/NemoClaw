@@ -6,8 +6,8 @@ use super::*;
 impl JourneyState {
     /// Resolve questions and readiness against the observations gathered so far.
     /// Endpoint models remain suggestions, while target observations can block
-    /// readiness. Credential availability is informational and reported only
-    /// for checked references; an empty sheet leaves compatibility unverified.
+    /// readiness. Credential availability is the review's to report; an empty
+    /// sheet leaves compatibility unverified.
     pub fn resolve_with_observations(
         &self,
         capabilities: &Capabilities,
@@ -69,28 +69,6 @@ impl JourneyState {
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
         };
-        // A reference that was never checked has no state to report. The
-        // observation's reason is not shown; only its status is.
-        for reference in document.credential_names() {
-            let Some(credential) = observations.get(&CredentialRequest {
-                reference: reference.into(),
-            }) else {
-                continue;
-            };
-            let (state, guidance, missing) = match credential.status {
-                ObservationStatus::Available => ("is set", String::new(), false),
-                ObservationStatus::Unavailable => ("is not set", missing_guidance(reference), true),
-                ObservationStatus::Unknown => {
-                    ("could not be read", missing_guidance(reference), true)
-                }
-            };
-            resolution
-                .credentials
-                .push(crate::journey_state::CredentialNote {
-                    text: format!("{reference} {state} in this environment.{guidance}"),
-                    missing,
-                });
-        }
         let Some(request) = crate::inference_request_for_document(document, self.current_route())
             .ok()
             .flatten()
@@ -293,16 +271,4 @@ fn catalog_credential_note(
     request.credential_env.as_ref().map(|reference| format!(
         "Model catalog needs credential {reference}. Set it to see model suggestions and use bulk acceptance, or enter a model identifier to continue individually."
     ))
-}
-
-/// What to do about a credential that is missing, in terms a newcomer can act on.
-fn missing_guidance(reference: &str) -> String {
-    let mut guidance =
-        format!(" Run `export {reference}=...` before `nemoclaw plan`, or plan asks you for it.");
-    if let Some(url) = crate::ProviderPreset::for_credential_reference(reference)
-        .and_then(crate::ProviderPreset::key_url)
-    {
-        guidance.push_str(&format!(" Get a key at {url}."));
-    }
-    guidance
 }

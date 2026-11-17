@@ -73,6 +73,7 @@ No CI job has an OpenShift cluster, and kind can't stand in for one: a managed `
 The `openshift-oidc` scenario deploys the agents of `kind-kubernetes-oidc` with the `openshift` runtime profile, and runs by hand, for example on OpenShift Local.
 OpenShift writes the namespace's UID range, so its test file supplies none, and `restricted-v2` admits the gateway as the range's first UID and group.
 The gateway can read its signing key only with that group, so the apply and the replies show that OpenShift assigned it.
+The chart's pass-through Route publishes the gateway at its endpoint; apply goes through the port-forward, and the probe dials the endpoint's host through the cluster's router, so each reply also shows that the Route reaches the gateway and that its certificate names the host.
 
 Prepare the cluster as its operator would:
 
@@ -81,7 +82,7 @@ Prepare the cluster as its operator would:
   For OpenShift's internal registry, copy the image through the registry's route into a namespace of its own, for example with `oc image mirror`, which keeps its digest, and bind `image-registry.openshift-image-registry.svc:5000/<namespace>/agent@<digest>`.
 - A login that can pull the image, for `TF_VAR_pull_credentials`: for the internal registry, a cluster administrator's name and a token from `oc whoami -t`.
 
-Bind a copy of `cases/openshift-oidc.yaml` to the run: a fresh `uid`, which is also the token audience; a free endpoint port; a new namespace, which also names the stub model's and the issuer's; the cluster's context; and the image.
+Bind a copy of `cases/openshift-oidc.yaml` to the run: a fresh `uid`, which is also the token audience; an endpoint host that the cluster's router serves, such as one under `apps-crc.testing` on OpenShift Local, at port 443; a new namespace, which also names the stub model's and the issuer's; the cluster's context; and the image.
 Then run from `crates/nemoclaw-e2e`:
 
 ```sh
@@ -124,10 +125,10 @@ Run blocks call these modules:
 | `docker-openclaw-vllm-shared` | Live / HCL, NVIDIA GPU runner | Two OpenClaw agents sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
 | `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, and OpenClaw's terminal UI through `openshell sandbox exec --tty`, on a stub model that requires the run's key, with replies that name the skills each harness offers from its mounted volumes, and Hermes's dashboard opening a skill as its volume holds it; in each sandbox, a writable workspace, skill volumes that are writable or read-only as mounted, and no model key in the environment; in Hermes's sandbox, a pseudo-terminal; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused. Then a change to each agent's instructions, Hermes's first, replaces only that agent's sandbox: the agent answers from its new runtime, the sibling keeps its binding, and the new sandbox keeps the caller's volumes and, for Hermes, its kept native home ([Agent Interfaces](#agent-interfaces)). |
-| `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, and a workspace file on a named volume that survives the destroy and redeploy. |
+| `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, a workspace file on a named volume that survives the destroy and redeploy, and sandbox requests that an external middleware allows, denies, fails on (blocked by the fail-closed binding), or, for an excluded destination, never sees. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
 | `kind-kubernetes-oidc` | `cargo ci live-kind` | Two agents [on kind](#kubernetes-gateway-without-the-helm-cli) in a namespace with OpenShift's UID range, from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens and that the chart's NodePort Service publishes at the node's address; apply goes through the port-forward, and each agent answers the stub's reply through the published address. |
-| `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` runtime profile [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`; each answers with the stub's reply. |
+| `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` runtime profile [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`, behind the chart's pass-through Route; each answers with the stub's reply through the Route's host. |
 
 Every scenario checks the same successful path:
 
@@ -273,11 +274,14 @@ To run one of them by hand, supply its inputs as its section describes.
 The `docker-dummy` [HCL E2E scenario](#hcl-e2e-scenarios) deploys an image derived from the [reference dummy image](agent-image-maintenance.md#qualify-the-reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
 Its gateway allows driver configuration, and its sandbox mounts a named volume on `/sandbox/workspace`, as [Keep Agent Files on Mounted Volumes](../../docs/build-deploy/state.md#keep-agent-files-on-mounted-volumes) describes; the `tests/e2e/hcl/volume` module creates the volume before the first apply and gives it to the agent image's user, UID 10001.
-The agent must reply with the configured `reply` setting, the `tests/e2e/hcl/command` module must write a marker file in the workspace as that user, a plan must report no changes, and destroy must keep only the gateway's storage.
+The agent must reply with the configured `reply` setting, and the `tests/e2e/hcl/command` module must write a marker file in the workspace as that user.
+The gateway registers an external middleware that `hcl_live::case` serves on the host, beside an HTTP recorder that counts the requests it receives; the sandbox's explicit policy permits the recorder at the gateway network's host address, which the middleware binding selects, and at the default Docker bridge's gateway, which the binding excludes.
+From the sandbox, a request the middleware allows must reach the recorder once, a request it denies must return 403 without reaching the recorder, a request on which the middleware returns a service error must also return 403 without reaching the recorder because the binding is `fail_closed`, and a request to the excluded address must reach the recorder without reaching the middleware.
+A plan must then report no changes, and destroy must keep only the gateway's storage.
 A second apply must then reuse that storage, refreshing rather than creating it again, and run the gateway in a new container; the new sandbox must read the marker from the kept volume, and the agent must reply again before a final destroy.
 It requests no inference and does not qualify a production adapter.
 
-`cargo ci live-docker` binds `cases/docker-dummy.yaml` to a fresh UID, free gateway port and subnet, a volume name with the UID, and the derived image by digest, then runs `hcl_live::case` with `NEMOCLAW_HCL_DOCUMENT` naming the bound copy.
+`cargo ci live-docker` binds `cases/docker-dummy.yaml` to a fresh UID, free gateway port and subnet, a volume name with the UID, the derived image by digest, free ports for the middleware and recorder, and the default bridge's gateway address, then runs `hcl_live::case` with `NEMOCLAW_HCL_DOCUMENT` naming the bound copy.
 After the suite, it removes every resource labeled with the document's UID, which includes the volume, and the gateway's sandbox objects; when the tests pass, it fails if OpenShell left a sandbox object.
 To run the scenario by hand, bind the template the same way and follow [HCL E2E Scenarios](#hcl-e2e-scenarios) with `NEMOCLAW_HCL_CASE=docker-dummy` and `NEMOCLAW_HCL_DOCUMENT=/absolute/path/to/bound.yaml`.
 

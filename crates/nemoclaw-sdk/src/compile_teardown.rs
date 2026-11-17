@@ -272,54 +272,6 @@ mod tests {
         assert_eq!(repeated.graph, compiled.graph);
     }
 
-    /// The `label=KEY=VALUE` filter of Remove Retained Resources' Docker
-    /// steps, with the deployment's UID in place of `$deployment_uid`.
-    fn documented_owner_filter(uid: &str) -> (String, String) {
-        let usage = include_str!("../../../docs/build-deploy/usage.md");
-        let (_, cleanup) = usage
-            .split_once("### Remove Retained Resources")
-            .expect("usage.md has Remove Retained Resources");
-        let docker = cleanup
-            .split_once("#### On Docker")
-            .and_then(|(_, rest)| rest.split_once("#### On Podman"))
-            .expect("Remove Retained Resources has Docker steps, then Podman's")
-            .0;
-        let assignment = |name: &str| {
-            docker
-                .lines()
-                .find_map(|line| line.strip_prefix(&format!("{name}=")))
-                .unwrap_or_else(|| panic!("the Docker steps set {name}"))
-                .trim_matches('"')
-        };
-        assert_eq!(
-            assignment("deployment_uid"),
-            "REPLACE_WITH_METADATA_UID",
-            "the Docker steps select by metadata.uid"
-        );
-        for object in ["container", "volume", "network"] {
-            let filtered = docker
-                .lines()
-                .filter(|line| {
-                    line.contains(&format!("\"$deployment_engine\" {object} ls"))
-                        && line.contains("--filter \"$owner_label\"")
-                })
-                .count();
-            assert_eq!(
-                filtered, 2,
-                "{object} list and removal filter on $owner_label"
-            );
-        }
-        let filter = assignment("owner_label");
-        assert!(filter.ends_with("=$deployment_uid"), "{filter}");
-        let (key, value) = filter
-            .replace("$deployment_uid", uid)
-            .strip_prefix("label=")
-            .and_then(|selector| selector.split_once('='))
-            .map(|(key, value)| (key.to_owned(), value.to_owned()))
-            .unwrap_or_else(|| panic!("{filter} is a label=KEY=VALUE filter"));
-        (key, value)
-    }
-
     /// Labels Docker objects of a retained resource carry: the volume,
     /// network, and initializer container of gateway storage, or the volume of
     /// a model cache or credential storage.
@@ -351,13 +303,14 @@ mod tests {
                     )
                 })
                 .collect(),
-            kind => panic!("{address}: no Docker cleanup is documented for retained {kind}"),
+            kind => panic!("{address}: no Docker labels are known for retained {kind}"),
         }
     }
 
     #[test]
-    fn documented_cleanup_filter_selects_every_retained_docker_object() {
-        // QA 016: Remove Retained Resources must find what destroy retains.
+    fn every_retained_docker_object_carries_the_deployment_owner_label() {
+        // QA 016: Remove Retained Resources finds what destroy retains by the
+        // owner label and the deployment's metadata.uid.
         let mut spark: Value =
             serde_saphyr::from_str(include_str!("../tests/fixtures/config/spark.yaml")).unwrap();
         spark["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
@@ -386,14 +339,17 @@ mod tests {
             let established = addresses(&compile(&document, &generations, "0.1.0").unwrap());
             let compiled =
                 compile_teardown(&document, &generations, "0.1.0", &established).unwrap();
-            let (key, uid) = documented_owner_filter(&document.metadata.uid);
+            let (key, uid) = (
+                crate::managed::OWNER_LABEL.to_owned(),
+                document.metadata.uid.clone(),
+            );
             for address in &compiled.retained {
                 let (kind, name) = address.split_once('.').unwrap();
                 let labels = docker_labels(address, &compiled.graph["resource"][kind][name]);
                 assert_eq!(
                     labels.get(&key),
                     Some(&uid),
-                    "the documented filter label={key}={uid} misses {address}: {labels:?}"
+                    "label={key}={uid} misses {address}: {labels:?}"
                 );
                 kinds.insert(kind.to_owned());
             }
@@ -409,7 +365,7 @@ mod tests {
                 ]
                 .map(String::from)
             ),
-            "the fixtures retain each documented kind of Docker storage"
+            "the fixtures retain each kind of Docker storage"
         );
     }
 

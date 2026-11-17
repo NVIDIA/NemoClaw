@@ -117,22 +117,7 @@ impl<'a> QuestionResolver<'a> {
     }
 
     fn resolution(&self, work: ResolutionWork, assessment: PartialAssessment) -> JourneyResolution {
-        // What the SDK fills in for each SDK field omission left unset.
-        let defaults = assessment
-            .document()
-            .and_then(|document| serde_json::to_value(document).ok())
-            .map(|document| {
-                work.omitted
-                    .iter()
-                    .filter(|field| {
-                        field.starts_with('/') && self.authored.values.pointer(field).is_none()
-                    })
-                    .filter_map(|field| Some((field.clone(), document.pointer(field)?.clone())))
-                    .collect()
-            })
-            .unwrap_or_default();
         JourneyResolution {
-            defaults,
             questions: work.questions,
             omitted: work.omitted,
             kept: {
@@ -142,7 +127,6 @@ impl<'a> QuestionResolver<'a> {
             },
             warnings: work.warnings,
             information: self.catalog_information(),
-            credentials: Vec::new(),
             unverified: work.unverified,
             assessment,
             target_required: !self.definition.target_prerequisites.is_empty(),

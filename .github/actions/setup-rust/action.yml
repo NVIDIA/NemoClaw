@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 name: Set up Rust
-description: Install pinned protoc and cargo-nextest, and restore third-party Rust artifacts.
+description: Install rustup where it is missing, pinned protoc and cargo-nextest, and restore third-party Rust artifacts.
 inputs:
   platform:
     description: Bundle platform.
@@ -20,6 +20,27 @@ inputs:
 runs:
   using: composite
   steps:
+    # A runner without rustup, such as a leased Colossus machine, gets the
+    # rustup-init that versions.json pins, installed for the runner user without
+    # changing shell profiles, and then the toolchain rust-toolchain.toml names.
+    # A runner that has rustup keeps it. Before rust-cache, which runs rustc.
+    - name: Install rustup when the runner lacks it
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        command -v rustup > /dev/null && exit 0
+        pin() { jq -er --arg platform "$PLATFORM" ".platforms[\$platform].rustupInit.$1" versions.json; }
+        url=$(pin url) && sha256=$(pin sha256) ||
+          { echo "versions.json pins no rustup-init for $PLATFORM" >&2; exit 1; }
+        installer="$RUNNER_TEMP/rustup-init"
+        curl --proto '=https' --tlsv1.2 -fsSL "$url" -o "$installer"
+        echo "$sha256  $installer" | sha256sum -c --quiet -
+        chmod +x "$installer"
+        "$installer" -y --no-modify-path --default-toolchain none
+        bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+        echo "$bin" >> "$GITHUB_PATH"
+        "$bin/rustup" toolchain install --no-self-update
     - name: Restore verified downloads
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
