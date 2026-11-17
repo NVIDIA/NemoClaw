@@ -556,6 +556,39 @@ describe("fixed catalog vLLM installs", () => {
     },
   );
 
+  it.each(["automatic", "picker"] as const)(
+    "keeps the reported 64 GB Spark recipe when extra serve arguments are set through %s selection (#14016)",
+    async (mode) => {
+      process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = '["--max-num-seqs","2","--disable-log-requests"]';
+      const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+      const readinessReports = vllmInstallTestReadinessAtMemory(profile, 63_082_733_568);
+      await withActualSelectionGuard(readinessReports);
+      mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: mode === "automatic",
+        promptFn: vi.fn(async (question: string) => (question.includes("Continue") ? "y" : "1")),
+        readinessReports,
+      });
+
+      expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
+      expect(spies.logSpy).toHaveBeenCalledWith(
+        "    Selected for your hardware: Qwen3.6 35B-A3B NVFP4 on one 64 GB DGX Spark",
+      );
+      expect(spies.logSpy).toHaveBeenCalledWith("    Context limit: 32768 tokens");
+      expect(spies.logSpy).toHaveBeenCalledWith(
+        "    Extra serve args: 3 token(s) from NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
+      );
+      const command = mocks.dockerRunDetached.mock.calls[0]![0].at(-1) as string;
+      expect(command).toContain("--max-model-len 32768");
+      expect(command).toContain("--gpu-memory-utilization 0.5");
+      expect(command).toContain("--safetensors-load-strategy lazy");
+      expect(command).not.toContain("--load-format fastsafetensors");
+      expect(command).toMatch(/--max-num-seqs 1 .*--max-num-seqs 2 --disable-log-requests/u);
+    },
+  );
+
   it("resumes a checkpointed model under an explicitly selected serving preset", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const modelIntent = "muse-glimmer-30b";
