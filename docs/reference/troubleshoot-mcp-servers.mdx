@@ -432,6 +432,8 @@ $$nemoclaw <sandbox> mcp status <server> --tools
 ```
 
 The refresh preserves all other policy fields, including denied tools, and retains the existing agent configuration and credentials.
+If another managed registration uses the same hostname and port, refresh refuses DNS answers that differ from its pins before changing policy.
+Follow [Refresh Shared-Host Registrations](../manage-sandboxes/mcp-servers/manage-mcp-servers#refresh-shared-host-registrations) to coordinate that change.
 Successful tool discovery verifies recovery.
 Status, restart, rebuild, and restore preserve the live pins.
 If refresh cannot confirm a write, inspect status and the live OpenShell policy before retrying.
@@ -444,17 +446,8 @@ Retry status after DNS recovers.
 
 If status reports `private address pins: drift`, review the endpoint address change before updating access.
 Status, restart, rebuild, and restore do not add new trusted-private addresses.
-Remove and re-add the server with the same trusted host to perform a new preflight and record new pins:
-
-```bash
-export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
-$$nemoclaw <sandbox> mcp remove <server>
-$$nemoclaw <sandbox> mcp add <server> \
-  --url https://mcp-host.corp.example/mcp \
-  --env LOCAL_MCP_TOKEN \
-  --trusted-private-host mcp-host.corp.example
-unset LOCAL_MCP_TOKEN
-```
+Follow [Change Trusted-Private Pins](../manage-sandboxes/mcp-servers/manage-mcp-servers#change-trusted-private-pins) to re-export the credential, remove the registration, clean up its retained provider, and re-add with reviewed pins.
+Confirm that no other sandbox uses the retained provider before deleting it.
 
 A `CONNECT 403` after an address change can mean that OpenShell rejected a current DNS answer outside `allowed_ips`.
 Do not add a provider's complete address range or broaden the policy to bypass the denial.

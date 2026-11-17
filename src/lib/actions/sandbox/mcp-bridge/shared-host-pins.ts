@@ -16,7 +16,7 @@ export type McpSharedHostPinAlignment =
     }
   | {
       ok: false;
-      /** Operator-facing reason the add cannot proceed; the caller reports it as a usage error. */
+      /** Operator-facing reason the operation cannot proceed; the caller reports it as a usage error. */
       message: string;
     };
 
@@ -47,28 +47,23 @@ function describeServers(servers: readonly string[]): string {
   return servers.map((server) => `'${server}'`).join(", ");
 }
 
-/**
- * OpenShell rejects a sandbox policy when two endpoints share a host and port
- * but list different `allowed_ips`. A host that publishes several DNS addresses
- * can answer each `mcp add` differently, so a second server on the same host
- * and port would be pinned to an address set that disagrees with the first.
- *
- * Keep the new server's pins identical to the ones already recorded for that
- * host and port. Fail before any mutation when the recorded pins already
- * disagree with each other, or when they cannot be reused safely.
+/** Keep endpoints on one host and port on a validated pin set before mutation.
+ * Adds may reuse public sibling pins; refreshes must not diverge from them.
  */
-export function alignMcpAddTargetWithSharedHostPins(options: {
+export function alignMcpTargetWithSharedHostPins(options: {
+  operation: "add" | "refresh";
   sandboxName: string;
   server: string;
   url: string;
   target: McpBridgeTargetValidation;
   bridges: Readonly<Record<string, McpSourceEntry>>;
 }): McpSharedHostPinAlignment {
-  const { sandboxName, server, url, target, bridges } = options;
+  const { operation, sandboxName, server, url, target, bridges } = options;
+  const action = operation === "add" ? "added" : "refreshed";
   const authority = endpointAuthority(url);
   if (!authority) return { ok: true, target, reusedFrom: [] };
 
-  const recovery = `Before removing registrations with \`nemoclaw ${sandboxName} mcp remove <server>\`, re-export the affected credential variables. Removal preserves providers. Before re-adding, perform explicit provider cleanup after confirming no other sandbox uses them. Follow https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential before adding the servers again.`;
+  const recovery = `Before removing registrations with \`nemoclaw ${sandboxName} mcp remove <server>\`, re-export the affected credential variables. Removal preserves providers. Perform explicit provider cleanup only after confirming no other sandbox uses them. Follow https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential before adding the servers again.`;
   const groups = new Map<string, PinGroup>();
   for (const entry of Object.values(bridges)) {
     if (
@@ -95,7 +90,7 @@ export function alignMcpAddTargetWithSharedHostPins(options: {
       .join("; ");
     return {
       ok: false,
-      message: `MCP server '${server}' was not added: managed servers on ${authority} already record different address pins (${recorded}). OpenShell rejects endpoints that share a host and port but list different allowed IPs. ${recovery}`,
+      message: `MCP server '${server}' was not ${action}: managed servers on ${authority} already record different address pins (${recorded}). OpenShell rejects endpoints that share a host and port but list different allowed IPs. ${recovery}`,
     };
   }
 
@@ -106,7 +101,14 @@ export function alignMcpAddTargetWithSharedHostPins(options: {
   if (firstGroup.trustedPrivate || target.trustedPrivateHost) {
     return {
       ok: false,
-      message: `MCP server '${server}' was not added: it resolves to ${describePins(requested)} on ${authority}, but ${describeServers(firstGroup.servers)} record${firstGroup.servers.length === 1 ? "s" : ""} ${describePins(firstGroup.pins)}, and OpenShell rejects endpoints that share a host and port but list different allowed IPs. NemoClaw does not reuse or replace trusted-private pins on its own. ${recovery}`,
+      message: `MCP server '${server}' was not ${action}: it resolves to ${describePins(requested)} on ${authority}, but ${describeServers(firstGroup.servers)} record${firstGroup.servers.length === 1 ? "s" : ""} ${describePins(firstGroup.pins)}, and OpenShell rejects endpoints that share a host and port but list different allowed IPs. NemoClaw does not reuse or replace trusted-private pins on its own. ${recovery}`,
+    };
+  }
+
+  if (operation === "refresh") {
+    return {
+      ok: false,
+      message: `MCP server '${server}' was not refreshed: ${authority} is shared with ${describeServers(firstGroup.servers)}, which record ${describePins(firstGroup.pins)}. Refreshing only this server to ${describePins(requested)} would create conflicting address pins. ${recovery}`,
     };
   }
 

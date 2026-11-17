@@ -58,7 +58,7 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { createMcpProviderAdapterBoundary } from "./mcp-bridge-provider-inspection";
-import { alignMcpAddTargetWithSharedHostPins } from "./mcp-bridge/shared-host-pins";
+import { alignMcpTargetWithSharedHostPins } from "./mcp-bridge/shared-host-pins";
 import {
   assertNoAmbiguousMcpCredentialTarget,
   assertNoAmbiguousMcpCredentialTargets,
@@ -634,6 +634,15 @@ export async function refreshMcpBridgePublicPins(
     }
     const url = new URL(normalizeMcpServerUrl(entry.url));
     const target = await preflightMcpServerUrlResolvedTarget(url);
+    const aligned = alignMcpTargetWithSharedHostPins({
+      operation: "refresh",
+      sandboxName,
+      server,
+      url: url.toString(),
+      target,
+      bridges: observed.bridges,
+    });
+    if (!aligned.ok) throw new McpBridgeError(aligned.message, 2);
     assertMcpCredentialBoundaryRuntimeVersion();
     await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
     const provider = await assertMcpProviderRecoverable(entry, runtimeSelection);
@@ -649,7 +658,7 @@ export async function refreshMcpBridgePublicPins(
         "The agent MCP registration changed during public-pin refresh. No policy was changed.",
       );
     }
-    await refreshMcpPublicPolicyPins(sandboxName, entry, target, runtimeSelection);
+    await refreshMcpPublicPolicyPins(sandboxName, entry, aligned.target, runtimeSelection);
     console.log(`  Refreshed public address pins for MCP server '${server}'.`);
   });
 }
@@ -782,7 +791,8 @@ async function addMcpBridgeUnlocked(
     // A host that publishes several addresses can answer each add differently,
     // and OpenShell rejects endpoints that share a host and port but list
     // different allowed IPs. Keep a new server's pins equal to its siblings'.
-    const aligned = alignMcpAddTargetWithSharedHostPins({
+    const aligned = alignMcpTargetWithSharedHostPins({
+      operation: "add",
       sandboxName,
       server: options.server,
       url: normalizedUrl,

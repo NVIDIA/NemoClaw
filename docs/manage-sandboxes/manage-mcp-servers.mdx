@@ -139,20 +139,29 @@ The bare `mcp list` and `mcp status` forms never probe, so they stay fast. Endpo
 
 ## Rotate a Credential
 
-Export the replacement under the same host environment name used by `mcp add`, remove the native registration, and add it again so NemoClaw creates a fresh provider binding:
+Export the replacement under the same host environment name used by `mcp add`, then remove the native registration:
 
 ```bash
 export GITHUB_MCP_TOKEN='replacement-value'
 $$nemoclaw my-sandbox mcp remove github
+```
+
+`remove` deletes the agent-native registration and detaches the exact managed provider, but preserves the provider object.
+Confirm that no sandbox uses that provider before you delete it with `openshell provider delete <provider-name>`.
+Keep the original URL, credential variable name, and any denied-tool or trusted-private options for the replacement.
+Then add the server again to create a fresh provider binding:
+
+```bash
 $$nemoclaw my-sandbox mcp add github \
   --url https://api.githubcopilot.com/mcp/ \
   --env GITHUB_MCP_TOKEN
 unset GITHUB_MCP_TOKEN
 ```
 
-`remove` deletes the agent-native registration and detaches the exact managed provider, but conservatively preserves the provider object. Remove that preserved provider explicitly after confirming no sandbox uses it; then `add` creates a new provider with the replacement credential and reconnects the native registration.
-
-For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`; NemoClaw resolves and records the replacement pins again. For a public entry, `add` resolves the hostname and creates a policy for the current validated public addresses.
+For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`.
+For a public entry, `add` validates current DNS but reuses revalidated sibling pins when another managed server uses the same hostname and port.
+Remove-and-add therefore does not independently refresh shared public pins.
+Refer to [Change Endpoint Pins](#change-endpoint-pins) for pin changes.
 
 The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config. Revoke the old credential upstream after the new add succeeds.
 
@@ -204,6 +213,22 @@ Correct a reported source conflict before retrying.
 If the write cannot be confirmed, inspect `mcp status` and the live OpenShell policy before retrying.
 Successful tool discovery verifies that the endpoint is reachable through its existing credential binding.
 
+### Refresh Shared-Host Registrations
+
+Registrations on one hostname and port must use identical address pins, even when their paths and credentials differ.
+A per-server refresh stops before mutation if its new DNS answers differ from a sibling's recorded pins or the siblings already disagree.
+Adding or re-adding one public registration reuses the sibling pins instead of refreshing them.
+
+To change the shared pin set, plan an interruption for every affected registration.
+Keep each server's original add options and re-export its credential from your secret manager before removal.
+Remove every registration on that hostname and port, and complete the [retained-provider cleanup](#rotate-a-credential) for each one.
+Add the servers again with their original options.
+The first public add records current validated DNS addresses; later adds reuse that set.
+Run `mcp status <server> --tools` for each server and confirm readiness and successful discovery.
+If DNS still differs from the recorded pins, coordinate the endpoint's DNS before repeating the procedure.
+
+### Change Trusted-Private Pins
+
 For a trusted-private server, review every destination change before NemoClaw records new pins. Neither status, restart, rebuild, nor restore changes the recorded address set.
 
 If the endpoint moves to another address, remove and re-add the server:
@@ -211,6 +236,11 @@ If the endpoint moves to another address, remove and re-add the server:
 ```bash
 export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
 $$nemoclaw my-sandbox mcp remove local-tools
+```
+
+Complete the [retained-provider cleanup](#rotate-a-credential), then re-add the server:
+
+```bash
 $$nemoclaw my-sandbox mcp add local-tools \
   --url https://mcp-host.corp.example/mcp \
   --env LOCAL_MCP_TOKEN \
@@ -218,7 +248,9 @@ $$nemoclaw my-sandbox mcp add local-tools \
 unset LOCAL_MCP_TOKEN
 ```
 
-Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set.
+Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. Complete the [retained-provider cleanup](#rotate-a-credential) before re-adding.
+The re-add performs a new DNS preflight and records the reviewed exact address set.
+For registrations sharing a hostname and port, coordinate removal and re-addition for all of them so their reviewed pins agree.
 
 ## Remove a Server
 

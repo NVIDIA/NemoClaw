@@ -102,6 +102,97 @@ describe("source-backed MCP denied-tool policy updates", () => {
     }
   });
 
+  it.each([
+    ["shared public pins", false, false],
+    ["trusted-private sibling", true, false],
+    ["conflicting sibling pins", false, true],
+  ])(
+    "refuses a public-pin refresh that would diverge from %s",
+    async (_label, trustedPrivate, conflicting) => {
+      const sibling: McpSourceEntry = {
+        ...entry,
+        server: "peer",
+        providerName: "alpha-mcp-peer",
+        providerId: "22222222-3333-4444-8555-666666666666",
+        policyName: "mcp-bridge-peer",
+        url: "https://mcp.example.test/peer",
+        env: ["PEER_TOKEN"],
+        ...(trustedPrivate
+          ? { trustedPrivateHost: "mcp.example.test", allowedIps: ["10.20.30.40"] }
+          : {}),
+      };
+      const bridges = {
+        github: entry,
+        peer: sibling,
+        ...(conflicting
+          ? {
+              third: {
+                ...sibling,
+                server: "third",
+                providerName: "alpha-mcp-third",
+                providerId: "33333333-4444-4555-8666-777777777777",
+                policyName: "mcp-bridge-third",
+                url: "https://mcp.example.test/third",
+                env: ["THIRD_TOKEN"],
+                allowedIps: ["9.9.9.9"],
+              },
+            }
+          : {}),
+      };
+      mocks.inspectSourceBridgeState.mockReturnValueOnce({
+        bridges,
+        sources: { native: bridges, legacy: {} },
+      });
+      const lookup = vi
+        .spyOn(dns, "lookup")
+        .mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
+      try {
+        await expect(refreshMcpBridgePublicPins("alpha", "github")).rejects.toThrow(
+          /not refreshed.*mcp\.example\.test:443/,
+        );
+        expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
+        expect(mocks.assertMcpProviderRecoverable).not.toHaveBeenCalled();
+        expect(mocks.refreshMcpPublicPolicyPins).not.toHaveBeenCalled();
+        expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+      } finally {
+        lookup.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    ["matching shared pins", "https://mcp.example.test/peer", "8.8.8.8"],
+    ["another hostname", "https://other.example.test/peer", "1.1.1.1"],
+    ["another port", "https://mcp.example.test:8443/peer", "1.1.1.1"],
+  ])("preserves public-pin refresh with %s", async (_label, url, address) => {
+    const sibling = {
+      ...entry,
+      server: "peer",
+      providerName: "alpha-mcp-peer",
+      providerId: "22222222-3333-4444-8555-666666666666",
+      policyName: "mcp-bridge-peer",
+      url,
+      env: ["PEER_TOKEN"],
+    };
+    const bridges = { github: entry, peer: sibling };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges,
+      sources: { native: bridges, legacy: {} },
+    });
+    const lookup = vi.spyOn(dns, "lookup").mockResolvedValue([{ address, family: 4 }] as never);
+    try {
+      await refreshMcpBridgePublicPins("alpha", "github");
+      expect(mocks.refreshMcpPublicPolicyPins).toHaveBeenCalledWith(
+        "alpha",
+        entry,
+        { addresses: [address] },
+        { gatewayName: "nemoclaw-9090", workspace: "default" },
+      );
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   it("refuses public-pin refresh when the native registration changes during DNS resolution (#10464)", async () => {
     const lookup = vi
       .spyOn(dns, "lookup")

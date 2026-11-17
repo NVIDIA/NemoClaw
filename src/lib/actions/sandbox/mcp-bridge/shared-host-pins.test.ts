@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { trailingJsonPayload } from "../../../../../test/helpers/host-process-harness";
 
 import type { McpSourceEntry } from "../mcp-bridge-contracts";
-import { alignMcpAddTargetWithSharedHostPins } from "./shared-host-pins";
+import { alignMcpTargetWithSharedHostPins } from "./shared-host-pins";
 
 function entry(server: string, overrides: Partial<McpSourceEntry> = {}): McpSourceEntry {
   return {
@@ -31,7 +31,8 @@ function align(
   url = "https://mcp.example.test/two",
   target: Partial<{ trustedPrivateHost: string }> = {},
 ) {
-  return alignMcpAddTargetWithSharedHostPins({
+  return alignMcpTargetWithSharedHostPins({
+    operation: "add",
     sandboxName: "alpha",
     server: "two",
     url,
@@ -44,7 +45,8 @@ describe("MCP shared-host address pins", () => {
   it("leaves the target alone when no other server uses the host and port", () => {
     const target = { addresses: ["1.1.1.1"] };
     expect(
-      alignMcpAddTargetWithSharedHostPins({
+      alignMcpTargetWithSharedHostPins({
+        operation: "add",
         sandboxName: "alpha",
         server: "two",
         url: "https://mcp.example.test/two",
@@ -77,7 +79,8 @@ describe("MCP shared-host address pins", () => {
 
   it("keeps the target when its answer already equals the recorded pins", () => {
     const target = { addresses: ["1.1.1.1", "8.8.8.8"] };
-    const aligned = alignMcpAddTargetWithSharedHostPins({
+    const aligned = alignMcpTargetWithSharedHostPins({
+      operation: "add",
       sandboxName: "alpha",
       server: "two",
       url: "https://mcp.example.test/two",
@@ -171,7 +174,8 @@ describe("MCP shared-host address pins", () => {
     });
     const target = { addresses: ["10.20.30.40"], trustedPrivateHost: "mcp.corp.example" };
     expect(
-      alignMcpAddTargetWithSharedHostPins({
+      alignMcpTargetWithSharedHostPins({
+        operation: "add",
         sandboxName: "alpha",
         server: "two",
         url: "https://mcp.corp.example/two",

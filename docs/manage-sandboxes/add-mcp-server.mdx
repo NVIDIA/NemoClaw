@@ -150,7 +150,7 @@ NemoClaw records the normalized host and every validated address as OpenShell po
 The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
 The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
 You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
-To replace it, remove and re-add the server with the replacement exported under the same host variable name. `mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
+To replace it, follow [Rotate a Credential](manage-mcp-servers#rotate-a-credential), including explicit cleanup of the retained provider before re-adding.
 
 Inspect the registration after the add returns:
 
@@ -208,7 +208,11 @@ Deep Agents Code supports at most 64 managed MCP servers in one sandbox.
 Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenShell glob metacharacters.
 Endpoint URLs cannot use port `0`.
 
-NemoClaw resolves hostnames before registration and pins the validated addresses in the generated policy.
+NemoClaw validates DNS before registration.
+When another managed server in the sandbox uses the same hostname and port, a public add revalidates and reuses its recorded address pins, even if current DNS differs.
+Otherwise, the generated policy pins the validated DNS addresses.
+NemoClaw refuses the add before mutation if sibling pin sets conflict or trusted-private pins would need to change.
+Refer to [Refresh Shared-Host Registrations](manage-mcp-servers#refresh-shared-host-registrations) to change pins for every registration on that hostname and port.
 Public endpoints need no trusted-private declaration.
 Private endpoints require a trust declaration and can use only RFC1918, CGNAT, or IPv6 unique local addresses.
 Supply the declaration with `--trusted-private-host` or the generic `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` environment variable.
