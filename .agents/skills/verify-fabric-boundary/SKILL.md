@@ -20,7 +20,7 @@ The feature files retain native discovery, registration, fresh use, and physical
 Keep the configuration and identity needed to drive a run as prerequisites, not separate proof of native behavior.
 
 The SDK tests [`public_fabric_configuration_passes_through_without_overriding_deployment_bindings`](../../../crates/nemoclaw-sdk/tests/fabric_compatibility.rs) and [`sandboxes_pass_driver_configuration_through`](../../../crates/nemoclaw-sdk/tests/compile.rs) cover skills passthrough with and without mounts and preservation of caller-owned writable mount payloads, respectively.
-Fabric owns adapter-native path mapping; its [OpenClaw test](https://github.com/NVIDIA/NeMo-Fabric/blob/e5b5ebf2b81cc3c6325301ea419ebf2453dab12e/tests/adapters/test_openclaw.py#L530) asserts `skills.load.extraDirs`.
+Fabric owns adapter-native path mapping; its [OpenClaw test](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/tests/adapters/test_openclaw.py#L553) asserts `skills.load.extraDirs`.
 
 ## Scope
 
