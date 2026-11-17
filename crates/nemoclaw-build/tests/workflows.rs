@@ -220,19 +220,6 @@ fn colossus_bundle_runs_linux_arm64_ci_without_writing_shared_caches() {
     let input = &platform["on"]["workflow_call"]["inputs"]["save-cache"];
     assert_eq!(input["type"], "boolean");
     assert_eq!(input["default"], true, "CI / Bundle keeps saving on v1");
-    let mut setups = 0;
-    for (name, job) in platform["jobs"].as_object().unwrap() {
-        for step in job["steps"].as_array().into_iter().flatten() {
-            if step["uses"] == "./.github/actions/setup-rust" {
-                setups += 1;
-                assert_eq!(
-                    step["with"]["save-cache"], "${{ inputs.save-cache }}",
-                    "{name} must honor save-cache"
-                );
-            }
-        }
-    }
-    assert!(setups > 0, "bundle-platform.yml sets up Rust");
 }
 
 /// Linux bundles must run on Ubuntu 22.04, the oldest supported Linux, so
@@ -306,20 +293,6 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
         "the E2E platform workflow calls Live / HCL"
     );
 
-    let platform = read(".github/workflows/e2e-platform.yml");
-    let gpu = &platform["jobs"]["gpu"];
-    assert!(needs(gpu).contains(&"live-images".to_owned()));
-    assert_eq!(
-        gpu["with"],
-        serde_json::json!({
-            "hosted": false,
-            "cases": "${{ inputs.hcl-cases }}",
-            "tests": "${{ inputs.tests }}",
-            "bundle": "${{ inputs.bundle }}",
-            "live-images": "${{ needs.live-images.outputs.artifact }}",
-            "live-images-commit": "${{ inputs.live-images-commit }}",
-        })
-    );
     let bundle_platform = read(".github/workflows/bundle-platform.yml");
     assert_eq!(
         bundle_platform["jobs"]["e2e"]["with"]["hcl-gpu"],

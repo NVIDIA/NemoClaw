@@ -224,10 +224,9 @@ jobs:
     # The cases with model runtime images need this NVIDIA GPU runner, which the main E2E workflow also uses.
     runs-on: ${{ contains(fromJSON(needs.cases.outputs.cases).runners.gpu, matrix.case) && needs.cases.outputs.runner || 'ubuntu-24.04' }}
     timeout-minutes: 60
-    # These cases use fixed gateway ports; finish cleanup before another run starts.
-    concurrency:
-      group: live-hcl-${{ matrix.case }}
-      cancel-in-progress: false
+    # The cases use fixed gateway ports. Each job has a runner and Docker engine
+    # to itself, so runs of one case don't collide; a job waits in the runner
+    # queue. A concurrency group would let a newer run cancel a waiting job.
     env:
       TEST_PLATFORM: ${{ needs.cases.outputs.platform }}
       NEMOCLAW_HCL_CASE: ${{ matrix.case }}

@@ -9,9 +9,12 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# A new pull request commit cancels the run for the commit it replaces. Each v1
+# push has its own group and finishes, so every v1 commit gets its Build checks
+# and its pushed images.
 concurrency:
-  group: agent-images-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  group: agent-images-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   plan:
     # The shared planner also reads the per-commit image package.
