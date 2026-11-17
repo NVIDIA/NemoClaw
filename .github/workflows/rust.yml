@@ -90,6 +90,47 @@ jobs:
         {"layer": "integration", "shard": 1, "shards": 3},
         {"layer": "integration", "shard": 2, "shards": 3},
         {"layer": "integration", "shard": 3, "shards": 3}]
+  # macOS and Windows only report the binary budgets, so their whole-suite
+  # timing reports run here, outside the Test checks and the macOS and Windows
+  # runner queues, with the Linux build tool. The tool enforces budgets when
+  # GITHUB_ACTIONS is set on Linux, so the report runs without it.
+  timing:
+    name: ${{ matrix.platform }} / ${{ matrix.layer == 'contract' && 'Contract' || 'Integration' }} timing report
+    needs: [plan, linux_amd64, darwin_arm64, windows_amd64]
+    if: ${{ !cancelled() && needs.plan.outputs.lifecycle == 'true' && needs.linux_amd64.outputs.lifecycle-artifact != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [darwin_arm64, windows_amd64]
+        layer: [contract, integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # For .config/test-budgets.yaml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.linux_amd64.outputs.lifecycle-artifact }}-inputs
+          path: .build/ci
+      # Every attempt's timings; the report reads each shard's latest attempt.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ${{ matrix.layer }}-${{ matrix.platform }}-*
+          path: .build/ci/timings
+      - name: Report the whole suite
+        env:
+          LAYER: ${{ matrix.layer }}
+          PLATFORM: ${{ matrix.platform }}
+          PARTITIONS: ${{ needs[matrix.platform].outputs.partitions }}
+        run: |
+          tool=.build/ci/nemoclaw-build
+          tar -xf .build/ci/lifecycle-inputs.tar "$tool"
+          shards=$(jq -c --arg layer "$LAYER" '[.[] | select(.layer == $layer) | .shard]' <<< "$PARTITIONS")
+          # Without a partition's report, the tool names it as missing.
+          mkdir -p .build/ci/timings
+          env -u GITHUB_ACTIONS "$tool" suite-timing "$LAYER" .build/ci/timings --platform "$PLATFORM" --shards "$shards"
   # The v1 ruleset requires one check per platform. Each covers the platform's
   # four test layers, Unit, Contract, Integration, and E2E, which the run page
   # groups under the platform. Each platform's jobs start after its own build,

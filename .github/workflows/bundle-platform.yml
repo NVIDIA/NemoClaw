@@ -68,6 +68,14 @@ on:
           compiles them slowly.
         type: boolean
         default: false
+    # The caller reports the macOS and Windows suites' timings from these.
+    outputs:
+      lifecycle-artifact:
+        description: The lifecycle artifacts' common name prefix, or empty when the build job uploaded none.
+        value: ${{ jobs.build.outputs.artifact }}
+      partitions:
+        description: The contract and integration partitions, as given.
+        value: ${{ inputs.partitions }}
 # The live suites read the per-commit image package for images to reuse.
 permissions:
   contents: read
@@ -444,12 +452,13 @@ jobs:
   # Each partition reports and enforces its own budget; this job reports each
   # layer's whole suite in its summary, from the partitions' uploaded timings,
   # including failed partitions'. A test binary's tests span partitions, so this
-  # job enforces the binary budgets: on Linux, a binary over its budget fails
-  # the platform's Test check.
+  # job enforces the binary budgets: a binary over its budget fails the
+  # platform's Test check. Only Linux enforces them, so only Linux runs this
+  # job; the caller reports the other platforms' suites outside their checks.
   timing:
     name: ${{ matrix.layer == 'contract' && 'Contract' || 'Integration' }} timing report
     needs: [build, tests]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.tests.result != 'skipped' }}
+    if: ${{ !cancelled() && startsWith(inputs.platform, 'linux_') && needs.build.result == 'success' && needs.tests.result != 'skipped' }}
     strategy:
       fail-fast: false
       matrix:
@@ -477,7 +486,6 @@ jobs:
           PARTITIONS: ${{ inputs.partitions }}
         run: |
           tool=.build/ci/nemoclaw-build
-          if [ "$RUNNER_OS" = Windows ]; then tool="$tool.exe"; fi
           tar -xf .build/ci/lifecycle-inputs.tar "$tool"
           shards=$(jq -c --arg layer "$LAYER" '[.[] | select(.layer == $layer) | .shard]' <<< "$PARTITIONS")
           "$tool" suite-timing "$LAYER" .build/ci/timings --platform "$TEST_PLATFORM" --shards "$shards"
