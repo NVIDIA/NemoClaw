@@ -46,9 +46,16 @@ const bundledRuntime = createRequire(import.meta.url)(
   path.resolve("agents/hermes/managed-startup-image-runtime.bundle"),
 ) as typeof sharedRuntime;
 
+const directBundledRuntime = createRequire(import.meta.url)(
+  path.resolve(
+    "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
+  ),
+) as typeof sharedRuntime;
+
 describe.each([
   ["shared runtime", sharedRuntime],
   ["shipped Hermes bundle", bundledRuntime],
+  ["shipped direct bundle", directBundledRuntime],
 ] as const)("%s routing recovery", (_label, runtime) => {
   it.each([
     ["empty", (target: string) => fs.writeFileSync(target, "")],

@@ -15,6 +15,17 @@ module only, it binds the filesystem import to `managed-startup-filesystem.ts`.
 The adapter leaves Node's global filesystem object unchanged. Other imports use native Node APIs.
 Other agents continue to use the existing reviewed shared artifact.
 
+When shared runtime source changes, rebuild and check the reviewed direct-startup artifact too:
+
+```sh
+npm --prefix tools/mcp-tool-discovery-runtime run bundle:reviewed
+npm --prefix tools/mcp-tool-discovery-runtime run bundle:reviewed:check
+```
+
+The Pi image copies the direct-startup artifact. After both PR Pi candidate jobs publish and
+qualify it, refresh the AMD64 and ARM64 qualification receipts and the Pi candidate authority.
+Receipts for an earlier artifact do not qualify the changed image input.
+
 The adapter changes deletion only for the four fixed Hermes generated-policy and routing source
 paths. If ordinary deletion returns `EACCES` or `EPERM`, it verifies the source, private parent,
 numeric sandbox identity and Node executable. The parent retains either its existing private mode
