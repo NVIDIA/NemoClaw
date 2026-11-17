@@ -239,7 +239,7 @@ spec:
             haproxy.router.openshift.io/timeout: 1h
 ```
 
-- **Endpoint:** `https://`, a lowercase DNS name that reaches the cluster's router, such as one under its apps domain, and the port the router serves, usually 443; NemoClaw doesn't check the port. Use a DNS name: clients send no host name for an IP address, so the router can't match one.
+- **Endpoint:** `https://`, a lowercase DNS name that reaches the cluster's router, such as one under its apps domain, and the port the router serves, usually 443; NemoClaw doesn't check the port. Plan refuses an IP address, because the Route's host is the endpoint's and clients send no host name for an IP address, so the router can't match one; `expose.service` accepts one.
 - **`annotations`** are optional and reach the Route unchanged, such as the router's `haproxy.router.openshift.io` settings; changing them updates the Route in place.
 - **Creating the Route:** Helm creates it with the identity that applies, which needs `create`, `update` and `delete` on `routes` in the `route.openshift.io` API group, and OpenShift sets a Route's host only for an identity that can create `routes/custom-host`. OpenShift's `admin` and `edit` roles grant both.
 

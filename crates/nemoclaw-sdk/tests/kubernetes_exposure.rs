@@ -108,6 +108,12 @@ fn exposure_rules_refuse_documents_with_the_rule_they_break() {
             input("https://gateway.apps.example.com:443", route()),
             "expose.service",
         ),
+        // The Route's host is the endpoint's, and clients send no SNI host
+        // name for an IP address.
+        (
+            openshift(input("https://192.0.2.10:443", route())),
+            "DNS name",
+        ),
         // One exposure publishes the gateway.
         (
             openshift(input(
