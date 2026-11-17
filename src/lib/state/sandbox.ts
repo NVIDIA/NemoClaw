@@ -1736,7 +1736,7 @@ function scanNativeTarFilePayload(
   descriptor: number,
   position: number,
   size: number,
-  opaqueAssignments: boolean,
+  credentialOptions: { opaqueAssignments: boolean; sqlBindParameters: boolean },
   npmConfig: boolean,
   providerProfileSchema: boolean,
   openclawConfig: boolean,
@@ -1761,7 +1761,7 @@ function scanNativeTarFilePayload(
     let raw = overlap + chunk.subarray(0, count).toString("utf8");
     if (dcodeSidecar) raw = normalizeDcodeSessionDiagnostic(raw);
     // Carry normalized diagnostics so an overlap cannot retain only their token assignment.
-    overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
+    const nextOverlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
     if (dcodeSidecar && remaining > count) {
       const diagnosticStart = raw.lastIndexOf("\0");
       if (diagnosticStart >= 0 && DCODE_QUICKJS_DIAGNOSTIC.startsWith(raw.slice(diagnosticStart))) {
@@ -1789,12 +1789,14 @@ function scanNativeTarFilePayload(
           : raw;
     if (
       textContainsCredential(credentialScanInput, {
-        opaqueAssignments,
+        ...credentialOptions,
         privateKeyHeader,
+        scannedPrefixLength: overlap.length,
       })
     ) {
       return true;
     }
+    overlap = nextOverlap;
     offset += count;
     remaining -= count;
   }
@@ -2230,8 +2232,12 @@ function nativeArchiveRawCredentialViolation(
           descriptor!,
           dataOffset,
           size,
-          dcodeSessionsDatabaseRole === "sidecar" ||
-            shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+          {
+            opaqueAssignments:
+              dcodeSessionsDatabaseRole === "sidecar" ||
+              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+            sqlBindParameters: dcodeSessionsDatabaseRole === "sidecar",
+          },
           fileName === ".npmrc",
           providerProfileSchema,
           openclawConfig,
