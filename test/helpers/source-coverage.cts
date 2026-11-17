@@ -63,11 +63,14 @@ export declare const sourceCoverageCacheIdentity: typeof sourceCoverageCacheIden
 
 function enableSourceCoverageImpl(options: CoverageOptions, isEnabled = () => true) {
   // Compile once before enabling the hook that examines every native import.
-  const picomatch = require("picomatch");
-  const include = picomatch(options.include ?? "**", { dot: true });
-  const exclude = picomatch(options.exclude ?? [], { dot: true });
+  const { Minimatch } = require("minimatch");
+  const include = [options.include ?? "**"]
+    .flat()
+    .map((pattern) => new Minimatch(pattern, { dot: true }));
+  const exclude = (options.exclude ?? []).map((pattern) => new Minimatch(pattern, { dot: true }));
   const matcher = (relative: string, absolute: string) =>
-    (include(relative) || include(absolute)) && !exclude(relative) && !exclude(absolute);
+    include.some((pattern) => pattern.match(relative) || pattern.match(absolute)) &&
+    !exclude.some((pattern) => pattern.match(relative) || pattern.match(absolute));
   coverageGlobal[STATE_KEY] = {
     options,
     cache: new Map(),
