@@ -74,7 +74,9 @@ Show that each new assertion can fail: break the behavior, or point the assertio
 
 ## 6. Keep the suite fast
 
-Don't raise a time budget; make the test faster, or split a long scenario.
+A test costs the time engineers wait for CI; see [CI wall-clock time](../../../internal-docs/contributing/testing.md#ci-wall-clock-time).
+Don't raise a time budget; make the test faster, or split a long scenario so partitions can run its parts in parallel.
+Don't add a test to a live suite or a job on the critical path when a lower layer can observe the behavior.
 Add fixture behavior once, for a concrete test, in the shared fixture, not as a per-test fake service.
 
 ## Report
