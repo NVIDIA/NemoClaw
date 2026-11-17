@@ -1102,13 +1102,13 @@ test(
         mode: "unmanaged",
       });
       expect(unmanagedBlocked.passthrough).toBe(true);
-      expect(unmanagedBlocked.failed).toBe(true);
+      expect(unmanagedBlocked.callback_status).toBe(403);
       const beforeWrongCallbackHandle = boundary.evidence.requests;
       const wrongCallbackHandle = await boundaryProbe(boundary.baseUrl, "unmanaged-wrong-handle", {
         mode: "unmanaged",
         credentialEnv: SWITCHYARD_PEER_CREDENTIAL_ENV,
       });
-      expect(wrongCallbackHandle.failed).toBe(true);
+      expect(wrongCallbackHandle.callback_status).toBe(403);
       expect(boundary.evidence.requests).toBe(beforeWrongCallbackHandle);
 
       const unmatched = await boundaryProbe(boundary.baseUrl, "unmatched-approved", {
@@ -1120,7 +1120,7 @@ test(
         mode: "unmatched",
       });
       expect(unmatchedBlocked.passthrough).toBe(true);
-      expect(unmatchedBlocked.failed).toBe(true);
+      expect(unmatchedBlocked.callback_status).toBe(403);
       boundary.respondWithError(true);
       const beforeProviderError = boundary.evidence.errors;
       const providerFailed = await boundaryProbe(boundary.baseUrl, "provider-failure");

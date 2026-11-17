@@ -136,10 +136,13 @@ class Response:
     def __enter__(self): return self
     def __exit__(self, *args): pass
     def read(self, size):
+        if fault == 'parse': return canary.encode()
+        if fault == 'read': raise OSError(canary)
         return json.dumps({'choices': [{'message': {'content': '${SWITCHYARD_BOUNDARY_ANSWER}'}}]}).encode()
 def urlopen(request, **kwargs):
-    if fault == 'http':
-        raise urllib.error.HTTPError(request.full_url, 503, 'unavailable', {}, io.BytesIO(canary.encode()))
+    if fault in ('http', 'denial'):
+        status = 403 if fault == 'denial' else 503
+        raise urllib.error.HTTPError(request.full_url, status, 'fixture error', {}, io.BytesIO(canary.encode()))
     if fault == 'proxy':
         raise urllib.error.URLError(OSError('Tunnel connection failed: 403 Forbidden ' + canary))
     if fault == 'transport': raise urllib.error.URLError(OSError(canary))
@@ -195,6 +198,12 @@ test.each(["unmanaged", "unmatched"] as const)(
 test.each(["unmanaged", "unmatched"] as const)(
   "%s callback failures expose only observed status and bounded categories",
   (mode) => {
+    expect(continuationProbe(mode, "denial")).toMatchObject({
+      failed: true,
+      callback_status: 403,
+      failure_category: "http_error",
+      answer: null,
+    });
     expect(continuationProbe(mode, "http")).toMatchObject({
       failed: true,
       callback_status: 503,
@@ -215,6 +224,20 @@ test.each(["unmanaged", "unmatched"] as const)(
     });
   },
 );
+
+test.each([
+  ["unmanaged", "parse"],
+  ["unmanaged", "read"],
+  ["unmatched", "parse"],
+  ["unmatched", "read"],
+] as const)("%s callback %s failure preserves HTTP 200 instead of a denial", (mode, fault) => {
+  expect(continuationProbe(mode, fault)).toMatchObject({
+    failed: true,
+    callback_status: 200,
+    failure_category: "upstream_details_unavailable",
+    answer: null,
+  });
+});
 
 test.each(["native-exception", "native-error"])(
   "%s preserves unavailable upstream detail without leaking bodies",
