@@ -363,8 +363,11 @@ jobs:
 
   tests:
     name: ${{ matrix.layer == 'contract' && 'Contract' || 'Integration' }} tests ${{ matrix.shard }} of ${{ matrix.shards }}
-    # The bundle job runs whenever contract and integration tests do.
-    if: inputs.lifecycle && needs.bundle.result == 'success'
+    # The bundle job runs whenever contract and integration tests do. Without
+    # a status function, a skipped bundle part would skip these jobs too.
+    if: >-
+      ${{ !cancelled() && inputs.lifecycle && needs.build.result == 'success'
+      && needs.bundle.result == 'success' }}
     needs: [build, bundle]
     strategy:
       fail-fast: false
