@@ -45,8 +45,11 @@ spec:
           endpoints:
             - host: integrate.api.nvidia.com
               port: 443
+          # The executables the OpenClaw image declares. OpenShell matches a
+          # process's executable, which for the openclaw script is node.
           binaries:
-            - path: /usr/bin/openclaw
+            - path: /usr/local/bin/node
+            - path: /usr/local/bin/python3.14
       filesystem_policy:
         include_workdir: true
         read_only:

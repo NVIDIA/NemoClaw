@@ -178,6 +178,7 @@ It deletes the cluster and its image tag whether or not the tests pass; set `NEM
 
 To build the live images once for both suites, run `cargo ci live-images`.
 It builds the OpenClaw and Hermes agent images and the reference dummy image under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
+It also saves the OpenClaw image alone to `.build/ci/live-images-openclaw.tar.zst`, which CI uploads for the GPU HCL cases that run only OpenClaw, since the GPU runner downloads artifacts slowly.
 The command exports directly from Docker's local containerd store before compression.
 This requires Docker to report its containerd address and namespace, `sudo -n ctr` access, and temporary disk space for the uncompressed archive.
 The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.
@@ -186,6 +187,72 @@ Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or 
 
 Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, and reference images that a `v1` commit pushed to `ghcr.io/nvidia/nemoclaw/v1-ci`, after `docker login ghcr.io`.
 `cargo run -p nemoclaw-build -- changes live-images --base REV` names such a commit: the newest of the latest 30 on `REV`'s first-parent history that pushed all three images for both architectures, provided the image rules find no change between it and `HEAD`.
+
+## CI Wall-Clock Time
+
+The cost of CI is the time engineers wait for it.
+An engineer waiting for checks costs about $200 to $300 an hour, while GitHub's standard hosted runners are free for this public repository.
+Spend runner capacity to shorten the wait: more parallel jobs, more partitions, and more caching are worth it whenever they make results arrive sooner.
+Never lengthen the critical path without measuring the change.
+
+### Push-to-Green and the Critical Path
+
+Measure push-to-green: the time from a push to every [required check](#how-ci-runs-the-tests) passing, across `CI / Bundle`, `CI / Images`, `CI / Dependencies`, and `CD / Documentation`.
+Each `Test / PLATFORM` check waits for all four platforms, so every one of them reports after the slowest platform's last job.
+The critical path is the chain of jobs, linked by their `needs`, that ends last.
+Time spent off that path doesn't change push-to-green; time added on it does.
+
+For example, over 22 pull request runs and 15 `v1` pushes in November 2026, a pull request took a median of about 15 minutes to turn green and about 41 at the 90th percentile; a `v1` push took about 27 and 53.
+A pull request's critical path was split almost evenly among three branches of about 14 minutes each: Windows' bundle build and integration partitions; Linux's bundle, live images, and kind tests; and macOS's bundle and integration partitions with their runner queue.
+Shortening one of these branches alone therefore barely moved push-to-green.
+A `v1` push's critical path ran through Linux AMD64's GPU cases, which finished 8 to 12 minutes after every other job.
+
+### Causes to Watch
+
+The slowest of those runs lost their time outside any test step:
+
+- Concurrency queuing on `v1` pushes: `CI / Bundle` doesn't cancel `v1` push runs, so a push's run waits for the previous push's run to finish, up to 39 minutes in those measurements; a newer push replaces a waiting run, and `CI / Bundle` never runs on that commit. `CI / Images` cancels superseded push runs, so an intermediate `v1` commit gets no `Build` result. Each GPU case also waits for the same case's job in any earlier run.
+- Runner queues: a job starts only when a runner picks it up. The macOS runners queued for 5 to 7 minutes at the 90th percentile and up to about 15, and the self-hosted GPU runner up to about 13; hosted Ubuntu and Windows runners rarely queued.
+- GPU runtime image builds: each GPU case builds its model runtime images on the GPU runner, in every run, which took about 4 minutes at the median.
+- Cold caches: a new month, a toolchain change, or a profile change in `.cargo/config.toml` starts a fresh [dependency cache](#ci-caches), and pull requests restore only `v1`'s caches; the first runs after a change spent 20 to 30 minutes in a single build.
+- Flaky reruns: a rerun repeats the failed job's wait and the time before it starts, and after its producers' artifacts expire, the [whole workflow's](#archives).
+- Serial `needs` chains: a job waits for every job it needs, even when it uses none of their outputs. `E2E build images` downloads no artifacts but waits for `Build bundle`, because the E2E workflow that contains it needs the build and bundle jobs.
+
+### Shorten It
+
+- Partition and parallelize: split a long job or step across runners instead of adding to it, as Windows runs a third integration partition.
+- Cache what a job would otherwise rebuild or download; see [CI caches](#ci-caches).
+- Keep `needs` chains short: a job should need only the jobs whose outputs it uses, and independent work should start in parallel.
+- Move a check to the cheapest [layer](#test-layers) that observes it, and keep live suites, whose Docker tests and kind scenarios run one at a time, to what needs a real engine or cluster.
+- Fix a flaky test or job when you see it, or file a `v1` issue with the failing run; don't rerun until it passes.
+
+### Measure a Workflow Change
+
+Compare several runs of the same kind before and after the change, since queues vary: pull requests or `v1` pushes, with the same selected checks and warm caches.
+List a run's times and each job's with the GitHub API:
+
+```sh
+gh api repos/NVIDIA/NemoClaw/actions/runs/RUN_ID --jq '.created_at, .updated_at'
+gh api "repos/NVIDIA/NemoClaw/actions/runs/RUN_ID/jobs?per_page=100" --paginate \
+  --jq '.jobs[] | "\(.created_at) \(.started_at) \(.completed_at) \(.name)"'
+```
+
+- The run's `created_at` is when the push created it; the time until its first job's `created_at` is spent waiting in a concurrency group.
+- A job's `created_at` to `started_at` is its runner queue, and `started_at` to `completed_at` its work; each job's `steps` carry `started_at` and `completed_at` too.
+- The last required check's `completed_at` ends push-to-green; repeat for each workflow that reports a required check.
+
+Follow the latest-finishing job back through its `needs` to find the critical path.
+Within a `cargo ci` step, the [build and test timing reports](#timing-reports) show where its time goes.
+Report the before-and-after push-to-green and critical-path times in the pull request.
+
+[Test budgets](#budgets-and-per-test-limits) bound only the test steps, measured from their JUnit reports.
+Compilation, image builds, cluster setup, artifact transfers, and runner and concurrency waits are in no budget, and no check fails when push-to-green grows: a change can pass every budget and still lengthen the wait.
+
+### Local Waiting Time
+
+Waiting for local checks costs the same as waiting for CI.
+Run the narrowest checks that [local validation](#choose-local-validation) allows.
+Plain `cargo ci` skips the bundle, contract, and integration steps that its plan doesn't select, and `cargo ci --dry-run` shows the selection before you wait for it; it runs the selected steps one after another, while CI runs each platform's layers in parallel.
 
 ## Budgets and Per-Test Limits
 
@@ -207,7 +274,7 @@ Its `binaries` section budgets each provider's contract binary by its nextest na
 | `nemoclaw-provider::contract` | 82 s | 12 s | 24 s |
 | `openshell-provider::contract` | 180 s | 12 s | 24 s |
 
-Budgets are measured from each step's JUnit report, so compilation, image builds, and cluster setup do not count.
+Budgets are measured from each step's JUnit report, so compilation, image builds, and cluster setup do not count; see [CI wall-clock time](#ci-wall-clock-time) for the rest of the wait.
 
 ### Where Budgets Are Enforced
 
@@ -215,6 +282,7 @@ Budgets fail a run only on the Linux GitHub Actions runners, where `GITHUB_ACTIO
 
 - The `test` step, each contract and integration partition, and each live suite check their step budget when the step ends; a step over its wall budget, or with a test over its limit, fails and names each offender with its time and limit.
 - Each platform's `Contract timing report` and `Integration timing report` jobs check the binary budgets, because a binary's tests run in several partitions.
+  The macOS and Windows reports run on a Linux runner without `GITHUB_ACTIONS`, so they report the budgets without failing, and their `Test / PLATFORM` checks do not wait for them.
   `cargo ci --full`, `cargo ci contract`, and `cargo ci integration` run each whole suite in one step and report them there too.
 - Nextest stops a test on every platform: each profile reports a test as slow at its per-test limit and stops it at a multiple of the limit, three times for the `test` step and twice for the others.
   An override in the binary's step profile does the same for each budgeted binary with that binary's limit.
@@ -243,7 +311,7 @@ They fail when a step that writes a JUnit report has no budget, a provider's con
 The bundle's Rust compilation uses `cargo build --locked --release --target TARGET --timings` for the CLI and three providers.
 Neither command changes the package graph or features for measurement.
 
-In `CI / Bundle`, download `build-workspace-PLATFORM-ATTEMPT` or `build-bundle-PLATFORM-ATTEMPT` from the workflow run's artifacts and open `cargo-timing.html` in a browser.
+In `CI / Bundle`, download `build-workspace-PLATFORM-ATTEMPT` or `build-bundle-PLATFORM-ATTEMPT` from the workflow run's artifacts and open `cargo-timing.html` in a browser; Windows uploads one `build-bundle-windows_amd64-PART-ATTEMPT` per bundle part instead.
 CI retains these artifacts for 14 days, including any reports Cargo writes before a build fails.
 Each job clears cached timing reports before building, so an early failure cannot upload an older build's report.
 The jobs upload separately, before later commands can replace a report; timestamped HTML copies are retained too.
@@ -324,16 +392,17 @@ The other jobs run on Ubuntu 24.04: executables built against an older glibc run
 Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners, whose job names start with their test layer:
 
 1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables. On Linux, it runs `docker buildx version` before the tests, so the Bake tests' first Docker call doesn't spend their time limit reading the Docker CLI and Buildx from disk.
-2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
-3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions, and `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets.
-4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E build images` with `cargo ci live-images`, and `E2E Docker tests` and `E2E Kubernetes (kind) tests`, from the platform's archive and bundle. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, and `E2E GPU` for those on the NVIDIA GPU runner, from the same artifacts; see [live suites](#live-suites).
+2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time. On Windows, where one runner compiles the bundle slower than the unit job runs, three `Build bundle` jobs for the CLI, the NemoClaw providers, and the OpenShell and Fabric providers instead compile their release executables in parallel with `cargo ci bundle --executables`, and the CLI job also builds the build tool. `Build bundle` then assembles them with `nemoclaw-build bundle --prebuilt`, which compiles nothing.
+3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions. On Linux, `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets; `CI / Bundle` reports the macOS and Windows suites in `PLATFORM / Contract timing report` and `PLATFORM / Integration timing report`, on Ubuntu, after the platform's jobs finish.
+4. On Linux, when the plan selects the live suites, `E2E build images` runs `cargo ci live-images` at the same time as the build and bundle jobs, because it reads neither job's artifacts. When all three finish, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E Docker tests` and `E2E Kubernetes (kind) tests` from the platform's archive, bundle, and live images. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, and `E2E GPU` for those on the NVIDIA GPU runner, from the same artifacts; see [live suites](#live-suites).
 
 When a pull request changes no image input since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
 
 Each platform starts its jobs after its own build; it does not wait for the other platforms.
 Superseded pull request runs are cancelled, and their checks report as cancelled rather than failed.
-Push runs finish, because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
-The image workflow cancels superseded pull request runs and pushes, but not manual runs; documentation and dependency pushes finish.
+In CI / Bundle and the image workflow, each `v1` push runs in its own concurrency group: it starts without waiting for an earlier push and is never cancelled, so every `v1` commit gets its checks and pushed images.
+GPU case jobs from several pushes wait in the GPU runner queue; none cancels another.
+Manual runs are not cancelled; documentation and dependency pushes finish.
 
 ### Partitions
 
@@ -414,6 +483,7 @@ Whenever the plan selects a hosted case, Linux AMD64 runs it as `linux_amd64 / E
 On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts, so a pull request never runs them.
 Live / HCL's `Cases` job lists the cases and fetches the model runtime images' pinned sources, and each case's job runs the same test archive, bundle, and live images as the hosted cases, which the GPU runner can run because CI / Bundle builds them on Ubuntu 22.04. Each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services.
 Dispatch Live / HCL to run the hosted or GPU cases alone: without CI / Bundle's artifacts, its `Build` job builds the bundle, test executable, and agent images on Ubuntu 22.04 from the dispatched branch.
+A `dgx-station` dispatch skips `Build`, and the Station case's job builds them on the Station runner before it runs the case: two machines share that runner's label, and Actions artifacts move the 1 GB candidate at 3-8 MB/s there.
 
 To see which live HCL cases a pull request affects, such as before dispatching the GPU cases, which its CI does not run, run from a clean checkout of its commit:
 
@@ -454,7 +524,7 @@ A denied license or source requires reviewing the dependency and policy; do not 
 
 ## Image Source Checks
 
-Use the [agent image build prerequisites](../../docs/build-deploy/build.md#build-agent-images); the target-selection test needs Docker Buildx but no host Python.
+Use the [agent image build prerequisites](../../docs/build-deploy/build.md#build-agent-images); the Bake tests need Docker Buildx but no host Python.
 For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
@@ -464,7 +534,7 @@ AGENT_PLATFORM=linux/arm64 docker buildx bake --check dummy agents ollama-proxy
 AGENT_PLATFORM=linux/arm64 docker buildx bake check
 ```
 
-The first command checks Bake's public target selection without a Docker daemon or prebuilt source tree.
+The first command checks, without a Docker daemon or prebuilt source tree, that Bake defaults to the host platform and rejects others, and that Dockerfiles copy remote files only from pinned sources.
 `cargo images fetch` places the remote files that `versions.json` pins under `imageSources` in `.build/image-sources`, where Bake reads them, even to check the Dockerfiles.
 Docker checks the selected build instructions; the `check` group runs Ruff lint/format checks, reference-backend tests without Fabric, and generic runtime behavior tests against Fabric's installed fixture adapter.
 Behavior tests run with networking disabled; downloading build dependencies still needs network access.
@@ -545,7 +615,7 @@ Profiles live in `.cargo/config.toml`, whose hash and the current month are part
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
 Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
 Within a month, manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
-The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v4` cache keeps those of its debug build tool and the target-specific release profile.
+The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v4` cache keeps those of its debug build tool and the target-specific release profile. On Windows, every `Build bundle` part restores that cache and may save it; when a manifest change creates a new key, the first part to finish saves it, and the others rebuild the dependencies that only they changed until the next key.
 On Linux, those jobs run on Ubuntu 22.04 and write the platform's caches, which the Ubuntu 24.04 `E2E build images` job restores.
 A cache written on a newer Ubuntu would carry its glibc headers' requirements into the bundle, because Cargo does not rebuild C objects when the system headers change; `native-deps-v5` and `native-bundle-v4` started fresh for that reason.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
@@ -556,7 +626,7 @@ Dependency caches are keyed by platform and the Rust toolchain, manifests, lockf
 The native build-and-test job and `E2E build images` share each platform's dependency cache instead of adding their job names to its key.
 Only the native build-and-test job writes that shared cache; `E2E build images` restores it without uploading a duplicate copy, and the bundle job writes its own.
 The live suites' Docker, Kind, and HCL jobs compile nothing, so they restore no Rust cache.
-Documentation restores the bundle job's cache without saving one; Live / Brev and Live / HCL's `Build` job keep their own prefixes.
+Documentation restores the bundle job's cache without saving one; Live / Brev and Live / HCL's candidate builds keep their own prefixes.
 The shared key causes a one-time cold build when first enabled; old job-specific entries can expire normally.
 
 `E2E build images` keeps BuildKit's layers for the live images in the same cache, through `cargo images build --gha-cache`: about 1.8 GB per Linux platform, mostly the OpenClaw application, the Rust toolchain, and the Fabric runtime's Rust build.
@@ -620,6 +690,9 @@ Put each test at the layer that owns its behavior, and don't repeat a check that
 At each layer, prefer a `tofu test` scenario to a Rust test. The [`write-tests` skill](../../.agents/skills/write-tests/SKILL.md) walks through the choice.
 
 Write each test as input, operation, and expected result, and name the observable behavior and its conditions in its title.
+Assert what the system does, not what its code, configuration, workflows, or documentation look like.
+A test that restates a workflow's jobs, conditions, or inputs, a file's strings, help text, or a golden copy of current output breaks on harmless edits and passes on real bugs; run the workflow, or test the behavior at its owner's layer, instead.
+Reading such files is acceptable only for a rule over every file of a kind, such as the [workflow rules](#workflow-rules), and for checking generated files against their generator.
 For deployment tests, keep the YAML and expected plan and apply resource actions easy to find.
 Use assertions and the test runner's output for failures; do not add separate reports, host inventories, or project-tracking metadata to tests.
 Keep inference requests, fault injection, and recovery checks in explicitly named scenarios.

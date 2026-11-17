@@ -457,6 +457,33 @@ mod tests {
     }
 
     #[test]
+    fn reference_states_bounds_that_depend_on_another_field_being_present() {
+        let input = schema(
+            json!({"memory":{"description":"Memory settings.", "$ref":"#/$defs/Memory"}}),
+            json!({"Memory":{"type":"object", "description":"Memory limits.",
+                "properties":{
+                    "utilization":{"type":"number", "description":"A share of the device."},
+                    "cache":{"type":"integer", "description":"Cache size."}},
+                "allOf":[{"if":{"required":["utilization"]},
+                    "then":{"properties":{"cache":{"const":0}}},
+                    "else":{"properties":{"cache":{"minimum":4, "maximum":12}}}}]}}),
+        );
+        let markdown = render_reference(&input).unwrap();
+        let rule = markdown
+            .lines()
+            .find(|line| line.contains("`utilization`") && line.contains("`cache`"))
+            .unwrap_or_else(|| panic!("no rule ties cache to utilization:\n{markdown}"));
+        let (then, otherwise) = rule
+            .split_once("Otherwise")
+            .unwrap_or_else(|| panic!("the rule omits the bounds without utilization: {rule}"));
+        assert!(then.contains('0'), "{rule}");
+        assert!(
+            otherwise.contains('4') && otherwise.contains("12"),
+            "{rule}"
+        );
+    }
+
+    #[test]
     fn equivalent_alternative_types_do_not_repeat_or_invent_constraints() {
         assert_eq!(
             input_type(

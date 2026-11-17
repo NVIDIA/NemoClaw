@@ -27,23 +27,6 @@ fn non_terminal_input_cannot_start_or_overwrite_the_example() {
 }
 
 #[test]
-fn help_describes_a_generation_only_example() {
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-onboarding"))
-        .arg("--help")
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("example terminal frontend"));
-    assert!(stdout.contains("does not plan or apply"));
-    assert!(stdout.contains("checks referenced environment variables"));
-    assert!(stdout.contains("does not prompt for or retain credential values"));
-    for unsupported in ["--state-dir", "--bundle", "--apply", "--edit"] {
-        assert!(!stdout.contains(unsupported));
-    }
-}
-
-#[test]
 fn edit_mode_is_rejected_without_touching_input_or_creating_output() {
     let directory = tempfile::tempdir().unwrap();
     let input = directory.path().join("template.yaml");

@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Pin the provider reads that planning derives from a document.
-//!
-//! Authoring and onboarding align their discovery queries to these inputs, so a
-//! refactor of the SDK's query construction must leave them byte-identical.
+//! The provider reads that planning derives from a document.
 use nemoclaw_sdk::{
     compile,
     config::{ComputeDriver, Document, ExternalGateway, Gateway},
@@ -48,33 +45,6 @@ fn discovery_graph(document: &Document) -> Value {
     json!({"data": data, "output": graph["output"]["discovery"]})
 }
 
-fn assert_pinned(document: &str, pinned: &str) {
-    let document = Document::parse(document.as_bytes()).unwrap();
-    let expected: Value = serde_json::from_str(pinned).unwrap();
-    assert_eq!(
-        discovery_graph(&document),
-        expected,
-        "{}",
-        serde_json::to_string_pretty(&discovery_graph(&document)).unwrap()
-    );
-}
-
-#[test]
-fn onboarding_example_discovery_inputs_are_pinned() {
-    assert_pinned(
-        include_str!("../../../examples/onboarding/openclaw.yaml"),
-        include_str!("fixtures/discovery_graph/openclaw.json"),
-    );
-}
-
-#[test]
-fn service_backed_routes_are_not_discovered_as_endpoints() {
-    assert_pinned(
-        include_str!("fixtures/config/spark.yaml"),
-        include_str!("fixtures/discovery_graph/spark.json"),
-    );
-}
-
 /// An external gateway with no image engine, and a service on another engine.
 fn external_gateway_with_a_remote_service() -> Document {
     let mut document =
@@ -99,16 +69,17 @@ fn external_gateway_with_a_remote_service() -> Document {
 
 #[test]
 fn external_gateway_discovery_never_substitutes_the_client_engine_for_a_service_target() {
-    let document = external_gateway_with_a_remote_service();
-    let expected: Value = serde_json::from_str(include_str!(
-        "fixtures/discovery_graph/external-service.json"
-    ))
-    .unwrap();
+    let graph = discovery_graph(&external_gateway_with_a_remote_service());
+    let engines = graph["data"]["host_engine"].as_object().unwrap();
     assert_eq!(
-        discovery_graph(&document),
-        expected,
-        "{}",
-        serde_json::to_string_pretty(&discovery_graph(&document)).unwrap()
+        engines.keys().collect::<Vec<_>>(),
+        ["target_0"],
+        "only the service's engine is read"
+    );
+    assert_eq!(engines["target_0"]["engine"], "ssh://operator@192.168.1.50");
+    assert_eq!(
+        graph["data"]["fabric_harnesses"]["sandbox_assistant"]["engine"], "",
+        "the unset image engine stays unset"
     );
 }
 

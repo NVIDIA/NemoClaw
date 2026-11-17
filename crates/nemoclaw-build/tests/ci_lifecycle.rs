@@ -686,6 +686,31 @@ fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed(
     );
 }
 
+/// The GPU HCL cases that run only OpenClaw download a smaller archive.
+#[test]
+fn live_images_also_save_the_agent_image_alone() {
+    let fixture = Fixture::new();
+    fixture.fake_container_tools();
+    fixture.seed_image_sources();
+    let output = fixture.run(&["live-images"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let archive = fs::read_to_string(
+        fixture
+            .0
+            .path()
+            .join(".build/ci/live-images-openclaw.tar.zst"),
+    )
+    .unwrap();
+    assert_eq!(
+        archive.trim(),
+        "exported docker.io/library/nc-live-images:openclaw"
+    );
+}
+
 /// CI saves the live images' layers on v1 only; every build imports them.
 #[test]
 fn live_images_import_cached_layers_and_save_them_only_when_ci_asks() {
@@ -876,6 +901,54 @@ fn bundle_builds_its_build_tool_so_it_can_run_without_the_build_step() {
     assert!(!args.contains("--no-default-features"), "{args}");
     let bundled = fs::read_to_string(fixture.0.path().join("bundled")).unwrap();
     assert_eq!(bundled, "bundle\n--platform\nlinux_arm64\n");
+}
+
+/// A part of a split bundle resolves features for every bundle package, as the
+/// whole bundle build does, so all parts share its cached dependencies.
+#[test]
+fn bundle_executables_compile_only_those_with_the_whole_bundles_features() {
+    let fixture = Fixture::new();
+    let output = fixture.run(&[
+        "bundle",
+        "--executables",
+        "terraform-provider-vllm,terraform-provider-fabric",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fixture.invocations(),
+        [concat!(
+            "build\n--locked\n--release\n--target\naarch64-unknown-linux-gnu\n--timings\n",
+            "-p\nnemoclaw-cli\n-p\nnemoclaw-provider\n-p\nopenshell-provider\n-p\nfabric-provider\n",
+            "--bin\nterraform-provider-vllm\n--bin\nterraform-provider-fabric\n",
+        )]
+    );
+    assert!(!fixture.0.path().join("bundled").exists());
+}
+
+#[test]
+fn bundle_executables_name_bundle_executables_for_the_bundle_step_only() {
+    let step = "--executables requires ci bundle";
+    let executable = "--executables takes only the bundle's executables";
+    for (args, expected) in [
+        (vec!["build", "--executables", "nemoclaw"], step),
+        (vec!["--executables", "nemoclaw"], step),
+        (
+            vec!["bundle", "--executables", "nemoclaw-build"],
+            executable,
+        ),
+        (vec!["bundle", "--executables", ""], executable),
+    ] {
+        let fixture = Fixture::new();
+        let output = fixture.run(&args);
+        assert!(!output.status.success(), "{args:?}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(expected), "{args:?}: {error}");
+        assert!(fixture.invocations().is_empty(), "{args:?}");
+    }
 }
 
 #[test]
