@@ -1,0 +1,265 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import dns from "node:dns/promises";
+import fs from "node:fs";
+import path from "node:path";
+import { expect } from "vitest";
+
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero } from "../fixtures/clients/command.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
+import { buildMcpBridgePolicyKey } from "../../../src/lib/actions/sandbox/mcp-bridge-policy-render";
+import { cleanupMcpBridge } from "./mcp-bridge-cleanup.ts";
+import { addBridgeAndReadStatus, runMcpProviderRewriteProbe } from "./mcp-bridge-reliability.ts";
+import { captureManagedMcpPolicy, expectExitNonZero } from "./mcp-bridge-sandbox.ts";
+import { startFakeMcpHttpsServer, startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
+
+type Address = { address: string; family: number };
+
+/** Control the add process's DNS input without replacing policy or provider operations. */
+export async function withMcpDnsAnswers<T>(
+  hostname: string,
+  addresses: readonly Address[],
+  run: (nodeOptions: string) => Promise<T>,
+): Promise<T> {
+  const scratch = path.resolve(".ws-tmp", "tmp");
+  fs.mkdirSync(scratch, { recursive: true, mode: 0o700 });
+  const directory = fs.mkdtempSync(path.join(scratch, "mcp-shared-host-dns-"));
+  const preload = path.join(directory, "lookup.cjs");
+  const observed = path.join(directory, "observed.json");
+  try {
+    fs.writeFileSync(
+      preload,
+      `
+const dns = require("node:dns/promises");
+const original = dns.lookup;
+const answers = ${JSON.stringify(addresses)};
+dns.lookup = async (hostname, options) => {
+  if (hostname !== ${JSON.stringify(hostname)} || options?.all !== true) {
+    return original.call(dns, hostname, options);
+  }
+  require("node:fs").writeFileSync(${JSON.stringify(observed)}, JSON.stringify(answers));
+  return answers.map(answer => ({ ...answer }));
+};
+`,
+      { mode: 0o600 },
+    );
+    const result = await run(`--require=${JSON.stringify(preload)}`);
+    // An unused preload cannot establish that the real add saw the intended DNS input.
+    if (fs.readFileSync(observed, "utf8") !== JSON.stringify(addresses)) {
+      throw new Error("MCP add did not consume the controlled DNS answers");
+    }
+    return result;
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+export async function assertSharedHostMcpComposition(options: {
+  host: HostCliClient;
+  sandbox: SandboxClient;
+  cleanup: CleanupRegistry;
+  artifacts: ArtifactSink;
+  progress: TestProgress;
+  sandboxName: string;
+}): Promise<void> {
+  const { host, sandbox, cleanup, artifacts, progress, sandboxName } = options;
+  const endpoint = await startFakeMcpHttpsServer({
+    secret: MCP_BRIDGE_TEST_CREDENTIALS.host,
+    additionalPaths: { "/mcp-peer": MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost },
+  });
+  cleanup.add("stop shared-host MCP endpoint", () => endpoint.close());
+  const tunnel = await startPublicMcpHttpsTunnel({
+    cleanup,
+    progress,
+    server: endpoint,
+    label: "shared-host MCP",
+  });
+  const hostname = new URL(tunnel.origin).hostname;
+  const resolved = await dns.lookup(hostname, { all: true, verbatim: true });
+  const answers = [
+    ...new Map(
+      resolved.map((answer) => [
+        answer.address.toLowerCase(),
+        { ...answer, address: answer.address.toLowerCase() },
+      ]),
+    ).values(),
+  ].sort((a, b) => a.address.localeCompare(b.address));
+  if (answers.length < 2)
+    throw new Error("Shared-host MCP fixture requires multiple public DNS answers");
+  const firstPins = answers.map((answer) => answer.address).sort();
+  const entries = [
+    {
+      server: "shared-one",
+      pathname: "/mcp",
+      key: "SHARED_ONE_MCP_SECRET",
+      secret: MCP_BRIDGE_TEST_CREDENTIALS.host,
+      answers,
+    },
+    {
+      server: "shared-two",
+      pathname: "/mcp-peer",
+      key: "SHARED_TWO_MCP_SECRET",
+      secret: MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost,
+      answers: answers.slice(1),
+    },
+  ];
+  await artifacts.writeJson(
+    "mcp-shared-host-dns-answers.json",
+    entries.map(({ server, answers }) => ({ server, answers })),
+  );
+  const remove = entries.map((entry) => {
+    let complete = false;
+    const provider = `${sandboxName}-mcp-${entry.server}`;
+    const run = async () => {
+      if (complete) return;
+      await cleanupMcpBridge(host, sandboxName, entry.server, "openclaw-config");
+      const deleted = await host.command(
+        host.openshellCommandPath,
+        ["provider", "delete", provider],
+        {
+          env: buildAvailabilityProbeEnv(),
+          artifactName: `shared-host-delete-${entry.server}`,
+          timeoutMs: 60_000,
+        },
+      );
+      assertCleanupSucceededOrAbsent(
+        deleted,
+        /provider[^\n]*(?:not found|does not exist)|NOT_FOUND/iu,
+        `remove owned shared-host provider ${provider}`,
+      );
+      complete = true;
+    };
+    cleanup.add(`remove shared-host MCP registration and provider ${entry.server}`, run);
+    return run;
+  });
+  for (const entry of entries) {
+    await withMcpDnsAnswers(hostname, entry.answers, (addNodeOptions) =>
+      addBridgeAndReadStatus(host, sandbox, {
+        sandboxName,
+        mcpUrl: `${tunnel.origin}${entry.pathname}`,
+        expectedAdapter: "openclaw-config",
+        artifactPrefix: entry.server,
+        serverName: entry.server,
+        credentialEnvName: entry.key,
+        credential: entry.secret,
+        applyHostPolicyEdit: false,
+        addNodeOptions,
+      }),
+    );
+  }
+  for (const entry of entries) {
+    const captured = await captureManagedMcpPolicy(sandbox, {
+      sandboxName,
+      url: `${tunnel.origin}${entry.pathname}`,
+      policyKey: buildMcpBridgePolicyKey(entry.server),
+      artifactName: `${entry.server}-effective-pins`,
+      label: "shared-host effective pins",
+    });
+    expect(captured.policy.endpoints?.[0]?.allowed_ips).toEqual(firstPins);
+    const requestOffset = endpoint.requests.length;
+    const accepted = await runMcpProviderRewriteProbe(
+      sandbox,
+      sandboxName,
+      `${tunnel.origin}${entry.pathname}`,
+      "tools/list",
+      "allow",
+      `${entry.server}-authenticated`,
+      entry.key,
+    );
+    assertExitZero(accepted, `${entry.server} authenticated request after both adds`);
+    const observed = endpoint.requests
+      .slice(requestOffset)
+      .filter((request) => request.path === entry.pathname);
+    expect(observed.length).toBeGreaterThan(0);
+    expect(
+      observed.every(
+        (request) => request.auth === `Bearer ${entry.secret}` && request.responseStatus === 200,
+      ),
+    ).toBe(true);
+  }
+  const requestOffset = endpoint.requests.length;
+  for (const entry of entries) {
+    const denied = await runMcpProviderRewriteProbe(
+      sandbox,
+      sandboxName,
+      `${tunnel.origin}/unconfigured`,
+      "tools/list",
+      "deny-strict",
+      `${entry.server}-outside-binding`,
+      entry.key,
+    );
+    assertExitZero(denied, `${entry.server} credential cannot reach an unconfigured path`);
+  }
+  expect(
+    endpoint.requests.slice(requestOffset).filter((request) => request.path === "/unconfigured"),
+  ).toHaveLength(0);
+  for (const run of remove) await run();
+  const list = await host.nemoclaw([sandboxName, "mcp", "list", "--json"], {
+    env: buildAvailabilityProbeEnv(),
+    artifactName: "shared-host-registrations-removed",
+    timeoutMs: 60_000,
+  });
+  assertExitZero(list, "list registrations after shared-host cleanup");
+  const names = (JSON.parse(list.stdout).bridges as Array<{ server: string }>).map(
+    (entry) => entry.server,
+  );
+  expect(names.filter((name) => entries.some((entry) => entry.server === name))).toEqual([]);
+  for (const entry of entries) {
+    const absent = await host.command(
+      host.openshellCommandPath,
+      ["provider", "get", `${sandboxName}-mcp-${entry.server}`],
+      {
+        env: buildAvailabilityProbeEnv(),
+        artifactName: `${entry.server}-provider-absent`,
+        timeoutMs: 60_000,
+      },
+    );
+    expectExitNonZero(
+      absent,
+      "shared-host provider removed",
+      /not found|does not exist|NOT_FOUND/iu,
+    );
+  }
+}
+
+/** Keep the existing different-host credential case beside the same-host composition case. */
+export async function addDistinctCredentialMcpEndpoint(options: {
+  host: HostCliClient;
+  sandbox: SandboxClient;
+  cleanup: CleanupRegistry;
+  progress: TestProgress;
+  sandboxName: string;
+  serverOptions: Parameters<typeof startFakeMcpHttpsServer>[0];
+}) {
+  const { host, sandbox, cleanup, progress, sandboxName, serverOptions } = options;
+  const endpoint = await startFakeMcpHttpsServer(serverOptions);
+  cleanup.add("stop distinct MCP HTTPS server", () => endpoint.close());
+  const tunnel = await startPublicMcpHttpsTunnel({
+    cleanup,
+    label: "distinct credential MCP HTTPS server",
+    progress,
+    server: endpoint,
+  });
+  cleanup.add("remove distinct credential bridge", () =>
+    cleanupMcpBridge(host, sandboxName, "distinct", "openclaw-config"),
+  );
+  await addBridgeAndReadStatus(host, sandbox, {
+    sandboxName,
+    mcpUrl: tunnel.url,
+    expectedAdapter: "openclaw-config",
+    serverName: "distinct",
+    credentialEnvName: "DISTINCT_MCP_SECRET",
+    credential: serverOptions.secret,
+    artifactPrefix: "openclaw-distinct",
+    applyHostPolicyEdit: false,
+  });
+  return { endpoint, tunnel };
+}

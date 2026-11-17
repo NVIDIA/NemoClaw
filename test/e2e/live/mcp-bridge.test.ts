@@ -59,6 +59,10 @@ import {
 } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
+  addDistinctCredentialMcpEndpoint,
+  assertSharedHostMcpComposition,
+} from "./mcp-bridge-shared-host.ts";
+import {
   DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
   HERMES_MCP_ENV_LOAD_COMMANDS,
   HERMES_MCP_DENIED_TOOL_PROBE,
@@ -815,30 +819,15 @@ test(
     expect(aliasState.policyAbsent).toBe(true);
     expect(aliasState.adapterAbsent).toBe(true);
     // Exercise both native adapters with both credentials and policy entries present.
-    const distinctMcp = await startFakeMcpHttpsServer({
-      ...MCP_SERVER_OPTIONS,
-      secret: ROTATED_HOST_SECRET,
-    });
-    cleanup.add("stop distinct MCP HTTPS server", () => distinctMcp.close());
-    const distinctTunnel = await startPublicMcpHttpsTunnel({
-      cleanup,
-      label: "distinct credential MCP HTTPS server",
-      progress,
-      server: distinctMcp,
-    });
-    cleanup.add("remove distinct credential bridge", () =>
-      cleanupMcpBridge(host, OPENCLAW_SANDBOX_NAME, "distinct", "openclaw-config"),
-    );
-    await addBridgeAndReadStatus(host, sandbox, {
-      ...bridge,
-      mcpUrl: distinctTunnel.url,
-      expectedAdapter: "openclaw-config",
-      serverName: "distinct",
-      credentialEnvName: "DISTINCT_MCP_SECRET",
-      credential: ROTATED_HOST_SECRET,
-      artifactPrefix: "openclaw-distinct",
-      applyHostPolicyEdit: false,
-    });
+    const { endpoint: distinctMcp, tunnel: distinctTunnel } =
+      await addDistinctCredentialMcpEndpoint({
+        host,
+        sandbox,
+        cleanup,
+        progress,
+        sandboxName: OPENCLAW_SANDBOX_NAME,
+        serverOptions: { ...MCP_SERVER_OPTIONS, secret: ROTATED_HOST_SECRET },
+      });
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
       resultToken: MCP_RESULT,
@@ -866,6 +855,14 @@ test(
       openClawToolSearch.toolNames = ["fake__fake_echo"];
     }
     await cleanupMcpBridge(host, OPENCLAW_SANDBOX_NAME, "distinct", "openclaw-config");
+    await assertSharedHostMcpComposition({
+      host,
+      sandbox,
+      cleanup,
+      artifacts,
+      progress,
+      sandboxName: OPENCLAW_SANDBOX_NAME,
+    });
     await assertBridgeInfrastructure(host, sandbox, {
       ...bridge,
       providerName,

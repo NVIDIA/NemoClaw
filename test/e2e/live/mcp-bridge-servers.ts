@@ -1072,6 +1072,7 @@ export async function startCompatibleMock(options: {
 
 export async function startFakeMcpHttpsServer(options: {
   secret: string;
+  additionalPaths?: Readonly<Record<string, string>>;
   challenge?: string;
   resultToken?: string;
   tls?: { cert: Buffer; key: Buffer };
@@ -1203,7 +1204,9 @@ export async function startFakeMcpHttpsServer(options: {
       res.writeHead(202);
       res.end();
     };
-    if (requestPath !== "/mcp") {
+    const requestSecret =
+      requestPath === "/mcp" ? expectedSecret : options.additionalPaths?.[requestPath];
+    if (requestSecret === undefined) {
       respondJson(404, { error: { message: "not found" } });
       return;
     }
@@ -1212,7 +1215,7 @@ export async function startFakeMcpHttpsServer(options: {
       return;
     }
     if (req.method === "GET") {
-      if (auth !== `Bearer ${expectedSecret}`) {
+      if (auth !== `Bearer ${requestSecret}`) {
         respondJson(401, { error: { message: "missing rewritten bearer credential" } });
         return;
       }
@@ -1241,7 +1244,7 @@ export async function startFakeMcpHttpsServer(options: {
           "cache-control": "no-cache",
           connection: "keep-alive",
         });
-        res.write(`event: endpoint\ndata: /mcp?legacySessionId=${eventSessionId}\n\n`);
+        res.write(`event: endpoint\ndata: ${requestPath}?legacySessionId=${eventSessionId}\n\n`);
         serverEventStreams.add(res);
         res.once("close", () => {
           eventSession.phase = "closed";
@@ -1270,7 +1273,7 @@ export async function startFakeMcpHttpsServer(options: {
       respondJson(405, { error: { message: "method not allowed" } });
       return;
     }
-    if (auth !== `Bearer ${expectedSecret}`) {
+    if (auth !== `Bearer ${requestSecret}`) {
       respondJson(401, { error: { message: "missing rewritten bearer credential" } });
       return;
     }

@@ -56,6 +56,7 @@ export async function addBridgeAndReadStatus(
     serverName?: string;
     credentialEnvName?: string;
     applyHostPolicyEdit?: boolean;
+    addNodeOptions?: string;
   },
 ): Promise<string> {
   await (options.applyHostPolicyEdit === false
@@ -80,6 +81,7 @@ export async function addBridgeAndReadStatus(
     artifactName: `${options.artifactPrefix}-mcp-add-fake-server`,
     env: {
       ...buildAvailabilityProbeEnv(),
+      ...(options.addNodeOptions ? { NODE_OPTIONS: options.addNodeOptions } : {}),
       [credentialEnvName]: credential,
     },
     redactionValues: [credential],

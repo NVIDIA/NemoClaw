@@ -146,6 +146,23 @@ describe("MCP shared-host address pins", () => {
     );
   });
 
+  it.each([
+    [
+      "conflicting public pins",
+      { one: entry("one"), three: entry("three", { allowedIps: ["8.8.4.4"] }) },
+    ],
+    ["trusted-private mismatch", { one: entry("one", { trustedPrivateHost: "mcp.example.test" }) }],
+  ])("explains complete retained-provider recovery for %s", (_label, bridges) => {
+    const refused = align(bridges, ["1.1.1.1"]);
+    expect(refused.ok).toBe(false);
+    const message = refused.ok ? "" : refused.message;
+    expect(message).toContain("re-export the affected credential variables");
+    expect(message).toContain("Removal preserves providers");
+    expect(message).toContain("explicit provider cleanup");
+    expect(message).toContain("no other sandbox uses them");
+    expect(message).toContain("manage-mcp-servers#rotate-a-credential");
+  });
+
   it("accepts trusted-private siblings whose pins already match", () => {
     const privateSibling = entry("one", {
       url: "https://mcp.corp.example/one",
