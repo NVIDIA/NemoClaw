@@ -223,6 +223,18 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
+    testsToRun: runTests("test/inference/managed/hermes-policy-cleanup-workflow.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:agents\/hermes\/(?:managed-startup-image-runtime\.bundle|managed-startup-filesystem\.ts|build-managed-startup-runtime\.ts)|src\/lib\/onboard\/managed-startup\/image-runtime\.ts|tools\/mcp-tool-discovery-runtime\/managed-startup-direct-entry\.ts)$/,
+    testsToRun: runTests(
+      "test/agents/hermes/managed-startup-runtime.test.ts",
+      "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/Dockerfile\.base$/,
     testsToRun: runTests(
       "test/agents/hermes/hermes-share-mount-deps.test.ts",

@@ -454,7 +454,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
     mode: "100644",
   },
   {
-    path: "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
+    path: "agents/hermes/managed-startup-image-runtime.bundle",
     mode: "100644",
   },
   {

@@ -8,5 +8,6 @@ export const HERMES_E2E_PHASES = [
   "restart Hermes gateway and validate supervision",
   "exercise Hermes ACP lifecycle and inference routes",
   "read logs and validate Hermes configuration integrity",
+  "validate Switchyard credential and egress boundaries",
   "finalize Hermes sandbox resources",
 ] as const;
