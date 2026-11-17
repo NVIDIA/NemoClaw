@@ -686,12 +686,22 @@ async function updateMcpBridgeDenyToolsUnlocked(
     throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
   }
   assertAuthenticatedBridgeEntry(storedEntry);
-  const target = (await preflightMcpEntryTargets([storedEntry])).get(server);
-  if (!target || target.addresses.length === 0) {
+  const resolved = (await preflightMcpEntryTargets([storedEntry])).get(server);
+  if (!resolved || resolved.addresses.length === 0) {
     throw new McpBridgeError(
       `MCP server '${server}' has no validated address pins. No policy was changed.`,
     );
   }
+  const aligned = alignMcpTargetWithSharedHostPins({
+    operation: "update",
+    sandboxName,
+    server,
+    url: storedEntry.url,
+    target: resolved,
+    bridges: observed.bridges,
+  });
+  if (!aligned.ok) throw new McpBridgeError(aligned.message, 2);
+  const target = aligned.target;
   const { denyTools: _previousDenyTools, ...entryWithoutDenyTools } = storedEntry;
   const updatedEntry: McpSourceEntry = {
     ...entryWithoutDenyTools,

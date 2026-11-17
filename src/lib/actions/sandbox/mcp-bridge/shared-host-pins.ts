@@ -11,7 +11,7 @@ export type McpSharedHostPinAlignment =
   | {
       ok: true;
       target: McpBridgeTargetValidation;
-      /** Servers whose recorded pins the new server reuses; empty when nothing changed. */
+      /** Servers whose recorded public pins are reused. */
       reusedFrom: string[];
     }
   | {
@@ -47,11 +47,9 @@ function describeServers(servers: readonly string[]): string {
   return servers.map((server) => `'${server}'`).join(", ");
 }
 
-/** Keep endpoints on one host and port on a validated pin set before mutation.
- * Adds may reuse public sibling pins; refreshes must not diverge from them.
- */
+/** Align policy targets with recorded pins on the same host and port before mutation. */
 export function alignMcpTargetWithSharedHostPins(options: {
-  operation: "add" | "refresh";
+  operation: "add" | "update" | "refresh";
   sandboxName: string;
   server: string;
   url: string;
@@ -59,7 +57,7 @@ export function alignMcpTargetWithSharedHostPins(options: {
   bridges: Readonly<Record<string, McpSourceEntry>>;
 }): McpSharedHostPinAlignment {
   const { operation, sandboxName, server, url, target, bridges } = options;
-  const action = operation === "add" ? "added" : "refreshed";
+  const action = { add: "added", update: "updated", refresh: "refreshed" }[operation];
   const authority = endpointAuthority(url);
   if (!authority) return { ok: true, target, reusedFrom: [] };
 

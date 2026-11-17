@@ -33,7 +33,10 @@ import type { SandboxEntry } from "../../state/registry/types";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { getKnownSandboxTarget, getPersistedSandboxTargetGateway } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
-import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
+import {
+  parseMcpUrlWithValidatedTarget,
+  type McpBridgeTargetValidation,
+} from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
   preflightMcpServerUrlResolvedTarget,
@@ -516,7 +519,11 @@ export async function preflightMcpEntryTargets(
         };
         return [entry.server, target] as const;
       }
-      const target = await preflightMcpServerUrlResolvedTarget(new URL(normalized));
+      const resolved = await preflightMcpServerUrlResolvedTarget(new URL(normalized));
+      // Existing registrations replay policy pins; changing them requires an
+      // explicit public-pin refresh, including during teardown rollback.
+      const target = entry.allowedIps?.length ? { addresses: [...entry.allowedIps] } : resolved;
+      parseMcpUrlWithValidatedTarget(normalized, target);
       return [entry.server, target] as const;
     }),
   );

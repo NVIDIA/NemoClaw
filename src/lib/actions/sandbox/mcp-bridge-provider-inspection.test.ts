@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import dns from "node:dns/promises";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +13,9 @@ import {
   getMcpProviderInspectionRuntimeSelection,
   resolveSandboxConfigRuntimeSelection,
   inspectMcpProvider,
+  preflightMcpEntryTargets,
 } from "./mcp-bridge-provider-inspection";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import * as gatewayTargets from "./gateway-target";
 
 const temporaryDirectories: string[] = [];
@@ -268,4 +271,47 @@ describe("MCP provider absence inspection", () => {
       });
     },
   );
+});
+
+describe("existing MCP target preflight", () => {
+  const entry: McpSourceEntry = {
+    server: "tools",
+    agent: "openclaw",
+    adapter: "openclaw-config",
+    url: "https://mcp.example.test/tools",
+    env: ["TOOLS_TOKEN"],
+    allowedIps: ["8.8.8.8"],
+    providerName: "alpha-mcp-tools",
+    providerId: "11111111-2222-4333-8444-555555555555",
+    policyName: "mcp-bridge-tools",
+  };
+
+  it("replays recorded public pins during update and rollback after fresh DNS validation", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
+    const targets = await preflightMcpEntryTargets([entry]);
+    expect(targets.get("tools")).toEqual({ addresses: ["8.8.8.8"] });
+    expect(lookup).toHaveBeenCalled();
+  });
+
+  it("rejects an invalid recorded public pin instead of replacing it with DNS", async () => {
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
+    await expect(
+      preflightMcpEntryTargets([{ ...entry, allowedIps: ["127.0.0.1"] }]),
+    ).rejects.toThrow(/private, local, or special-use address pin/);
+  });
+
+  it("still rejects private DNS before replaying recorded public pins", async () => {
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "10.20.30.40", family: 4 }] as never);
+    await expect(preflightMcpEntryTargets([entry])).rejects.toThrow(
+      /private, local, or special-use/,
+    );
+  });
+
+  it("keeps fresh public resolution for legacy entries without recorded pins", async () => {
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
+    const targets = await preflightMcpEntryTargets([{ ...entry, allowedIps: undefined }]);
+    expect(targets.get("tools")).toEqual({ addresses: ["1.1.1.1"] });
+  });
 });

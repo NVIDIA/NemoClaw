@@ -3046,7 +3046,7 @@ Update the denied-tool list or refresh public address pins for one registered MC
 Both operations use the live OpenShell policy and preserve the agent-native endpoint, credential reference, provider, attachment, and agent adapter.
 Pass one or more `--deny-tool <name-or-glob>` options, or pass `--clear-deny-tools` to remove every denied-tool rule.
 Use only one mode per command: `--deny-tool`, `--clear-deny-tools`, or `--refresh-public-pins`.
-Live OpenShell policy is the enforcement source of truth; NemoClaw does not persist duplicate MCP intent. A denied-tool update validates the current source and address pins, removes the current route, and applies the replacement. If activation fails, the route remains blocked and the error prints the exact `mcp update` retry command. Rebuild captures and restores the complete live policy, including denied-tool rules.
+Live OpenShell policy is the enforcement source of truth; NemoClaw does not persist duplicate MCP intent. A denied-tool update validates the current source and address pins, then checks sibling pin agreement before replacing the route. Public endpoints undergo DNS validation and retain revalidated recorded pins. If activation fails, the route remains blocked and the error prints the exact `mcp update` retry command. Rebuild captures and restores the complete live policy, including denied-tool rules.
 
 ```bash
 $$nemoclaw my-assistant mcp update github --deny-tool 'delete_*' --deny-tool 'admin_*'

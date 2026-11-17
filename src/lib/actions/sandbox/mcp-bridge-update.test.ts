@@ -258,6 +258,94 @@ describe("source-backed MCP denied-tool policy updates", () => {
     }
   });
 
+  it.each([
+    ["replace", ["--deny-tool", "delete_*"]],
+    ["clear", ["--clear-deny-tools"]],
+  ])("keeps shared public pins when denied tools %s after DNS drift", async (_mode, flags) => {
+    const peer = {
+      ...entry,
+      server: "peer",
+      url: "https://mcp.example.test/peer",
+      env: ["PEER_TOKEN"],
+      providerName: "alpha-mcp-peer",
+      providerId: "22222222-3333-4444-8555-666666666666",
+      policyName: "mcp-bridge-peer",
+    };
+    const bridges = { github: entry, peer };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges,
+      sources: { native: bridges, legacy: {} },
+    });
+    mocks.preflightMcpEntryTargets.mockResolvedValueOnce(
+      new Map([["github", { addresses: ["1.1.1.1"] }]]),
+    );
+
+    await dispatchMcpBridgeCommand("alpha", ["update", "github", ...flags]);
+
+    expect(mocks.applyGeneratedPolicy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ allowedIps: ["8.8.8.8"], env: ["GITHUB_TOKEN"] }),
+      { addresses: ["8.8.8.8"] },
+      { runtimeSelection: { gatewayName: "nemoclaw-9090", workspace: "default" } },
+    );
+    expect(mocks.removeGeneratedPolicy.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.applyGeneratedPolicy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it.each([
+    ["conflicting public pins on replace", ["delete_*"], ["9.9.9.9"], false, true],
+    ["conflicting public pins on clear", [], ["9.9.9.9"], false, true],
+    ["trusted-private sibling on replace", ["delete_*"], ["10.20.30.40"], true, false],
+    ["trusted-private sibling on clear", [], ["10.20.30.40"], true, false],
+    ["invalid public sibling pins on replace", ["delete_*"], ["127.0.0.1"], false, false],
+    ["invalid public sibling pins on clear", [], ["127.0.0.1"], false, false],
+  ])(
+    "rejects denied-tool changes before mutation with %s",
+    async (_label, denyTools, pins, privatePeer, conflict) => {
+      const peer = {
+        ...entry,
+        server: "peer",
+        url: "https://mcp.example.test/peer",
+        env: ["PEER_TOKEN"],
+        providerName: "alpha-mcp-peer",
+        providerId: "22222222-3333-4444-8555-666666666666",
+        policyName: "mcp-bridge-peer",
+        allowedIps: pins,
+        ...(privatePeer ? { trustedPrivateHost: "mcp.example.test" } : {}),
+      };
+      const bridges = {
+        github: entry,
+        peer,
+        ...(conflict
+          ? {
+              third: {
+                ...peer,
+                server: "third",
+                url: "https://mcp.example.test/third",
+                env: ["THIRD_TOKEN"],
+                providerName: "alpha-mcp-third",
+                providerId: "33333333-4444-4555-8666-777777777777",
+                policyName: "mcp-bridge-third",
+                allowedIps: ["8.8.8.8"],
+              },
+            }
+          : {}),
+      };
+      mocks.inspectSourceBridgeState.mockReturnValue({
+        bridges,
+        sources: { native: bridges, legacy: {} },
+      });
+      await expect(updateMcpBridgeDenyTools("alpha", "github", denyTools)).rejects.toThrow(
+        /not updated|private, local, or special-use address pin/,
+      );
+      expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
+      expect(mocks.assertMcpProviderRecoverable).not.toHaveBeenCalled();
+      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+      expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+    },
+  );
+
   it("removes the old route before applying and publishing the live replacement (#11115)", async () => {
     await updateMcpBridgeDenyTools("alpha", "github", ["submit_*", "delete_repo"]);
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import dns from "node:dns/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -73,7 +74,8 @@ vi.mock("./mcp-bridge-status", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-status")>()),
   statusMcpBridge: mocks.status,
 }));
-vi.mock("./mcp-bridge-validation", () => ({
+vi.mock("./mcp-bridge-validation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge-validation")>()),
   assertAuthenticatedBridgeEntry: vi.fn(),
   assertMcpCredentialBoundaryRuntimeVersion: vi.fn(),
   resolveCredentialEnv: vi.fn(() => ({})),
@@ -81,6 +83,7 @@ vi.mock("./mcp-bridge-validation", () => ({
 }));
 
 import { restartMcpBridge, restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
+import { applyGeneratedPolicy } from "./mcp-bridge-policy";
 
 const entries = ["first", "second"].map((server) => ({
   server,
@@ -244,6 +247,41 @@ describe("OpenClaw MCP partial-mutation recovery", () => {
       ["openclaw-config", "openclaw-config"],
       runtimeSelection,
     );
+  });
+
+  it("restores shared-host policy pins through real preflight despite differing DNS answers", async () => {
+    const shared = entries.map((entry) => ({
+      ...entry,
+      url: `https://mcp.example.test/${entry.server}`,
+      allowedIps: ["8.8.8.8"],
+    }));
+    const { preflightMcpEntryTargets } = await vi.importActual<
+      typeof import("./mcp-bridge-provider-inspection")
+    >("./mcp-bridge-provider-inspection");
+    mocks.preflightTargets.mockImplementationOnce(preflightMcpEntryTargets);
+    mocks.register.mockReset().mockResolvedValue(undefined);
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValueOnce([{ address: "1.1.1.1", family: 4 }] as never)
+      .mockResolvedValue([{ address: "9.9.9.9", family: 4 }] as never);
+    try {
+      await restoreExistingMcpBridgeRuntime("alpha", shared, {
+        lifecyclePhase: "teardown-rollback",
+      });
+      expect(lookup).toHaveBeenCalledTimes(2);
+      expect(
+        vi
+          .mocked(applyGeneratedPolicy)
+          .mock.calls.map((call) => [call[1].server, call[2].addresses]),
+      ).toEqual([
+        ["first", ["8.8.8.8"]],
+        ["first", ["8.8.8.8"]],
+        ["second", ["8.8.8.8"]],
+        ["second", ["8.8.8.8"]],
+      ]);
+    } finally {
+      lookup.mockRestore();
+    }
   });
 
   it("reloads successful restoration using its recorded runtime", async () => {
