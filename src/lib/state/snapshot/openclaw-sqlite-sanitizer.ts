@@ -25,6 +25,18 @@ const MACHINE_AUTHORITY_TABLES_TO_CLEAR = [
   "web_push_subscriptions",
 ] as const;
 
+// Leave a row unchanged when its JSON is malformed; the credential scan still sees it.
+function withoutJsonField(
+  table: string,
+  column: string,
+  field: string,
+  where: string,
+  extraAssignments = "",
+): string {
+  const present = `CASE WHEN json_valid(${column}) THEN json_type(${column}, '$.${field}') IS NOT NULL ELSE 0 END`;
+  return `UPDATE ${table} SET ${column} = json_remove(${column}, '$.${field}')${extraAssignments} WHERE ${where} AND ${present}`;
+}
+
 const MACHINE_LOCAL_ROW_UPDATES = [
   {
     table: "state_leases",
@@ -49,6 +61,29 @@ const MACHINE_LOCAL_ROW_UPDATES = [
   {
     table: "device_pairing_paired",
     statement: "UPDATE device_pairing_paired SET tokens_json = NULL WHERE tokens_json IS NOT NULL",
+  },
+  {
+    table: "exec_approvals_config",
+    // OpenClaw mints this socket token for itself and creates a new one when it
+    // is absent. Keep the approvals document and its allowlists.
+    statement: withoutJsonField(
+      "exec_approvals_config",
+      "raw_json",
+      "socket.token",
+      "config_key = 'current'",
+      ", has_socket_token = 0",
+    ),
+  },
+  {
+    table: "plugin_state_entries",
+    // The session key is optional routing metadata and is not read for trust
+    // decisions; the credential scan flags it by field name.
+    statement: withoutJsonField(
+      "plugin_state_entries",
+      "value_json",
+      "sessionKey",
+      "plugin_id = 'core:memory-artifact-provenance' AND namespace = 'workspace-files'",
+    ),
   },
 ] as const;
 
