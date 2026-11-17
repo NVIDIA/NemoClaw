@@ -477,7 +477,8 @@ Sandboxes still need `image.metadata`.
 
 ### Reach an External Gateway Through an Ingress
 
-NemoClaw doesn't put a managed gateway behind an ingress; it passes none of the chart's `grpcRoute` values ([current limits](../resources/limits.md#platforms-models-and-placement)). On OpenShift, [a Route](#through-an-openshift-route) can publish a managed gateway.
+NemoClaw doesn't put a managed gateway behind a Gateway API ingress, because TLS would end at the Gateway, which conflicts with NemoClaw's mTLS ([current limits](../resources/limits.md#platforms-models-and-placement)).
+On OpenShift, [a pass-through Route](#through-an-openshift-route) can publish a managed gateway instead.
 Instead, the platform operator installs the OpenShell chart behind a Gateway API ingress with OpenShell's [Kubernetes ingress guide](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/kubernetes/ingress.mdx), and the deployment connects to it with `management: external`.
 No automated test covers this setup.
 [#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) records runs of these steps behind Envoy Gateway v1.8.1 with a Keycloak issuer, with OpenShell 0.1.7 on single-node kind and k3d clusters and with OpenShell 0.1.8 on kind: an agent replied through the ingress in each, and requests longer than 15 seconds failed until the request timeout below was disabled.
