@@ -58,6 +58,8 @@ than being reconstructed from provider bodies. Captured probe streams are capped
 Support tests own fixture responses, redacted evidence, and probe syntax; they are not live OpenShell evidence.
 Judge-preflight tests distinguish a withheld probe from a sent request that failed and verify cleanup for both.
 
+The committed-routing refusal scenario first applies and commits a routed profile through the shipped root-applicator CLI. It empties the committed Relay file and re-enters the managed application-to-entrypoint sequence. Startup must fail with the original diagnostic and recovery instructions, both gateway ports must stay closed, and routing bytes and metadata must remain unchanged. The existing root-entrypoint workflow runs this case with the other Hermes scenarios.
+
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
@@ -2470,7 +2472,8 @@ its existing platform-specific qualification.
 ### DGX Spark Express vLLM
 
 `dgx-express.test.ts` contains separate physical-host cases for Spark and Station Express.
-The Spark case qualifies the second DGX Spark Express inference option, the catalog-backed fixed vLLM profile.
+The Spark cases have separate selectors: `spark-express-vllm` keeps the second Express option with its catalog-backed fixed profile; `spark-vllm-extra-arguments` owns automatic managed installation with extra serve arguments.
+The second case requires the physical host to report at least 60 GB and less than 64 GB of memory; it does not override detected memory or mock Docker.
 The canonical runner requires an explicit selector matching `E2E_TARGET_ID`; it rejects missing, unknown, or mismatched selections before starting Vitest.
 The Spark case requires a qualified NVIDIA DGX Spark with Docker, NVIDIA Container Toolkit, OpenShell prerequisites, enough storage for the pinned image and model, and no unrelated `nemoclaw-vllm` container.
 The target accepts only a local Docker socket and the default Docker context, rejects remote selectors, and treats Docker inspection errors as preflight failures instead of absent resources.
@@ -2492,6 +2495,14 @@ E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SAND
 ```
 
 A passing Spark target establishes that option 2 selects the fixed vLLM preset and recipe.
+The extra-arguments case invokes the candidate CLI with `NEMOCLAW_PROVIDER=install-vllm` and `["--max-num-seqs","2"]`.
+It requires the selected-profile output and 32,768-token context, then inspects the real container command for the bounded recipe and the appended sequence override.
+Each case keeps the existing 65-minute test deadline and identity-bound cleanup. These hardware targets have no automatic PR workflow. Qualify the repair separately on a 60 GB to 64 GB Spark using the command below and retain its receipt for the candidate commit.
+
+```bash
+E2E_JOB=1 E2E_TARGET_ID=spark-vllm-extra-arguments NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-vllm-extra-arguments:'
+```
+
 The managed container carries catalog provenance and the catalog-derived serve command.
 Health requests succeed on loopback and the private OpenShell bridge; connections to every other discovered host address are refused.
 The target also requires a chat response through `inference.local` and an HTTP `403` response for unrelated sandbox egress.
