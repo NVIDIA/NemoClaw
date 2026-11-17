@@ -47,6 +47,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-security-code-review\/SKILL\.md$/,
+    testsToRun: runTests("test/security/security-review-paths.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)schemas\/network-policy\.schema\.json$/,
     testsToRun: runTests("test/onboarding/validate-config-schemas.test.ts"),
   },

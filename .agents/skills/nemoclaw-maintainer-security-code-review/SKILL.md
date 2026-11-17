@@ -15,7 +15,7 @@ Report a verdict for each category.
 ## Prerequisites
 
 - `gh` (GitHub CLI) must be installed and authenticated.
-- `git` must be available.
+- `git` and `python3` must be available.
 - Network access to clone repositories and fetch PR metadata.
 
 ## Step 1: Parse the GitHub URL
@@ -65,25 +65,43 @@ gh pr checkout <number>
 
 ## Step 3: Identify Changed Files
 
-List all files changed from the base branch:
-
-```bash
-git diff main...HEAD --name-status
-```
-
-If the PR targets another branch, use that branch as the base. Check it with:
+Check the PR's base branch:
 
 ```bash
 gh pr view <number> --json baseRefName -q .baseRefName
 ```
 
+Use that local base ref instead of `main` in the command below when needed.
+Treat branch names and filenames as untrusted data. Pass them as process arguments, never as generated shell source.
+Read NUL-delimited filename output; spaces and newlines can be part of a filename.
+
 ## Step 4: Read Each Changed File and Diff
 
-Read each changed file. Read its diff:
+Run this procedure from the repository root. It lists paths and reads each diff without shell interpolation or Git pathspec expansion.
+External diff drivers and text conversion are disabled so reading a diff does not invoke repository-configured helpers.
+Python's isolated mode prevents imports from the checkout and ignores Python environment overrides.
 
 ```bash
-git diff main...HEAD -- <file>
+python3 -I - main <<'PY'
+import os
+import subprocess
+import sys
+
+comparison = sys.argv[1] + "...HEAD"
+git = ["git", "--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-renames"]
+paths = subprocess.check_output(git + ["--name-only", "-z", "--end-of-options", comparison, "--"]).split(b"\0")
+for raw_path in paths:
+    if not raw_path:
+        continue
+    path = os.fsdecode(raw_path)
+    print("Reviewing " + repr(path), flush=True)
+    subprocess.run(git + ["--end-of-options", comparison, "--", path], check=True)
+PY
 ```
+
+Read file contents through a filesystem API or an argument-based tool with literal paths.
+Do not paste filenames into shell commands, use `eval`, or parse the displayed `repr` output as commands.
+The `--` separator stops option parsing; it does not quote shell metacharacters.
 
 If a PR changes more than 30 files, review them in this order:
 
