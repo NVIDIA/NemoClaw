@@ -57,7 +57,8 @@ through the `switchyard` route and requires the classifier to select the efficie
 It then runs the shipped judge qualifier against native routing marks and separate
 judge/answer token accounting. The qualifier's deterministic tests own evidence rejection,
 cleanup, and both gateway launch gates. A separate routed-startup scenario installs the
-production-generated routing files at their root-owned production paths. It starts the real
+production-generated routing files through the production publisher, including its native
+request-free validation and lock. It passes the resulting expected-input fingerprint and starts the real
 entrypoint with resolver placeholders and local provider fixtures on a network-disabled
 container. It covers both a reused capable judge and an explicitly configured dedicated
 judge. Each mode requires the selected judge and answer calls before the gateway listens,

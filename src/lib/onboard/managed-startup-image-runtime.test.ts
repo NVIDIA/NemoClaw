@@ -665,7 +665,7 @@ describe("managed startup image runtime", () => {
     };
   }
 
-  it("atomically promotes exact Switchyard bytes before activating Relay (#13862)", () => {
+  it("validates staging before native publication and cleanup (#13864)", () => {
     const { environment, paths, serialized } = switchyardRoutingFixture();
     const filesystem = mockRootReplayFilesystem(
       [],
@@ -681,24 +681,13 @@ describe("managed startup image runtime", () => {
         [paths.switchyardDeploymentTarget, { contents: "previous deployment", mode: 0o444 }],
       ]),
     );
-    const promotionOrder: string[] = [];
-    const previousByTarget = new Map([
-      [paths.switchyardDeploymentTarget, "previous deployment"],
-      [paths.relayPluginStateTarget, "previous relay state"],
-      [paths.relayPluginsTarget, "previous relay activation"],
-    ]);
-    filesystem.beforeRename((_source, target) => {
-      expect(filesystem.readFile(target)).toBe(previousByTarget.get(target));
-      promotionOrder.push(target);
+    const publish = vi.fn((files) => {
+      filesystem.writeFile(paths.switchyardDeploymentTarget, files.switchyardDeploymentToml, 0o444);
+      filesystem.writeFile(paths.relayPluginStateTarget, files.relayPluginStateJson, 0o444);
+      filesystem.writeFile(paths.relayPluginsTarget, files.relayPluginsToml, 0o444);
     });
-
-    installHermesSwitchyardRoutingFiles(environment, paths, { uid: 0, gid: 0 });
-
-    expect(promotionOrder).toEqual([
-      paths.switchyardDeploymentTarget,
-      paths.relayPluginStateTarget,
-      paths.relayPluginsTarget,
-    ]);
+    installHermesSwitchyardRoutingFiles(environment, paths, { uid: 0, gid: 0 }, publish);
+    expect(publish).toHaveBeenCalledExactlyOnceWith(serialized);
     expect(filesystem.readFile(paths.switchyardDeploymentTarget)).toBe(
       serialized.switchyardDeploymentToml,
     );
@@ -751,7 +740,7 @@ describe("managed startup image runtime", () => {
     },
   );
 
-  it("removes Relay activation before stale Switchyard deployment when disabled (#13862)", () => {
+  it("delegates disabled routing cleanup to the stopped-gateway publisher (#13864)", () => {
     const { paths } = switchyardRoutingFixture();
     const filesystem = mockRootReplayFilesystem(
       [],
@@ -761,16 +750,13 @@ describe("managed startup image runtime", () => {
         [paths.switchyardDeploymentTarget, { contents: "stale deployment", mode: 0o444 }],
       ]),
     );
-    const removalOrder: string[] = [];
-    filesystem.beforeUnlink((target) => removalOrder.push(target));
-
-    installHermesSwitchyardRoutingFiles({}, paths, { uid: 0, gid: 0 });
-
-    expect(removalOrder).toEqual([
-      paths.relayPluginsTarget,
-      paths.relayPluginStateTarget,
-      paths.switchyardDeploymentTarget,
-    ]);
+    const publish = vi.fn(() => {
+      fs.unlinkSync(paths.relayPluginsTarget);
+      fs.unlinkSync(paths.relayPluginStateTarget);
+      fs.unlinkSync(paths.switchyardDeploymentTarget);
+    });
+    installHermesSwitchyardRoutingFiles({}, paths, { uid: 0, gid: 0 }, publish);
+    expect(publish).toHaveBeenCalledExactlyOnceWith(null);
     expect(filesystem.hasFile(paths.relayPluginsTarget)).toBe(false);
     expect(filesystem.hasFile(paths.relayPluginStateTarget)).toBe(false);
     expect(filesystem.hasFile(paths.switchyardDeploymentTarget)).toBe(false);

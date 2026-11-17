@@ -19,6 +19,7 @@ import {
   readHermesSwitchyardRoutingEnvironment,
   readSwitchyardProviderBindingsEnvironment,
   serializeHermesSwitchyardRouting,
+  type SerializedHermesSwitchyardRouting,
 } from "../../hermes-switchyard-routing";
 import {
   type ManagedStartupAgentEnvironment,
@@ -992,14 +993,13 @@ export function installHermesSwitchyardRoutingFiles(
   configurationEnvironment: Readonly<NodeJS.ProcessEnv>,
   paths: HermesSwitchyardRoutingFilePaths = HERMES_SWITCHYARD_ROUTING_PATHS,
   sandboxIdentityInput?: NumericIdentity,
+  publish: (
+    files: SerializedHermesSwitchyardRouting | null,
+  ) => void = publishHermesSwitchyardRouting,
 ): void {
   const routing = readHermesSwitchyardRoutingEnvironment(configurationEnvironment);
   if (!routing) {
-    // Remove activation first so no live Relay configuration can reference a
-    // deployment file while stale state is being cleared.
-    removeSafeRootFile(paths.relayPluginsTarget);
-    removeSafeRootFile(paths.relayPluginStateTarget);
-    removeSafeRootFile(paths.switchyardDeploymentTarget);
+    publish(null);
     return;
   }
   const serialized = serializeHermesSwitchyardRouting(
@@ -1031,17 +1031,36 @@ export function installHermesSwitchyardRoutingFiles(
     sandboxIdentity,
   );
 
-  // Install the referenced deployment and enabled lifecycle state before
-  // making the Relay plugin configuration visible.
-  atomicWriteRootFile(paths.switchyardDeploymentTarget, expectedDeployment, 0o444);
-  atomicWriteRootFile(paths.relayPluginStateTarget, expectedRelayState, 0o444);
-  atomicWriteRootFile(paths.relayPluginsTarget, expectedRelay, 0o444);
+  publish(serialized);
   verifyCommittedRoutingFile(paths.switchyardDeploymentTarget, expectedDeployment);
   verifyCommittedRoutingFile(paths.relayPluginStateTarget, expectedRelayState);
   verifyCommittedRoutingFile(paths.relayPluginsTarget, expectedRelay);
   removeStableRoutingSource(paths.switchyardDeploymentSource, deploymentSource);
   removeStableRoutingSource(paths.relayPluginStateSource, relayStateSource);
   removeStableRoutingSource(paths.relayPluginsSource, relaySource);
+}
+
+function publishHermesSwitchyardRouting(files: SerializedHermesSwitchyardRouting | null): void {
+  // This production boundary owns native validation and exclusion of every
+  // managed gateway launch. Keep staging-file ownership checks in the caller.
+  ensureRootOwnedDirectory("/usr/local/share/nemoclaw");
+  const result = spawnSync(
+    "/opt/hermes/.venv/bin/python",
+    ["-I", "/opt/nemoclaw-hermes-config/switchyard-preflight.py", "publish"],
+    {
+      input: JSON.stringify(files),
+      encoding: "utf8",
+      timeout: 50_000,
+      killSignal: "SIGKILL",
+      maxBuffer: 4096,
+      env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", HERMES_HOME: "/sandbox/.hermes" },
+    },
+  );
+  if (result.status !== 0 || result.signal || result.error) {
+    fail(
+      "Switchyard publication failed. Routing inputs were not accepted; the gateway must remain stopped.",
+    );
+  }
 }
 
 export function verifyHermesSwitchyardRoutingFiles(

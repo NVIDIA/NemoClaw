@@ -8,6 +8,8 @@ import { managedStartupE2eProfile } from "../../scripts/checks/generate-managed-
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile";
 import { entry } from "./native-launch-readiness.ts";
 import type { SandboxEntry } from "../../src/lib/state/registry";
+import { switchyardPreflightFixture } from "../support/switchyard-preflight";
+import { observeSwitchyardPreflight } from "../../src/lib/onboard/switchyard/preflight";
 
 export async function createSwitchyardReadinessFixture(gatewayName: string, sandboxName: string) {
   const routing = createHermesSwitchyardRoutingIntent({
@@ -27,6 +29,8 @@ export async function createSwitchyardReadinessFixture(gatewayName: string, sand
   });
   const routedEntry = {
     ...entry("hermes"),
+    name: sandboxName,
+    gatewayName,
     provider: routing.capable.provider,
     model: routing.capable.model,
     credentialEnv: "OPENAI_API_KEY",
@@ -47,5 +51,11 @@ export async function createSwitchyardReadinessFixture(gatewayName: string, sand
       shared: true,
     },
   } satisfies SandboxEntry;
-  return { f, routedEntry };
+  const preflight = switchyardPreflightFixture({ routing, bindings });
+  const observe: typeof observeSwitchyardPreflight = (entry, name) =>
+    observeSwitchyardPreflight(entry, name, {
+      ...preflight.deps,
+      providerAdapter: f.input.adapter,
+    });
+  return { f, routedEntry, preflight, observe };
 }

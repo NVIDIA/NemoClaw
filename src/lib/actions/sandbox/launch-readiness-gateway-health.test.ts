@@ -32,6 +32,8 @@ import {
   waitForStartedNativeGatewayProcess,
 } from "./process-recovery";
 
+import { createSwitchyardReadinessFixture } from "../../../../test/helpers/native-launch-readiness-switchyard";
+
 describe("launch-readiness gateway health scope", () => {
   it("bounds bound Switchyard provider reads with the readiness probe timeout", async () => {
     const capture = vi.fn(() => ({
@@ -44,12 +46,14 @@ describe("launch-readiness gateway health scope", () => {
       runBuffered: vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(),
     };
     const deps = createBoundLaunchReadinessDeps(capture, commandExecutor);
-    await deps.switchyardProviderAdapter?.getProvider({
-      target: { kind: "named", gatewayName: "selected" },
-      providerName: "fixture-provider",
-    });
+    const { routedEntry } = await createSwitchyardReadinessFixture("selected", "sandbox");
+    await expect(deps.switchyardPreflight?.(routedEntry, "sandbox")).rejects.toThrow("providers");
     expect(capture).toHaveBeenCalledExactlyOnceWith(
-      expect.arrayContaining(["provider", "get", "fixture-provider"]),
+      expect.arrayContaining([
+        "provider",
+        "get",
+        routedEntry.hermesSwitchyard.bindings.providers[0]!.providerName,
+      ]),
       expect.objectContaining({ timeout: OPENSHELL_PROBE_TIMEOUT_MS }),
     );
   });

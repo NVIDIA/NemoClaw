@@ -251,6 +251,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/agents/hermes/hermes-switchyard-judge-preflight.test.ts"),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/switchyard-preflight\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-switchyard-preflight.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/image-build-probes\.py$/,
     testsToRun: runTests("test/agents/hermes/hermes-image-build-probes.test.ts"),
   },
