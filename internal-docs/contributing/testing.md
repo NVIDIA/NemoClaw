@@ -398,8 +398,9 @@ When a pull request changes no image input since a `v1` commit that pushed the l
 
 Each platform starts its jobs after its own build; it does not wait for the other platforms.
 Superseded pull request runs are cancelled, and their checks report as cancelled rather than failed.
-Push runs finish, because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
-The image workflow cancels superseded pull request runs and pushes, but not manual runs; documentation and dependency pushes finish.
+In CI / Bundle and the image workflow, each `v1` push runs in its own concurrency group: it starts without waiting for an earlier push and is never cancelled, so every `v1` commit gets its checks and pushed images.
+GPU case jobs from several pushes wait in the GPU runner queue; none cancels another.
+Manual runs are not cancelled; documentation and dependency pushes finish.
 
 ### Partitions
 
