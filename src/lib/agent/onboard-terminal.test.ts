@@ -241,7 +241,7 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
 
   it("rejects a below-minimum terminal version on fresh setup (#6193)", async () => {
     // BINARY_CHECK ok, both smoke commands pass, but the plain version probe
-    // reports 0.0.1 — below the manifest's expected_version (0.1.71).
+    // reports 0.0.1 — below the manifest's expected_version (0.1.87).
     const calls: string[] = [];
     const runCaptureOpenshell = vi.fn((args: string[]) =>
       recordDriftedDeepAgentsRuntimeCall(args, calls),
@@ -263,7 +263,7 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     expect(context.recordStepComplete).not.toHaveBeenCalled();
     expect(context.recordStepFailed).toHaveBeenCalledWith(
       "agent_setup",
-      expect.stringMatching(/version 0\.0\.1 is below required minimum 0\.1\.71/),
+      expect.stringMatching(/version 0\.0\.1 is below required minimum 0\.1\.87/),
     );
   });
 
@@ -295,7 +295,7 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     expect(context.recordStepComplete).not.toHaveBeenCalled();
     expect(context.recordStepFailed).toHaveBeenCalledWith(
       "agent_setup",
-      expect.stringMatching(/version 0\.0\.1 is below required minimum 0\.1\.71/),
+      expect.stringMatching(/version 0\.0\.1 is below required minimum 0\.1\.87/),
     );
   });
 
@@ -322,7 +322,7 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     expect(context.recordStepFailed).toHaveBeenCalledWith(
       "agent_setup",
       expect.stringMatching(
-        /version could not be verified against required version 0\.1\.71: the version probe failed/,
+        /version could not be verified against required version 0\.1\.87: the version probe failed/,
       ),
     );
   });

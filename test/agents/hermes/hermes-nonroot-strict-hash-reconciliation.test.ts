@@ -112,6 +112,7 @@ function runManagedNonrootWrite(
   fixture: ReconciliationFixture,
   expectedDigest: string,
   content: string,
+  prepare = "",
 ) {
   const wrapper = String.raw`
 import importlib.util
@@ -128,6 +129,7 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 module._managed_nonroot_reconciliation_is_allowed = lambda: True
 module._sandbox_identity = lambda: (os.geteuid(), os.getegid())
+${prepare}
 sys.argv = [source, *sys.argv[3:]]
 raise SystemExit(module.main())
 `;
@@ -146,6 +148,92 @@ raise SystemExit(module.main())
       timeout: 5000,
     },
   );
+}
+
+function discordStartupPreparation(scenario: string): string {
+  return String.raw`
+hermes_dir = sys.argv[sys.argv.index("--hermes-dir") + 1]
+hash_file = sys.argv[sys.argv.index("--hash-file") + 1]
+validator = os.path.join(os.path.dirname(source), "validate-env-secret-boundary.py")
+case = ${JSON.stringify(scenario)}
+module.ensure_api_key(hermes_dir, hash_file, "compat")
+os.environ["DISCORD_BOT_TOKEN"] = "openshell:resolve:env:v8_DISCORD_BOT_TOKEN"
+runtime_plan = None
+if case == "runtime-plan" or case.startswith("missing-slot"):
+    import json
+    bindings = [{"channelId": "discord", "providerEnvKey": "DISCORD_BOT_TOKEN"}]
+    if case == "missing-slot-multiple":
+        os.environ["SLACK_BOT_TOKEN"] = "openshell:resolve:env:v8_SLACK_BOT_TOKEN"
+        bindings.insert(0, {"channelId": "slack", "providerEnvKey": "SLACK_BOT_TOKEN"})
+    runtime_plan = os.path.join(hermes_dir, "runtime-plan.json")
+    with open(runtime_plan, "w") as handle:
+        json.dump({"channels": [{"channelId": binding["channelId"], "active": True} for binding in bindings], "credentialBindings": bindings}, handle)
+module.provider_placeholders(hermes_dir, hash_file, "compat", runtime_plan, validator)
+witness = os.path.join(hermes_dir, ".provider-startup-env")
+case = case.removeprefix("missing-slot-")
+if case == "repeat-refresh":
+    os.environ["DISCORD_BOT_TOKEN"] = "openshell:resolve:env:v9_DISCORD_BOT_TOKEN"
+    module.provider_placeholders(hermes_dir, hash_file, "compat", None, validator)
+if case == "forged-witness":
+    with open(witness, "w") as handle:
+        handle.write("SAFE_SETTING=forged\n")
+    os.chmod(witness, 0o600)
+if case == "symlink-witness":
+    os.unlink(witness)
+    os.symlink(os.path.join(hermes_dir, ".env"), witness)
+if case == "cleanup-failure":
+    original_unlink = module.os.unlink
+    def failed_unlink(path, **kwargs):
+        if path == ".provider-startup-env":
+            raise PermissionError("injected witness cleanup failure")
+        return original_unlink(path, **kwargs)
+    module.os.unlink = failed_unlink
+if case == "rotated-api-key":
+    env_path = os.path.join(hermes_dir, ".env")
+    with open(env_path) as handle:
+        text = handle.read()
+    with open(env_path, "w") as handle:
+        handle.write(text.replace("a" * 64, "b" * 64))
+    module.refresh_hashes(hermes_dir, hash_file, "compat")
+if case == "missing-witness" and os.path.exists(witness):
+    os.unlink(witness)
+if case == "unsafe-witness" and os.path.exists(witness):
+    os.chmod(witness, 0o644)
+if case in ("unrelated-drift", "wrong-provider-suffix", "raw-provider-value"):
+    env_path = os.path.join(hermes_dir, ".env")
+    with open(env_path) as handle:
+        text = handle.read()
+    if case == "unrelated-drift":
+        text += "UNEXPECTED_SETTING=attacker-controlled\n"
+    elif case == "wrong-provider-suffix":
+        text = text.replace("v8_DISCORD_BOT_TOKEN", "v8_SLACK_BOT_TOKEN")
+    else:
+        text = text.replace("openshell:resolve:env:v8_DISCORD_BOT_TOKEN", "raw-forbidden")
+    with open(env_path, "w") as handle:
+        handle.write(text)
+    module.refresh_hashes(hermes_dir, hash_file, "compat")
+if case in ("env-race", "witness-race"):
+    original = module._provider_startup_env_matches
+    def raced(*args):
+        accepted = original(*args)
+        if accepted:
+            with open(witness if case == "witness-race" else os.path.join(hermes_dir, ".env"), "a") as handle:
+                handle.write("# raced after proof\n")
+        return accepted
+    module._provider_startup_env_matches = raced
+`;
+}
+
+function createDiscordFixture(reference: string | null = "v7_DISCORD_BOT_TOKEN", apiKeyLine = "") {
+  const fixture = createFixture(0o700);
+  fixture.trustedEnv +=
+    (reference === null ? "" : `DISCORD_BOT_TOKEN=openshell:resolve:env:${reference}\n`) +
+    apiKeyLine;
+  fs.writeFileSync(fixture.envPath, fixture.trustedEnv);
+  const initialHash = hashInputs(fixture);
+  fs.writeFileSync(fixture.hashPath, initialHash);
+  fs.writeFileSync(fixture.compatHashPath, initialHash);
+  return { fixture, initialHash };
 }
 
 function refreshCompatOnly(fixture: ReconciliationFixture): void {
@@ -294,6 +382,87 @@ print(json.dumps([private_live, canonical_mutable, foreign_private, unexpected_m
           expect(strictHashIsValid(fixture)).toBe(true);
           expect(fs.existsSync(fixture.statePath)).toBe(false);
           expect(fs.existsSync(path.join(fixture.root, "hermes-config-mutation.lock"))).toBe(false);
+        } finally {
+          fs.rmSync(fixture.root, { recursive: true, force: true });
+        }
+      },
+    );
+
+    it.each([
+      [
+        "existing-api-key",
+        "v7_DISCORD_BOT_TOKEN",
+        `API_SERVER_KEY=${"a".repeat(64)}\n`,
+        "v8",
+        false,
+      ],
+      ["minted-api-key", "v7_DISCORD_BOT_TOKEN", "", "v8", false],
+      ["repeat-refresh", "v7_DISCORD_BOT_TOKEN", "", "v9", false],
+      ["runtime-plan", "v7_DISCORD_BOT_TOKEN", "", "v8", false],
+      ["missing-slot", null, "", "v8", false],
+      ["missing-slot-multiple", null, "", "v8", false],
+      ["missing-slot-existing-api-key", null, `API_SERVER_KEY=${"a".repeat(64)}\n`, "v8", false],
+      ["canonical-placeholder", "DISCORD_BOT_TOKEN", "", "v8", false],
+      ["cleanup-failure", "v7_DISCORD_BOT_TOKEN", "", "v8", true],
+    ] as const)(
+      "accepts proved Discord startup refresh (%s)",
+      (scenario, reference, apiKeyLine, scope, witnessRetained) => {
+        const { fixture } = createDiscordFixture(reference, apiKeyLine);
+        const updatedConfig = "model:\n  default: trusted-model-v2\n";
+        try {
+          const result = runManagedNonrootWrite(
+            fixture,
+            expectedConfigDigest(fixture),
+            updatedConfig,
+            discordStartupPreparation(scenario),
+          );
+          expect(result.status, result.stderr).toBe(0);
+          expect(fs.readFileSync(fixture.configPath, "utf-8")).toBe(updatedConfig);
+          expect(fs.readFileSync(fixture.envPath, "utf-8")).toContain(
+            `DISCORD_BOT_TOKEN=openshell:resolve:env:${scope}_DISCORD_BOT_TOKEN\n`,
+          );
+          expect(strictHashIsValid(fixture)).toBe(true);
+          expect(fs.existsSync(path.join(fixture.hermesDir, ".provider-startup-env"))).toBe(
+            witnessRetained,
+          );
+          expect(result.stderr.includes("Retained stale provider env startup witness")).toBe(
+            witnessRetained,
+          );
+        } finally {
+          fs.rmSync(fixture.root, { recursive: true, force: true });
+        }
+      },
+    );
+
+    it.each([
+      ["unrelated-drift", ""],
+      ["forged-witness", ""],
+      ["missing-witness", ""],
+      ["unsafe-witness", ""],
+      ["wrong-provider-suffix", ""],
+      ["raw-provider-value", ""],
+      ["env-race", ""],
+      ["witness-race", ""],
+      ["symlink-witness", ""],
+      ["rotated-api-key", `API_SERVER_KEY=${"a".repeat(64)}\n`],
+      ["missing-slot-unrelated-drift", "", null],
+      ["missing-slot-forged-witness", "", null],
+      ["missing-slot-wrong-provider-suffix", "", null],
+      ["missing-slot-raw-provider-value", "", null],
+    ])(
+      "refuses unproved Discord startup changes (%s)",
+      (scenario, apiKeyLine, reference: string | null = "v7_DISCORD_BOT_TOKEN") => {
+        const { fixture, initialHash } = createDiscordFixture(reference, apiKeyLine);
+        try {
+          const result = runManagedNonrootWrite(
+            fixture,
+            expectedConfigDigest(fixture),
+            "model:\n  default: must-not-apply\n",
+            discordStartupPreparation(scenario),
+          );
+          expect(result.status, result.stderr).not.toBe(0);
+          expect(fs.readFileSync(fixture.configPath, "utf-8")).toBe(fixture.trustedConfig);
+          assertCleanRefusal(fixture, initialHash);
         } finally {
           fs.rmSync(fixture.root, { recursive: true, force: true });
         }

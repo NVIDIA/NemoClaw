@@ -128,7 +128,7 @@ export function validateGrowthGuardrailsWorkflowBoundary(
             if: "${{ steps.approval.outputs.head_sha != '' }}",
             uses: SETUP_NODE,
             with: {
-              "node-version": "24.18.1",
+              "node-version": "24.22.1",
             },
           },
           {

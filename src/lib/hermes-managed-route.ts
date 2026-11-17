@@ -180,10 +180,11 @@ export function applyHermesManagedRoute(
   config.custom_providers = customProviders;
 }
 
-/** Refresh an issued local reference without replacing restored model settings. */
+/** Refresh an issued managed reference without replacing restored model settings. */
 export function refreshHermesNativeLocalCredential(
   config: Record<string, unknown>,
   route: HermesManagedRoute & { nativeCredentialHandle: string },
+  options: { recoverStrippedNvidia?: boolean } = {},
 ): void {
   const expected: Record<string, unknown> = {};
   applyHermesManagedRoute(expected, route);
@@ -197,9 +198,20 @@ export function refreshHermesNativeLocalCredential(
     (entry) => isObjectRecord(entry) && entry.name === route.upstreamProvider,
   );
   const previous = model.api_key;
-  const reference = new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN).exec(String(previous));
+  const nvidia =
+    route.upstreamProvider === "nvidia-prod" &&
+    managedInferenceApiKey(route.baseUrl, "") === NVIDIA_INFERENCE_PLACEHOLDER;
+  const pattern = nvidia
+    ? NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN
+    : new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN);
+  const template = nvidia ? NVIDIA_INFERENCE_PLACEHOLDER : `\${${NATIVE_LOCAL_CREDENTIAL_ENV}}`;
+  const reference = pattern.exec(String(previous));
+  // The sentinel identifies damage, not authority. Only the registered restore
+  // caller may admit it after verifying live identity and provider binding.
+  const recoverStripped =
+    options.recoverStrippedNvidia === true && nvidia && previous === "[STRIPPED_BY_MIGRATION]";
   if (
-    !nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl) ||
+    (!nvidia && !nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl)) ||
     upstream.provider !== route.upstreamProvider ||
     upstream.provider_key !== providerKey ||
     upstream.model !== route.model ||
@@ -216,7 +228,7 @@ export function refreshHermesNativeLocalCredential(
     typeof previous !== "string" ||
     managed.api_key !== previous ||
     matches[0].api_key !== previous ||
-    (previous !== `\${${NATIVE_LOCAL_CREDENTIAL_ENV}}` && reference?.[0] !== previous)
+    (previous !== template && reference?.[0] !== previous && !recoverStripped)
   ) {
     throw new Error("Restored Hermes inference configuration does not match its registered route.");
   }

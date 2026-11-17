@@ -74,6 +74,20 @@ export function reviewedOpenShellMcpRuntime(version: string) {
       gateway = "a6d230ccf79f777602e5a7d101775edcb8f59a29dc569d8cd41544ebb8e44fda";
       standaloneSandbox = "23147b42d31bd0b13e1a9ed7b3834b8e6075836cba0872fffa9e7d481f6dd281";
       break;
+    case "0.1.5":
+      sourceSha = "bdb956f2cd65a635f1294fccf1d138d263bf650f";
+      supervisorDigest = "fabcd01f656e9d23df4386f82e80b4f48b90f3452d7d5c58889007643a069161";
+      cli = "446f766842d2bf03abc37b56a3f5a3e46b96140b5b6c305d3f168d67921fd271";
+      gateway = "c8fa78fd49f245978f64d038207ce0205d98fcdd48bf115bae8a0b9f4f4d5003";
+      standaloneSandbox = "65aa2a2afb96e7d1351c1d197ded7a966e20bcad68e18a58a94621a8f23769bc";
+      break;
+    case "0.1.7":
+      sourceSha = "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c";
+      supervisorDigest = "a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06";
+      cli = "718f40674738206a84bc3a967966225ff47dfed9ba5738099d56777faa4af793";
+      gateway = "0b7cb54fd8558bfad4c57f556f7fc1a20ef8cd94ebb11f4f40a9a90b74b4ad17";
+      standaloneSandbox = "d13966b032b07d75c917d3fbb7471e608edfdf1f25e9d922e5aa7c779cf6ad21";
+      break;
     default:
       throw new Error("The selected OpenShell release has no reviewed MCP runtime provenance");
   }

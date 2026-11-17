@@ -7,6 +7,10 @@ export const TAVILY_PROVIDER_PROFILE_ID = "tavily";
 // profile so upgrades never accept the earlier Deep Agents-only Tavily binary
 // allowlist as compatible with Hermes.
 export const HERMES_TAVILY_PROVIDER_PROFILE_ID = "tavily-hermes-v1";
+/** Both shipped Tavily profiles grant access to the same service. */
+export function isTavilyProviderProfileId(type: string): boolean {
+  return type === TAVILY_PROVIDER_PROFILE_ID || type === HERMES_TAVILY_PROVIDER_PROFILE_ID;
+}
 export const WEB_SEARCH_PROVIDER_PROFILE_IDS = [
   BRAVE_PROVIDER_PROFILE_ID,
   TAVILY_PROVIDER_PROFILE_ID,

@@ -217,6 +217,26 @@ describe("sandbox inference invocation probe", () => {
     expect(JSON.stringify(result)).not.toContain("canary-replay-marker");
   });
 
+  it("classifies only a curl-confirmed timeout as transient (#13616)", async () => {
+    const execute = vi.fn(async () => ({
+      status: 28,
+      stdout: "curl-error:28\n",
+      stderr: "secret-shaped diagnostic",
+    }));
+    const result = await probeSandboxInferenceInvocation(input, { execute });
+    expect(result).toMatchObject({ ok: false, httpStatus: null, timedOut: true });
+    expect(JSON.stringify(result)).not.toContain("secret-shaped diagnostic");
+
+    execute.mockResolvedValue({ status: 28, stdout: "", stderr: "" });
+    expect(await probeSandboxInferenceInvocation(input, { execute })).toMatchObject({
+      ok: false,
+      httpStatus: null,
+    });
+    expect(await probeSandboxInferenceInvocation(input, { execute })).not.toHaveProperty(
+      "timedOut",
+    );
+  });
+
   it("names the account entitlement cause behind an invocation 404 (#10879)", async () => {
     const execute = vi.fn(async () => ({
       status: 1,
@@ -508,6 +528,30 @@ describe("sandbox inference invocation probe", () => {
         detail: `sandbox inference invocation probe ${detail}`,
         httpStatus,
         endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+      });
+      expect(JSON.stringify(result)).not.toContain("nvapi-private-canary");
+    },
+  );
+
+  it.each([
+    [403, 403],
+    [407, 407],
+    [503, null],
+  ])(
+    "reports proxy CONNECT refusal %s without exposing stderr or treating it as an upstream status",
+    async (proxyStatus, retainedStatus) => {
+      const result = await probeSandboxInferenceInvocation(input, {
+        execute: vi.fn(async () => ({
+          status: 56,
+          stdout: "curl-error:56\n",
+          stderr: `untrusted nvapi-private-canary\ncurl: (56) CONNECT tunnel failed, response ${proxyStatus}\n`,
+        })),
+      });
+      expect(result).toEqual({
+        ok: false,
+        detail: `sandbox inference invocation probe exited with status 56${retainedStatus ? ` (proxy CONNECT returned HTTP ${retainedStatus})` : ""}`,
+        httpStatus: null,
+        endpoint: "https://inference.local/v1/chat/completions",
       });
       expect(JSON.stringify(result)).not.toContain("nvapi-private-canary");
     },

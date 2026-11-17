@@ -192,6 +192,8 @@ describe("confirmed destroy proxy cleanup", () => {
       harness.runOpenshellSpy.mockImplementation((args: string[]) => {
         const name = args.includes("alpha") ? "alpha" : "beta";
         switch (`${args[0]}:${args[1]}`) {
+          case "gateway:list":
+            return { status: 0, stdout: "[]", stderr: "" };
           case "sandbox:list":
             return { status: 0, stdout: sandboxListJson([...remoteNames]), stderr: "" };
           case "sandbox:get":

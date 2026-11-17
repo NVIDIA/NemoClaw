@@ -13,18 +13,14 @@ import type {
 } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { isValidName } from "../../sandbox-name-contract";
+import { NativeProviderError, unownedNativeProviderRefusal } from "./lifecycle";
 import {
   normalizeNativeProviderAttachment,
   type NativeProviderAttachment,
   type NativeProviderDefinition,
 } from "./contract";
 
-export class NativeProviderError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "NativeProviderError";
-  }
-}
+export { NativeProviderError };
 
 /** The shared lifecycle for NemoClaw's fixed hosted provider profiles. */
 export class NativeProviderLifecycle<ProfileId extends string, ProviderName extends string> {
@@ -285,9 +281,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
     if (before) {
       const receipt = this.nativeProviderAttachmentFromMetadata(before);
       if (!input.expected) {
-        throw new NativeProviderError(
-          `OpenShell provider '${this.definition.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
-        );
+        throw unownedNativeProviderRefusal(this.definition.providerName, target);
       }
       if (input.expected.providerId !== receipt.providerId) {
         throw new NativeProviderError(

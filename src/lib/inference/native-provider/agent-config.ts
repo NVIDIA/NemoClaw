@@ -4,10 +4,11 @@
 import {
   hostedNativeProvider,
   customNativeCredentialEnv,
+  HOSTED_NATIVE_PROVIDERS,
   isCustomHostedProvider,
 } from "./hosted.ts";
 
-export { hostedNativeProvider };
+export { hostedNativeProvider, HOSTED_NATIVE_PROVIDERS };
 
 /** Public configuration only. Never read the host's provider credential here. */
 export function nativeHostedAgentConfig(provider: string | null | undefined, baseUrl: string) {

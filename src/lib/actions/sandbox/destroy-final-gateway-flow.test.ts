@@ -61,10 +61,7 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
 
     expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(2);
     expect(harness.finalGatewaySleepSpy).toHaveBeenCalledOnce();
-    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
-      "nemoclaw-19080",
-      harness.runOpenshellSpy,
-    );
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", expect.any(Function));
     expect(warnOutput(harness)).not.toContain("gateway left running");
   });
 
@@ -178,12 +175,17 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     const harness = createDestroyHarness({
       executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,
     });
+    harness.setCrossRootGatewayCleanupOwners([]);
     harness.withGatewayRouteMutationLockSpy
       .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) =>
         (operation as () => Promise<unknown>)(),
       )
       .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) => {
         harness.setRegisteredSandboxCount(1);
+        vi.mocked(harness.registry.listSandboxes).mockReturnValue({
+          sandboxes: [{ name: "beta", gatewayName: "nemoclaw-19080", gatewayPort: 19080 }],
+        } as ReturnType<typeof harness.registry.listSandboxes>);
+        harness.setCrossRootGatewayCleanupOwners(harness.registry.listSandboxes().sandboxes);
         return (operation as () => Promise<unknown>)();
       });
 

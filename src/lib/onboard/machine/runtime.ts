@@ -31,7 +31,7 @@ export interface OnboardRuntimeDeps {
   createSession(overrides?: Partial<Session>): Session;
   saveSession(session: Session): Session;
   updateSession(mutator: (session: Session) => Session | void): Session;
-  markStepStarted(stepName: string): Session;
+  markStepStarted(stepName: string, updates?: SessionUpdates): Session;
   markStepComplete(stepName: string, updates?: SessionUpdates): Session;
   markStepSkipped(stepName: string): Session;
   markStepRejected?(stepName: string): Session;
@@ -151,8 +151,16 @@ export class OnboardRuntime {
     return session;
   }
 
-  async markStepStarted(stepName: string): Promise<Session> {
-    return this.deps.markStepStarted(stepName);
+  async markStepStarted(stepName: string, updates: SessionUpdates = {}): Promise<Session> {
+    const fields = Object.keys(this.deps.filterSafeUpdates(updates));
+    const updated = this.deps.markStepStarted(stepName, updates);
+    if (fields.length > 0) {
+      this.emit("context.updated", updated, {
+        step: stepName,
+        metadata: { fields },
+      });
+    }
+    return updated;
   }
 
   async markStepComplete(stepName: string, updates: SessionUpdates = {}): Promise<Session> {

@@ -542,7 +542,7 @@ describe("uninstall Docker resource scope", () => {
         rmSync: vi.fn(),
         run: (command, args) =>
           command === "openshell" && args.join(" ") === "gateway list -o json"
-            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            ? ok(JSON.stringify([{ name: "nemoclaw", active: false }]))
             : ok(),
         runDocker,
       },
@@ -600,7 +600,7 @@ describe("uninstall Docker resource scope", () => {
           rmSync: vi.fn(),
           run: (command, args) =>
             command === "openshell" && args.join(" ") === "gateway list -o json"
-              ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+              ? ok(JSON.stringify([{ name: "nemoclaw", active: false }]))
               : ok(),
           runDocker,
         },
@@ -652,7 +652,7 @@ describe("uninstall Docker resource scope", () => {
         rmSync: vi.fn(),
         run: (command, args) =>
           command === "openshell" && args.join(" ") === "gateway list -o json"
-            ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+            ? ok(JSON.stringify([{ name: "nemoclaw", active: false }]))
             : ok(),
         runDocker,
       },

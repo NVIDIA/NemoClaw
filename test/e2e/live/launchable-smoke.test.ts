@@ -23,6 +23,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { bootstrapInstallSudoArgs } from "../fixtures/bootstrap-install-command.ts";
 
 // This is intentionally a single live test instead of a new fixture
 // family: the contract is the real Ubuntu bootstrap path, so the test invokes
@@ -252,16 +253,27 @@ test(
 
     progress.phase("run the Brev bootstrap script");
     const installLog = artifacts.pathFor("bootstrap.log");
-    const install = await host.command("sudo", ["-E", "bash", BOOTSTRAP_SCRIPT], {
-      artifactName: "phase-2-brev-bootstrap-script",
-      env: runEnv({
-        LAUNCH_LOG: installLog,
-        NEMOCLAW_CLONE_DIR: cloneDir,
-        NEMOCLAW_REF: "main",
-        SKIP_DOCKER_PULL: process.env.SKIP_DOCKER_PULL ?? "1",
+    // sudo implementations may ignore -E. Pass only the bootstrap's non-secret
+    // inputs explicitly so it builds the preseeded candidate checkout.
+    const install = await host.command(
+      "sudo",
+      bootstrapInstallSudoArgs({
+        script: BOOTSTRAP_SCRIPT,
+        cloneDir,
+        installLog,
+        env: process.env,
       }),
-      timeoutMs: INSTALL_TIMEOUT_MS,
-    });
+      {
+        artifactName: "phase-2-brev-bootstrap-script",
+        env: runEnv({
+          LAUNCH_LOG: installLog,
+          NEMOCLAW_CLONE_DIR: cloneDir,
+          NEMOCLAW_REF: "main",
+          SKIP_DOCKER_PULL: process.env.SKIP_DOCKER_PULL ?? "1",
+        }),
+        timeoutMs: INSTALL_TIMEOUT_MS,
+      },
+    );
     expectExitZero(install, "Brev bootstrap script completed");
 
     progress.phase("inspect installed CLI and runtime artifacts");

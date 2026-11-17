@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -40,6 +42,15 @@ function expectRequiredPodmanPackages(run: string): void {
   }
 }
 
+const TELEMETRY_ENVIRONMENT = {
+  CI: "true",
+  GITHUB_ACTIONS: "true",
+  GITHUB_RUN_ID: "12345678901",
+  GITHUB_RUN_ATTEMPT: "2",
+  NEMOCLAW_TELEMETRY_TEST_LABEL: "literal = ' $ data\nnext-line",
+  NEMOCLAW_DISABLE_TELEMETRY: "1",
+};
+
 describe("native runtime qualification producer workflow", () => {
   it("keeps candidate execution out of the authenticated controller", () => {
     const generate = job("generate-matrix");
@@ -69,7 +80,7 @@ describe("native runtime qualification producer workflow", () => {
     const compile = step(plan, "Compile the trusted qualification producer matrix");
 
     expect(plan.if).toBe(
-      "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}",
+      "${{ !cancelled() && needs.generate-matrix.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}",
     );
     expect(plan.permissions).toEqual({
       actions: "read",
@@ -209,6 +220,58 @@ describe("native runtime qualification producer workflow", () => {
     expect(upload.uses).toBe(
       "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57",
     );
+  });
+
+  it.each([
+    { name: "populated values", environment: TELEMETRY_ENVIRONMENT },
+    {
+      name: "empty controls",
+      environment: {
+        ...TELEMETRY_ENVIRONMENT,
+        NEMOCLAW_TELEMETRY_TEST_LABEL: "",
+        NEMOCLAW_DISABLE_TELEMETRY: "",
+      },
+    },
+    { name: "absent identity and controls", environment: { CI: "true" } },
+  ])("preserves isolated installer telemetry with $name", ({ environment }) => {
+    const installer = step(
+      job("native-runtime-qualification-producer"),
+      "Run the authenticated installer qualification",
+    );
+    const handoffSource = installer.run!.match(
+      /telemetry_env=\(\)[\s\S]*?(?=CONTAINERS_CONF=)/u,
+    )![0];
+    const handoff = spawnSync(
+      "bash",
+      [
+        "-c",
+        `set -euo pipefail
+sudo() { shift 2; "$@"; }
+${handoffSource}/usr/bin/env -0`,
+      ],
+      {
+        encoding: "utf8",
+        timeout: 5000,
+        env: {
+          ...environment,
+          ACCOUNT: "qualification-test",
+          PATH: "/usr/bin:/bin",
+          QUALIFICATION_TEST_CREDENTIAL: "must-not-pass",
+        },
+      },
+    );
+    expect(handoff.status, handoff.stderr).toBe(0);
+    expect(
+      Object.fromEntries(
+        handoff.stdout
+          .split("\0")
+          .filter(Boolean)
+          .map((line) => {
+            const [name, ...value] = line.split("=");
+            return [name, value.join("=")];
+          }),
+      ),
+    ).toEqual(environment);
   });
 
   it("runs each candidate case in an isolated account and emits one bounded evidence artifact", () => {
@@ -574,7 +637,7 @@ describe("native runtime qualification producer workflow", () => {
     expect(identity.run).toContain('.status == "in_progress"');
     expect(identity.run).toContain("select(length == 1)");
     expect(identity.run).toContain("Aggregate job lookup exceeds the bounded 100-job page");
-    expect(setupNode.with?.["node-version"]).toBe("24.18.1");
+    expect(setupNode.with?.["node-version"]).toBe("24.22.1");
     expect(collect.run).toContain("native-runtime-qualification-producer-aggregate.mts");
     expect(collect.env?.QUALIFICATION_PLAN).toBe(
       "${{ needs.native-runtime-qualification-producer-plan.outputs.matrix }}",

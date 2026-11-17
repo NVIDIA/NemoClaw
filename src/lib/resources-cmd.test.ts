@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as docker from "./adapters/docker/exec";
 import {
   appendResourceFlags,
   getHardwareResources,
@@ -48,6 +49,7 @@ describe("resources-cmd", () => {
     expect(() => resolveResourceValue("0%", 16, "cpu")).toThrow("integer between 1% and 100%");
     expect(() => resolveResourceValue("101%", 16, "cpu")).toThrow("integer between 1% and 100%");
     expect(() => resolveResourceValue("12.5%", 16, "cpu")).toThrow("integer between 1% and 100%");
+    expect(() => resolveResourceValue("%25", 16, "cpu")).toThrow("integer between 1% and 100%");
   });
 
   it("resolves profiles against Kubernetes allocatable capacity when available", () => {
@@ -69,6 +71,24 @@ describe("resources-cmd", () => {
       memory: "4Gi",
     });
   });
+
+  it.each(["4Gi", "4096Mi", "4194304Ki", "4294967296"])(
+    "resolves a half-memory profile against %s of allocatable node memory",
+    (memory) => {
+      vi.spyOn(docker, "dockerSpawnSync").mockReturnValue({
+        status: 0,
+        stdout: JSON.stringify({ items: [{ status: { allocatable: { memory } } }] }),
+        stderr: "",
+        pid: 1,
+        output: [],
+        signal: null,
+      });
+
+      const hw = getHardwareResources();
+      expect(hw.memory.allocatableMB).toBe(4096);
+      expect(resolveProfile({ cpu: "1", memory: "50%" }, hw).memory).toBe("2048Mi");
+    },
+  );
 
   it("loads resource profiles from the blueprint", () => {
     const profiles = loadResourceProfiles();
@@ -198,11 +218,13 @@ describe("resources-cmd", () => {
     expect(args).toEqual(["sandbox", "create"]);
   });
 
-  it("gracefully skips resource flags when profile resolution fails", () => {
+  it("rejects an invalid percentage instead of skipping supported resource flags", () => {
     const openshell = makeExecutable("#!/usr/bin/env sh\necho '--cpu --memory'\n");
     const args = ["sandbox", "create"];
 
-    expect(appendResourceFlags(args, { cpu: "bogus%", memory: "25%" }, openshell)).toBe(false);
+    expect(() => appendResourceFlags(args, { cpu: "bogus%", memory: "25%" }, openshell)).toThrow(
+      "Invalid percentage 'bogus%': must be an integer between 1% and 100%",
+    );
     expect(args).toEqual(["sandbox", "create"]);
   });
 });

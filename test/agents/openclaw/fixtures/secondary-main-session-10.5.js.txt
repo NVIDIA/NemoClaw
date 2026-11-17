@@ -1,0 +1,2 @@
+	const isMainSession = target.canonicalKey !== "global" && isAgentMainSessionKey(cfg, target.canonicalKey);
+	if ((target.canonicalKey === "global" || isMainSession) && !isSelectedNonDefaultGlobal) return invalidSessionRequest(`Cannot delete the main session (${target.canonicalKey}).`);

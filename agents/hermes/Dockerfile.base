@@ -3,7 +3,7 @@
 #
 # Hermes sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:24.18.1-trixie-slim (OpenShell needs Node), apt packages, setpriv,
+# Contains: node:24.22.1-trixie-slim (OpenShell needs Node), apt packages, setpriv,
 # user/group setup, .hermes directory structure, Hermes CLI, and the
 # dependencies for NemoClaw-supported Hermes integrations.
 #
@@ -14,7 +14,7 @@
 #   1. Hermes version bump      — run scripts/update-hermes-agent.sh
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. util-linux upgrade       — update the pinned apt package version
-#   4. node:24.18.1-trixie-slim digest rotates — run:
+#   4. node:24.22.1-trixie-slim digest rotates — run:
 #        DOCKERFILE=agents/hermes/Dockerfile.base scripts/update-docker-pin.sh
 #   5. npm upgrade              — update upgrade-bundled-npm.mts
 #   6. New .hermes subdirectory — add mkdir/chmod below
@@ -24,7 +24,7 @@ ARG PERL_VERSION=5.44.0
 ARG PERL_SHA256=505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91
 ARG PERL_PACKAGE_REVISION=1nemoclaw1
 
-FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS native-security-builder
+FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS native-security-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
@@ -63,7 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN bash /scripts/security/build-perl-security-packages.sh \
     /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
 
-FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
+FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea
 
 COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
@@ -87,9 +87,9 @@ ARG UV_VERSION=0.11.33
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
 # tools again after install.
-# Install the reviewed libexpat, jq, and Vim packages from immutable Debian
-# snapshots: Expat from 20260811T082421Z, jq from 20260724T000000Z, and Vim
-# from 20260727T143429Z, matching the checksum-bound OpenClaw base packages.
+# Install the reviewed libexpat, jq, and Vim packages with exact versions
+# and hashes matching the OpenClaw base: Expat from the 20260811T082421Z
+# Debian Snapshot archive, and jq and Vim from the official Debian pool.
 # hadolint ignore=DL3001,DL4006
 RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,target=/tmp/nemoclaw-security/scripts/security/security-package-inventory.mts \
     --mount=type=bind,source=src/lib/sandbox-base-image/security-package-specs.ts,target=/tmp/nemoclaw-security/src/lib/sandbox-base-image/security-package-specs.ts \
@@ -145,9 +145,8 @@ RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,tar
         *) echo "Unsupported architecture for Debian security packages: $arch" >&2; exit 1 ;; \
     esac \
     && security_deb_dir="/tmp/nemoclaw-debian-security" \
-    && snapshot_url="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main" \
-    && expat_snapshot_url="https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main" \
-    && vim_snapshot_url="https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main" \
+    && debian_pool_url="https://deb.debian.org/debian/pool/main" \
+    && expat_snapshot_url="https://snapshot-cloudflare.debian.org/archive/debian/20260811T082421Z/pool/main" \
     && vim_common_sha256="c21aad77632ef790d2352f1c38e688069980bbd530034248dd5e1158da9c9fe3" \
     && mkdir -p "$security_deb_dir" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
@@ -157,23 +156,23 @@ RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,tar
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libonig5.deb" \
-        "$snapshot_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
+        "$debian_pool_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libjq1.deb" \
-        "$snapshot_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
+        "$debian_pool_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/jq.deb" \
-        "$snapshot_url/j/jq/jq_1.8.2-1_${arch}.deb" \
+        "$debian_pool_url/j/jq/jq_1.8.2-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-common.deb" \
-        "$vim_snapshot_url/v/vim/vim-common_9.2.0858-1_all.deb" \
+        "$debian_pool_url/v/vim/vim-common_9.2.0858-1_all.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-tiny.deb" \
-        "$vim_snapshot_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
+        "$debian_pool_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
     && printf '%s  %s\n' \
         "$libexpat_sha256" "$security_deb_dir/libexpat1.deb" \
         "$libonig_sha256" "$security_deb_dir/libonig5.deb" \
@@ -232,22 +231,20 @@ RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,tar
     && test -z "$(dpkg --audit)"
 
 # The exact upstream image supplies the reviewed Node.js and bundled npm.
-RUN test "$(node --version)" = "v24.18.1" \
-    && test "$(npm --version)" = "11.16.0"
+RUN test "$(node --version)" = "v24.22.1" \
+    && test "$(npm --version)" = "11.19.1"
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
-COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
+COPY scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/patch-bundled-npm-undici.mts /scripts/lib/
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
 COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 
-# npm 11.16.0 in Node.js 24.18.1 bundles an affected node-tar copy.
-# Patch that private package after curl is installed and before npm processes
-# the reviewed npm archive.
+# Verify the Node image's bundled tar before npm processes the reviewed archive.
 RUN node /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
@@ -273,6 +270,9 @@ RUN node /scripts/patch-bundled-npm-brace-expansion.mts \
 # registry- and SRI-pinned 10.3.1 release.
 # hadolint ignore=DL3059
 RUN node /scripts/lib/patch-bundled-npm-ip-address.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+# hadolint ignore=DL3059
+RUN node /scripts/lib/patch-bundled-npm-undici.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # setpriv runtime contract for gateway and sandbox privilege separation.

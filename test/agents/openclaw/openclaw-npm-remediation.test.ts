@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
-  chmodSync,
   cpSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -14,18 +15,21 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRemediatedOpenClawPluginArchive,
   fatalOpenClawNpmRemediationDiagnostic,
   hashPackageTree,
-  patchCurrentOpenClawCorePackageGraph,
-  patchLegacyOpenClawCorePackageGraph,
+  patchDiscordEmbeddedZodPackage,
   patchOpenClawDiagnosticsOtelPackageGraph,
+  patchOpenClawBundledZodPackageGraph,
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
+  patchOpenClaw105PluginDependencies,
   patchOpenClawSlackProxyAddrPackageGraph,
+  remediateInstalledOfficialOpenClawPlugin,
   OpenClawNpmRemediationCommandError,
   runOpenClawNpmRemediationCommand,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
@@ -118,145 +122,6 @@ function writeDiagnosticsFixture(jaegerVersion = "2.8.0"): string {
           "node_modules/@opentelemetry/propagator-jaeger": {
             version: jaegerVersion,
             dependencies: { "@opentelemetry/core": jaegerVersion },
-          },
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return directory;
-}
-
-function writeLegacyCoreFixture(tarVersion = "7.5.11"): string {
-  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-legacy-openclaw-core-remediation-"));
-  temporaryDirectories.push(directory);
-  writeFileSync(
-    path.join(directory, "package.json"),
-    `${JSON.stringify(
-      {
-        name: "openclaw",
-        version: "2026.3.11",
-        dependencies: {
-          "@whiskeysockets/baileys": "7.0.0-rc.9",
-          commander: "14.0.3",
-          tar: tarVersion,
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return directory;
-}
-
-function writeCurrentCoreFixture(
-  braceExpansionVersion = "5.0.7",
-  fastUriVersion = "3.1.2",
-  undiciVersion = "8.5.0",
-  ipAddressVersion = "10.2.0",
-): string {
-  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-current-openclaw-core-remediation-"));
-  temporaryDirectories.push(directory);
-  writeFileSync(
-    path.join(directory, "package.json"),
-    `${JSON.stringify(
-      {
-        name: "openclaw",
-        version: "2026.7.1",
-        dependencies: {
-          "@modelcontextprotocol/sdk": "1.29.0",
-          "@openclaw/fs-safe": "0.4.1",
-          minimatch: "10.2.5",
-          tar: "7.5.19",
-          undici: undiciVersion,
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  writeFileSync(
-    path.join(directory, "npm-shrinkwrap.json"),
-    `${JSON.stringify(
-      {
-        name: "openclaw",
-        version: "2026.7.1",
-        lockfileVersion: 3,
-        packages: {
-          "": {
-            name: "openclaw",
-            version: "2026.7.1",
-            dependencies: {
-              "@modelcontextprotocol/sdk": "1.29.0",
-              "@openclaw/fs-safe": "0.4.1",
-              minimatch: "10.2.5",
-              tar: "7.5.19",
-              undici: undiciVersion,
-            },
-          },
-          "node_modules/@openclaw/fs-safe": {
-            version: "0.4.1",
-            resolved: "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.4.1.tgz",
-            integrity:
-              "sha512-hQi+BxO10KdRFlYUot1syC+hTaUnGeQNdqX5kwkKJig8CFq1tKsYJLPm+zkiiGsSKOprPAquQl/txejEhpKPgg==",
-            license: "MIT",
-            engines: { node: ">=22" },
-            optionalDependencies: { jszip: "^3.10.1", tar: "7.5.19" },
-          },
-          "node_modules/ajv": {
-            version: "8.20.0",
-            dependencies: { "fast-uri": "^3.0.1" },
-          },
-          "node_modules/brace-expansion": {
-            version: braceExpansionVersion,
-            resolved: `https://registry.npmjs.org/brace-expansion/-/brace-expansion-${braceExpansionVersion}.tgz`,
-            integrity:
-              "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
-            dependencies: { "balanced-match": "^4.0.2" },
-          },
-          "node_modules/fast-uri": {
-            version: fastUriVersion,
-            resolved: `https://registry.npmjs.org/fast-uri/-/fast-uri-${fastUriVersion}.tgz`,
-            integrity:
-              "sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==",
-          },
-          "node_modules/minimatch": {
-            version: "10.2.5",
-            dependencies: { "brace-expansion": "^5.0.5" },
-          },
-          "node_modules/tar": {
-            version: "7.5.19",
-            resolved: "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
-            integrity:
-              "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
-            license: "BlueOak-1.0.0",
-            dependencies: {
-              "@isaacs/fs-minipass": "^4.0.0",
-              chownr: "^3.0.0",
-              minipass: "^7.1.2",
-              minizlib: "^3.1.0",
-              yallist: "^5.0.0",
-            },
-            engines: { node: ">=18" },
-          },
-          "node_modules/express-rate-limit": {
-            version: "8.5.2",
-            dependencies: { "ip-address": "^10.2.0" },
-          },
-          "node_modules/ip-address": {
-            version: ipAddressVersion,
-            resolved: `https://registry.npmjs.org/ip-address/-/ip-address-${ipAddressVersion}.tgz`,
-            integrity:
-              "sha512-/+S6j4E9AHvW9SWMSEY9Xfy66O5PWvVEJ08O0y5JGyEKQpojb0K0GKpz/v5HJ/G0vi3D2sjGK78119oXZeE0qA==",
-            engines: { node: ">= 12" },
-          },
-          "node_modules/undici": {
-            version: undiciVersion,
-            resolved: `https://registry.npmjs.org/undici/-/undici-${undiciVersion}.tgz`,
-            integrity:
-              "sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==",
-            engines: { node: ">=22.19.0" },
           },
         },
       },
@@ -382,140 +247,12 @@ function writeJson(file: string, value: unknown): void {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function packFixture(packageDirectory: string, archivePath: string): void {
-  const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-archive-fixture-"));
-  temporaryDirectories.push(root);
-  cpSync(packageDirectory, path.join(root, "package"), { recursive: true });
-  const result = spawnSync("tar", ["-czf", archivePath, "-C", root, "package"], {
-    encoding: "utf-8",
-  });
-  expect(result.status, result.stderr || "failed to pack OpenClaw test archive").toBe(0);
-}
-
 function readPackageField<T>(directory: string, field: string): T {
   let value: unknown = readJson<Record<string, unknown>>(path.join(directory, "package.json"));
   for (const part of field.split(".")) {
     value = (value as Record<string, unknown>)[part];
   }
   return value as T;
-}
-
-function writeLegacyCoreArchiveFixtures(): {
-  archivePath: string;
-  npmExecutable: string;
-  workingDirectory: string;
-} {
-  const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-legacy-openclaw-build-remediation-"));
-  temporaryDirectories.push(root);
-  const archivePath = path.join(root, "openclaw-2026.3.11.tgz");
-  packFixture(writeLegacyCoreFixture(), archivePath);
-
-  const tarDirectory = path.join(root, "tar-package");
-  mkdirSync(tarDirectory, { recursive: true });
-  writeFileSync(
-    path.join(tarDirectory, "package.json"),
-    `${JSON.stringify({ name: "tar", version: "7.5.21" }, null, 2)}\n`,
-  );
-  const tarArchive = path.join(root, "tar-7.5.21-source.tgz");
-  packFixture(tarDirectory, tarArchive);
-
-  const baileysDirectory = path.join(root, "baileys-package");
-  mkdirSync(baileysDirectory, { recursive: true });
-  writeFileSync(
-    path.join(baileysDirectory, "package.json"),
-    `${JSON.stringify(
-      {
-        name: "@whiskeysockets/baileys",
-        version: "7.0.0-rc.9",
-        license: "MIT",
-        engines: { node: ">=20.0.0" },
-        gitHead: "cb8b3717aaede47460ba700651ee936f268c0ce4",
-        dependencies: {
-          "@cacheable/node-cache": "^1.4.0",
-          "@hapi/boom": "^9.1.3",
-          "async-mutex": "^0.5.0",
-          libsignal: "git+https://github.com/whiskeysockets/libsignal-node",
-          "lru-cache": "^11.1.0",
-          "music-metadata": "^11.7.0",
-          "p-queue": "^9.0.0",
-          pino: "^9.6",
-          protobufjs: "^7.2.4",
-          ws: "^8.13.0",
-        },
-        peerDependencies: {
-          "audio-decode": "^2.1.3",
-          jimp: "^1.6.0",
-          "link-preview-js": "^3.0.0",
-          sharp: "*",
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  const baileysArchive = path.join(root, "whiskeysockets-baileys-7.0.0-rc.9-source.tgz");
-  packFixture(baileysDirectory, baileysArchive);
-
-  const libsignalDirectory = path.join(root, "libsignal-package");
-  mkdirSync(libsignalDirectory, { recursive: true });
-  writeFileSync(
-    path.join(libsignalDirectory, "package.json"),
-    `${JSON.stringify(
-      {
-        name: "libsignal",
-        version: "6.0.0",
-        license: "GPL-3.0",
-        gitHead: "bcea72df9ec34d9d9140ab30619cf479c7c144c7",
-        dependencies: { "curve25519-js": "^0.0.4", protobufjs: "^7.5.5" },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  const libsignalArchive = path.join(root, "libsignal-6.0.0-source.tgz");
-  packFixture(libsignalDirectory, libsignalArchive);
-
-  const npmExecutable = path.join(root, "npm-fixture.sh");
-  writeFileSync(
-    npmExecutable,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `tar_archive=${JSON.stringify(tarArchive)}`,
-      `baileys_archive=${JSON.stringify(baileysArchive)}`,
-      `libsignal_archive=${JSON.stringify(libsignalArchive)}`,
-      'case "$1:$2:${3:-}" in',
-      '  "view:tar@7.5.21:dist.integrity") value="sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==" ;;',
-      '  "view:tar@7.5.21:dist.tarball") value="https://registry.npmjs.org/tar/-/tar-7.5.21.tgz" ;;',
-      '  "pack:tar@7.5.21:--pack-destination") ;;',
-      '  "view:@whiskeysockets/baileys@7.0.0-rc.9:dist.integrity") value="sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==" ;;',
-      '  "view:@whiskeysockets/baileys@7.0.0-rc.9:dist.tarball") value="https://registry.npmjs.org/@whiskeysockets/baileys/-/baileys-7.0.0-rc.9.tgz" ;;',
-      '  "pack:@whiskeysockets/baileys@7.0.0-rc.9:--pack-destination") ;;',
-      '  "view:libsignal@6.0.0:dist.integrity") value="sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA==" ;;',
-      '  "view:libsignal@6.0.0:dist.tarball") value="https://registry.npmjs.org/libsignal/-/libsignal-6.0.0.tgz" ;;',
-      '  "pack:libsignal@6.0.0:--pack-destination") ;;',
-      '  *) echo "unexpected npm fixture invocation: $*" >&2; exit 1 ;;',
-      "esac",
-      'if [ "$1" = "view" ]; then printf "%s\\n" "$value"; exit 0; fi',
-      'package_spec="$2"',
-      'destination=""',
-      'while [ "$#" -gt 0 ]; do',
-      '  if [ "$1" = "--pack-destination" ]; then destination="$2"; shift 2; continue; fi',
-      "  shift",
-      "done",
-      'case "$package_spec" in',
-      '  "tar@7.5.21") archive="$tar_archive"; filename="tar-7.5.21.tgz"; integrity="sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==" ;;',
-      '  "@whiskeysockets/baileys@7.0.0-rc.9") archive="$baileys_archive"; filename="whiskeysockets-baileys-7.0.0-rc.9.tgz"; integrity="sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==" ;;',
-      '  "libsignal@6.0.0") archive="$libsignal_archive"; filename="libsignal-6.0.0.tgz"; integrity="sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA==" ;;',
-      "esac",
-      'cp "$archive" "$destination/$filename"',
-      'printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$filename" "$integrity"',
-      "",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  chmodSync(npmExecutable, 0o700);
-  return { archivePath, npmExecutable, workingDirectory: path.join(root, "work") };
 }
 
 afterEach(() => {
@@ -525,6 +262,57 @@ afterEach(() => {
 });
 
 describe("OpenClaw npm remediation", () => {
+  it.each(["openclaw@2026.3.11", "openclaw@2026.6.10", "openclaw@2026.7.1"])(
+    "rejects retired core archive %s before starting remediation (#13594)",
+    (packageSpec) => {
+      const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-retired-core-"));
+      temporaryDirectories.push(root);
+      const workingDirectory = path.join(root, "work");
+      expect(() =>
+        buildRemediatedOpenClawPluginArchive({
+          archivePath: path.join(root, "unused.tgz"),
+          packageSpec,
+          workingDirectory,
+        }),
+      ).toThrow(`No OpenClaw npm remediation is defined for ${packageSpec}`);
+      expect(existsSync(workingDirectory)).toBe(false);
+    },
+  );
+
+  it.each([
+    ["package.json", "symlink", symlinkSync],
+    ["package.json", "hardlink", linkSync],
+    ["npm-shrinkwrap.json", "symlink", symlinkSync],
+    ["npm-shrinkwrap.json", "hardlink", linkSync],
+  ] as const)(
+    "rejects linked %s metadata (%s) before Zod migration changes files",
+    (name, _kind, link) => {
+      const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-zod-metadata-link-"));
+      temporaryDirectories.push(root);
+      const plugin = path.join(root, "plugin");
+      mkdirSync(plugin);
+      const original = JSON.stringify({
+        name: "@openclaw/slack",
+        version: "2026.9.5",
+        dependencies: { zod: "4.5.4" },
+      });
+      const external = path.join(root, "external.json");
+      writeFileSync(external, original);
+      writeFileSync(path.join(plugin, "package.json"), original);
+      rmSync(path.join(plugin, name), { force: true });
+      link(external, path.join(plugin, name));
+      expect(() =>
+        patchOpenClawBundledZodPackageGraph(
+          plugin,
+          path.join(root, "must-not-read"),
+          "@openclaw/slack@2026.9.5",
+        ),
+      ).toThrow("single regular file");
+      expect(readFileSync(external, "utf8")).toBe(original);
+      expect(existsSync(path.join(plugin, "node_modules"))).toBe(false);
+    },
+  );
+
   it("bounds a non-returning remediation command and keeps its diagnostic generic", () => {
     const startedAt = Date.now();
     let failure: unknown;
@@ -654,8 +442,10 @@ describe("OpenClaw npm remediation", () => {
       readFileSync(path.join(replacement, "index.js"), "utf8"),
     );
     expect(readJson(path.join(target, "package.json"))).toMatchObject({ version: "2.0.8" });
+    expect(() => patchOpenClawSlackProxyAddrPackageGraph(directory, replacement)).not.toThrow();
+    writeFileSync(path.join(target, "index.js"), "changed after remediation");
     expect(() => patchOpenClawSlackProxyAddrPackageGraph(directory, replacement)).toThrow(
-      "must be proxy-addr@2.0.7",
+      "changed after remediation",
     );
   });
   it("hashes package entries through opened file descriptors", () => {
@@ -827,161 +617,13 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
-  it("rejects a legacy rebuild fixture tar graph that changed after review", () => {
-    const directory = writeLegacyCoreFixture("7.5.12");
-
-    expect(() => patchLegacyOpenClawCorePackageGraph(directory)).toThrow(
-      "must declare reviewed tar@7.5.11 before remediation",
-    );
-  });
-
-  it("replaces the reviewed OpenClaw 2026.7.1 dependency resolutions", () => {
-    const directory = writeCurrentCoreFixture();
-
-    patchCurrentOpenClawCorePackageGraph(directory);
-
-    const shrinkwrap = readJson<{
-      packages: Record<
-        string,
-        {
-          dependencies?: Record<string, string>;
-          integrity?: string;
-          optionalDependencies?: Record<string, string>;
-          resolved?: string;
-          version?: string;
-        }
-      >;
-    }>(path.join(directory, "npm-shrinkwrap.json"));
-    expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
-      version: "5.0.9",
-      resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz",
-      integrity:
-        "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
-    });
-    expect(shrinkwrap.packages["node_modules/fast-uri"]).toMatchObject({
-      version: "3.1.7",
-      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz",
-      integrity:
-        "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==",
-    });
-    expect(shrinkwrap.packages["node_modules/undici"]).toMatchObject({
-      version: "8.10.0",
-      resolved: "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz",
-      integrity:
-        "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==",
-    });
-    expect(shrinkwrap.packages["node_modules/ip-address"]).toMatchObject({
-      version: "10.3.1",
-      resolved: "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz",
-      integrity:
-        "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==",
-    });
-    expect(shrinkwrap.packages["node_modules/tar"]).toMatchObject({
-      version: "7.5.21",
-      resolved: "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz",
-      integrity:
-        "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==",
-    });
-    expect(shrinkwrap.packages["node_modules/@openclaw/fs-safe"].optionalDependencies).toEqual({
-      jszip: "^3.10.1",
-      tar: "7.5.21",
-    });
-    expect(shrinkwrap.packages[""].dependencies).toMatchObject({ tar: "7.5.21" });
-    expect(
-      readJson<{ dependencies: Record<string, string> }>(path.join(directory, "package.json")),
-    ).toMatchObject({ dependencies: { tar: "7.5.21", undici: "8.10.0" } });
-  });
-
-  it("rejects a current OpenClaw manifest with a changed tar dependency", () => {
-    const directory = writeCurrentCoreFixture();
-    const packageJsonPath = path.join(directory, "package.json");
-    const packageJson = readJson<{ dependencies: Record<string, string> }>(packageJsonPath);
-    packageJson.dependencies.tar = "7.5.20";
-    writeJson(packageJsonPath, packageJson);
-
-    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(
-      "dependency boundary changed after review",
-    );
-  });
-
-  it("rejects a current OpenClaw fs-safe edge with a changed tar dependency", () => {
-    const directory = writeCurrentCoreFixture();
-    const shrinkwrapPath = path.join(directory, "npm-shrinkwrap.json");
-    const shrinkwrap = readJson<{
-      packages: Record<string, { optionalDependencies: Record<string, string> }>;
-    }>(shrinkwrapPath);
-    shrinkwrap.packages["node_modules/@openclaw/fs-safe"].optionalDependencies.tar = "7.5.20";
-    writeJson(shrinkwrapPath, shrinkwrap);
-
-    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(
-      "@openclaw/fs-safe tar layout changed after review",
-    );
-  });
-
-  it.each([
-    ["version", "7.5.20"],
-    ["resolved", "https://registry.npmjs.org/tar/-/tar-7.5.20.tgz"],
-    ["integrity", "sha512-deliberate-mismatch"],
-  ])("rejects a current OpenClaw tar shrinkwrap with changed %s", (field, value) => {
-    const directory = writeCurrentCoreFixture();
-    const shrinkwrapPath = path.join(directory, "npm-shrinkwrap.json");
-    const shrinkwrap = readJson<{
-      packages: Record<string, Record<string, unknown>>;
-    }>(shrinkwrapPath);
-    shrinkwrap.packages["node_modules/tar"][field] = value;
-    writeJson(shrinkwrapPath, shrinkwrap);
-
-    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(
-      "tar layout changed after review",
-    );
-  });
-
-  it.each([
-    ["brace-expansion", "5.0.6", "brace-expansion layout changed after review"],
-    ["fast-uri", "3.1.1", "fast-uri layout changed after review"],
-    ["undici", "8.4.0", "dependency boundary changed after review"],
-    ["ip-address", "10.1.1", "ip-address layout changed after review"],
-  ])(
-    "rejects a current OpenClaw %s graph that changed after review",
-    (dependency, version, error) => {
-      const directory =
-        dependency === "brace-expansion"
-          ? writeCurrentCoreFixture(version)
-          : dependency === "fast-uri"
-            ? writeCurrentCoreFixture("5.0.7", version)
-            : dependency === "undici"
-              ? writeCurrentCoreFixture("5.0.7", "3.1.2", version)
-              : writeCurrentCoreFixture("5.0.7", "3.1.2", "8.5.0", version);
-
-      expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(error);
-    },
-  );
-
-  it.each([
-    ["resolved", "https://registry.npmjs.org/undici/-/undici-8.4.0.tgz"],
-    ["integrity", "sha512-deliberate-mismatch"],
-    ["engines", { node: ">=22.20.0" }],
-  ])("rejects a current OpenClaw undici shrinkwrap with changed %s", (field, value) => {
-    const directory = writeCurrentCoreFixture();
-    const shrinkwrapPath = path.join(directory, "npm-shrinkwrap.json");
-    const shrinkwrap = readJson<{
-      packages: Record<string, Record<string, unknown>>;
-    }>(shrinkwrapPath);
-    shrinkwrap.packages["node_modules/undici"][field] = value;
-    writeJson(shrinkwrapPath, shrinkwrap);
-
-    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(
-      "undici layout changed after review",
-    );
-  });
-
   // source-shape-contract: security -- Exact package and shrinkwrap identities prove the guarded Discord remediation installs only the reviewed undici graph
   it("replaces the reviewed OpenClaw Discord undici dependency", () => {
     const directory = writeDiscordFixture();
 
     patchOpenClawDiscordPackageGraph(directory);
 
-    expect(readPackageField<string>(directory, "dependencies.undici")).toBe("8.10.0");
+    expect(readPackageField<string>(directory, "dependencies.undici")).toBe("8.12.2");
     const shrinkwrap = readJson<{
       packages: Record<
         string,
@@ -993,12 +635,12 @@ describe("OpenClaw npm remediation", () => {
         }
       >;
     }>(path.join(directory, "npm-shrinkwrap.json"));
-    expect(shrinkwrap.packages[""].dependencies).toMatchObject({ undici: "8.10.0" });
+    expect(shrinkwrap.packages[""].dependencies).toMatchObject({ undici: "8.12.2" });
     expect(shrinkwrap.packages["node_modules/undici"]).toMatchObject({
-      version: "8.10.0",
-      resolved: "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz",
+      version: "8.12.2",
+      resolved: "https://registry.npmjs.org/undici/-/undici-8.12.2.tgz",
       integrity:
-        "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==",
+        "sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==",
     });
   });
 
@@ -1051,75 +693,288 @@ describe("OpenClaw npm remediation", () => {
       "bundled undici layout changed after review",
     );
   });
+});
 
-  it("rebuilds the legacy fixture archive with the reviewed tar package bundled", () => {
-    const fixture = writeLegacyCoreArchiveFixtures();
-    const request = {
-      archivePath: fixture.archivePath,
-      env: {
-        NEMOCLAW_REVIEWED_NPM_EXECUTABLE: fixture.npmExecutable,
-        NPM_CONFIG_CACHE: path.join(path.dirname(fixture.archivePath), "npm-cache"),
-      },
-      packageSpec: "openclaw@2026.3.11",
-      workingDirectory: fixture.workingDirectory,
-    };
-    const remediated = buildRemediatedOpenClawPluginArchive(request);
-    expect(() =>
-      buildRemediatedOpenClawPluginArchive({
-        ...request,
-        expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
+describe("Discord embedded Zod remediation trust boundary", () => {
+  function fixture() {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-discord-zod-"));
+    temporaryDirectories.push(root);
+    const sdk = path.join(root, "sdk");
+    const replacement = path.join(root, "replacement");
+    mkdirSync(sdk);
+    mkdirSync(replacement);
+    writeFileSync(
+      path.join(sdk, "package.json"),
+      JSON.stringify({
+        name: "@discord/embedded-app-sdk",
+        version: "2.5.0",
+        dependencies: { zod: "^3.9.8" },
       }),
-    ).toThrow(`got ${remediated.metadataIntegrity}`);
+    );
+    writeFileSync(
+      path.join(replacement, "package.json"),
+      JSON.stringify({ name: "zod", version: "4.6.6" }),
+    );
+    return { root, sdk, replacement };
+  }
 
-    const extracted = path.join(path.dirname(fixture.archivePath), "asserted");
-    mkdirSync(extracted, { recursive: true });
-    const extraction = spawnSync("tar", ["-xzf", remediated.archivePath, "-C", extracted], {
-      encoding: "utf8",
-    });
-    expect(extraction.status, extraction.stderr).toBe(0);
-    expect(existsSync(path.join(extracted, "package", "npm-shrinkwrap.json"))).toBe(false);
+  it("rejects unreviewed replacement bytes even when the package name and version match", () => {
+    const { sdk, replacement } = fixture();
+    const before = hashPackageTree(sdk);
+    expect(() => patchDiscordEmbeddedZodPackage(sdk, replacement)).toThrow(
+      "replacement Zod tree integrity mismatch",
+    );
+    expect(hashPackageTree(sdk)).toBe(before);
+  });
+
+  it("rejects a package directory symlink before changing its target", () => {
+    const { root, sdk, replacement } = fixture();
+    const link = path.join(root, "sdk-link");
+    symlinkSync(sdk, link);
+    const before = hashPackageTree(sdk);
+    expect(() => patchDiscordEmbeddedZodPackage(link, replacement)).toThrow(
+      "requires real package directories",
+    );
+    expect(hashPackageTree(sdk)).toBe(before);
+  });
+
+  it("rejects linked source members before reading outside the package", () => {
+    const { root, sdk, replacement } = fixture();
+    const outside = path.join(root, "outside");
+    writeFileSync(outside, "preserved");
+    symlinkSync(outside, path.join(sdk, "linked-member"));
+    expect(() => patchDiscordEmbeddedZodPackage(sdk, replacement)).toThrow();
+    expect(readFileSync(outside, "utf8")).toBe("preserved");
     expect(
-      readJson<{
-        bundledDependencies?: string[];
-        dependencies?: Record<string, string>;
-      }>(path.join(extracted, "package", "package.json")),
-    ).toMatchObject({
-      bundledDependencies: ["tar", "@whiskeysockets/baileys", "libsignal"],
-      dependencies: {
-        "@whiskeysockets/baileys": "7.0.0-rc.9",
-        libsignal: "6.0.0",
-        tar: "7.5.21",
+      readJson<{ dependencies: { zod: string } }>(path.join(sdk, "package.json")),
+    ).toMatchObject({ dependencies: { zod: "^3.9.8" } });
+  });
+});
+
+describe("OpenClaw 10.5 bundled dependency repair", () => {
+  function fixture() {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-plugin-security-"));
+    temporaryDirectories.push(root);
+    const plugin = path.join(root, "plugin");
+    const zod = path.join(plugin, "node_modules/zod");
+    mkdirSync(zod, { recursive: true });
+    writeFileSync(
+      path.join(plugin, "package.json"),
+      JSON.stringify({
+        name: "@openclaw/googlechat",
+        version: "2026.10.5",
+        dependencies: { zod: "4.6.5" },
+      }),
+    );
+    writeFileSync(
+      path.join(zod, "package.json"),
+      JSON.stringify({ name: "zod", version: "4.6.5" }),
+    );
+    return { root, plugin, zod };
+  }
+
+  it("rejects changed bundled bytes before fetching or replacing packages", () => {
+    const { root, plugin } = fixture();
+    const before = hashPackageTree(plugin);
+    expect(() => patchOpenClaw105PluginDependencies(plugin, root)).toThrow(
+      "source integrity mismatch",
+    );
+    expect(hashPackageTree(plugin)).toBe(before);
+  });
+
+  it("rejects a linked dependency parent without modifying its target", () => {
+    const { root, plugin } = fixture();
+    const outside = path.join(root, "outside");
+    mkdirSync(outside);
+    writeFileSync(path.join(outside, "sentinel"), "preserved");
+    rmSync(path.join(plugin, "node_modules"), { recursive: true });
+    symlinkSync(outside, path.join(plugin, "node_modules"));
+    expect(() => patchOpenClaw105PluginDependencies(plugin, root)).toThrow(
+      "requires real package directories",
+    );
+    expect(readFileSync(path.join(outside, "sentinel"), "utf8")).toBe("preserved");
+  });
+
+  it("refuses an official plugin installed outside its named managed project", () => {
+    const { root, plugin } = fixture();
+    const before = hashPackageTree(plugin);
+    expect(() =>
+      remediateInstalledOfficialOpenClawPlugin({
+        archivePath: path.join(root, "unused.tgz"),
+        packageSpec: "@openclaw/googlechat@2026.10.5",
+        packageDirectory: plugin,
+        trustedStateRoot: root,
+        workingDirectory: root,
+      }),
+    ).toThrow("requires a valid managed npm package directory");
+    expect(hashPackageTree(plugin)).toBe(before);
+  });
+});
+
+describe("Teams native dependency remediation", () => {
+  function teamsFixture() {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-teams-msal-"));
+    temporaryDirectories.push(root);
+    const project = `openclaw-msteams-${createHash("sha256").update("@openclaw/msteams").digest("hex").slice(0, 10)}`;
+    const modules = path.join(root, "npm/projects", project, "node_modules");
+    const packageDirectory = path.join(modules, "@openclaw/msteams");
+    const packages = [
+      [
+        "@openclaw/msteams",
+        { name: "@openclaw/msteams", version: "2026.9.2", dependencies: { zod: "4.4.3" } },
+      ],
+      [
+        "@azure/identity",
+        {
+          name: "@azure/identity",
+          version: "4.13.2",
+          dependencies: { "@azure/msal-node": "^5.1.5" },
+        },
+      ],
+      [
+        "@microsoft/teams.apps",
+        {
+          name: "@microsoft/teams.apps",
+          version: "2.0.15",
+          dependencies: { "@azure/msal-node": "^5.2.2" },
+        },
+      ],
+      [
+        "@azure/msal-node",
+        {
+          name: "@azure/msal-node",
+          version: "5.6.0",
+          main: "index.cjs",
+          dependencies: { "@azure/msal-common": "16.13.0", jsonwebtoken: "^9.0.0" },
+        },
+      ],
+      ["@azure/msal-common", { name: "@azure/msal-common", version: "16.14.0" }],
+      ["zod", { name: "zod", version: "4.4.3", main: "index.cjs" }],
+    ] as const;
+    packages.forEach(([name, metadata]) => {
+      mkdirSync(path.join(modules, name), { recursive: true });
+      writeJson(path.join(modules, name, "package.json"), metadata);
+    });
+    const archives = path.join(root, "archives");
+    mkdirSync(archives);
+    ["msal-node-7.1.0", "msal-common-16.14.2", "zod-4.6.6"].forEach((name) =>
+      cpSync(
+        path.resolve(import.meta.dirname, "../../fixtures/npm", name, `${name}.tgz`),
+        path.join(archives, `${name}.tgz`),
+      ),
+    );
+    const target = path.join(modules, "@azure/msal-node");
+    writeFileSync(path.join(target, "index.cjs"), "vulnerable-original");
+    writeFileSync(path.join(modules, "zod/index.cjs"), "vulnerable-zod");
+    return {
+      root,
+      modules,
+      target,
+      request: {
+        archivePath: path.join(root, "unused.tgz"),
+        packageSpec: "@openclaw/msteams@2026.9.2",
+        workingDirectory: root,
+        trustedStateRoot: root,
+        packageDirectory,
+        env: { NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: archives },
       },
+    };
+  }
+
+  it("replaces shared MSAL and its Common together while preserving the browser Common", () => {
+    const fixture = teamsFixture();
+    remediateInstalledOfficialOpenClawPlugin(fixture.request);
+    expect(readJson(path.join(fixture.target, "package.json"))).toMatchObject({ version: "7.1.0" });
+    expect(
+      readJson(path.join(fixture.target, "node_modules/@azure/msal-common/package.json")),
+    ).toMatchObject({ version: "16.14.2" });
+    expect(readJson(path.join(fixture.modules, "@azure/msal-common/package.json"))).toMatchObject({
+      version: "16.14.0",
     });
+    expect(existsSync(path.join(fixture.target, "index.cjs"))).toBe(false);
+    const zod = createRequire(path.join(fixture.request.packageDirectory, "package.json"))("zod");
     expect(
-      readJson<{ name?: string; version?: string }>(
-        path.join(extracted, "package", "node_modules", "tar", "package.json"),
-      ),
-    ).toMatchObject({ name: "tar", version: "7.5.21" });
-    expect(
-      readJson<{
-        dependencies?: Record<string, string>;
-        name?: string;
-        version?: string;
-      }>(
-        path.join(
-          extracted,
-          "package",
-          "node_modules",
-          "@whiskeysockets",
-          "baileys",
-          "package.json",
-        ),
-      ),
-    ).toMatchObject({
-      name: "@whiskeysockets/baileys",
-      version: "7.0.0-rc.9",
-      dependencies: { libsignal: "6.0.0" },
-    });
-    expect(
-      readJson<{ name?: string; version?: string }>(
-        path.join(extracted, "package", "node_modules", "libsignal", "package.json"),
-      ),
-    ).toMatchObject({ name: "libsignal", version: "6.0.0" });
-  }, 60_000);
+      createRequire(path.join(fixture.request.packageDirectory, "package.json"))("zod/package.json")
+        .version,
+    ).toBe("4.6.6");
+    let visited = 0;
+    const bounded = zod
+      .array(
+        zod.string().superRefine(() => {
+          visited += 1;
+        }),
+      )
+      .max(1);
+    expect(bounded.safeParse(["a", "b"]).success).toBe(false);
+    expect(visited).toBe(0);
+    expect(bounded.parse(["a"])).toEqual(["a"]);
+  });
+
+  it.each([
+    "dependency link",
+    "nested MSAL",
+    "unreviewed SDK",
+    "wrong project",
+    "nested Zod",
+    "Zod link",
+    "unreviewed Zod",
+  ])("denies %s before replacing MSAL", (scenario) => {
+    const fixture = teamsFixture();
+    const identity = path.join(fixture.modules, "@azure/identity");
+    const mutations: Record<string, () => void> = {
+      "dependency link": () => {
+        const original = path.join(fixture.root, "original-identity");
+        cpSync(identity, original, { recursive: true });
+        rmSync(identity, { recursive: true });
+        symlinkSync(original, identity);
+      },
+      "nested MSAL": () => {
+        const nested = path.join(identity, "node_modules/@azure/msal-node");
+        mkdirSync(nested, { recursive: true });
+        writeJson(path.join(nested, "package.json"), {
+          name: "@azure/msal-node",
+          version: "5.6.0",
+          main: "index.cjs",
+        });
+        writeFileSync(path.join(nested, "index.cjs"), "nested-vulnerable");
+      },
+      "unreviewed SDK": () =>
+        writeJson(path.join(identity, "package.json"), {
+          name: "@azure/identity",
+          version: "5.0.0",
+        }),
+      "nested Zod": () => {
+        const nested = path.join(fixture.request.packageDirectory, "node_modules/zod");
+        mkdirSync(nested, { recursive: true });
+        writeJson(path.join(nested, "package.json"), {
+          name: "zod",
+          version: "4.4.3",
+          main: "index.cjs",
+        });
+        writeFileSync(path.join(nested, "index.cjs"), "nested-vulnerable");
+      },
+      "Zod link": () => {
+        const target = path.join(fixture.modules, "zod");
+        const original = path.join(fixture.root, "original-zod");
+        cpSync(target, original, { recursive: true });
+        rmSync(target, { recursive: true });
+        symlinkSync(original, target);
+      },
+      "unreviewed Zod": () =>
+        writeJson(path.join(fixture.modules, "zod/package.json"), {
+          name: "zod",
+          version: "5.0.0",
+        }),
+      "wrong project": () => {
+        fixture.request.trustedStateRoot = fixture.modules;
+      },
+    };
+    mutations[scenario]();
+    expect(() => remediateInstalledOfficialOpenClawPlugin(fixture.request)).toThrow(
+      "reviewed dependency graph",
+    );
+    expect(readFileSync(path.join(fixture.target, "index.cjs"), "utf8")).toBe(
+      "vulnerable-original",
+    );
+  });
 });

@@ -56,8 +56,7 @@ function makeDeps(overrides: {
     remoteProviderConfig: overrides.remoteProviderConfig ?? {
       compatible: COMPATIBLE_ENDPOINT_CONFIG,
     },
-    defaultRouteCredentialEnv: "OPENAI_API_KEY",
-    isRoutedInferenceProvider: () => false,
+
     providerExistsInGateway: () => overrides.providerExists ?? true,
     hydrateCredentialEnv: () => overrides.credentialValue ?? null,
     getProviderLabel: (key) => key,

@@ -544,8 +544,11 @@ test/e2e/
 - `.github/workflows/portable-profile-e2e.yaml` provides experimental portable-profile evidence on matching `main` changes or manual dispatches.
 - The explicit-only `portable-hermes-finalization` job in `.github/workflows/e2e.yaml`
   runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
-  rootless Podman 5.7. The selector stages and uses that runtime directly, including
-  the receipt-bound Hermes build, publication, and OpenShell create transaction.
+  rootless Podman 5.7. Select `jobs=portable-hermes-finalization` to choose
+  Podman, including when you also select `targets`. The scenario includes the
+  receipt-bound Hermes build,
+  publication, and OpenShell create transaction. A failed sandbox or Hermes image
+  build retains a bounded error category and process result without raw build output.
 - `.github/workflows/podman-cpu-proof.yaml` provides PR-only experimental runtime evidence with Docker disabled.
 - `.github/workflows/sandbox-images.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.

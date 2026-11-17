@@ -1,0 +1,47 @@
+{/*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}
+
+## v0.0.142
+
+NemoClaw v0.0.142 fixes native inference onboarding, limits managed vLLM host exposure, and improves sandbox recovery and installation.
+
+### Inference and Onboarding
+
+- OpenClaw Model Router onboarding attaches a sandbox-scoped native provider and restores its recorded attachment when onboarding resumes.
+  Related change: [PR #14104](https://github.com/NVIDIA/NemoClaw/pull/14104).
+- OpenClaw onboarding and provider replacement support pinned NVIDIA-compatible provider profiles without retaining the bundled NVIDIA network grant after attachment.
+  Operator-owned network policies remain subject to admission checks.
+  Related change: [PR #14210](https://github.com/NVIDIA/NemoClaw/pull/14210).
+- GPU post-ready checks verify the selected native local inference endpoint before committing the runtime and registering the sandbox.
+  Local NIM and retained shared routes continue to use the shared inference endpoint.
+  If the sandbox lacks curl, onboarding warns and skips this reachability check.
+  Related change: [PR #14098](https://github.com/NVIDIA/NemoClaw/pull/14098).
+- New managed single-host vLLM containers publish their host port only on loopback and the private OpenShell Docker bridge gateway.
+  Existing containers retain their bindings until recreated; managed route recovery rejects owned bearerless containers with unsafe bindings.
+  Related change: [PR #14122](https://github.com/NVIDIA/NemoClaw/pull/14122).
+- Host assessment finds the WSL-provided `nvidia-smi` when it is absent from `PATH`.
+  Related change: [PR #14193](https://github.com/NVIDIA/NemoClaw/pull/14193).
+- Linux Ollama installer download failures identify the failing host and provide firewall, proxy, and retry guidance.
+  Related change: [PR #14002](https://github.com/NVIDIA/NemoClaw/pull/14002).
+
+### Recovery and Diagnostics
+
+- Registered Hermes NVIDIA sandboxes can recover three matching `[STRIPPED_BY_MIGRATION]` credential fields during rebuild after validating sandbox identity and provider binding.
+  Unrelated settings and user state remain preserved; partial or ambiguous damage is rejected.
+  Related change: [PR #14153](https://github.com/NVIDIA/NemoClaw/pull/14153).
+- Rebuild unwinds CLI exits through its cleanup path before the command exits.
+  Related change: [PR #13671](https://github.com/NVIDIA/NemoClaw/pull/13671).
+- Deep Agents Code retains managed route and upstream provider identity outside its writable native preferences.
+  Rebuild restores saved model and endpoint preferences.
+  Related change: [PR #14127](https://github.com/NVIDIA/NemoClaw/pull/14127).
+- OpenClaw readiness failures identify rejected CLI pairing state.
+  Related change: [PR #13768](https://github.com/NVIDIA/NemoClaw/pull/13768).
+
+### Installation and Resources
+
+- Installation falls back from unsafe system npm prefixes and keeps user-local directories private on Ubuntu.
+  Related changes: [PR #14230](https://github.com/NVIDIA/NemoClaw/pull/14230) and [PR #13856](https://github.com/NVIDIA/NemoClaw/pull/13856).
+- Memory profiles use Kubernetes allocatable memory consistently when the node reports bytes or binary units.
+  Related change: [PR #14232](https://github.com/NVIDIA/NemoClaw/pull/14232).

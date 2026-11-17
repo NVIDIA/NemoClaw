@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
+import { performance } from "node:perf_hooks";
+import { inspect } from "node:util";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -27,7 +29,8 @@ const PR = 123;
 const HASH = "a".repeat(64);
 
 const processReads = vi.hoisted(() => ({
-  execFileSync: vi.fn<(command: string, args: string[]) => string>(),
+  execFileSync:
+    vi.fn<(command: string, args: string[], options?: { timeout?: number }) => string>(),
   spawnSync: vi.fn(),
 }));
 vi.mock("node:child_process", () => processReads);
@@ -154,10 +157,13 @@ describe("Maintainer approval through the production diff loader", () => {
     const digest = e2eBudgetChangeDigest(source, head)!;
     const comments = [record("approve", digest)];
     const api = "gh api --hostname github.com --method GET repos/NVIDIA/NemoClaw";
+    const merged = "c".repeat(40);
     const responses = new Map<string, () => string>([
-      [`git fetch --no-tags --depth=1 origin refs/pull/${PR}/head`, () => ""],
+      ["git rev-parse --is-shallow-repository", () => "false"],
+      [`git fetch --no-tags --depth=32 origin refs/pull/${PR}/head`, () => ""],
       ["git rev-parse FETCH_HEAD", () => HEAD],
-      [`git diff --name-status -z -M ${BASE} ${HEAD} --`, () => `M\0${BUDGET}\0`],
+      [`git merge-tree --write-tree --no-messages ${BASE} ${HEAD}`, () => merged],
+      [`git diff --name-status -z -M ${BASE} ${merged} --`, () => `M\0${BUDGET}\0`],
       [`${api}/issues/${PR}/comments?per_page=100&page=1`, () => JSON.stringify(comments)],
       [
         `${api}/collaborators/maintainer/permission`,
@@ -171,8 +177,9 @@ describe("Maintainer approval through the production diff loader", () => {
       return response!();
     });
     const contents = new Map([
+      [`git merge-base ${BASE} ${HEAD}`, BASE],
       [`git show ${BASE}:${BUDGET}`, source],
-      [`git show ${HEAD}:${BUDGET}`, head],
+      [`git show ${merged}:${BUDGET}`, head],
     ]);
     processReads.spawnSync.mockImplementation((command, args) => {
       const content = contents.get(`${command} ${args.join(" ")}`);
@@ -180,6 +187,80 @@ describe("Maintainer approval through the production diff loader", () => {
     });
     return { diff: loadGrowthGuardrailDiff(), comments };
   }
+
+  it.each(["true", "false"])("allows a slow fetch with shallow history %s", async (shallow) => {
+    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+    processReads.execFileSync
+      .mockImplementationOnce(() => shallow)
+      .mockImplementationOnce((_command, _args, options) => {
+        expect(options?.timeout).toBeGreaterThan(70_000);
+        clock.mockReturnValue(70_000);
+        return "";
+      });
+
+    const { diff } = load("pull_request_target");
+    expect((await diff).files).toEqual([{ filename: BUDGET, status: "modified" }]);
+  });
+
+  it("stops deepening when sequential fetches consume the preparation budget", () => {
+    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+    processReads.execFileSync
+      .mockImplementationOnce(() => "true")
+      .mockImplementationOnce(() => {
+        clock.mockReturnValue(70_000);
+        return "";
+      })
+      .mockImplementationOnce(() => {
+        clock.mockReturnValue(140_000);
+        return "";
+      })
+      .mockImplementationOnce(() => HEAD)
+      .mockImplementationOnce((_command, args, options) => {
+        expect(args).toContain("--depth=1024");
+        expect(options?.timeout).toBe(40_000);
+        clock.mockReturnValue(180_000);
+        return "";
+      });
+    processReads.spawnSync.mockReturnValueOnce({ status: 1, stdout: "" });
+
+    expect(() => load("pull_request_target")).toThrow(/PR #123.*PR commit fetch.*budget exhausted/);
+    expect(processReads.execFileSync).toHaveBeenCalledTimes(5);
+    expect(processReads.spawnSync).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { code: "ETIMEDOUT", status: null, signal: "SIGTERM" },
+    { code: undefined, status: 128, signal: null },
+  ])("retains safe fetch diagnostics for $code and exit $status", (failure) => {
+    const stderr =
+      "fatal: https://user:private-password@github.com/repo\nAuthorization: Bearer private-token\n";
+    processReads.execFileSync
+      .mockImplementationOnce(() => "false")
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("private-message"), failure, {
+          stderr: stderr + "x".repeat(10_000),
+          stdout: "private-stdout",
+          cause: new Error("private-cause"),
+        });
+      });
+    const failureResult = (() => {
+      try {
+        load("pull_request_target");
+      } catch (error) {
+        return error as Error;
+      }
+      throw new Error("Expected preparation to fail");
+    })();
+
+    expect(failureResult.message).toMatch(/PR #123.*PR commit fetch.*depth=32/);
+    expect(failureResult.message).toContain(`code ${failure.code ?? "none"}`);
+    expect(failureResult.message).toContain(`exit ${failure.status ?? "none"}`);
+    expect(failureResult.message).toContain("fatal:");
+    expect(failureResult.message).toContain("<REDACTED>");
+    expect(failureResult.message.length).toBeLessThan(3_000);
+    expect(inspect(failureResult, { depth: null })).not.toMatch(/private-/);
+    expect(failureResult.cause).toBeUndefined();
+  });
 
   it.each(["pull_request_target", "issue_comment"])(
     "accepts a current maintainer approval from %s and rejects its removal",

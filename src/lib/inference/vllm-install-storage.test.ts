@@ -153,7 +153,8 @@ describe("managed vLLM install storage", () => {
       expect(errors).toContain("Available:");
       expect(errors).toContain("Required:");
       expect(errors).toContain("393.68 GB");
-      expect(errors).toContain("docker system df");
+      expect(errors).toContain("docker --context default system df");
+      expect(errors).toContain("docker --context default info --format '{{.DockerRootDir}}'");
     },
   );
 

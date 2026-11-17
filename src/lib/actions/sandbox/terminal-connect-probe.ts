@@ -5,6 +5,7 @@ import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/ope
 import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { runAgentSmokeCommands } from "../../agent/terminal-smoke";
+import { enforceTerminalAgentVersion } from "../../agent/terminal-version-enforcement";
 import { redact } from "../../runner";
 import {
   probeSandboxInferenceInvocation,
@@ -37,12 +38,14 @@ export async function runTerminalAgentConnectProbe({
   agentName,
   commandExecutor,
   ensureInferenceRoute,
+  gatewayName,
   sandboxName,
 }: {
   agent: AgentDefinition;
   agentName: string;
   commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   ensureInferenceRoute: EnsureTerminalInferenceRoute;
+  gatewayName: string;
   sandboxName: string;
 }): Promise<void> {
   const routeResult = ensureInferenceRoute(sandboxName, { quiet: true });
@@ -53,7 +56,7 @@ export async function runTerminalAgentConnectProbe({
     );
     process.exit(1);
   }
-  const smokeResult = await runAgentSmokeCommands(sandboxName, agent, commandExecutor);
+  const smokeResult = await runAgentSmokeCommands(sandboxName, agent, commandExecutor, gatewayName);
   if (!smokeResult.ok) {
     console.error(
       `  Probe failed: ${agentName} terminal smoke command failed: ${smokeResult.command}`,
@@ -63,6 +66,13 @@ export async function runTerminalAgentConnectProbe({
     }
     process.exit(1);
   }
+  await enforceTerminalAgentVersion(sandboxName, agent, commandExecutor, {
+    gatewayName,
+    onFailure: async (message) => {
+      console.error(`  Probe failed: ${message}.`);
+      process.exit(1);
+    },
+  });
   const command = agentRuntime.getTerminalCommand(agent);
   const commandText = command ? ` (${command})` : "";
   console.log(`  Probe complete: ${agentName} terminal smoke checks passed${commandText}.`);

@@ -22,9 +22,10 @@ import {
 function defineCodebaseGrowthGuardrails(): void {
   let diff: GrowthGuardrailDiff;
 
+  // Preparation shares a 180-second budget; leave time for approval reads and file loading.
   beforeAll(async () => {
     diff = await loadGrowthGuardrailDiff();
-  });
+  }, 240_000);
 
   it("requires TypeScript for new Node.js files", () => {
     const violations = addedJavaScriptViolations(diff.files);

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DUAL_STATION_VLLM_RUNTIME } from "./vllm-station-cluster";
+import { UnsafeLegacyVllmBindingsError } from "./serving/vllm-host-local-lifecycle";
 
 interface ManagedBaseUrlOverrides {
   loadApiKey?: () => string | null;
@@ -19,6 +20,7 @@ const managedClusterRecovery = vi.hoisted(() => ({
 }));
 const hostLocalRecovery = vi.hoisted(() => ({
   endpoint: vi.fn(),
+  bridgeHost: vi.fn<() => string | null>(() => null),
 }));
 const managedBridge = vi.hoisted(() => ({
   host: vi.fn(() => "172.18.0.1"),
@@ -36,6 +38,7 @@ vi.mock("./serving/managed-cluster-runtime-receipt", () => ({
 vi.mock("./serving/vllm-host-local-lifecycle", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./serving/vllm-host-local-lifecycle")>()),
   recoverHostLocalManagedVllmEndpoint: hostLocalRecovery.endpoint,
+  getLegacyHostLocalManagedVllmBridgeHost: hostLocalRecovery.bridgeHost,
   resolveManagedVllmBridgeHost: managedBridge.host,
 }));
 vi.mock("./vllm-api-key", async (importOriginal) => ({
@@ -46,6 +49,8 @@ vi.mock("./vllm-api-key", async (importOriginal) => ({
 import {
   CONTAINER_REACHABILITY_IMAGE,
   getLocalProviderBaseUrl,
+  getLocalProviderAvailabilityEndpoint,
+  getLocalProviderValidationBaseUrl,
   getLocalProviderContainerReachabilityCheck,
   getLocalProviderHealthCheck,
   getLocalProviderHealthEndpoint,
@@ -118,6 +123,8 @@ beforeEach(() => {
   managedClusterRecovery.endpoint.mockReturnValue(null);
   hostLocalRecovery.endpoint.mockReset();
   hostLocalRecovery.endpoint.mockReturnValue(null);
+  hostLocalRecovery.bridgeHost.mockReset();
+  hostLocalRecovery.bridgeHost.mockReturnValue(null);
   managedBridge.host.mockReset();
   managedBridge.host.mockReturnValue("172.18.0.1");
   managedKey.load.mockReset();
@@ -131,6 +138,75 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("managed vLLM authentication", () => {
+  it("refuses all default routes to an owned legacy container with unsafe bindings (#14083)", () => {
+    lifecycle.baseUrl.mockReturnValue(null);
+    hostLocalRecovery.bridgeHost.mockImplementation(() => {
+      throw new UnsafeLegacyVllmBindingsError();
+    });
+    const capture = vi.fn(() => JSON.stringify({ data: [{ id: "test/model" }] }));
+    expect(() => getManagedVllmProviderBinding()).toThrow("Handle a Running vLLM Server");
+    expect(getLocalProviderBaseUrl("vllm-local")).toBeNull();
+    expect(getLocalProviderValidationBaseUrl("vllm-local")).toBeNull();
+    expect(getLocalProviderHealthEndpoint("vllm-local")).toBeNull();
+    expect(getLocalProviderAvailabilityEndpoint("vllm-local")).toBeNull();
+    expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBeNull();
+    expect(probeLocalProviderHealth("vllm-local")?.detail).toContain(
+      "Handle a Running vLLM Server",
+    );
+    expect(validateLocalProvider("vllm-local", capture).ok).toBe(false);
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("probes bearerless managed vLLM on the OpenShell bridge instead of Docker's default gateway (#14083)", () => {
+    vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+    vi.stubEnv("DOCKER_HOST", "ssh://remote.example.test");
+    lifecycle.baseUrl.mockReturnValue(null);
+    hostLocalRecovery.bridgeHost.mockReturnValue("172.18.0.1");
+    const capture = vi.fn((argv: readonly string[]) =>
+      argv[0] === "curl" || argv.includes("host.openshell.internal:172.18.0.1")
+        ? `${JSON.stringify({ data: [{ id: "test/model" }] })}\n200`
+        : "",
+    );
+
+    expect(validateLocalProvider("vllm-local", capture, vi.fn())).toEqual({ ok: true });
+    const command = capture.mock.calls.find(([argv]) => argv[0] === "docker")?.[0];
+    expect(command?.slice(0, 4)).toEqual(["docker", "--context", "default", "run"]);
+    expect(command).toContain("host.openshell.internal:172.18.0.1");
+    expect(command).not.toContain("host.openshell.internal:host-gateway");
+    expect(command).not.toContain("host.openshell.internal:172.17.0.1");
+  });
+
+  it.each([
+    { state: "unsafe bindings", failure: new UnsafeLegacyVllmBindingsError() },
+    {
+      state: "an unavailable bridge",
+      failure: new Error("Managed host-local vLLM could not inspect the OpenShell bridge"),
+    },
+  ])("returns a validation failure when a later inspection finds $state", ({ failure }) => {
+    lifecycle.baseUrl.mockReturnValue(null);
+    hostLocalRecovery.bridgeHost
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null)
+      .mockImplementation(() => {
+        throw failure;
+      });
+    const capture = vi.fn(() => `${JSON.stringify({ data: [{ id: "test/model" }] })}\n200`);
+    const prepareDockerEnvironment = vi.fn();
+
+    expect(validateLocalProvider("vllm-local", capture, vi.fn(), prepareDockerEnvironment)).toEqual(
+      {
+        ok: false,
+        message:
+          "Managed vLLM state could not be inspected safely. Re-run `nemoclaw onboard` to repair the provider.",
+      },
+    );
+    expect(hostLocalRecovery.bridgeHost).toHaveBeenCalledTimes(3);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(expect.arrayContaining(["curl"]), {
+      ignoreError: true,
+    });
+    expect(prepareDockerEnvironment).not.toHaveBeenCalled();
+  });
+
   it("keeps an explicit sandbox host override ahead of managed endpoint recovery", () => {
     const loadApiKeyImpl = vi.fn(() => API_KEY);
     expect(getLocalProviderBaseUrl("vllm-local", { hostUrl: "http://explicit-host" })).toBe(

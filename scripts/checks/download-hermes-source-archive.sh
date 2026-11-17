@@ -7,7 +7,7 @@ set -euo pipefail
 version="${1:-}"
 output="${2:-}"
 max_attempts=3
-retry_delays=(1 2)
+retry_delays=(60 120)
 url="https://github.com/NousResearch/hermes-agent/archive/refs/tags/${version}.tar.gz"
 partial="${output}.partial"
 curl_error="${output}.curl-error"

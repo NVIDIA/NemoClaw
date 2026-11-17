@@ -6,6 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
+  chmodSync,
   closeSync,
   constants,
   cpSync,
@@ -45,7 +46,7 @@ export const BUNDLED_NPM_TAR_COMMAND_TIMEOUT_MS = 15 * 60_000;
  * The Dockerfile contract test forces that review whenever either pin changes.
  */
 export const NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH = [
-  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc",
+  "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea",
 ] as const;
 
 function parseVersion(version: unknown, label: string): readonly [number, number, number] {
@@ -130,9 +131,11 @@ export function patchBundledNpmTar(options: {
   }
 
   const current = inspectBundledNpmTar(npmRoot);
-  if (current.state === "fixed") return current;
-
   const livePath = join(npmRoot, "node_modules", "tar");
+  if (current.state === "fixed") {
+    chmodSync(realDirectory(livePath, "npm bundled tar root"), 0o755);
+    return current;
+  }
   const transactionId = `${process.pid}-${randomBytes(8).toString("hex")}`;
   const stagingRoot = mkdtempSync(join(dirname(livePath), ".tar.nemoclaw-stage-"));
   const stagedPath = join(stagingRoot, "replacement");
@@ -140,6 +143,8 @@ export function patchBundledNpmTar(options: {
   let rollbackRequired = false;
   try {
     cpSync(replacementRoot, stagedPath, { dereference: false, recursive: true });
+    // The transaction stays private; its installed package must be readable by the sandbox.
+    chmodSync(stagedPath, 0o755);
     cpSync(livePath, backupPath, {
       dereference: false,
       errorOnExist: true,
@@ -293,6 +298,7 @@ function patchBundledNpmTarWithPreparedReplacement(
 ): BundledNpmTarState {
   const current = inspectBundledNpmTar(npmRoot);
   if (current.state === "fixed") {
+    chmodSync(realDirectory(join(npmRoot, "node_modules", "tar"), "npm bundled tar root"), 0o755);
     commandRunner("npm", ["--version"]);
     commandRunner("npx", ["--version"]);
     return current;

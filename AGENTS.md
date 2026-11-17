@@ -78,8 +78,14 @@ their own authorization boundaries. Use `./scripts/dev-setup.sh --expose-cli` on
 For every E2E triage, diagnosis, debugging, or repair task, first use
 [`nemoclaw-maintainer-audit-e2e-assertions`](.agents/skills/nemoclaw-maintainer-audit-e2e-assertions/SKILL.md).
 This also applies when E2E failures emerge during broader PR or CI work. Complete its itemized
-source audit before a repair push or expensive rerun. Status-only and dispatch-only requests
+source audit before a repair push or qualification rerun. Reuse applicable evidence and follow the skill's
+bounded diagnostic procedure when a runtime observation is needed to finish diagnosis. Status-only and dispatch-only requests
 continue through the existing E2E execution skill without an assertion audit.
+
+### Long-running work
+
+Follow [Task Continuation](.agents/skills/_shared/task-continuation.md) when work spans external waits, compaction, or handoff.
+Keep one task record and reuse active watchers. Preserve scope, authorization, evidence, and retry accounting across continuations.
 
 ### E2E Selection and Authoring
 
@@ -160,6 +166,9 @@ mismatched digests.
 ## PR Requirements
 
 Follow `nemoclaw-contributor-create-pr` for publication.
+
+Every PR must have the skill's opening authoring-session report in a collapsed comment, including unavailable fields.
+Publish it when opening a new PR. For an existing PR, add it on the next update; see the skill's migration guidance.
 
 - PRs that change `scripts/prepare-dgx-station-host.sh` must include reviewable DGX Station test evidence identifying the tested commit, Station profile or scenario, result, and a supporting link. Any maintainer may review the evidence; without acceptable evidence, the PR is not ready to approve or merge. Treat the evidence as human-reviewed, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must document the reason on the PR.
 - No secrets, API keys, or credentials committed

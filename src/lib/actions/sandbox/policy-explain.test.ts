@@ -4,10 +4,15 @@
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../../policy/context", () => ({
+const contextMock = vi.hoisted(() => ({
   buildPolicyContext: vi.fn(),
   renderPolicyContextMarkdown: vi.fn(),
 }));
+vi.mock("../../policy/context", () => contextMock);
+const policyMock = vi.hoisted(() => ({
+  getSandboxAgentName: vi.fn((_name: string) => "openclaw"),
+}));
+vi.mock("../../policy", () => policyMock);
 
 import type { PolicyContext } from "../../policy/context";
 import {
@@ -285,6 +290,119 @@ describe("writePolicyContextToSandbox", () => {
       expect(occurrences).toBeGreaterThanOrEqual(1);
     },
   );
+});
+
+describe("policy context agent scope (#13618)", () => {
+  const okExec = () =>
+    vi.fn((_sandbox: string, _command: string) => ({ status: 0, stdout: "", stderr: "" }));
+
+  it("skips Hermes before loading the sandbox executor", async () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn(() => "policy");
+
+    const result = await writePolicyContextToSandbox("alpha", {
+      build,
+      render,
+      getAgent: () => "hermes",
+    });
+
+    expect(result.failure).toBe("unsupported-agent");
+    expect(build).not.toHaveBeenCalled();
+    expect(render).not.toHaveBeenCalled();
+  });
+
+  it.each(["hermes", "pi", "langchain-deepagents-code", "nemocua"])(
+    "does not create the OpenClaw workspace in a %s sandbox",
+    async (agent) => {
+      const build = vi.fn(fakeContext);
+      const render = vi.fn(() => "policy");
+      const exec = okExec();
+
+      const result = await writePolicyContextToSandbox("alpha", {
+        build,
+        render,
+        exec,
+        getAgent: () => agent,
+      });
+
+      expect(result).toEqual({
+        written: false,
+        reason: `${POLICY_CONTEXT_SANDBOX_PATH} is an OpenClaw workspace file and is not written for ${agent} sandboxes`,
+        failure: "unsupported-agent",
+      });
+      expect(build).not.toHaveBeenCalled();
+      expect(render).not.toHaveBeenCalled();
+      expect(exec).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["openclaw", null, undefined])(
+    "still writes POLICY.md when the agent is %s",
+    async (agent) => {
+      const exec = okExec();
+
+      const result = await writePolicyContextToSandbox("alpha", {
+        build: fakeContext,
+        render: () => "policy",
+        exec,
+        getAgent: () => agent,
+      });
+
+      expect(result).toEqual({ written: true });
+      expect(exec).toHaveBeenCalledOnce();
+      expect(exec.mock.calls[0][1]).toContain(POLICY_CONTEXT_SANDBOX_PATH);
+    },
+  );
+
+  it("resolves the registered sandbox agent by default", async () => {
+    const exec = okExec();
+    policyMock.getSandboxAgentName.mockReturnValueOnce("hermes");
+
+    const skipped = await writePolicyContextToSandbox("beta", {
+      build: fakeContext,
+      render: () => "policy",
+      exec,
+    });
+
+    expect(policyMock.getSandboxAgentName).toHaveBeenLastCalledWith("beta");
+    expect(skipped.failure).toBe("unsupported-agent");
+    expect(exec).not.toHaveBeenCalled();
+
+    policyMock.getSandboxAgentName.mockReturnValueOnce("openclaw");
+    const written = await writePolicyContextToSandbox("gamma", {
+      build: fakeContext,
+      render: () => "policy",
+      exec,
+    });
+
+    expect(policyMock.getSandboxAgentName).toHaveBeenLastCalledWith("gamma");
+    expect(written).toEqual({ written: true });
+    expect(exec).toHaveBeenCalledOnce();
+  });
+
+  it("prints the context but reports the skipped write for policy explain --write on Hermes", async () => {
+    const log = vi.fn();
+    const warn = vi.fn();
+    const exec = okExec();
+
+    await explainSandboxPolicy(
+      "alpha",
+      { writeToSandbox: true },
+      {
+        build: fakeContext,
+        render: () => "rendered policy",
+        log,
+        warn,
+        exec,
+        getAgent: () => "hermes",
+      },
+    );
+
+    expect(log).toHaveBeenCalledWith("rendered policy");
+    expect(exec).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0][0]).toContain("not written for hermes sandboxes");
+  });
 });
 
 it("awaits asynchronous context preparation and write failure without changing process.exit", async () => {

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouter } from "../inference/config";
 import os from "node:os";
 import type { SystemReadinessReport } from "../readiness/types";
 import type { ManagedInferenceReadinessSource } from "../inference/serving/types";
@@ -61,10 +62,12 @@ import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./pro
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
 import {
   applyVllmInstallResumeDefaults,
+  checkpointPendingNvidiaModel,
   selectedProviderModelProvenance,
   type SelectedModelOrigin,
   resolveSelectedEndpointSource,
   resolveRequestedProviderSelection,
+  resolveSwitchyardProviderSelection,
   vllmInstallRecoveryOptions,
 } from "./provider-selection";
 import { reportProviderSelectionFailure } from "./provider-selection-failure";
@@ -118,6 +121,7 @@ export interface SetupNimRemoteSelectionArgs {
   sandboxName: string | null;
   intendedInferenceApi: string | null;
   recoverySessionId: string | null | undefined;
+  checkpointNvidiaModel(model: string | null): void;
 }
 
 export type SetupNim = (
@@ -191,7 +195,6 @@ export interface SetupNimFlowDeps {
     probeVllm?: boolean;
   }): InferenceProviderHostState;
   getAgentInferenceProviderOptions(agent: AgentDefinition | null | undefined): string[];
-  loadRoutedProfile(): { router?: { enabled?: boolean } } | null | undefined;
   readRecordedProvider(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -244,6 +247,7 @@ export interface SetupNimFlowDeps {
     state: SetupNimSelectionState,
     requestedModel: string | null,
     recoveredModel: string | null,
+    managedRuntime?: true,
   ): Promise<SetupNimSelectionResult>;
   handleNimLocalSelection(
     gpu: SetupNimGpu,
@@ -301,7 +305,6 @@ export interface SetupNimFlowDeps {
     env?: NodeJS.ProcessEnv,
   ): RequestedServingProfileModel | null;
   selectVllmModelFromEnv?(env?: NodeJS.ProcessEnv): { id: string; servedModelId?: string } | null;
-  handleRoutedSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
   coerceAgentInferenceApi(
     agent: AgentDefinition | null,
     preferredInferenceApi: string | null,
@@ -716,6 +719,8 @@ async function handleEndpointProviderSelection(input: {
   recoverySessionId: string | null | undefined;
   agent: AgentDefinition | null;
   recoveredRegistryRoute: RegistryInferenceRoute | null;
+  currentModelOrigin: () => SelectedModelOrigin | undefined;
+  resumedNvidiaModel: ReturnType<typeof prepareProviderDiscovery>["resumedNvidiaModel"];
 }): Promise<SetupNimSelectionResult> {
   const {
     deps,
@@ -739,15 +744,24 @@ async function handleEndpointProviderSelection(input: {
   }
   const remoteConfig = deps.remoteProviderConfig[selected.key];
   if (!remoteConfig) throw new Error(`Missing remote provider config for '${selected.key}'.`);
-  return deps.handleRemoteProviderSelection(
+  const resumed = selected.key === "build" ? input.resumedNvidiaModel : null;
+  if (resumed?.source) state.onModelSelected?.(resumed.model, resumed.source);
+  const result = await deps.handleRemoteProviderSelection(
     {
       selected,
-      requestedModel,
+      requestedModel: requestedModel ?? resumed?.model ?? null,
       recoveredFromSandbox,
       recoveredModel,
       sandboxName,
       gatewayName,
       recoverySessionId,
+      checkpointNvidiaModel(model) {
+        if (deps.isNonInteractive()) return;
+        const origin = input.currentModelOrigin();
+        const source =
+          origin?.model === model && origin.provider === state.provider ? origin.source : undefined;
+        checkpointPendingNvidiaModel(recoverySessionId, model === null ? null : { model, source });
+      },
       intendedInferenceApi: resolveValidationInferenceApi(
         selected.key,
         remoteConfig.providerName,
@@ -757,6 +771,10 @@ async function handleEndpointProviderSelection(input: {
     state,
     recoveredRegistryRoute,
   );
+  if (selected.key === "build" && result === "retry-selection") {
+    checkpointPendingNvidiaModel(recoverySessionId, undefined);
+  }
+  return result;
 }
 
 function vllmPortConflictMessage(
@@ -983,7 +1001,7 @@ export function createSetupNim(
   const localModelProfileIntegration =
     deps.localModelProfileIntegration ?? createLocalModelProfileIntegration(deps);
 
-  return async function setupNimWithDeps(
+  const setupOrdinaryNim: SetupNim = async function setupNimWithDeps(
     gpu: SetupNimGpu,
     sandboxName: string | null = null,
     agent: AgentDefinition | null = null,
@@ -998,6 +1016,7 @@ export function createSetupNim(
     revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
     readinessReport?: SystemReadinessReport,
   ): Promise<ProviderSelectionResult> {
+    rejectRetiredModelRouter(deps.getNonInteractiveProvider());
     deps.step(3, 8, "Configuring inference provider");
 
     let model: string | BaseSetupNimSelectionState["model"] = null;
@@ -1100,6 +1119,7 @@ export function createSetupNim(
     const {
       requestedProvider,
       requestedModel,
+      resumedNvidiaModel,
       recoveredRegistryRoute,
       recordedProviderReaders,
       probeOllama,
@@ -1158,7 +1178,6 @@ export function createSetupNim(
         requestedProvider,
       });
 
-    const blueprintRouterCfg = deps.loadRoutedProfile();
     const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
       remoteProviderConfig: deps.remoteProviderConfig,
       agentProviderOptions,
@@ -1181,7 +1200,6 @@ export function createSetupNim(
       winOllamaLoopbackOnly,
       ollamaInstallEntry: ollamaInstallMenu.entry,
       vllmEntries,
-      routedEnabled: blueprintRouterCfg?.router?.enabled === true,
       managedLlamaCppOptions,
     });
 
@@ -1307,6 +1325,7 @@ export function createSetupNim(
             selected,
             state,
             requestedModel,
+            resumedNvidiaModel,
             recoveredFromSandbox,
             recoveredModel,
             sandboxName,
@@ -1314,6 +1333,7 @@ export function createSetupNim(
             recoverySessionId,
             agent,
             recoveredRegistryRoute,
+            currentModelOrigin: () => selectedModelOrigin,
           });
           ({
             model,
@@ -1387,7 +1407,7 @@ export function createSetupNim(
             continue selectionLoop;
           }
           state.model = installed.model;
-          const result = await deps.handleLlamaCppSelection(state, installed.model, null);
+          const result = await deps.handleLlamaCppSelection(state, installed.model, null, true);
           ({
             model,
             provider,
@@ -1581,20 +1601,6 @@ export function createSetupNim(
             requestedServingProfile,
           );
           break;
-        } else if (selected.key === "routed") {
-          const state = createSelectionState();
-          const result = await deps.handleRoutedSelection(state);
-          ({
-            model,
-            provider,
-            endpointUrl,
-            credentialEnv,
-            preferredInferenceApi,
-            nimContainer,
-            allowToolsIncompatible,
-          } = state);
-          if (result === "retry-selection") continue selectionLoop;
-          break;
         }
       }
     }
@@ -1663,6 +1669,12 @@ export function createSetupNim(
       ...(provider === "vllm-local" && vllmModelIdentity ? { vllmModelIdentity } : {}),
       inferenceCapabilityCache,
     };
+  };
+  return async (...args: Parameters<SetupNim>) => {
+    deps.step(3, 8, "Configuring inference provider");
+    return (
+      resolveSwitchyardProviderSelection(process.env, args[2]?.name) ?? setupOrdinaryNim(...args)
+    );
   };
 }
 

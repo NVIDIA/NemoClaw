@@ -15,7 +15,7 @@ import {
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
-import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
+import { managedStartupCreateReadiness } from "./managed-startup/hold";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import {
@@ -208,8 +208,21 @@ function requireCompatibilityLifecycleCommand(
     timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
   });
   if (Number(result.status ?? 1) !== 0 || result.error || ("signal" in result && result.signal)) {
+    // Keep native output private while retaining the reason needed to diagnose
+    // a failed cutover. In particular, a timed-out mutation is not a rejection.
+    let outcome = "missing exit status";
+    if (result.error) {
+      outcome =
+        "code" in result.error && result.error.code === "ETIMEDOUT"
+          ? "command timed out"
+          : "process error";
+    } else if ("signal" in result && result.signal) {
+      outcome = "terminated by signal";
+    } else if (Number.isSafeInteger(result.status)) {
+      outcome = `exit status ${result.status}`;
+    }
     throw new Error(
-      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover.`,
+      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover (${outcome}).`,
     );
   }
 }
@@ -804,14 +817,14 @@ export function createSandboxGpuCreateAttemptRunner(
                 if (!deferRestartSafeCutover) void runtimePatch.maybeApplyDuringCreate();
               },
             }),
-        readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
+        ...managedStartupCreateReadiness({
+          startupCommand: input.sandboxStartupCommand,
           isTerminalAgent: input.terminalAgent,
-          startupRunsDuringCreate: true,
           env: input.sandboxEnv,
+          deferPostCreateEffects: deferRestartSafeCutover || deferPostCreateEffects,
         }),
         failureCheck: runtimePatch.createFailureMessage,
         traceEvent: addTraceEvent,
-        waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
         initialPhase:
           compatibility && (input.prebuild.imageRef || state.compatibilityRequest)
             ? "create"

@@ -18,7 +18,9 @@ filesystem_policy:
     - /usr
     - /lib
     - /opt/hermes
+    - /opt/nemo-relay/plugins/switchyard
     - /proc
+    - /sys/class/drm               # Discover GPU device names for startup identity checks.
     - /dev/urandom
     - /app
     - /run/nemoclaw/managed-gateway-expected-exit

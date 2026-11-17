@@ -9,7 +9,7 @@ keywords: ["switch nemoclaw provider", "change inference provider", "nemoclaw in
 content:
   type: "how_to"
 ---
-Move a sandbox to another provider family while keeping the OpenShell route, agent configuration, and host registry aligned.
+Move a sandbox to another provider family while keeping the selected inference path, agent configuration, and host registry aligned.
 Use onboarding first when the target is neither `compatible-endpoint` nor `compatible-anthropic-endpoint` and is not registered.
 The compatible endpoint workflow below can register an absent custom provider from complete route metadata.
 
@@ -126,12 +126,52 @@ Endpoint-shape and shared-gateway compatibility checks still apply.
 
 ## Recreate a Deep Agents Sandbox
 
-Deep Agents uses fresh sandbox recreation for provider changes.
-The recreation validates the provider and rewrites `/sandbox/.deepagents/config.toml` with the OpenShell route.
+Named recreation replaces the Deep Agents sandbox and restores its saved native home, including `/sandbox/.deepagents/config.toml`.
+It preserves saved model and endpoint preferences.
+If those preferences conflict with the requested provider or model, validation stops before NemoClaw updates the registry.
+The replacement still exists, but its live route is unverified.
+Keep the backup and follow the printed recovery instructions.
+Do not rebuild that replacement without verified registry metadata.
+
+Use named recreation when you need a replacement image with the saved preferences:
 
 ```bash
 $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
+
+## Validate a Different Deep Agents Selection
+
+To select a different provider or model without restoring existing preferences, use a new sandbox name.
+Review [shared-gateway effects](#account-for-shared-gateways) before selecting a shared route.
+Record your existing default sandbox's name before starting.
+Onboarding selects the new sandbox as the default before final verification.
+A later verification failure can leave that default changed.
+Onboard the new sandbox and choose the requested provider and model:
+
+```bash
+$$nemoclaw onboard --fresh --name <new-sandbox-name>
+```
+
+This creates a separate sandbox and native configuration.
+After the onboarding attempt, restore your existing default before testing the new sandbox:
+
+```bash
+$$nemoclaw use <existing-sandbox-name>
+```
+
+If onboarding failed, follow the printed recovery instructions while keeping the existing sandbox as the default.
+After successful onboarding, inspect the new sandbox's route:
+
+```bash
+$$nemoclaw <new-sandbox-name> status
+$$nemoclaw <new-sandbox-name> inference get
+```
+
+Require the output to report the requested provider and model.
+Complete [Verify the Sandbox Inference Route](../validate-inference/verify-inference-route) using the new sandbox name for each command.
+Use the named `inference get` command above instead of the default-sandbox form.
+After validation succeeds, follow [Choose the Default Sandbox](../../manage-sandboxes/operate-sandboxes/run-deep-agents-code#choose-the-default-sandbox) to select it again.
+If validation fails, keep the restored default and follow the reported recovery instructions.
 
 </AgentOnly>
 
@@ -155,6 +195,13 @@ $$nemoclaw inference set \
 ```
 
 NemoClaw validates the endpoint before it changes the route.
+For a custom compatible endpoint that uses a native provider, NemoClaw reads the sandbox's base policy before creating or detaching a provider.
+When the provider pins destination addresses, existing endpoint rules that cover its host and port must have matching IP pins.
+This includes wildcard host rules and IP-only rules on that port.
+If the pins are absent or differ, the command names the conflicting policy and leaves providers and the inference selection unchanged.
+{/* This page is published under inference/manage-inference; links follow the navigation slugs in docs/index.yml. */}
+Follow [Customize the Sandbox Network Policy](../../network-policy/customize-network-policy) to inspect the named rule before retrying.
+If NemoClaw cannot read the policy, resolve the reported OpenShell error before retrying.
 For an HTTPS IP-literal or DNS-pinned HTTP endpoint, NemoClaw registers and verifies an absent provider before selecting the route.
 If OpenShell still reports the provider as absent, NemoClaw retries the switch once.
 If provider verification fails or OpenShell confirms that it did not apply the route, NemoClaw leaves the inference selection unchanged.
@@ -189,7 +236,7 @@ Then rerun onboarding before you use the route.
 
 ## Account for Shared Gateways
 
-One gateway has one live route even when NemoClaw records different intended routes for its sandboxes.
+Shared-route sandboxes on one gateway use one live route, even when NemoClaw records different intended routes for them.
 Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a provider that another registered sandbox shares.
 For a shared-route switch, provider-global endpoint, API-family, credential, and incomplete-metadata conflicts stop the command before mutation.
 Native hosted attachments, qualified Hermes local attachments, and recorded OpenClaw native local attachments do not change that shared route.

@@ -28,3 +28,10 @@ updates:
       prefix: "chore(deps)"
     labels:
       - "v1"
+    # The organization allows taiki-e/install-action only at listed commits.
+    # v1 pins 43aecc8d72668fbcfe75c31400bc4f890f1c5853, which is allowed.
+    # Every proposed bump fails v1's workflow test and would leave
+    # CI / Dependencies unable to start (see #13612 and #14217).
+    # Remove this ignore once the organization allows a newer commit.
+    ignore:
+      - dependency-name: "taiki-e/install-action"

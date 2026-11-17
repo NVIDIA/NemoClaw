@@ -63,18 +63,24 @@ describe("compiled artifact preparation", () => {
     },
   );
 
-  it.each(["pull_request", "push", "workflow_dispatch"])(
-    "builds and caches the full package after a %s miss",
-    (event) => {
-      const result = runCompiledArtifactPreparation(false, event);
-      expect(result.failure).toBe("");
-      expect(result.summary).not.toContain("gh cache delete");
-      expect(result.commands).toEqual(["install", "--prefix nemoclaw run build", "run build:cli"]);
-      expect(existsSync(join(result.root, "dist/stale"))).toBe(false);
-      expect(result.saved).toBe(1);
-      expect(() => verifyCompiledArtifact(result.root, COMPILED_ARTIFACT_SHA)).not.toThrow();
-    },
-  );
+  it.each([
+    ["pull_request", "auto"],
+    ["push", "auto"],
+    ["workflow_dispatch", "artifact"],
+    ["push", "artifact"],
+  ])("builds and caches the full package after a %s miss with %s packages", (event, mode) => {
+    const result = runCompiledArtifactPreparation(false, event, false, mode);
+    expect(result.failure).toBe("");
+    expect(result.summary).not.toContain("gh cache delete");
+    expect(result.commands).toEqual([
+      `install full ${mode}`,
+      "--prefix nemoclaw run build",
+      "run build:cli",
+    ]);
+    expect(existsSync(join(result.root, "dist/stale"))).toBe(false);
+    expect(result.saved).toBe(1);
+    expect(() => verifyCompiledArtifact(result.root, COMPILED_ARTIFACT_SHA)).not.toThrow();
+  });
 
   it("reports recovery for a rejected cache hit without compiling or saving", () => {
     const result = runCompiledArtifactPreparation(true, "pull_request", true);

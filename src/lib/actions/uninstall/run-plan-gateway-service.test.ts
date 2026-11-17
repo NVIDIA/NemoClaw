@@ -163,6 +163,7 @@ async function uninstall(
           ok(JSON.stringify(gateways))) ||
         (command === "systemctl" &&
           args.includes("--property=MainPID") &&
+          delegated.status === 0 &&
           delegated.stdout === "" &&
           ok("0\n")) ||
         delegated
@@ -1071,6 +1072,130 @@ describe("uninstall OpenShell gateway user service", () => {
       "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
     );
   });
+
+  const SCOPED = [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }];
+  const removedWithoutManager =
+    "The systemd user manager is unavailable; removing nemoclaw-openshell-gateway.service without disabling or reloading it.";
+  it.each([
+    {
+      mode: "full",
+      useXdg: false,
+      gateways: undefined,
+      gatewayEnv: "none",
+      extraLink: false,
+      removed: true,
+    },
+    {
+      mode: "full with another activation link",
+      useXdg: false,
+      gateways: undefined,
+      gatewayEnv: "none",
+      extraLink: true,
+      removed: false,
+    },
+    {
+      mode: "scoped with a proven state binding",
+      useXdg: true,
+      gateways: SCOPED,
+      gatewayEnv: "bound",
+      extraLink: false,
+      removed: true,
+    },
+    {
+      mode: "scoped without a state binding",
+      useXdg: true,
+      gateways: SCOPED,
+      gatewayEnv: "none",
+      extraLink: false,
+      removed: false,
+    },
+    {
+      mode: "scoped with a later sibling binding",
+      useXdg: true,
+      gateways: SCOPED,
+      gatewayEnv: "shadowed",
+      extraLink: false,
+      removed: false,
+    },
+  ] as const)(
+    "handles the marked unit on $mode uninstall when the systemd user manager is unavailable (#13622)",
+    async ({ useXdg, gateways, gatewayEnv, extraLink, removed }) => {
+      const test = fixture(useXdg);
+      const servicePath = writeManagedService(test);
+      const configPath = writeGatewayState(test);
+      const bound = `OPENSHELL_GATEWAY_CONFIG=${configPath}\n`;
+      const sibling = "OPENSHELL_GATEWAY_CONFIG=/sibling/openshell-gateway.toml\n";
+      writeGatewayEnv(test, { none: "", bound, shadowed: `${bound}${sibling}` }[gatewayEnv]);
+      const linkPath = (unitRoot: string) =>
+        path.join(unitRoot, "default.target.wants", path.basename(servicePath));
+      const enablementLink = linkPath(path.dirname(servicePath));
+      const otherLink = linkPath(path.join(test.home, ".local", "share", "systemd", "user"));
+      [enablementLink, ...(extraLink ? [otherLink] : [])].forEach((link) => {
+        fs.mkdirSync(path.dirname(link), { recursive: true });
+        fs.symlinkSync(servicePath, link);
+      });
+      const warnings: string[] = [];
+      const run = vi.fn((command: string, _args: string[]) =>
+        command === "systemctl"
+          ? { status: 1, stdout: "", stderr: "Failed to connect to bus: No medium found" }
+          : ok(),
+      );
+      const systemctlCalls = (action: string) =>
+        run.mock.calls.filter(
+          ([command, args]) => command === "systemctl" && args.includes(action),
+        );
+
+      const result = await uninstall(
+        test,
+        false,
+        {
+          commandExists: (command) => ["systemctl", "npm", "docker"].includes(command),
+          error: (line) => warnings.push(line),
+          run,
+        },
+        gateways,
+      );
+
+      expect(result.exitCode).toBe(removed ? 0 : 1);
+      expect(fs.existsSync(servicePath)).toBe(!removed);
+      expect(fs.lstatSync(otherLink, { throwIfNoEntry: false }) !== undefined).toBe(extraLink);
+      expect(systemctlCalls("daemon-reload")).toHaveLength(0);
+      expect(warnings.includes(removedWithoutManager)).toBe(removed);
+    },
+  );
+
+  // A `sudo -u` caller exports no runtime directory, and can inherit no bus
+  // address or a stale one from another session.
+  it.skipIf(typeof process.getuid !== "function").each(["", "unix:path=/tmp/stale-session/bus"])(
+    "reaches the user manager through the derived runtime directory before deciding it is unavailable (inherited bus %j) (#13622)",
+    async (inheritedBus) => {
+      const test = fixture();
+      test.env.XDG_RUNTIME_DIR = "";
+      test.env.DBUS_SESSION_BUS_ADDRESS = inheritedBus;
+      const servicePath = writeManagedService(test);
+      const bus = `unix:path=/run/user/${String(process.getuid?.())}/bus`;
+      const run = vi.fn(
+        (command: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) =>
+          command === "systemctl" && options?.env?.DBUS_SESSION_BUS_ADDRESS !== bus
+            ? { status: 1, stdout: "", stderr: "XDG_RUNTIME_DIR is not set in the environment." }
+            : ok(),
+      );
+      const systemctlBus = (action: string) =>
+        run.mock.calls
+          .filter(([command, args]) => command === "systemctl" && args.includes(action))
+          .map(([, , options]) => options?.env?.DBUS_SESSION_BUS_ADDRESS);
+
+      const result = await uninstall(test, false, {
+        commandExists: (command) => ["systemctl", "npm"].includes(command),
+        run,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(fs.existsSync(servicePath)).toBe(false);
+      expect(systemctlBus("disable")).toEqual([bus]);
+      expect(systemctlBus("daemon-reload")).toEqual([bus]);
+    },
+  );
 
   it("preserves a foreign unit at the NemoClaw service path (#6903)", async () => {
     const test = fixture();

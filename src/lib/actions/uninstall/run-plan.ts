@@ -29,11 +29,10 @@ import {
   providerDeleteSkipMessage,
   sandboxDeleteAbsentMessage,
   sandboxDeleteFailureMessage,
+  sandboxCleanupReasonMessage,
 } from "../../domain/uninstall/messaging";
 import {
   cleanupManagedLlamaCppRuntimeForSandbox,
-  HOST_LOCAL_VLLM_CONTAINER_NAME,
-  HOST_LOCAL_VLLM_MANAGED_LABEL,
   HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
   type ManagedLlamaCppCleanupTarget,
   resolveManagedLlamaCppCleanupTarget,
@@ -50,9 +49,12 @@ import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gatewa
 import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   getNemoclawOpenShellGatewayUserServicePath,
+  findNemoclawGatewayUserServiceActivationPath,
   getOpenShellUserConfigHome,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
+  systemctlUserEnv,
+  userManagerLooksUnavailable,
 } from "../../onboard/docker-driver-gateway-service";
 import {
   assertManagedGatewayStateDirectoryParentTrusted,
@@ -80,6 +82,7 @@ import {
 } from "./gateway-cleanup";
 import {
   externallySupervisedHostGatewayProcessOwnershipFailure,
+  gatewayEnvSelectsStateConfig,
   hasStateScopedSandboxNamespace,
   isHostPortFree,
   processUsesStateScopedSandboxNamespace,
@@ -91,6 +94,7 @@ import {
 } from "../../onboard/host-gateway-process";
 import {
   assertGatewayStatePathSafe,
+  hasDefaultGatewayEvidence,
   prepareGatewayProviderAuthorityRetirement,
   GATEWAYS_SUBDIR,
   type GatewayRegistryEntry,
@@ -119,11 +123,11 @@ import {
   type OnboardStateLockHandle,
 } from "../../state/onboard-session/lock";
 import {
-  managedHermesStateVolumeContext,
-  type ManagedHermesStateVolumeRuntime,
-  type ManagedHermesStateVolumeContext,
-  removeManagedHermesStateVolumes,
-} from "./hermes-uninstall-cleanup";
+  managedAgentStateVolumeContext,
+  type ManagedAgentStateVolumeRuntime,
+  type ManagedAgentStateVolumeContext,
+  removeManagedAgentStateVolumesForUninstall,
+} from "./agent-state-volume-cleanup";
 import {
   stopBedrockRuntimeAdapter,
   stopHttpsPinRuntimeAdapter,
@@ -137,6 +141,9 @@ import {
   pidExists,
   readOnboardSessionModelRouter,
   removeForceFreshReceiptVolumes,
+  removeOrphanedManagedHostLocalVllm,
+  verifyManagedInferenceCleanup,
+  MANAGED_INFERENCE_CONTAINER_NAME_PATTERN,
   selectedGatewayCleanupRuntimeSelection,
 } from "./runtime-commands";
 import {
@@ -197,6 +204,7 @@ export interface UninstallRunDeps {
   requireCompleteGatewayProcessCleanup?: boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
   retainedGatewayPorts?: readonly number[];
+  sweepDefaultGatewayAbsent?: boolean;
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker?: (args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -204,7 +212,7 @@ export interface UninstallRunDeps {
   runHuggingFaceCacheDataCleanup?: (options?: SpawnSyncOptions) => RunResult;
   runLocalModelRuntimeCleanup?: (options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup?: (sandboxName: string, gatewayPort: number) => RunResult;
-  runtimeProviders?: ManagedHermesStateVolumeRuntime["runtimeProviders"];
+  runtimeProviders?: ManagedAgentStateVolumeRuntime["runtimeProviders"];
   sleep?: (milliseconds: number) => void;
   hasPortableRuntimeCleanup?: (stateDir: string) => boolean;
   runPortableRuntimeCleanupTransaction?: (
@@ -234,8 +242,6 @@ export interface UninstallRunOutcome {
 const OPENSHELL_COMMAND_MISSING_ERROR =
   "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.";
 const INTERRUPTED_ONBOARD_SESSION_MAX_BYTES = 1024 * 1024;
-export const MANAGED_INFERENCE_CONTAINER_NAME_PATTERN =
-  /^(?:nemoclaw-vllm|nemoclaw-vllm-worker|nemoclaw-llama-cpp|nemoclaw-vllm-cluster-rank-[0-9]+)$/;
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
   if (!command || command.includes("\0")) return false;
@@ -544,6 +550,7 @@ interface UninstallRuntime {
   requireCompleteGatewayProcessCleanup: boolean;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
   retainedGatewayPorts: readonly number[];
+  sweepDefaultGatewayAbsent: boolean;
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker: (args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -551,7 +558,7 @@ interface UninstallRuntime {
   runHuggingFaceCacheDataCleanup: (options?: SpawnSyncOptions) => RunResult;
   runLocalModelRuntimeCleanup: (options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup: (sandboxName: string, gatewayPort: number) => RunResult;
-  runtimeProviders: ManagedHermesStateVolumeRuntime["runtimeProviders"];
+  runtimeProviders: ManagedAgentStateVolumeRuntime["runtimeProviders"];
   sleep: (milliseconds: number) => void;
   hasPortableRuntimeCleanup: (stateDir: string) => boolean;
   runPortableRuntimeCleanupTransaction: (
@@ -610,6 +617,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     resolveGatewayTeardownAuthority:
       deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority,
     retainedGatewayPorts: deps.retainedGatewayPorts ?? [],
+    sweepDefaultGatewayAbsent: deps.sweepDefaultGatewayAbsent ?? false,
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,
@@ -978,6 +986,7 @@ async function deletePortableOpenShellSandbox(
   });
   if (result.kind === "failed") {
     runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+    runtime.warn(sandboxCleanupReasonMessage(result));
     if (result.error.kind === "command" && result.error.reason === "invalid_request") return false;
   }
   if (result.kind === "absent") {
@@ -1354,6 +1363,15 @@ function removeNemoclawOpenShellGatewayUserService(
   }
 
   const hasSystemctl = runtime.commandExists("systemctl");
+  // Reach the user manager through its runtime directory even when the caller
+  // (for example `sudo -u`) did not export XDG_RUNTIME_DIR, so a missing client
+  // variable is never mistaken for an unavailable manager.
+  const systemctlEnv = systemctlUserEnv(runtime.env);
+  // True only when the scoped `show` or the disable failed because the systemd
+  // user manager is unreachable ("Failed to connect to bus: ..."). In that case the unit file
+  // is dead on disk: remove it and skip daemon-reload, mirroring install and
+  // destroy's standalone-gateway fallback on headless accounts.
+  let userManagerUnavailable = false;
   if (hasSystemctl) {
     if (scopedStateDir !== undefined) {
       const inspected = runtime.run(
@@ -1365,16 +1383,32 @@ function removeNemoclawOpenShellGatewayUserService(
           "--property=MainPID",
           "--value",
         ],
-        { env: runtime.env },
+        { env: systemctlEnv },
       );
+      // An unreachable user manager has no loaded unit, so there is no
+      // service process whose namespace needs proof before the dead marked
+      // unit file is removed.
+      userManagerUnavailable =
+        inspected.status !== 0 && userManagerLooksUnavailable(inspected.stderr);
+      // The fixed per-user unit path can belong to another state directory, so
+      // without a loaded process to prove, require the unit's EnvironmentFile
+      // to name the selected state's gateway config.
+      if (userManagerUnavailable && !markedUnitSelectsState(runtime, scopedStateDir)) {
+        runtime.warn(
+          `Leaving ${servicePath} in place because the systemd user manager is unavailable and the unit's gateway state cannot be proven.`,
+        );
+        return false;
+      }
       const mainPid = Number(inspected.stdout.trim());
       if (
-        !hasStateScopedSandboxNamespace(scopedStateDir) ||
-        inspected.status !== 0 ||
-        !inspected.stdout.trim() ||
-        !Number.isSafeInteger(mainPid) ||
-        mainPid < 0 ||
-        (mainPid > 0 && !processUsesStateScopedSandboxNamespace(mainPid, scopedStateDir, runtime))
+        !userManagerUnavailable &&
+        (!hasStateScopedSandboxNamespace(scopedStateDir) ||
+          inspected.status !== 0 ||
+          !inspected.stdout.trim() ||
+          !Number.isSafeInteger(mainPid) ||
+          mainPid < 0 ||
+          (mainPid > 0 &&
+            !processUsesStateScopedSandboxNamespace(mainPid, scopedStateDir, runtime)))
       ) {
         runtime.warn(
           "Refusing scoped gateway service stop because its loaded sandbox namespace cannot be proven.",
@@ -1382,18 +1416,44 @@ function removeNemoclawOpenShellGatewayUserService(
         return false;
       }
     }
-    const disabled = runtime.run(
-      "systemctl",
-      ["--user", "disable", "--now", NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE],
-      { env: runtime.env, stdio: "ignore" },
-    );
-    if (disabled.status !== 0) {
-      runtime.warn(`Failed to disable ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`);
-      return false;
+    if (!userManagerUnavailable) {
+      const disabled = runtime.run(
+        "systemctl",
+        ["--user", "disable", "--now", NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE],
+        { env: systemctlEnv, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      userManagerUnavailable =
+        disabled.status !== 0 && userManagerLooksUnavailable(disabled.stderr);
+      // On a headless account without a reachable systemd user manager
+      // ("Failed to connect to bus: ...", /run/user/<uid>/bus missing), the
+      // unit file exists on disk but cannot be managed or started. Installation
+      // and destroy already treat this as the standalone-gateway fallback, so
+      // uninstall removes the dead unit instead of reporting a failure and
+      // leaving it behind. Any other disable failure stays conservative.
+      if (disabled.status !== 0 && !userManagerUnavailable) {
+        runtime.warn(`Failed to disable ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`);
+        return false;
+      }
     }
-    runtime.log(`Disabled ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`);
+    if (!userManagerUnavailable) {
+      runtime.log(`Disabled ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`);
+    }
   } else {
     runtime.warn("systemctl not found; removing NemoClaw gateway user service file only.");
+  }
+  // `disable` did not run, so remove its enablement link ourselves, and keep
+  // the unit while any other activation path could still start it.
+  if (
+    userManagerUnavailable &&
+    (!removeMarkedUnitEnablementLink(runtime, servicePath) ||
+      !noOtherActivationPath(runtime, servicePath, systemctlEnv))
+  ) {
+    return false;
+  }
+  if (userManagerUnavailable) {
+    runtime.warn(
+      `The systemd user manager is unavailable; removing ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service without disabling or reloading it.`,
+    );
   }
   try {
     runtime.rmSync(servicePath, { force: true });
@@ -1404,9 +1464,9 @@ function removeNemoclawOpenShellGatewayUserService(
     );
     return false;
   }
-  if (hasSystemctl) {
+  if (hasSystemctl && !userManagerUnavailable) {
     const reloaded = runtime.run("systemctl", ["--user", "daemon-reload"], {
-      env: runtime.env,
+      env: systemctlEnv,
       stdio: "ignore",
     });
     if (reloaded.status !== 0) {
@@ -1415,6 +1475,77 @@ function removeNemoclawOpenShellGatewayUserService(
     }
   }
   return true;
+}
+
+function markedUnitSelectsState(runtime: UninstallRuntime, stateDir: string): boolean {
+  const envPath = path.join(
+    getOpenShellUserConfigHome(runtime.env.HOME || os.homedir(), runtime.env),
+    "openshell",
+    "gateway.env",
+  );
+  let envFile: OpenRegularFile;
+  try {
+    envFile = runtime.openRegularFile(envPath);
+  } catch {
+    return false;
+  }
+  try {
+    return gatewayEnvSelectsStateConfig(envFile.readUtf8(), stateDir);
+  } catch {
+    return false;
+  } finally {
+    envFile.close();
+  }
+}
+
+// The packaged unit is `WantedBy=default.target`. Remove only a symbolic link
+// that points at the marked unit; a missing link needs no cleanup.
+function removeMarkedUnitEnablementLink(runtime: UninstallRuntime, servicePath: string): boolean {
+  const linkPath = path.join(
+    path.dirname(servicePath),
+    "default.target.wants",
+    path.basename(servicePath),
+  );
+  let target: string;
+  try {
+    if (!fs.lstatSync(linkPath).isSymbolicLink()) return true;
+    target = fs.readlinkSync(linkPath);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return true;
+    runtime.warn(`Failed to inspect ${linkPath}: ${formatError(error)}`);
+    return false;
+  }
+  if (path.resolve(path.dirname(linkPath), target) !== servicePath) return true;
+  try {
+    runtime.rmSync(linkPath, { force: true });
+    runtime.log(`Removed ${linkPath}`);
+    return true;
+  } catch (error) {
+    runtime.warn(`Failed to remove ${linkPath}: ${formatError(error)}`);
+    return false;
+  }
+}
+
+function noOtherActivationPath(
+  runtime: UninstallRuntime,
+  servicePath: string,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  let activationPath: string | null;
+  try {
+    activationPath = findNemoclawGatewayUserServiceActivationPath(
+      runtime.env.HOME || os.homedir(),
+      env,
+    );
+  } catch (error) {
+    runtime.warn(`Leaving ${servicePath} in place: ${formatError(error)}`);
+    return false;
+  }
+  if (activationPath === null) return true;
+  runtime.warn(
+    `Leaving ${servicePath} in place because ${activationPath} can still activate it. Remove that link, then rerun uninstall.`,
+  );
+  return false;
 }
 
 // scripts/install.sh stages the NemoClaw-managed gateway user service only for
@@ -1472,7 +1603,7 @@ function removeNemoclawOpenShellGatewayEnv(
 
 interface SelectedRegistrySandboxState {
   backupNames: string[];
-  managedHermesStateVolumes: ManagedHermesStateVolumeContext[];
+  managedAgentStateVolumes: ManagedAgentStateVolumeContext[];
   names: string[];
   registrations: Record<string, GatewayRegistryEntry>;
 }
@@ -1485,14 +1616,14 @@ function selectedRegistrySandboxState(
   const home = path.dirname(sharedRoot);
   const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
   if (!pathEntryExists(registryFile, runtime)) {
-    return { backupNames: [], managedHermesStateVolumes: [], names: [], registrations: {} };
+    return { backupNames: [], managedAgentStateVolumes: [], names: [], registrations: {} };
   }
   const registry = readGatewayRegistryFile(home, registryFile);
   if (!registry) {
-    return { backupNames: [], managedHermesStateVolumes: [], names: [], registrations: {} };
+    return { backupNames: [], managedAgentStateVolumes: [], names: [], registrations: {} };
   }
   const backupNames: string[] = [];
-  const managedHermesStateVolumes: ManagedHermesStateVolumeContext[] = [];
+  const managedAgentStateVolumes: ManagedAgentStateVolumeContext[] = [];
   const names: string[] = [];
   const registrations: Record<string, GatewayRegistryEntry> = {};
   for (const [name, entry] of Object.entries(registry.sandboxes)) {
@@ -1508,16 +1639,16 @@ function selectedRegistrySandboxState(
       );
     }
     names.push(name);
-    const managedHermesStateVolume = managedHermesStateVolumeContext(name, entry);
-    if (managedHermesStateVolume.runtimeProviderId !== "podman") {
+    const managedAgentStateVolume = managedAgentStateVolumeContext(name, entry);
+    if (managedAgentStateVolume.runtimeProviderId !== "podman") {
       backupNames.push(name);
     }
     registrations[name] = entry;
-    managedHermesStateVolumes.push(managedHermesStateVolume);
+    managedAgentStateVolumes.push(managedAgentStateVolume);
   }
   return {
     backupNames: backupNames.sort(),
-    managedHermesStateVolumes: managedHermesStateVolumes.sort((left, right) =>
+    managedAgentStateVolumes: managedAgentStateVolumes.sort((left, right) =>
       left.sandboxName.localeCompare(right.sandboxName),
     ),
     names: names.sort(),
@@ -2444,34 +2575,6 @@ function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallR
   return false;
 }
 
-function removeOrphanedManagedHostLocalVllm(runtime: UninstallRuntime): boolean {
-  if (!runtime.commandExists("docker")) return true;
-  const inspection = runtime.runDocker(
-    [
-      "container",
-      "inspect",
-      "--format",
-      `{{.Id}} {{index .Config.Labels ${JSON.stringify(HOST_LOCAL_VLLM_MANAGED_LABEL)}}}`,
-      HOST_LOCAL_VLLM_CONTAINER_NAME,
-    ],
-    { env: runtime.env, timeout: 10_000 },
-  );
-  if (inspection.status !== 0 || !inspection.stdout.trim()) return true;
-  const [containerId, managedLabel, ...extra] = inspection.stdout.trim().split(/\s+/);
-  if (!/^[0-9a-f]{64}$/u.test(containerId ?? "") || managedLabel !== "true" || extra.length > 0) {
-    return true;
-  }
-  const removal = runtime.runDocker(["rm", "-f", containerId], {
-    env: runtime.env,
-    timeout: 10_000,
-  });
-  if (removal.status === 0) return true;
-  runtime.error(
-    `Could not remove orphaned managed inference container '${HOST_LOCAL_VLLM_CONTAINER_NAME}'. NemoClaw did not start the remaining uninstall steps.`,
-  );
-  return false;
-}
-
 function managedLlamaCppCleanupPorts(homeDir: string, scopedToSelectedGateway: boolean): number[] {
   const ports = new Set<number>([GATEWAY_PORT]);
   if (scopedToSelectedGateway) return [...ports];
@@ -2552,24 +2655,7 @@ function removeManagedModelRuntimes(
     removePath(path.join(sharedRoot, MANAGED_VLLM_API_KEY_FILE), runtime);
   }
   if (!runtime.commandExists("docker")) return llama;
-  const inventory = runtime.runDocker(["ps", "-a", "--format", "{{.Names}}"], {
-    env: runtime.env,
-    timeout: 10_000,
-  });
-  if (inventory.status !== 0) {
-    runtime.error(
-      "Docker could not inventory reserved managed inference container names. NemoClaw refused the remaining uninstall steps so it cannot report incomplete cleanup as success.",
-    );
-    return { failedStateDirs: [], ok: false };
-  }
-  const residual = splitNonEmptyLines(inventory.stdout).find((name) =>
-    MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name),
-  );
-  if (!residual) return llama;
-  runtime.error(
-    `Managed inference container '${residual}' remains after ownership-aware cleanup. NemoClaw refused the remaining uninstall steps; restore its ownership state or remove it after manual review, then retry.`,
-  );
-  return { failedStateDirs: [], ok: false };
+  return { ...llama, ok: verifyManagedInferenceCleanup(runtime) };
 }
 
 function recordManagedModelCleanup(
@@ -2603,7 +2689,7 @@ function hasDockerSandboxRegistrations(
   registrations: SelectedRegistrySandboxState["registrations"],
 ): boolean {
   return Object.entries(registrations).some(
-    ([name, entry]) => managedHermesStateVolumeContext(name, entry).runtimeProviderId === "docker",
+    ([name, entry]) => managedAgentStateVolumeContext(name, entry).runtimeProviderId === "docker",
   );
 }
 
@@ -3071,6 +3157,8 @@ async function discoverOtherGatewayEnvironments(
   if (!selectedIsDefault && pathEntryExists(sharedRoot, runtime)) {
     try {
       if (
+        (!runtime.sweepDefaultGatewayAbsent ||
+          hasDefaultGatewayEvidence(path.dirname(sharedRoot))) &&
         fs
           .readdirSync(sharedRoot)
           .some(
@@ -3288,7 +3376,7 @@ async function executeOpenShellResourceCleanup(
   scopedToSelectedGateway: boolean,
   sandboxNames: readonly string[],
   sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
-  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
+  managedAgentStateVolumes: readonly ManagedAgentStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
   interruptedOnboardLock?: OnboardStateLockHandle,
@@ -3362,7 +3450,7 @@ async function executeOpenShellResourceCleanup(
   if (
     !portableRuntimeCleanup &&
     !externallySupervised &&
-    !removeManagedHermesStateVolumes(managedHermesStateVolumes, runtime)
+    !removeManagedAgentStateVolumesForUninstall(managedAgentStateVolumes, runtime)
   ) {
     return false;
   }
@@ -3909,7 +3997,7 @@ async function executePlan(
   otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
   sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
-  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
+  managedAgentStateVolumes: readonly ManagedAgentStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
@@ -3987,7 +4075,7 @@ async function executePlan(
       otherGatewayPorts,
       sandboxNames,
       sandboxRegistrations,
-      managedHermesStateVolumes,
+      managedAgentStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,
       portableRetirementEntries,
@@ -4492,7 +4580,7 @@ async function executePreparedPlan(
   initialOtherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
   sandboxRegistrations: SelectedRegistrySandboxState["registrations"],
-  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
+  managedAgentStateVolumes: readonly ManagedAgentStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
@@ -4626,7 +4714,7 @@ async function executePreparedPlan(
           scopedToSelectedGateway,
           sandboxNames,
           sandboxRegistrations,
-          managedHermesStateVolumes,
+          managedAgentStateVolumes,
           teardownAuthority,
           false,
           openShellCleanup === "interrupted-pre-gateway" ? interruptedOnboardLock : undefined,
@@ -5002,7 +5090,7 @@ async function prepareUninstallRun(
   let { otherGatewayEnvironmentsRemain: scopedToSelectedGateway } = gatewayInspection;
   let selectedSandboxState: SelectedRegistrySandboxState = {
     backupNames: [],
-    managedHermesStateVolumes: [],
+    managedAgentStateVolumes: [],
     names: [],
     registrations: {},
   };
@@ -5133,7 +5221,7 @@ async function executePreparedUninstall(
       prepared.gatewayInspection.otherGatewayPorts,
       selectedSandboxState.names,
       selectedSandboxState.registrations,
-      selectedSandboxState.managedHermesStateVolumes,
+      selectedSandboxState.managedAgentStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,
       portableRetirementEntries,

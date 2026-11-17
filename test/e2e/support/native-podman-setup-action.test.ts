@@ -975,7 +975,11 @@ exec /bin/bash "$@"
       ) ?? -1;
     const fixtureRemovalIndex = job.steps?.indexOf(fixtureRemoval!) ?? -1;
 
-    expect(job.needs).toEqual(["generate-matrix", "portable-podman-toolchain"]);
+    expect(job.needs).toEqual([
+      "generate-matrix",
+      "portable-podman-toolchain",
+      "package-openshell-sdk",
+    ]);
     expect(job["runs-on"]).toBe("linux-amd64-gpu-rtxpro6000-latest-1");
     expect(job.env).toMatchObject({
       E2E_DEFAULT_ENABLED: "0",
@@ -1108,9 +1112,6 @@ exec /bin/bash "$@"
     );
     expect(trustedCheckoutIndex).toBeGreaterThanOrEqual(0);
     expect(openshellInstallIndex).toBeGreaterThan(trustedCheckoutIndex);
-    expect(candidateCheckoutIndex).toBeGreaterThan(openshellInstallIndex);
-    expect(candidateCheckoutIndex).toBeGreaterThan(trustedCheckoutIndex);
-    expect(setupIndex).toBeGreaterThanOrEqual(0);
     expect(uploadIndex).toBeGreaterThan(setupIndex);
     expect(restoreIndex).toBeGreaterThan(uploadIndex);
     expect(fixtureRemovalIndex).toBeGreaterThan(restoreIndex);

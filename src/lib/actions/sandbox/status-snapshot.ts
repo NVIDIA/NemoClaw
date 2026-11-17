@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
@@ -36,7 +37,11 @@ import {
   type DcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  GATEWAY_PORT,
+  resolveGatewayName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding/identity";
 import { redact } from "../../security/redact";
 import * as registry from "../../state/registry";
 import {
@@ -54,6 +59,9 @@ import {
   getSandboxGatewayStateForStatus,
 } from "./gateway-state";
 import {
+  HermesNvidiaCredentialRejectedError,
+  HermesNvidiaCredentialVerifierMissingError,
+  verifyHermesNvidiaCredential,
   readNativeStatusSelection,
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
@@ -80,6 +88,18 @@ import {
   probeTerminalRuntimeCgroupOom,
   type TerminalRuntimeOomProbeResult,
 } from "./terminal-runtime-health";
+
+const unlockedStatusRead = new AsyncLocalStorage<boolean>();
+
+/** Run a best-effort status read that may observe transitional ordinary sandbox state. */
+export function withUnlockedSandboxStatusRead<T>(operation: () => Promise<T> | T): Promise<T> | T {
+  return unlockedStatusRead.run(true, operation);
+}
+
+/** Whether status is running in the best-effort ordinary-host read path. */
+export function isUnlockedSandboxStatusRead(): boolean {
+  return unlockedStatusRead.getStore() === true;
+}
 
 type ProbeProviderHealth = (
   provider: string,
@@ -142,7 +162,11 @@ export function maybeGetSandboxStatusInferenceHealth(
 
 /** True when the authoritative inference route must make status exit nonzero. */
 export function isInferenceHealthFailing(inferenceHealth: ProviderHealthStatus | null): boolean {
-  return Boolean(inferenceHealth && (!inferenceHealth.probed || !inferenceHealth.ok));
+  return Boolean(
+    inferenceHealth &&
+    !(inferenceHealth.ok && inferenceHealth.degraded === true) &&
+    (!inferenceHealth.probed || !inferenceHealth.ok),
+  );
 }
 
 /** Validate user-editable mount state before it reaches JSON or terminal output. */
@@ -197,6 +221,8 @@ export interface SandboxStatusReport {
   portableLifecyclePhase?: "pending" | "configuring" | "active";
   gatewayState: string;
   inferenceHealth: ProviderHealthStatus | null;
+  /** True when host-fence contention suppresses inference-health and invocation probes. */
+  inferenceProbeSuppressed?: boolean;
   rpcIssue: { kind: "image_drift" | "host_process_drift" | "protobuf_mismatch" } | null;
   hostGpuDetected: boolean;
   sandboxGpuEnabled: boolean;
@@ -266,6 +292,12 @@ export function resolveSandboxStatusDcodeAutoApprovalMode(
   return normalizeDcodeAutoApprovalMode(sandbox.dcodeAutoApprovalMode);
 }
 
+export function resolveSandboxStatusSessionGatewayName(sandbox: registry.SandboxEntry): string {
+  return sandbox.gatewayName != null || sandbox.gatewayPort != null
+    ? resolveSandboxGatewayName(sandbox)
+    : resolveGatewayName(GATEWAY_PORT);
+}
+
 export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatusAgentInfo {
   let agentDisplayName = agentName === "openclaw" ? "OpenClaw" : agentName;
   let agentRuntime: SandboxStatusAgentInfo["agentRuntime"] = "gateway";
@@ -319,6 +351,7 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 }
 
 interface CollectSandboxStatusSnapshotDeps {
+  verifyHermesNvidiaCredentialImpl?: typeof import("./inference-route-health").verifyHermesNvidiaCredential;
   findSandboxAcrossGatewayRoots?: typeof findSandboxAcrossGatewayRoots;
   listPublishedSandboxNamesAcrossGatewayRoots?: typeof listPublishedSandboxNamesAcrossGatewayRoots;
   listPublishedSandboxesAcrossGatewayRoots?: typeof listPublishedSandboxesAcrossGatewayRoots;
@@ -420,9 +453,7 @@ async function refreshPreflightAfterDockerRecovery(
 
 function reportInferenceProbeError(error: unknown, writer: (message: string) => void): void {
   const detail = sanitizedStatusDetail(error);
-  writer(
-    `  Warning: the authoritative inference.local probe could not run: ${detail || "unknown error"}`,
-  );
+  writer(`  Warning: the sandbox inference probe could not run: ${detail || "unknown error"}`);
 }
 
 function reportInferenceProbeRetry(
@@ -480,9 +511,11 @@ export async function collectSandboxStatusSnapshot(
     ((name: string) =>
       getReconciledSandboxGatewayState(name, {
         getState: getSandboxGatewayStateForStatus,
-        ...(initialPreflight?.intentionalStopConfirmed
-          ? { gatewayRecovery: "observe" as const }
-          : {}),
+        ...(isUnlockedSandboxStatusRead()
+          ? { gatewayRecovery: "observe" as const, selectOwningGateway: false }
+          : initialPreflight?.intentionalStopConfirmed
+            ? { gatewayRecovery: "observe" as const }
+            : {}),
       }));
   let lookup: SandboxGatewayState;
   try {
@@ -495,6 +528,7 @@ export async function collectSandboxStatusSnapshot(
     };
   }
   if (
+    !isUnlockedSandboxStatusRead() &&
     sb?.stopped === true &&
     lookup.state === "present" &&
     (lookup.phase === "Ready" || lookup.phase === "Running") &&
@@ -522,6 +556,7 @@ export async function collectSandboxStatusSnapshot(
     !initialPreflight?.intentionalStopConfirmed;
   let recoveredManagedGateway = false;
   if (
+    !isUnlockedSandboxStatusRead() &&
     lookup.state === "present" &&
     (lookup.recoveredSandbox || managedOpenClawDeliveryMustBeProven)
   ) {
@@ -564,8 +599,9 @@ export async function collectSandboxStatusSnapshot(
         )
       : undefined;
   const suppressInferenceProbe =
-    (postRecoveryPreflight ?? initialPreflight)?.suppressInferenceProbe ??
-    opts.suppressInferenceProbe === true;
+    isUnlockedSandboxStatusRead() ||
+    ((postRecoveryPreflight ?? initialPreflight)?.suppressInferenceProbe ??
+      opts.suppressInferenceProbe === true);
   const nativeSelection = readNativeStatusSelection(sb);
   const { attachment: nativeAttachment, label: nativeLabel } = nativeSelection;
   let nativeAttachmentFailure = nativeSelection.failure;
@@ -621,7 +657,13 @@ export async function collectSandboxStatusSnapshot(
   // as drift instead of being mislabeled as this sandbox's configuration.
   const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
   const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
-  if (!suppressInferenceProbe && lookup.state === "present" && nativeProvider && sb) {
+  if (
+    !isUnlockedSandboxStatusRead() &&
+    !suppressInferenceProbe &&
+    lookup.state === "present" &&
+    nativeProvider &&
+    sb
+  ) {
     const expected = nativeAttachment;
     if (!gatewayName || !expected) {
       nativeAttachmentFailure =
@@ -847,6 +889,55 @@ export async function collectSandboxStatusSnapshot(
           model: invocationRoute.model ?? null,
           preferredInferenceApi: sb?.preferredInferenceApi ?? null,
         });
+  }
+  if (
+    !suppressInferenceProbe &&
+    lookup.state === "present" &&
+    sb?.agent === "hermes" &&
+    sb.provider === "nvidia-prod" &&
+    sb.nativeNvidiaProviderAttachment !== undefined
+  ) {
+    try {
+      const verify = opts.deps?.verifyHermesNvidiaCredentialImpl ?? verifyHermesNvidiaCredential;
+      await verify(sb);
+    } catch (error) {
+      const rejected = error instanceof HermesNvidiaCredentialRejectedError;
+      let detail =
+        "Hermes credential verification is unavailable. Retry status; if it remains unavailable, check sandbox health and recover access before retrying.";
+      if (rejected) {
+        detail =
+          "Hermes inference credentials are invalid or stale. Rebuild the sandbox to refresh its managed credential.";
+      } else if (error instanceof HermesNvidiaCredentialVerifierMissingError) {
+        detail =
+          "The installed Hermes image lacks the credential verifier. Rebuild the sandbox to install the credential verifier, then rerun status.";
+      }
+      const credentialHealth: ProviderHealthStatus = {
+        ok: false,
+        probed: false,
+        providerLabel: "Hermes NVIDIA inference",
+        endpoint: "https://integrate.api.nvidia.com/v1",
+        probeLabel: "agent credential",
+        failureLabel: rejected ? "unauthorized" : "unreachable",
+        detail,
+      };
+      if (!rejected && inferenceHealth && isInferenceHealthFailing(inferenceHealth)) {
+        // An unavailable verifier cannot replace an observed provider-path failure.
+        inferenceHealth = {
+          ...inferenceHealth,
+          subprobes: [...(inferenceHealth.subprobes ?? []), credentialHealth],
+        };
+      } else {
+        const subprobes: ProviderHealthStatus[] = [];
+        if (inferenceHealth) {
+          const { subprobes: diagnostics = [], ...providerPath } = inferenceHealth;
+          subprobes.push(
+            { ...providerPath, probeLabel: providerPath.probeLabel ?? "provider path" },
+            ...diagnostics,
+          );
+        }
+        inferenceHealth = { ...credentialHealth, subprobes };
+      }
+    }
   }
   // Classify once per snapshot so every renderer observes the same receipt state.
   // A complete matching live route is required because the shared gateway route

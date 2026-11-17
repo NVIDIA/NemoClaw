@@ -322,22 +322,38 @@ describe("native NVIDIA OpenShell provider", () => {
     expect(updateProvider).not.toHaveBeenCalled();
   });
 
-  it("refuses an existing provider without an ownership receipt before mutation (#12558)", async () => {
-    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
-    const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
-    const providerAdapter = adapter({ updateProvider, attachProvider });
+  it.each([
+    { gatewayName: "nemoclaw", quotedGateway: "'nemoclaw'" },
+    {
+      gatewayName: "gw'; $(touch /tmp/x) #",
+      quotedGateway: "'gw'\\''; $(touch /tmp/x) #'",
+    },
+  ])(
+    "refuses an existing provider without an ownership receipt before mutation on gateway $gatewayName (#12558)",
+    async ({ gatewayName, quotedGateway }) => {
+      const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
+      const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
+      const providerAdapter = adapter({ updateProvider, attachProvider });
 
-    await expect(
-      ensureNativeNvidiaProvider({
-        adapter: providerAdapter,
-        target,
-        credentialValue: "opaque-test-secret",
-      }),
-    ).rejects.toThrow(/already exists without a matching NemoClaw ownership receipt/u);
-    expect(updateProvider).not.toHaveBeenCalled();
-    expect(attachProvider).not.toHaveBeenCalled();
-    expect(providerAdapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
-  });
+      await expect(
+        ensureNativeNvidiaProvider({
+          adapter: providerAdapter,
+          target: { kind: "named", gatewayName },
+          credentialValue: "opaque-test-secret",
+        }),
+      ).rejects.toMatchObject({
+        lines: [
+          "OpenShell provider 'nemoclaw-nvidia-prod-v1' already exists without a matching NemoClaw ownership receipt. No provider was changed.",
+          "Check whether any sandbox on this gateway uses this provider. If none does, remove it with:",
+          `  openshell provider delete 'nemoclaw-nvidia-prod-v1' -g ${quotedGateway}`,
+          "Then run onboarding again.",
+        ],
+      });
+      expect(updateProvider).not.toHaveBeenCalled();
+      expect(attachProvider).not.toHaveBeenCalled();
+      expect(providerAdapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not record a receipt after an ambiguous credential update (#12558)", async () => {
     const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({

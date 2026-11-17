@@ -123,21 +123,35 @@ function requirePinnedAction(errors: string[], step: WorkflowStep | undefined, n
   }
 }
 
+/** Verify SDK admission and execution identities passed from the catalogue to each reusable profile. */
 function validateProfileCallers(errors: string[], workflow: WorkflowRecord): void {
   const jobs = record(workflow.jobs);
   const sdkPackage = record(jobs["package-openshell-sdk"]);
-  if (sdkPackage.if !== undefined || record(sdkPackage.permissions).packages !== "read") {
+  if (
+    sdkPackage.if !==
+      "${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}" ||
+    record(sdkPackage.permissions).packages !== "read"
+  ) {
     errors.push(
-      "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+      "catalogue profiles require SDK packaging with package-read permission whenever candidate compilation is selected",
     );
   }
   const sdkPackageStep = namedStep(
     steps(sdkPackage.steps),
     "Download and verify reviewed OpenShell SDK packages",
   );
-  if (record(sdkPackageStep?.env).NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT !== "1") {
+  const sdkPackageScript = sdkPackageStep?.run;
+  if (
+    typeof sdkPackageScript !== "string" ||
+    !sdkPackageScript.includes("packageCandidateOpenShellSdkIfRequired(output,") ||
+    !sdkPackageScript.includes("packageReviewedOpenShellSdk(output, 'if-present'") ||
+    !sdkPackageScript.includes("process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'") ||
+    !sdkPackageScript.includes("process.env.CANDIDATE_SHA !== process.env.UPGRADE_BASE_SHA") ||
+    record(sdkPackageStep?.env).GITHUB_TOKEN !== "${{ github.token }}" ||
+    record(sdkPackage.permissions)["pull-requests"] !== "read"
+  ) {
     errors.push(
-      "catalogue SDK packaging must include an available reviewed transition replacement",
+      "catalogue SDK packaging must admit candidate identities and retain reviewed main and exact-base packages",
     );
   }
   for (const profile of E2E_EXECUTION_PROFILES) {
@@ -180,6 +194,8 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     for (const [name, expected] of Object.entries({
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+      upgrade_pr_number: "${{ inputs.pr_number }}",
+      upgrade_base_sha: "${{ inputs.base_sha }}",
       runtime_provider: "${{ matrix.runtime_provider }}",
       execution_id: "${{ matrix.execution_id }}",
       coverage_variant: "${{ matrix.coverage_variant }}",
@@ -238,6 +254,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
   }
 }
 
+/** Reject reusable profiles that change their declared inputs, permissions, or trusted execution steps. */
 function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): void {
   const triggers = record(profile.on ?? profile[true as unknown as string]);
   const call = record(triggers.workflow_call);
@@ -279,7 +296,14 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   };
   if (
     Object.keys(inputs).sort().join(",") !==
-      [...Object.keys(requiredInputs), "hosted_inference_model"].sort().join(",") ||
+      [
+        ...Object.keys(requiredInputs),
+        "hosted_inference_model",
+        "upgrade_pr_number",
+        "upgrade_base_sha",
+      ]
+        .sort()
+        .join(",") ||
     Object.entries(requiredInputs).some(
       ([name, type]) =>
         record(inputs[name]).required !== true || record(inputs[name]).type !== type,
@@ -296,6 +320,13 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must accept an optional selected hosted model");
   }
+  for (const name of ["upgrade_pr_number", "upgrade_base_sha"]) {
+    if (
+      !isDeepStrictEqual(record(inputs[name]), { required: false, type: "string", default: "" })
+    ) {
+      errors.push(`standard E2E profile must accept optional ${name} for SDK admission`);
+    }
+  }
   const acceptedSecrets = [
     "DOCKERHUB_TOKEN",
     "DOCKERHUB_USERNAME",
@@ -310,8 +341,10 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must accept only its declared optional profile secrets");
   }
-  if (record(profile.permissions).contents !== "read") {
-    errors.push("standard E2E profile permissions must be contents: read");
+  if (
+    !isDeepStrictEqual(record(profile.permissions), { contents: "read", "pull-requests": "read" })
+  ) {
+    errors.push("standard E2E profile permissions must be contents: read and pull-requests: read");
   }
 
   const runJob = record(record(profile.jobs).run);
@@ -332,6 +365,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
   const jobEnv = record(runJob.env);
   const expectedJobEnv = {
+    UPGRADE_PR_NUMBER: "${{ inputs.upgrade_pr_number }}",
+    CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
+    UPGRADE_BASE_SHA: "${{ inputs.upgrade_base_sha }}",
     E2E_JOB: "1",
     E2E_EXECUTION_ID: "${{ inputs.execution_id }}",
     NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "${{ inputs.managed_image_catalog }}",
@@ -359,8 +395,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     undefined,
     "Authenticate to Docker Hub",
     "Install target host dependencies",
-    "Prepare E2E workspace",
     "Download reviewed OpenShell SDK archive",
+    "Prepare E2E workspace",
     "Install reviewed OpenShell SDK archive without package credentials",
     "Restore exact-commit CLI artifact",
     "Prepare native Podman E2E runtime",
@@ -512,7 +548,11 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
   if (
     prepare?.uses !== E2E_ACTION_PROVENANCE.prepareWorkspace.reference ||
-    record(prepare?.with)["build-cli"] !== "false"
+    !isDeepStrictEqual(prepare, {
+      name: "Prepare E2E workspace",
+      uses: E2E_ACTION_PROVENANCE.prepareWorkspace.reference,
+      with: { "build-cli": "false", "install-dependencies": "false" },
+    })
   ) {
     errors.push("standard E2E profile must prepare once without rebuilding the CLI");
   }
@@ -530,7 +570,14 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     errors.push("standard E2E profile must download the run-scoped reviewed SDK archive");
   }
   const sdkInstall = requireStep(errors, workflowSteps, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
-  if (!isReviewedOpenShellSdkInstallStep(sdkInstall)) {
+  if (
+    !isReviewedOpenShellSdkInstallStep(sdkInstall) ||
+    !prepare ||
+    !sdkDownload ||
+    !sdkInstall ||
+    workflowSteps.indexOf(sdkDownload) !== workflowSteps.indexOf(prepare) - 1 ||
+    workflowSteps.indexOf(sdkInstall) !== workflowSteps.indexOf(prepare) + 1
+  ) {
     errors.push(
       "standard E2E profile must install one reviewed SDK archive without credentials or package scripts",
     );
@@ -569,7 +616,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     stoppedStateHelper.shell !== EXECUTION_PLAN_SHELL ||
     !isDeepStrictEqual(record(stoppedStateHelper.env), {
       CLEANUP_IMAGE:
-        "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc",
+        "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea",
       RUNTIME_PROVIDER: "${{ inputs.runtime_provider }}",
     }) ||
     !stoppedStateHelperRun.includes('docker pull "$CLEANUP_IMAGE"') ||

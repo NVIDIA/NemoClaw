@@ -68,6 +68,7 @@ import {
   validateHostLocalVllmRuntimeReceipt,
 } from "../serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
+import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
 
 export {
   HOST_LOCAL_VLLM_CONTAINER_NAME,
@@ -1513,16 +1514,24 @@ export function cleanupManagedLlamaCppRuntimeForSandbox(
 }
 
 function resolveCleanupDeps(overrides: Partial<CleanupDeps> = {}): CleanupDeps {
+  // These Docker operations own host-local vLLM. llama.cpp resolves its engine
+  // separately from its persisted gateway authority.
+  const env = buildLocalManagedVllmDockerEnv();
   return {
-    capture: overrides.capture ?? dockerCapture,
+    capture:
+      overrides.capture ??
+      ((args, options) => dockerCapture(args, { ...options, env, replaceEnv: true })),
     currentUserId:
       overrides.currentUserId === undefined
         ? typeof process.getuid === "function"
           ? process.getuid()
           : null
         : overrides.currentUserId,
-    forceRm: overrides.forceRm ?? dockerForceRm,
-    run: overrides.run ?? dockerRun,
+    forceRm:
+      overrides.forceRm ??
+      ((id, options) => dockerForceRm(id, { ...options, env, replaceEnv: true })),
+    run:
+      overrides.run ?? ((args, options) => dockerRun(args, { ...options, env, replaceEnv: true })),
     unlink: overrides.unlink ?? fs.unlinkSync,
   };
 }

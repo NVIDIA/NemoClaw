@@ -228,10 +228,36 @@ export function cleanupPortableHostGatewayAlias(
   env: NodeJS.ProcessEnv,
 ): void {
   if (wasPresentBefore) return;
-  spawnSync("sudo", ["--", "ip", "address", "delete", `${gatewayIp}/32`, "dev", "lo"], {
-    env,
-    killSignal: "SIGKILL",
-    stdio: "ignore",
-    timeout: 15_000,
-  });
+  const aliasIsPresent = (): boolean => {
+    const inspected = spawnSync("ip", ["-o", "-4", "address", "show", "dev", "lo"], {
+      encoding: "utf-8",
+      env,
+      killSignal: "SIGKILL",
+      maxBuffer: 64 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 15_000,
+    });
+    if (inspected.error || inspected.status !== 0) {
+      throw new Error(
+        `Failed to inspect the portable host gateway alias (exit ${String(inspected.status)})`,
+      );
+    }
+    return inspected.stdout.split("\n").some((line) => line.includes(`inet ${gatewayIp}/32`));
+  };
+  if (!aliasIsPresent()) return;
+  const deleted = spawnSync(
+    "sudo",
+    ["--", "ip", "address", "delete", `${gatewayIp}/32`, "dev", "lo"],
+    {
+      env,
+      killSignal: "SIGKILL",
+      stdio: "ignore",
+      timeout: 15_000,
+    },
+  );
+  if (deleted.error || deleted.status !== 0 || aliasIsPresent()) {
+    throw new Error(
+      `Failed to retire the portable host gateway alias (exit ${String(deleted.status)})`,
+    );
+  }
 }

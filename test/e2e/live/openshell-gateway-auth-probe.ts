@@ -10,7 +10,7 @@ import { getDockerDriverGatewayLocalTlsBundle } from "../../../src/lib/onboard/d
 
 const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";
 export const DOCKER_GRPC_PROBE_IMAGE =
-  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
+  "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea";
 const CONTAINER_PROBE_CA_PATH = "/tmp/nemoclaw-probe-ca.crt";
 const CONTAINER_PROBE_CLIENT_CERT_PATH = "/tmp/nemoclaw-probe-client.crt";
 const CONTAINER_PROBE_CLIENT_KEY_PATH = "/tmp/nemoclaw-probe-client.key";

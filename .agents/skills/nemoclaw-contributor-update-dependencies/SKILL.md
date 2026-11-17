@@ -35,6 +35,14 @@ Add these outcomes to the working plan:
 
 An unresolved high-impact concern blocks the upgrade.
 
+Before expensive work, check the capabilities needed for the planned route: target support, local tooling,
+publication access, required reviewer availability, execution environment, and effective timeout limits.
+Distinguish verified prerequisites from unknown ones. Report an external blocker early and continue independent authorized work.
+Use [Task Continuation](../_shared/task-continuation.md) for work that spans waits or handoffs.
+When live qualification is part of the accepted upgrade task, record its execution scope once and
+follow [E2E execution authorization](../nemoclaw-maintainer-e2e/SKILL.md#carry-execution-authorization-through-the-task)
+through repair and requalification. Do not stop for renewed dispatch approval after every run or commit.
+
 ## Discover current contracts
 
 Follow [Discover the Current Implementation](../_shared/implementation-discovery.md).
@@ -42,6 +50,11 @@ Follow [Discover the Current Implementation](../_shared/implementation-discovery
 Search from the current dependency identity and each changed upstream identifier. Trace consumers
 through source, tests, configuration, generated inputs, packaging, workflows, and documentation.
 Do not maintain a path or selector inventory in this skill.
+
+Follow indirect build consumers, including checksums, generated inputs, staging overlays, and cache keys.
+A version-string search alone does not establish the complete migration scope.
+Keep stable integration knowledge with its owning component. Keep release-specific findings in task evidence and regression tests.
+Do not turn one release's failure list into mandatory work for every upgrade.
 
 ## Audit upstream changes
 
@@ -92,6 +105,23 @@ Implement migrations in upstream release order. Remove a workaround only when cu
 source and runtime evidence satisfy its recorded removal condition. Preserve historical executable fixtures only when they still support a current test.
 
 ## Verify the result
+
+Before relying on changed-test coverage, refresh the canonical comparison ref and verify its identity:
+
+```bash
+nemoclaw_trusted_base_sha="$(gh api repos/NVIDIA/NemoClaw/git/ref/heads/main --jq '.object.sha')"
+git fetch --no-tags git@github.com:NVIDIA/NemoClaw.git +refs/heads/main:refs/remotes/origin/main
+test "$(git rev-parse --verify refs/remotes/origin/main)" = "$nemoclaw_trusted_base_sha"
+```
+
+Stop if a command fails or the SHAs differ. Then run `npm run test:changed -- --changed=origin/main` for early source and integration feedback.
+It combines import relationships with the existing opaque-input mappings. Inspect unmapped inputs before claiming coverage.
+Load the affected component's `AGENTS.md` for artifact validators and lifecycle boundaries.
+Run cheap compatibility checks before expensive image or live qualification when they can establish the required behavior.
+Resolve the target's dependency graph during initial preparation; do not defer consistency and security checks until CI fails.
+Exercise affected consumers against the distributed artifact, including downstream patches and existing-install paths when relevant.
+Derive checks from discovered contracts rather than requiring every agent, provider, or historical regression for every upgrade.
+Use [Contract audit](references/contract-audit.md) to check build-input closure and validation coverage.
 
 Derive validation from each concern and the current repository test organization. Use runtime or
 artifact evidence when static tests cannot establish process, network, credential, image,

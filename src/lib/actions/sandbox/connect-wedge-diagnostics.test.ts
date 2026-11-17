@@ -25,6 +25,26 @@ describe("connectSandbox wedge diagnostic failures", () => {
     delete require.cache[requireDist.resolve(connectModulePath)];
   });
 
+  it("reports the bounded pairing failure reason and retains the publication failure exit", async () => {
+    const harness = createConnectHarness({
+      readinessPublicationResult: {
+        kind: "evidence-failed",
+        diagnostic: {
+          stage: "publication-validation",
+          reason: "pairing-observation-failed",
+          pairingFailureReason: "state-changed",
+        },
+      },
+    });
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      "  Readiness evidence: stage=publication-validation reason=pairing-observation-failed pairing=state-changed",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("preserves the classified recovery exit when wedge diagnostics reject", async () => {
     const harness = createConnectHarness({
       processCheck: {

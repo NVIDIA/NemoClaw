@@ -33,7 +33,6 @@ const {
   selectFeaturedModelAfterCredentialPrompt,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const setupNimFlow: typeof import("./onboard/setup-nim-flow") = require("./onboard/setup-nim-flow");
-const setupNimRoutedSelection: typeof import("./onboard/inference-providers/routed-selection") = require("./onboard/inference-providers/routed-selection");
 const openrouterSelection: typeof import("./onboard/openrouter-selection") = require("./onboard/openrouter-selection");
 const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
@@ -187,7 +186,6 @@ const {
   VLLM_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
-  resolveConfiguredModelRouterPort,
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
@@ -416,9 +414,7 @@ const promptValidatedSandboxName = sandboxAgent.createPromptValidatedSandboxName
     onboardSessionBootstrap.checkpointSandboxName(sandboxName, agent, onboardSession.updateSession),
   exit: process.exit,
 });
-const modelRouter: typeof import("./onboard/model-router") = require("./onboard/model-router");
-const { isRoutedInferenceProvider, loadBlueprintProfile, reconcileModelRouter } = modelRouter;
-const routedInference: typeof import("./onboard/routed-inference") = require("./onboard/routed-inference");
+const { rejectRetiredModelRouter } = require("./inference/provider-key/contract");
 const {
   OnboardRuntimeBoundary,
 }: typeof import("./onboard/runtime-boundary") = require("./onboard/runtime-boundary");
@@ -1522,7 +1518,6 @@ const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
     },
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
-type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
 const {
@@ -1649,16 +1644,7 @@ type OllamaModelSelectionDefaults =
   import("./onboard/setup-nim-selection").OllamaModelSelectionDefaults;
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
-type RemoteProviderSelectionArgs = {
-  selected: ProviderChoice;
-  requestedModel: string | null;
-  recoveredFromSandbox: boolean;
-  recoveredModel: string | null;
-  sandboxName: string | null;
-  gatewayName: string | null;
-  intendedInferenceApi: string | null;
-  recoverySessionId: string | null | undefined;
-};
+type RemoteProviderSelectionArgs = import("./onboard/setup-nim-flow").SetupNimRemoteSelectionArgs;
 
 async function handleNimLocalSelection(
   gpu: ReturnType<typeof nim.detectGpu>,
@@ -1955,6 +1941,7 @@ async function handleRemoteProviderSelection(
       state.reuseGatewayCredentialWithoutLocalKey = state.skipHostInferenceSmoke;
     } else {
       assertSelectionMutationAuthority(state, "register the NVIDIA provider credential");
+      args.checkpointNvidiaModel(null);
       apiKeyNavigation = await ensureApiKey();
     }
     state.model = await selectFeaturedModelAfterCredentialPrompt(
@@ -2176,6 +2163,7 @@ async function handleRemoteProviderSelection(
       `Missing model for ${remoteConfig.label}`,
     );
     state.assertRouteCompatible?.();
+    args.checkpointNvidiaModel(buildModel);
     const buildValidation = await buildCredentialReuse.resolveBuildPreferredInferenceApi({
       reuseGatewayCredentialWithoutLocalKey: state.skipHostInferenceSmoke === true,
       note,
@@ -2216,7 +2204,6 @@ function getSetupNimDeps(): SetupNimDeps {
     createNvidiaFeaturedModelSession,
     detectInferenceProviderHostState,
     getAgentInferenceProviderOptions,
-    loadRoutedProfile: () => loadBlueprintProfile("routed"),
     ...providerSelectionReaders,
     prompt,
     selectFromNumberedMenu: selectFromNumberedMenuOrExit,
@@ -2242,18 +2229,6 @@ function getSetupNimDeps(): SetupNimDeps {
     installVllm: setupNimFlow.withServingPortGuard(vllmInference.installVllm, checkPortAvailable),
     handleVllmSelection,
     selectVllmModelFromEnv: vllmInference.selectVllmModelFromEnv,
-    handleRoutedSelection: (state) =>
-      setupNimRoutedSelection.handleRoutedSelection(state, {
-        modelRouter,
-        localInference,
-        urlUtils,
-        credentials,
-        hydrateCredentialEnv,
-        providerKeyBridge,
-        isNonInteractive,
-        exitProcess: (code): never => process.exit(code),
-        credentialPrompt,
-      }),
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
     resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi,
     ...reasoningMode.compatibleEndpointReasoningClearDeps,
@@ -2282,6 +2257,7 @@ const getSetupInferenceDeps = (): SetupInferenceDeps => ({
   isNonInteractive,
   updateSandbox: registry.reserveSandboxInferenceRoute,
   getSandbox: registry.getSandbox,
+  getSandboxRecreateObservation,
   listSandboxes: registry.listSandboxes,
   unloadOllamaModels,
   hermesProviderAuth,
@@ -2318,9 +2294,6 @@ const getSetupInferenceDeps = (): SetupInferenceDeps => ({
   persistAndProbeOllamaProxy,
   localInference,
   ollamaProxyCredentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
-  isRoutedInferenceProvider,
-  reconcileModelRouter,
-  routedInference,
   log: (message: string) => console.log(message),
   error: (message: string) => console.error(message),
   exitProcess: (code: number): never => process.exit(code),
@@ -2368,7 +2341,6 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
       promptOrDefault,
     }),
 });
-
 const stageSandboxCredentialProviders = (
   input: import("./onboard/credential-provider-registration").StageSandboxCredentialProvidersInput<AgentDefinition | null>,
 ) =>
@@ -2409,7 +2381,7 @@ const setupOpenclaw = openclawSetup.createOpenclawSetup({
   configureOpenclawSandbox,
   restartNativeGateway: restartNativeGatewayForInitialSetup,
   waitForGatewayStartup: finalizationHandlerDeps.waitForStartedOpenclawGatewayProcess,
-  shouldRestartNativeGateway: isRoutedInferenceProvider,
+  shouldRestartNativeGateway: () => false,
 });
 const {
   buildChain,
@@ -2537,6 +2509,7 @@ async function preflightAuthoritativeRebuildTarget(
 const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 const onboard = onboardSessionBootstrap.wrapOnboardDeferredExit(wrappedOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
+  rejectRetiredModelRouter(process.env.NEMOCLAW_PROVIDER);
   let currentRunReadinessReport: import("./readiness/types").SystemReadinessReport | undefined;
   const hostMountScope = onboardSessionBootstrap.beginHostMountScope(opts.hostMounts);
   const hermesApiPortReservationScope = agentOnboard.createHermesApiPortReservationScope();
@@ -2747,7 +2720,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         session,
         selectedAgentName: agent?.name,
-        routerPort: resolveConfiguredModelRouterPort(),
         note,
       });
       setOnboardBrandingAgent(agent?.name || "openclaw");
@@ -2915,7 +2887,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resumeProvider: {
           getSandbox: registry.getSandbox,
           isNonInteractive,
-          isRoutedInferenceProvider,
           providerExistsInGateway,
           replaceNamedCredential,
           resumeManagedLlamaCppRuntime: setupNimFlow.bindManagedLlamaCppResume(GATEWAY_PORT),
@@ -2970,12 +2941,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               providerName === "compatible-anthropic-endpoint" &&
               bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
             isInferenceRouteReady,
-            isRoutedInferenceProvider,
-            reconcileModelRouter,
-            reupsertRoutedProvider: setupInferenceFactory.createRoutedResumeProviderUpsert({
-              upsertProvider,
-              hydrateCredentialEnv,
-            }),
             reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
             hasSandboxLifecycleAuthority: registry.hasSandboxLifecycleAuthority,
             registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
@@ -3060,8 +3025,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             selectResourceProfileForSandbox: () =>
               selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
             listRegistrySandboxes: registry.listSandboxes,
-            planRegisteredExtraProviders: (gatewayName) =>
-              planRegisteredExtraProviders(gatewayName, { runOpenshell }),
+            planRegisteredExtraProviders: (gatewayName, options) =>
+              planRegisteredExtraProviders(gatewayName, { runOpenshell, ...options }),
             resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
             createSandbox: preparedDcodeRuntime.bindCreateSandbox((...createArgs) =>
               withSandboxPortReservationScope((dashboardPortReservationScope) =>
@@ -3077,7 +3042,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   ...createArgs,
                   opts.allowRemovedImmutabilityStateRecord === true,
                   fromImage ?? null,
-                  opts.toolDisclosure ?? null,
+                  ...([opts.toolDisclosure ?? null, opts.switchyardRouting !== undefined] as const),
                 ),
               ),
             ),

@@ -31,7 +31,7 @@ const lifecycleGenerationPath = require.resolve("../state/registry/lifecycle-gen
 const lifecycleGenerationCasPath = require.resolve("../state/registry/lifecycle-generation-cas");
 const { buildStoppedDockerSandboxChannelCleanupScript } = require(helperPath);
 const PINNED_CLEANUP_IMAGE =
-  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
+  "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea";
 const EXPECTED_WECHAT_STATE_PATHS = [
   "/sandbox/.openclaw/wechat",
   "/sandbox/.openclaw/openclaw-weixin",
@@ -229,9 +229,10 @@ describe("privileged sandbox exec routing", () => {
     ).toBe("abc123");
   });
 
-  it("clears stopped OpenClaw WeChat state through an isolated immutable-image helper", () => {
+  it("clears stopped state when an unrelated GPU recovery backup is also discovered", () => {
     const containerId = "a".repeat(64);
     const helperId = "b".repeat(64);
+    const backupId = "d".repeat(64);
     const mounts = JSON.stringify([
       {
         Type: "volume",
@@ -304,7 +305,9 @@ describe("privileged sandbox exec routing", () => {
 
     withPrivilegedExecMocks(
       {
-        dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+        dockerCapture: () =>
+          `${containerId}\topenshell-alpha\tsandbox\n` +
+          `${backupId}\topenshell-default--alpha-nemoclaw-gpu-backup-1780491860342\tsupervisor\n`,
         dockerRun: runDocker,
         getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
@@ -500,6 +503,32 @@ describe("privileged sandbox exec routing", () => {
         });
       },
     );
+  });
+
+  it("rejects a GPU recovery backup when its discovery row includes a role", () => {
+    const containerId = "a".repeat(64);
+    const captureDocker = vi.fn(
+      () => `${containerId}\topenshell-default--alpha-nemoclaw-gpu-backup-1780491860342\tsandbox\n`,
+    );
+    const runDocker = vi.fn();
+
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: captureDocker,
+        dockerRun: runDocker,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedSandboxStateRoots }) => {
+        expect(clearStoppedSandboxStateRoots("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual({
+          cleared: false,
+          failure: "no-eligible-stopped-runtime",
+        });
+      },
+    );
+
+    expect(captureDocker).toHaveBeenCalledOnce();
+    expect(runDocker).not.toHaveBeenCalled();
   });
 
   it("classifies invalid stopped-container ownership metadata", () => {
@@ -952,7 +981,7 @@ describe("privileged sandbox exec routing", () => {
           "--filter",
           "label=openshell.ai/sandbox-name=alpha",
           "--format",
-          "{{.ID}}\t{{.Names}}",
+          '{{.ID}}\t{{.Names}}\t{{.Label "openshell.ai/isolation-role"}}',
         ],
         timeout: 5000,
       },

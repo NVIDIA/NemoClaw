@@ -50,3 +50,35 @@ export function buildGatewayRuntimeStartScript(): string {
     "  });",
   ].join("\n");
 }
+
+/** Observe native startup after an external OpenShell start without restarting the sandbox. */
+export function buildOpenClawGatewayWaitScript(): string {
+  return [
+    '"use strict";',
+    'const { waitForStartedNativeGatewayProcess, isSandboxGatewayRunningForStatus } = require("./dist/lib/actions/sandbox/process-recovery");',
+    "const [sandboxName, gatewayName, budget] = process.argv.slice(1);",
+    "const budgetMs = Number(budget);",
+    'if (!sandboxName || !gatewayName || !Number.isFinite(budgetMs) || budgetMs <= 0) throw new Error("Native startup requires an explicit target and remaining time budget.");',
+    "let probes = 0;",
+    // Retain completed observations even if the outer deadline ends the observer.
+    // A failed diagnostic stream must not replace the readiness verdict.
+    'process.stdout.on("error", () => {});',
+    "const emit = (event) => { try { console.log(JSON.stringify(event)); } catch {} };",
+    "Promise.resolve()",
+    '  .then(() => waitForStartedNativeGatewayProcess(sandboxName, "openclaw", gatewayName, {',
+    "    environment: {}, defaultTimeoutSeconds: budgetMs / 1000, log: console.log,",
+    "    probe: async (...args) => {",
+    "      const started = performance.now();",
+    "      const ready = await isSandboxGatewayRunningForStatus(...args);",
+    '      const verdict = ready === true || ready === false || ready === null ? ready : "invalid";',
+    '      emit({ kind: "native-readiness-observation", attempt: ++probes, elapsedMs: Math.max(0, performance.now() - started), ready: verdict });',
+    "      return ready;",
+    "    },",
+    "  }))",
+    '  .then((ready) => { if (ready !== true) throw new Error("OpenClaw did not become ready within the remaining dashboard deadline."); })',
+    "  .catch((error) => {",
+    "    console.error(error instanceof Error ? error.message : String(error));",
+    "    process.exitCode = 1;",
+    "  });",
+  ].join("\n");
+}

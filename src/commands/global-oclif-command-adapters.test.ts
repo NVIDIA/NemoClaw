@@ -285,6 +285,15 @@ describe("global oclif command adapters", () => {
     );
   });
 
+  it("passes the Hermes Switchyard config path to the shared onboard action (#13862)", async () => {
+    await OnboardCliCommand.run(["--switchyard-config", "./switchyard.json"], rootDir);
+
+    expect(mocks.runOnboardAction).toHaveBeenCalledWith(
+      expect.objectContaining({ "switchyard-config": "./switchyard.json" }),
+      mocks.onboardRuntimeDeps,
+    );
+  });
+
   it("maps inference set flags into the inference action", async () => {
     await InferenceSetCommand.run(
       [

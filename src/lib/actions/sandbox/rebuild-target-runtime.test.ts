@@ -275,7 +275,194 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
   });
 });
 
+function nativeHostedRebuildHarness(selection: {
+  provider: string;
+  profileId: string;
+  providerName: string;
+  credentialEnv: string;
+  field: "nativeNvidiaProviderAttachment" | "nativeHostedProviderAttachment";
+}) {
+  const receipt = {
+    schemaVersion: 1 as const,
+    profileId: selection.profileId,
+    providerName: selection.providerName,
+    providerId: "owned",
+  };
+  const metadata = {
+    name: receipt.providerName,
+    type: receipt.profileId,
+    credentialKeys: [selection.credentialEnv],
+    configKeys: [],
+    revision: { id: "owned", resourceVersion: 1 },
+  };
+  const adapter = {
+    importProviderProfile: vi.fn(async () => ({ ok: true as const, value: undefined })),
+    getProvider: vi.fn(async () => ({ ok: true as const, value: metadata })),
+    listProviderAttachments: vi.fn(async () => ({
+      ok: true as const,
+      value: { names: [receipt.providerName] },
+    })),
+  };
+  mocks.providerAdapter.mockReturnValue(adapter as unknown as OpenShellProviderAdapter);
+  const route = vi.fn(() => "mismatched" as const);
+  const authority = { checkpoint: "gateway-authority" };
+  mocks.preflightAuthoritativeRebuildTarget.mockImplementation(async (options) => {
+    await preflightAuthoritativeRebuildTarget(
+      { ...options, controlUiPort: null },
+      {
+        resolveBaselinePolicy: () => ({}),
+        bindGatewayAuthority: vi.fn(),
+        runFatalRuntimePreflight: vi.fn(),
+        ensureOpenshell: vi.fn(),
+        assertGatewayReadiness: vi.fn(),
+        inferenceRouteState: route,
+        observeForwardPorts: vi.fn(),
+      },
+    );
+    return authority;
+  });
+  const resumeConfig = {
+    ...TARGET.resumeConfig,
+    agent: "openclaw",
+    provider: selection.provider,
+    [selection.field]: receipt,
+  } as RebuildResumeConfig;
+  const options = { ...RECREATE_OPTIONS, targetGatewayName: "nemoclaw" };
+  const run = () =>
+    preflightAuthoritativeOnboardRuntime("alpha", resumeConfig, options, (message): never => {
+      throw new Error(message);
+    });
+  return { adapter, authority, metadata, options, receipt, resumeConfig, route, run };
+}
+
+const NATIVE_NVIDIA_REBUILD_SELECTION = {
+  provider: "nvidia-prod",
+  profileId: "nemoclaw-nvidia-inference-v1",
+  providerName: "nemoclaw-nvidia-prod-v1",
+  credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+  field: "nativeNvidiaProviderAttachment" as const,
+};
+
 describe("authoritative rebuild readiness", () => {
+  afterEach(() => {
+    mocks.preflightAuthoritativeRebuildTarget.mockReset();
+  });
+
+  it.each([
+    NATIVE_NVIDIA_REBUILD_SELECTION,
+    {
+      provider: "openai-api",
+      profileId: "nemoclaw-openai-inference-v1",
+      providerName: "nemoclaw-openai-api-v1",
+      credentialEnv: "OPENAI_API_KEY",
+      field: "nativeHostedProviderAttachment" as const,
+    },
+    {
+      provider: "anthropic-prod",
+      profileId: "nemoclaw-anthropic-inference-v1",
+      providerName: "nemoclaw-anthropic-prod-v1",
+      credentialEnv: "ANTHROPIC_API_KEY",
+      field: "nativeHostedProviderAttachment" as const,
+    },
+  ])("verifies the recorded $provider attachment instead of a shared route", async (selection) => {
+    const h = nativeHostedRebuildHarness(selection);
+    await expect(h.run()).resolves.toBe(true);
+    expect(h.options.rebuildGatewayAuthority).toBe(h.authority);
+    expect(h.route).not.toHaveBeenCalled();
+    expect(h.adapter.importProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      profilePath: expect.stringContaining(`${selection.profileId}.yaml`),
+    });
+    expect(h.adapter.getProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      providerName: selection.providerName,
+    });
+    expect(h.adapter.listProviderAttachments).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      sandboxName: "alpha",
+    });
+  });
+
+  it("rejects a changed native NVIDIA provider identity before granting rebuild authority", async () => {
+    const h = nativeHostedRebuildHarness(NATIVE_NVIDIA_REBUILD_SELECTION);
+    h.metadata.revision.id = "replacement";
+    await expect(h.run()).rejects.toThrow("Replacement onboarding preflight failed");
+    expect(h.options).not.toHaveProperty("rebuildGatewayAuthority");
+    expect(h.adapter.listProviderAttachments).not.toHaveBeenCalled();
+    expect(h.route).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing native NVIDIA sandbox attachment without falling back to a shared route", async () => {
+    const h = nativeHostedRebuildHarness(NATIVE_NVIDIA_REBUILD_SELECTION);
+    h.adapter.listProviderAttachments.mockResolvedValue({ ok: true, value: { names: [] } });
+    await expect(h.run()).rejects.toThrow("Replacement onboarding preflight failed");
+    expect(h.options).not.toHaveProperty("rebuildGatewayAuthority");
+    expect(h.route).not.toHaveBeenCalled();
+  });
+
+  it("rejects native NVIDIA authority paired with a different logical provider", async () => {
+    const h = nativeHostedRebuildHarness({
+      ...NATIVE_NVIDIA_REBUILD_SELECTION,
+      provider: "openai-api",
+    });
+    await expect(h.run()).rejects.toThrow("Replacement onboarding preflight failed");
+    expect(h.options).not.toHaveProperty("rebuildGatewayAuthority");
+    expect(h.adapter.getProvider).not.toHaveBeenCalled();
+    expect(h.route).not.toHaveBeenCalled();
+  });
+
+  it("rejects a native NVIDIA provider with unexpected credential keys", async () => {
+    const h = nativeHostedRebuildHarness(NATIVE_NVIDIA_REBUILD_SELECTION);
+    h.metadata.credentialKeys = ["UNRELATED_API_KEY"];
+    await expect(h.run()).rejects.toThrow("Replacement onboarding preflight failed");
+    expect(h.options).not.toHaveProperty("rebuildGatewayAuthority");
+    expect(h.adapter.listProviderAttachments).not.toHaveBeenCalled();
+    expect(h.route).not.toHaveBeenCalled();
+  });
+
+  it("preserves native profile verification failure without granting rebuild authority", async () => {
+    const h = nativeHostedRebuildHarness(NATIVE_NVIDIA_REBUILD_SELECTION);
+    h.adapter.importProviderProfile.mockRejectedValue(new Error("profile boundary unavailable"));
+    await expect(h.run()).rejects.toThrow("Replacement onboarding preflight failed");
+    expect(h.options).not.toHaveProperty("rebuildGatewayAuthority");
+    expect(h.adapter.getProvider).not.toHaveBeenCalled();
+    expect(h.route).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unavailable native provider observation without using the shared route", async () => {
+    const h = nativeHostedRebuildHarness(NATIVE_NVIDIA_REBUILD_SELECTION);
+    h.adapter.getProvider.mockRejectedValue(new Error("provider observation unavailable"));
+    await expect(h.run()).rejects.toThrow("Replacement onboarding preflight failed");
+    expect(h.options).not.toHaveProperty("rebuildGatewayAuthority");
+    expect(h.adapter.listProviderAttachments).not.toHaveBeenCalled();
+    expect(h.route).not.toHaveBeenCalled();
+  });
+
+  it("rejects conflicting native local and NVIDIA authority before inspecting a provider", async () => {
+    const h = nativeHostedRebuildHarness(NATIVE_NVIDIA_REBUILD_SELECTION);
+    const binding = {
+      provider: "compatible-endpoint" as const,
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+    };
+    Object.assign(h.resumeConfig, {
+      nativeLocalProviderAttachment: {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1,
+        providerId: "local-owned",
+      },
+    });
+    await expect(h.run()).rejects.toThrow("Replacement onboarding preflight failed");
+    expect(h.options).not.toHaveProperty("rebuildGatewayAuthority");
+    expect(h.adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(h.adapter.getProvider).not.toHaveBeenCalled();
+    expect(h.route).not.toHaveBeenCalled();
+  });
+
   it.each(["authenticated", "sentinel"] as const)(
     "rebuilds the recorded %s local attachment when the shared route differs (#13197)",
     async (authMode) => {

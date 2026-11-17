@@ -19,6 +19,7 @@ export async function proveStoppedDockerAgentRecovery(
   rebuildAndProveState: () => Promise<void>,
   restorationProof: "provider-backed-mcp" | "native-readiness",
   agentName: "openclaw" | "langchain-deepagents-code" = "openclaw",
+  afterSourceStopped?: () => Promise<void>,
 ): Promise<void> {
   const prefix = agentName === "openclaw" ? "openclaw" : "deepagents";
   if (
@@ -34,7 +35,7 @@ export async function proveStoppedDockerAgentRecovery(
   }
   assert(sandboxName.startsWith("e2e-"), "Container disruption requires a test-owned sandbox name");
   const gateway = process.env.OPENSHELL_GATEWAY ?? "nemoclaw";
-  const env = buildAvailabilityProbeEnv();
+  const env = { ...buildAvailabilityProbeEnv(), OPENSHELL_GATEWAY: gateway };
   let observation = 0;
   const readSource = async (): Promise<{ id: string; phase: string }> => {
     const result = await sandbox.openshell(["sandbox", "list", "-g", gateway, "-o", "json"], {
@@ -119,6 +120,7 @@ export async function proveStoppedDockerAgentRecovery(
     { deadlineMs: Date.now() + 60_000, initialIntervalMs: 1_000, maxAttempts: 30 },
   );
   assert(terminal, "OpenShell did not report the killed source as Error");
+  await afterSourceStopped?.();
   await rebuildAndProveState();
   const replacement = await runtime.resolveSandboxResourceHandle(sandboxName, {
     artifactName: `${prefix}-stopped-replacement-container`,

@@ -397,7 +397,19 @@ async function recoverRequestedSandboxIfNeeded(
   if (!namesSandboxAction && !isKnownSandboxAction(action)) return;
 
   validateName(sandboxName, "sandbox name");
-  await registryRecovery().recoverRegistryEntries({ requestedSandboxName: sandboxName });
+  const recoverRequestedSandbox = async () => {
+    await registryRecovery().recoverRegistryEntries({ requestedSandboxName: sandboxName });
+  };
+  if (action === "rebuild") {
+    const { withRebuildHostFence } =
+      require("../actions/sandbox/rebuild/owning-registry") as typeof import("../actions/sandbox/rebuild/owning-registry");
+    await withRebuildHostFence(
+      process.env.HOME || require("node:os").homedir(),
+      recoverRequestedSandbox,
+    );
+  } else {
+    await recoverRequestedSandbox();
+  }
   if (findKnownSandboxEntry(sandboxName)) return;
 
   // Recovery runs first so a live sandbox named after an action stays reachable
@@ -412,6 +424,18 @@ async function recoverRequestedSandboxIfNeeded(
       console.error(`  Did you mean: ${CLI_NAME} ${suggestion}?`);
       process.exit(1);
     }
+  }
+
+  if (action === "rebuild") {
+    const { printRebuildPreflightFailure } =
+      require("../actions/sandbox/rebuild-preflight-error") as typeof import("../actions/sandbox/rebuild-preflight-error");
+    printRebuildPreflightFailure(
+      `sandbox '${sandboxName}' has no registry entry.`,
+      `Verify the sandbox name with '${CLI_NAME} list' and rerun rebuild.`,
+      `Sandbox '${sandboxName}' not found in registry.`,
+      (_message, code = 1) => process.exit(code),
+    );
+    return;
   }
 
   console.error(`  Sandbox '${sandboxName}' does not exist.`);

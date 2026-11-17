@@ -22,7 +22,8 @@ const TEAMS_OPENCLAW_RENDER = {
     appId: "00000000-0000-0000-0000-000000000001",
     appPassword: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
     tenantId: "00000000-0000-0000-0000-000000000002",
-    webhook: { port: 3978, path: "/api/messages" },
+    webhook: { path: "/api/messages" },
+    legacyWebhook: { port: 3978 },
     healthMonitor: { enabled: false },
     streaming: { mode: "off" },
     dmPolicy: "allowlist",
@@ -111,7 +112,8 @@ describe("managed startup profile Microsoft Teams webhook", () => {
             ...TEAMS_OPENCLAW_RENDER,
             value: {
               ...TEAMS_OPENCLAW_RENDER.value,
-              webhook: { port, path: "/api/messages" },
+              webhook: { path: "/api/messages" },
+              legacyWebhook: { port },
             },
           }),
         ),
@@ -120,12 +122,33 @@ describe("managed startup profile Microsoft Teams webhook", () => {
   );
 
   it.each([
+    ["a zero port", { port: 0 }],
+    ["a port above 65535", { port: 65_536 }],
+    ["a fractional port", { port: 3978.5 }],
+    ["a string port", { port: "3978" }],
+    ["a missing port", {}],
+    ["a disabled listener", false],
+    ["a missing listener", undefined],
+    ["an unowned host", { port: 3978, host: "0.0.0.0" }],
+    ["credential material", { port: 3978, token: `ghp_${"a".repeat(32)}` }],
+  ])("rejects a Teams compatibility listener with %s", (_label, legacyWebhook) => {
+    expect(() =>
+      validateManagedStartupProfile(
+        profileWithRender({
+          ...TEAMS_OPENCLAW_RENDER,
+          value: { ...TEAMS_OPENCLAW_RENDER.value, legacyWebhook },
+        }),
+      ),
+    ).toThrow(/credential-shaped/);
+  });
+
+  it.each([
     ["a zero port", { port: 0, path: "/api/messages" }],
     ["a port above 65535", { port: 65_536, path: "/api/messages" }],
     ["a fractional port", { port: 3978.5, path: "/api/messages" }],
     ["a string port", { port: "3978", path: "/api/messages" }],
-    ["a missing port", { path: "/api/messages" }],
-    ["a missing path", { port: 3978 }],
+    ["a missing path", {}],
+    ["a retired port field", { port: 3978, path: "/api/messages" }],
     ["another path", { port: 3978, path: "/messages" }],
     ["a string value", "http://127.0.0.1:3978/api/messages"],
     ["a null value", null],

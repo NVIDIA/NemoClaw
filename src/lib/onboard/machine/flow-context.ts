@@ -43,7 +43,7 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   hostLocalInferenceSandboxProofAuthority?: HostLocalInferenceSandboxProofAuthority | null;
   /** Route staged until the source sandbox's pre-delete backup succeeds. */
   stagedNativeLocalRecreation?: import("../inference-providers/types").StagedNativeLocalRecreation;
-  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+  deferredInferenceRoute?: import("../inference-providers/types").DeferredInferenceRoute;
   gpu: Gpu | null;
   sandboxGpuConfig: SandboxGpuConfig | null;
   gpuPassthrough: boolean;
@@ -97,7 +97,7 @@ export interface ProviderModelSelectedContextUpdate {
   hostLocalInferenceRouteOnly: boolean;
   hostLocalInferenceSandboxProofAuthority: HostLocalInferenceSandboxProofAuthority | null;
   stagedNativeLocalRecreation?: import("../inference-providers/types").StagedNativeLocalRecreation;
-  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+  deferredInferenceRoute?: import("../inference-providers/types").DeferredInferenceRoute;
 }
 
 export interface SandboxCreatedContextUpdate {

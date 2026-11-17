@@ -65,6 +65,7 @@ function fixture(
   });
   fs.mkdirSync(path.join(replacementRoot, "lib"));
   fs.writeFileSync(path.join(replacementRoot, "lib", "fixed.js"), "fixed\n");
+  fs.chmodSync(replacementRoot, 0o700);
   return { npmRoot, replacementRoot };
 }
 
@@ -96,10 +97,18 @@ describe("npm bundled node-tar remediation", () => {
     const target = fixture(npmVersion, tarVersion);
 
     expect(() => verifyBundledNpmTar(target.npmRoot)).toThrow(`bundles affected tar@${tarVersion}`);
+    const installed = path.join(target.npmRoot, "node_modules", "tar");
+    const originalMetadata = fs.statSync(path.join(target.replacementRoot, "package.json"));
     expect(patchBundledNpmTar(target)).toMatchObject({
       npmVersion,
       state: "fixed",
       tarVersion: FIXED_TAR_VERSION,
+    });
+    expect(fs.statSync(installed).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(path.join(installed, "package.json"))).toMatchObject({
+      uid: originalMetadata.uid,
+      gid: originalMetadata.gid,
+      mode: originalMetadata.mode,
     });
     expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "old.js"))).toBe(false);
     expect(
@@ -236,7 +245,13 @@ describe("npm bundled node-tar remediation", () => {
 
   it("is idempotent when npm already bundles a safe release", () => {
     const target = fixture("10.9.7", FIXED_TAR_VERSION);
+    const installed = path.join(target.npmRoot, "node_modules", "tar");
+    fs.chmodSync(installed, 0o700);
     expect(patchBundledNpmTar(target)).toMatchObject({ state: "fixed" });
+    expect(fs.statSync(installed).mode & 0o777).toBe(0o755);
+    fs.chmodSync(installed, 0o700);
+    patchBundledNpmTarFromRegistry(target.npmRoot, { commandRunner: vi.fn() });
+    expect(fs.statSync(installed).mode & 0o777).toBe(0o755);
     expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "old.js"))).toBe(true);
   });
 

@@ -36,7 +36,6 @@ export interface BuildInferenceProviderMenuInput {
   winOllamaLoopbackOnly: boolean;
   ollamaInstallEntry: ProviderMenuChoice | null;
   vllmEntries: readonly ProviderMenuChoice[];
-  routedEnabled: boolean;
   managedLlamaCppOptions?: readonly ProviderMenuChoice[];
 }
 
@@ -120,10 +119,6 @@ export function buildInferenceProviderMenu(
   }
 
   if (input.ollamaInstallEntry) options.push(input.ollamaInstallEntry);
-
-  if (input.routedEnabled) {
-    options.push({ key: "routed", label: "Model Router (experimental)" });
-  }
 
   options.push(...(input.managedLlamaCppOptions ?? []));
 

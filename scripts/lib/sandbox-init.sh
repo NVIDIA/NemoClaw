@@ -419,7 +419,9 @@ verify_config_integrity() {
 # SANDBOX_CHILD_PIDS: array of PIDs to kill on signal (best-effort).
 # SANDBOX_WAIT_PID: the primary PID whose exit status is returned.
 cleanup_on_signal() {
-  echo "[gateway] received signal, forwarding to children..." >&2
+  # The supervisor can close the logging pipe while signalling the process group.
+  # Isolate SIGPIPE from this notification so shutdown still reaches the gateway.
+  (echo "[gateway] received signal, forwarding to children..." >&2) || true
   local primary_status=0
 
   # ${arr[@]+...} guard prevents "unbound variable" under set -u when

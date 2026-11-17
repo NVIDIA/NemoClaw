@@ -48,6 +48,7 @@ const OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
 ] as const;
 
 const SECURITY_INVENTORY_PROBE_OK = "nemoclaw-security-inventory-ok";
+const SANDBOX_BASE_NODE_VERSION = "24.22.1";
 
 // The reduced Launchable build context includes scripts/ but excludes src/.
 // Keep this probe aligned with security-package-specs.ts via the integration test.
@@ -74,6 +75,8 @@ function securityInventoryProbe(
     'test ! -L "$security_inventory"',
     `test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"`,
     comparison,
+    // Node's bundled native libraries are outside dpkg and npm audit coverage.
+    `test "$(node -p 'process.versions.node')" = "${SANDBOX_BASE_NODE_VERSION}"`,
     // Check installed packages after authenticating the complete file contents.
     // A current manifest alongside an obsolete library must not admit a base.
     'while IFS="=" read -r package version; do',

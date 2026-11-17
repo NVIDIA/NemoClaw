@@ -81,7 +81,13 @@ if (command.includes("printf '%s\\\\0%s\\\\0'")) {
   process.stdout.write(Buffer.from(remoteRoot + "\\0" + remoteWorkspace + "\\0"));
   process.exit(0);
 }
+
 if (command.includes("tar -C")) {
+  const churnMarker = process.env.NEMOCLAW_TEST_NATIVE_CHURN_MARKER;
+  if (churnMarker && !fs.existsSync(churnMarker)) {
+    fs.writeFileSync(churnMarker, "churned");
+    process.exit(21);
+  }
   const procRoot = process.env.NEMOCLAW_TEST_NATIVE_PROC;
   if (procRoot) {
     const prelude = 'kill() { printf "%s\\\\n" "$*" >> "$NEMOCLAW_TEST_SIGNAL_LOG"; }; sleep() { :; }; tar() { command tar -C "$NEMOCLAW_TEST_NATIVE_ROOT" -cf - .; }; ';
@@ -116,7 +122,7 @@ if (command.includes("tar -C")) {
     const tarArgs = hardDereferenceSupported
       ? ["-C", copyRoot, "--hard-dereference", "-cf", "-", "--", "."]
       : ["-C", copyRoot, "-cf", "-", "--", "."];
-    process.exit(spawnSync("tar", tarArgs, { stdio: ["ignore", "inherit", "inherit"] }).status ?? 91);
+    process.exit(spawnSync("tar", tarArgs, { env: { ...process.env, COPYFILE_DISABLE: "1" }, stdio: ["ignore", "inherit", "inherit"] }).status ?? 91);
   } finally {
     fs.rmSync(copyRoot, { recursive: true, force: true });
   }
@@ -158,6 +164,20 @@ process.exit(93);
   );
 }
 
+/** Block temporary SSH-state cleanup so capture failure remains non-retryable. */
+export function blockNativeSshCleanup(): { restore: () => void; directories: string[] } {
+  const originalRemove = fs.rmSync;
+  const directories: string[] = [];
+  const remove = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+    if (typeof target === "string" && path.basename(target).startsWith("nemoclaw-native-state-")) {
+      directories.push(target);
+      throw new Error("cleanup blocked");
+    }
+    return originalRemove(target, options);
+  });
+  return { restore: () => remove.mockRestore(), directories };
+}
+
 export function writeNativeQuiescenceStates(
   procRoot: string,
   leader: string,
@@ -193,4 +213,53 @@ export function useOrderedNativeCapture(directory: string, entries: string[]): v
     }
     return Reflect.apply(originalSpawn, childProcess, args);
   });
+}
+
+export function tarHeader(
+  entryPath: string,
+  content: Buffer,
+  options: { type?: string; linkTarget?: string } = {},
+): Buffer {
+  const header = Buffer.alloc(512, 0);
+  const type = options.type ?? "0";
+  header.write(entryPath, 0, Math.min(entryPath.length, 100), "utf8");
+  header.write("0000644\0", 100, 8, "utf8");
+  header.write("0001000\0", 108, 8, "utf8");
+  header.write("0001000\0", 116, 8, "utf8");
+  const size = ["0", "S", "x", "g"].includes(type) ? content.length : 0;
+  header.write(`${size.toString(8).padStart(11, "0")}\0`, 124, 12, "utf8");
+  header.write(
+    `${Math.floor(Date.now() / 1000)
+      .toString(8)
+      .padStart(11, "0")}\0`,
+    136,
+    12,
+    "utf8",
+  );
+  header.write(type, 156, 1, "utf8");
+  if (options.linkTarget) {
+    header.write(options.linkTarget, 157, Math.min(options.linkTarget.length, 100), "utf8");
+  }
+  header.write("ustar\0", 257, 6, "utf8");
+  header.write("00", 263, 2, "utf8");
+  header.fill(0x20, 148, 156);
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "utf8");
+  return header;
+}
+
+export function paddedTarPayload(content: Buffer): Buffer {
+  const padded = Buffer.alloc(Math.ceil(content.length / 512) * 512, 0);
+  content.copy(padded);
+  return padded;
+}
+
+export function paxRecord(key: string, value: string): Buffer {
+  const body = ` ${key}=${value}\n`;
+  let length = Buffer.byteLength(body) + 1;
+  while (Buffer.byteLength(`${length}${body}`) !== length) {
+    length = Buffer.byteLength(`${length}${body}`);
+  }
+  return Buffer.from(`${length}${body}`, "utf8");
 }

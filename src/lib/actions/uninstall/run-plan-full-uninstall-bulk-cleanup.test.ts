@@ -117,7 +117,7 @@ function fullCleanupDeps(
   commandInvocations?: Array<{ args: string[]; env?: NodeJS.ProcessEnv }>,
 ) {
   const responses = new Map<string, RunResult>([
-    ["gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
+    ["gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw", active: false }]))],
     ["sandbox list", ok(sandboxInventory)],
   ]);
   return {

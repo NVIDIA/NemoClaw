@@ -1,0 +1,47 @@
+{/*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}
+
+## v0.0.144
+
+NemoClaw v0.0.144 fixes Deep Agents Code startup approval mode, improves rebuild and installer safety, and adds managed Hermes Switchyard provider binding.
+
+### Agent Startup and Inference
+
+- Deep Agents Code starts in Manual when its managed auto-approval capability is disabled, even if native configuration selects Auto or Yolo.
+  Related change: [PR #13915](https://github.com/NVIDIA/NemoClaw/pull/13915).
+- Managed Hermes onboarding with `--switchyard-config` creates and attaches OpenShell providers for the selected hosted profiles.
+  An optional dedicated judge can replace a capable target that fails judge qualification.
+  Gateway startup verifies judge classification and usage accounting.
+  Published bindings cannot be reused for routing or credential changes; preserve the sandbox and onboard with a new name.
+  The owning session can recover an unchanged, unpublished provider reservation before sandbox creation starts.
+  Full adaptive-routing qualification remains tracked in [issue #13866](https://github.com/NVIDIA/NemoClaw/issues/13866).
+  Related change: [PR #14303](https://github.com/NVIDIA/NemoClaw/pull/14303).
+- OpenClaw launch-readiness qualification accepts settled native TUI pairing state while retaining identity, token, scope, and file-safety checks.
+  Related change: [PR #14437](https://github.com/NVIDIA/NemoClaw/pull/14437).
+
+### Rebuild, Installation, and Cleanup
+
+- OpenClaw rebuild validates `NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS` before its backup, deletion, or replacement.
+  Installer-driven upgrades use the same preflight, but their strict pre-upgrade backup can already exist.
+  Set an integer from 1500 to 10000 milliseconds, or unset the variable, before retrying a rejected command.
+  Related change: [PR #14439](https://github.com/NVIDIA/NemoClaw/pull/14439).
+- The installer prepares and revalidates the OpenShell replacement destination before retiring the old gateway, preserving the selected executable handoff.
+  Related change: [PR #14276](https://github.com/NVIDIA/NemoClaw/pull/14276).
+- Deep Agents Code backups accept the existing public QuickJS diagnostic in database sidecars while preserving credential rejection and original database and archive bytes.
+  Related change: [PR #14381](https://github.com/NVIDIA/NemoClaw/pull/14381).
+- Uninstall reports the reason OpenShell refused sandbox cleanup, providing a usable diagnostic while preserving existing exit codes.
+  Related change: [PR #13773](https://github.com/NVIDIA/NemoClaw/pull/13773).
+
+### Messaging and Contributor Workflows
+
+- Sandbox status warnings describe an unavailable inference probe without assuming the sandbox uses `inference.local`.
+  Related change: [PR #14457](https://github.com/NVIDIA/NemoClaw/pull/14457).
+- Telegram and WeChat readiness messages report channel API reachability without claiming to verify the agent's inference route.
+  Related change: [PR #14448](https://github.com/NVIDIA/NemoClaw/pull/14448).
+- Interrupted upgrade tasks retain validated checkpoints, pending writes, and retry budgets.
+  Changed-test runs include affected integration contracts, and manual PR candidate retries cannot cancel baseline comparisons.
+  Related change: [PR #14095](https://github.com/NVIDIA/NemoClaw/pull/14095).
+- The Teams messaging image fixture uses the reviewed webhook schema so plugin inspection can proceed after the image build.
+  Related change: [PR #14451](https://github.com/NVIDIA/NemoClaw/pull/14451).

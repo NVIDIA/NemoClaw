@@ -30,6 +30,12 @@ export const buildContextFingerprint = requireDist(
   "../../adapters/fs/build-context-fingerprint.js",
 );
 export const destroy = requireDist("./destroy.js");
+export const destroyPresence = requireDist(
+  "./destroy-presence.js",
+) as typeof import("../../src/lib/actions/sandbox/destroy-presence");
+export const dockerRuntime = requireDist(
+  "../../adapters/docker/run.js",
+) as typeof import("../../src/lib/adapters/docker/run");
 export const dockerImage = requireDist("../../adapters/docker/image.js");
 export const dockerInspect = requireDist("../../adapters/docker/inspect.js");
 export const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
@@ -58,6 +64,12 @@ export const managedWorkloadRebuild = requireDist(
 export const rebuildBackupPhase = requireDist(
   "./rebuild-backup-phase.js",
 ) as typeof import("../../src/lib/actions/sandbox/rebuild-backup-phase");
+export const rebuildDestroyPhase = requireDist(
+  "./rebuild-destroy-phase.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-destroy-phase");
+export const rebuildRecreateJournal = requireDist(
+  "./rebuild-recreate-journal.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-recreate-journal");
 export const onboardSession = requireDist("../../state/onboard-session.js");
 export const removedImmutabilityMigration = requireDist(
   "../../state/migrations/removed-immutability.js",
@@ -187,10 +199,14 @@ export type RebuildFlowTestHookOptions = {
 
 export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions = {}): void {
   const restoreRebuildFlowEnv = snapshotEnv([
+    "HOME",
+    "NEMOCLAW_TEST_BASE_HOME",
     "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
     "NEMOCLAW_SANDBOX_NAME",
   ]);
   beforeEach(() => {
+    process.env.HOME = createHarnessTempDir("nemoclaw-rebuild-home-");
+    process.env.NEMOCLAW_TEST_BASE_HOME = process.env.HOME;
     harnessRebuildBackups.splice(0);
     delete process.env.NEMOCLAW_SANDBOX_NAME;
     if (options.acceptThirdPartySoftware) {

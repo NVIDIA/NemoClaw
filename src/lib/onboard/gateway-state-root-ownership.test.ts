@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { shellQuote } from "../core/shell-quote";
 import {
   MANAGED_GATEWAY_STATE_ROOT_MARKER,
   ensureManagedGatewayStateRoot,
@@ -14,6 +15,21 @@ import {
 
 function target(stateDir: string, gatewayPort = 9123) {
   return { gatewayName: `nemoclaw-${String(gatewayPort)}`, gatewayPort, stateDir };
+}
+
+function mockNonRootOwner(ancestor: string): () => void {
+  const real = fs.lstatSync;
+  const getuid = vi.spyOn(process, "getuid").mockReturnValue(12345);
+  const lstat = vi
+    .spyOn(fs, "lstatSync")
+    .mockImplementation(((p: fs.PathLike) =>
+      String(p) === ancestor
+        ? Object.assign(real(p), { uid: 12345 })
+        : real(p)) as typeof fs.lstatSync);
+  return () => {
+    lstat.mockRestore();
+    getuid.mockRestore();
+  };
 }
 
 describe("managed gateway state root ownership", () => {
@@ -91,6 +107,104 @@ describe("managed gateway state root ownership", () => {
       expect(fs.existsSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER))).toBe(false);
     } finally {
       fs.chmodSync(root, 0o700);
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("does not suggest chmod for a shared root-owned directory like /tmp", () => {
+    const real = fs.lstatSync;
+    const lstat = vi
+      .spyOn(fs, "lstatSync")
+      .mockImplementation(((p: fs.PathLike) =>
+        String(p) === "/shared"
+          ? Object.assign(real("/"), { uid: 0, mode: 0o41777 })
+          : real(p)) as typeof fs.lstatSync);
+    try {
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).toThrow(
+        /ancestor '\/shared' is not a trusted real directory/,
+      );
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).not.toThrow(/chmod/);
+    } finally {
+      lstat.mockRestore();
+    }
+  });
+
+  it("does not suggest chmod for /tmp when running as root", () => {
+    const real = fs.lstatSync;
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(0);
+    const lstat = vi
+      .spyOn(fs, "lstatSync")
+      .mockImplementation(((p: fs.PathLike) =>
+        String(p) === "/shared"
+          ? Object.assign(real("/"), { uid: 0, mode: 0o41777 })
+          : Object.assign(real(p), { uid: 0 })) as typeof fs.lstatSync);
+    try {
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).toThrow(
+        /ancestor '\/shared' is not a trusted real directory/,
+      );
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).not.toThrow(/chmod/);
+    } finally {
+      lstat.mockRestore();
+      getuid.mockRestore();
+    }
+  });
+
+  it("does not suggest chmod for an owned shared sticky directory", () => {
+    const real = fs.lstatSync;
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(12345);
+    const lstat = vi
+      .spyOn(fs, "lstatSync")
+      .mockImplementation(((p: fs.PathLike) =>
+        String(p) === "/shared"
+          ? Object.assign(real("/"), { uid: 12345, mode: 0o41777 })
+          : real(p)) as typeof fs.lstatSync);
+    try {
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).toThrow(
+        /ancestor '\/shared' is not a trusted real directory/,
+      );
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).not.toThrow(/chmod/);
+    } finally {
+      lstat.mockRestore();
+      getuid.mockRestore();
+    }
+  });
+
+  it("names the mode and the chmod remedy when an owned ancestor is group-writable", () => {
+    const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-group-writable-parent-"));
+    const stateDir = path.join(root, "gateway");
+    const restoreOwner = mockNonRootOwner(root);
+    try {
+      fs.chmodSync(root, 0o775);
+
+      expect(() => ensureManagedGatewayStateRoot(target(stateDir))).toThrow(
+        `ancestor '${root}' is not a trusted real directory owned by the current user or root without group or world write access. It has mode 0775; remove group and other write permission (chmod go-w '${root}'), then retry.`,
+      );
+      expect(fs.existsSync(stateDir)).toBe(false);
+    } finally {
+      restoreOwner();
+      fs.chmodSync(root, 0o700);
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("quotes an apostrophe in the suggested chmod path (#12496)", () => {
+    const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-quoted-gateway-parent-"));
+    const ancestor = path.join(root, "owned'directory");
+    const stateDir = path.join(ancestor, "gateway");
+    try {
+      fs.mkdirSync(ancestor);
+      fs.chmodSync(ancestor, 0o775);
+
+      const restoreOwner = mockNonRootOwner(ancestor);
+      try {
+        expect(() => ensureManagedGatewayStateRoot(target(stateDir))).toThrow(
+          `chmod go-w ${shellQuote(ancestor)}`,
+        );
+        expect(fs.existsSync(stateDir)).toBe(false);
+      } finally {
+        restoreOwner();
+      }
+    } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
   });

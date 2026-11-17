@@ -412,14 +412,10 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
-  it("maps Model Router sandboxes through managed inference.local", () => {
-    expect(getSandboxInferenceConfig("nvidia-routed", "nvidia-router")).toEqual({
-      providerKey: MANAGED_PROVIDER_ID,
-      primaryModelRef: `${MANAGED_PROVIDER_ID}/nvidia-routed`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
-      inferenceApi: "openai-completions",
-      inferenceCompat: null,
-    });
+  it("rejects the retired Model Router configuration", () => {
+    expect(() => getSandboxInferenceConfig("nvidia-routed", "nvidia-router")).toThrow(
+      "Model Router has been removed",
+    );
   });
 
   it("leaves Kimi K2.6 compat to the model-specific setup registry", () => {

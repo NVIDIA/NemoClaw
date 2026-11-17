@@ -109,10 +109,9 @@ Choices:
 6. OpenAI, which requires an OpenAI API key.
 7. Anthropic, which requires an Anthropic API key.
 8. Google Gemini, which requires a Gemini API key.
-9. Model Router, which requires an NVIDIA API key.
-10. Other OpenAI-compatible endpoint, which requires an endpoint, model, and usually a key.
-11. Other Anthropic-compatible endpoint, which requires an endpoint, model, and usually a key.
-12. Hermes Provider, only when Hermes is selected.
+9. Other OpenAI-compatible endpoint, which requires an endpoint, model, and usually a key.
+10. Other Anthropic-compatible endpoint, which requires an endpoint, model, and usually a key.
+11. Hermes Provider, only when Hermes is selected.
 
 On ordinary supported macOS or Linux:
 
@@ -189,7 +188,6 @@ Use this provider mapping for non-interactive setup:
 - Anthropic: `NEMOCLAW_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`.
 - Gemini: `NEMOCLAW_PROVIDER=gemini`, `GEMINI_API_KEY`.
 - Hermes Provider: `NEMOCLAW_PROVIDER=hermes-provider`; Hermes only.
-- Model Router: `NEMOCLAW_PROVIDER=routed`, `NVIDIA_INFERENCE_API_KEY`.
 - OpenAI-compatible: `NEMOCLAW_PROVIDER=custom`, endpoint, model, `COMPATIBLE_API_KEY`.
 - Anthropic-compatible: `NEMOCLAW_PROVIDER=anthropicCompatible`, endpoint, model, `COMPATIBLE_ANTHROPIC_API_KEY`.
 - Ollama: `NEMOCLAW_PROVIDER=ollama`, optional `NEMOCLAW_MODEL`.
@@ -243,7 +241,7 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 
 ## Policy, Approval, and Verification
 
-- Before any installer command, explain that the installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default. Offer `NEMOCLAW_DISABLE_TELEMETRY=1` to suppress collection and delivery. If I opt out, pass it to every installer and NemoClaw CLI command during this setup, including verification commands; do not persist it beyond the setup unless I ask.
+- Before any installer command, explain that the installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed Production receiver by default. Offer `NEMOCLAW_DISABLE_TELEMETRY=1` to suppress collection and delivery. If I opt out, pass it to every installer and NemoClaw CLI command during this setup, including verification commands; do not persist it beyond the setup unless I ask.
 - If a loaded platform asset selects its approved install path, follow its policy requirement and skip the policy-tier question.
 - For installation outside an accepted platform-asset path, ask for Balanced, Restricted, or Open policy.
 - Explain that messaging and web-search selections add required endpoints.

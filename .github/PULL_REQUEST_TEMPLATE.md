@@ -21,6 +21,10 @@ For a sensitive-path change, record the review context or maintainer-approved wa
 For an accepted non-success, skipped, or missing CI check, name the check, approval link, and follow-up issue.
 If scripts/prepare-dgx-station-host.sh changes, identify the tested commit, Station profile or scenario, result, and supporting link. Maintainers must review that evidence before merge. If repository governance permits an exception, document the reason. -->
 
+<!-- Post the opening authoring-session report as a collapsed PR comment.
+Use .github/SESSION_REPORT_TEMPLATE.md.
+See .agents/skills/nemoclaw-contributor-create-pr/SKILL.md#session-report for the evidence contract. -->
+
 ---
 <!-- DCO sign-off is required in this PR description. Every commit must appear as Verified in GitHub. -->
 Signed-off-by: Your Name <your-email@example.com>

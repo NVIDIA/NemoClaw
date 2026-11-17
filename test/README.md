@@ -17,6 +17,20 @@ The test directory uses execution lanes first and behavior areas second.
 Other `*.test.js` and `*.test.ts` files outside the dedicated lanes above belong to the `integration` project.
 The project globs in `vitest.config.ts` must remain disjoint and exhaustive.
 
+## Early changed-input validation
+
+Run `npm run test:changed -- --changed=origin/main` to compare the working tree with the PR base.
+The default comparison is `HEAD`; staged, unstaged, deleted, and untracked inputs are included.
+The command runs source and integration projects, including mapped tests for files that Vitest cannot import.
+It reuses `test/helpers/vitest-watch-triggers.ts`; add concrete opaque-input relationships there.
+The selection report lists changed inputs, mapped tests, and unmapped opaque inputs.
+Unmapped inputs need inspection; a successful selected run does not establish their coverage.
+The related-test child has a 30-minute deadline. The existing `NEMOCLAW_EXEC_TIMEOUT` value in milliseconds can raise this deadline.
+The command terminates the child on expiry and reports the effective timeout, signal, and failure status.
+Inspect retained test resources before retrying a timed-out run.
+The final report records wall time and exit status. Compare like-for-like inputs before claiming a speed improvement.
+Live, installer, and compiled-package qualification retain their own commands and prerequisites.
+
 ## Shared test code
 
 - Put passive inputs in `fixtures/`.
@@ -74,6 +88,29 @@ The native llama.cpp image PR workflow supplies the pinned model and runs this t
 image it builds, on CPU. Other jobs skip it when the image or model variable is absent.
 A passing manual run proves the bridge cancellation path with the approved CPU image; it does not prove OpenShell
 onboarding, production CUDA image qualification, or the complete supported E2E fanout.
+
+### Native Hermes Discord status
+
+Managed-image PR builds run the native Hermes Discord contract on the local image on AMD64 and ARM64.
+For same-repository PRs, they also qualify the published immutable digest before exporting its contract.
+Release builds qualify the published digest before promotion.
+Protected multiarch qualification runs the contract before recording evidence.
+All three paths run the existing package-contract test with the selected immutable image.
+It mounts the compiled CLI and checkout read-only in the image under test, disables networking,
+and provides an empty Hermes home and temporary caches.
+
+To run it on Linux, build the CLI and select a cached immutable Hermes image for the native platform.
+Use Linux dependencies that match the image's architecture:
+
+```bash
+npm run build:cli
+npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts --image '<image@sha256:digest>' --platform linux/amd64
+```
+
+The test uses Hermes's installed runtime writer and the compiled channel status action. It checks
+authentication rejection, connected recovery, dead-writer uncertainty and native-error redaction.
+It does not contact Discord or prove message delivery. Ordinary package-contract runs skip the test;
+the qualification command supplies `NEMOCLAW_HERMES_RUNTIME_TEST=1` inside the image.
 
 ## Test contracts
 

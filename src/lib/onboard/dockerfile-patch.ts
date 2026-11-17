@@ -38,6 +38,7 @@ import { isValidDcodeUpstreamProvider } from "./managed-startup/dcode-upstream-p
 import * as remoteDashboardBindContract from "./dockerfile-remote-dashboard-bind-contract";
 import {
   type DockerfileInstruction,
+  type DockerfilePatchSnapshot,
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
   replaceDockerfilePatchSnapshot,
@@ -188,6 +189,7 @@ function normalizeOptionalEndpointUrlArg(value: string | null | undefined, name:
 export type DockerfileBuildIdPolicy = "preserve" | "rewrite";
 
 export interface PatchStagedDockerfileOptions {
+  sourceSnapshot?: DockerfilePatchSnapshot;
   agentName?: string;
   buildIdPolicy?: DockerfileBuildIdPolicy;
   toolDisclosure?: ToolDisclosure;
@@ -293,6 +295,14 @@ function patchMessagingPlanDockerArg(dockerfile: string, plan: SandboxMessagingP
   );
 }
 
+export function hasSandboxBaseImageArg(dockerfile: string): boolean {
+  const currentValue = /^ARG BASE_IMAGE=(.*)$/m.exec(dockerfile)?.[1]?.trim();
+  return Boolean(
+    currentValue?.startsWith(`${SANDBOX_BASE_IMAGE}:`) ||
+    currentValue?.startsWith(`${SANDBOX_BASE_IMAGE}@`),
+  );
+}
+
 export function patchStagedDockerfile(
   dockerfilePath: string,
   model: string,
@@ -326,7 +336,7 @@ export function patchStagedDockerfile(
     : inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
       ? inferenceBaseUrlOverride
       : sandboxInference.inferenceBaseUrl;
-  const patchSnapshot = readDockerfilePatchSnapshot(dockerfilePath);
+  const patchSnapshot = options.sourceSnapshot ?? readDockerfilePatchSnapshot(dockerfilePath);
   let dockerfile = patchSnapshot.content;
   const toolDisclosure = normalizeToolDisclosure(options.toolDisclosure) ?? DEFAULT_TOOL_DISCLOSURE;
   const toolDisclosureInstruction = options.requireToolDisclosureContract
@@ -346,19 +356,10 @@ export function patchStagedDockerfile(
   // Only rewrite when the current value already points at our sandbox-base
   // image — custom --from Dockerfiles may use a different base.
   const sanitizedBaseImageRef = baseImageRef ? sanitizeDockerArg(baseImageRef) : null;
-  if (sanitizedBaseImageRef) {
+  if (sanitizedBaseImageRef && hasSandboxBaseImageArg(dockerfile)) {
     dockerfile = dockerfile.replace(
       /^ARG BASE_IMAGE=(.*)$/m,
-      (line: string, currentValue: string) => {
-        const trimmed = String(currentValue).trim();
-        if (
-          trimmed.startsWith(`${SANDBOX_BASE_IMAGE}:`) ||
-          trimmed.startsWith(`${SANDBOX_BASE_IMAGE}@`)
-        ) {
-          return `ARG BASE_IMAGE=${sanitizedBaseImageRef}`;
-        }
-        return line;
-      },
+      () => `ARG BASE_IMAGE=${sanitizedBaseImageRef}`,
     );
   }
   // A source=local resolution is built from this checkout's Dockerfile.base,

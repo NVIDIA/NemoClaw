@@ -226,6 +226,8 @@ run_native_runtime_installer_qualification() (
   local installed_revision=""
   local pre_execution_docker_posture=""
   local post_execution_docker_posture=""
+  local telemetry_name=""
+  local -a telemetry_env=()
 
   cleanup() {
     if [[ -n "$receipt_stage" && -d "$receipt_stage" && ! -L "$receipt_stage" ]]; then
@@ -370,9 +372,15 @@ run_native_runtime_installer_qualification() (
     assert_docker_unavailable "pre-execution" "$docker_guard" "$docker_guard_sha256"
   )"
 
+  for telemetry_name in CI GITHUB_ACTIONS GITHUB_RUN_ID GITHUB_RUN_ATTEMPT NEMOCLAW_TELEMETRY_TEST_LABEL NEMOCLAW_DISABLE_TELEMETRY; do
+    if [[ ${!telemetry_name+x} ]]; then
+      telemetry_env+=("$telemetry_name=${!telemetry_name}")
+    fi
+  done
+
   # The child shell expands positional parameters inside this literal program.
   # shellcheck disable=SC2016
-  env -i \
+  env -i "${telemetry_env[@]}" \
     ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     HOME="$qualification_home" \
     LANG=C.UTF-8 \

@@ -26,6 +26,77 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it.each<
+    [string, (steps: Array<{ name: string; with?: Record<string, string>; if?: string }>) => void]
+  >([
+    [
+      "early install",
+      (steps) => {
+        steps.find((step) => step.name === "Prepare E2E workspace")!.with!["install-dependencies"] =
+          "true";
+      },
+    ],
+    [
+      "late archive",
+      (steps) => {
+        const index = steps.findIndex(
+          (step) => step.name === "Download reviewed OpenShell SDK archive",
+        );
+        const [archive] = steps.splice(index, 1);
+        steps.push(archive);
+      },
+    ],
+    [
+      "conditional install",
+      (steps) => {
+        steps.find(
+          (step) =>
+            step.name === "Install reviewed OpenShell SDK archive without package credentials",
+        )!.if = "${{ false }}";
+      },
+    ],
+  ])("rejects %s in the reviewed SDK handoff", (_scenario, mutate) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    );
+    mutate(profile.jobs.run.steps);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "sdk-profile-order-"));
+    try {
+      const profilePath = path.join(directory, "profile.yaml");
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).not.toEqual([]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { field: "uses", value: "actions/setup-python@v7" },
+    { field: "if", value: "true" },
+    { field: "with", value: { "python-version": "3.14" } },
+    { field: "env", value: { UNREVIEWED_INPUT: "present" } },
+    { field: "run", value: "python3 --version" },
+  ])("rejects reintroduced Model Router Python $field", ({ field, value }) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    ) as { jobs: { run: { steps: Array<Record<string, unknown>> } } };
+    const python: Record<string, unknown> = {
+      name: "Set up supported Model Router Python",
+      [field]: value,
+    };
+    profile.jobs.run.steps.push(python);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-router-python-"));
+    const profilePath = path.join(directory, "profile.yaml");
+    try {
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        "standard E2E profile must keep its reviewed step set and order",
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
     // The original 70-minute path now includes native configuration and plugin lifecycle work.
     expect(FULL_E2E_TEST_TIMEOUT_MINUTES).toBeGreaterThanOrEqual(100);
@@ -134,21 +205,24 @@ describe("standard E2E execution profile", () => {
     const workflow = readWorkflow() as { jobs: Record<string, { if?: string }> };
     workflow.jobs["package-openshell-sdk"]!.if = "${{ inputs.jobs == 'external-gateway-health' }}";
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
-      "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+      "catalogue profiles require SDK packaging with package-read permission whenever candidate compilation is selected",
     );
   });
 
   it("requires the SDK producer to include an available reviewed transition replacement", () => {
     const workflow = readWorkflow() as {
-      jobs: Record<string, { steps: Array<{ env?: Record<string, string>; name?: string }> }>;
+      jobs: Record<string, { steps: Array<{ run?: string; name?: string }> }>;
     };
     const packageStep = workflow.jobs["package-openshell-sdk"]!.steps.find(
       (step) => step.name === "Download and verify reviewed OpenShell SDK packages",
     )!;
-    delete packageStep.env!.NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT;
+    packageStep.run = packageStep.run!.replace(
+      "packageReviewedOpenShellSdk(output, 'if-present'",
+      "packageReviewedOpenShellSdk(output, 'exclude'",
+    );
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
-      "catalogue SDK packaging must include an available reviewed transition replacement",
+      "catalogue SDK packaging must admit candidate identities and retain reviewed main and exact-base packages",
     );
   });
 

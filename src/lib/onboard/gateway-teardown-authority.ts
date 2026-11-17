@@ -57,7 +57,12 @@ export type GatewayTeardownAuthorityResolver = (
   deps?: GatewayTeardownAuthorityDeps,
 ) => GatewayOwner;
 
-type GatewayAuthorityEffect = "credential mutation" | "forward recovery" | "rebuild" | "teardown";
+type GatewayAuthorityEffect =
+  | "credential mutation"
+  | "forward recovery"
+  | "rebuild"
+  | "teardown"
+  | "observation";
 
 const FRESH_ONBOARDING_CHECKPOINT_RECOVERY =
   " Start a fresh onboarding run to replace the invalid checkpoint before retrying.";
@@ -168,7 +173,9 @@ function resolveGatewayEffectAuthority(
         ? "sandbox rebuild"
         : effect === "forward recovery"
           ? "sandbox forward recovery"
-          : "provider credential mutation";
+          : effect === "observation"
+            ? "gateway observation"
+            : "provider credential mutation";
   if (resolveGatewayName(target.gatewayPort) !== target.gatewayName) {
     throw new GatewayAuthorityError(
       `Refusing ${operation} for noncanonical target '${target.gatewayName}@${String(target.gatewayPort)}'.`,
@@ -301,6 +308,17 @@ export function resolveGatewayForwardAuthority(
   deps: GatewayTeardownAuthorityDeps = {},
 ): GatewayOwner {
   return resolveGatewayEffectAuthority(target, "forward recovery", deps);
+}
+
+/** Read-only inspection reuses recorded service ownership without service discovery. */
+export function resolveGatewayObservationAuthority(target: GatewayTeardownTarget): GatewayOwner {
+  const session = loadTargetSession(target, process.env);
+  const authority = session?.checkpoint?.gatewayAuthority;
+  return resolveGatewayEffectAuthority(target, "observation", {
+    loadSession: () => session,
+    hasPackagedService: () =>
+      authority?.kind === "selected" && authority.value.source === "packaged-service",
+  });
 }
 
 /** Revalidate the exact checkpointed authority before a provider credential mutation. */

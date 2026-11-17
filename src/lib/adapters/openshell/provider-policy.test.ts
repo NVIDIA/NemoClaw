@@ -6,6 +6,7 @@ import { initializeNativeProviderPolicy, requireNativeProviderPolicy } from "./p
 
 import type { OpenShellProviderAdapter, OpenShellProviderMetadata } from "./provider-adapter";
 import { ensureNativeLocalProvider } from "../../inference/native-local/profile";
+import { redactOnboardErrorText } from "../../onboard/diagnostics/redaction";
 
 import { fixture } from "./provider-policy.test-support";
 
@@ -29,6 +30,17 @@ describe("native provider policy prerequisites", () => {
       expect(run.mock.calls.every(([args]) => args[1] === "get")).toBe(true);
     },
   );
+  it("keeps the full recovery command visible after onboard line bounding (#13540)", async () => {
+    const gatewayName = "g".repeat(19);
+    const run = fixture("<unset>");
+    const error = await requireNativeProviderPolicy(gatewayName, run).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    const displayed = redactOnboardErrorText((error as Error).message);
+    expect(displayed).toContain(
+      `openshell settings set -g ${gatewayName} --global --key providers_v2_enabled --value true --yes`,
+    );
+    expect(displayed).toContain("Then retry.");
+  });
   it("refuses an active global override even when composition is enabled (#12558)", async () => {
     const run = fixture("true", {
       status: 0,

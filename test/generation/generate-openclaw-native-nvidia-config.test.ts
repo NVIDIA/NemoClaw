@@ -10,6 +10,18 @@ import {
   NATIVE_NVIDIA_URLS,
 } from "../fixtures/native-nvidia-inference-urls";
 
+it("rejects the retired native Model Router before serializing configuration", () => {
+  expect(() =>
+    buildConfig({
+      ...baseOpenClawGenerationEnv(),
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-router",
+      NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:4000/v1",
+      NEMOCLAW_LOCAL_INFERENCE_TOKEN: "test-only-secret",
+    }),
+  ).toThrow("Model Router has been removed");
+});
+
 it.each(NATIVE_NVIDIA_URLS)(
   "uses a resolvable credential for native NVIDIA inference at %s",
   (baseUrl) => {

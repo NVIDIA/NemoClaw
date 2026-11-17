@@ -17,8 +17,8 @@ export {
 } from "./security-package-specs";
 
 /**
- * Reject a published or cached base that predates the immutable security
- * package inventory consumed by completed-image verification.
+ * Reject a published or cached base that predates the reviewed package or
+ * Node runtime identity consumed by completed-image verification.
  */
 function sandboxBaseImageHasPackageInventory(
   imageRef: string,

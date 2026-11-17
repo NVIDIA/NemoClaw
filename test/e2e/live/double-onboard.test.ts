@@ -16,6 +16,8 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -269,6 +271,42 @@ async function prerequisiteOrSkip(
   skip(message);
 }
 
+/** Uninstall must remove the managed OpenClaw state volume so same-name onboarding starts fresh (#13595). */
+async function uninstallThenOnboardSameName(
+  host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
+  progress: TestProgress,
+  fakeBaseUrl: string,
+): Promise<boolean> {
+  progress.phase("uninstall removes OpenClaw state and permits same-name onboarding");
+  const stateVolume = `nemoclaw-openclaw-state-v1-${SANDBOX_A}`;
+  const volumeBefore = await runtimeProvider.command(["volume", "inspect", stateVolume], {
+    artifactName: "phase-7-state-volume-before-uninstall",
+    timeoutMs: 30_000,
+  });
+  expect(volumeBefore.exitCode, resultText(volumeBefore)).toBe(0);
+  // --destroy-user-data also drops the preserved registry, so the next onboard starts fresh.
+  const uninstall = await command(host, ["uninstall", "--yes", "--destroy-user-data"], {
+    artifactName: "phase-7-uninstall",
+    env: commandEnv(),
+    timeoutMs: 10 * 60_000,
+  });
+  expect(uninstall.exitCode, resultText(uninstall)).toBe(0);
+  const volumeAfter = await runtimeProvider.command(["volume", "inspect", stateVolume], {
+    artifactName: "phase-7-state-volume-after-uninstall",
+    timeoutMs: 30_000,
+  });
+  expect(volumeAfter.exitCode, resultText(volumeAfter)).not.toBe(0);
+  const reonboard = await runOnboard(
+    host,
+    SANDBOX_A,
+    fakeBaseUrl,
+    "phase-7-same-name-onboard-after-uninstall",
+  );
+  expect(reonboard.exitCode, resultText(reonboard)).toBe(0);
+  return volumeAfter.exitCode !== 0 && reonboard.exitCode === 0;
+}
+
 test(
   "double-onboard: reuses the gateway, isolates a sibling, and replaces stale state",
   {
@@ -284,6 +322,7 @@ test(
         "verify sibling native endpoint accepts authenticated requests",
         "stop sibling sandbox without disturbing the first forward",
         "replace sandbox after stale registry refusal",
+        "uninstall removes OpenClaw state and permits same-name onboarding",
         "remove double-onboard resources",
       ],
     },
@@ -412,6 +451,9 @@ test(
         "stopping the sibling releases only its dashboard forward",
         "status and connect preserve a stale local registration",
         "explicit removal permits a clean replacement and complete cleanup",
+        ...(process.env.NEMOCLAW_AGENT === "hermes"
+          ? []
+          : ["uninstall removes the managed OpenClaw state volume before same-name onboarding"]),
       ],
     });
 
@@ -689,6 +731,11 @@ test(
     });
     expect(registryHas(SANDBOX_A), "replacement did not register sandbox A").toBe(true);
 
+    const uninstallRemovedOpenClawState =
+      process.env.NEMOCLAW_AGENT === "hermes"
+        ? null
+        : await uninstallThenOnboardSameName(host, runtimeProvider, progress, fake.baseUrl);
+
     progress.phase("remove double-onboard resources");
     const destroyError = await cleanupDoubleOnboardResources(
       host,
@@ -726,6 +773,7 @@ test(
           retainedForwardAAfterStop.reachable &&
           listenerAAfterStop.valid,
         staleRegistrationRecovered: replacement.exitCode === 0,
+        uninstallRemovedOpenClawState,
         cleanupComplete:
           !registryHas(SANDBOX_A) &&
           !registryHas(SANDBOX_B) &&

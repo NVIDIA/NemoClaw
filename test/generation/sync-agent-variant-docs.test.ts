@@ -293,6 +293,35 @@ Run $$nemoclaw list.
     }
   });
 
+  it.each([
+    ["openclaw", "nemoclaw"],
+    ["hermes", "nemohermes"],
+    ["deepagents", "nemo-deepagents"],
+  ] as const)("renders managed vLLM recovery with a required port for %s", (variant, cli) => {
+    const setupPath = path.join(REPO_ROOT, "docs/inference/set-up-vllm.mdx");
+    const setup = renderAgentVariantPage(readFileSync(setupPath, "utf8"), variant, {
+      sourcePath: setupPath,
+    });
+    const troubleshootingPath = path.join(REPO_ROOT, "docs/reference/troubleshooting.mdx");
+    const troubleshooting = renderAgentVariantPage(
+      readFileSync(troubleshootingPath, "utf8"),
+      variant,
+      {
+        sourcePath: troubleshootingPath,
+      },
+    );
+    expect(setup).toContain(
+      "To recreate the container, follow [Handle a Running vLLM Server](#handle-a-running-vllm-server) with the original model and port settings.",
+    );
+    expect(troubleshooting).toContain(
+      "To recreate the container, follow [Handle a Running vLLM Server](../inference/local-inference/set-up-vllm#handle-a-running-vllm-server) with the original model and port settings.",
+    );
+    expect(setup).toContain(
+      'NEMOCLAW_VLLM_PORT="${VLLM_HOST_PORT:?Set the recorded host port first.}" \\\n' +
+        `    NEMOCLAW_PROVIDER=install-vllm ${cli} onboard`,
+    );
+  });
+
   function renderHermesCommandsVariant(source: string): string {
     return renderAgentVariantPage(source, "hermes", {
       sourcePath: "/repo/docs/reference/commands.mdx",

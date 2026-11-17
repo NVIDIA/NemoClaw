@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+  readSwitchyardProviderBindingsEnvironment,
+} from "../../hermes-switchyard-routing";
+
 import { Buffer } from "node:buffer";
 import { createHash, X509Certificate } from "node:crypto";
 
@@ -9,6 +14,10 @@ import { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../../inference/ollama-r
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { withLocalNoProxy } from "../../proxy/local-no-proxy";
+import {
+  HERMES_SWITCHYARD_ROUTING_ENV,
+  readHermesSwitchyardRoutingEnvironment,
+} from "../../hermes-switchyard-routing";
 import {
   MAX_CORPORATE_CA_BYTES,
   MAX_CORPORATE_CA_CERTS,
@@ -66,7 +75,7 @@ export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
  */
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
   openclaw: "b4a3fa7060c7b7f5654c271513398666ccf52e36dcc2ff4ac8064b1d801841cf",
-  hermes: "795c97be2dcb1921e06328a6d23b1f7389ebb2f6a085fa67b7aaa0f287ce88e0",
+  hermes: "566904b99ca27b8cb12e3e8929eef6a73d7fd9ab1a0d0f4362939be6f2a912e2",
   "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
   pi: "6302d387182c596fd67ad18577ecf82107bad6271aeeb5e69714115f91557abb",
 } as const satisfies Record<ManagedStartupAgent, string>;
@@ -641,6 +650,12 @@ function profilePathExists(profile: ManagedStartupProfile, profilePath: string):
 function assertInventoryPathsResolved(profile: ManagedStartupProfile): void {
   for (const affordance of MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent]) {
     if (profile.inference === null && affordance.profilePath.startsWith("inference.")) continue;
+    if (
+      affordance.input === HERMES_SWITCHYARD_BINDINGS_ENV &&
+      profile.agentConfig.agent === "hermes" &&
+      !profile.agentConfig.switchyardRouting
+    )
+      continue;
     if (!profilePathExists(profile, affordance.profilePath)) {
       fail(`${affordance.input} has no resolved value at ${affordance.profilePath}`);
     }
@@ -831,6 +846,21 @@ function assertEnvironmentConsistency(
         profile.tools.enabledGateways,
       );
     }
+    if (presentEnvironmentValue(environment, HERMES_SWITCHYARD_ROUTING_ENV) !== null) {
+      assertEquivalent(
+        HERMES_SWITCHYARD_ROUTING_ENV,
+        readHermesSwitchyardRoutingEnvironment(environment),
+        config.switchyardRouting ?? null,
+      );
+    }
+    if (presentEnvironmentValue(environment, HERMES_SWITCHYARD_BINDINGS_ENV) !== null) {
+      if (!config.switchyardRouting) fail("Switchyard provider bindings require routing intent");
+      assertEquivalent(
+        HERMES_SWITCHYARD_BINDINGS_ENV,
+        readSwitchyardProviderBindingsEnvironment(environment, config.switchyardRouting),
+        config.switchyardBindings,
+      );
+    }
   } else if (profile.agentConfig.agent === "langchain-deepagents-code") {
     const config = profile.agentConfig;
     const approval = presentEnvironmentValue(environment, "NEMOCLAW_DCODE_AUTO_APPROVAL");
@@ -940,7 +970,20 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
     };
   } else if (input.agent === "hermes") {
     if (!webSearch) fail("Hermes web-search state is missing");
-    agentConfig = { agent: "hermes", webSearch };
+    const switchyardRouting = readHermesSwitchyardRoutingEnvironment(input.environment);
+    agentConfig = {
+      agent: "hermes",
+      webSearch,
+      switchyardRouting,
+      ...(switchyardRouting
+        ? {
+            switchyardBindings: readSwitchyardProviderBindingsEnvironment(
+              input.environment,
+              switchyardRouting,
+            ),
+          }
+        : {}),
+    };
     tuning = {
       contextWindow: parsePositiveInteger(input.environment, "NEMOCLAW_CONTEXT_WINDOW", null, {
         minimum: MIN_HERMES_CONTEXT_WINDOW,

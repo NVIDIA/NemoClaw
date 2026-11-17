@@ -263,6 +263,7 @@ describe("onboard session", () => {
         model: "qwen3.5:9b",
         endpointUrl: "http://127.0.0.1:11435/v1",
         credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
         sandboxName: "rejected-review",
         sandboxPromptProgress: {
           sandboxName: true,
@@ -300,6 +301,7 @@ describe("onboard session", () => {
       model: null,
       endpointUrl: null,
       credentialEnv: null,
+      preferredInferenceApi: null,
       sandboxName: null,
       sandboxPromptProgress: { sandboxName: false },
       lastStepStarted: null,

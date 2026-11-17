@@ -778,7 +778,25 @@ function classifyProfileEquality(
   expected: ManagedStartupProfile,
 ): ExportFinding[] {
   const findings: ExportFinding[] = [];
-  if (!hasEqualJsonStructure(profile.inference, expected.inference)) {
+  const unsupportedInputs =
+    profile.agent === "openclaw" && profile.inference?.inputModalities?.includes("image") === true;
+  if (unsupportedInputs) {
+    findings.push(
+      finding(
+        "source.workload.startupProfile.inference.inputModalities",
+        "unsupported",
+        "V1 config export cannot preserve OpenClaw image input. " +
+          "To export a text-only configuration, onboard a new sandbox with NEMOCLAW_INFERENCE_INPUTS=text. " +
+          "Keep this sandbox to retain image input.",
+      ),
+    );
+  }
+  // V1 cannot express image input; keep drift checks for every other route field.
+  const inference =
+    unsupportedInputs && profile.inference && expected.inference
+      ? { ...profile.inference, inputModalities: expected.inference.inputModalities }
+      : profile.inference;
+  if (!hasEqualJsonStructure(inference, expected.inference)) {
     findings.push(
       finding(
         "spec.inferenceProviders",

@@ -68,7 +68,7 @@ export type SandboxInferenceInvocationInput = {
 
 export type SandboxInferenceInvocationResult =
   | { ok: true }
-  | { ok: false; detail: string; httpStatus: number | null; endpoint?: string };
+  | { ok: false; detail: string; httpStatus: number | null; endpoint?: string; timedOut?: true };
 
 export type SandboxInferenceInvocationDeps = {
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
@@ -360,14 +360,28 @@ export async function probeSandboxInferenceInvocation(
     };
   }
   const httpStatus = result.stdout.match(/(?:^|\n)([1-5]\d\d)(?:\n|$)/)?.[1];
+  const timedOut =
+    result.status === 28 &&
+    result.stdout.split("\n").some((line) => line.trim() === "curl-error:28") &&
+    !httpStatus;
   // Only the fixed marker is read back, never the line that carried it, so an
   // upstream body can still not reach diagnostics (#6195).
   const nvcfFunctionNotFound = result.stdout
     .split("\n")
     .some((line) => line.trim() === NVCF_FUNCTION_NOT_FOUND_MARKER);
-  const detail = httpStatus
-    ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
-    : `sandbox inference invocation probe exited with status ${result.status}`;
+  // Retain only curl's numeric CONNECT refusal, never arbitrary proxy stderr.
+  // This status belongs to the proxy, not the upstream inference endpoint.
+  const proxyConnectStatus =
+    result.status === 56 && result.stdout.split("\n").some((line) => line === "curl-error:56")
+      ? result.stderr.match(
+          /(?:^|\n)curl: \(56\) CONNECT tunnel failed, response (403|407)\r?(?:\n|$)/,
+        )?.[1]
+      : undefined;
+  const detail = timedOut
+    ? "sandbox inference invocation timed out before the upstream answered"
+    : httpStatus
+      ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
+      : `sandbox inference invocation probe exited with status ${result.status}${proxyConnectStatus ? ` (proxy CONNECT returned HTTP ${proxyConnectStatus})` : ""}`;
   const legacyDnsFailure =
     input.nativeProvider !== true &&
     result.stdout.split("\n").some((line) => line.trim() === "curl-error:6") &&
@@ -381,6 +395,7 @@ export async function probeSandboxInferenceInvocation(
           ? `${detail}. The legacy inference route could not be resolved. If that route is no longer available, recreate this sandbox to use native inference.`
           : detail,
     httpStatus: httpStatus ? Number.parseInt(httpStatus, 10) : null,
+    ...(timedOut ? { timedOut: true as const } : {}),
     endpoint: resolveSandboxInferenceInvocationEndpoint(input),
   };
 }

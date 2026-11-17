@@ -142,6 +142,7 @@ describe("selected route consumers", () => {
     expect(
       await verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "ollama-local", {
         sandboxName: "alpha",
+        resolveInferenceRoute: vi.fn(),
         dockerDriverGateway: true,
         selectedRoute: "native",
         env: HOST_NETWORK_ENV,
@@ -151,6 +152,7 @@ describe("selected route consumers", () => {
     const verifyDirectSandboxGpu = vi.fn();
     await verifyGpuSandboxAfterReady(GPU_CONFIG, "ollama-local", {
       sandboxName: "alpha",
+      resolveInferenceRoute: vi.fn(),
       dockerDriverGateway: true,
       selectedRoute: "native",
       verifyDirectSandboxGpu,
@@ -169,6 +171,7 @@ describe("selected route consumers", () => {
       await expect(
         verifyGpuSandboxAfterReady(GPU_CONFIG, "ollama-local", {
           sandboxName: "alpha",
+          resolveInferenceRoute: vi.fn(),
           dockerDriverGateway: true,
           selectedRoute: "native",
           verifyDirectSandboxGpu: vi.fn(() => {

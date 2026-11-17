@@ -7,7 +7,9 @@ Fresh Hermes named profiles intentionally omit ``config.yaml``. The upstream
 v2026.9.14 defaults would therefore enable smart command approval, browser
 evaluation of sensitive primitives, reasoning/commentary display, update-time
 state mutation, disk-backed SQLite temporary storage, and indefinite gateway
-sessions outside NemoClaw's generated default home.
+sessions outside NemoClaw's generated default home. When the image has no web
+backend, they would also offer web tools through the keyless public search
+backends that the sandbox egress policy blocks.
 
 This image-level compatibility patch changes only the pinned upstream default
 leaves that NemoClaw already writes explicitly for its default and dashboard
@@ -151,6 +153,12 @@ def patch_config_source(source: str, values: dict[str, object]) -> str:
             f'        "refresh_cua_driver": {_literal(values["updates.refresh_cua_driver"])}',
         ),
     )
+    if "web.keyless_fallback" in values:
+        replacements += ((
+            '"keyless_fallback": True,',
+            "# NemoClaw compatibility override: no web backend, so no anonymous search.\n"
+            f'        "keyless_fallback": {_literal(values["web.keyless_fallback"])},',
+        ),)
     return _replace_exact(source, replacements, label="Hermes config")
 
 

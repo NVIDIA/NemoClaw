@@ -1485,10 +1485,7 @@ describe("runInferenceSet compatible providers", () => {
       inferenceRouteMutator: { setInferenceRoute: noBindingSet },
     });
     await expect(
-      runInferenceSet(
-        { provider: "nvidia-router", model: "gpt-test", noVerify: true },
-        noBindingDeps,
-      ),
+      runInferenceSet({ provider: "nvidia-nim", model: "gpt-test", noVerify: true }, noBindingDeps),
     ).rejects.toThrow("provider not found");
     expect(noBindingSet).toHaveBeenCalledOnce();
   });

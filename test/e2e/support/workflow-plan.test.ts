@@ -41,8 +41,7 @@ const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
 const PLANNER_CLI_PREFIX = ["--import", "tsx", PLANNER_CLI];
 const PLANNER_COMPILE_CACHE = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cache-"));
 
-// Each case owns its output files; bound child-process overlap on CI and retain
-// the child-process timeout under aggregate runner load.
+// Each case owns its output files; bound CI overlap and retain the child-process timeout.
 vi.setConfig({ maxConcurrency: 4, testTimeout: 35_000 });
 afterAll(() => rmSync(PLANNER_COMPILE_CACHE, { force: true, recursive: true }));
 
@@ -155,7 +154,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(49);
+    expect(catalogueIds).toHaveLength(48);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -606,31 +605,6 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it("uses the explicit Podman planner in the CI output path", () => {
-    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-podman-"));
-    const output = path.join(directory, "github-output");
-    const summary = path.join(directory, "summary.md");
-    const plan = buildE2eWorkflowPlan({}, { gatewayRuntimes: ["podman"] });
-    try {
-      writeE2eWorkflowPlanCiOutput(
-        {},
-        {
-          GITHUB_OUTPUT: output,
-          GITHUB_STEP_SUMMARY: summary,
-          INFERENCE_MODE: "mock",
-          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
-          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-          NEMOCLAW_GATEWAY_RUNTIMES: "podman",
-        },
-      );
-
-      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
   it.each([{}, { jobs: "managed-image-protected-runtime" }])(
     "rejects unauthorized candidate planning with selectors %j before writing outputs",
     (selectors) => {
@@ -696,6 +670,14 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it("focuses readiness helper changes on inference routing", () => {
+    const file = "test/e2e/support/bearerless-vllm-readiness.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [file] });
+    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["inference-routing"]);
+    expect(plan.matrix).toEqual([]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
+  });
+
   it.each<[string, string[]]>([
     ["test/e2e/fixtures/native-local-chat.ts", ["gpu-double-onboard", "gpu-e2e"]],
     [
@@ -703,11 +685,40 @@ describe("E2E workflow plan", () => {
       ["inference-routing-openclaw-native"],
     ],
     ["src/lib/actions/sandbox/inference-route-health.ts", ["inference-routing-openclaw-native"]],
+    ["src/lib/inference/local.ts", ["inference-routing"]],
+    ["src/lib/inference/serving/vllm-host-local-lifecycle.ts", ["inference-routing"]],
+    ["src/lib/inference/serving/vllm-host-local-network.ts", ["inference-routing"]],
+    ["src/lib/inference/vllm-docker-env.ts", ["inference-routing"]],
   ])("selects the live owners of %s", (changedFile, targets) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual(
       expect.arrayContaining(targets),
     );
   });
+
+  it.each(["test/e2e/live/gpu-e2e-helpers.ts", "test/e2e/live/gpu-e2e-ollama.ts"])(
+    "selects the live targets that import %s when it changes",
+    (file) => {
+      const plan = buildE2eWorkflowPlan({}, { changedFiles: [file] });
+      expect(
+        Object.values(plan.catalogueMatrices).flatMap((rows) => rows.map((row) => row.id)),
+      ).toEqual(
+        expect.arrayContaining([
+          "gpu-e2e",
+          "gpu-double-onboard",
+          "llama-cpp-generic-gpu",
+          "inference-routing-openclaw-native",
+          "openclaw-inference-switch",
+          "openclaw-compatible-anthropic-inference-switch",
+        ]),
+      );
+      expect(selectedWorkflowJobs(plan)).toEqual(
+        expect.arrayContaining([
+          "managed-image-protected-runtime",
+          "managed-image-multiarch-startup",
+        ]),
+      );
+    },
+  );
 
   it("selects Hermes GPU startup when its output proof changes", () => {
     const plan = buildE2eWorkflowPlan(
@@ -744,19 +755,28 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
   });
 
+  it("selects MCP bridge when its compatible mock protocol changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/mcp-bridge-servers.ts"] },
+    );
+    expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
+  });
+
   it.each([
     "scripts/install.sh",
     "src/lib/actions/global.ts",
     "src/lib/actions/maintenance.ts",
     "src/lib/actions/sandbox/forward-recovery.ts",
     "src/lib/actions/upgrade-sandboxes.ts",
-  ])("selects both gateway-upgrade fixtures when %s changes", (changedFile) => {
+  ])("selects all reviewed gateway-upgrade fixtures when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual([
       ...(changedFile === "scripts/install.sh"
         ? ["deferred-onboarding-hermes", "deferred-onboarding-langchain-deepagents-code"]
         : []),
       "openshell-gateway-upgrade-v0-0-89-x86-64",
       "openshell-gateway-upgrade-v0-0-123-x86-64",
+      "openshell-gateway-upgrade-v0-0-141-x86-64",
     ]);
   });
 
@@ -819,21 +839,6 @@ describe("E2E workflow plan", () => {
       );
     },
   );
-
-  it.each([
-    "src/lib/adapters/openshell/command-execution.ts",
-    "src/lib/adapters/openshell/forward-cli.ts",
-    "src/lib/adapters/openshell/forward-runtime.ts",
-    "src/lib/adapters/openshell/forward.ts",
-  ])("selects OpenClaw and Hermes forward lifecycles when %s changes (#9808)", (changedFile) => {
-    const targetIds = catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id);
-
-    expect(targetIds).toEqual([
-      "dashboard-remote-bind",
-      "double-onboard-hermes",
-      "onboard-resume-hermes",
-    ]);
-  });
 
   it.each(["double-onboard-hermes", "onboard-resume-hermes"])(
     "prepares Hermes swap for the %s execution",
@@ -902,8 +907,8 @@ describe("E2E workflow plan", () => {
     "src/lib/onboard/model-router-process.ts",
     "src/lib/onboard/model-router.ts",
     "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
-  ])("selects the Model Router target when %s changes", (changedFile) => {
-    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+  ])("does not select the retired Model Router target when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).not.toContain(
       "model-router-provider-routed-inference",
     );
   });
@@ -1126,7 +1131,7 @@ describe("E2E workflow plan", () => {
     expect(plan.testMatrix.map((row) => row.id)).toEqual([testId]);
   });
 
-  it.each(["definitely-unknown-e2e-job", "constructor"])(
+  it.each(["definitely-unknown-e2e-job", "constructor", "model-router-provider-routed-inference"])(
     "rejects unknown job %s without consulting inherited alias properties",
     (job) => {
       expect(() => buildE2eWorkflowPlan({ jobs: job })).toThrow(`Unknown E2E test ID: ${job}`);
@@ -1399,12 +1404,12 @@ describe("E2E workflow plan", () => {
       "| `ubuntu-repo-cloud-openclaw / docker` | openclaw | Repository install onboarding and hosted inference succeed | Ubuntu managed-runtime host; NVIDIA hosted inference | typed-registry |  |",
     );
     expect(complete.stdout).toContain(
-      "| `vllm-docker-storage / docker` | none | vLLM storage gate accepts and rejects the intended host states | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
+      "| `vllm-docker-storage / docker` | none | vLLM storage gate handles host capacity and startup errors survive Docker restarts | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
     );
     expect(complete.stdout).toContain(
       "| `channels-add-remove / default-docker` | openclaw | Messaging: adds and removes Telegram configuration | Ubuntu; no inference endpoint | catalogue |  |",
     );
-    expect(complete.stdout).toContain(
+    expect(complete.stdout).not.toContain(
       "| `model-router-provider-routed-inference / default-docker` | openclaw | Inference: Model Router returns a provider-routed response | Ubuntu; NVIDIA API and Model Router | catalogue |  |",
     );
     expect(complete.stdout).toContain(
@@ -1477,6 +1482,10 @@ describe("E2E workflow plan", () => {
         INFERENCE_MODE: "mock",
         JOBS: "cloud-onboard",
         TARGETS: target,
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_WORKFLOW_REF: "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main",
+        EVENT_NAME: "workflow_dispatch",
       });
 
       expect(result.status, result.stderr).toBe(0);

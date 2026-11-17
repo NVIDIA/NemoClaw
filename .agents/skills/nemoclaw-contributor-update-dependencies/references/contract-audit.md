@@ -40,6 +40,19 @@ For each material upstream change:
 Do not conclude `no-impact` from an empty literal search. Cite both the upstream boundary and the
 downstream call path or exclusion.
 
+## Check build and validation boundaries
+
+For affected artifacts, trace source inputs through generation, checksums, overlays, cache selection, and runtime installation.
+Verify that a staging overlay carries the compatible inputs used by its candidate build.
+Verify that changed build inputs invalidate the owning cache, or cite an existing equivalence check that permits reuse.
+Inspect the current selector and version validators together; a fresh install does not prove an existing installation rejects stale state.
+
+Select the earliest executable check that can detect each discovered mismatch.
+Check dependency resolution and installation consistency against the target artifact's metadata on the supported platform.
+Exercise changed downstream patches and consumers, including repeat application or removal when their contract requires it.
+Keep historical regressions in their owning tests; do not copy release-specific cases into this reusable procedure.
+When an existing fast check covers the concern, use it instead of adding a duplicate suite.
+
 ## Concern record
 
 Record one independently reviewable failure mode per concern:

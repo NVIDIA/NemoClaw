@@ -163,8 +163,44 @@ function makeStagedHermesMessagingPlan() {
   });
 }
 
+function disabledDiscordRebuildHarness(recorded: ReturnType<typeof makeStagedHermesMessagingPlan>) {
+  const harness = createRebuildFlowHarness({
+    sandboxEntry: {
+      agent: "hermes",
+      provider: "nvidia-prod",
+      model: MODEL,
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      messaging: { schemaVersion: 1, plan: recorded },
+    },
+    buildMessagingRebuildPlan: () => ({
+      ...recorded,
+      channels: recorded.channels.map((channel) => ({ ...channel, active: false, disabled: true })),
+      disabledChannels: ["discord"],
+    }),
+    hydrateCredentialEnv: () => "saved-provider-key",
+    runOpenshell: providerRuntime(["nvidia-prod"]),
+  });
+  configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+  return harness;
+}
+
 describe("rebuildSandbox flow: credential preflight", () => {
   installRebuildFlowTestHooks();
+
+  it.each(["routed", "nvidia-router"])(
+    "rejects retired %s before rebuild backup or deletion",
+    async (provider) => {
+      const harness = createRebuildFlowHarness({ sandboxEntry: { provider } });
+      const before = structuredClone(harness.session);
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+      ).rejects.toThrow("Model Router has been removed");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.session).toEqual(before);
+    },
+  );
 
   it.each(["hermes", "langchain-deepagents-code"] as const)(
     "rebuilds native local %s with only its scoped provider",
@@ -210,6 +246,59 @@ describe("rebuildSandbox flow: credential preflight", () => {
       expect(diagnostics(harness)).not.toContain("private provider diagnostic");
     },
   );
+
+  it.each([
+    { agent: "openclaw", recovery: false },
+    { agent: null, recovery: false },
+    { agent: "openclaw", recovery: true },
+  ])(
+    "refuses an invalid tools/list timeout for agent=$agent recovery=$recovery before mutation (#14435)",
+    async ({ agent, recovery }) => {
+      vi.stubEnv("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", "500");
+      const harness = createRebuildFlowHarness({ sandboxEntry: { agent } });
+      const before = structuredClone(harness.getSandboxEntry());
+      const recoveryManifest = recovery ? makePreparedRecoveryManifest() : undefined;
+      const recoveryBefore = structuredClone(recoveryManifest);
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true, recoveryManifest }),
+      ).rejects.toThrow("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS");
+
+      expect(diagnostics(harness)).toContain("1500 to 10000");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.getSandboxEntry()).toEqual(before);
+      expect(recoveryManifest).toEqual(recoveryBefore);
+    },
+  );
+
+  it.each([undefined, " 3000 "])(
+    "continues rebuild with tools/list timeout %s (#14435)",
+    async (value) => {
+      vi.stubEnv("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", value);
+      const harness = createRebuildFlowHarness();
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.onboardSpy).toHaveBeenCalled();
+    },
+  );
+
+  it("ignores an invalid OpenClaw tools/list timeout when rebuilding Hermes (#14435)", async () => {
+    vi.stubEnv("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS", "500");
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: { agent: "hermes" },
+      beforeBackup: () => {
+        throw new Error("reached backup");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("reached backup");
+  });
 
   it("rechecks native Hermes authority after asynchronous policy recapture", async () => {
     const { harness, verify, refresh } = createNativeLocalRebuildHarness("hermes");
@@ -770,6 +859,38 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
+  it("stops before backup when staged Discord would disable an active channel (#13809)", async () => {
+    const harness = disabledDiscordRebuildHarness(makeStagedHermesMessagingPlan());
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Rebuild would disable active messaging channels: discord");
+    expect(diagnostics(harness)).toContain("messaging plan validation failed.");
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["stopped", { active: false, disabled: true }, ["discord"]],
+    ["stopped-list", { active: true, disabled: false }, ["discord"]],
+    ["pending-removal", { active: true, disabled: false, pendingRemoval: true }, []],
+  ] as const)(
+    "allows recorded %s Discord state during rebuild (#13809)",
+    async (_state, flags, disabledChannels) => {
+      const recorded = makeStagedHermesMessagingPlan();
+      const harness = disabledDiscordRebuildHarness({
+        ...recorded,
+        disabledChannels: [...disabledChannels],
+        channels: recorded.channels.map((channel) => ({ ...channel, ...flags })),
+      });
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    },
+  );
+
   it("copies the staged Hermes messaging plan into the rebuild resume session", async () => {
     const plan = makeStagedHermesMessagingPlan();
     const harness = createRebuildFlowHarness({
@@ -798,7 +919,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
   it("stops before backup when the agent base-image preflight fails", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: { agent: "hermes", provider: "nvidia-prod" },
       baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
     });
 

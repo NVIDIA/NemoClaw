@@ -71,7 +71,7 @@ jobs:
         if: ${{ steps.approval.outputs.head_sha != '' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
       - name: Install reviewed npm
         if: ${{ steps.approval.outputs.head_sha != '' }}
         uses: ./.github/actions/setup-reviewed-npm

@@ -37,6 +37,9 @@ const canonicalCredentialFilterBoundary = path.resolve(
 const canonicalOpenShellExternalTargetBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-external-target-boundary.cts",
 );
+const canonicalOpenShellGatewayEndpointBoundary = path.resolve(
+  "nemoclaw/src/shared/openshell-gateway-endpoint-boundary.cts",
+);
 const canonicalOpenShellObservationBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-observation-boundary.cts",
 );
@@ -63,6 +66,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*openshell-external-target-boundary\.cjs$/,
     replacement: canonicalOpenShellExternalTargetBoundary,
+  },
+  {
+    find: /^.*openshell-gateway-endpoint-boundary\.cjs$/,
+    replacement: canonicalOpenShellGatewayEndpointBoundary,
   },
   {
     find: /^.*openshell-observation-boundary\.cjs$/,

@@ -229,6 +229,8 @@ export type StartOpenShellForwardRequest = Readonly<{
 }>;
 
 export type RetireLegacyOpenShellForwardRequest = Readonly<{
+  /** Also retire an owned wildcard direct forward before replacing it with loopback. */
+  migrateToLoopback?: boolean;
   forward: OpenShellForwardIdentity;
   timeoutMs?: number;
   assertCurrent?: () => Promise<void>;

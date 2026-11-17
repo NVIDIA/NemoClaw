@@ -9,7 +9,48 @@ import {
   PROTECTED_MANAGED_IMAGE_PLATFORMS,
   PROTECTED_MANAGED_IMAGE_SHA_PATTERN,
   type ProtectedManagedImagePlatform,
+  type ProtectedManagedImageEvidence,
+  type ProtectedManagedImageEvidenceIdentity,
+  type ProtectedManagedImageDirectRun,
+  parseProtectedManagedImageEvidence,
 } from "../../../scripts/checks/protected-managed-image-contract.ts";
+
+/** Older trusted producers require the same native check at the consuming boundary. */
+export async function qualifyProtectedHermesEvidence(
+  value: unknown,
+  identity: ProtectedManagedImageEvidenceIdentity,
+  qualify: (contract: ProtectedManagedImageDirectRun) => Promise<void>,
+): Promise<ProtectedManagedImageEvidence> {
+  const source = value as { directRuns?: unknown } | null;
+  const runs = source && Array.isArray(source.directRuns) ? source.directRuns : [];
+  const missing = runs.some(
+    (run) =>
+      run &&
+      typeof run === "object" &&
+      run.agent === "hermes" &&
+      !Object.hasOwn(run, "hermesDiscordStatus"),
+  );
+  // Validate every identity and contract before running an image. Return the
+  // native result only after qualification succeeds; never rewrite its source artifact.
+  const evidence = parseProtectedManagedImageEvidence(
+    missing
+      ? {
+          ...source,
+          directRuns: runs.map((run) =>
+            run &&
+            typeof run === "object" &&
+            run.agent === "hermes" &&
+            !Object.hasOwn(run, "hermesDiscordStatus")
+              ? { ...run, hermesDiscordStatus: "passed" }
+              : run,
+          ),
+        }
+      : value,
+    identity,
+  );
+  if (missing) await qualify(evidence.directRuns.find((run) => run.agent === "hermes")!);
+  return evidence;
+}
 
 export interface ProtectedManagedImageDispatchEnvironment {
   artifactDirectory: string;

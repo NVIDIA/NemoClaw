@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { StdioOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import type { CapturedProcessChild } from "../../../core/process-capture";
 import type { ProcessSessionSignals } from "../../../core/process-session";
 import { createCliOpenShellSandboxSessionExecutor } from "../../../adapters/openshell/sandbox-command-cli";
+import type { OpenShellSandboxSessionRequest } from "../../../adapters/openshell/sandbox-session";
 import {
+  AGENT_STDIN_MAX_BYTES,
+  dispatchWithAgentStdinDeadline,
+  readAgentStdinWithinDeadline,
   runAgentDispatch,
   canCloseAgentStdin,
   hasOpenClawAgentSelector,
@@ -381,5 +387,173 @@ describe("agent dispatch execution deadline", () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+});
+
+describe("agent piped-input deadline (#13621)", () => {
+  const request: OpenShellSandboxSessionRequest = {
+    kind: "command",
+    sandboxName: "alpha",
+    target: { kind: "selected" },
+    command: ["openclaw", "agent", "--agent", "main"],
+    tty: false,
+    output: "capture",
+  };
+  const delivered = {
+    outcome: { kind: "exited" as const, exitCode: 0 },
+    stdout: "PONG\n",
+    stderr: "",
+  };
+  const runner = () => vi.fn(async (_request: OpenShellSandboxSessionRequest) => delivered);
+
+  it("hands piped input that reached EOF to OpenShell", async () => {
+    const run = runner();
+    const readStdin = vi.fn(async () => ({ kind: "eof" as const, data: Buffer.from("ping\n") }));
+
+    const result = await dispatchWithAgentStdinDeadline(request, 30, run, {
+      stdinIsTty: () => false,
+      readStdin,
+    });
+
+    expect(result).toEqual(delivered);
+    expect(readStdin).toHaveBeenCalledWith(30_000);
+    expect(run).toHaveBeenCalledWith({ ...request, stdin: Buffer.from("ping\n") });
+  });
+
+  it.each([
+    [
+      { kind: "deadline" as const },
+      "Timed out after 1 second(s) waiting for the piped message to end.",
+    ],
+    [{ kind: "too-large" as const }, `The piped message exceeds ${AGENT_STDIN_MAX_BYTES} bytes.`],
+    [{ kind: "read-error" as const }, "Could not read the piped message from stdin."],
+  ])("fails before dispatch when piped input does not end cleanly %#", async (read, problem) => {
+    const run = runner();
+
+    const result = await dispatchWithAgentStdinDeadline(request, 1, run, {
+      stdinIsTty: () => false,
+      readStdin: async () => read,
+    });
+
+    expect(run).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ outcome: { kind: "exited", exitCode: 1 }, stdout: "" });
+    expect(result.stderr).toContain(problem);
+    expect(result.stderr).toContain("provide --message, or set --timeout <seconds>");
+  });
+
+  it.each([
+    ["closed stdin", { ...request, stdin: false }, false],
+    ["interactive terminal", request, true],
+  ])("keeps the %s posture without reading input", async (_name, prepared, terminal) => {
+    const run = runner();
+    const readStdin = vi.fn();
+
+    await dispatchWithAgentStdinDeadline(prepared as OpenShellSandboxSessionRequest, 30, run, {
+      stdinIsTty: () => terminal,
+      readStdin,
+    });
+
+    expect(readStdin).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith(prepared);
+  });
+
+  it.each([
+    [["--timeout", "1"], 1_000],
+    [[], 30_000],
+    [["--timeout", "1.5"], 30_000],
+    [["--unknown-flag", "--timeout", "1"], 30_000],
+    [["--", "--timeout", "1"], 30_000],
+    [["--timeout", String(Number.MAX_SAFE_INTEGER)], 30_000],
+  ])(
+    "uses a recognized --timeout, else 30 seconds, as the input deadline %#",
+    async (flags, ms) => {
+      const readStdin = vi.fn(async () => ({ kind: "deadline" as const }));
+
+      const result = await runOpenClawAgentDispatch(
+        "alpha",
+        ["openclaw", "agent", "--agent", "main", ...flags],
+        { getGatewayName: () => null, stdinIsTty: () => false, readStdin },
+      );
+
+      expect(readStdin).toHaveBeenCalledWith(ms);
+      expect(result.outcome).toEqual({ kind: "exited", exitCode: 1 });
+    },
+  );
+
+  it("hands EOF-delimited input from the default dispatch to OpenShell fd 0", async () => {
+    const harness = dispatchHarness();
+    const end = vi.fn();
+    harness.child.stdin = { on: vi.fn(), end };
+    const spawnChild = vi.fn(
+      (_binary: string, _args: readonly string[], _options: { stdio: StdioOptions }) => {
+        queueMicrotask(() => {
+          harness.stdout.emit("data", "PONG\n");
+          harness.child.exitCode = 0;
+          harness.childEvents.emit("close", 0, null);
+        });
+        return harness.child;
+      },
+    );
+
+    const result = await runOpenClawAgentDispatch(
+      "alpha",
+      ["openclaw", "agent", "--agent", "main"],
+      {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        stdinIsTty: () => false,
+        readStdin: async () => ({ kind: "eof", data: Buffer.from("ping\n") }),
+        spawnChild,
+      },
+    );
+
+    expect(spawnChild.mock.calls[0]?.[2].stdio).toEqual(["pipe", "pipe", "pipe"]);
+    expect(end).toHaveBeenCalledWith(Buffer.from("ping\n"));
+    expect(result).toMatchObject({ outcome: { kind: "exited", exitCode: 0 }, stdout: "PONG\n" });
+  });
+
+  it("reads piped input to EOF", async () => {
+    const source = new PassThrough();
+    const pending = readAgentStdinWithinDeadline(source, 1_000);
+
+    source.end("ping\n");
+
+    await expect(pending).resolves.toEqual({ kind: "eof", data: Buffer.from("ping\n") });
+  });
+
+  it("stops at the deadline while the producer keeps the pipe open", async () => {
+    vi.useFakeTimers();
+    try {
+      const source = new PassThrough();
+      const pending = readAgentStdinWithinDeadline(source, 1_000);
+      source.write("ping\n");
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(pending).resolves.toEqual({ kind: "deadline" });
+      expect(source.destroyed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a read error after partial input instead of a truncated message", async () => {
+    const source = new PassThrough();
+    const pending = readAgentStdinWithinDeadline(source, 1_000);
+
+    source.write("pi");
+    source.destroy(new Error("EIO"));
+
+    await expect(pending).resolves.toEqual({ kind: "read-error" });
+  });
+
+  it("stops at the size limit", async () => {
+    const source = new PassThrough();
+    const pending = readAgentStdinWithinDeadline(source, 1_000, 4);
+
+    source.write("12345");
+
+    await expect(pending).resolves.toEqual({ kind: "too-large" });
+    expect(source.destroyed).toBe(true);
   });
 });

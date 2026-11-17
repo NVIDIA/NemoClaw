@@ -11,9 +11,9 @@ if [[ ! -s "$manifest" || ! -s "$payload" ]]; then
   echo "::error::exact-commit CLI artifact is incomplete"
   exit 1
 fi
-[[ "$(node --version)" == "v24.18.1" ]] \
+[[ "$(node --version)" == "v24.22.1" ]] \
   || {
-    echo "::error::consumer must restore the CLI under the pinned Node 24.18.1 toolchain"
+    echo "::error::consumer must restore the CLI under the pinned Node 24.22.1 toolchain"
     exit 1
   }
 
@@ -49,7 +49,7 @@ jq -e \
     .workflow.sha == $workflowSha and
     .workflow.runId == $runId and
     .workflow.runAttempt == $runAttempt and
-    .toolchain.node == "v24.18.1" and
+    .toolchain.node == "v24.22.1" and
     .toolchain.npm == "12.0.2" and
     .toolchain.runnerOs == "Linux" and
     .toolchain.runnerArch == "X64" and

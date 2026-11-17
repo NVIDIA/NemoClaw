@@ -32,6 +32,7 @@ vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
 import {
   cleanupGatewayAfterLastSandbox,
   resolveGatewayCleanupRuntimeProviderId,
+  scopeSandboxDestroyOpenShellArgs,
 } from "./destroy-gateway";
 
 function packagedServiceOwner({
@@ -96,6 +97,43 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       stopped: [],
       sudoRemediationPids: [],
     });
+  });
+
+  it("allows named final-gateway lifecycle commands through the scoped destroy runner", async () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "unrecognized subcommand 'remove'" })
+      .mockReturnValue({ status: 0, stdout: "", stderr: "" });
+
+    await cleanupGatewayAfterLastSandbox("nemoclaw", (args, options) =>
+      runOpenshell(scopeSandboxDestroyOpenShellArgs(args, "nemoclaw"), options),
+    );
+
+    const calls = runOpenshell.mock.calls.map(([args]) =>
+      scopeSandboxDestroyOpenShellArgs(args, "nemoclaw"),
+    );
+    expect(calls).toEqual([
+      ["gateway", "remove", "nemoclaw"],
+      ["gateway", "destroy", "-g", "nemoclaw"],
+    ]);
+    expect(scopeSandboxDestroyOpenShellArgs(["gateway", "list", "-o", "json"], "nemoclaw")).toEqual(
+      ["gateway", "list", "-o", "json"],
+    );
+    expect(() =>
+      scopeSandboxDestroyOpenShellArgs(["gateway", "remove", "other-gateway"], "nemoclaw"),
+    ).toThrow("OpenShell command targets gateway 'other-gateway' instead of 'nemoclaw'.");
+    expect(() =>
+      scopeSandboxDestroyOpenShellArgs(["gateway", "destroy", "-g", "other-gateway"], "nemoclaw"),
+    ).toThrow("OpenShell command targets gateway 'other-gateway' instead of 'nemoclaw'.");
+    expect(() =>
+      scopeSandboxDestroyOpenShellArgs(
+        ["gateway", "remove", "nemoclaw", "-g", "nemoclaw"],
+        "nemoclaw",
+      ),
+    ).toThrow("OpenShell command contains multiple gateway targets.");
+    expect(() =>
+      scopeSandboxDestroyOpenShellArgs(["gateway", "select", "other"], "nemoclaw"),
+    ).toThrow();
   });
 
   it("recovers Podman cleanup authority after the sandbox registry row is gone", () => {

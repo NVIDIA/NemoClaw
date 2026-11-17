@@ -965,7 +965,12 @@ describe("post-merge documentation runner", () => {
     git(source, ["checkout", "main"]);
     input.env.GITHUB_SHA = git(source, ["rev-parse", "HEAD"]);
     const { tools } = runnerTools(input);
-    expect(() => executePostMergeDocs(input.env, tools)).toThrow();
+    const run = () => executePostMergeDocs(input.env, tools);
+    expect(run).toThrow(
+      `The managed documentation draft ${input.env.POST_MERGE_DOCS_PREVIOUS_SHA} conflicts with main ${input.env.GITHUB_SHA} in: docs/guide.mdx`,
+    );
+    expect(run).toThrow("CONFLICT (content): Merge conflict in docs/guide.mdx");
+    expect(run).toThrow("docs/AUTOMATION.md#resolve-a-draft-merge-conflict");
     expect(tools.run).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(input.root, "artifact/docs.patch"))).toBe(false);
   });

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { rejectRetiredModelRouterSession } from "../../inference/provider-key/contract";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
@@ -17,6 +18,8 @@ export interface OnboardResumeIntentSnapshot {
   readonly checkpointUpdatedAt: string;
   readonly machineRevision: number;
   readonly profile: CheckpointOnboardProfile;
+  readonly recordedAgent: string | null;
+  readonly recordedCustomImage: boolean;
 }
 
 export class OnboardResumeIntentError extends Error {
@@ -89,6 +92,7 @@ export function resolveOnboardResumeIntent(options: {
   const status = stored?.value.status;
   const effectiveResume = options.explicitResume || (!options.fresh && status === "in_progress");
   if (!effectiveResume) return { effectiveResume: false, snapshot: null };
+  rejectRetiredModelRouterSession(stored?.value);
   if (!stored) {
     throw new OnboardResumeIntentError("No resumable onboarding session was found.");
   }
@@ -142,6 +146,10 @@ export function resolveOnboardResumeIntent(options: {
       checkpointUpdatedAt: inspected.checkpoint.updatedAt,
       machineRevision: Number(machineRevision),
       profile,
+      recordedAgent: typeof stored.value.agent === "string" ? stored.value.agent : null,
+      recordedCustomImage:
+        isObjectRecord(stored.value.metadata) &&
+        Boolean(stored.value.metadata.fromDockerfile || stored.value.metadata.fromImage),
     },
   };
 }

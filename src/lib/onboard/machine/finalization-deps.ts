@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  formatOpenClawPairingMismatchField,
   OpenClawPairingIncompatibleError,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
   type OpenClawPairingSettlementObservation,
 } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
+
 import type { OpenClawPairingSettlementTarget } from "../../actions/sandbox/launch-readiness";
 import type {
   AutoPairWatcherStatus,
@@ -17,6 +19,7 @@ import { WATCHER_STATUS_TIMEOUT_MS } from "../../actions/sandbox/auto-pair-warmu
 import { sanitizeWedgeLogLine } from "../../actions/sandbox/gateway-wedge-diagnostics";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 
+export { formatOpenClawPairingMismatchField };
 export {
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
@@ -66,10 +69,13 @@ export type OrdinaryOpenClawPairingSettlementResult =
   | { readonly kind: "settled" }
   | {
       readonly kind: "incomplete";
+      readonly pairingField?: string;
       readonly reason:
         | "runtime-identity-invalid"
         | "pairing-lock-unavailable"
         | "pairing-unavailable"
+        | "startup-timeout"
+        | "startup-gateway-exited"
         | "pairing-incompatible"
         | "scope-warmup-failed"
         | "scope-upgrade-not-requested"
@@ -92,6 +98,8 @@ const ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES: Record<
   "runtime-identity-invalid": "its recorded OpenClaw runtime identity changed or is invalid",
   "pairing-lock-unavailable": "NemoClaw could not acquire the pairing settlement locks",
   "pairing-unavailable": "its canonical CLI device pairing did not appear",
+  "startup-timeout": "the native gateway startup deadline expired before pairing could start",
+  "startup-gateway-exited": "the native gateway exited before pairing could start",
   "pairing-incompatible":
     "its existing CLI pairing has incompatible metadata, scopes, or credentials",
   "scope-warmup-failed": "the bounded CLI scope warm-up could not run",
@@ -189,6 +197,7 @@ type PairingWaitResult =
       readonly kind: "timeout";
       readonly last: OpenClawPairingSettlementObservation | null;
       readonly incompatible: boolean;
+      readonly pairingField: string | null;
     };
 
 async function waitForPairingObservation(
@@ -201,9 +210,10 @@ async function waitForPairingObservation(
 ): Promise<PairingWaitResult> {
   let last: OpenClawPairingSettlementObservation | null = null;
   let incompatible = false;
+  let pairingField: string | null = null;
   while (true) {
     const remaining = deadline - deps.now();
-    if (remaining <= 0) return { kind: "timeout", last, incompatible };
+    if (remaining <= 0) return { kind: "timeout", last, incompatible, pairingField };
     if (!samePairingTarget(target, deps.getTarget(name))) return { kind: "target-changed" };
     try {
       const value = deps.observePairing(
@@ -220,15 +230,23 @@ async function waitForPairingObservation(
       }
       last = value;
       incompatible = false;
+      pairingField = null;
       if (!samePairingTarget(target, deps.getTarget(name))) return { kind: "target-changed" };
-      if (deadline - deps.now() <= 0) return { kind: "timeout", last, incompatible };
+      if (deadline - deps.now() <= 0) {
+        return { kind: "timeout", last, incompatible, pairingField };
+      }
       if (accept(value)) return { kind: "observed", value };
     } catch (error) {
-      if (error instanceof OpenClawPairingIncompatibleError) incompatible = true;
+      if (error instanceof OpenClawPairingIncompatibleError) {
+        incompatible = true;
+        pairingField = error.field;
+      }
       // Pairing state can be absent or changing while the startup watcher runs.
     }
     const remainingAfterAttempt = deadline - deps.now();
-    if (remainingAfterAttempt <= 0) return { kind: "timeout", last, incompatible };
+    if (remainingAfterAttempt <= 0) {
+      return { kind: "timeout", last, incompatible, pairingField };
+    }
     await deps.sleep(Math.min(OPENCLAW_ONBOARDING_PAIRING_POLL_MS, remainingAfterAttempt));
   }
 }
@@ -300,6 +318,7 @@ export async function settleOrdinaryOpenClawPairing(
           // already-settled device, and reuse an exact upgrade already pending.
           let initial: OpenClawPairingSettlementObservation | null = null;
           let initiallyIncompatible = false;
+          let initialPairingField: string | null = null;
           try {
             initial = deps.observePairing(
               name,
@@ -309,6 +328,9 @@ export async function settleOrdinaryOpenClawPairing(
             );
           } catch (error) {
             initiallyIncompatible = error instanceof OpenClawPairingIncompatibleError;
+            if (error instanceof OpenClawPairingIncompatibleError) {
+              initialPairingField = error.field;
+            }
             // Pairing may not have appeared yet. Wait for the canonical device
             // before running the request producer.
           }
@@ -316,7 +338,11 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
           if (initiallyIncompatible) {
-            return { kind: "incomplete", reason: "pairing-incompatible" };
+            return {
+              kind: "incomplete",
+              reason: "pairing-incompatible",
+              ...(initialPairingField ? { pairingField: initialPairingField } : {}),
+            };
           }
           if (deps.now() >= settlementDeadline) {
             return { kind: "incomplete", reason: "pairing-unavailable" };
@@ -340,12 +366,25 @@ export async function settleOrdinaryOpenClawPairing(
               return { kind: "incomplete", reason: "runtime-identity-invalid" };
             }
             if (pairingAppearance.kind === "timeout") {
-              return {
-                kind: "incomplete",
-                reason: pairingAppearance.incompatible
-                  ? "pairing-incompatible"
-                  : "pairing-unavailable",
-              };
+              const watcher = deps.readWatcherStatus(name, target.gatewayName);
+              if (!samePairingTarget(target, deps.getTarget(name))) {
+                return { kind: "incomplete", reason: "runtime-identity-invalid" };
+              }
+              if (pairingAppearance.incompatible) {
+                return {
+                  kind: "incomplete",
+                  reason: "pairing-incompatible",
+                  ...(pairingAppearance.pairingField
+                    ? { pairingField: pairingAppearance.pairingField }
+                    : {}),
+                };
+              }
+              const state = watcher?.state;
+              const reason =
+                state === "startup-timeout" || state === "startup-gateway-exited"
+                  ? state
+                  : "pairing-unavailable";
+              return { kind: "incomplete", reason };
             }
             initial = pairingAppearance.value;
           }
@@ -380,7 +419,11 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "settled" };
           }
           if (final.incompatible) {
-            return { kind: "incomplete", reason: "pairing-incompatible" };
+            return {
+              kind: "incomplete",
+              reason: "pairing-incompatible",
+              ...(final.pairingField ? { pairingField: final.pairingField } : {}),
+            };
           }
 
           if (
@@ -426,9 +469,15 @@ export async function settleOrdinaryOpenClawPairing(
 export function ordinaryOpenClawPairingIncompleteMessage(
   name: string,
   reason: OrdinaryOpenClawPairingIncompleteReason,
+  pairingField?: string,
 ): string {
   const cause = ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES[reason];
-  return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Resume or rerun onboarding.`;
+  if (reason === "startup-timeout" || reason === "startup-gateway-exited") {
+    return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Read the startup log with \`nemoclaw ${name} exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log\`. Correct the reported error, then run \`nemoclaw ${name} gateway restart\`. After the restart succeeds, resume onboarding.`;
+  }
+  const field =
+    reason === "pairing-incompatible" ? formatOpenClawPairingMismatchField(pairingField) : "";
+  return `OpenClaw onboarding for '${name}' is incomplete because ${cause}${field}. Resume or rerun onboarding.`;
 }
 
 function readRegistrySandbox(name: string) {
@@ -483,7 +532,9 @@ export const finalizationHandlerDeps = {
   async settleStartedOpenclawGatewayForConfiguration(name: string): Promise<boolean> {
     const pairing = await settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());
     if (pairing.kind === "settled") return true;
-    console.error(`  ${ordinaryOpenClawPairingIncompleteMessage(name, pairing.reason)}`);
+    console.error(
+      `  ${ordinaryOpenClawPairingIncompleteMessage(name, pairing.reason, pairing.pairingField)}`,
+    );
     return false;
   },
   async checkAndRecoverSandboxProcesses(
@@ -501,7 +552,7 @@ export const finalizationHandlerDeps = {
         "openclaw",
         target.gatewayName,
       );
-      if (startup === false) {
+      if (startup !== true) {
         console.error(
           `  OpenClaw startup did not settle for '${name}' on gateway '${target.gatewayName}'.`,
         );

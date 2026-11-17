@@ -91,6 +91,7 @@ describe("managed workload rebuild mutation guard", () => {
     expect(() =>
       prepareManagedRebuildProfileHandoff({
         catalogHandoff,
+        gatewayPort: 8080,
         targetConfig,
         recreateOptions: {
           controlUiPort: 18_789,
@@ -122,6 +123,7 @@ describe("managed workload rebuild mutation guard", () => {
     expect(() =>
       prepareManagedRebuildProfileHandoff({
         catalogHandoff,
+        gatewayPort: 8080,
         targetConfig,
         recreateOptions: {
           controlUiPort: 18_789,
@@ -195,6 +197,7 @@ describe("managed workload rebuild mutation guard", () => {
             dashboard: legacyDashboard,
           },
         },
+        gatewayPort: 8080,
         targetConfig,
         recreateOptions,
         messagingPlan: null,
@@ -206,6 +209,7 @@ describe("managed workload rebuild mutation guard", () => {
 
     const prepared = prepareManagedRebuildProfileHandoff({
       catalogHandoff,
+      gatewayPort: 8080,
       targetConfig,
       recreateOptions,
       messagingPlan: null,
@@ -232,6 +236,7 @@ describe("managed workload rebuild mutation guard", () => {
           dashboard: { ...previousDashboard, browserUrl: loopbackBrowserUrl },
         },
       },
+      gatewayPort: 8080,
       targetConfig,
       recreateOptions,
       messagingPlan: null,
@@ -303,6 +308,7 @@ describe("managed workload rebuild mutation guard", () => {
       } as unknown as managedWorkload.ManagedWorkloadRebuildCatalogHandoff;
       const prepared = prepareManagedRebuildProfileHandoff({
         catalogHandoff,
+        gatewayPort: 8080,
         targetConfig,
         recreateOptions,
         messagingPlan: null,

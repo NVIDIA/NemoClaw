@@ -87,7 +87,7 @@ export function buildInstallerPlan(options: BuildInstallerPlanOptions = {}): Ins
     ),
     installRef,
     installerVersion: resolveInstallerVersion({
-      defaultVersion: options.defaultVersion ?? "0.1.0",
+      defaultVersion: options.defaultVersion ?? "0.0.0",
       env,
       gitDescribeVersion: options.gitDescribeVersion,
       packageJsonVersion: options.packageJsonVersion,

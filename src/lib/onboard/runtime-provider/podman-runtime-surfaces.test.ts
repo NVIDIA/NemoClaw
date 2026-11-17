@@ -90,6 +90,55 @@ function exactLabels(): Readonly<Record<string, string>> {
 }
 
 describe("current Podman runtime provider", () => {
+  it("preserves private transport bounds while resolving the current engine", async () => {
+    vi.resetModules();
+    const capture = vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" }));
+    vi.doMock("../../adapters/podman", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../../adapters/podman")>();
+      return {
+        ...actual,
+        capturePodmanSocketAuthority: vi.fn(() => ({})),
+        createPodmanContainerEngine: vi.fn(
+          () =>
+            ({
+              operation: "sandbox-lifecycle",
+              engineId: "podman",
+              displayName: "Podman",
+              authorityId: "podman:test-current",
+              endpointAuthorityId: "podman-path-sha256:test-current",
+              capture,
+              captureHost: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+              assertAuthority: vi.fn(),
+            }) satisfies PodmanBoundContainerEngine,
+        ),
+      };
+    });
+
+    try {
+      const { createCurrentPodmanOperationEngine } = await import("./podman-runtime-surfaces");
+      const engine = createCurrentPodmanOperationEngine("sandbox-lifecycle", {
+        HOME: "/tmp/nemoclaw-test-home",
+        PATH: "/usr/bin:/bin",
+        XDG_RUNTIME_DIR: "/run/user/1000",
+      });
+      const input = Buffer.from("private startup state", "utf8");
+      const privateTransport = { maxInputBytes: 4096, maxOutputBytes: 8192 };
+
+      expect(
+        engine.capture(["container", "exec", "sandbox"], 12_345, input, privateTransport),
+      ).toEqual({ status: 0, stdout: "ok", stderr: "" });
+      expect(capture).toHaveBeenCalledWith(
+        ["container", "exec", "sandbox"],
+        12_345,
+        input,
+        privateTransport,
+      );
+    } finally {
+      vi.doUnmock("../../adapters/podman");
+      vi.resetModules();
+    }
+  });
+
   it("binds destroy continuity to the full Podman ownership identity", () => {
     let labels = exactLabels();
     const engine = runtimeEngine(() => labels);
@@ -236,6 +285,7 @@ describe("current Podman runtime provider", () => {
         hostGatewayIp: NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
         includeSupervisorBin: false,
         processOwnership: "runtime-marker",
+        driverConfigLayout: "inline-supervisor",
       },
       network: {
         sandboxSourceCidrs: expect.any(Function),

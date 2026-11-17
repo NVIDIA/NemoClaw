@@ -43,7 +43,7 @@ function patchNodeRefresh(options: {
     dockerfilePath,
     [
       "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-      "FROM node:24.18.1-trixie-slim@sha256:builder AS builder",
+      "FROM node:24.22.1-trixie-slim@sha256:builder AS builder",
       "FROM ${BASE_IMAGE}",
       NODE_REFRESH,
     ].join("\n"),
@@ -95,7 +95,7 @@ describe("managed OpenClaw Node runtime refresh", () => {
     const baseImage = baseDockerfile.match(/^FROM (node:[^\s]+)$/m)?.[1];
 
     expect(dockerfile).toContain("FROM npm12 AS builder");
-    expect(reviewedNpmImage).toMatch(/^node:24\.18\.1-trixie-slim@sha256:[0-9a-f]{64}$/);
+    expect(reviewedNpmImage).toMatch(/^node:24\.22\.1-trixie-slim@sha256:[0-9a-f]{64}$/);
     expect(baseImage).toBe(reviewedNpmImage);
   });
 });

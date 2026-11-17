@@ -418,7 +418,12 @@ export async function setupPoliciesWithSelection(
   const chosen = await withPolicyApplicationTrace(sandboxName, options, () =>
     setupPoliciesWithSelectionInner(deps, sandboxName, options),
   );
-  await seedInitialPolicyContext(sandboxName);
+  // Fresh onboard policy selection can finish before the sandbox registry
+  // records its agent. Avoid the OpenClaw fallback for known other agents.
+  const selectedAgent = options.agent?.trim().toLowerCase();
+  if (!selectedAgent || selectedAgent === "openclaw") {
+    await seedInitialPolicyContext(sandboxName);
+  }
   return chosen;
 }
 

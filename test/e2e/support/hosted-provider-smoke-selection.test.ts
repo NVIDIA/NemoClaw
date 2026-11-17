@@ -31,9 +31,9 @@ describe("OpenRouter qualification selection", () => {
   const id = "hosted-inference-openrouter";
   it("selects only the named provider in the existing smoke owner", () => {
     const target = catalogueTarget(id);
-    expect(target.agentRuntime).toBe("openclaw + langchain-deepagents-code");
+    expect(target.agentRuntime).toBe("openclaw + hermes + langchain-deepagents-code");
     expect(target.testFile).toBe("test/e2e/live/inference-routing-provider-smoke.test.ts");
-    expect(target.timeoutMinutes).toBe(90);
+    expect(target.timeoutMinutes).toBe(140);
     expect(
       new RegExp(target.selector!).test(
         `${selected.id} ${selected.label} answers through its native provider`,
@@ -92,7 +92,7 @@ it.each(["openai", "anthropic", "gemini", "hermes"])(
   },
 );
 
-it("runs both OpenRouter agents through the existing trusted target", () => {
+it("runs all three OpenRouter agents through the existing trusted target", () => {
   const target = catalogueTarget("hosted-inference-openrouter");
   expect(
     new RegExp(target.selector!).test("TC-INF-07D Deep Agents Code reaches native OpenRouter"),
@@ -102,9 +102,14 @@ it("runs both OpenRouter agents through the existing trusted target", () => {
       "'TC-INF-07' 'OpenRouter' answers through its native provider",
     ),
   ).toBe(true);
+  expect(
+    new RegExp(target.selector!).test(
+      "TC-INF-07H Hermes authenticates immediately after OpenRouter rebuild",
+    ),
+  ).toBe(true);
   expect(target.environment.NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE).toBe("openrouter");
-  const selectedTestMinutes = 20 + 35;
-  const cleanupMinutes = 2 * 10;
+  const selectedTestMinutes = 20 + 35 + 35;
+  const cleanupMinutes = 3 * 10;
   const setupAndArtifactMinutes = 15;
   expect(target.timeoutMinutes).toBeGreaterThanOrEqual(
     selectedTestMinutes + cleanupMinutes + setupAndArtifactMinutes,

@@ -7,6 +7,14 @@ export const NVIDIA_HOSTED_NATIVE_PROFILE_ID = "nemoclaw-nvidia-inference-v1";
 export const NVIDIA_HOSTED_NATIVE_PROVIDER = "nemoclaw-nvidia-prod-v1";
 export const NVIDIA_HOSTED_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 
+export const NVIDIA_HOSTED_NATIVE_DEFINITION = {
+  logicalProvider: NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  label: "NVIDIA",
+  profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+  providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+  credentialEnv: NVIDIA_HOSTED_CREDENTIAL_ENV,
+} as const;
+
 export type NativeNvidiaProviderAttachment = Readonly<{
   schemaVersion: 1;
   profileId: typeof NVIDIA_HOSTED_NATIVE_PROFILE_ID;

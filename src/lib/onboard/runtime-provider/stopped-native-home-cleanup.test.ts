@@ -132,7 +132,7 @@ describe("stopped native-home cleanup", () => {
       }),
     ).toEqual({ cleared: true });
     expect(capture).toHaveBeenCalledWith(
-      ["pull", "--quiet", expect.stringContaining("node:24.18.1-trixie-slim")],
+      ["pull", "--quiet", expect.stringContaining("node:24.22.1-trixie-slim")],
       120_000,
     );
     // Podman 6.1 rejects Docker's --mount volume-nocopy option; both engines

@@ -361,6 +361,10 @@ sandboxConfig.setOpenClawConfigValues = (_name, updates) => {
   }
 };
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
+processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor = async ({ sandboxName, runtimeSelection }) => ({
+  ok: true,
+  window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+});
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => {
   events.push({ kind: "restart", primary: nativeConfig.agents.defaults.model.primary });
   return { ok: true };
@@ -725,6 +729,10 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
+processRecovery.prepareUnregisteredOpenClawPostRestoreDoctor = async ({ sandboxName, runtimeSelection }) => ({
+  ok: true,
+  window: { sandboxName, ...(runtimeSelection ? { runtimeSelection } : {}) },
+});
 processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
@@ -865,7 +873,14 @@ const { createSandbox } = require(${onboardPath});
         (e) => e.kind === "run" && (e.cmd || "").includes("sandbox delete"),
       );
       const restoreIndex = events.findIndex((e) => e.kind === "restore");
+      const providerDetachCommands = events.filter(
+        (event) => event.kind === "run" && event.cmd?.includes("sandbox provider detach"),
+      );
 
+      assert.ok(
+        providerDetachCommands.length > 0,
+        "should inspect providers for the existing sandbox",
+      );
       assert.ok(backupIndex >= 0, "should call backupSandboxState for not-ready sandbox");
       assert.ok(deleteIndex > backupIndex, "backup must happen before sandbox delete");
       assert.ok(restoreIndex > deleteIndex, "restore must happen after sandbox recreate");

@@ -1342,7 +1342,8 @@ function stopAllLocked(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   } catch (error) {
     unmanagedError = error instanceof Error ? error : new Error(String(error));
   }
-  if (!pidDir && rawSandboxName) {
+  // Destroy skips cloudflared with a valid name, which also leaves pidDir unset (#13815).
+  if (!pidDir && rawSandboxName && !sandboxName) {
     warn("Invalid sandbox name without an explicit PID directory; skipping host service stop.");
   }
 

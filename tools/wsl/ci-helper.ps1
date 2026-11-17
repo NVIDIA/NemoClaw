@@ -374,17 +374,17 @@ function Start-WslContainerRuntime {
 function Get-WslNodeInstallScript {
     return @'
 set -euo pipefail
-node_version="24.18.1"
+node_version="24.22.1"
 npm_version="12.0.2"
 expected_npm_integrity="sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw=="
 case "$(uname -m)" in
   x86_64)
     node_arch="x64"
-    node_sha256="d6c664df3f3f61458e8c277585571328522d705166723a7c7823a9253a4d15a0"
+    node_sha256="6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6"
     ;;
   aarch64 | arm64)
     node_arch="arm64"
-    node_sha256="7201e3a09dc825bac57867c81913e2b8f0ef87d04cb9082af4cda82f6ff3d88c"
+    node_sha256="dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e"
     ;;
   *)
     echo "Unsupported Node.js architecture: $(uname -m)" >&2

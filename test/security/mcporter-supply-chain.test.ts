@@ -24,10 +24,12 @@ const expectedHonoNodeServerTarball =
   "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
 const expectedHonoVersion = "4.12.34";
 const expectedHonoTarball = "https://registry.npmjs.org/hono/-/hono-4.12.34.tgz";
-const expectedFastUriVersion = "3.1.7";
-const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz";
+const expectedFastUriVersion = "3.1.9";
+const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz";
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
+const expectedZodVersion = "4.6.6";
+const expectedZodTarball = "https://registry.npmjs.org/zod/-/zod-4.6.6.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 const reviewedAuditConfig = JSON.parse(
   fs.readFileSync(path.join(repoRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
@@ -135,6 +137,13 @@ describe("mcporter image supply-chain controls", () => {
         version: expectedIpAddressVersion,
       }),
     );
+    expect(findDependency(graph, "zod")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedZodTarball,
+        version: expectedZodVersion,
+      }),
+    );
   });
 
   it.each(dockerfiles)("pins and verifies the package in $name", ({ contents }) => {
@@ -189,10 +198,16 @@ describe("mcporter image supply-chain controls", () => {
     );
     expect(
       flattenedContents.includes(
-        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts /scripts/lib/",
       ) ||
         flattenedContents.includes(
+          "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+        ) ||
+        flattenedContents.includes(
           "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/",
+        ) ||
+        flattenedContents.includes(
+          "COPY scripts/lib/verify-openclaw-official-plugin.mts scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/",
         ) ||
         contents.includes(
           "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",

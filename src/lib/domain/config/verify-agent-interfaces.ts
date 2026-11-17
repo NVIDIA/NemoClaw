@@ -84,6 +84,25 @@ function inspectOpenClawDashboard(
 type HermesDashboard = Extract<ManagedStartupProfile["dashboard"], { agent: "hermes" }>;
 type EnabledHermesDashboard = Extract<HermesDashboard, { mode: "loopback-forwarded" }>;
 
+const ALLOCATED_LOOPBACK_DASHBOARD_URL = /^http:\/\/127\.0\.0\.1:([1-9]\d{3,4})$/u;
+
+function allocatedLoopbackDashboardPort(dashboard: HermesDashboard): number | null {
+  const port = Number(ALLOCATED_LOOPBACK_DASHBOARD_URL.exec(dashboard.url)?.[1]);
+  return port >= 1024 && port <= 65_535 ? port : null;
+}
+
+function isAllocatedLoopbackDashboard(
+  entry: ObservedExportRegistry,
+  dashboard: HermesDashboard,
+): boolean {
+  const port = allocatedLoopbackDashboardPort(dashboard);
+  return (
+    port !== null &&
+    (entry.dashboardPort === port || (entry.dashboardPort === undefined && port === 18_789)) &&
+    [undefined, dashboard.url].includes(dashboard.browserUrl)
+  );
+}
+
 function hermesApiFindings(
   entry: ObservedExportRegistry,
   dashboardEnabled: boolean,
@@ -100,14 +119,20 @@ function hermesApiFindings(
   ];
 }
 
-function disabledHermesDashboardFindings(entry: ObservedExportRegistry): ExportFinding[] {
+function disabledHermesDashboardFindings(
+  entry: ObservedExportRegistry,
+  dashboard: HermesDashboard,
+): ExportFinding[] {
+  const port = allocatedLoopbackDashboardPort(dashboard);
   const stale =
     [entry.hermesDashboardEnabled, entry.hermesDashboardTui].some(
       (value) => ![undefined, null, false].includes(value),
     ) ||
     [entry.hermesDashboardPort, entry.hermesDashboardInternalPort].some(
       (value) => value !== undefined && value !== null,
-    );
+    ) ||
+    (entry.dashboardPort !== undefined &&
+      (typeof entry.dashboardPort !== "number" || (port !== null && entry.dashboardPort !== port)));
   return stale
     ? [
         mismatch(
@@ -178,8 +203,9 @@ function inspectHermesDashboard(
       : {};
     const interfaces = { ...targetDashboard, ...api };
     return {
-      findings: [...findings, ...disabledHermesDashboardFindings(entry)],
+      findings: [...findings, ...disabledHermesDashboardFindings(entry, dashboard)],
       ...(Object.keys(interfaces).length ? { interfaces } : {}),
+      ...(isAllocatedLoopbackDashboard(entry, dashboard) ? { dashboard } : {}),
     };
   }
   const url = `http://127.0.0.1:${dashboard.publicPort}`;

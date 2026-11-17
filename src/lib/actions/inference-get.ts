@@ -21,11 +21,7 @@ import {
 } from "../inference/gateway-route-compatibility";
 import { parseHttpsPinRouteId } from "../inference/https-pin-runtime";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia";
-import {
-  isLocalInferenceProvider,
-  NATIVE_LOCAL_CREDENTIAL_ENV,
-} from "../inference/native-local/agent-config";
-import { normalizeNativeLocalProviderAttachment } from "../inference/selection";
+import { authorizedNativeLocalAttachment } from "../inference/native-local/recorded-selection";
 import { recordedNativeProviderAttachment } from "../inference/native-provider/recorded-selection";
 import { hostedNativeProvider } from "../inference/native-provider/hosted";
 import { inspectManagedLlamaCppOwnership } from "../inference/llama-cpp/managed-state";
@@ -344,37 +340,17 @@ export async function runInferenceGet(
     return payload;
   }
   if (selectedSandbox?.nativeLocalProviderAttachment !== undefined) {
-    const attachment = normalizeNativeLocalProviderAttachment(
-      selectedSandbox.nativeLocalProviderAttachment,
-    );
     let recordedGatewayName: string | undefined;
     try {
       recordedGatewayName = getPersistedSandboxTargetGatewayName(selectedSandbox);
     } catch {
       // A malformed binding must not make the shared gateway appear selected.
     }
-    if (
-      !attachment ||
-      selectedSandbox.nativeHostedProviderAttachment !== undefined ||
-      selectedSandbox.nativeNvidiaProviderAttachment !== undefined ||
-      !isPublishedSandboxRegistration(selectedSandbox) ||
-      selectedSandbox.name !== selectedSandboxName ||
-      attachment.sandboxName !== selectedSandbox.name ||
-      attachment.gatewayName !== recordedGatewayName ||
-      attachment.gatewayName !== selectedSandbox.gatewayName ||
-      attachment.provider !== selectedSandbox.provider ||
-      attachment.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV ||
-      typeof selectedSandbox.model !== "string" ||
-      !selectedSandbox.model.trim() ||
-      !(selectedSandbox.agent === "langchain-deepagents-code"
-        ? attachment.agent === undefined
-        : selectedSandbox.agent === "hermes"
-          ? attachment.agent === "hermes"
-          : selectedSandbox.agent === "openclaw" &&
-            attachment.agent === "openclaw" &&
-            isLocalInferenceProvider(selectedSandbox.provider) &&
-            !selectedSandbox.nimContainer)
-    ) {
+    const attachment =
+      selectedSandbox.name === selectedSandboxName
+        ? authorizedNativeLocalAttachment(selectedSandbox, recordedGatewayName)
+        : undefined;
+    if (!attachment) {
       throw new InferenceGetError(
         "Invalid native local provider attachment for the recorded inference selection",
       );
@@ -385,8 +361,8 @@ export async function runInferenceGet(
         ? { endpointUrl: attachment.endpointUrl }
         : endpointOmission("withheld");
     const payload: InferenceGetResult = {
-      provider: selectedSandbox.provider,
-      model: selectedSandbox.model,
+      provider: selectedSandbox.provider ?? null,
+      model: selectedSandbox.model ?? null,
       ...endpoint,
     };
     if (!options.quiet) {

@@ -184,6 +184,8 @@ const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime" as const;
 const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUTS = new Set([
+  "test/e2e/live/gpu-e2e-helpers.ts",
+  "test/e2e/live/gpu-e2e-ollama.ts",
   MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION,
   "src/lib/onboard.ts",
   "src/lib/onboard/sandbox-create-intent-types.ts",

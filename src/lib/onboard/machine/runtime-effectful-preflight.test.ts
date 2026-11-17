@@ -36,6 +36,7 @@ function gatewayRuntime(
       sandboxNamespace: "scoped",
       hostGatewayIp: null,
       includeSupervisorBin: true,
+      driverConfigLayout: "split-supervisor",
       processOwnership: "scoped-namespace",
     },
     network: {

@@ -626,6 +626,10 @@ class ProgressiveToolDisclosureMiddleware(
             # account for these provider-owned representations.
             if name is None or name in CORE_TOOL_NAMES or index in selected_indices:
                 visible.append(tool)
+        # The executor registers this middleware tool even if a request-time
+        # projection omits its schema. Keep discovery reachable in that view.
+        if not any(_tool_name(tool) == "search_tools" for tool in visible):
+            visible.append(self.tools[0])
         return request.override(tools=visible)
 
     def wrap_model_call(

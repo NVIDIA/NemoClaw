@@ -7,6 +7,7 @@ import { prepareNativeLocalSwitch } from "../actions/inference/native-local";
 import * as localRuntime from "../actions/inference-set/local-runtime";
 import { OLLAMA_PROXY_PORT } from "../core/ollama-proxy-port";
 import { isProtectedLocalInferencePort } from "./gateway/local-endpoint-ports";
+import { prepareNativeLocalSelection } from "./native-local/selection";
 import { describe, expect, it, vi } from "vitest";
 import {
   createCliOpenShellProviderAdapter,
@@ -915,6 +916,15 @@ vi.mock("../state/gateway-registry", () => ({
   listRecordedGatewayPorts: () => [12345],
   listRecordedModelRouterPorts: () => [12346],
 }));
+
+describe("retired native Model Router", () => {
+  it("rejects creation before importing a profile or creating a provider", async () => {
+    const f = fixture({ ...binding, provider: "nvidia-router", agent: "openclaw" });
+    await expect(prepareNativeLocalSelection(f.input)).rejects.toThrow("unavailable");
+    expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+  });
+});
 
 describe("local inference endpoint port reservations", () => {
   it.each([

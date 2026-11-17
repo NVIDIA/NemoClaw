@@ -22,19 +22,23 @@ import {
   REVIEWED_GATEWAY_UPGRADE_FIXTURE,
   REVIEWED_GATEWAY_UPGRADE_FIXTURES,
   REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE,
+  REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE,
 } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
 import { registerOpenShellHostMockFirewall } from "../fixtures/host-mock-firewall.ts";
+import { prepareGatewayUpgradeExecutableDirectory } from "../fixtures/gateway-upgrade-executable-directory.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -46,9 +50,12 @@ import {
   gatewayUpgradeRecoverySucceeded,
   gatewayUpgradeAgentResponseIsSuccessful,
   gatewayUpgradeInstallerCommand,
+  gatewayUpgradeMarkerWriteCommand,
   type GatewayUpgradeServiceEvidence,
   captureGatewayUpgradeService,
   prepareGatewayUpgradeUserManager,
+  prepareGatewayUpgradeInstallPaths,
+  gatewayUpgradeInstallEnv,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   isolateGatewayUpgradeFixtureEnv,
   legacyGatewayUpgradeBaseImageOverrideEnabled,
@@ -144,6 +151,7 @@ function writeExecutable(target: string, contents: string): void {
 function liveEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
+    ...gatewayUpgradeInstallEnv(os.homedir(), process.env.PATH ?? "/usr/bin:/bin"),
     ...(VERIFY_SYSTEMD_UPGRADE
       ? {
           XDG_CONFIG_HOME: path.join(os.homedir(), ".config"),
@@ -170,7 +178,7 @@ function shellLoginPrefix(): string {
     '  source "$HOME/.bashrc" 2>/dev/null || true',
     "fi",
     'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"',
-    'if [ -s "$NVM_DIR/nvm.sh" ]; then',
+    'if ! command -v node >/dev/null 2>&1 && [ -s "$NVM_DIR/nvm.sh" ]; then',
     "  # shellcheck source=/dev/null",
     '  . "$NVM_DIR/nvm.sh"',
     "fi",
@@ -238,7 +246,10 @@ async function collectOpenClawCredentialBoundary(
   const requestOffset = fake.requests().length;
   const sessionId = `e2e-state-upgrade-${phase}`;
   const agentCommand = `agent --agent main --json --thinking off --session-id ${shellQuote(sessionId)} -m ${shellQuote("Reply with only: ok")}`;
-  // OpenClaw 2026.9.1's local convenience command requests operator.admin.
+  const useNativeAgentRpc =
+    phase === "upgraded" ||
+    OLD_OPENCLAW_VERSION === REVIEWED_RECENT_GATEWAY_UPGRADE_FIXTURE.openclawVersion;
+  // OpenClaw 2026.9.2's local convenience command requests operator.admin.
   // The same native agent RPC needs operator.write for this ordinary message.
   const rpcParams = JSON.stringify({
     message: "Reply with only: ok",
@@ -253,14 +264,13 @@ async function collectOpenClawCredentialBoundary(
     redactionValues: [GATEWAY_CREDENTIAL],
     timeoutMs: 120_000,
   };
-  const agent =
-    phase === "upgraded"
-      ? await bash(
-          host,
-          `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec -- openclaw gateway call agent --json --expect-final --timeout 120000 --params ${shellQuote(rpcParams)}`,
-          agentOptions,
-        )
-      : await runInSurvivorSandbox(host, `openclaw ${agentCommand}`, agentOptions);
+  const agent = useNativeAgentRpc
+    ? await bash(
+        host,
+        `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec -- openclaw gateway call agent --json --expect-final --timeout 120000 --params ${shellQuote(rpcParams)}`,
+        agentOptions,
+      )
+    : await runInSurvivorSandbox(host, `openclaw ${agentCommand}`, agentOptions);
   const requests = fake
     .requests()
     .slice(requestOffset)
@@ -272,7 +282,7 @@ async function collectOpenClawCredentialBoundary(
     valid:
       secretNonExposure.exitCode === 0 &&
       agent.exitCode === 0 &&
-      (phase !== "upgraded" || gatewayUpgradeAgentResponseIsSuccessful(agent.stdout)) &&
+      (!useNativeAgentRpc || gatewayUpgradeAgentResponseIsSuccessful(agent.stdout)) &&
       parseOpenClawAgentText(agent.stdout).trim().toLowerCase() === "ok" &&
       requests.length > 0 &&
       requests.every((request) => request.auth === "ok" && request.authorizationSent === true),
@@ -445,7 +455,7 @@ async function createStoppedLegacySandboxes(
     const marker = `gateway-upgrade-stopped-${sandboxName}`;
     const markerWrite = await bash(
       host,
-      `openshell sandbox exec --name ${shellQuote(sandboxName)} -- sh -lc ${shellQuote(`mkdir -p /sandbox/.openclaw/workspace && printf '%s\n' ${shellQuote(marker)} >${shellQuote(STOPPED_SANDBOX_MARKER_PATH)}`)}`,
+      `openshell sandbox exec --name ${shellQuote(sandboxName)} -- sh -lc ${shellQuote(gatewayUpgradeMarkerWriteCommand(STOPPED_SANDBOX_MARKER_PATH, marker))}`,
       {
         artifactName: `old-marker-${sandboxName}`,
         env: onboardEnv,
@@ -563,7 +573,7 @@ async function installOldNemoclawAndClaw(
 async function writeSurvivorMarker(host: HostCliClient): Promise<void> {
   await bash(
     host,
-    `openshell sandbox exec --name ${shellQuote(SURVIVOR_SANDBOX)} -- sh -lc ${shellQuote(`mkdir -p /sandbox/.openclaw/workspace && printf '%s\\n' ${shellQuote(SURVIVOR_MARKER)} >${shellQuote(SURVIVOR_MARKER_PATH)}`)}`,
+    `openshell sandbox exec --name ${shellQuote(SURVIVOR_SANDBOX)} -- sh -lc ${shellQuote(gatewayUpgradeMarkerWriteCommand(SURVIVOR_MARKER_PATH, SURVIVOR_MARKER))}`,
     { artifactName: "write-survivor-marker", timeoutMs: 60_000 },
   );
 }
@@ -572,6 +582,8 @@ async function installCurrentNemoclawUpgrade(
   host: HostCliClient,
   artifacts: ArtifactSink,
   fakeBaseUrl: string,
+  sandbox: SandboxClient,
+  runtime: RuntimeProviderPrerequisite,
 ): Promise<void> {
   const currentRef = currentNemoclawUpgradeRef(process.env);
   const currentBaseEnv = liveEnv({
@@ -607,6 +619,18 @@ async function installCurrentNemoclawUpgrade(
       ...(VERIFY_SYSTEMD_UPGRADE ? { home: `${os.homedir()}//` } : {}),
       onFailure: async () => {
         await Promise.allSettled([
+          ...LEGACY_SANDBOXES.map((sandboxName) =>
+            captureOpenClawOnboardFailure({ exitCode: 1 }, sandbox, {
+              sandboxName,
+              artifactPrefix: `current-install-${sandboxName}`,
+              // Three complete Doctor passes can exceed the default 16 KiB log bound.
+              logLimitBytes: 131_072,
+              env: currentEnv,
+              redactionValues,
+              runtime,
+              host,
+            }),
+          ),
           bash(host, `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} doctor`, {
             artifactName: "current-install-failure-doctor",
             env: currentEnv,
@@ -713,7 +737,7 @@ runOpenShellGatewayUpgrade(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, progress, sandbox, runtimeProvider }) => {
     await artifacts.writeJson("live-upgrade-target.json", {
       id: "openshell-gateway-upgrade",
       runner: "vitest",
@@ -769,8 +793,10 @@ runOpenShellGatewayUpgrade(
     // Vitest retries execute in the same runner process. Tear down any failed
     // legacy gateway before each attempt so partial containerd layers from a
     // transient image-import failure cannot consume the next attempt's disk.
+    await prepareGatewayUpgradeExecutableDirectory(host, liveEnv());
     await prepareGatewayUpgradeUserManager(host, liveEnv(), VERIFY_SYSTEMD_UPGRADE);
     await preCleanUpgradeGateway(host, "pre-cleanup-gateway");
+    prepareGatewayUpgradeInstallPaths(os.homedir());
 
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: GATEWAY_CREDENTIAL,
@@ -823,7 +849,7 @@ runOpenShellGatewayUpgrade(
     );
 
     progress.phase("upgrade to the current OpenShell gateway");
-    await installCurrentNemoclawUpgrade(host, artifacts, fake.baseUrl);
+    await installCurrentNemoclawUpgrade(host, artifacts, fake.baseUrl, sandbox, runtimeProvider);
     const upgradedService = await captureGatewayUpgradeService(
       host,
       "upgraded",

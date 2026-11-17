@@ -111,7 +111,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   if (job["runs-on"] !== "linux-amd64-gpu-rtxpro6000-latest-1") {
     errors.push(`${JOB_ID} must run on the protected amd64 GPU runner`);
   }
-  if (job["timeout-minutes"] !== 75) errors.push(`${JOB_ID} must keep the 75 minute timeout`);
+  if (job["timeout-minutes"] !== 90) errors.push(`${JOB_ID} must keep the 90 minute timeout`);
   if (!isDeepStrictEqual(job.permissions, { contents: "read", "pull-requests": "read" })) {
     errors.push(`${JOB_ID} permissions must be exactly contents: read and pull-requests: read`);
   }
@@ -157,6 +157,10 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     workflowSteps,
     "Validate protected runtime exact-head dispatch",
   );
+  if (workflowSteps[0] !== guard) errors.push(`${JOB_ID} must record its deadline before setup`);
+  requireFragments(errors, guard, [
+    `printf 'NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS=%s000\\n' "$(date +%s)" >> "$GITHUB_ENV"`,
+  ]);
   requireValues(errors, `${JOB_ID} exact-head guard env`, record(guard?.env), {
     BASE_SHA: "${{ inputs.base_sha || github.event.before || github.sha }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}",
@@ -250,7 +254,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
   if (
     prepare?.uses !==
-    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c"
+    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351"
   ) {
     errors.push(`${JOB_ID} must pin the trusted E2E preparation action`);
   }
@@ -281,15 +285,15 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     jobEnv.GH_TOKEN !== undefined ||
     workflowSteps.some(
       (step) =>
-        ![projection, verifyBeforeUse, verify, restore].includes(step) &&
+        ![projection, verifyBeforeUse, verify].includes(step) &&
         (record(step.env).GITHUB_TOKEN !== undefined || record(step.env).GH_TOKEN !== undefined),
     )
   )
     errors.push(`${JOB_ID} must expose GitHub credentials only to candidate admission operations`);
   if (verifyBeforeUse?.if !== undefined || verify?.if !== undefined)
     errors.push(`${JOB_ID} must not skip OpenShell verification`);
-  if (restore?.if !== "${{ always() && steps.openshell-projection.outcome == 'success' }}") {
-    errors.push(`${JOB_ID} must restore sources after a successful OpenShell projection`);
+  if (restore?.if !== "${{ always() }}") {
+    errors.push(`${JOB_ID} must always reconcile a recorded OpenShell projection`);
   }
   for (const [step, operation, output] of [
     [projection, "prepare", "openshell-projection.json"],
@@ -297,11 +301,25 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     [verify, "verify", "openshell-projection-verified.json"],
     [restore, "restore", "openshell-projection-restored.json"],
   ] as const) {
-    const expected = `set -euo pipefail\nnode tools/e2e/protected-openshell-workspace.mts ${operation} > "$E2E_ARTIFACT_DIR/${output}"\n`;
+    const expected =
+      operation === "restore"
+        ? [
+            "set -euo pipefail",
+            'receipt="$GITHUB_WORKSPACE/.git/nemoclaw-openshell-projection.json"',
+            'if [[ "${PROJECTION_OUTCOME:-}" == success || -e "$receipt" || -L "$receipt" ]]; then',
+            `  node tools/e2e/protected-openshell-workspace.mts restore > "$E2E_ARTIFACT_DIR/${output}"`,
+            "fi",
+            "",
+          ].join("\n")
+        : `set -euo pipefail\nnode tools/e2e/protected-openshell-workspace.mts ${operation} > "$E2E_ARTIFACT_DIR/${output}"\n`;
+    const expectedEnv =
+      operation === "restore"
+        ? { PROJECTION_OUTCOME: "${{ steps.openshell-projection.outcome }}" }
+        : admissionEnv;
     if (
       step?.run !== expected ||
       step?.shell !== "bash" ||
-      !isDeepStrictEqual(step?.env, admissionEnv) ||
+      !isDeepStrictEqual(step?.env, expectedEnv) ||
       step?.["continue-on-error"] !== undefined
     ) {
       errors.push(`${JOB_ID} must use the reviewed OpenShell ${operation} operation`);
@@ -418,7 +436,8 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     'local candidate_prefix="localhost:5000/nemoclaw-managed-protected-base/${agent}@"',
     '[[ "$reference" == "${candidate_prefix}${digest}" ]]',
     '[[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]',
-    '[[ "$CANDIDATE_BASES" == false && "$reference" == "${repository}@${digest}" &&',
+    '[[ ( "$CANDIDATE_BASES" == false || "$agent" == openclaw ) &&',
+    '"$reference" == "${repository}@${digest}" &&',
     '( -z "$expected_published" || "$reference" == "$expected_published" ) ]]',
     '"$(cat "$prepared_inputs")" == "$cached_revision $cached_platform $cached_openclaw $cached_hermes $cached_dcode"',
     'docker buildx imagetools inspect "$reference" --raw > "$work_dir/${name}-exact.raw"',
@@ -529,6 +548,17 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     path: "e2e-artifacts/live/managed-image-protected-runtime/",
   });
   requireStep(errors, workflowSteps, "Clean up Docker auth");
+  for (const [name, minutes] of [
+    ["Remove isolated protected runtime registry", 2],
+    ["Restore trusted OpenShell sources", 1],
+    ["Upload protected managed-image runtime artifacts", 4],
+    ["Clean up Docker auth", 1],
+  ] as const) {
+    const step = workflowSteps.find((candidate) => candidate.name === name);
+    if (step?.["timeout-minutes"] !== minutes) {
+      errors.push(`${JOB_ID} step '${name}' must fit its ${minutes} minute finalization budget`);
+    }
+  }
   requireOrderedSteps(errors, workflowSteps, [
     "Validate protected runtime exact-head dispatch",
     "Checkout trusted protected runtime qualification",

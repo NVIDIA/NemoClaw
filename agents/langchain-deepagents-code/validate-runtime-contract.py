@@ -9,8 +9,8 @@ from importlib.metadata import version
 from pathlib import Path
 
 EXPECTED_VERSIONS = {
-    "deepagents": "0.7.15",
-    "deepagents-code": "0.1.71",
+    "deepagents": "0.7.29",
+    "deepagents-code": "0.1.87",
 }
 REQUIRED_MODULES = ("deepagents", "deepagents_code")
 SUCCESS_MARKER = "nemoclaw-dcode-runtime-contract-ok"

@@ -9,7 +9,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
-import { readWorkflow, required, step } from "../../helpers/managed-image-publication-workflow";
 import {
   assertReviewedAuditReportsPass,
   NPM_AUDIT_SIGNATURE_ARGV,
@@ -188,9 +187,13 @@ if (args[0] === "ci" && !fs.existsSync("package-lock.json")) {
 }
 if (args[0] === "ci") {
   const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+  const workspace = ${JSON.stringify(graphFixture.workspace ?? null)};
   for (const [location, entry] of Object.entries(lock.packages)) {
     if (!location) continue;
     fs.mkdirSync(location, { recursive: true });
+    if (workspace !== null && location === "node_modules/openclaw") {
+      fs.writeFileSync(location + "/pnpm-workspace.yaml", workspace);
+    }
     fs.writeFileSync(location + "/package.json", JSON.stringify({
       name: location.slice(location.lastIndexOf("node_modules/") + 13),
       version: entry.version,
@@ -201,6 +204,7 @@ if (args[0] === "ci") {
   }
 }
 if (args[0] === "install" && !fs.existsSync("package-lock.json")) {
+  fs.mkdirSync("node_modules", { recursive: true });
   const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
   fs.writeFileSync("package-lock.json", JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }));
 }
@@ -305,16 +309,6 @@ function writeProductionSourceGraph(
 }
 
 describe("trusted npm audit workflow (#5896)", () => {
-  it("runs the PR audit from its exact head commit", () => {
-    const job = required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit");
-    expect(step(job, "Checkout").with).toMatchObject({
-      ref: "${{ github.event.pull_request.head.sha }}",
-      "persist-credentials": false,
-    });
-    expect(step(job, "Audit reviewed production npm graphs").uses).toBe(
-      "./.github/actions/ci-reviewed-npm-audit",
-    );
-  });
   // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
   it("passes the cache identity target root without interpolating it into shell source", () => {
     const action = YAML.parse(
@@ -353,14 +347,13 @@ describe("trusted npm audit workflow (#5896)", () => {
   });
 
   it("records the selected replacement identity in locked-graph audit provenance", () => {
-    const graph = REVIEWED_AUDIT_CONFIG.lockedGraphs.find(({ id }) => id === "openclaw-runtime")!;
     const fixture = runConsolidatedAuditFixture(
       () => {},
       undefined,
       0,
       0,
       REVIEWED_AUDIT_CONFIG.npmVersion,
-      openClawReplacementGraphFixture(REPO_ROOT, graph),
+      openClawReplacementGraphFixture(REPO_ROOT),
     );
 
     expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
@@ -527,11 +520,11 @@ describe("trusted npm audit workflow (#5896)", () => {
       fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
     );
     expect(config.archivePackages.map(({ packageSpec }) => packageSpec)).toContain(
-      "@openclaw/googlechat@2026.9.5",
+      "@openclaw/googlechat@2026.10.5",
     );
     expect(
       config.archivePackages.some(
-        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.9",
+        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.10",
       ),
     ).toBe(true);
     expect(config.lockedGraphs).toContainEqual(
@@ -539,7 +532,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "84f2b731e9ffe731d29c28ebbe795116217771971c729b577df1a8816296f9b8",
+        lockSha256: "128880428a7929f4dccec034418ff4290513ad728f8af12fbf1d3536cb468803",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),

@@ -325,7 +325,10 @@ export function parseTryCloudflareOrigin(log: string): string | null {
   return log.match(TRYCLOUDFLARE_ORIGIN_PATTERN)?.[0] ?? null;
 }
 
-export function buildCloudflaredQuickTunnelArgs(port: number): string[] {
+export function buildCloudflaredQuickTunnelArgs(
+  port: number,
+  originProtocol: "http" | "https" = "https",
+): string[] {
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error(`invalid local MCP HTTPS port: ${port}`);
   }
@@ -335,20 +338,18 @@ export function buildCloudflaredQuickTunnelArgs(port: number): string[] {
     "--protocol",
     "http2",
     "--url",
-    `https://127.0.0.1:${port}`,
-    "--no-tls-verify",
+    `${originProtocol}://127.0.0.1:${port}`,
+    ...(originProtocol === "https" ? ["--no-tls-verify"] : []),
     "--loglevel",
     "info",
   ];
 }
 
 /**
- * Publishes a local HTTPS origin behind a real `trycloudflare.com` quick
+ * Publishes a local HTTP or HTTPS origin behind a real `trycloudflare.com` quick
  * tunnel: a genuinely public, DNS-resolvable, publicly-trusted-certificate
- * endpoint. Named for its original MCP-bridge fixture caller; reused as-is
- * (via the optional readiness override below) for the HTTPS-pin runtime
- * adapter's live coverage, since both need the identical real-tunnel proof
- * and only differ in which local path/status means "ready".
+ * endpoint. MCP and inference fixtures share discovery, readiness and cleanup.
+ * Each caller selects the local path and status that establish readiness.
  */
 export async function startPublicMcpHttpsTunnel(options: {
   cleanup: TunnelCleanupRegistry;
@@ -359,10 +360,12 @@ export async function startPublicMcpHttpsTunnel(options: {
   curlBin?: string;
   readinessPath?: string;
   readinessStatus?: number;
+  /** The local fixture hop; the published endpoint always uses HTTPS. */
+  originProtocol?: "http" | "https";
 }): Promise<StartedPublicMcpTunnel> {
   const readinessPath = options.readinessPath ?? "/mcp";
   const readinessStatus = options.readinessStatus ?? 405;
-  const args = buildCloudflaredQuickTunnelArgs(options.server.port);
+  const args = buildCloudflaredQuickTunnelArgs(options.server.port, options.originProtocol);
   let lastFailure = "cloudflared did not publish a quick-tunnel URL";
 
   for (let attempt = 1; attempt <= QUICK_TUNNEL_ATTEMPTS; attempt += 1) {
@@ -872,7 +875,23 @@ export async function startCompatibleMock(options: {
         if (toolResultCount === 0 && visibleToolNames.has(toolName)) {
           protocolError = `progressive target ${toolName} was visible before search_tools`;
         } else if (toolResultCount === 0 && !visibleToolNames.has("search_tools")) {
-          protocolError = "search_tools was not visible before progressive discovery";
+          const knownNames = [
+            "ask_user",
+            "edit_file",
+            "execute",
+            "glob",
+            "grep",
+            "ls",
+            "read_file",
+            "write_file",
+            "write_todos",
+            toolName,
+          ];
+          const visibleKnownNames = knownNames.filter((name) => visibleToolNames.has(name));
+          protocolError =
+            "search_tools was not visible before progressive discovery; " +
+            `visible known tools: ${visibleKnownNames.join(", ") || "none"}; ` +
+            `other tool count: ${visibleToolNames.size - visibleKnownNames.length}`;
         } else if (toolResultCount === 0) {
           plannedToolCall = {
             id: "call_progressive_tool_search",

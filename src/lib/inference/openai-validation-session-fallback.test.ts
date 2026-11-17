@@ -321,7 +321,7 @@ describe("OpenAI validation curl fallback", () => {
     const server = http.createServer((request, response) => {
       request.resume();
       requests += 1;
-      response.statusCode = 500;
+      response.statusCode = 501;
       response.end('{"error":{"message":"internal"}}');
     });
     const port = await listen(server);

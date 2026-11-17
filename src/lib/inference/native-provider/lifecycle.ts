@@ -7,6 +7,8 @@ import type {
   OpenShellProviderError,
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/sandbox-observer";
+import { shellQuote } from "../../core/shell-quote";
+import { OperatorRefusalError } from "../../domain/operator-refusal";
 
 export type NativeProviderAttachment = Readonly<{
   schemaVersion: 1;
@@ -25,6 +27,31 @@ export class NativeProviderError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "NativeProviderError";
+  }
+}
+
+/**
+ * Refuse a provider that has no NemoClaw receipt, and name the command that
+ * clears it. Each name is shell-quoted because operators copy the command.
+ * The command has its own line so onboard's per-line bound cannot cut it, and
+ * the gateway comes last so redaction cannot take the provider as its value.
+ */
+export function unownedNativeProviderRefusal(
+  providerName: string,
+  target: OpenShellGatewayTarget,
+): OperatorRefusalError {
+  const gatewayFlag = target.kind === "named" ? ` -g ${shellQuote(target.gatewayName)}` : "";
+  return new OperatorRefusalError([
+    `OpenShell provider '${providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
+    "Check whether any sandbox on this gateway uses this provider. If none does, remove it with:",
+    `  openshell provider delete ${shellQuote(providerName)}${gatewayFlag}`,
+    "Then run onboarding again.",
+  ]);
+}
+
+export class NativeProviderCredentialExpiredError extends NativeProviderError {
+  constructor() {
+    super("Native provider credential is expired.");
   }
 }
 
@@ -81,10 +108,12 @@ async function inspectNativeProvider(
   adapter: OpenShellProviderAdapter,
   target: OpenShellGatewayTarget,
   profile: NativeProviderProfile,
+  includeCredentialExpirations = false,
 ): Promise<OpenShellProviderMetadata | null> {
   const observed = await adapter.getProvider({
     target,
     providerName: profile.providerName,
+    ...(includeCredentialExpirations ? { includeCredentialExpirations: true } : {}),
   });
   if (observed.ok) return observed.value;
   if (observed.error.kind === "command" && observed.error.reason === "not_found") return null;
@@ -222,9 +251,7 @@ export async function ensureNativeProvider(input: {
   if (before) {
     const receipt = nativeProviderAttachmentFromMetadata(before, profile);
     if (!input.expected) {
-      throw new NativeProviderError(
-        `OpenShell provider '${profile.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
-      );
+      throw unownedNativeProviderRefusal(profile.providerName, target);
     }
     if (input.expected && input.expected.providerId !== receipt.providerId) {
       throw new NativeProviderError(
@@ -307,12 +334,18 @@ export async function verifyNativeProviderAttachment(input: {
   target: OpenShellGatewayTarget;
   sandboxName: string;
   expected?: NativeProviderAttachment;
+  requireUnexpiredCredential?: boolean;
 }): Promise<NativeProviderAttachment> {
   const profile = input.profile;
   if (!profile)
     throw new NativeProviderError("Native inference requires a recorded provider identity.");
   assertExpectedProfile(profile, input.expected);
-  const provider = await inspectNativeProvider(input.adapter, input.target, profile);
+  const provider = await inspectNativeProvider(
+    input.adapter,
+    input.target,
+    profile,
+    input.requireUnexpiredCredential,
+  );
   if (!provider) {
     throw new NativeProviderError(
       `OpenShell provider '${profile.providerName}' is missing. Recreate the sandbox to restore native ${profile.label} inference.`,
@@ -337,6 +370,23 @@ export async function verifyNativeProviderAttachment(input: {
     throw new NativeProviderError(
       `Sandbox '${input.sandboxName}' does not have its native ${profile.label} inference provider attached. Recreate the sandbox; NemoClaw does not migrate existing beta sandboxes automatically.`,
     );
+  }
+  if (input.requireUnexpiredCredential) {
+    // Expiry inventory is read separately from provider metadata. Bind that
+    // observation to the same immutable provider and resource version.
+    const current = await inspectNativeProvider(input.adapter, input.target, profile);
+    if (
+      !current ||
+      !exactNativeProvider(current, profile) ||
+      current.revision?.id !== provider.revision?.id ||
+      current.revision?.resourceVersion !== provider.revision?.resourceVersion ||
+      provider.credentialExpiresAtMs === undefined
+    )
+      throw new NativeProviderError("Native provider credential expiry could not be verified.");
+    const expiresAt = provider.credentialExpiresAtMs[profile.credentialEnv] ?? 0;
+    if (!Number.isSafeInteger(expiresAt) || expiresAt < 0)
+      throw new NativeProviderError("Native provider credential expiry is invalid.");
+    if (expiresAt > 0 && expiresAt <= Date.now()) throw new NativeProviderCredentialExpiredError();
   }
   return receipt;
 }

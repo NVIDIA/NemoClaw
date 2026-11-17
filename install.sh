@@ -66,6 +66,28 @@ has_payload_marker() {
   [[ -f "$file" ]] && grep -q "$PAYLOAD_MARKER" "$file"
 }
 
+# Use explicit Git/libcurl timeout diagnostics. Elapsed time is not a timeout cause.
+classify_install_ref_fetch_failure() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      "fatal: couldn't find remote ref "* | "fatal: invalid refspec "*)
+        printf 'missing-ref'
+        return 0
+        ;;
+      "fatal: unable to access "* | "error: RPC failed; "*)
+        case "$line" in
+          *"timed out"* | *"Timeout was reached"* | *"Operation too slow."* | *"SSL connection timeout"*)
+            printf 'connect-timeout'
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+  done <<<"$1"
+  printf 'lookup-failed'
+}
+
 clone_nemoclaw_ref() {
   local ref="$1" dest="$2"
 
@@ -74,9 +96,25 @@ clone_nemoclaw_ref() {
     umask 022
     git init --quiet "$dest"
     git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-    if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
-      printf "[ERROR] Requested install ref '%s' is not available from https://github.com/NVIDIA/NemoClaw.git.\n" "$ref" >&2
-      printf "        Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again.\n" >&2
+    local fetch_error="" elapsed_detail=""
+    if ! fetch_error="$(LC_ALL=C git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target" 2>&1)"; then
+      [[ -z "$fetch_error" ]] || printf '%s\n' "$fetch_error" >&2
+      [[ "$fetch_error" =~ after\ ([0-9]+)\ ms ]] \
+        && elapsed_detail=" Git reported ${BASH_REMATCH[1]} ms elapsed before the lookup failed."
+      case "$(classify_install_ref_fetch_failure "$fetch_error")" in
+        connect-timeout)
+          printf "[ERROR] Timed out looking up install ref '%s' at https://github.com/NVIDIA/NemoClaw.git.\n" "$ref" >&2
+          printf "        The installed CLI was not changed. Check network access to github.com and try again.\n" >&2
+          ;;
+        missing-ref)
+          printf "[ERROR] Requested install ref '%s' is not available from https://github.com/NVIDIA/NemoClaw.git.\n" "$ref" >&2
+          printf "        The installed CLI was not changed. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again.\n" >&2
+          ;;
+        *)
+          printf "[ERROR] Could not verify install ref '%s' from https://github.com/NVIDIA/NemoClaw.git.%s\n" "$ref" "$elapsed_detail" >&2
+          printf "        The installed CLI was not changed. Check repository access and the Git diagnostic, then try again.\n" >&2
+          ;;
+      esac
       exit 1
     fi
     git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
@@ -312,7 +350,7 @@ bootstrap_usage() {
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --defer-onboarding   Install NemoClaw without onboarding for a supported agent when NVIDIA inference credentials are absent\n"
   printf "                          Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
-  printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
+  printf "                          and the build or cloud NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --force-fresh-install Destroy all NemoClaw and OpenShell state, then reinstall (Apple silicon macOS only)\n"
   printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
@@ -326,7 +364,7 @@ bootstrap_usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1   Same as --non-interactive\n"
   printf "    NEMOCLAW_DEFER_ONBOARDING=1  Same as --defer-onboarding\n"
   printf "                                 Use only with NEMOCLAW_AGENT=hermes or langchain-deepagents-code, no registered sandboxes, no local model profile,\n"
-  printf "                                 and the build, cloud, or routed NVIDIA hosted provider\n"
+  printf "                                 and the build or cloud NVIDIA hosted provider\n"
   printf "    NEMOCLAW_FRESH=1             Same as --fresh\n"
   printf "    NEMOCLAW_FORCE_FRESH_INSTALL=1 Same as --force-fresh-install (Apple silicon macOS only)\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
@@ -342,7 +380,7 @@ bootstrap_usage() {
   printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
   printf "                                 Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_PROVIDER            build | openrouter | openai | anthropic | anthropicCompatible\n"
-  printf "                                 | gemini | ollama | custom | nim-local | vllm | routed\n"
+  printf "                                 | gemini | ollama | custom | nim-local | vllm\n"
   printf "                                 | hermes-provider | llama-cpp | install-llama-cpp\n"
   printf "                                 (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_POLICY_MODE         suggested | custom | skip\n"

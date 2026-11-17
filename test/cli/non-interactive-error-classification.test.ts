@@ -122,7 +122,90 @@ os.unlink(db_path)
 `;
 }
 
+function resumeConflictScript(
+  format: "text" | "json",
+  exception = 'graph_errors.ConflictError("private-model-message", body=body)',
+): string {
+  return `
+${runtimePreamble}
+body = {"diagnostics": {
+    "category": "policy_drift", "reason": "private-model-message",
+    "snapshot_status": "current", "changes": [
+        {"name": "no_mcp", "state": "changed", "bound": "runtime-secret", "current": "checkpoint-secret"},
+        {"name": "private-model-message", "state": "values_unavailable"},
+        {"name": "no_mcp", "state": "values_unavailable"},
+    ],
+}}
+conflict = ${exception}
+async def fail(*args, **kwargs):
+    raise conflict
+target._run_non_interactive_impl = fail
+assert asyncio.run(target.run_non_interactive("task", resume="thread-1", output_format="${format}")) == 1
+`;
+}
+
 describe("managed non-interactive error reporting", () => {
+  it("preserves safe resume conflict recovery in text output", () => {
+    const result = runPatchedNonInteractive(resumeConflictScript("text"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Rerun from the same directory with the same flags");
+    expect(result.stdout).toContain("Changed: no_mcp");
+    expect(result.stderr).not.toContain("Rerun from the same directory");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+  });
+
+  it("keeps resume recovery on stderr beside a valid JSON failure envelope", () => {
+    const result = runPatchedNonInteractive(resumeConflictScript("json"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("Rerun from the same directory with the same flags");
+    expect(result.stderr).toContain("Changed: no_mcp");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+    expect(JSON.parse(result.stdout).data).toMatchObject({
+      status: "agent_failure",
+      exit_code: 1,
+      response: null,
+    });
+  });
+
+  it.each(["text", "json"] as const)(
+    "keeps non-conflict exceptions on the safe generic %s error path",
+    (format) => {
+      const result = runPatchedNonInteractive(
+        resumeConflictScript(
+          format,
+          'graph_errors.APIStatusError("private-model-message", body=body)',
+        ),
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(output).toContain("category=agent_remote_failure");
+      expect(output).not.toContain("Rerun from the same directory");
+      expect(output).not.toContain("Changed:");
+      expect(output).not.toMatch(PLANTED_SECRETS);
+    },
+  );
+
+  it.each(["None", "{'diagnostics': []}"])(
+    "preserves fixed resume guidance when diagnostics are unavailable [%#]",
+    (body) => {
+      const result = runPatchedNonInteractive(
+        resumeConflictScript(
+          "json",
+          `graph_errors.ConflictError("private-model-message", body=${body})`,
+        ),
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain("Rerun from the same directory with the same flags");
+      expect(result.stderr).not.toContain("Changed:");
+      expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+      expect(JSON.parse(result.stdout).data).toMatchObject({
+        status: "agent_failure",
+        exit_code: 1,
+        response: null,
+      });
+    },
+  );
+
   it("disables unsupported OpenAI prompt cache affinity (#10549)", () => {
     const result = runPatchedNonInteractive(`
 from deepagents_code import config

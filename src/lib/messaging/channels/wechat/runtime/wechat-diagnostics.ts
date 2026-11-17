@@ -131,11 +131,7 @@ type WechatHttpRequestLike = (this: unknown, ...args: unknown[]) => WechatReques
     if (Number(statusCode) < 200 || Number(statusCode) >= 300) return;
     providerStarted = true;
     readyLogged = true;
-    emit(
-      "[wechat] [" +
-        accountIdFromEnv() +
-        "] provider ready (iLink reachable; agent replies use inference.local)",
-    );
+    emit("[wechat] [" + accountIdFromEnv() + "] provider ready (iLink reachable)");
   }
 
   function wrapHttp(mod: WechatHttpModuleLike, methodName: string): void {

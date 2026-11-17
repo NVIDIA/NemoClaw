@@ -220,6 +220,8 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
         "exec",
         "--name",
         sandboxName,
+        "-g",
+        "nemoclaw",
         "--tty",
         "--",
         "/bin/bash",

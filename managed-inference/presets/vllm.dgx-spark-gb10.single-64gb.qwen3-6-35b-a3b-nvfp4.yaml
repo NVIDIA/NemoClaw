@@ -7,10 +7,10 @@ kind: ServingPreset
 metadata:
   id: vllm.dgx-spark-gb10.single-64gb.qwen3-6-35b-a3b-nvfp4
   displayName: Qwen3.6 35B-A3B NVFP4 on one 64 GB DGX Spark
-  supportState: experimental
+  supportState: supported
   validation:
-    level: software
-    evidence: src/lib/inference/vllm-runtime-selection.test.ts
+    level: hardware
+    evidence: NVIDIA/NemoClaw/pull/12633
 
 spec:
   selection: automatic

@@ -41,6 +41,11 @@ Compare status for the same server on a known-good host.
 A `credential resolution: unknown` verdict with an endpoint or policy detail means the probe could not reach a judgment.
 Fix the reported endpoint or policy condition, then rerun status.
 
+If the detail is `probe exited 56`, the adapter HTTP probe failed.
+The exit code alone does not identify the cause.
+`provider.credentialReady: true` confirms that the provider has a credential, but does not prove endpoint connectivity or credential resolution.
+For CA bundle requirements and rebuild limitations, refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust).
+
 A detail containing `CONNECT 503` means OpenShell failed closed before TLS setup because gateway TLS termination state was unavailable.
 Inspect the OpenShell gateway's ephemeral CA generation and CA-file initialization, repair the reported condition, and rerun `mcp status <server>`.
 
@@ -214,16 +219,21 @@ $$nemoclaw <sandbox> logs --tail 100
 ```
 
 Read `transport_phase` first.
-It states which transport step failed:
+It classifies the error visible to OpenClaw at the `fetch` boundary:
 
 | Transport phase | What failed |
 |-----------------|-------------|
 | `policy` | The network policy refused the destination |
 | `connect` | The proxy CONNECT tunnel failed for a reason other than a denial |
-| `tls` | TLS setup or certificate validation failed |
+| `tls` | A TLS setup or certificate validation error reached OpenClaw |
 | `app_connect` | The upstream connection was refused, unreachable, or unresolved |
 | `request` | The request failed before any response arrived |
 | `response_headers` | A response arrived and its status or headers report the failure |
+
+A closed socket with `UND_ERR_SOCKET` and `other side closed` in `cause_chain` falls under `transport_phase=request` when no more specific cause is visible.
+Neither this socket error nor `probe exited 56` alone proves a CA trust failure.
+For a private-CA endpoint, check the certificate chain and runtime CA trust before changing credentials or increasing timeouts.
+For CA configuration requirements, refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust).
 
 `route=proxy_configured` states that OpenClaw received a supported proxy environment variable.
 `route=unknown` states that the diagnostic did not observe one.
@@ -398,9 +408,13 @@ A URL that the agent-native path accepts is therefore not registrable through ma
 For a host-local server, keep the MCP process on loopback when practical.
 Place an operator-managed HTTPS reverse proxy on a stable private address that the OpenShell gateway can route to.
 The certificate must match the original endpoint hostname and chain to a trust root available to the managed runtime.
-For a private CA, set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding, or rebuild the existing sandbox after setting it.
+For a private CA, set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding a new sandbox.
 The managed image installs that CA for both the OpenShell upstream proxy and sandbox TLS clients.
 Restrict the proxy listener to the OpenShell gateway or required deployment subnet with host firewall rules.
+
+`--trusted-private-host` permits a private destination; it does not install a CA or disable certificate validation.
+Managed-image rebuilds preserve the recorded CA profile and do not import a newly exported bundle.
+Refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust) for bundle requirements and the limitation for existing sandboxes.
 
 Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejected.
 Sandbox loopback is not the host service, and `--trusted-private-host` does not create a route to it.

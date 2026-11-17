@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -40,7 +41,7 @@ function writePackage(root: string, location: string, name: string, version: str
   writeJson(path.join(root, "node_modules", location, "package.json"), { name, version });
 }
 
-function affectedNpm(version: "10.9.8" | "11.13.0" | "11.16.0" | "11.18.0"): string {
+function affectedNpm(version: "10.9.8" | "11.13.0" | "11.16.0" | "11.18.0" | "11.19.1"): string {
   const root = path.join(temporaryDirectory(), "npm");
   writeJson(path.join(root, "package.json"), { name: "npm", version });
   writePackage(root, "brace-expansion", "brace-expansion", "2.0.2");
@@ -94,6 +95,72 @@ afterEach(() => {
 });
 
 describe("reviewed bundled npm upgrade", () => {
+  // source-shape-contract: compatibility -- The shipped DCode Dockerfile command must keep build cache out of native restore state.
+  it.each([0, 23])(
+    "keeps the DCode image upgrade cache out of native home when the command exits %i (#13241)",
+    (exitCode) => {
+      const fixture = temporaryDirectory();
+      const nativeHome = path.join(fixture, "native-home");
+      const callerCache = path.join(fixture, "caller-cache");
+      const bin = path.join(fixture, "bin");
+      fs.mkdirSync(nativeHome);
+      fs.mkdirSync(callerCache);
+      fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(callerCache, "persisted"), "prior cache bytes\n");
+      const dockerfile = fs.readFileSync(
+        path.resolve(import.meta.dirname, "../../agents/langchain-deepagents-code/Dockerfile"),
+        "utf8",
+      );
+      const lines = dockerfile.split("\n");
+      const upgradeLine = lines.findIndex((line) =>
+        line.trim().startsWith("node /scripts/upgrade-bundled-npm.mts"),
+      );
+      expect(upgradeLine).toBeGreaterThan(0);
+      let start = upgradeLine;
+      while (start > 0 && !lines[start]!.startsWith("RUN ")) start -= 1;
+      expect(lines[start]).toMatch(/^RUN /u);
+      let end = start;
+      while (lines[end]?.trimEnd().endsWith("\\")) end += 1;
+      const command = lines
+        .slice(start, end + 1)
+        .join("\n")
+        .replace(/^RUN /u, "")
+        .replace(/\\\n\s*/gu, " ");
+      const fakeNode = path.join(bin, "node");
+      fs.writeFileSync(
+        fakeNode,
+        "#!/bin/sh\nset -eu\n" +
+          '[ "$NPM_CONFIG_CACHE" = "$npm_config_cache" ] || exit 90\n' +
+          'printf "build cache bytes\\n" > "$NPM_CONFIG_CACHE/npm-marker"\n' +
+          'printf "%s" "$NPM_CONFIG_CACHE"\n' +
+          'exit "$PROBE_EXIT_CODE"\n',
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync("sh", ["-c", command], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          HOME: nativeHome,
+          NPM_CONFIG_CACHE: callerCache,
+          npm_config_cache: callerCache,
+          PROBE_EXIT_CODE: String(exitCode),
+        },
+        timeout: 10_000,
+      });
+
+      expect(result.status, result.stderr).toBe(exitCode);
+      expect(result.stdout).toMatch(/^\/tmp\/nemoclaw-dcode-npm-cache\.[A-Za-z0-9]+$/u);
+      expect(fs.existsSync(result.stdout)).toBe(false);
+      expect(fs.readdirSync(nativeHome)).toEqual([]);
+      expect(fs.readdirSync(callerCache)).toEqual(["persisted"]);
+      expect(fs.readFileSync(path.join(callerCache, "persisted"), "utf8")).toBe(
+        "prior cache bytes\n",
+      );
+    },
+  );
+
   it("binds the reviewed npm release to its immutable registry artifact", () => {
     expect(REVIEWED_NPM_VERSION).toBe("12.0.2");
     expect(REVIEWED_NPM_INTEGRITY).toBe(
@@ -133,7 +200,7 @@ describe("reviewed bundled npm upgrade", () => {
     expect(verifyBundledNpmTar(npmRoot).tarVersion).toBe("7.5.21");
   });
 
-  it.each(["10.9.8", "11.13.0", "11.16.0", "11.18.0"] as const)(
+  it.each(["10.9.8", "11.13.0", "11.16.0", "11.18.0", "11.19.1"] as const)(
     "replaces npm %s before running npm or npx",
     (version) => {
       const npmRoot = affectedNpm(version);

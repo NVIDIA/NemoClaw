@@ -13,6 +13,9 @@ import { applyOnboardRuntimeControlRequests } from "./runtime-control-flow";
 import { handleSandboxState } from "./machine/handlers/sandbox";
 import { baseOptions, createDeps } from "./machine/handlers/sandbox-test-fixtures";
 import { createSession } from "../state/onboard-session";
+import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
+import { serializeCheckpoint } from "../state/onboard-checkpoint";
+import { resolveOnboardResumeIntent } from "./session-bootstrap";
 
 vi.mock("./messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
@@ -64,6 +67,175 @@ describe("onboard DCode auto-approval input", () => {
       Parser.parse(["--dcode-auto-approval", mode], { flags: buildOnboardFlags() }),
     ).rejects.toThrow();
   });
+
+  it.each([
+    { agent: "openclaw", env: {} },
+    { agent: "hermes", env: {} },
+    { agent: "nemohermes", env: {} },
+    { agent: "openclaw", env: { NEMOCLAW_AGENT: "langchain-deepagents-code" } },
+    { agent: undefined, env: { NEMOCLAW_AGENT: "openclaw" } },
+    { agent: undefined, env: { NEMOCLAW_AGENT: "hermes" } },
+    { agent: undefined, env: { NEMOCLAW_AGENT: "nemohermes" } },
+  ])(
+    "rejects thread opt-in before onboarding for $agent and $env (#13537)",
+    async ({ agent, env }) => {
+      const error = vi.fn();
+      const runOnboard = vi.fn();
+      const exit = vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      });
+      await expect(
+        runOnboardCommand({
+          flags: { agent, "dcode-auto-approval": "thread-opt-in" } as OnboardFlags,
+          env,
+          listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
+          error,
+          exit,
+          runOnboard,
+        }),
+      ).rejects.toThrow("exit 1");
+      expect(runOnboard).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("supported only with the managed"),
+      );
+      expect(exit).toHaveBeenCalledWith(1);
+    },
+  );
+
+  it.each(["from", "from-image"] as const)(
+    "rejects thread opt-in with --%s before onboarding (#13537)",
+    async (imageFlag) => {
+      const dockerfile = path.join(stateDir, "Dockerfile");
+      fs.writeFileSync(dockerfile, "FROM scratch\n");
+      const images = {
+        from: dockerfile,
+        "from-image": `ghcr.io/example/agent@sha256:${"a".repeat(64)}`,
+      };
+      const error = vi.fn();
+      const runOnboard = vi.fn();
+      const exit = vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      });
+      await expect(
+        runOnboardCommand({
+          flags: {
+            agent: "langchain-deepagents-code",
+            "dcode-auto-approval": "thread-opt-in",
+            [imageFlag]: images[imageFlag],
+          } as OnboardFlags,
+          env: {},
+          listAgents: () => ["langchain-deepagents-code"],
+          error,
+          exit,
+          runOnboard,
+        }),
+      ).rejects.toThrow("exit 1");
+      expect(runOnboard).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("supported only with the managed"),
+      );
+    },
+  );
+
+  it.each([
+    { name: "OpenClaw", agent: null, fromDockerfile: null, fromImage: null },
+    { name: "Hermes", agent: "hermes", fromDockerfile: null, fromImage: null },
+    {
+      name: "custom Dockerfile",
+      agent: "langchain-deepagents-code",
+      fromDockerfile: "/tmp/custom/Dockerfile",
+      fromImage: null,
+    },
+    {
+      name: "custom image",
+      agent: "langchain-deepagents-code",
+      fromDockerfile: null,
+      fromImage: `ghcr.io/example/agent@sha256:${"a".repeat(64)}`,
+    },
+  ])(
+    "rejects thread opt-in before onboarding for a resumed $name session (#13537)",
+    async (saved) => {
+      const session = createSession({
+        agent: saved.agent,
+        metadata: {
+          gatewayName: "nemoclaw",
+          fromDockerfile: saved.fromDockerfile,
+          fromImage: saved.fromImage,
+        },
+      });
+      session.checkpoint = deriveCheckpointFromSession(session);
+      const sessionFile = path.join(stateDir, "resume-session.json");
+      const before = `${JSON.stringify({
+        ...session,
+        checkpoint: serializeCheckpoint(session.checkpoint),
+      })}\n`;
+      fs.writeFileSync(sessionFile, before, { mode: 0o600 });
+      const error = vi.fn();
+      const runOnboard = vi.fn();
+      const exit = vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      });
+
+      await expect(
+        runOnboardCommand({
+          flags: { resume: true, "dcode-auto-approval": "thread-opt-in" } as OnboardFlags,
+          env: { NEMOCLAW_AGENT: "" },
+          listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
+          resolveResumeIntent: (input) => resolveOnboardResumeIntent({ ...input, sessionFile }),
+          error,
+          exit,
+          runOnboard,
+        }),
+      ).rejects.toThrow("exit 1");
+      expect(runOnboard).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("supported only with the managed"),
+      );
+      expect(fs.readFileSync(sessionFile, "utf8")).toBe(before);
+    },
+  );
+
+  it("allows thread opt-in for a resumed managed Deep Agents Code session (#13537)", async () => {
+    const session = createSession({ agent: "langchain-deepagents-code" });
+    session.checkpoint = deriveCheckpointFromSession(session);
+    const sessionFile = path.join(stateDir, "resume-session.json");
+    fs.writeFileSync(
+      sessionFile,
+      JSON.stringify({ ...session, checkpoint: serializeCheckpoint(session.checkpoint) }),
+      { mode: 0o600 },
+    );
+    const runOnboard = vi.fn();
+    await runOnboardCommand({
+      flags: { resume: true, "dcode-auto-approval": "thread-opt-in" } as OnboardFlags,
+      env: {},
+      listAgents: () => ["openclaw", "langchain-deepagents-code"],
+      resolveResumeIntent: (input) => resolveOnboardResumeIntent({ ...input, sessionFile }),
+      runOnboard,
+    });
+    expect(runOnboard).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { agent: "dcode", env: { NEMOCLAW_AGENT: "openclaw" }, mode: "thread-opt-in" },
+    { agent: undefined, env: { NEMOCLAW_AGENT: "dcode" }, mode: "thread-opt-in" },
+    { agent: "openclaw", env: {}, mode: "disabled" },
+    { agent: undefined, env: {}, mode: "thread-opt-in" },
+  ] as const)(
+    "preserves valid or unselected $agent input with $mode (#13537)",
+    async ({ agent, env, mode }) => {
+      const runOnboard = vi.fn();
+      await runOnboardCommand({
+        flags: { agent, "dcode-auto-approval": mode } as OnboardFlags,
+        env,
+        listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
+        runOnboard,
+      });
+      expect(runOnboard).toHaveBeenCalledOnce();
+      expect(runOnboard).toHaveBeenCalledWith(
+        expect.objectContaining({ dcodeAutoApprovalMode: mode }),
+      );
+    },
+  );
 
   it.each([
     [undefined, undefined, "thread-opt-in", "thread-opt-in"],

@@ -67,6 +67,33 @@ afterEach(() => {
 });
 
 describe("prepareSandboxDockerfilePatch fail-closed base-image resolution", () => {
+  it("retains the ABI refusal for a custom Dockerfile that consumes sandbox-base", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-base-abi-"));
+    tempRoots.push(directory);
+    const stagedDockerfile = path.join(directory, "Dockerfile");
+    const source =
+      "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest\nFROM ${BASE_IMAGE}\n";
+    fs.writeFileSync(stagedDockerfile, source);
+    const enforceDockerGpuPatchPreserveNetwork = vi.fn(async () => false);
+    const patchStagedDockerfile = vi.fn();
+    await expect(
+      prepareSandboxDockerfilePatch({
+        ...baseInput,
+        fromDockerfile: stagedDockerfile,
+        stagedDockerfile,
+        deps: {
+          isLinuxDockerDriverGatewayEnabled: () => true,
+          pullAndResolveBaseImageDigest: () => null,
+          enforceDockerGpuPatchPreserveNetwork,
+          patchStagedDockerfile,
+        },
+      }),
+    ).rejects.toThrow("No OpenShell ABI-compatible sandbox base image could be resolved.");
+    expect(enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
+    expect(patchStagedDockerfile).not.toHaveBeenCalled();
+    expect(fs.readFileSync(stagedDockerfile, "utf8")).toBe(source);
+  });
+
   it("propagates changed-input resolution errors without cached-latest fallback (#4680)", async () => {
     const resolutionError = new SandboxBaseImageResolutionError("changed inputs not rebuilt");
     const dockerImageInspect = vi.fn();
