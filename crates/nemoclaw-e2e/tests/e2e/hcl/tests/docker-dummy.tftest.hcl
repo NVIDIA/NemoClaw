@@ -8,9 +8,9 @@
 # container, the marker read back in the new sandbox, the reply again, and
 # destroy. It needs no model or credentials; cargo ci live-docker runs it.
 # Before the first destroy, sandbox requests check that the gateway's
-# external middleware sees the requests its binding selects and blocks the
-# one it denies before the destination, and that an excluded destination
-# bypasses it.
+# external middleware sees the requests its binding selects, blocks the one it
+# denies and the one whose check fails (the binding is fail_closed) before the
+# destination, and that an excluded destination bypasses it.
 
 # The workspace volume, which a platform provides before apply. The agent
 # image runs agents as 10001:10001 (image/fabric/Dockerfile).
@@ -87,7 +87,9 @@ run "write_marker" {
 
 # The sandbox requests the case's effect recorder at the gateway network's
 # host address, which the middleware binding selects, and at the default
-# bridge's gateway, which it excludes. The middleware denies /deny.
+# bridge's gateway, which it excludes. The middleware denies /deny and fails
+# on /fail, which its fail_closed binding must block. /fail goes last so that
+# no later request depends on how the supervisor treats a failed service.
 run "middleware" {
   module {
     source = "./command"
@@ -101,12 +103,12 @@ run "middleware" {
         command = ["python3", "-c", <<-EOT
           import json, sys, urllib.error, urllib.request
           selected, excluded = (f"http://{e['host']}:{e['port']}" for e in json.loads(sys.argv[1]))
-          for url in (f"{selected}/allow", f"{selected}/deny", f"{excluded}/bypass"):
+          for url in (f"{selected}/allow", f"{selected}/deny", f"{excluded}/bypass", f"{selected}/fail"):
               try: print(urllib.request.urlopen(url, timeout=10).status)
               except urllib.error.HTTPError as error: print(error.status)
         EOT
         , jsonencode(yamldecode(file(jsondecode(var.context).config)).spec.sandboxes.assistant.network.policy.explicit.network_policies.fixture.endpoints)]
-        contains = "200\n403\n200\n"
+        contains = "200\n403\n200\n403\n"
       }
     }
   }
@@ -118,13 +120,24 @@ run "middleware" {
 
   # hcl_live::case's fixture records each request before answering it.
   assert {
-    condition     = jsondecode(file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")).middleware == { "/allow" = 1, "/deny" = 1 }
-    error_message = "Middleware must see the selected requests once each and not the excluded one: ${file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")}"
+    condition = (
+      { for path, count in jsondecode(file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")).middleware : path => count if path != "/fail" }
+      == { "/allow" = 1, "/deny" = 1 }
+    )
+    error_message = "Middleware must see the allowed and denied requests once each and not the excluded one: ${file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")}"
   }
 
+  # The fixture records /fail before it errors. The count is a floor because
+  # OpenShell may call a failing service more than once.
+  assert {
+    condition     = lookup(jsondecode(file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")).middleware, "/fail", 0) >= 1
+    error_message = "Middleware must be called for the request it fails: ${file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")}"
+  }
+
+  # Neither the denied request nor the one whose check failed may arrive.
   assert {
     condition     = jsondecode(file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")).destination == { "/allow" = 1, "/bypass" = 1 }
-    error_message = "The allowed and excluded requests must reach the destination once each, and the denied one never: ${file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")}"
+    error_message = "The allowed and excluded requests must reach the destination once each, and neither the denied nor the failed one: ${file("${jsondecode(var.context).evidence_dir}/middleware-effects.json")}"
   }
 }
 

@@ -40,7 +40,9 @@ impl Effects {
     }
 }
 
-/// Allows every request except one to `/deny`.
+/// Allows every request except one to `/deny`, which it denies, and one to
+/// `/fail`, which it answers with a service error, as a middleware that can't
+/// complete its check does.
 #[derive(Clone)]
 struct Guard(Effects);
 
@@ -89,6 +91,9 @@ impl SupervisorMiddleware for Guard {
             .target
             .ok_or_else(|| Status::invalid_argument("missing target"))?;
         self.0.record("middleware", &target.path);
+        if target.path == "/fail" {
+            return Err(Status::internal("the live guard fails this request"));
+        }
         Ok(Response::new(HttpRequestResult {
             decision: if target.path == "/deny" {
                 Decision::Deny
