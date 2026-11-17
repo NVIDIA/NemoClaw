@@ -435,13 +435,20 @@ export async function runMcpProviderRewriteProbe(
   artifactName: string,
   credentialKey = "FAKE_MCP_SECRET",
   toolName?: string,
+  adapter: McpAdapter = "openclaw-config",
 ): Promise<ShellProbeResult> {
+  // Keep the admitted Python interpreter as an ancestor of the Node probe,
+  // matching the runtime attribution used by the existing rebinding probe.
+  const runtime =
+    adapter === "openclaw-config"
+      ? "node"
+      : `${adapter === "hermes-config" ? "/opt/hermes/.venv/bin/python" : "/opt/venv/bin/python3"} -c ${shellQuote("import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:], check=False).returncode)")} node`;
   return sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
       [
         "set -eu",
-        `nemoclaw-start node - ${shellQuote(targetUrl)} ${shellQuote(method)} ${shellQuote(expectation)} ${shellQuote(credentialKey)}${toolName ? ` ${shellQuote(toolName)}` : ""} <<'NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE'`,
+        `nemoclaw-start ${runtime} - ${shellQuote(targetUrl)} ${shellQuote(method)} ${shellQuote(expectation)} ${shellQuote(credentialKey)}${toolName ? ` ${shellQuote(toolName)}` : ""} <<'NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE'`,
         MCP_PROVIDER_REWRITE_PROBE_SOURCE,
         "NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE",
       ].join("\n"),

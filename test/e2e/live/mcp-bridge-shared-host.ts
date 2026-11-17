@@ -16,7 +16,8 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { buildMcpBridgePolicyKey } from "../../../src/lib/actions/sandbox/mcp-bridge-policy-render";
-import { cleanupMcpBridge } from "./mcp-bridge-cleanup.ts";
+import { cleanupMcpBridge, type McpAdapter } from "./mcp-bridge-cleanup.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { addBridgeAndReadStatus, runMcpProviderRewriteProbe } from "./mcp-bridge-reliability.ts";
 import { captureManagedMcpPolicy, expectExitNonZero } from "./mcp-bridge-sandbox.ts";
 import { startFakeMcpHttpsServer, startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
@@ -63,6 +64,7 @@ dns.lookup = async (hostname, options) => {
 }
 
 export async function assertSharedHostMcpComposition(options: {
+  adapter: McpAdapter;
   host: HostCliClient;
   sandbox: SandboxClient;
   cleanup: CleanupRegistry;
@@ -70,7 +72,13 @@ export async function assertSharedHostMcpComposition(options: {
   progress: TestProgress;
   sandboxName: string;
 }): Promise<void> {
-  const { host, sandbox, cleanup, artifacts, progress, sandboxName } = options;
+  const { adapter, host, sandbox, cleanup, artifacts, progress, sandboxName } = options;
+  if (adapter === "openclaw-config") {
+    await approveOpenClawAdminScope(host, sandbox, sandboxName, buildAvailabilityProbeEnv(), [
+      MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint,
+      MCP_BRIDGE_TEST_CREDENTIALS.host,
+    ]);
+  }
   const endpoint = await startFakeMcpHttpsServer({
     secret: MCP_BRIDGE_TEST_CREDENTIALS.host,
     additionalPaths: { "/mcp-peer": MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost },
@@ -120,7 +128,7 @@ export async function assertSharedHostMcpComposition(options: {
     const provider = `${sandboxName}-mcp-${entry.server}`;
     const run = async () => {
       if (complete) return;
-      await cleanupMcpBridge(host, sandboxName, entry.server, "openclaw-config");
+      await cleanupMcpBridge(host, sandboxName, entry.server, adapter);
       const deleted = await host.command(
         host.openshellCommandPath,
         ["provider", "delete", provider],
@@ -145,7 +153,7 @@ export async function assertSharedHostMcpComposition(options: {
       addBridgeAndReadStatus(host, sandbox, {
         sandboxName,
         mcpUrl: `${tunnel.origin}${entry.pathname}`,
-        expectedAdapter: "openclaw-config",
+        expectedAdapter: adapter,
         artifactPrefix: entry.server,
         serverName: entry.server,
         credentialEnvName: entry.key,
@@ -173,6 +181,8 @@ export async function assertSharedHostMcpComposition(options: {
       "allow",
       `${entry.server}-authenticated`,
       entry.key,
+      undefined,
+      adapter,
     );
     assertExitZero(accepted, `${entry.server} authenticated request after both adds`);
     const observed = endpoint.requests
@@ -195,6 +205,8 @@ export async function assertSharedHostMcpComposition(options: {
       "deny-strict",
       `${entry.server}-outside-binding`,
       entry.key,
+      undefined,
+      adapter,
     );
     assertExitZero(denied, `${entry.server} credential cannot reach an unconfigured path`);
   }

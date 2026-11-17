@@ -14,9 +14,10 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpSourceEntry } from "../../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
+import { loadAgent } from "../../../src/lib/agent/defs";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -139,6 +140,8 @@ async function onboardAgent(
     agent: McpAgent;
     sandboxName: string;
     artifactName: string;
+    artifacts: ArtifactSink;
+    progress: TestProgress;
     envOverlay?: NodeJS.ProcessEnv;
   },
 ): Promise<void> {
@@ -177,6 +180,15 @@ async function onboardAgent(
   });
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
   assertMcpBridgeManagedRegistryReceipt(options.sandboxName, options.agent, REGISTRY_FILE);
+  await assertSharedHostMcpComposition({
+    host,
+    sandbox,
+    cleanup,
+    artifacts: options.artifacts,
+    progress: options.progress,
+    sandboxName: options.sandboxName,
+    adapter: loadAgent(options.agent).mcpCapability.adapter!,
+  });
 }
 async function assertSecretAbsentFromSandbox(
   sandbox: SandboxClient,
@@ -727,16 +739,11 @@ test(
     await onboardAgent(host, sandbox, cleanup, endpointUrl, {
       ...bridge,
       artifactName: "onboard-openclaw-mcp-bridge",
+      artifacts,
+      progress,
     });
-    await approveOpenClawAdminScope(
-      host,
-      sandbox,
-      OPENCLAW_SANDBOX_NAME,
-      buildAvailabilityProbeEnv(),
-      [COMPATIBLE_KEY, HOST_SECRET],
-    );
-    // Prove raw OpenShell allowed_ips with curl and a /** grant before MCP
-    // mutation. The helper restores the exact base policy before returning.
+    // Prove raw OpenShell allowed_ips with curl and a /** grant before ordinary
+    // lifecycle checks. The helper restores the exact base policy before returning.
     await runFullMcpBridgeE2eCoverage(mcpBridgeE2eScope, () =>
       assertRawOpenShellAllowedIpsRebindingDenied({
         artifacts,
@@ -855,14 +862,6 @@ test(
       openClawToolSearch.toolNames = ["fake__fake_echo"];
     }
     await cleanupMcpBridge(host, OPENCLAW_SANDBOX_NAME, "distinct", "openclaw-config");
-    await assertSharedHostMcpComposition({
-      host,
-      sandbox,
-      cleanup,
-      artifacts,
-      progress,
-      sandboxName: OPENCLAW_SANDBOX_NAME,
-    });
     await assertBridgeInfrastructure(host, sandbox, {
       ...bridge,
       providerName,
@@ -1118,6 +1117,8 @@ mcpBridgeShardTest("hermes")(
     await onboardAgent(host, sandbox, cleanup, endpointUrl, {
       ...bridge,
       artifactName: "onboard-hermes-mcp-bridge",
+      artifacts,
+      progress,
     });
     cleanup.add("remove Hermes MCP bridge", () =>
       cleanupMcpBridge(host, HERMES_SANDBOX_NAME, SERVER_NAME, "hermes-config"),
@@ -1351,6 +1352,8 @@ mcpBridgeShardTest("deepagents")(
     await onboardAgent(host, sandbox, cleanup, endpointUrl, {
       ...bridge,
       artifactName: "onboard-deepagents-mcp-bridge",
+      artifacts,
+      progress,
       envOverlay: exactMainProof.envOverlay,
     });
     await exactMainProof.afterOnboard();
