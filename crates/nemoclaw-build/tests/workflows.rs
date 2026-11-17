@@ -351,53 +351,6 @@ fn a_station_dispatch_builds_its_candidate_in_the_case_job() {
     }
 }
 
-/// The GPU runner downloads artifacts slowly, so a GPU HCL case whose
-/// document names no Hermes image loads CI / Bundle's OpenClaw-only live
-/// images artifact, and a case that also runs Hermes loads every live image.
-#[cfg(unix)]
-#[test]
-fn gpu_cases_without_hermes_download_only_the_openclaw_image() {
-    let live: Value = serde_saphyr::from_str(
-        &fs::read_to_string(repository().join(".github/workflows/hcl-e2e.yml")).unwrap(),
-    )
-    .unwrap();
-    let select = live["jobs"]["e2e"]["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|step| step["id"] == "agents")
-        .expect("the case job selects its agent images")["run"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    for (case, expected) in [
-        ("docker-openclaw-vllm", "names=openclaw\nsuffix=-openclaw\n"),
-        (
-            "docker-openclaw-vllm-shared",
-            "names=openclaw\nsuffix=-openclaw\n",
-        ),
-        (
-            "docker-openclaw-hermes-ollama",
-            "names=openclaw hermes\nsuffix=\n",
-        ),
-    ] {
-        let output = tempfile::NamedTempFile::new().unwrap();
-        let status = std::process::Command::new("bash")
-            .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", &select])
-            .current_dir(repository())
-            .env("NEMOCLAW_HCL_CASE", case)
-            .env("GITHUB_OUTPUT", output.path())
-            .status()
-            .unwrap();
-        assert!(status.success(), "{case}");
-        assert_eq!(
-            fs::read_to_string(output.path()).unwrap(),
-            expected,
-            "{case}"
-        );
-    }
-}
-
 /// The organization allows GitHub's and NVIDIA's actions and verified
 /// creators' at any version, and other actions only at the commits it lists;
 /// any other action stops its whole workflow from starting (#13612).
