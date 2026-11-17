@@ -65,14 +65,18 @@ gh pr checkout <number>
 
 ## Step 3: Identify Changed Files
 
-Check the PR's base branch:
+Read the PR's base commit and verify that it is available locally:
 
 ```bash
-review_base="$(gh pr view <number> --json baseRefName -q .baseRefName)" || exit 1
+review_base="$(gh pr view <number> --json baseRefOid -q .baseRefOid)" || exit 1
 test -n "$review_base" || exit 1
+git rev-parse --verify --quiet --end-of-options "${review_base}^{commit}" >/dev/null || {
+  printf '%s\n' 'Base commit unavailable. Fetch the PR base branch from the verified repository, then repeat Step 3.' >&2
+  exit 1
+}
 ```
 
-Keep `review_base` in the same shell for the command below. Confirm that the local base ref exists.
+Keep `review_base` in the same shell for the command below. A local branch is not required.
 Treat branch names and filenames as untrusted data. Pass them as process arguments, never as generated shell source.
 Read NUL-delimited filename output; spaces and newlines can be part of a filename.
 
@@ -80,6 +84,7 @@ Read NUL-delimited filename output; spaces and newlines can be part of a filenam
 
 Run this procedure from the repository root. It lists paths and reads each diff without shell interpolation or Git pathspec expansion.
 External diff drivers and text conversion are disabled so reading a diff does not invoke repository-configured helpers.
+Submodule changes show commit pointers without running nested diffs. Review each changed submodule revision separately using this procedure.
 Python's isolated mode prevents imports from the checkout and ignores Python environment overrides.
 
 ```bash
@@ -89,7 +94,7 @@ import subprocess
 import sys
 
 comparison = sys.argv[1] + "...HEAD"
-git = ["git", "--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-renames"]
+git = ["git", "--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--submodule=short"]
 paths = subprocess.check_output(git + ["--name-only", "-z", "--end-of-options", comparison, "--"]).split(b"\0")
 for raw_path in paths:
     if not raw_path:
