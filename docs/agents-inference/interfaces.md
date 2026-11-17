@@ -208,6 +208,7 @@ OpenShell opens the pseudo-terminal of `openshell sandbox exec --tty` and hands 
 
 Hermes's `terminal` interface attaches Hermes's terminal UI to the backend that serves browser chat, which the agent's runtime starts.
 Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper may change between Fabric releases without compatibility; see [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/docs/integrations/harness/hermes/hermes-tui.mdx).
+Fabric tracks what it takes for the interface to stop being experimental in [NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656).
 Give it the dashboard's port, so that both use one backend process:
 
 ```yaml
