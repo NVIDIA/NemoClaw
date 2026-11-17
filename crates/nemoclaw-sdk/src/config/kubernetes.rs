@@ -52,7 +52,7 @@ pub struct KubernetesExpose {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ExposureService")]
     pub service: Option<ExposureService>,
-    /// The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's port is the one the router serves. Requires `runtime.provider: openshift`.
+    /// The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's host is a DNS name, since clients send no SNI host name for an IP address, and its port is the one the router serves. Requires `runtime.provider: openshift`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ExposureRoute")]
     pub route: Option<ExposureRoute>,

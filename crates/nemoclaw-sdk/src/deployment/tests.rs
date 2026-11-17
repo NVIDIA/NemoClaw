@@ -1174,10 +1174,10 @@ async fn changing_a_gateway_exposure_preserves_saved_state() {
     let bundle_directory = guard_bundle();
     let (document, _) = kubernetes_context();
     // OpenShift accepts either exposure.
-    let exposed = |expose: Option<serde_json::Value>| {
+    let exposed = |endpoint: &str, expose: Option<serde_json::Value>| {
         let mut value = serde_json::to_value(&document).unwrap();
         value["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
-        value["spec"]["gateway"]["endpoint"] = json!("https://127.0.0.1:30851");
+        value["spec"]["gateway"]["endpoint"] = json!(endpoint);
         if let Some(expose) = expose {
             value["spec"]["gateway"]["kubernetes"]["expose"] = expose;
         }
@@ -1185,13 +1185,17 @@ async fn changing_a_gateway_exposure_preserves_saved_state() {
     };
     let service = || Some(json!({"service": {"type": "NodePort"}}));
     let route = || Some(json!({"route": {}}));
+    // A loopback endpoint takes no Route, and a Route no IP address, so the
+    // endpoint check refuses a change between those first.
+    let (loopback, host) = (
+        "https://127.0.0.1:30851",
+        "https://gateway.apps.example.com:443",
+    );
     for (original, changed) in [
-        (exposed(service()), exposed(None)),
-        (exposed(None), exposed(service())),
-        (exposed(route()), exposed(None)),
-        (exposed(None), exposed(route())),
-        (exposed(service()), exposed(route())),
-        (exposed(route()), exposed(service())),
+        (exposed(loopback, service()), exposed(loopback, None)),
+        (exposed(loopback, None), exposed(loopback, service())),
+        (exposed(host, service()), exposed(host, route())),
+        (exposed(host, route()), exposed(host, service())),
     ] {
         let state_directory = tempfile::tempdir().unwrap();
         let store = Store::open(state_directory.path()).unwrap();
@@ -1214,11 +1218,16 @@ async fn changing_a_gateway_exposure_preserves_saved_state() {
     // Route in place.
     let state_directory = tempfile::tempdir().unwrap();
     let store = Store::open(state_directory.path()).unwrap();
-    store.save(&Record::new(exposed(route())).unwrap()).unwrap();
+    store
+        .save(&Record::new(exposed(host, route())).unwrap())
+        .unwrap();
     drop(store);
-    let annotated = exposed(Some(json!({
-        "route": {"annotations": {"haproxy.router.openshift.io/timeout": "1h"}}
-    })));
+    let annotated = exposed(
+        host,
+        Some(json!({
+            "route": {"annotations": {"haproxy.router.openshift.io/timeout": "1h"}}
+        })),
+    );
     let error = Deployment::new(state_directory.path(), bundle_directory.path())
         .run(&annotated, &CancellationToken::new(), false)
         .await

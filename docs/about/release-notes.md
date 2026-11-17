@@ -44,7 +44,7 @@ Kubernetes and OpenShift:
 
 - `gateway.kubernetes.expose.route` publishes a managed OpenShift gateway at `gateway.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI; its optional `annotations` reach the Route.
   The gateway certificate names the endpoint's host, and NemoClaw's own commands keep their port forward.
-  Plan refuses `expose.route` unless `gateway.runtime.provider` is `openshift`.
+  Plan refuses `expose.route` unless `gateway.runtime.provider` is `openshift` and the endpoint's host is a DNS name.
   See [publishing through an OpenShift Route](../build-deploy/kubernetes.md#through-an-openshift-route).
 
 Examples and builds:
