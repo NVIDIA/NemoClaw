@@ -153,14 +153,27 @@ pub(super) fn build(platform: &str) -> Result<()> {
         );
         Ok(())
     });
+    // DIAGNOSTIC (temporary): where the cleanup time goes.
+    let meminfo = fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    for line in meminfo
+        .lines()
+        .filter(|l| l.starts_with("Dirty:") || l.starts_with("Writeback:"))
+    {
+        eprintln!("DIAG {line}");
+    }
+    let sync = Instant::now();
+    let _ = Command::new("sync").status();
+    eprintln!("DIAG sync took {:.1}s", sync.elapsed().as_secs_f64());
     let cleanup = Instant::now();
     // The archive holds them; the local names would only take space.
     for tag in &tags {
+        let one = Instant::now();
         let _ = docker()
             .args(["image", "rm", tag])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+        eprintln!("DIAG rm {tag} took {:.1}s", one.elapsed().as_secs_f64());
     }
     eprintln!(
         "Live image cleanup took {:.1}s",
