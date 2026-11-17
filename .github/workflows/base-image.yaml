@@ -448,6 +448,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      pull-requests: read
     uses: ./.github/workflows/managed-images.yaml
     with:
       dcode-base-contract-base64: ${{ needs.build-and-push-dcode.outputs.contract-base64 }}
