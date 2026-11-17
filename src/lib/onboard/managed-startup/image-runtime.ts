@@ -948,24 +948,28 @@ function expectedSandboxOwnedRoutingSource(
 }
 
 function verifyCommittedRoutingFile(target: string, expected: Buffer): void {
-  const installed = readStableRegularFileSnapshot(target, MAX_HERMES_SWITCHYARD_CONFIG_BYTES);
-  if (
-    installed.stat.uid !== 0n ||
-    installed.stat.gid !== 0n ||
-    Number(installed.stat.mode & 0o777n) !== 0o444 ||
-    !installed.bytes.equals(expected)
-  ) {
-    fail(
-      `committed Hermes routing artifact drifted: ${target}\n` +
-        "Hermes startup stopped because its protected routing configuration does not match this image.\n" +
-        "Do not edit the protected routing files to bypass this check.\n" +
-        "To start a fresh Hermes sandbox, run on the host:\n" +
-        "  nemoclaw onboard --fresh --agent hermes --name <new-name> --switchyard-config <routing-config.json>\n" +
-        "Replace <new-name> with an unused sandbox name and <routing-config.json> with your Switchyard routing JSON file.\n" +
-        "This creates a fresh workspace; it does not recover data from the failed sandbox.\n" +
-        "Restoring your previous data requires an independently maintained backup.\n" +
-        "Do not delete the failed sandbox while data recovery is unresolved.",
-    );
+  try {
+    const installed = readStableRegularFileSnapshot(target, MAX_HERMES_SWITCHYARD_CONFIG_BYTES);
+    if (
+      installed.stat.uid !== 0n ||
+      installed.stat.gid !== 0n ||
+      Number(installed.stat.mode & 0o777n) !== 0o444 ||
+      !installed.bytes.equals(expected)
+    ) {
+      fail(`committed Hermes routing artifact drifted: ${target}`);
+    }
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    failure.message +=
+      "\nHermes startup stopped because its protected routing configuration does not match this image.\n" +
+      "Do not edit the protected routing files to bypass this check.\n" +
+      "To start a fresh Hermes sandbox, run on the host:\n" +
+      "  nemoclaw onboard --fresh --agent hermes --name <new-name> --switchyard-config <routing-config.json>\n" +
+      "Replace <new-name> with an unused sandbox name and <routing-config.json> with your Switchyard routing JSON file.\n" +
+      "This creates a fresh workspace; it does not recover data from the failed sandbox.\n" +
+      "Restoring your previous data requires an independently maintained backup.\n" +
+      "Do not delete the failed sandbox while data recovery is unresolved.";
+    throw failure;
   }
 }
 
