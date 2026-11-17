@@ -2232,11 +2232,7 @@ async function runVllmInstall(
     );
     return { ok: false };
   }
-  if (
-    !hostLocalSelection &&
-    resolved.source === "picker" &&
-    !process.env[VLLM_EXTRA_ARGS_ENV]?.trim()
-  ) {
+  if (!hostLocalSelection && resolved.source === "picker") {
     const selected = resolveHostLocalVllmSelection(
       profile,
       {
