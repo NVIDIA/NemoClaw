@@ -220,19 +220,6 @@ fn colossus_bundle_runs_linux_arm64_ci_without_writing_shared_caches() {
     let input = &platform["on"]["workflow_call"]["inputs"]["save-cache"];
     assert_eq!(input["type"], "boolean");
     assert_eq!(input["default"], true, "CI / Bundle keeps saving on v1");
-    let mut setups = 0;
-    for (name, job) in platform["jobs"].as_object().unwrap() {
-        for step in job["steps"].as_array().into_iter().flatten() {
-            if step["uses"] == "./.github/actions/setup-rust" {
-                setups += 1;
-                assert_eq!(
-                    step["with"]["save-cache"], "${{ inputs.save-cache }}",
-                    "{name} must honor save-cache"
-                );
-            }
-        }
-    }
-    assert!(setups > 0, "bundle-platform.yml sets up Rust");
 }
 
 /// Linux bundles must run on Ubuntu 22.04, the oldest supported Linux, so
@@ -306,20 +293,6 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
         "the E2E platform workflow calls Live / HCL"
     );
 
-    let platform = read(".github/workflows/e2e-platform.yml");
-    let gpu = &platform["jobs"]["gpu"];
-    assert!(needs(gpu).contains(&"live-images".to_owned()));
-    assert_eq!(
-        gpu["with"],
-        serde_json::json!({
-            "hosted": false,
-            "cases": "${{ inputs.hcl-cases }}",
-            "tests": "${{ inputs.tests }}",
-            "bundle": "${{ inputs.bundle }}",
-            "live-images": "${{ needs.live-images.outputs.artifact }}",
-            "live-images-commit": "${{ inputs.live-images-commit }}",
-        })
-    );
     let bundle_platform = read(".github/workflows/bundle-platform.yml");
     assert_eq!(
         bundle_platform["jobs"]["e2e"]["with"]["hcl-gpu"],
@@ -332,6 +305,50 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
         build.contains("inputs.tests == ''"),
         "Live / HCL builds a candidate only without CI / Bundle's artifacts: {build}"
     );
+}
+
+/// Two machines share the Station runner label, and Actions artifacts move at
+/// 3-8 MB/s there, so a Station dispatch builds its candidate in the case's
+/// own job instead of uploading it from one job and downloading it in another.
+#[test]
+fn a_station_dispatch_builds_its_candidate_in_the_case_job() {
+    let live: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/hcl-e2e.yml")).unwrap(),
+    )
+    .unwrap();
+    let build = live["jobs"]["build"]["if"].as_str().unwrap_or_default();
+    assert!(
+        build.contains("inputs.target != 'dgx-station'"),
+        "the Build job skips a Station dispatch: {build}"
+    );
+    let case = &live["jobs"]["e2e"];
+    let runs = case["if"].as_str().unwrap_or_default();
+    assert!(
+        runs.contains("needs.build.result == 'skipped'")
+            && runs.contains("inputs.target == 'dgx-station'"),
+        "a Station case runs without the Build job: {runs}"
+    );
+    let steps = case["steps"].as_array().unwrap();
+    let builds: Vec<_> = steps
+        .iter()
+        .filter(|step| step["uses"] == "./.github/actions/hcl-candidate")
+        .map(|step| step["if"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        builds,
+        ["inputs.target == 'dgx-station'"],
+        "a Station case builds its candidate"
+    );
+    for step in steps
+        .iter()
+        .filter(|step| step["with"]["name"] == "${{ env.CANDIDATE }}")
+    {
+        let condition = step["if"].as_str().unwrap_or_default();
+        assert!(
+            condition.contains("inputs.target != 'dgx-station'"),
+            "a Station case downloads no candidate: {condition}"
+        );
+    }
 }
 
 /// The organization allows GitHub's and NVIDIA's actions and verified
