@@ -73,6 +73,7 @@ No CI job has an OpenShift cluster, and kind can't stand in for one: a managed `
 The `openshift-oidc` scenario deploys the agents of `kind-kubernetes-oidc` with the `openshift` runtime profile, and runs by hand, for example on OpenShift Local.
 OpenShift writes the namespace's UID range, so its test file supplies none, and `restricted-v2` admits the gateway as the range's first UID and group.
 The gateway can read its signing key only with that group, so the apply and the replies show that OpenShift assigned it.
+The chart's pass-through Route publishes the gateway at its endpoint; apply goes through the port-forward, and the probe dials the endpoint's host through the cluster's router, so each reply also shows that the Route reaches the gateway and that its certificate names the host.
 
 Prepare the cluster as its operator would:
 
@@ -81,7 +82,7 @@ Prepare the cluster as its operator would:
   For OpenShift's internal registry, copy the image through the registry's route into a namespace of its own, for example with `oc image mirror`, which keeps its digest, and bind `image-registry.openshift-image-registry.svc:5000/<namespace>/agent@<digest>`.
 - A login that can pull the image, for `TF_VAR_pull_credentials`: for the internal registry, a cluster administrator's name and a token from `oc whoami -t`.
 
-Bind a copy of `cases/openshift-oidc.yaml` to the run: a fresh `uid`, which is also the token audience; a free endpoint port; a new namespace, which also names the stub model's and the issuer's; the cluster's context; and the image.
+Bind a copy of `cases/openshift-oidc.yaml` to the run: a fresh `uid`, which is also the token audience; an endpoint host that the cluster's router serves, such as one under `apps-crc.testing` on OpenShift Local, at port 443; a new namespace, which also names the stub model's and the issuer's; the cluster's context; and the image.
 Then run from `crates/nemoclaw-e2e`:
 
 ```sh
@@ -127,7 +128,7 @@ Run blocks call these modules:
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, a workspace file on a named volume that survives the destroy and redeploy, and sandbox requests that an external middleware allows, denies, or, for an excluded destination, never sees. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
 | `kind-kubernetes-oidc` | `cargo ci live-kind` | Two agents [on kind](#kubernetes-gateway-without-the-helm-cli) in a namespace with OpenShift's UID range, from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens and that the chart's NodePort Service publishes at the node's address; apply goes through the port-forward, and each agent answers the stub's reply through the published address. |
-| `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` runtime profile [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`; each answers with the stub's reply. |
+| `openshift-oidc` | By hand on OpenShift | The same two agents with the `openshift` runtime profile [on OpenShift](#openshift-gateway), whose `restricted-v2` constraint assigns the gateway its UID and `fsGroup`, behind the chart's pass-through Route; each answers with the stub's reply through the Route's host. |
 
 Every scenario checks the same successful path:
 
