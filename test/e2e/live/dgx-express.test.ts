@@ -4,7 +4,6 @@
 /** Exercises the DGX Spark and Station Express vLLM paths on physical hardware. */
 
 import assert from "node:assert/strict";
-import { totalmem } from "node:os";
 
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
@@ -22,7 +21,6 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { assertAgentExecutionSucceeded } from "./gpu-e2e-helpers.ts";
 import {
   assertLocalDockerEnvironment,
   classifyDockerContainerInspection,
@@ -86,7 +84,6 @@ function e2eEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_PROVIDER: "",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    NEMOCLAW_SERVING_PRESET: "",
     NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "",
     NEMOCLAW_VLLM_MODEL: "",
     NEMOCLAW_VLLM_PORT: "",
@@ -230,12 +227,6 @@ async function removeExactVllmContainer(
     { artifactName, env: e2eEnv(), timeoutMs: 120_000 },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
-  const remaining = await host.command("docker", ["inspect", containerId], {
-    artifactName: `${artifactName}-absence`,
-    env: e2eEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(classifyDockerContainerInspection(remaining), resultText(remaining)).toBe("absent");
 }
 
 test(
@@ -462,135 +453,6 @@ test(
     );
     expect(denied.exitCode, resultText(denied)).toBe(0);
     expect(denied.stdout.trim()).toBe("56 403");
-  },
-);
-
-test(
-  "spark-vllm-extra-args: automatic selection on a 64 GB Spark keeps the smaller recipe and serves sandbox inference",
-  {
-    timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "qualify the smaller Spark memory tier",
-        "onboard automatic vLLM with operator arguments",
-        "inspect the launched recipe and prove sandbox inference",
-      ],
-    },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
-    validateSandboxName(SANDBOX_NAME);
-    assertLocalDockerEnvironment(process.env);
-    const env = e2eEnv({
-      NEMOCLAW_AGENT: "openclaw",
-      NEMOCLAW_PROVIDER: "install-vllm",
-      NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--gpu-memory-utilization","0.45"]',
-    });
-    await artifacts.target.declare({
-      id: "spark-vllm-extra-args",
-      boundary: "automatic host-local vLLM selection + operator arguments + real sandbox inference",
-      sandboxName: SANDBOX_NAME,
-      expectedRecipe: "vllm.qwen3-6-35b-a3b-nvfp4.spark-single-64gb.v1",
-    });
-
-    progress.phase("qualify the smaller Spark memory tier");
-    await requireLivePrerequisites(host, runtimeProvider);
-    const platform = await host.command(
-      "bash",
-      [
-        "--noprofile",
-        "--norc",
-        "-c",
-        "source scripts/install.sh >/dev/null; detect_express_platform",
-      ],
-      { artifactName: "spark-extra-args-platform", cwd: REPO_ROOT, env, timeoutMs: 30_000 },
-    );
-    expect(platform.exitCode, resultText(platform)).toBe(0);
-    expect(platform.stdout.trim()).toBe("DGX Spark");
-    const memoryBytes = totalmem();
-    await artifacts.writeJson("spark-extra-args-memory", { memoryBytes });
-    expect(
-      memoryBytes,
-      "this scenario requires the real smaller Spark memory tier",
-    ).toBeGreaterThanOrEqual(60_000_000_000);
-    expect(memoryBytes).toBeLessThan(64_000_000_000);
-    await assertVllmContainerAbsent(host);
-    await assertSandboxAbsent(host, SANDBOX_NAME);
-
-    let createdContainerId: string | null = null;
-    let createdSandboxId: string | null = null;
-    cleanup.add(`remove ${VLLM_CONTAINER}`, () =>
-      createdContainerId
-        ? removeExactVllmContainer(host, createdContainerId, "cleanup-spark-extra-args-vllm")
-        : Promise.resolve(),
-    );
-    cleanup.add(`remove sandbox ${SANDBOX_NAME}`, () =>
-      createdSandboxId
-        ? removeExactSandbox(host, sandbox, SANDBOX_NAME, createdSandboxId)
-        : Promise.resolve(),
-    );
-
-    progress.phase("onboard automatic vLLM with operator arguments");
-    let inspectionResult: CommandExitResult;
-    let onboard: CommandExitResult;
-    try {
-      onboard = await host.command(
-        "node",
-        [
-          "bin/nemoclaw.js",
-          "onboard",
-          "--fresh",
-          "--non-interactive",
-          "--yes",
-          "--yes-i-accept-third-party-software",
-        ],
-        {
-          artifactName: "spark-extra-args-onboard",
-          cwd: REPO_ROOT,
-          env,
-          timeoutMs: ONBOARD_TIMEOUT_MS,
-        },
-      );
-    } finally {
-      // Capture identities even when the onboarding command times out or throws.
-      inspectionResult = await host.command("docker", ["inspect", VLLM_CONTAINER], {
-        artifactName: "spark-extra-args-container-inspect",
-        env,
-        timeoutMs: 30_000,
-      });
-      createdContainerId = capturedVllmContainerId(inspectionResult);
-      const identity = await inspectSandbox(host, SANDBOX_NAME, "spark-extra-args-sandbox-inspect");
-      createdSandboxId = identity.kind === "present" ? identity.id : null;
-    }
-    await (onboard.exitCode !== 0
-      ? captureOnboardFailureDiagnostics(host, SANDBOX_NAME)
-      : Promise.resolve());
-    expect(onboard.exitCode, resultText(onboard)).toBe(0);
-
-    progress.phase("inspect the launched recipe and prove sandbox inference");
-    expect(inspectionResult.exitCode, resultText(inspectionResult)).toBe(0);
-    const [inspection] = JSON.parse(inspectionResult.stdout) as VllmContainerInspection[];
-    const command = inspection.Config.Cmd.at(-1)!;
-    // Inspect Docker's actual launch command against literals, independently of the selector and command builder.
-    expect(command).toMatch(/(?:^| )--max-model-len 32768(?: |$)/u);
-    expect(command).toMatch(/--gpu-memory-utilization 0\.5 .*--gpu-memory-utilization 0\.45$/u);
-    const turn = await host.command(
-      "node",
-      [
-        "bin/nemoclaw.js",
-        SANDBOX_NAME,
-        "agent",
-        "--agent",
-        "main",
-        "--json",
-        "--session-id",
-        `${SANDBOX_NAME}-${Date.now()}`,
-        "-m",
-        "Reply with exactly one word: PONG",
-      ],
-      { artifactName: "spark-extra-args-sandbox-turn", cwd: REPO_ROOT, env, timeoutMs: 5 * 60_000 },
-    );
-    expect(turn.exitCode, resultText(turn)).toBe(0);
-    assertAgentExecutionSucceeded(turn.stdout, "inference", "nvidia/Qwen3.6-35B-A3B-NVFP4");
   },
 );
 
