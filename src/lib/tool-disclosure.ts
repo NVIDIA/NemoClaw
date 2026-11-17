@@ -15,11 +15,16 @@ export function normalizeToolDisclosure(value: unknown): ToolDisclosure | null {
   return normalized === "progressive" || normalized === "direct" ? normalized : null;
 }
 
+function readTrimmedEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined>): string {
+  const value = env[TOOL_DISCLOSURE_ENV];
+  return typeof value === "string" ? value.trim() : "";
+}
+
 /** Read the build-time environment contract with the shared closed-enum policy. */
 export function readToolDisclosureEnv(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): ToolDisclosure {
-  const raw = env[TOOL_DISCLOSURE_ENV] || DEFAULT_TOOL_DISCLOSURE;
+  const raw = readTrimmedEnv(env) || DEFAULT_TOOL_DISCLOSURE;
   const normalized = normalizeToolDisclosure(raw);
   if (!normalized) {
     throw new Error(`${TOOL_DISCLOSURE_ENV} must be progressive or direct`);
@@ -33,9 +38,7 @@ export function resolveToolDisclosureRequest(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): ToolDisclosure | null {
   const rawCli = typeof cliValue === "string" ? cliValue.trim() : "";
-  const rawEnv =
-    typeof env[TOOL_DISCLOSURE_ENV] === "string" ? env[TOOL_DISCLOSURE_ENV]!.trim() : "";
-  const raw = rawCli || rawEnv;
+  const raw = rawCli || readTrimmedEnv(env);
   if (!raw) return null;
   const normalized = normalizeToolDisclosure(raw);
   if (!normalized) {
