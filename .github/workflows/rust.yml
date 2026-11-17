@@ -79,6 +79,9 @@ jobs:
       platform: windows_amd64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
+      # One 4-vCPU Windows runner takes about 7 minutes to compile the bundle,
+      # longer than the unit job, so three runners compile its parts.
+      split-bundle: true
       # Windows runs its tests longest after its slower bundle build, so its
       # integration tests use a third partition to keep that path closer to
       # the other platforms.

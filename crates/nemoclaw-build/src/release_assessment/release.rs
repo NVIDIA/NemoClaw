@@ -679,27 +679,15 @@ mod tests {
             .as_str()
             .unwrap();
         // Release candidates report a blocked result without failing.
-        for (job, id, pass_name, passing) in [
-            (
-                "publish",
-                "gate",
-                "Require a passing release policy",
-                &[0][..],
-            ),
+        for (job, pass_name, passing) in [
+            ("publish", "Require a passing release policy", &[0][..]),
             (
                 "candidate-security",
-                "gate",
                 "Report the result without disclosing findings",
                 &[0, 2],
             ),
         ] {
             let steps = workflow["jobs"][job]["steps"].as_array().unwrap();
-            assert!(
-                steps
-                    .iter()
-                    .any(|v| v["id"] == id && v["uses"] == "./.github/actions/release-assessment"),
-                "{job} must assess through the shared action"
-            );
             let pass = steps.iter().find(|v| v["name"] == pass_name).unwrap()["run"]
                 .as_str()
                 .unwrap();
@@ -817,11 +805,7 @@ mod tests {
         let workflow: Value =
             serde_saphyr::from_str(include_str!("../../../../.github/workflows/release.yml"))
                 .unwrap();
-        let job = &workflow["jobs"]["publish"];
-        // Anyone who may push a final tag may release: no approval gates it.
-        assert!(job.get("environment").is_none());
-        assert!(!job["if"].as_str().unwrap().contains("vars."));
-        let script = job["steps"]
+        let script = workflow["jobs"]["publish"]["steps"]
             .as_array()
             .unwrap()
             .iter()

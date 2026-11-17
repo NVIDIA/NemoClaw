@@ -69,6 +69,9 @@ Assert the few semantic facts that identify a failure, one outcome per assertion
 - Don't compare complete objects, generated names, serialization, or unrelated defaults, or repeat the same outcome through several representations.
 - Check unchanged reconciliation directly, such as gateway effects or agent starts against a baseline; a second apply that succeeds proves nothing.
 - Expose facts from fixtures and write the expectation in the test.
+- Don't write change detectors: tests that read source, configuration, workflows, or documentation and assert their structure, strings, or contents, and golden files that copy current output. They fail on harmless edits and pass on real bugs.
+  Test a GitHub workflow by running it on pull requests or by dispatch, and a workflow step's script by running it against fake tools.
+  A test may read such files only to apply a rule to every file of a kind that a run cannot reveal, such as the [workflow rules](../../../internal-docs/contributing/testing.md#workflow-rules), or to compare generated files with their generator.
 
 Show that each new assertion can fail: break the behavior, or point the assertion at a value the resource does hold, observe the failure, and revert.
 
