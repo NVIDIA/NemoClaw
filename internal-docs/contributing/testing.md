@@ -686,6 +686,9 @@ Put each test at the layer that owns its behavior, and don't repeat a check that
 At each layer, prefer a `tofu test` scenario to a Rust test. The [`write-tests` skill](../../.agents/skills/write-tests/SKILL.md) walks through the choice.
 
 Write each test as input, operation, and expected result, and name the observable behavior and its conditions in its title.
+Assert what the system does, not what its code, configuration, workflows, or documentation look like.
+A test that restates a workflow's jobs, conditions, or inputs, a file's strings, help text, or a golden copy of current output breaks on harmless edits and passes on real bugs; run the workflow, or test the behavior at its owner's layer, instead.
+Reading such files is acceptable only for a rule over every file of a kind, such as the [workflow rules](#workflow-rules), and for checking generated files against their generator.
 For deployment tests, keep the YAML and expected plan and apply resource actions easy to find.
 Use assertions and the test runner's output for failures; do not add separate reports, host inventories, or project-tracking metadata to tests.
 Keep inference requests, fault injection, and recovery checks in explicitly named scenarios.
