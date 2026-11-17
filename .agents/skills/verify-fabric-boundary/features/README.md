@@ -6,7 +6,7 @@
 ## Baseline Preconditions
 
 - The [launch](../SKILL.md#launch) completed for this run, including the Fabric-boundary YAML edits, the seeded caller volumes, and `bindings.md`, and the [doctor](../SKILL.md#doctor) passes.
-- `$EVIDENCE/checks.md` lists every selected check with an empty outcome: 136 rows for `hermes`, 134 for `openclaw`.
+- `$EVIDENCE/checks.md` lists every selected check with an empty outcome: 135 rows for `hermes`, 133 for `openclaw`.
 - The inference source the target file chose answers its `/models` request.
 - The OpenShell CLI matching `versions.json` on `PATH`, with `OPENSHELL_GATEWAY_ENDPOINT` and `OPENSHELL_WORKSPACE` set by the doctor.
 - `jq`, `curl`, and `openssl` on the host.
@@ -137,7 +137,7 @@ Phases run in this order, once each. A transition phase holds one lifecycle chec
 | Recreate | `recreate` | Preview and destroy the deployment, keeping state and caller volumes, then plan/apply the baseline YAML; a new sandbox replaces the old one | 1 |
 | After recreate | `after-recreate` | Re-run every check that lists this phase | 22 |
 | Config change | `config-change` | Change only the agent's supported shell restriction from the baseline, save the diff, then plan/apply | 1 |
-| After config change | `after-config-change` | Re-run every check that lists this phase; shell checks expect rejection with no other execution path | 22 |
+| After config change | `after-config-change` | Re-run every check that lists this phase; shell checks expect rejection with no other execution path | 21 |
 | Restore | `restore` | Restore the exact baseline YAML, then plan/apply | 1 |
 | After restore | `after-restore` | Re-run every check that lists this phase; shell execution returns | 22 |
 | Teardown | `teardown` | Preview and destroy, then list the retained caller volumes, model cache, and evidence | 1 |
@@ -151,7 +151,7 @@ After config change, the feature files expect these results; the change disables
 | [skills](skills.md) | Every check expects the same results, since skills use file tools; a skill check that fails only because the shell is gone is Failed: the change removed more than the shell |
 | [plugins](plugins.md) | Every check expects the same results, since plugin effects don't use the shell; record any actual dependency on the shell in a finding instead of bypassing the restriction |
 | [mounted-extensions](mounted-extensions.md) | Every check expects the same results, since they use file tools and native tools; record any actual dependency on the shell in a finding instead of bypassing the restriction |
-| [lifecycle-and-retention](lifecycle-and-retention.md) | `retention` expects the same results |
+| [lifecycle-and-retention](lifecycle-and-retention.md) | `retention` doesn't run: the live interface scenario checks it, as its step 2 says |
 
 [lifecycle-and-retention](lifecycle-and-retention.md) drives each transition and gives its commands.
 
