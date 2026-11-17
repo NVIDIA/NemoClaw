@@ -40,6 +40,13 @@ Inference and models:
 - A managed vLLM service keeps FlashInfer's autotune results on its model volume, in `/data/vllm-cache/flashinfer-autotune`, so a replaced container doesn't tune again; vLLM 0.34.0 otherwise keeps them inside the container.
   See [retained model files](../agents-inference/models.md#retained-model-files).
 
+Kubernetes and OpenShift:
+
+- `gateway.kubernetes.expose.route` publishes a managed OpenShift gateway at `gateway.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI; its optional `annotations` reach the Route.
+  The gateway certificate names the endpoint's host, and NemoClaw's own commands keep their port forward.
+  Plan refuses `expose.route` unless `gateway.runtime.provider` is `openshift`.
+  See [publishing through an OpenShift Route](../build-deploy/kubernetes.md#through-an-openshift-route).
+
 Examples and builds:
 
 - Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
@@ -161,7 +168,7 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
   Write `endpoint: https://bookings.example.com/mcp` as `endpoints: [https://bookings.example.com/mcp]`.
   An `openshell_api` with an `mcp` block takes exactly one URL.
 
-- The intent record is now version 24, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
+- The intent record is now version 25, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
   `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up.

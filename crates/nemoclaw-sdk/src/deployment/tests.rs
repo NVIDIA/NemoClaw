@@ -1168,23 +1168,30 @@ fn guard_bundle() -> tempfile::TempDir {
 }
 
 /// A gateway's exposure selects the address its endpoint names, so, like the
-/// endpoint, it stays as first planned.
+/// endpoint, whether a Service or a Route publishes it stays as first planned.
 #[tokio::test]
 async fn changing_a_gateway_exposure_preserves_saved_state() {
     let bundle_directory = guard_bundle();
     let (document, _) = kubernetes_context();
-    let exposed = |expose: bool| {
+    // OpenShift accepts either exposure.
+    let exposed = |expose: Option<serde_json::Value>| {
         let mut value = serde_json::to_value(&document).unwrap();
+        value["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
         value["spec"]["gateway"]["endpoint"] = json!("https://127.0.0.1:30851");
-        if expose {
-            value["spec"]["gateway"]["kubernetes"]["expose"] =
-                json!({"service": {"type": "NodePort"}});
+        if let Some(expose) = expose {
+            value["spec"]["gateway"]["kubernetes"]["expose"] = expose;
         }
         Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
     };
+    let service = || Some(json!({"service": {"type": "NodePort"}}));
+    let route = || Some(json!({"route": {}}));
     for (original, changed) in [
-        (exposed(true), exposed(false)),
-        (exposed(false), exposed(true)),
+        (exposed(service()), exposed(None)),
+        (exposed(None), exposed(service())),
+        (exposed(route()), exposed(None)),
+        (exposed(None), exposed(route())),
+        (exposed(service()), exposed(route())),
+        (exposed(route()), exposed(service())),
     ] {
         let state_directory = tempfile::tempdir().unwrap();
         let store = Store::open(state_directory.path()).unwrap();
@@ -1203,6 +1210,23 @@ async fn changing_a_gateway_exposure_preserves_saved_state() {
         );
         assert_eq!(fs::read(&intent).unwrap(), before);
     }
+    // A Route's annotations aren't part of the exposure: Helm updates the
+    // Route in place.
+    let state_directory = tempfile::tempdir().unwrap();
+    let store = Store::open(state_directory.path()).unwrap();
+    store.save(&Record::new(exposed(route())).unwrap()).unwrap();
+    drop(store);
+    let annotated = exposed(Some(json!({
+        "route": {"annotations": {"haproxy.router.openshift.io/timeout": "1h"}}
+    })));
+    let error = Deployment::new(state_directory.path(), bundle_directory.path())
+        .run(&annotated, &CancellationToken::new(), false)
+        .await
+        .unwrap_err();
+    assert!(
+        !matches!(error, Error::Conflict(message) if message.contains("exposure")),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]

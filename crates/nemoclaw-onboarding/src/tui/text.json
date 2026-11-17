@@ -10,6 +10,10 @@
     "/spec/gateway/engine": {
       "title": "Gateway engine socket"
     },
+    "/spec/gateway/kubernetes/expose/route/annotations/*": {
+      "title": "Route annotation",
+      "description": "A value NemoClaw passes unchanged to the gateway's OpenShift Route, such as a setting the cluster's router reads."
+    },
     "/spec/gateway/management": {
       "title": "How should NemoClaw reach its gateway?"
     },
