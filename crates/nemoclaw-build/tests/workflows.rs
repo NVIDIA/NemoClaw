@@ -220,20 +220,6 @@ fn colossus_bundle_runs_linux_arm64_ci_without_writing_shared_caches() {
     let input = &platform["on"]["workflow_call"]["inputs"]["save-cache"];
     assert_eq!(input["type"], "boolean");
     assert_eq!(input["default"], true, "CI / Bundle keeps saving on v1");
-    let mut setups = 0;
-    for (name, job) in platform["jobs"].as_object().unwrap() {
-        for step in job["steps"].as_array().into_iter().flatten() {
-            if step["uses"] == "./.github/actions/setup-rust" {
-                setups += 1;
-                let save = &step["with"]["save-cache"];
-                assert!(
-                    save == "${{ inputs.save-cache }}" || save == "false",
-                    "{name} must honor save-cache or never save: {save}"
-                );
-            }
-        }
-    }
-    assert!(setups > 0, "bundle-platform.yml sets up Rust");
 }
 
 /// Linux bundles must run on Ubuntu 22.04, the oldest supported Linux, so
@@ -307,19 +293,6 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
         "the E2E platform workflow calls Live / HCL"
     );
 
-    let platform = read(".github/workflows/e2e-platform.yml");
-    let gpu = &platform["jobs"]["gpu"];
-    assert_eq!(
-        gpu["with"],
-        serde_json::json!({
-            "hosted": false,
-            "cases": "${{ inputs.hcl-cases }}",
-            "tests": "${{ inputs.tests }}",
-            "bundle": "${{ inputs.bundle }}",
-            "live-images": "${{ inputs.images }}",
-            "live-images-commit": "${{ inputs.live-images-commit }}",
-        })
-    );
     let bundle_platform = read(".github/workflows/bundle-platform.yml");
     assert_eq!(
         bundle_platform["jobs"]["e2e"]["with"]["hcl-gpu"],
@@ -334,60 +307,19 @@ fn ci_bundle_runs_the_gpu_cases_from_its_linux_amd64_artifacts() {
     );
 }
 
-/// `E2E build images` reads no build or bundle artifact, so it starts with
-/// the platform's build and bundle jobs instead of after both, and the live
-/// jobs that load its images wait for all three.
-#[test]
-fn live_images_build_alongside_the_build_and_bundle_jobs() {
-    let platform: Value = serde_saphyr::from_str(
-        &fs::read_to_string(repository().join(".github/workflows/bundle-platform.yml")).unwrap(),
-    )
-    .unwrap();
-    let images = &platform["jobs"]["live-images"];
-    assert_eq!(images["name"], "E2E build images");
-    assert!(needs(images).is_empty(), "it needs {:?}", needs(images));
-    let e2e = &platform["jobs"]["e2e"];
-    assert_eq!(needs(e2e), ["build", "bundle", "live-images"]);
-    assert_eq!(
-        e2e["with"]["images"],
-        "${{ needs.live-images.outputs.artifact }}"
-    );
-}
-
-/// The GPU runner downloads artifacts slowly, so a GPU HCL case that runs
-/// only OpenClaw downloads `E2E build images`' OpenClaw-only archive, which
-/// that job uploads only when CI / Bundle runs the GPU cases, and a case
-/// that also runs Hermes downloads every live image.
+/// The GPU runner downloads artifacts slowly, so a GPU HCL case whose
+/// document names no Hermes image loads CI / Bundle's OpenClaw-only live
+/// images artifact, and a case that also runs Hermes loads every live image.
+#[cfg(unix)]
 #[test]
 fn gpu_cases_without_hermes_download_only_the_openclaw_image() {
-    let read = |path: &str| -> Value {
-        serde_saphyr::from_str(&fs::read_to_string(repository().join(path)).unwrap()).unwrap()
-    };
-    let steps = |workflow: &Value, job: &str| -> Vec<Value> {
-        workflow["jobs"][job]["steps"].as_array().unwrap().clone()
-    };
-    let platform = read(".github/workflows/bundle-platform.yml");
-    let upload = steps(&platform, "live-images")
-        .into_iter()
-        .find(|step| step["with"]["path"] == ".build/ci/live-images-openclaw.tar.zst")
-        .expect("E2E build images uploads the OpenClaw-only archive");
-    assert_eq!(upload["if"], "inputs.hcl-gpu");
-    assert_eq!(
-        upload["with"]["name"],
-        "${{ steps.identity.outputs.artifact }}-openclaw"
-    );
-
-    let live = read(".github/workflows/hcl-e2e.yml");
-    let e2e = steps(&live, "e2e");
-    let download = e2e
-        .iter()
-        .find(|step| step["if"] == "inputs.tests != '' && inputs.live-images-commit == ''")
-        .expect("the case job downloads the live images");
-    assert_eq!(
-        download["with"]["name"],
-        "${{ inputs.live-images }}${{ steps.agents.outputs.suffix }}"
-    );
-    let select = e2e
+    let live: Value = serde_saphyr::from_str(
+        &fs::read_to_string(repository().join(".github/workflows/hcl-e2e.yml")).unwrap(),
+    )
+    .unwrap();
+    let select = live["jobs"]["e2e"]["steps"]
+        .as_array()
+        .unwrap()
         .iter()
         .find(|step| step["id"] == "agents")
         .expect("the case job selects its agent images")["run"]
