@@ -116,7 +116,7 @@ pub(super) fn build(platform: &str) -> Result<()> {
     }
     // On GitHub Actions, the images reuse the layers an earlier run saved,
     // which CI saves on v1 only, by setting NEMOCLAW_SAVE_GHA_CACHE=true.
-    let mut cache = vec!["--gha-cache", "live-images"];
+    let mut cache = vec!["--gha-cache", "live-images-diag-cold"];
     if std::env::var("NEMOCLAW_SAVE_GHA_CACHE").is_ok_and(|save| save == "true") {
         cache.push("--save-gha-cache");
     }
