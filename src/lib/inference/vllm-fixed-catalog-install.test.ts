@@ -580,7 +580,10 @@ describe("fixed catalog vLLM installs", () => {
       expect(spies.logSpy).toHaveBeenCalledWith(
         "    Extra serve args: 3 token(s) from NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
       );
-      const command = mocks.dockerRunDetached.mock.calls[0]![0].at(-1) as string;
+      const runArgs = mocks.dockerRunDetached.mock.calls[0]![0] as string[];
+      expect(runArgs).toContain("com.nvidia.nemoclaw.managed-vllm=true");
+      expect(runArgs.filter((arg) => arg.startsWith("com.nvidia.nemoclaw.serving-"))).toEqual([]);
+      const command = runArgs.at(-1) as string;
       expect(command).toContain("--max-model-len 32768");
       expect(command).toContain("--gpu-memory-utilization 0.5");
       expect(command).toContain("--safetensors-load-strategy lazy");
