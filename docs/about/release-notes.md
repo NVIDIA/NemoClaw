@@ -27,6 +27,8 @@ Agents and interfaces:
   `sandboxEnv` (`sandbox_env` in HCL) names the variable the sandbox sees the key in, such as `NVIDIA_API_KEY`; without it the name stays `NEMOCLAW_API_<NAME>_KEY`.
   OpenShell reports, during apply, a sandbox whose attached registrations put keys in the same variable.
   See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
+- Apply prints the command that opens Hermes's terminal UI for a Hermes agent that enables Fabric's `terminal` interface, which Fabric marks experimental.
+  See [Hermes's terminal UI](../agents-inference/interfaces.md#hermess-terminal-ui).
 
 Sandbox policy:
 

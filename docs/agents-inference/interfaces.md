@@ -129,13 +129,14 @@ sandboxes:
 | OpenClaw | `dashboard`, the Control UI with browser chat | `port` (required, at most 65425), `enabled` | Yes | `http://127.0.0.1:PORT/#token=TOKEN` |
 | Hermes | `api`, the OpenAI-compatible API server | `port` (required), `enabled` | Yes | `Authorization: Bearer TOKEN` |
 | Hermes | `dashboard`, with browser chat | `port` (required), `enabled` | No | None |
+| Hermes | `terminal`, the terminal UI; experimental in Fabric | `port` (required, the dashboard's port when both are on), `enabled` | No | The `Terminal` command signs in |
 
 An interface is on while it is present, unless it sets `enabled: false`.
 OpenClaw reserves the ports from `port` through `port + 110`, and its `port` can't be combined with `port_range`.
 Hermes's `startup_timeout_seconds` setting, 60 by default and at most 75, bounds how long its interfaces have to start.
 
 Planning checks each interface against its schema in the image's adapter descriptor.
-It rejects an interface name or field that the adapter doesn't declare, for example `sandbox/claw: adapter/nvidia.fabric.openclaw compatibility rejected; harness_interfaces: harness.settings.interfaces.terminal: the image's adapter does not support this interface setting`, and a missing required field, a wrong type, or an out-of-range value, for example `harness_interfaces: harness.settings.interfaces.api.port: is required by the image's adapter`.
+It rejects an interface name or field that the adapter doesn't declare, for example `sandbox/claw: adapter/nvidia.fabric.openclaw compatibility rejected; harness_interfaces: harness.settings.interfaces.api: the image's adapter does not support this interface setting`, and a missing required field, a wrong type, or an out-of-range value, for example `harness_interfaces: harness.settings.interfaces.api.port: is required by the image's adapter`.
 Fabric checks the rest when it starts the agent: settings outside the interfaces, combinations such as OpenClaw's `port` with `port_range`, and a port that is already in use. The agent fails to start if an enabled interface can't start.
 Changing an agent's settings, including its interfaces, replaces its sandbox, deleting its files and conversations.
 
@@ -201,7 +202,43 @@ Press Ctrl-D to quit. Opening it again reconnects to the same session and shows 
 The token changes each time the runtime starts, so read it again after a restart.
 The agent's own tools can read the token, as [Who Can Use an Interface](#who-can-use-an-interface) describes.
 
-OpenShell opens the pseudo-terminal of `openshell sandbox exec --tty` and hands it to the command, so the terminal UI works without `/dev/pts` in the sandbox's filesystem policy. Hermes's browser chat opens its own pseudo-terminal, so it needs `/dev/pts`, as the next section describes.
+OpenShell opens the pseudo-terminal of `openshell sandbox exec --tty` and hands it to the command, so the terminal UI works without `/dev/pts` in the sandbox's filesystem policy. Hermes's browser chat opens its own pseudo-terminal, so it needs `/dev/pts`, as [Hermes's Browser Chat](#hermess-browser-chat) describes.
+
+### Hermes's Terminal UI
+
+Hermes's `terminal` interface attaches Hermes's terminal UI to the backend that serves browser chat, which the agent's runtime starts.
+Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper may change between Fabric releases without compatibility; see [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/docs/integrations/harness/hermes/hermes-tui.mdx).
+Give it the dashboard's port, so that both use one backend process:
+
+```yaml
+sandboxes:
+  hermes:
+    harness:
+      kind: nvidia.fabric.hermes
+      settings:
+        interfaces:
+          dashboard:
+            port: 9119
+          terminal:
+            port: 9119
+```
+
+Without the dashboard, Fabric starts the backend on the terminal's port without the browser pages.
+Apply prints the command that opens the terminal UI on the interface's `Terminal` line, and JSON results carry the command it runs in the sandbox as `terminal`:
+
+```text
+  hermes/terminal
+    Sign in:  the Terminal command reads the runtime's credential itself
+    Terminal: openshell sandbox exec -n hermes --tty -- python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/AGENT/interfaces/tui.json
+```
+
+Run it from a terminal on the client host with the gateway and workspace selected; it needs no forward and no token.
+Fabric's attach helper reads the backend's port and token from the runtime's `tui.json` and `tui.token` in the agent's [kept state](../build-deploy/state.md#agent-files), which only the sandbox's user can read, and starts the terminal UI on that backend; it fails if the backend doesn't accept the token, and never starts a backend of its own.
+Anyone who can run commands in the sandbox, including the agent's own tools, can open it.
+
+Each terminal UI starts a new conversation in the agent's Hermes home, with the agent's configuration, skills, and model; it doesn't continue the conversations of `fabric-agent-ctl invoke` or browser chat.
+Quitting it leaves the runtime and the backend running.
+Stopping the runtime stops the backend and removes the attachment files, so open the terminal UI again after the runtime restarts; what an open terminal UI does when its runtime stops isn't settled yet ([#14202](https://github.com/NVIDIA/NemoClaw/issues/14202)).
 
 ### Hermes's Browser Chat
 
