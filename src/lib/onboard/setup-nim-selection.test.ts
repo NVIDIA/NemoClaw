@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { requireValue } from "../core/require-value";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
@@ -387,4 +387,57 @@ describe("createRemoteModelValidator", () => {
       assert.equal(receivedOptions?.useNvidiaEndpointProbePayload, true);
     },
   );
+  describe("agent context window floor on custom endpoints (#14067)", () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    async function validateCustom(floor: number, nonInteractive = false) {
+      const state = makeState();
+      state.provider = "openai-compatible";
+      state.endpointUrl = "https://compatible.example/v1";
+      state.model = "model-a";
+      state.ollamaContextWindowFloor = floor;
+      state.nonInteractive = nonInteractive;
+      const logLines: string[] = [];
+      const { validateSelectedRemoteModel } = createRemoteModelValidator({
+        OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
+        ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+        requireValue,
+        isBackToSelection: (_value): _value is never => false,
+        validateCustomOpenAiLikeSelection: async () => ({ ok: true, api: "openai-completions" }),
+        validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+        validateAnthropicSelectionWithRetryMessage: async () => ({ ok: false, retry: "selection" }),
+        validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        shouldRequireResponsesToolCalling: () => false,
+        shouldSkipResponsesProbe: () => false,
+        getProbeAuthMode: () => undefined,
+        log: (message) => logLines.push(message),
+      });
+      const result = await validateSelectedRemoteModel({
+        selected: { key: "custom" },
+        remoteConfig: { label: "Custom", endpointUrl: "https://x.example/v1", helpUrl: null },
+        state,
+        selectedCredentialEnv: "OPENAI_API_KEY",
+      });
+      return { result, logLines };
+    }
+
+    it("rejects a context window below the agent floor", async () => {
+      vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
+      const { result, logLines } = await validateCustom(64_000);
+      assert.equal(result, "retry-model");
+      expect(logLines.join("\n")).toContain("32768-token context window, below the 64000");
+    });
+
+    it("fails without a prompt in non-interactive mode", async () => {
+      vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
+      await expect(validateCustom(64_000, true)).rejects.toThrow("below the 64000");
+    });
+
+    it("keeps a window at or above the floor, and agents without a higher floor", async () => {
+      vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "64000");
+      assert.equal((await validateCustom(64_000)).result, "selected");
+      vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
+      assert.equal((await validateCustom(16_384)).result, "selected");
+    });
+  });
 });
