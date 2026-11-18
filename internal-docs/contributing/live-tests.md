@@ -165,16 +165,23 @@ Station runs only through a manual **Live / HCL** dispatch. It does not run on P
 gh workflow run hcl-e2e.yml --ref <branch> -f target=dgx-station -f hosted=false
 ```
 
-Spark uses the same workflow and persistent-runner path, with the `colossus-gb10` label. It accepts only a manual dispatch on canonical `v1`, without CI / Bundle artifacts:
+Spark uses the same workflow and persistent-runner path, with the `colossus-gb10` label on canonical `v1`. It accepts manual dispatches without CI / Bundle artifacts:
 
 ```bash
 gh workflow run hcl-e2e.yml --repo NVIDIA/NemoClaw --ref v1 -f target=dgx-spark -f hosted=false
 ```
 
+For pre-merge qualification, the `Select target` step also permits one explicit PR branch and maps it to an owner-provided Spark's unique runner label.
+Verify that mapping against the approved runner, then use the command above with `--ref <reviewed-pr-branch>`.
+Other Spark branch refs remain rejected.
+Remove the temporary branch mapping after qualification and before merge; retain the tested SHA and runner identity with the PR evidence.
+
 Build, inference, and cleanup failures fail that manual run. An offline runner leaves its hardware job queued.
 
 Colorunner must prepare Ubuntu 24.04 ARM64, the intended GPU (GB300 for Station or GB10 for Spark), Docker/Buildx, NVIDIA Container Toolkit, container GPU access, and the containerd image store. CI does not provision the host or manage its lease.
-Before Spark dispatch, complete the capacity checks in [#13934](https://github.com/NVIDIA/NemoClaw/issues/13934): record the SSA owner, admitted lease window, limits and recovery procedure; verify host identity and GPU access; and qualify the persistent runner with a manual smoke on its unique label. Keep the exact smoke commit, runner ID and run URL. Smoke runs `true` and proves job delivery only; capacity, inference and cleanup need their own evidence.
+For SSA fleet qualification, complete the capacity checks in [#13934](https://github.com/NVIDIA/NemoClaw/issues/13934): record the SSA owner, admitted lease window, limits and recovery procedure.
+An owner-provided qualification host instead needs its owner's approval, active lease window and recovery procedure; that test does not satisfy the SSA capacity criteria.
+Before either dispatch, verify host identity and GPU access, and qualify the persistent runner with a manual smoke on its unique label. Keep the exact smoke commit, runner ID and run URL. Smoke runs `true` and proves job delivery only; capacity, inference and cleanup need their own evidence.
 
 The shared HCL workflow builds on the selected host and binds its existing GTC example to candidate images, a fresh UID, state, and nonoverlapping subnet:
 
