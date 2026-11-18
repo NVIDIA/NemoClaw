@@ -86,6 +86,7 @@ impl Github {
             "status": "completed",
             "conclusion": conclusion,
             "html_url": format!("https://github.com/NVIDIA/NemoClaw/actions/runs/{id}"),
+            "head_commit": {"id": COMMIT, "timestamp": "2026-11-18T03:16:00Z"},
         }));
         let mut listed = Vec::new();
         for (name, expired, contents) in artifacts {
@@ -128,6 +129,11 @@ impl Github {
 
     /// Run the workflow's packaging step for COMMIT.
     fn package(&self) -> Output {
+        self.package_in("runner-temp")
+    }
+
+    /// Run the packaging step with RUNNER_TEMP at TEMP under the fake's root.
+    fn package_in(&self, temp: &str) -> Output {
         fs::create_dir_all(self.data()).unwrap();
         fs::write(
             self.data().join("runs.json"),
@@ -138,7 +144,7 @@ impl Github {
         fs::create_dir_all(&bin).unwrap();
         fs::write(bin.join("gh"), FAKE_GH).unwrap();
         fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o700)).unwrap();
-        let temp = self.root.path().join("runner-temp");
+        let temp = self.root.path().join(temp);
         fs::create_dir_all(&temp).unwrap();
         let workflow: Value = serde_saphyr::from_str(
             &fs::read_to_string(
@@ -275,6 +281,25 @@ fn each_platform_archive_holds_the_bundle_from_the_passing_ci_run_at_the_commit(
         "the checksums verify: {}",
         report(&check)
     );
+}
+
+/// A rerun replaces the draft's archives, so the same bundles must yield the
+/// same checksums however long after the first run it packages them.
+#[test]
+fn packaging_the_same_bundles_again_later_yields_the_same_checksums() {
+    let mut github = Github::new();
+    github.run(13, "push", "success", &bundles("checked", 1));
+
+    let first = github.package_in("first");
+    assert!(first.status.success(), "{}", report(&first));
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let second = github.package_in("second");
+    assert!(second.status.success(), "{}", report(&second));
+
+    let sums = |temp: &str| {
+        fs::read_to_string(github.root.path().join(temp).join("cli-bundles/SHA256SUMS")).unwrap()
+    };
+    assert_eq!(sums("first"), sums("second"), "the checksums match");
 }
 
 #[test]

@@ -77,13 +77,13 @@ jobs:
             "repos/$GITHUB_REPOSITORY/actions/workflows/rust.yml/runs?head_sha=$COMMIT&status=success&per_page=100" |
             jq -r --arg commit "$COMMIT" '.workflow_runs[]
               | select(.head_sha == $commit and .conclusion == "success" and (.event == "push" or .event == "workflow_dispatch"))
-              | "\(.id) \(.html_url)"')
+              | "\(.id) \(.html_url) \(.head_commit.timestamp)"')
           if [ ${#runs[@]} = 0 ]; then
             echo "::error::CI / Bundle hasn't passed at $COMMIT, so no checked bundles exist to stage. $retry"
             exit 1
           fi
           for entry in "${runs[@]}"; do
-            read -r run source <<< "$entry"
+            read -r run source committed <<< "$entry"
             gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=100" > "$work/artifacts.json"
             names=()
             missing=
@@ -113,10 +113,12 @@ jobs:
             root="nemoclaw-$VERSION-$platform"
             mv "$download/dist/$platform" "$work/$root"
             rm -rf "$download"
-            # Fixed entry order and ownership, so packaging the same bundle
-            # again yields the same archive and checksum.
+            # Fixed entry order, ownership, and times, so packaging the same
+            # bundle again yields the same archive and checksum. Extraction
+            # times the directories that the macOS and Windows tars don't list.
+            find "$work/$root" -exec touch -h -d "$committed" {} +
             case "$platform" in
-              windows_*) (cd "$work" && find "$root" -print | LC_ALL=C sort | zip -q -X "$out/$root.zip" -@) ;;
+              windows_*) (cd "$work" && find "$root" -print | LC_ALL=C sort | TZ=UTC zip -q -X "$out/$root.zip" -@) ;;
               *) tar -C "$work" --sort=name --owner=0 --group=0 --numeric-owner -cf - "$root" | gzip -n > "$out/$root.tar.gz" ;;
             esac
             rm -rf "${work:?}/$root"
@@ -124,7 +126,13 @@ jobs:
           (cd "$out" && sha256sum -- nemoclaw-* > SHA256SUMS)
           echo "artifact=cli-bundles-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
           echo "source=$source" >> "$GITHUB_OUTPUT"
-          echo "CLI bundles from $source, built and checked at \`$COMMIT\`." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "CLI bundles from $source, built and checked at \`$COMMIT\`:"
+            echo
+            echo '```'
+            cat "$out/SHA256SUMS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload the archives
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
