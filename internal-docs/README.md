@@ -18,6 +18,7 @@ Use the [public guide](../docs/README.md) for deployment tasks. The pages here r
 | Maintain generated schema and field reference | [Schema maintenance](contributing/configuration-schema.md) |
 | Maintain agent image pins, catalogs, and test fixtures | [Agent image maintenance](contributing/agent-image-maintenance.md) |
 | Assess image changes | [Image assessment](contributing/image-assessment.md) |
+| Review image licenses before a release | [Image licenses](contributing/image-licenses.md) |
 
 ## Design Decisions
 

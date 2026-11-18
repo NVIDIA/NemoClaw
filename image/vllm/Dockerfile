@@ -4,7 +4,7 @@
 # Bake supplies the supervisor context from image/supervisor/Dockerfile.
 FROM vllm/vllm-openai@sha256:20fdb089454afbb324efa4110a2c025ff7b27cc1a086e07aa580b18df8ad1ce1
 COPY --from=supervisor /nemoclaw-runtime /usr/local/bin/nemoclaw-runtime
-COPY --from=supervisor /supervisor-source.tar.gz /opt/nemoclaw/source/
+COPY --from=supervisor /supervisor-source.tar.gz /rust-COPYRIGHT-library.html /opt/nemoclaw/source/
 COPY --from=supervisor /Cargo.lock /opt/nemoclaw/source/supervisor/Cargo.lock
 COPY LICENSE /opt/nemoclaw/source/LICENSE
 COPY image/supervisor/Dockerfile /opt/nemoclaw/source/supervisor.Dockerfile
