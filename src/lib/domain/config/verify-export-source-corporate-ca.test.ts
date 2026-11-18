@@ -42,12 +42,12 @@ describe("config export with corporate CA trust", () => {
     const withoutCa = await exportSnapshots([baseline]);
     const result = await exportSnapshots([observed]);
 
-    expect(result.outcome).toEqual({
+    expect(result.outcome).toMatchObject({
       ok: true,
       completion: { kind: "stdout" },
       corporateCaOmitted: true,
     });
-    expect(withoutCa.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(withoutCa.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(result.writeStdout).toHaveBeenCalledOnce();
     expect(result.writeStdout.mock.calls).toEqual(withoutCa.writeStdout.mock.calls);
     expect(observed).toEqual(original);

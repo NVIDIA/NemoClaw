@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { V1_IMAGE_REF_PLACEHOLDER } from "./export-document";
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
@@ -134,29 +135,31 @@ describe("Deep Agents config export (#11860)", () => {
     });
 
     const result = await exportSnapshots([observed]);
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const document = asExportedConfig(YAML.parse(yaml));
-    const sandbox = document.spec.sandboxes[0]!;
+    const sandbox = document.spec.sandboxes.alpha!;
     expect(document.apiVersion).toBe("nemoclaw.nvidia.com/v1alpha1");
     expect(document.spec.gateway).toEqual({
       management: "managed",
+      runtime: { provider: "docker" },
       endpoint: "http://127.0.0.1:8080",
     });
-    expect(document.spec.inferenceProviders).toEqual([
-      {
-        name: "hosted-openai-api",
+    expect(document.spec.inferenceProviders).toEqual({
+      "hosted-openai-api": {
         provider: "openai",
         api: "openai-completions",
         endpoint: "https://api.openai.com/v1",
         credential: { env: "OPENAI_API_KEY" },
       },
-    ]);
-    expect(sandbox.harness).toEqual({ kind: "deepagents" });
-    expect(sandbox.runtime).toEqual({ provider: "docker" });
+    });
+    expect(sandbox.harness).toEqual({ kind: "nvidia.fabric.deepagents" });
+    expect(sandbox).not.toHaveProperty("runtime");
     expect("agent" in sandbox).toBe(true);
     const deepAgentsSandbox = exportedDeepAgentsSandbox(sandbox);
-    expect(deepAgentsSandbox.image).toEqual({ ref: dcodeImageRef });
+    // V0's Deep Agents image ships no Fabric adapter, so the export carries the placeholder.
+    expect(deepAgentsSandbox.image).toEqual({ ref: V1_IMAGE_REF_PLACEHOLDER });
+    expect(JSON.stringify(document)).not.toContain(dcodeImageRef);
     expect(deepAgentsSandbox.agent).toEqual({
       name: "primary",
       inference: {
@@ -179,7 +182,7 @@ describe("Deep Agents config export (#11860)", () => {
       filesystem_policy: { read_only: expect.arrayContaining(["/opt/hermes", "/app"]) },
     });
     expect(sandbox.harness).not.toHaveProperty("observability");
-    expect(sandbox.harness).not.toHaveProperty("interfaces");
+    expect(sandbox.harness).not.toHaveProperty("settings");
   });
 
   it.each([

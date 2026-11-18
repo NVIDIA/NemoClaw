@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   buildExportConfig: vi.fn(),
   renderCanonicalNemoClawConfig: vi.fn(),
   publishExportFile: vi.fn(),
+  exportOmissions: vi.fn(),
+}));
+vi.mock("../../lib/domain/config/export-omissions", () => ({
+  exportOmissions: mocks.exportOmissions,
 }));
 
 vi.mock("../../lib/config/canonical", () => ({
@@ -56,6 +60,7 @@ describe("config export command", () => {
       source: { sandboxName: "alpha" },
       attempts: 1,
     });
+    mocks.exportOmissions.mockReset().mockReturnValue([]);
     mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
     mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
       yaml: "kind: NemoClawConfig\n",
@@ -102,6 +107,28 @@ describe("config export command", () => {
       expect(mocks.publishExportFile).not.toHaveBeenCalled();
     },
   );
+
+  it("prints one warning per omitted field on stderr and keeps YAML on stdout (#14580)", async () => {
+    const notice = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.exportOmissions.mockReturnValue([
+      { field: "proxy", kind: "omitted", message: "proxy is not included in the exported YAML: x" },
+      { field: "image.ref", kind: "placeholder", message: "image.ref is a placeholder: y" },
+    ]);
+    vi.spyOn(process.stdout, "write").mockImplementation(((
+      _: string,
+      callback?: (error?: Error | null) => void,
+    ) => {
+      callback?.();
+      return true;
+    }) as typeof process.stdout.write);
+    await expect(
+      ConfigExportCommand.run(["alpha", "--output", "-"], process.cwd()),
+    ).resolves.toBeUndefined();
+    expect(notice.mock.calls).toEqual([
+      ["Warning: proxy is not included in the exported YAML: x"],
+      ["Warning: image.ref is a placeholder: y"],
+    ]);
+  });
 
   it("does not report CA omission when YAML stdout fails (#12146)", async () => {
     const notice = vi.spyOn(console, "error").mockImplementation(() => {});

@@ -145,16 +145,11 @@ describe("attached Ollama export pipeline", () => {
       localProvider.profileWorkspace = workspace;
       raw.getProviderProfile.mockImplementation(readProfile);
       const { result, writeStdout, publish } = await exportLiveSource();
-      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
       const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
-      expect(document.spec.inferenceProviders).toEqual([
-        {
-          name: "local",
-          provider: "openai",
-          api: "openai-completions",
-          serviceRef: "ollama-auth",
-        },
-      ]);
+      expect(document.spec.inferenceProviders).toEqual({
+        local: { provider: "openai", api: "openai-completions", serviceRef: "ollama-auth" },
+      });
       expect(document.spec.services).toEqual({
         "ollama-auth": {
           kind: "ollamaProxy",
@@ -169,7 +164,7 @@ describe("attached Ollama export pipeline", () => {
           },
         },
       });
-      const sandbox = document.spec.sandboxes[0]!;
+      const sandbox = document.spec.sandboxes.alpha!;
       expect(sandbox.agent.inference.routes[0]).toMatchObject({
         providerRef: "local",
         overrides: { model },

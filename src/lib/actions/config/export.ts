@@ -10,6 +10,7 @@ import {
 import { renderCanonicalNemoClawConfig } from "../../config/canonical";
 import type { NonEmptyExportFindings } from "../../domain/config/export-evidence";
 import { buildExportConfig } from "../../domain/config/export-document";
+import { exportOmissions, type ExportOmission } from "../../domain/config/export-omissions";
 import type {
   YamlExportFailure,
   YamlExportPublication,
@@ -71,6 +72,7 @@ export type ConfigExportOutcome =
       readonly ok: true;
       readonly completion: ConfigExportCompletion;
       readonly corporateCaOmitted?: true;
+      readonly omissions: readonly ExportOmission[];
     }
   | { readonly ok: false; readonly failure: ConfigExportFailure };
 
@@ -94,7 +96,10 @@ export async function runConfigExport(
     documentUid: dependencies.createDocumentUid(),
   });
   const rendered = renderCanonicalNemoClawConfig(config);
-  const omittedCa = observation.corporateCaOmitted ? { corporateCaOmitted: true as const } : {};
+  const omittedCa = {
+    ...(observation.corporateCaOmitted ? { corporateCaOmitted: true as const } : {}),
+    omissions: exportOmissions(observation.source),
+  };
 
   if (request.target.kind === "stdout") {
     try {

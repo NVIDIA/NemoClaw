@@ -6,6 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   buildExportConfig: vi.fn(),
   renderCanonicalNemoClawConfig: vi.fn(),
+  exportOmissions: vi.fn(),
+}));
+vi.mock("../../domain/config/export-omissions", () => ({
+  exportOmissions: mocks.exportOmissions,
 }));
 
 vi.mock("../../config/canonical", () => ({
@@ -29,6 +33,7 @@ const documentUid = parseNemoClawConfigDocumentUid("123e4567-e89b-42d3-a456-4266
 function dependencies(): ConfigExportDependencies {
   const observation = { sandboxName: "alpha" } as never;
   const config = { kind: "NemoClawConfig" } as never;
+  mocks.exportOmissions.mockReset().mockReturnValue([]);
   mocks.buildExportConfig.mockReset().mockReturnValue(config);
   mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
     yaml: "kind: NemoClawConfig\n",
@@ -51,7 +56,7 @@ describe("runConfigExport", () => {
         { sandboxName: "alpha", documentName: alphaDocumentName, target: { kind: "stdout" } },
         deps,
       ),
-    ).resolves.toEqual({ ok: true, completion: { kind: "stdout" } });
+    ).resolves.toEqual({ ok: true, omissions: [], completion: { kind: "stdout" } });
     expect(deps.writeStdout).toHaveBeenCalledWith("kind: NemoClawConfig\n");
     expect(deps.publish).not.toHaveBeenCalled();
   });
@@ -69,6 +74,7 @@ describe("runConfigExport", () => {
       ),
     ).resolves.toEqual({
       ok: true,
+      omissions: [],
       completion: {
         kind: "file",
         result: {

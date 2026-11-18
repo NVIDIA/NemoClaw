@@ -50,7 +50,6 @@ import {
   exportNativeInferenceReceipt,
 } from "./export-evidence";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
-import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -654,30 +653,18 @@ function exportedObservability(
   return Check(NemoClawOpenClawObservabilitySchema, value) ? value : undefined;
 }
 
+/** Pass the observed v0 tuning and execution values through; the exporter decides what v1 keeps. */
 function projectAgentSettings(profile: ManagedStartupProfile) {
   if (profile.agentConfig.agent !== "openclaw") {
     return {};
   }
-  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.openclaw;
-  const overrides = Object.fromEntries(
-    Object.entries(profile.tuning).filter(
-      ([key, value]) => value !== defaults.tuning[key as keyof typeof defaults.tuning],
-    ),
-  );
-  const execution: { timeoutSeconds?: number; heartbeatEvery?: string } = {};
-  if (profile.agentConfig.agentTimeoutSeconds !== defaults.execution.timeoutSeconds) {
-    execution.timeoutSeconds = profile.agentConfig.agentTimeoutSeconds;
-  }
-  if (
-    profile.agentConfig.heartbeatEvery !== defaults.execution.heartbeatEvery &&
-    profile.agentConfig.heartbeatEvery !== null
-  ) {
+  const execution: { timeoutSeconds: number; heartbeatEvery?: string } = {
+    timeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
+  };
+  if (profile.agentConfig.heartbeatEvery !== null) {
     execution.heartbeatEvery = profile.agentConfig.heartbeatEvery;
   }
-  return {
-    ...(Object.keys(overrides).length === 0 ? {} : { overrides }),
-    ...(Object.keys(execution).length === 0 ? {} : { execution }),
-  };
+  return { overrides: { ...profile.tuning }, execution };
 }
 
 function classifyReasoningAgreement(
@@ -1654,12 +1641,7 @@ function projectVerifiedTools(
   entry: ObservedExportRegistry,
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
 ) {
-  if (
-    entry.agent !== "openclaw" ||
-    authority === null ||
-    authority.profile.tools.disclosure === V1ALPHA1_RUNTIME_DEFAULTS.openclaw.tools.disclosure
-  )
-    return {};
+  if (entry.agent !== "openclaw" || authority === null) return {};
   return { tools: { disclosure: authority.profile.tools.disclosure } };
 }
 
