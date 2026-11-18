@@ -95,7 +95,7 @@ Choose an external endpoint when its operator owns availability, or a managed se
 
 Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.
 The [harness matrix](../references/fabric-harnesses.md) distinguishes accepted configurations from live qualification.
-Examples use the SDK default image or an explicit image digest, plus deployment identities and environment-specific endpoints.
+Examples use placeholder image digests, plus deployment identities and environment-specific endpoints.
 Build/select your own matching images and replace those values before use.
 An accepted example is a configuration contract, not evidence that the combination completes live inference.
 
@@ -158,6 +158,9 @@ Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with 
 The provider's key under `inferenceProviders` is the local name routes reference; it does not select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
 
+OpenClaw can't use an `anthropic` provider yet: Fabric's OpenClaw adapter selects `openai-completions` for every route with a base URL, so OpenClaw sends the key in an `Authorization` bearer header, and OpenShell 0.1.8 and later refuse it with `403` `credential_placement_mismatch` because an `anthropic` provider places its key in `x-api-key`.
+NemoClaw doesn't check the combination, so plan and apply succeed; for an endpoint that accepts OpenAI chat completions, use `provider: openai` ([current limits](../resources/limits.md#inference)).
+
 ### Point Hermes at an Anthropic Endpoint
 
 Hermes sends an `anthropic` provider's requests to its `endpoint` only when [Hermes's rule](https://github.com/NousResearch/hermes-agent/blob/b200f5bc60e31588ba2cb60e288029c4a54ba5fa/hermes_cli/runtime_provider.py#L395-L403) recognizes the endpoint as Anthropic's:
@@ -189,7 +192,7 @@ For a local external Ollama daemon, use the [managed proxy](#use-external-ollama
 Use the route's `overrides.model` for the upstream model ID.
 Native agents send the configured model ID to the native endpoint using an OpenShell placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
 Confirm a native agent reply after apply using [verification levels](#verify-the-result).
-Guides for named hosted providers are tracked in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038).
+NemoClaw has no guides for named hosted providers.
 
 ### Trust a Custom Certificate Authority
 
@@ -626,6 +629,7 @@ Use an explicit request to qualify inference.
 The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
-Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
-A managed NVIDIA NIM service is not planned: use NIM as an external OpenAI-compatible endpoint ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)).
+Managed llama.cpp and NVIDIA NIM services are tracked in [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); until then, use either as an external OpenAI-compatible endpoint.
+NemoClaw has no Model Router and no provider for Gemini's native API; onboarding's Google Gemini preset uses Gemini's OpenAI-compatible endpoint.
+Distributed inference, separate inference hosts and other model formats are tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
 None of these limits prevents using a separately verified external endpoint with an accepted API.

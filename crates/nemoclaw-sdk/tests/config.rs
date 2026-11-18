@@ -151,15 +151,7 @@ fn inference_endpoints_leave_destination_checks_to_openshell() {
 
 #[test]
 fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
-    let mut original =
-        Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
-    original
-        .spec
-        .sandboxes
-        .get_mut("assistant")
-        .unwrap()
-        .image
-        .ref_ = nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE.into();
+    let original = Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
     let mut defaulted = original.clone();
     defaulted.spec.gateway.endpoint_mut().clear();
     defaulted
@@ -174,14 +166,6 @@ fn managed_defaults_and_safety_bounds_match_the_qualified_recipe() {
     };
     service.serving = Default::default();
     service.memory = Default::default();
-    defaulted
-        .spec
-        .sandboxes
-        .get_mut("assistant")
-        .unwrap()
-        .image
-        .ref_
-        .clear();
     *defaulted.spec.gateway.runtime_mut() = Default::default();
     defaulted
         .spec
@@ -307,20 +291,8 @@ fn openclaw_uses_only_fabric_with_external_or_managed_dependencies() {
             .as_mut()
             .unwrap()
             .kind = "nvidia.fabric.openclaw".parse().unwrap();
-        document
-            .spec
-            .sandboxes
-            .get_mut("assistant")
-            .unwrap()
-            .image
-            .ref_
-            .clear();
         document.defaults();
         document.validate().unwrap();
-        assert_eq!(
-            document.spec.sandboxes["assistant"].image.ref_,
-            nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
-        );
         assert_eq!(
             document
                 .sandbox_harness(document.sandbox("assistant").unwrap())
@@ -629,26 +601,6 @@ fn fabric_harness_identifiers_are_extensible_and_validated() {
     for invalid in ["", " "] {
         assert!(invalid.parse::<HarnessKind>().is_err());
     }
-}
-
-#[test]
-fn default_image_is_deployment_policy_independent_of_adapter_identity() {
-    let mut value: Value =
-        serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
-    value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = "fixture-new-agent".into();
-    value["spec"]["sandboxes"]["assistant"]
-        .as_object_mut()
-        .unwrap()
-        .remove("image");
-    assert_eq!(
-        Document::parse(serde_json::to_vec(&value).unwrap().as_slice())
-            .unwrap()
-            .spec
-            .sandboxes["assistant"]
-            .image
-            .ref_,
-        nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE
-    );
 }
 
 #[test]

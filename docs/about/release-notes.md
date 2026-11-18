@@ -51,6 +51,7 @@ Kubernetes and OpenShift:
 
 Examples and builds:
 
+- A staged release attaches the CLI bundles that CI built and checked at its tag, one archive each for Linux ARM64 and AMD64, macOS ARM64, and Windows AMD64, with their SHA-256 checksums in `SHA256SUMS`.
 - Pinned components: OpenShell 0.1.9, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
 - OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
 - [Building from source](../build-deploy/build.md) uses Rust 1.100.0, as do the Rust stages of the agent, supervisor, and Ollama proxy images.
@@ -216,6 +217,9 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
 
 - In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
   Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
+- Every sandbox must set `image.ref` to an agent image pinned by digest, on Docker and Podman as on Kubernetes.
+  The SDK no longer supplies a default agent image, and the parser rejects an omitted `image`, `image: {}`, and an empty `ref`; see [build agent images](../build-deploy/build.md#build-agent-images).
+  In the Rust SDK, `config::DEFAULT_AGENT_IMAGE` is removed.
 - With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
   A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
 - With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.

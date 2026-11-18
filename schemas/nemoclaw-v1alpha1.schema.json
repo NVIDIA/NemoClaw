@@ -970,20 +970,15 @@
           "description": "Environment reference to the absolute path of a local OCI metadata bundle for `ref`; required for Kubernetes and OpenShift, where no local engine can be inspected. Destroy does not read it. Its index, manifest, configuration, and Fabric catalog are verified against `ref` before use. The bundle holds no image layers or credentials. Docker and Podman inspect their engine instead."
         },
         "ref": {
-          "anyOf": [
-            {
-              "const": ""
-            },
-            {
-              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
-            }
-          ],
-          "description": "Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.",
+          "description": "Immutable image reference, pinned by SHA-256 digest. Required on every runtime; build one as described in the agent image build instructions.",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$",
           "type": "string",
-          "x-nemoclaw-default-rule": "Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.",
-          "x-nemoclaw-required": "For Kubernetes sandboxes"
+          "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images"
         }
       },
+      "required": [
+        "ref"
+      ],
       "type": "object"
     },
     "ImagePullPolicy": {
@@ -2980,8 +2975,8 @@
         },
         "image": {
           "$ref": "#/$defs/Image",
-          "description": "Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.",
-          "x-nemoclaw-required": "For Kubernetes sandboxes"
+          "description": "Immutable agent image that contains the selected Fabric adapter and, on Kubernetes, is compatible with the gateway's runtime user and group IDs. Required: no default image is published.",
+          "x-nemoclaw-error": "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images"
         },
         "inferenceProviders": {
           "additionalProperties": {
@@ -3027,7 +3022,8 @@
         }
       },
       "required": [
-        "agent"
+        "agent",
+        "image"
       ],
       "type": "object"
     },
@@ -4803,13 +4799,7 @@
                 "additionalProperties": {
                   "properties": {
                     "image": {
-                      "properties": {
-                        "ref": {
-                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$"
-                        }
-                      },
                       "required": [
-                        "ref",
                         "metadata"
                       ]
                     }

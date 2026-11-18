@@ -33,11 +33,17 @@ spec:
             model: qwen3:4b
   sandboxes:
     researcher:
+      image:
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harnessRef: assistant
       agent:
         name: researcher
         inferenceRef: smart-and-fast
     writer:
+      image:
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harnessRef: assistant
       agent:
         name: writer

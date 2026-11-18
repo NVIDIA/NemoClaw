@@ -41,6 +41,8 @@ spec:
       serviceRef: ollama-server
   sandboxes:
     assistant:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: nvidia.fabric.openclaw
       network:
@@ -54,6 +56,8 @@ spec:
               overrides:
                 model: nvidia/nemotron-3.5-super-vl-120b-a12b
     researcher:
+      image:
+        ref: nc-fabric-hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: nvidia.fabric.hermes
       network:

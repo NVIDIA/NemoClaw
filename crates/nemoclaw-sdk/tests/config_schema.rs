@@ -147,7 +147,7 @@ fn input_schema_preserves_defaults_strict_objects_and_opaque_route_settings() {
             .unwrap()
             .remove(key);
     }
-    for key in ["image", "network", "runtime"] {
+    for key in ["network", "runtime"] {
         value["spec"]["sandboxes"]["assistant"]
             .as_object_mut()
             .unwrap()
@@ -627,6 +627,7 @@ fn inference_providers_are_keyed_by_name_in_both_scopes() {
 fn sandboxes_are_keyed_by_name() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let sandbox = json!({
+        "image": {"ref": format!("nc-fabric@sha256:{}", "0".repeat(64))},
         "network": {"tier": "isolated"},
         "harness": {"kind": "nvidia.fabric.openclaw"},
         "agent": {"name": "main", "inference": {"routes": [
