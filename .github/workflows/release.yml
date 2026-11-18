@@ -3,7 +3,8 @@
 # Security review, scan binding, and controlled draft publication added for #13523.
 # Stage a release from a semver tag such as v0.1.0-rc1 on the v1 branch. Promote
 # the images CI checked on the tagged history to v1/<image>:<tag>, build the runtime
-# images, and create a draft release listing every digest. The protected
+# images, and create a draft release listing every digest, with the CLI bundles
+# CI / Bundle built and checked at the tagged commit. The protected
 # publisher stays disabled until v1 signoff; no job changes package visibility.
 # Nothing pushes to a package an
 # administrator hasn't created as internal: packages a workflow creates inherit
@@ -162,6 +163,7 @@ jobs:
       (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: write
       packages: write
     steps:
@@ -195,6 +197,44 @@ jobs:
           names: ${{ steps.images.outputs.names }}
           required: "true"
           token: ${{ github.token }}
+      # The CLI bundles CI / Bundle built and checked at the tag, as it uploaded
+      # them. Push and manual runs build the commit itself; a pull request run
+      # builds a merge commit, so its bundles are another commit's.
+      - name: Download the CLI bundles CI checked at the tag
+        id: cli
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cli="$RUNNER_TEMP/cli-bundles"
+          mkdir "$cli"
+          retry="Run CI / Bundle at the tag with 'gh workflow run rust.yml --ref $GITHUB_REF_NAME', and rerun this workflow once it passes."
+          found=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow rust.yml --commit "$GITHUB_SHA" \
+            --json databaseId,event,conclusion,url --jq '[.[] | select(.conclusion == "success"
+              and (.event == "push" or .event == "workflow_dispatch"))][0] // empty | "\(.databaseId) \(.url)"')
+          if [ -z "$found" ]; then
+            echo "::error::CI / Bundle hasn't passed at $GITHUB_SHA, so no checked bundles exist to stage. $retry"
+            exit 1
+          fi
+          read -r run source <<< "$found"
+          missing=
+          for platform in linux_arm64 linux_amd64 darwin_arm64 windows_amd64; do
+            # gh skips expired artifacts. A rerun bundle job uploads its own
+            # attempt's bundle; take the latest.
+            download="$RUNNER_TEMP/bundle-$platform"
+            if gh run download "$run" --repo "$GITHUB_REPOSITORY" --pattern "bundle-$platform-$GITHUB_SHA-*" --dir "$download"; then
+              bundle=$(printf '%s\n' "$download"/*/bundle.tar | sort -V | tail -n 1)
+              gzip -n < "$bundle" > "$cli/nemoclaw-$GITHUB_REF_NAME-$platform.tar.gz"
+              rm -r "$download"
+            else
+              missing="$missing $platform"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::$source no longer has the bundle for:$missing. CI keeps a v1 commit's bundles for 7 days. $retry"
+            exit 1
+          fi
+          (cd "$cli" && sha256sum -- * > SHA256SUMS)
+          echo "source=$source" >> "$GITHUB_OUTPUT"
       - name: Join each image's platforms and draft the release
         id: draft
         env:
@@ -202,6 +242,7 @@ jobs:
           AGENTS: ${{ steps.images.outputs.agents }}
           GH_TOKEN: ${{ github.token }}
           SOURCE: ${{ needs.select.outputs.source }}
+          CLI_SOURCE: ${{ steps.cli.outputs.source }}
           TAG: ${{ github.ref_name }}
           PACKAGE: ${{ env.CI_PACKAGE }}
           SYFT: ${{ steps.syft.outputs.cmd }}
@@ -212,8 +253,21 @@ jobs:
           mkdir "$bundles"
           inventory="$RUNNER_TEMP/inventory.json"
           echo '[]' > "$inventory"
+          cli="$RUNNER_TEMP/cli-bundles"
           {
             echo "Staged from \`$GITHUB_SHA\`. The agent and proxy images are the ones CI checked at \`$SOURCE\`."
+            echo
+            echo '## CLI'
+            echo
+            echo "Each archive holds one platform's \`nemoclaw\` CLI with OpenTofu and the providers, as [CI / Bundle]($CLI_SOURCE) built and checked them at \`$GITHUB_SHA\`. \`SHA256SUMS\` lists their SHA-256 checksums."
+            echo
+            echo '| Archive | SHA-256 |'
+            echo '|---|---|'
+            while read -r sum archive; do
+              echo "| \`$archive\` | \`$sum\` |"
+            done < "$cli/SHA256SUMS"
+            echo
+            echo '## Images'
             echo
             echo "A Kubernetes sandbox names its agent image's metadata bundle in \`image.metadata\`; each one is attached to this release."
             echo
@@ -291,6 +345,7 @@ jobs:
               --title "NemoClaw $TAG" --notes-file "$notes"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$bundles"/*.metadata.json
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$cli"/nemoclaw-* "$cli/SHA256SUMS"
           cp "$inventory" "$sboms/inventory.json"
           echo "inventory_sha256=$(sha256sum "$inventory" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "sboms_sha256=$(sha256sum "$sboms/sboms.json" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"

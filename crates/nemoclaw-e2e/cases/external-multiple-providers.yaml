@@ -22,8 +22,7 @@ spec:
       provider: openai
       endpoint: http://172.20.0.1:11434/v1
     hosted:
-      provider: anthropic
-      api: anthropic-messages
+      provider: openai
       endpoint: https://hosted.example/v1
       credential:
         env: HOSTED_API_KEY

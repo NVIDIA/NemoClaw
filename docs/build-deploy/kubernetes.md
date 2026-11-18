@@ -89,7 +89,7 @@ Size the cluster for the sandboxes you declare:
 - **Storage:** a managed gateway gives each sandbox a 2 GiB workspace claim, so 256 sandboxes claim 512 GiB, from the cluster's default StorageClass unless `workspace_storage_class` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) names another, as [the placement example](../../examples/kubernetes/sandbox-placement.yaml) does.
   OpenShell deletes a sandbox whose pod hasn't started within 5 minutes, so add sandboxes in steps the StorageClass provisions in that time.
   k3s's local-path provisioner made about one volume every 2 seconds; steps of 64 sandboxes started within about 3 minutes, and a single apply of 256 lost 100.
-- **Gateway:** the managed gateway is limited to 1 CPU and 2 GiB of memory, and the limit can't be changed yet ([#13835](https://github.com/NVIDIA/NemoClaw/issues/13835)).
+- **Gateway:** the managed gateway is limited to 1 CPU and 2 GiB of memory, and NemoClaw has no setting to change the limit.
   In a recorded run, 256 sandboxes used up to about 1.2 GiB of it ([#14403](https://github.com/NVIDIA/NemoClaw/issues/14403)).
 - **Open files:** the gateway holds about three connections per sandbox, 800 to 1,000 open files at 256, and a pod gets its open-file limit from the node's container runtime.
   k3s installed as a service gives pods 1,048,576, but k3d nodes on Docker gave a soft limit of 1,024, which 256 sandboxes exceed; create such clusters with `k3d cluster create --runtime-ulimit "nofile=1048576:1048576"`.

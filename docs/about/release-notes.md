@@ -56,6 +56,7 @@ Kubernetes and OpenShift:
 
 Examples and builds:
 
+- A staged release attaches the CLI bundles that CI built and checked at its tag, one archive each for Linux ARM64 and AMD64, macOS ARM64, and Windows AMD64, with their SHA-256 checksums in `SHA256SUMS`.
 - Pinned components: OpenShell 0.1.9, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
 - OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
 - [Building from source](../build-deploy/build.md) uses Rust 1.100.0, as do the Rust stages of the agent, supervisor, and Ollama proxy images.

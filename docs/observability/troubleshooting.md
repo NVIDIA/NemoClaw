@@ -242,4 +242,4 @@ Do not replay an uncertain native invocation merely to reproduce a log entry.
 [Hermes Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) and [web search](../agents-inference/agents.md#web-search) have their own configuration and verification limits.
 Configuration readiness does not prove collector delivery, a valid Brave credential, or available quota.
 
-Troubleshooting a production collector is tracked in [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144), and testing hosted search live in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
+These pages don't cover troubleshooting a production collector; testing hosted search live is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
