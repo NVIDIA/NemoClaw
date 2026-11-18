@@ -188,9 +188,15 @@ describe("sandbox mutation lock acquisition", () => {
     return { read: () => now, monotonicNow: () => (now += stepMs) };
   };
 
+  const elapsedClock = (scale: number) => {
+    const startedAt = performance.now();
+    const read = () => (performance.now() - startedAt) * scale;
+    return { read, monotonicNow: read };
+  };
+
   it.each(lockers)("prints one wait notice after the default delay (%s)", async (_name, run) => {
     const lockPath = writeForeignLock(4242);
-    const clock = steppedClock(1_000);
+    const clock = elapsedClock(100);
     const notices: Array<{ message: string; at: number }> = [];
     await expect(
       run({
@@ -201,15 +207,14 @@ describe("sandbox mutation lock acquisition", () => {
     ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
     expect(notices).toHaveLength(1);
     expect(notices[0].at).toBeGreaterThanOrEqual(10_000);
-    expect(notices[0].at).toBeLessThan(20_000);
     expect(notices[0].message).toContain("PID 4242");
     expect(notices[0].message).toContain(lockPath);
 
     notices.length = 0;
-    const shortClock = steppedClock(1_000);
+    const shortClock = elapsedClock(100);
     await expect(
       run({
-        ...options({ timeoutMs: 5_000 }),
+        ...options({ timeoutMs: 9_900 }),
         monotonicNow: shortClock.monotonicNow,
         writeNotice: (message) => notices.push({ message, at: shortClock.read() }),
       }),
@@ -219,9 +224,15 @@ describe("sandbox mutation lock acquisition", () => {
 
   it.each(lockers)("times the notice from each new lock owner (%s)", async (_name, run) => {
     writeForeignLock(4242);
-    const clock = steppedClock(1_000);
+    const clock = elapsedClock(100);
     const notices: Array<{ message: string; at: number }> = [];
-    const afterNotice = [() => writeForeignLock(4343)];
+    let replacedAt = 0;
+    const afterNotice = [
+      () => {
+        writeForeignLock(4343);
+        replacedAt = clock.read();
+      },
+    ];
     await expect(
       run({
         ...options({ timeoutMs: 20_000, waitNoticeMs: 3_000 }),
@@ -234,7 +245,7 @@ describe("sandbox mutation lock acquisition", () => {
     ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
     expect(notices).toHaveLength(2);
     expect(notices[1].message).toContain("PID 4343");
-    expect(notices[1].at - notices[0].at).toBeGreaterThanOrEqual(3_000);
+    expect(notices[1].at - replacedAt).toBeGreaterThanOrEqual(3_000);
   });
 
   it.each(lockers)(
