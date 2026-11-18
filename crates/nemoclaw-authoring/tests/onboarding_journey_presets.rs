@@ -377,6 +377,50 @@ fn openclaw_is_not_offered_an_anthropic_preset_but_other_harnesses_are() {
 }
 
 #[test]
+fn switching_to_openclaw_reopens_an_accepted_anthropic_preset() {
+    let capabilities = Capabilities::available();
+    let mut state = choose_preset(ProviderPreset::Anthropic);
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("inference:preset")
+            .is_none()
+    );
+    state
+        .answer(
+            &capabilities,
+            "/spec/sandboxes/assistant/harness/kind",
+            Some(json!("nvidia.fabric.openclaw")),
+        )
+        .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    let question = resolution
+        .question("inference:preset")
+        .expect("the incompatible preset is asked again");
+    assert!(question.required());
+    assert!(question.suggestion().is_none());
+    assert!(!question.choices().contains(&json!("anthropic")));
+    assert!(!question.choices().contains(&json!("anthropic-compatible")));
+    state
+        .answer(&capabilities, "inference:preset", Some(json!("openai")))
+        .unwrap();
+    assert_eq!(
+        state
+            .values()
+            .pointer("/spec/inferenceProviders/nvidia-prod/provider"),
+        Some(&json!("openai"))
+    );
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("inference:preset")
+            .is_none()
+    );
+}
+
+#[test]
 fn every_curated_preset_and_protocol_roundtrips_through_the_sdk() {
     let capabilities = Capabilities::available();
     for preset in ProviderPreset::ALL {

@@ -88,6 +88,7 @@ impl JourneyState {
                 candidate
                     .authored
                     .put_harness(&candidate.position, value.expect("required"))?;
+                candidate.reopen_presets_openclaw_refuses();
             }
             QuestionTarget::StructuralForm { path } => {
                 let selected = value

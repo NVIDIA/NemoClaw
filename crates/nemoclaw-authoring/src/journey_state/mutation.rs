@@ -16,6 +16,37 @@ impl JourneyState {
         }
     }
 
+    /// OpenClaw is not offered the Anthropic presets, so a harness change to
+    /// OpenClaw reopens any accepted one for a new choice.
+    pub(super) fn reopen_presets_openclaw_refuses(&mut self) {
+        if harness_kind(&self.authored.values) != Some(OPENCLAW_HARNESS) {
+            return;
+        }
+        let routes = routes_path(&self.authored.values)
+            .and_then(|path| self.authored.values.pointer(&path))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for route in self.decisions.accepted_presets.clone() {
+            let anthropic = routes
+                .get(route)
+                .and_then(|route| route.get("providerRef"))
+                .and_then(Value::as_str)
+                .and_then(|name| {
+                    self.authored
+                        .values
+                        .pointer("/spec/inferenceProviders")?
+                        .get(name)
+                })
+                .and_then(|provider| provider.get("provider"))
+                .and_then(Value::as_str)
+                == Some(InferenceProviderKind::Anthropic.as_str());
+            if anthropic {
+                self.decisions.accepted_presets.remove(&route);
+            }
+        }
+    }
+
     fn routes_for_provider(&self, provider: &str) -> Vec<usize> {
         routes_path(&self.authored.values)
             .and_then(|path| self.authored.values.pointer(&path))
