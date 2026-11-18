@@ -15,6 +15,8 @@ The runtime uses the upstream pull, show, and inventory APIs, environment config
 The process inventory reports GPU residency using the same total/VRAM comparison as the upstream `ollama ps` command.
 
 The retained supervisor archive contains the exact Rust sources, vendored dependency sources and notices, and the build instructions used by this artifact.
+`/opt/nemoclaw/source/rust-COPYRIGHT-library.html` retains the notices of the Rust standard library the supervisor links.
+The upstream image keeps the Go, llama.cpp, and cpp-httplib licenses in `/usr/lib/ollama`, and carries NVIDIA CUDA libraries under NVIDIA's license in `/usr/lib/ollama/cuda_*`.
 The runtime verifies pinned model manifests and blobs in persistent storage before starting Ollama.
 Model licenses remain with the registry snapshot; they are not replaced by the supervisor license.
 
