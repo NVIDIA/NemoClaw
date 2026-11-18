@@ -26,7 +26,8 @@ The source-build workflow does not supply an installer or a published package; k
 
 | Limit | Issue | Last verified |
 |---|---|---|
-| No release, installer or release downloads; build the bundle from source | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue; only draft releases exist |
+| No published release: the [release archives](../get-started/install.md) are on draft releases, which only maintainers see; others [build the bundle from source](../build-deploy/build.md#build-a-native-bundle) | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`291723b`][v1-291723b]: issue; only draft releases exist |
+| The release executables are neither signed nor notarized for macOS or Windows | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`291723b`][v1-291723b]: code, issue |
 | The SDK and provider packages are not published | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | No support policy or enterprise deployment qualification | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue |
 
@@ -152,3 +153,4 @@ Select the v1 guide explicitly and match its source revision to the bundle befor
 | Packaged installation of the documentation skill for assistant clients | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 
 [v1-cb8ef25]: https://github.com/NVIDIA/NemoClaw/tree/cb8ef25252ffffbca051787adb4711c96ebfcf28
+[v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9

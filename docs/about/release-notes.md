@@ -28,6 +28,11 @@ Agents:
 - OpenClaw's `web_fetch` reaches hosts that the sandbox's network policy allows ([#14537](https://github.com/NVIDIA/NemoClaw/issues/14537)).
 - OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does; see [agent files](../build-deploy/state.md#agent-files).
 
+Installation:
+
+- [Install the CLI](../get-started/install.md) covers installing, upgrading, and uninstalling a release's CLI from its `nemoclaw-TAG-PLATFORM.tar.gz` archive, checked against `SHA256SUMS`.
+- The [support matrix](#support-matrix) lists the platforms, gateway runtimes, model services, harnesses, and GPUs, and what CI runs on each.
+
 ### Changes in v0.1.0-rc11
 
 These changes reached `v1` between the `v0.1.0-rc10` and `v0.1.0-rc11` tags; [breaking changes](#breaking-changes-in-v010-rc11) are listed separately.
@@ -294,6 +299,64 @@ These changes before the `v0.1.0-rc9` tag affect existing deployments:
 - `spec.gateway.image` is removed: the SDK pins the managed gateway image, and defaulted and exported documents no longer name it.
   - Remove the field from documents; the parser rejects it as an unknown field.
   - In the Rust SDK, `ManagedGateway` has no `image` field; `managed::Spec.image` carries the managed gateway's pin.
+
+## Support Matrix
+
+These tables list what this revision accepts and what CI runs it on; a configuration without an automated run is accepted but untested.
+[Current limits](../resources/limits.md) lists what v1 doesn't do or hasn't tested, and [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) tracks a tested matrix of harness, model, provider, and platform combinations.
+
+### Client Platforms
+
+Each release attaches the CLI for these platforms; see [install the CLI](../get-started/install.md).
+[CI / Bundle](../../.github/workflows/rust.yml) runs the unit, contract, and integration tests on each one.
+
+| Platform | Archive | Requirement | Live tests in CI |
+|---|---|---|---|
+| Linux ARM64 | `linux_arm64` | glibc 2.35 or newer, as on Ubuntu 22.04 | Docker and kind suites |
+| Linux AMD64 | `linux_amd64` | glibc 2.35 or newer, as on Ubuntu 22.04 | Docker and kind suites, the cases on NVIDIA hosted inference, and the GPU cases |
+| macOS ARM64 | `darwin_arm64` | | None |
+| Windows AMD64 | `windows_amd64` | | None |
+
+The builder also accepts `darwin_amd64`, but no release attaches it and CI doesn't build it.
+The release executables are neither signed nor notarized.
+
+### Gateway Runtimes
+
+Sandboxes and model services run on Linux engines or clusters; the agent and runtime images are built for `linux/arm64` and `linux/amd64`.
+
+| `spec.gateway.runtime.provider` | Accepted | Live tests in CI |
+|---|---|---|
+| `docker` | Managed or external gateway; managed vLLM, Ollama, and container services | Docker suite, the cases on NVIDIA hosted inference, and the GPU cases |
+| `podman` | Managed rootless gateway on a local Linux engine; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |
+| `kubernetes` | Managed or external gateway, with external inference endpoints | kind suite |
+| `openshift` | Managed or external gateway, with external inference endpoints | None; [run by hand](../../internal-docs/contributing/live-tests.md#openshift-gateway) on OpenShift Local |
+
+### Model Services
+
+| Service | Live tests in CI |
+|---|---|
+| External endpoint, such as NVIDIA hosted inference | OpenClaw and Hermes on NVIDIA hosted inference, on Linux AMD64 |
+| Managed vLLM | OpenClaw on the GPU runner |
+| Managed Ollama | Hermes on the GPU runner |
+| External Ollama through a managed proxy | None; contract and integration tests run it against fixtures |
+
+### Harnesses
+
+The image workflow builds and checks an image for each harness in the [Fabric harness table](../references/fabric-harnesses.md): OpenClaw, Hermes, Deep Agents, Claude Code, Codex, mini-SWE-agent, OO Agents, BenchAgent, Remote agent, Pi, and OpenCode.
+The live tests deploy OpenClaw and Hermes; no live test deploys the others.
+Onboarding offers OpenClaw and Hermes.
+
+### GPUs
+
+Managed vLLM and Ollama check the GPU against the deployment's [hardware profile](../agents-inference/models.md#choose-a-hardware-profile), such as `dgx-spark`, `dgx-station`, `h100`, or `rtx-pro-6000-blackwell`.
+Accepting a profile doesn't qualify that GPU.
+
+| GPU host | Live tests |
+|---|---|
+| NVIDIA RTX PRO 6000 Blackwell, Linux AMD64 | The GPU cases, on CI's GPU runner, on `v1` pushes and manual runs |
+| DGX Station (GB300), Linux ARM64 | One case, by manual dispatch of Live / HCL |
+| DGX Spark (GB10), Linux ARM64 | None |
+| Other GPUs, several GPUs serving one model, Windows/WSL, and macOS | None |
 
 ## Qualification and Known Issues
 
