@@ -105,6 +105,7 @@ Each check gets one of three outcomes:
 | Not tested | A runner, access, credential, procedure, or evidence problem prevented a valid check, or the check depends on an earlier finding that left no usable runtime |
 
 - **Missing support is Failed.** Link every check it affects to one shared finding with revision-specific source or image evidence. Never weaken a check to match what a revision supports.
+- **Upstream owners.** Every check here covers a gap that [Features](#features) assigns to an upstream issue; a finding for it names that issue as its owner, not NemoClaw.
 - **Shared findings.** Explain each immediate problem once in `findings.md` and link every affected check to its ID. Every check that isn't Passed names a finding, and every finding is used.
 - **Dependent checks.** A check blocked by an earlier finding's unusable runtime is Not tested, linked to that finding. Keep checking what stays independent, such as a fixture's hash, and reassess blocked checks after each transition.
 - A later diagnostic, recovery, or retry never turns an earlier failure into a pass.
