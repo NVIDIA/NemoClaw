@@ -144,14 +144,16 @@ function createWaitNotifier(
     announced = true;
     const detail =
       decision.kind === "wait" && decision.disposition === "active"
-        ? `PID ${String(decision.ownerPid)} holds it. If no nemoclaw command for this sandbox is running here, the owner may be in another PID namespace or on another host. Check it there. If it has exited, verify that, then remove the lock file. NemoClaw does not remove it automatically.`
+        ? `PID ${String(decision.ownerPid)} holds it. If no nemoclaw command for this sandbox is running here, the owner may be in another PID namespace or on another host. Check it there. Do not delete the lock file while ownership is ambiguous. NemoClaw does not remove it automatically.`
         : observation.reclaimable
           ? "The lock record is unreadable. NemoClaw retries reclaiming it after a grace period."
           : "The lock path is not a file. NemoClaw cannot reclaim it. Remove it if no nemoclaw command is running.";
     try {
-      writeNotice(
-        `Still waiting for the sandbox mutation lock for '${sandboxName}'. Lock file: ${lockPath}. ${detail}\n`,
-      );
+      void Promise.resolve(
+        writeNotice(
+          `Still waiting for the sandbox mutation lock for '${sandboxName}'. Lock file: ${lockPath}. ${detail}\n`,
+        ),
+      ).catch(() => {});
     } catch {
       // A failed notice must not end the wait.
     }

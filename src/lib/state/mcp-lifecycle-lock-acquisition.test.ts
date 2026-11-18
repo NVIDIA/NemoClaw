@@ -221,13 +221,14 @@ describe("sandbox mutation lock acquisition", () => {
     writeForeignLock(4242);
     const clock = steppedClock(1_000);
     const notices: Array<{ message: string; at: number }> = [];
+    const afterNotice = [() => writeForeignLock(4343)];
     await expect(
       run({
         ...options({ timeoutMs: 20_000, waitNoticeMs: 3_000 }),
         monotonicNow: clock.monotonicNow,
         writeNotice: (message) => {
           notices.push({ message, at: clock.read() });
-          if (notices.length === 1) writeForeignLock(4343);
+          afterNotice.shift()?.();
         },
       }),
     ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
@@ -268,6 +269,21 @@ describe("sandbox mutation lock acquisition", () => {
           fs.rmSync(lockPath);
           throw new Error("notice failed");
         },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each(lockers)("acquires the lock after a notice callback rejects (%s)", async (_name, run) => {
+    const lockPath = writeForeignLock(4242);
+    const clock = steppedClock(1_000);
+    await expect(
+      run({
+        ...options({ timeoutMs: 30_000, waitNoticeMs: 1_000 }),
+        monotonicNow: clock.monotonicNow,
+        writeNotice: (() => {
+          fs.rmSync(lockPath);
+          return Promise.reject(new Error("notice failed"));
+        }) as () => void,
       }),
     ).resolves.toBeUndefined();
   });
