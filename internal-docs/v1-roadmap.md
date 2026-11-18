@@ -100,12 +100,6 @@ Dropping a separate NemoClaw memory subsystem does not exclude the harness's nat
 Classic documents [MCP credential rotation](https://github.com/NVIDIA/NemoClaw/blob/495896a404/docs/manage-sandboxes/manage-mcp-servers.mdx).
 A changed value behind an unchanged reference is not rotated by unchanged apply; verify the documented [credential workflow](../docs/security/security.md).
 
-## Review enterprise parity
-
-**Needs review.** Inventory the required company enrollment, identity, policy, and recovery workflows with their owners, as requested in the call.
-The scoped [runtime identity issue #12652](https://github.com/NVIDIA/NemoClaw/issues/12652) and existing APF integration do not define the whole enterprise journey.
-Decide that broader scope before committing additional parity work.
-
 ## Classic CLI and API compatibility
 
 **Not planned in NemoClaw.** NemoClaw Agent Config uses desired-state deployments and the Rust SDK/OpenTofu providers, without compatibility with the Classic imperative CLI or TypeScript lifecycle API.
