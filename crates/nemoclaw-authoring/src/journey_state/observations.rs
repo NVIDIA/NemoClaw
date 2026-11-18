@@ -165,6 +165,52 @@ impl JourneyState {
         }
     }
 
+    /// Answer each sandbox image question that `observations` settle: exactly
+    /// one image on the engine installs the harness, and the document names no
+    /// other. The image is then the sandbox's, and the review shows it.
+    /// Questions that several images, none, or an unread engine leave open, and
+    /// ones a template or an earlier answer already gave another image, stay.
+    pub fn answer_single_agent_images(
+        &mut self,
+        capabilities: &Capabilities,
+        observations: &DiscoveryObservations,
+    ) {
+        let Ok(resolution) = self.resolve(capabilities) else {
+            return;
+        };
+        for question in resolution.questions() {
+            let Some(only) = self.single_agent_image(question.id(), observations) else {
+                continue;
+            };
+            if self
+                .authored
+                .values
+                .pointer(question.id())
+                .is_some_and(|named| named.as_str() != Some(&only))
+            {
+                continue;
+            }
+            // A reference the schema rejects leaves the question to its user.
+            let _ = self.answer(capabilities, question.id(), Some(Value::String(only)));
+        }
+    }
+
+    /// The only image `observations` list for the sandbox image question
+    /// `question`, when the read succeeded.
+    pub fn single_agent_image(
+        &self,
+        question: &str,
+        observations: &DiscoveryObservations,
+    ) -> Option<String> {
+        let observed = observations
+            .get(&self.agent_images_request(question)?)
+            .filter(|observed| observed.status == ObservationStatus::Available)?;
+        match observed.references.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        }
+    }
+
     /// The chosen runtime of a managed gateway without an authored engine, when
     /// this machine was asked and no engine answered for that runtime.
     fn runtime_without_local_engine(&self) -> Option<&str> {

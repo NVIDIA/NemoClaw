@@ -35,6 +35,7 @@ Agents and interfaces:
 Onboarding:
 
 - At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
+  When exactly one such image exists and your template names no other, onboarding uses it without asking and the review says so.
 
 Sandbox policy:
 

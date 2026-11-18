@@ -1455,6 +1455,17 @@ const HERMES_IMAGE: &str =
 fn at_the_image_question(harness: &str) -> JourneyWizard {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = on_one_docker_engine(capabilities, state);
+    wizard.submit(Some(serde_json::json!(harness))).unwrap();
+    to_the_image_question(wizard)
+}
+
+/// `state` on a machine whose one Docker engine answered, with the first
+/// question open.
+fn on_one_docker_engine(
+    capabilities: Capabilities,
+    state: nemoclaw_authoring::JourneyState,
+) -> JourneyWizard {
     let candidate = DiscoveryRequest {
         engine: DOCKER_ENGINE.into(),
         compute_driver: ComputeDriver::Docker,
@@ -1466,7 +1477,11 @@ fn at_the_image_question(harness: &str) -> JourneyWizard {
         DiscoveryObservation::Engine(engine_observation(ObservationStatus::Available)),
     ));
     wizard.started = true;
-    wizard.submit(Some(serde_json::json!(harness))).unwrap();
+    wizard
+}
+
+/// Accept suggestions until the sandbox image question is open.
+fn to_the_image_question(mut wizard: JourneyWizard) -> JourneyWizard {
     for _ in 0..12 {
         if wizard
             .question()
@@ -1493,8 +1508,13 @@ fn agent_images(references: &[&str]) -> DiscoveryObservation {
     })
 }
 
+const OLDER_HERMES_IMAGE: &str =
+    "nc-fabric@sha256:2222222222222222222222222222222222222222222222222222222222222222";
+
+const IMAGE_QUESTION: &str = "/spec/sandboxes/assistant/image/ref";
+
 #[test]
-fn the_image_question_suggests_the_local_image_that_installs_the_chosen_harness() {
+fn the_image_question_suggests_the_newest_of_the_local_images_that_install_the_chosen_harness() {
     let mut wizard = at_the_image_question("nvidia.fabric.hermes");
     let query = agent_images_probe(&wizard).expect("the image question reads the engine's images");
     assert_eq!(
@@ -1504,18 +1524,174 @@ fn the_image_question_suggests_the_local_image_that_installs_the_chosen_harness(
             adapter_id: "nvidia.fabric.hermes".into(),
         })
     );
-    wizard.record(query, agent_images(&[HERMES_IMAGE]));
+    wizard.record(query, agent_images(&[HERMES_IMAGE, OLDER_HERMES_IMAGE]));
     assert_eq!(
         agent_images_probe(&wizard),
         None,
         "the images are read once"
     );
     let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.id(), IMAGE_QUESTION);
     assert_eq!(
         question.suggestion(),
         Some(&serde_json::json!(HERMES_IMAGE))
     );
-    assert_eq!(question.choices(), [serde_json::json!(HERMES_IMAGE)]);
+    assert_eq!(
+        question.choices(),
+        [
+            serde_json::json!(HERMES_IMAGE),
+            serde_json::json!(OLDER_HERMES_IMAGE)
+        ]
+    );
+}
+
+/// The questions the journey asks from `wizard` to its review, accepting each
+/// suggestion.
+fn questions_to_the_review(wizard: &mut JourneyWizard) -> Vec<String> {
+    let mut asked = Vec::new();
+    for _ in 0..40 {
+        let Some(question) = wizard.question().unwrap() else {
+            return asked;
+        };
+        asked.push(question.id().to_owned());
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{asked:?}: {:?}", wizard.error);
+    }
+    panic!("the journey did not reach review: {asked:?}");
+}
+
+#[test]
+fn exactly_one_local_image_for_the_harness_is_chosen_without_asking_and_named_in_the_review() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
+    let asked = questions_to_the_review(&mut wizard);
+    assert!(!asked.iter().any(|id| id == IMAGE_QUESTION), "{asked:?}");
+    assert_eq!(
+        wizard.state().values().pointer(IMAGE_QUESTION),
+        Some(&serde_json::json!(HERMES_IMAGE))
+    );
+    let yaml = wizard.configuration().unwrap().unwrap();
+    assert!(yaml.contains(HERMES_IMAGE), "{yaml}");
+    let review = screen(&wizard, 160, 60);
+    assert!(review.contains(HERMES_IMAGE), "{review}");
+    assert!(
+        flat(&review).contains("The only image on this engine that installs nvidia.fabric.hermes."),
+        "{review}"
+    );
+}
+
+#[test]
+fn going_back_from_the_question_after_a_chosen_image_skips_the_image_again() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
+    let after = wizard.question().unwrap().unwrap().id().to_owned();
+    assert_ne!(after, IMAGE_QUESTION);
+    wizard.back();
+    let before = wizard.question().unwrap().unwrap();
+    assert_ne!(before.id(), IMAGE_QUESTION);
+    assert_ne!(before.id(), after);
+    // The earlier answer is given again, and the image is chosen again.
+    wizard.advance();
+    assert_eq!(wizard.question().unwrap().unwrap().id(), after);
+    assert_eq!(
+        wizard.state().values().pointer(IMAGE_QUESTION),
+        Some(&serde_json::json!(HERMES_IMAGE))
+    );
+}
+
+#[test]
+fn several_local_images_for_the_harness_are_still_asked() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[HERMES_IMAGE, OLDER_HERMES_IMAGE]));
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
+}
+
+#[test]
+fn an_image_the_engine_could_not_list_is_still_asked() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(
+        query,
+        DiscoveryObservation::AgentImages(AgentImagesObservation {
+            status: ObservationStatus::Unknown,
+            reason: Some("the engine did not answer".into()),
+            references: vec![HERMES_IMAGE.into()],
+        }),
+    );
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
+}
+
+/// The express OpenClaw template, with its image `image` when given, on a
+/// machine whose one engine holds `local`, at the sandbox image question.
+fn template_at_the_image_question(image: Option<&str>, local: &[&str]) -> JourneyWizard {
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
+    if let Some(image) = image {
+        values["spec"]["sandboxes"]["assistant"]["image"]["ref"] = serde_json::json!(image);
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("template.yaml");
+    std::fs::write(&path, values.to_string()).unwrap();
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Template(&path), &capabilities).unwrap();
+    let mut wizard = to_the_image_question(on_one_docker_engine(capabilities, state));
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(local));
+    wizard
+}
+
+#[test]
+fn a_template_that_names_another_image_is_still_asked_about_it() {
+    for image in [
+        None,
+        Some("nc-fabric@sha256:3333333333333333333333333333333333333333333333333333333333333333"),
+    ] {
+        let wizard = template_at_the_image_question(
+            image,
+            &["nc-fabric@sha256:4444444444444444444444444444444444444444444444444444444444444444"],
+        );
+        let question = wizard.question().unwrap().unwrap();
+        assert_eq!(question.id(), IMAGE_QUESTION, "{image:?}");
+        assert_eq!(
+            question.suggestion(),
+            Some(&serde_json::json!(
+                "nc-fabric@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+            ))
+        );
+    }
+}
+
+#[test]
+fn a_template_that_names_the_one_local_image_is_not_asked_about_it() {
+    let wizard = template_at_the_image_question(Some(HERMES_IMAGE), &[HERMES_IMAGE]);
+    let next = wizard
+        .question()
+        .unwrap()
+        .map(|question| question.id().to_owned());
+    assert_ne!(next.as_deref(), Some(IMAGE_QUESTION));
+    assert_eq!(
+        wizard.state().values().pointer(IMAGE_QUESTION),
+        Some(&serde_json::json!(HERMES_IMAGE))
+    );
+}
+
+#[test]
+fn without_discovery_the_image_question_is_asked_with_no_suggestion() {
+    let wizard = at_the_image_question("nvidia.fabric.hermes");
+    assert!(
+        agent_images_probe(&wizard).is_some(),
+        "the images have not been read"
+    );
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.id(), IMAGE_QUESTION);
+    assert_eq!(question.suggestion(), None);
 }
 
 #[test]
