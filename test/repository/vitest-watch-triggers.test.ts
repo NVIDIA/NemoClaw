@@ -12,6 +12,7 @@ import {
 } from "../helpers/vitest-watch-triggers";
 
 const E2E_WORKFLOW_CONTRACTS = [
+  "test/e2e/support/manual-pr-concurrency.test.ts",
   "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
@@ -116,6 +117,27 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it("selects the security review procedure test when its skill changes", () => {
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md")).toEqual(
+      ["test/security/security-review-paths.test.ts"],
+    );
+  });
+
+  it("selects the root network-policy schema consumer", () => {
+    expect(triggeredBy("schemas/network-policy.schema.json")).toEqual([
+      "test/onboarding/validate-config-schemas.test.ts",
+    ]);
+  });
+
+  it.each([
+    "agents/langchain-deepagents-code/validate-nemotron-ultra-profile.py",
+    "agents/langchain-deepagents-code/patch-managed-deepagents-code.py",
+  ])("selects the profile-plugin contract for %s", (input) => {
+    expect(triggeredBy(input)).toContain(
+      "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
+    );
+  });
+
   it.each(["test/helpers/onboard-fixture-contract.json", "test/helpers/onboard-script-mocks.cjs"])(
     "maps %s to every sandbox identity consumer (#10463)",
     (fixturePath) => {
@@ -143,6 +165,9 @@ describe("Vitest opaque-input watch triggers", () => {
     "maps YAML workflow files to the shared display-name contract [%s]",
     (workflowPath) => {
       expect(resolveVitestWatchTests(path.resolve(workflowPath))).toContain(WORKFLOW_NAME_TEST);
+      expect(resolveVitestWatchTests(path.resolve(workflowPath))).toContain(
+        "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      );
     },
   );
 
@@ -257,6 +282,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/inference/managed/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
+      "test/agents/deepagents/langchain-deepagents-code-image.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "test/mcp/mcp-tool-discovery-image-contract.test.ts",
     ]);
@@ -299,6 +327,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
+      "test/inference/managed/hermes-policy-cleanup-workflow.test.ts",
       "test/inference/managed/managed-image-discord-workflow-boundary.test.ts",
       "test/e2e/support/managed-podman-docker-guard.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",

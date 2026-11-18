@@ -3463,8 +3463,12 @@ resolve_openclaw_version() {
 
   if [[ -f "$package_json" ]]; then
     resolved_version="$(
-      node -e "const v = require('${package_json}').dependencies?.openclaw; if (v) console.log(v)" \
-        2>/dev/null || true
+      node -e '
+        const fs = require("node:fs");
+        const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        const version = pkg.dependencies?.openclaw;
+        if (version) console.log(version);
+      ' "$package_json" 2>/dev/null || true
     )"
     if [[ -n "$resolved_version" ]]; then
       printf '%s\n' "$resolved_version"

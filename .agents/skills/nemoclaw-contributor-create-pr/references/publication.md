@@ -73,9 +73,12 @@ Apply these steps before every branch publication:
    PR identity and source branch, and require both its `headRefOid` and the remote branch to equal the
    local publication SHA. Classify an unchanged prior branch and PR state separately. Treat every
    other combination, including a missing, closed, replaced, or mismatched PR, as unknown.
-6. Continue only from the expected-commit classification. From unchanged prior state, stop, report
-   the observed branch and PR SHAs, and do not retry the push in this invocation. Stop without
-   retrying from an unknown state.
+6. Continue only from the expected-commit classification. From unchanged prior state, record the
+   observed branch and PR SHAs and diagnose the failure. For a confirmed transient failure, the
+   shared bounded retry policy permits one automatic push retry without renewed approval. Record
+   its intent and repeat every guard above before retrying. Do not retry an access denial, policy
+   rejection, failed validation, active equivalent push, or unknown state. If the retry fails,
+   preserve the observations and investigate or report the blocker.
 7. Read GitHub verification for every published commit. Continue only when every commit is
    `Verified`.
 

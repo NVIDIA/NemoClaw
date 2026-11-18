@@ -206,6 +206,18 @@ describe("publishDownloadArtifact", () => {
     expect(fs.readFileSync(path.join(destination, "existing.txt"), "utf8")).toBe("existing");
   });
 
+  it("preserves a 240-byte filename when publishing a directory", () => {
+    const staged = path.join(dir, "staged");
+    const destination = path.join(dir, "destination");
+    const filename = "a".repeat(240);
+    fs.mkdirSync(staged);
+    fs.writeFileSync(path.join(staged, filename), "payload");
+
+    publishDownloadArtifact(staged, destination, "dir");
+
+    expect(fs.readFileSync(path.join(destination, filename), "utf8")).toBe("payload");
+  });
+
   it("rejects a destination path that traverses a symbolic link", () => {
     const staged = path.join(dir, "staged");
     const outside = path.join(dir, "outside");

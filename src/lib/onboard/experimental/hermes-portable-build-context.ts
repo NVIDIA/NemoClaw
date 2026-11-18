@@ -118,7 +118,7 @@ const LOCAL_COPY_SOURCES = [
   "src/lib/tool-disclosure.ts",
   "src/lib/providerless-inference.ts",
   "tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz",
-  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
+  "agents/hermes/managed-startup-image-runtime.bundle",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle",
