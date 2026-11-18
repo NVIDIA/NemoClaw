@@ -85,3 +85,29 @@ fn a_suite_runs_its_requested_cases_and_refuses_cases_placed_elsewhere() {
     let error = docker(Some(&["hosted-c"])).unwrap_err();
     assert!(error.contains("hosted-c"), "{error}");
 }
+
+#[test]
+fn the_station_example_is_discovered_without_sending_it_to_the_generic_gpu_runner() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("crates/nemoclaw-e2e/tests/e2e/hcl/tests")).unwrap();
+    for (path, contents) in [
+        (
+            "examples/gtc-dc/openclaw-dgx-station.yaml",
+            document("docker", VLLM),
+        ),
+        (
+            "crates/nemoclaw-e2e/tests/e2e/hcl/manual/dgx-station-openclaw-nemotron.tftest.hcl",
+            "\n".into(),
+        ),
+    ] {
+        let path = root.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+    let placements = nemoclaw_build::hcl_cases::placements(root.path()).unwrap();
+    let station = placements
+        .get("dgx-station-openclaw-nemotron")
+        .expect("discover the qualified Station case");
+    assert_eq!(station.runner.name(), "dgx-station");
+    assert!(on(root.path(), Runner::Gpu, None).unwrap().is_empty());
+}

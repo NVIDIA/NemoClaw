@@ -159,13 +159,18 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 
 ### DGX Station on Colossus
 
-Station runs only through a manual **Live / HCL** dispatch. It does not run on PRs or `v1` pushes; [#14346](https://github.com/NVIDIA/NemoClaw/issues/14346) owns trigger and gating policy. Dispatch the candidate branch:
+**Live / V1 PR hardware** listens for `copy-pr-bot` pushes to `pull-request/<number>`. Like main, it uses the bot's trusted-author admission rather than a maintainer/admin-only actor gate. It verifies that the PR is open, non-draft, targets `v1`, and still has the copied head SHA, then uses `changes cases --base` to select affected GPU and Station cases. The Station example and scenario belong to the Station placement in the same case registry; shared changes select it through the existing dependency rules. Unqualified Spark hardware is excluded. A PR based on v1 before this workflow was introduced must pick up the workflow before its copied branch can trigger it.
+
+These runs report failures in a separate workflow; they are not added as merge requirements. Running jobs are not automatically cancelled. Hardware jobs recheck PR eligibility after queueing and before deployment. GitLab/Colorunner continues to own leases and replacement; CI does not provision hosts.
+
+Operators can dispatch **Live / HCL** on `v1`, or on a current, non-draft v1 PR's bot-admitted `pull-request/<number>` branch. The optional `jobs` input selects individual comma-separated case IDs on the target; unknown or misplaced IDs fail before hardware jobs queue. An empty input selects every case on that target:
 
 ```bash
-gh workflow run hcl-e2e.yml --ref <branch> -f target=dgx-station -f hosted=false
+gh workflow run hcl-e2e.yml --ref v1 -f target=dgx-station -f hosted=false \
+  -f jobs=dgx-station-openclaw-nemotron
 ```
 
-Build, inference, and cleanup failures fail that manual run. An offline runner leaves its hardware job queued.
+Build, inference, and cleanup failures fail the run visibly. An offline runner leaves its hardware job queued. A queued PR revision that becomes draft, closes, or is superseded cannot deploy when it reaches a runner.
 
 Colorunner must prepare Ubuntu 24.04 ARM64, GB300, Docker GPU access, and the containerd image store. CI does not provision the host or manage its lease.
 The shared HCL workflow binds the existing GTC Station example to its pinned Nemotron 3.5 model/runtime and candidate images, fresh UID, state, and nonoverlapping subnet. The scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup.
