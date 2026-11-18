@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Temporary, removed before merge: runs Release / Attest on a throwaway index in
+# the internal v1-ci package, since the release workflow attests only final tags.
+name: Release / Attest check
+on:
+  push:
+    branches: [cv/attest-v1-images]
+permissions: {}
+jobs:
+  image:
+    name: Push a throwaway index
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      images: ${{ steps.push.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require internal packages
+        uses: ./.github/actions/internal-packages
+        with:
+          namespace: ghcr.io/nvidia/nemoclaw
+          names: v1-ci
+          required: "true"
+          token: ${{ github.token }}
+      - name: Push a two-platform index
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx create --use --driver docker-container
+          context=$(mktemp -d)
+          printf 'Attestation check %s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$context/check"
+          printf 'FROM scratch\nCOPY check /check\n' > "$context/Dockerfile"
+          tag="ghcr.io/nvidia/nemoclaw/v1-ci:attest-check-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker buildx build --platform linux/arm64,linux/amd64 --provenance=false --sbom=false --push --tag "$tag" "$context"
+          digest=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}')
+          echo "images=$(jq -cn --arg digest "$digest" '[{name: "attest-check", repository: "ghcr.io/nvidia/nemoclaw/v1-ci", digest: $digest}]')" >> "$GITHUB_OUTPUT"
+          echo "Attested \`ghcr.io/nvidia/nemoclaw/v1-ci@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+          docker logout ghcr.io
+  attest:
+    name: Attest
+    needs: image
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release-attest.yml
+    with:
+      images: ${{ needs.image.outputs.images }}
