@@ -28,6 +28,10 @@ Agents:
 - OpenClaw's `web_fetch` reaches hosts that the sandbox's network policy allows ([#14537](https://github.com/NVIDIA/NemoClaw/issues/14537)).
 - OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does; see [agent files](../build-deploy/state.md#agent-files).
 
+Gateways:
+
+- [Current limits](../resources/limits.md#data-and-cleanup) list a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: it leaves its sandboxes in `Error`, and the next apply replaces them ([#13953](https://github.com/NVIDIA/NemoClaw/issues/13953)).
+
 ### Changes in v0.1.0-rc11
 
 These changes reached `v1` between the `v0.1.0-rc10` and `v0.1.0-rc11` tags; [breaking changes](#breaking-changes-in-v010-rc11) are listed separately.
