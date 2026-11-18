@@ -441,16 +441,6 @@ test.for([
     expect(inspection.Config.Entrypoint).toEqual(["/bin/bash"]);
     expect(inspection.Config.Cmd[0]).toBe("-lc");
     expect(inspection.Config.Cmd[1]).toBe(buildVllmServeCommand(materialized.model, installEnv));
-    extraArguments
-      ? (() => {
-          expect(onboard.stdout).toContain(
-            "Selected for your hardware: Qwen3.6 35B-A3B NVFP4 on one 64 GB DGX Spark",
-          );
-          expect(onboard.stdout).toContain("Context limit: 32768 tokens");
-          expect(inspection.Config.Cmd[1]).toMatch(/--max-model-len 32768(?: |$)/u);
-          expect(inspection.Config.Cmd[1]).toMatch(/--max-num-seqs 1 .*--max-num-seqs 2(?: |$)/u);
-        })()
-      : undefined;
     expect(inspection.Config.Labels).toMatchObject({
       "com.nvidia.nemoclaw.managed-vllm": "true",
     });

@@ -48,8 +48,6 @@ provider TLS, adaptive onboarding, or `inference.local` isolation in a routed sa
 standard Hermes sandbox still uses `inference.local`. Support tests own fixture responses,
 redacted evidence, and probe syntax; they are not live OpenShell evidence.
 
-The committed-routing refusal scenario first applies and commits a routed profile through the shipped root-applicator CLI. It empties the committed Relay file and re-enters the managed application-to-entrypoint sequence. Startup must fail with the original diagnostic and recovery instructions, both gateway ports must stay closed, and routing bytes and metadata must remain unchanged. The existing root-entrypoint workflow runs this case with the other Hermes scenarios.
-
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
@@ -2485,7 +2483,8 @@ E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SAND
 
 A passing Spark target establishes that option 2 selects the fixed vLLM preset and recipe.
 The extra-arguments case invokes the candidate CLI with `NEMOCLAW_PROVIDER=install-vllm` and `["--max-num-seqs","2"]`.
-It requires the selected-profile output and 32,768-token context, then inspects the real container command for the bounded recipe and the appended sequence override.
+It compares the real container command with the bounded recipe and appended sequence override.
+Fast installer tests own the selected-profile output, 32,768-token context and argument-order assertions.
 Each case keeps the existing 65-minute test deadline and identity-bound cleanup. These hardware targets have no hosted PR workflow or supported Advisor selector.
 The standalone command below requires a physical Spark reporting at least 60 GB and less than 64 GB.
 Retain its candidate-bound receipt, but keep hosted Spark qualification unresolved until a trusted workflow supports this scenario.

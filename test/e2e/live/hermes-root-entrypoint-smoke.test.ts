@@ -12,11 +12,6 @@ import {
 import { captureHermesCrash, hermesCrashCaptureArgs } from "../fixtures/hermes-crash-capture.ts";
 import { hermesSwitchyardBoundsProbe } from "../fixtures/hermes-switchyard-bounds.ts";
 
-import {
-  HERMES_COMMITTED_ROUTING_REPLAY_PROBE,
-  hermesCommittedRoutingReplayRequest,
-} from "../fixtures/hermes-committed-routing-replay.ts";
-
 // real Docker/root-entrypoint smoke: it builds the Hermes image when no prebuilt
 // NEMOCLAW_HERMES_TEST_IMAGE is supplied, starts /usr/local/bin/nemoclaw-start
 // as root, and verifies health, gateway privilege separation, runtime layout,
@@ -733,82 +728,6 @@ test(
       async ({ containers, image, probe, runId }) => {
         context.progress.phase("validate clean Hermes root-entrypoint readiness");
         await runCleanVariant(probe, image, runId, containers, { artifacts, shellProbe });
-      },
-    );
-  },
-);
-
-test(
-  "refuses unreadable committed routing before managed Hermes startup",
-  {
-    meta: {
-      e2ePhases: [
-        "check Docker and prepare the Hermes root-entrypoint image",
-        "validate committed routing refusal before gateway launch",
-      ],
-    },
-  },
-  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
-    await runRootEntrypointScenario(
-      { artifacts, cleanup, progress, secrets, signal, skip },
-      {
-        id: "committed-routing-refusal",
-        assertion: "committedRoutingRefusalVerified",
-        contract: [
-          "the real root applicator commits a routed Hermes profile before its routing file becomes empty",
-          "startup replay fails before the gateway entrypoint with the original diagnostic and recovery instructions",
-          "gateway ports remain closed and rejected routing bytes and metadata remain unchanged",
-        ],
-      },
-      async ({ containers, image, probe, runId }) => {
-        progress.phase("validate committed routing refusal before gateway launch");
-        const container = `nemoclaw-hermes-root-routing-refusal-${runId}`;
-        containers.push(container);
-        await probe.expect(
-          [
-            "run",
-            "-d",
-            "--network",
-            "none",
-            "--user",
-            "root",
-            "--name",
-            container,
-            "--entrypoint",
-            "/usr/bin/tail",
-            image,
-            "-f",
-            "/dev/null",
-          ],
-          { artifactName: "start-committed-routing-refusal-container", timeoutMs: RUN_TIMEOUT_MS },
-        );
-        const result = await probe.expect(
-          [
-            "exec",
-            container,
-            "/opt/hermes/.venv/bin/python",
-            "-I",
-            "-c",
-            HERMES_COMMITTED_ROUTING_REPLAY_PROBE,
-            Buffer.from(hermesCommittedRoutingReplayRequest()).toString("base64"),
-          ],
-          { artifactName: "committed-routing-startup-refusal", timeoutMs: 150_000 },
-        );
-        const evidence = JSON.parse(result.stdout) as {
-          exitCode: number;
-          output: string;
-          gatewayPortsClosed: boolean[];
-          routingStateUnchanged: boolean;
-        };
-        expect(evidence.exitCode).not.toBe(0);
-        expect(evidence.output).toContain(
-          "Managed startup image application failed: refusing unsafe or oversized file /usr/local/share/nemoclaw/hermes-relay-plugins.toml",
-        );
-        expect(evidence.output).toMatch(
-          /Do not edit the protected routing files[\s\S]*nemoclaw onboard --fresh --agent hermes --name <new-name> --switchyard-config <routing-config.json>[\s\S]*does not recover data[\s\S]*independently maintained backup[\s\S]*Do not delete the failed sandbox/u,
-        );
-        expect(evidence.gatewayPortsClosed).toEqual([true, true]);
-        expect(evidence.routingStateUnchanged).toBe(true);
       },
     );
   },

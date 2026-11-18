@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { decodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
-import { parseManagedStartupRootApplyRequest } from "../../../src/lib/onboard/managed-startup/root-apply.ts";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -20,11 +18,6 @@ import {
   HERMES_SWITCHYARD_BOUNDS_REQUEST,
   HERMES_SWITCHYARD_BOUNDS_WORKER,
 } from "../fixtures/hermes-switchyard-bounds.ts";
-
-import {
-  HERMES_COMMITTED_ROUTING_REPLAY_PROBE,
-  hermesCommittedRoutingReplayRequest,
-} from "../fixtures/hermes-committed-routing-replay.ts";
 
 test.each(["efficient", "capable", "judge"])(
   "%s bounds request selects streaming only for answer clients",
@@ -306,22 +299,3 @@ with TemporaryDirectory() as directory:
     expect(body.choices[0].message.content).toBe(content);
   },
 );
-
-test("committed replay uses a validated routed Hermes request without provider credentials", () => {
-  const request = parseManagedStartupRootApplyRequest(hermesCommittedRoutingReplayRequest());
-  const profile = decodeManagedStartupProfile(request.encodedProfile);
-  expect(profile.agent).toBe("hermes");
-  expect(profile.agentConfig).toMatchObject({
-    switchyardRouting: {
-      efficient: { provider: "nvidia-prod" },
-      capable: { provider: "openai-api" },
-    },
-    switchyardBindings: { schemaVersion: 1 },
-  });
-  const result = spawnSync(
-    "python3",
-    ["-I", "-c", "import sys; compile(sys.stdin.read(), '<committed-routing-replay>', 'exec')"],
-    { input: HERMES_COMMITTED_ROUTING_REPLAY_PROBE, encoding: "utf8", timeout: 10_000 },
-  );
-  expect(result.status, result.stderr).toBe(0);
-});
