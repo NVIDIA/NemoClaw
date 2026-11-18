@@ -85,7 +85,7 @@ Before pushing a final tag, complete the license review ([#13524](https://github
 
 A final release attests each image index's build provenance with a GitHub artifact attestation before it publishes the draft.
 The attestation is signed through Sigstore's public-good instance, whose log is public, so release candidates get none.
-It is stored beside the image in `ghcr.io` as an OCI referrer, so the index digest stays the one staging pushed.
+It is stored beside the image in `ghcr.io` as an OCI referrer, so the index digest stays the one staging pushed; `ghcr.io` has no referrers API, so the image's package shows it under the tag `sha256-<index digest hex>`.
 
 Verify an image by the index digest the release lists:
 
