@@ -71,6 +71,9 @@ Select the adapter and image together, then verify its integrations and native r
 | Hermes OAuth and managed tools | No open issue |
 | Agent interfaces are reached by Fabric's P0 conventions; runtime handles don't report them yet | [NVIDIA/NeMo-Fabric#565](https://github.com/NVIDIA/NeMo-Fabric/issues/565) |
 | Interface tokens that the agent's own tools can't read, an interface health check, and exposed service URLs for Hermes's dashboard | [NVIDIA/NeMo-Fabric#566](https://github.com/NVIDIA/NeMo-Fabric/issues/566) |
+| Native tools and plugins from a mounted volume: no Fabric adapter field loads or enables them from a location you supply. NemoClaw doesn't download or install plugins | [NVIDIA/NeMo-Fabric#661](https://github.com/NVIDIA/NeMo-Fabric/issues/661), [NVIDIA/NeMo-Fabric#665](https://github.com/NVIDIA/NeMo-Fabric/issues/665) |
+| Plugins bundled in the Hermes or OpenClaw image, and plugins the agent installs: Fabric's tests don't show them loading, or staying usable after a restart or sandbox replacement | [NVIDIA/NeMo-Fabric#660](https://github.com/NVIDIA/NeMo-Fabric/issues/660), [NVIDIA/NeMo-Fabric#664](https://github.com/NVIDIA/NeMo-Fabric/issues/664), [NVIDIA/NeMo-Fabric#657](https://github.com/NVIDIA/NeMo-Fabric/issues/657) |
+| What an attached Hermes terminal and its in-flight turn do when Fabric stops the runtime: Fabric starts and stops the terminal's backend and doesn't define or test this yet | [NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656#issuecomment-6971534523) |
 | OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | No open issue |
 | Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
