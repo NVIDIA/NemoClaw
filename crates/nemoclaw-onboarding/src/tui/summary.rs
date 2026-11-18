@@ -254,7 +254,7 @@ fn image_row(sandbox: NamedSandbox<'_>, harness: Option<&str>, facts: &Facts<'_>
                 .iter()
                 .any(|(name, single)| name == sandbox.name && single == image)
         })
-        .map(|harness| format!("The only image on this engine that installs {harness}."));
+        .map(|harness| format!("Image discovery found only this image for {harness}."));
     let status = match facts.target {
         Some(CompatibilityStatus::Compatible) => Status::fine("compatible"),
         Some(CompatibilityStatus::Conflict) => Status::attention("conflict"),

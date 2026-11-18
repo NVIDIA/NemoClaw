@@ -170,6 +170,8 @@ impl JourneyState {
     /// other. The image is then the sandbox's, and the review shows it.
     /// Questions that several images, none, or an unread engine leave open, and
     /// ones a template or an earlier answer already gave another image, stay.
+    /// So does the image of a sandbox whose harness question is still open: a
+    /// harness chosen next would leave an image that does not install it.
     pub fn answer_single_agent_images(
         &mut self,
         capabilities: &Capabilities,
@@ -179,6 +181,19 @@ impl JourneyState {
             return;
         };
         for question in resolution.questions() {
+            let harness_open = question
+                .id()
+                .strip_suffix("/image/ref")
+                .map(|sandbox| format!("{sandbox}/harness/kind"))
+                .is_some_and(|harness| {
+                    resolution
+                        .questions()
+                        .iter()
+                        .any(|asked| asked.id() == harness)
+                });
+            if harness_open {
+                continue;
+            }
             let Some(only) = self.single_agent_image(question.id(), observations) else {
                 continue;
             };

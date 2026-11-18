@@ -339,6 +339,7 @@ pub(super) async fn ask_target(
     poll: impl FnMut() -> io::Result<Option<Event>>,
 ) -> Result<bool, Error> {
     let discovery_cancel = cancel.child_token();
+    let asked = current_question(wizard);
     let Some(observed) = wait_for_discovery(
         read(queries, &discovery_cancel),
         cancel,
@@ -351,7 +352,18 @@ pub(super) async fn ask_target(
         return Ok(false);
     };
     wizard.remember(observed);
+    // The keys typed during the read answer the question that was on screen.
+    // When the read answered it, they would answer the next one unseen.
+    if current_question(wizard) != asked {
+        queued_events.clear();
+    }
     Ok(true)
+}
+
+/// The ID of the question the wizard asks, if it asks one.
+fn current_question(wizard: &JourneyWizard) -> Option<String> {
+    let question = wizard.question().ok()??;
+    Some(question.id().to_owned())
 }
 
 /// Read the target directly. A read that fails is an unknown observation,
