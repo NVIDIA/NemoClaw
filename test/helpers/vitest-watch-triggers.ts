@@ -162,6 +162,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/runtime/sandbox/sandbox-init.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/pr\.ya?ml$/,
+    testsToRun: runTests("test/automation/pull-requests/pr-code-classification.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/,
     testsToRun: runTests("test/repository/github-actions-workflow-names.test.ts"),
   },

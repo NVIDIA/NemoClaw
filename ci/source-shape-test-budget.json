@@ -520,6 +520,11 @@
       "file": "test/automation/pull-requests/candidate-upgrade-admission-workflow.test.ts",
       "test": "refreshes admission through the configured %s review handoff after %s",
       "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-code-classification.test.ts",
+      "test": "classifies %s for required code checks",
+      "category": "security"
     }
   ]
 }
