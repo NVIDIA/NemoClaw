@@ -63,6 +63,7 @@ The next comment lines each describe one setting:
 - `omitted`: the export left the setting out. `value` is its V0 value.
 - `placeholder`: the export wrote a stand-in to replace.
 - `changed`: the export rewrote the value. `before` is V0's, `after` is the exported one, and `after=omitted` means the field was dropped.
+- `review`: the export kept the value, but it may not hold in v1. `value` lists what to check.
 
 The last line, `# gateway endpoint=... port=...`, gives V0's gateway port, which the export reuses.
 
@@ -146,6 +147,9 @@ The table shows what the pinned Fabric adapters accept; the image's descriptor d
 | `inference.contextWindow` | None for OpenClaw or Hermes | Neither adapter's model schema has one. |
 | `proxy` | None | v1 has no sandbox proxy setting. Egress goes through the sandbox's network policy. |
 | `observability` | None confirmed | OpenClaw's adapter has no telemetry. Hermes has [Relay tracing](../../../docs/agents-inference/agents.md#hermes-relay-tracing), which isn't V0's OTLP export. |
+| `network.policy.explicit.filesystem_policy`, `.process`, `.landlock` | The image's runtime policy | Step 6. `value` is V0's section, for the user's reference. |
+| `network_policies.<key>` | None needed | OpenShell generated the entry from a V0 provider and generates it again for the v1 deployment's providers. |
+| `network_policies[].binaries` (`review`) | Same rules, with v1 paths | Step 6. |
 | `network_policies[].endpoints[].tls` (`changed`) | Already written | `skip` is v1's raw TLS tunnel; omitted `tls` is automatic termination. Tell the user, and see [sandbox network](../../../docs/security/sandbox-network.md). |
 
 Report a line that isn't in this table to the user unchanged, without guessing a home.
@@ -154,19 +158,32 @@ Report a line that isn't in this table to the user unchanged, without guessing a
 
 - **Credentials.** `credential.env` names an environment variable. The user exports it before `plan`; never ask for the value in chat or write it to YAML.
 - **Managed services.** An exported `spec.services` entry has a placeholder image, reported as `# placeholder services.<name>.image`; older exports wrote `image: null`. Build or select its image as [models](../../../docs/agents-inference/models.md) or [inference](../../../docs/agents-inference/inference.md) describes, and check the vLLM `hardware.architecture` against the host. No migration with a managed service has been run yet.
-- **Policy.** The export keeps V0's explicit policy, which describes V0's image: its user, `1000`, and its writable directories.
-  The v1 agent starts only with the selected image's identity and directories, and `plan` doesn't check either: with V0's values, apply fails with `start_failed`.
-  Replace `filesystem_policy`, `process`, and `landlock` with the image's runtime policy, and tell the user what changed:
+- **Policy.** v1 needs the selected image's user and writable directories, and `plan` checks neither.
+  With V0's sections, apply fails at agent start with `start_failed`; without any, an explicit policy gets OpenShell's defaults, which no run has shown to start a v1 agent.
+  Read the image's runtime policy:
 
   ```sh
   docker image inspect IMAGE --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}' \
     | jq '.runtime.policy | {filesystem_policy, process, landlock}'
   ```
 
-  Keep the `network_policies` entries: they are the user's egress rules. Review them with the user against [sandbox network](../../../docs/security/sandbox-network.md); their `binaries` name V0's executable paths, which may differ in the v1 image, and the export doesn't prove the rules have the same effect in v1.
-  Remove every `network_policies` entry whose key starts with `_provider_`, and tell the user.
+  Put its three sections in `network.policy.explicit`, and tell the user what changed from V0:
+  - A current export reports V0's sections as `omitted network.policy.explicit.<section>` lines and has none in the YAML; add them.
+  - An older export carries V0's sections, with `process.run_as_user` such as `"1000"`; replace them.
+
+  Keep the `network_policies` entries: they are the user's egress rules.
+  Review them with the user against [sandbox network](../../../docs/security/sandbox-network.md); the export doesn't prove they have the same effect in v1.
+  Each rule's `binaries` name V0's executable paths; the `review network_policies[].binaries` line lists them, and an older export has no such line.
+  Check each path in the v1 image without starting the agent:
+
+  ```sh
+  docker run --rm --network none --entrypoint /bin/sh IMAGE -c 'for p in "$@"; do ls -d $p >/dev/null 2>&1 && echo "found $p" || echo "missing $p"; done' sh PATH...
+  ```
+
+  A rule grants access only to the executables it names ([sandbox network](../../../docs/security/sandbox-network.md)), so a rule whose paths are all missing doesn't serve the v1 agent. Show the user each missing path and the image's executable of the same name, if any, and change it only when they agree.
+  An older export also carries entries whose key starts with `_provider_`; remove them and tell the user.
   OpenShell generates those entries from a sandbox's attached providers and rejects them in authored policy; `plan` accepts them, but `apply` fails at sandbox creation.
-  The v1 deployment attaches its own inference provider, and OpenShell generates the entry again.
+  Current exports leave them out and report each as `omitted network_policies.<key>`.
 
 ## 7. Plan
 
