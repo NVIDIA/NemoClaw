@@ -621,7 +621,7 @@ Reads have a five-second total bound and limits on response size, models, and pa
 The observation identifies control-host reachability, catalog authentication, and advertised model identifiers.
 It does not establish sandbox reachability or generation, streaming, tool-calling, or model-loading behavior; `api_verified` remains false.
 Authentication denial is distinguished from a missing or unsupported model-list endpoint.
-Onboarding adds observed identifiers to model suggestions while preserving manual model entry and accepted choices.
+Onboarding offers the observed identifiers as model suggestions for an endpoint with no curated list, and uses them to narrow a vendor's curated list, preserving manual model entry and accepted choices.
 
 Credentials remain a direct SDK concern: `observe_credentials` reports whether each selected reference resolves, separately from remote authentication.
 Gateway and resource discovery reuse their existing strict lifecycle reads below, preserving bindings when refresh fails.

@@ -1252,16 +1252,25 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
             source: "fixture".into(),
             reachable: Some(true),
             authentication: AuthenticationStatus::Accepted,
-            models: vec!["vendor/discovered".into()],
+            models: vec![
+                "nvidia/nemotron-3-ultra-550b-a55b".into(),
+                "vendor/discovered".into(),
+            ],
             api_verified: false,
         }),
     );
     let question = wizard.question().unwrap().unwrap();
-    assert!(
-        question
-            .choices()
-            .contains(&serde_json::json!("vendor/discovered"))
+    // The endpoint lists a model that is not recommended, so only the
+    // recommended model it lists is offered.
+    assert_eq!(
+        question.choices(),
+        [serde_json::json!("nvidia/nemotron-3-ultra-550b-a55b")]
     );
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let screen = terminal.backend().to_string();
+    assert!(!screen.contains("vendor/discovered"), "{screen}");
+    assert!(screen.contains("Type another model"), "{screen}");
     wizard.selected = question.choices().len();
     wizard.selection_changed = true;
     wizard.advance();
