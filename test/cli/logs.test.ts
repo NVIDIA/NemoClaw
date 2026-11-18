@@ -70,6 +70,7 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(r.out).toContain("$ nemoclaw alpha logs");
+    expect(r.out.match(/USAGE/g)).toHaveLength(1);
     expect(r.out).toContain("--follow");
     expect(r.out).toContain("--tail");
     expect(r.out).toContain("--since");
