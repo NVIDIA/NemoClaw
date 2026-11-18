@@ -11,6 +11,6 @@ pub mod interfaces;
 #[cfg(feature = "client")]
 mod observe;
 
-pub use capabilities::{AgentImage, AgentImagesObservation, FabricObservation, FabricRequirements};
+pub use capabilities::{AgentImagesObservation, FabricObservation, FabricRequirements};
 #[cfg(feature = "client")]
 pub use observe::{judge_image, observe_agent_images, observe_fabric};

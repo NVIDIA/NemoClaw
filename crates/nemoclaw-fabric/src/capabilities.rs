@@ -456,21 +456,13 @@ pub struct FabricObservation {
     pub compatibility: Option<CompatibilityReport>,
 }
 
-/// The agent images an engine holds: the images whose catalog label installs
-/// a Fabric runtime and that the engine records by digest.
+/// The images an engine holds that install one adapter's runtime, newest
+/// first, by the `NAME@sha256:DIGEST` reference a sandbox pins.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentImagesObservation {
     pub status: nemoclaw_backend::ObservationStatus,
     pub reason: Option<String>,
-    pub images: Vec<AgentImage>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentImage {
-    /// The image's `NAME@sha256:DIGEST` references, as its engine records them.
     pub references: Vec<String>,
-    /// The IDs of the Fabric adapters whose runtime the image installs.
-    pub adapters: Vec<String>,
 }
 
 impl FabricObservation {

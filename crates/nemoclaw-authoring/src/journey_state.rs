@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nemoclaw_sdk::config::{ComputeDriver, Document, InferenceApi, InferenceProviderKind};
+use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
 use nemoclaw_sdk::discovery::{
     AgentImagesRequest, DiscoveryObservations, DiscoveryRequest, ObservationStatus,
 };
@@ -325,18 +325,20 @@ impl JourneyState {
         );
     }
 
-    /// The read of the agent images on the engine a Docker or Podman gateway
-    /// inspects sandbox images on, once that engine is authored. Its answer
-    /// suggests each sandbox's image.
-    pub fn agent_images_request(&self) -> Option<AgentImagesRequest> {
-        let values = &self.authored.values;
-        let engine = values.pointer(GATEWAY_ENGINE_PATH)?.as_str()?;
-        let kubernetes = values
-            .pointer(RUNTIME_PROVIDER)
-            .and_then(|runtime| serde_json::from_value::<ComputeDriver>(runtime.clone()).ok())
-            .is_some_and(ComputeDriver::is_kubernetes);
-        (!engine.is_empty() && !kubernetes).then(|| AgentImagesRequest {
-            engine: engine.into(),
+    /// For the question with ID `question`, when it asks for a sandbox's
+    /// image, the read of the images on the gateway's engine that install the
+    /// sandbox's harness, once both are authored.
+    pub fn agent_images_request(&self, question: &str) -> Option<AgentImagesRequest> {
+        let sandbox = question
+            .strip_prefix("/spec/sandboxes/")?
+            .strip_suffix("/image/ref")?;
+        let text = |path: &str| {
+            let value = self.authored.values.pointer(path)?.as_str()?;
+            (!value.is_empty()).then(|| value.to_owned())
+        };
+        Some(AgentImagesRequest {
+            engine: text(GATEWAY_ENGINE_PATH)?,
+            adapter_id: text(&format!("/spec/sandboxes/{sandbox}/harness/kind"))?,
         })
     }
 

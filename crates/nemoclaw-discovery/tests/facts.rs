@@ -159,15 +159,11 @@ async fn image_capabilities_come_from_selected_image_and_missing_metadata_stays_
     assert!(absent.catalog.is_none());
 }
 
-/// An agent image is a labeled image that installs a Fabric runtime and that
-/// the engine records by digest; it offers the adapters it installs. The
-/// newest comes first.
+/// The images that install an adapter are those whose catalog label
+/// installs its runtime and that the engine records by digest, newest first.
 #[tokio::test]
-async fn agent_images_are_digested_images_whose_catalog_installs_a_runtime_newest_first() {
-    use nemoclaw_sdk::{
-        discovery::AgentImage,
-        fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL},
-    };
+async fn agent_images_install_the_adapter_and_have_a_digest_newest_first() {
+    use nemoclaw_sdk::fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
     let installed = |adapter: &str| {
         let mut catalog = FabricCatalog::bundled().for_adapter(adapter);
         let mut runtime: serde_json::Value =
@@ -176,60 +172,43 @@ async fn agent_images_are_digested_images_whose_catalog_installs_a_runtime_newes
         catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
         serde_json::to_string(&catalog).unwrap()
     };
-    let older = format!("nc-old@sha256:{}", "4".repeat(64));
-    let hermes = format!("nc-fabric@sha256:{}", "1".repeat(64));
-    let mut images = json!([
-        {"Id":"sha256:older", "RepoTags":["nc-old:hermes"], "RepoDigests":[older], "Created":1,
-         "Labels":{IMAGE_CATALOG_LABEL: installed("nvidia.fabric.hermes")}},
-        {"Id":"sha256:hermes", "RepoTags":["nc-fabric:hermes"], "RepoDigests":[hermes], "Created":2,
-         "Labels":{IMAGE_CATALOG_LABEL: installed("nvidia.fabric.hermes")}},
-        // No digest to pin, as in Docker's classic image store.
-        {"Id":"sha256:classic", "RepoTags":["nc-fabric:openclaw"], "RepoDigests":["<none>@<none>"],
-         "Labels":{IMAGE_CATALOG_LABEL: installed("nvidia.fabric.openclaw")}},
-        // Descriptors without an installed runtime.
-        {"Id":"sha256:bundled", "RepoTags":[], "RepoDigests":[format!("bundled@sha256:{}", "2".repeat(64))],
-         "Labels":{IMAGE_CATALOG_LABEL: serde_json::to_string(&FabricCatalog::bundled()).unwrap()}},
-        {"Id":"sha256:other", "RepoTags":["other:latest"], "RepoDigests":[format!("other@sha256:{}", "3".repeat(64))],
-         "Labels":{}},
+    let image = |created: i64, digest: &str, catalog: String| {
+        json!({"Id": "sha256:id", "ParentId": "", "RepoTags": [], "RepoDigests": [digest],
+               "Created": created, "Size": 1, "SharedSize": -1, "Containers": -1,
+               "Labels": {IMAGE_CATALOG_LABEL: catalog}})
+    };
+    let older = format!("old@sha256:{}", "1".repeat(64));
+    let newer = format!("new@sha256:{}", "2".repeat(64));
+    let images = json!([
+        image(1, &older, installed("nvidia.fabric.hermes")),
+        image(2, &newer, installed("nvidia.fabric.hermes")),
+        image(
+            3,
+            &format!("claw@sha256:{}", "3".repeat(64)),
+            installed("nvidia.fabric.openclaw")
+        ),
+        // Docker's classic image store records a local build without a digest.
+        image(4, "<none>@<none>", installed("nvidia.fabric.hermes")),
+        // A catalog that installs no runtime.
+        image(
+            5,
+            &format!("bare@sha256:{}", "4".repeat(64)),
+            serde_json::to_string(&FabricCatalog::bundled()).unwrap()
+        ),
     ]);
-    // The fields every engine reports for an image.
-    for image in images.as_array_mut().unwrap() {
-        for (field, value) in [
-            ("ParentId", json!("")),
-            ("Created", json!(0)),
-            ("Size", json!(1)),
-            ("SharedSize", json!(-1)),
-            ("Containers", json!(-1)),
-        ] {
-            image.as_object_mut().unwrap().entry(field).or_insert(value);
-        }
-    }
     let fixture = transport::Fixture::start(move |request| {
-        assert_eq!(request.method, "GET");
         assert!(request.path.starts_with("/images/json"), "{}", request.path);
         Some((200, serde_json::to_vec(&images).unwrap()))
     })
     .await;
-    let observed = observe_agent_images(&Direct, &fixture.endpoint).await;
+    let observed = observe_agent_images(&Direct, &fixture.endpoint, "nvidia.fabric.hermes").await;
     assert_eq!(
         observed.status,
         ObservationStatus::Available,
         "{:?}",
         observed.reason
     );
-    assert_eq!(
-        observed.images,
-        [
-            AgentImage {
-                references: vec![hermes],
-                adapters: vec!["nvidia.fabric.hermes".into()],
-            },
-            AgentImage {
-                references: vec![older],
-                adapters: vec!["nvidia.fabric.hermes".into()],
-            },
-        ]
-    );
+    assert_eq!(observed.references, [newer, older]);
 }
 
 #[tokio::test]

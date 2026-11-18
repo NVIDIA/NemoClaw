@@ -57,12 +57,12 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, &'static str, Value),
         }
         DiscoveryQuery::Gateway(_)
         | DiscoveryQuery::Credential(_)
-        | DiscoveryQuery::Inference(_) => {
+        | DiscoveryQuery::Inference(_)
+        | DiscoveryQuery::AgentImages(_) => {
             unreachable!(
-                "a plan reads the gateway, credentials, and model catalogs outside its discovery reads"
+                "a plan reads the gateway, credentials, and model catalogs outside its discovery reads, and lists no agent images"
             )
         }
-        DiscoveryQuery::AgentImages(_) => unreachable!("a plan never lists agent images"),
     })
 }
 
@@ -217,10 +217,11 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     graph["data"]["fabric_harness"][sandbox.name] = harness;
                 }
             }
-            DiscoveryQuery::Credential(_) => {
-                unreachable!("a plan reads credentials separately from its provider reads")
+            DiscoveryQuery::Credential(_) | DiscoveryQuery::AgentImages(_) => {
+                unreachable!(
+                    "a plan reads credentials separately from its provider reads, and lists no agent images"
+                )
             }
-            DiscoveryQuery::AgentImages(_) => unreachable!("a plan never lists agent images"),
         }
     }
     graph["output"]["discovery"] = json!({ "value": observations });

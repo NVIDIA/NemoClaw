@@ -23,8 +23,8 @@ pub enum DiscoveryQuery {
     Gateway(GatewayRequest),
     /// Whether a credential reference resolves locally; never its value.
     Credential(CredentialRequest),
-    /// The agent images an engine holds, which onboarding offers for a
-    /// sandbox image; a plan never lists them.
+    /// The images on an engine that install an adapter, which onboarding
+    /// offers for a sandbox image; a plan never lists them.
     AgentImages(AgentImagesRequest),
 }
 
@@ -61,6 +61,7 @@ pub struct CredentialRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentImagesRequest {
     pub engine: String,
+    pub adapter_id: String,
 }
 
 /// The reads a plan makes of the target for `document`, in the order it names
@@ -350,7 +351,7 @@ impl EngineObservation {
     }
 }
 
-pub use nemoclaw_fabric::{AgentImage, AgentImagesObservation, FabricObservation};
+pub use nemoclaw_fabric::{AgentImagesObservation, FabricObservation};
 
 /// Compatibility of a managed inference image with the compiled runtime contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

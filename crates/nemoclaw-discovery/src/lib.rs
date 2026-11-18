@@ -113,7 +113,7 @@ pub async fn observe(
                     observe_credential(secrets, &request.reference),
                 ),
                 DiscoveryQuery::AgentImages(request) => DiscoveryObservation::AgentImages(
-                    observe_agent_images(engines, &request.engine).await,
+                    observe_agent_images(engines, &request.engine, &request.adapter_id).await,
                 ),
             };
             ((*query).clone(), observation)

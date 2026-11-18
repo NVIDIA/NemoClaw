@@ -20,9 +20,8 @@ use nemoclaw_sdk::{
     CancellationToken, Error,
     config::{ComputeDriver, Document},
     discovery::{
-        AgentImage, AgentImagesObservation, AgentImagesRequest, CredentialRequest,
-        DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
-        ObservationStatus,
+        AgentImagesObservation, AgentImagesRequest, CredentialRequest, DiscoveryObservation,
+        DiscoveryQuery, DiscoveryRequest, EngineObservation, ObservationStatus,
     },
     inference_discovery::{CredentialObservation, EndpointObservation},
 };
@@ -1450,8 +1449,6 @@ async fn unreachable(
 const DOCKER_ENGINE: &str = "unix:///home/me/.colima/docker.sock";
 const HERMES_IMAGE: &str =
     "nc-fabric@sha256:1111111111111111111111111111111111111111111111111111111111111111";
-const OPENCLAW_IMAGE: &str =
-    "nc-fabric@sha256:2222222222222222222222222222222222222222222222222222222222222222";
 
 /// The default journey for `harness` on a machine whose one Docker engine
 /// answered, at the sandbox image question.
@@ -1484,17 +1481,14 @@ fn at_the_image_question(harness: &str) -> JourneyWizard {
     panic!("the journey did not reach the image question");
 }
 
-/// The engine holds one agent image per `(reference, adapter)`.
-fn agent_images(images: &[(&str, &str)]) -> DiscoveryObservation {
+/// The engine's images that install the harness asked about.
+fn agent_images(references: &[&str]) -> DiscoveryObservation {
     DiscoveryObservation::AgentImages(AgentImagesObservation {
         status: ObservationStatus::Available,
         reason: None,
-        images: images
+        references: references
             .iter()
-            .map(|(reference, adapter)| AgentImage {
-                references: vec![(*reference).into()],
-                adapters: vec![(*adapter).into()],
-            })
+            .map(|reference| (*reference).into())
             .collect(),
     })
 }
@@ -1506,16 +1500,11 @@ fn the_image_question_suggests_the_local_image_that_installs_the_chosen_harness(
     assert_eq!(
         query,
         DiscoveryQuery::AgentImages(AgentImagesRequest {
-            engine: DOCKER_ENGINE.into()
+            engine: DOCKER_ENGINE.into(),
+            adapter_id: "nvidia.fabric.hermes".into(),
         })
     );
-    wizard.record(
-        query,
-        agent_images(&[
-            (OPENCLAW_IMAGE, "nvidia.fabric.openclaw"),
-            (HERMES_IMAGE, "nvidia.fabric.hermes"),
-        ]),
-    );
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
     assert_eq!(
         agent_images_probe(&wizard),
         None,
@@ -1526,26 +1515,16 @@ fn the_image_question_suggests_the_local_image_that_installs_the_chosen_harness(
         question.suggestion(),
         Some(&serde_json::json!(HERMES_IMAGE))
     );
-    assert!(
-        !question
-            .choices()
-            .contains(&serde_json::json!(OPENCLAW_IMAGE)),
-        "an image without the harness is offered: {:?}",
-        question.choices()
-    );
+    assert_eq!(question.choices(), [serde_json::json!(HERMES_IMAGE)]);
 }
 
 #[test]
 fn without_a_local_image_for_the_harness_the_image_question_says_how_to_build_one() {
     let mut wizard = at_the_image_question("nvidia.fabric.hermes");
     let query = agent_images_probe(&wizard).unwrap();
-    wizard.record(
-        query,
-        agent_images(&[(OPENCLAW_IMAGE, "nvidia.fabric.openclaw")]),
-    );
+    wizard.record(query, agent_images(&[]));
     let question = wizard.question().unwrap().unwrap();
     assert_eq!(question.suggestion(), None);
-    assert!(question.choices().is_empty(), "{:?}", question.choices());
     let note = question
         .note()
         .expect("the question says why it suggests no image");

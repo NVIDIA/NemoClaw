@@ -3,7 +3,7 @@
 //! Reads an image's Fabric catalog label through its container engine.
 
 use crate::{
-    AgentImage, AgentImagesObservation, FabricObservation, FabricRequirements,
+    AgentImagesObservation, FabricObservation, FabricRequirements,
     capabilities::{ImageMetadata, assess_image},
     catalog::{FabricCatalog, IMAGE_CATALOG_LABEL},
 };
@@ -66,71 +66,63 @@ pub async fn observe_fabric(
     observed
 }
 
-/// List the agent images `endpoint` holds: those whose catalog label installs
-/// a Fabric runtime, newest first, by the digest references a sandbox can
-/// pin. An image without one, as in Docker's classic image store, can't be
+/// List the images `endpoint` holds whose catalog label installs
+/// `adapter_id`'s runtime, newest first, by digest. An image the engine
+/// records without one, as Docker's classic image store does, can't be
 /// pinned. This never pulls an image or starts a container.
-pub async fn observe_agent_images(engines: &dyn Engines, endpoint: &str) -> AgentImagesObservation {
+pub async fn observe_agent_images(
+    engines: &dyn Engines,
+    endpoint: &str,
+    adapter_id: &str,
+) -> AgentImagesObservation {
     let work = async {
         engines
             .engine(endpoint)?
             .images_labeled(IMAGE_CATALOG_LABEL)
             .await
     };
-    let summaries = match tokio::time::timeout(Duration::from_secs(5), work).await {
-        Ok(Ok(summaries)) => summaries,
-        Ok(Err(error)) => return agent_images_unknown(error.to_string()),
-        Err(_) => return agent_images_unknown("image listing timed out".into()),
-    };
-    let mut summaries = summaries;
-    summaries.sort_by_key(|summary| std::cmp::Reverse(summary.created));
-    let images = summaries
+    let (status, reason, mut images) =
+        match tokio::time::timeout(Duration::from_secs(5), work).await {
+            Ok(Ok(images)) => (ObservationStatus::Available, None, images),
+            Ok(Err(error)) => (
+                ObservationStatus::Unknown,
+                Some(error.to_string()),
+                Vec::new(),
+            ),
+            Err(_) => (
+                ObservationStatus::Unknown,
+                Some("image listing timed out".into()),
+                Vec::new(),
+            ),
+        };
+    images.sort_by_key(|image| std::cmp::Reverse(image.created));
+    let references = images
         .into_iter()
-        .filter_map(|summary| {
-            let catalog =
-                FabricCatalog::from_json(summary.labels.get(IMAGE_CATALOG_LABEL)?).ok()?;
-            catalog.runtime.as_ref()?;
-            let references: Vec<String> = summary
+        .filter(|image| {
+            image
+                .labels
+                .get(IMAGE_CATALOG_LABEL)
+                .and_then(|label| FabricCatalog::from_json(label).ok())
+                .is_some_and(|catalog| {
+                    catalog.runtime.is_some()
+                        && catalog
+                            .adapters
+                            .iter()
+                            .any(|adapter| adapter.adapter_id() == adapter_id)
+                })
+        })
+        .filter_map(|image| {
+            image
                 .repo_digests
                 .into_iter()
-                .filter(|reference| digest_reference(reference))
-                .collect();
-            (!references.is_empty()).then(|| AgentImage {
-                references,
-                adapters: catalog
-                    .adapters
-                    .iter()
-                    .map(|adapter| adapter.adapter_id().to_owned())
-                    .collect(),
-            })
+                .find(|reference| reference.contains("@sha256:"))
         })
         .collect();
     AgentImagesObservation {
-        status: ObservationStatus::Available,
-        reason: None,
-        images,
+        status,
+        reason,
+        references,
     }
-}
-
-fn agent_images_unknown(reason: String) -> AgentImagesObservation {
-    AgentImagesObservation {
-        status: ObservationStatus::Unknown,
-        reason: Some(reason),
-        images: Vec::new(),
-    }
-}
-
-/// Whether `reference` is `NAME@sha256:DIGEST`.
-fn digest_reference(reference: &str) -> bool {
-    reference
-        .rsplit_once("@sha256:")
-        .is_some_and(|(name, digest)| {
-            !name.is_empty()
-                && digest.len() == 64
-                && digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
 }
 
 /// Judge an image read against what its sandbox requires, on the engine

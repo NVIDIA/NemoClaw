@@ -123,62 +123,45 @@ impl JourneyState {
         Ok(resolution)
     }
 
-    /// Offer each sandbox image question the local agent images that install
-    /// its harness, by digest, suggesting the first; with none, say how to
-    /// build one. Only an image the engine listed is offered.
+    /// Offer each sandbox image question the images on the engine that install
+    /// its harness, suggesting the newest unless the suggestion is one of
+    /// them; with none, link the build instructions.
     fn offer_agent_images(
         &self,
         questions: &mut [JourneyQuestion],
         observations: &DiscoveryObservations,
     ) {
-        let Some(observed) = self
-            .agent_images_request()
-            .and_then(|request| observations.get(&request))
-            .filter(|observed| observed.status == ObservationStatus::Available)
-        else {
-            return;
-        };
-        for question in questions.iter_mut() {
-            let Some(sandbox) = question
-                .id
-                .strip_prefix("/spec/sandboxes/")
-                .and_then(|rest| rest.strip_suffix("/image/ref"))
+        for question in questions {
+            let Some(request) = self.agent_images_request(&question.id) else {
+                continue;
+            };
+            let Some(observed) = observations
+                .get(&request)
+                .filter(|observed| observed.status == ObservationStatus::Available)
             else {
                 continue;
             };
-            let Some(harness) = self
-                .authored
-                .values
-                .pointer(&format!("/spec/sandboxes/{sandbox}/harness/kind"))
-                .and_then(Value::as_str)
-            else {
-                continue;
-            };
-            let fitting: Vec<Value> = observed
-                .images
+            let references: Vec<Value> = observed
+                .references
                 .iter()
-                .filter(|image| image.adapters.iter().any(|adapter| adapter == harness))
-                .flat_map(|image| image.references.iter().cloned().map(Value::String))
+                .cloned()
+                .map(Value::String)
                 .collect();
-            if fitting.is_empty() {
+            if references.is_empty() {
                 question.note = Some(format!(
-                    "No image on this engine installs {harness}. Build one as described at {BUILD_AGENT_IMAGES}, then enter its digest reference."
+                    "No image on this engine installs {}; see {BUILD_AGENT_IMAGES}.",
+                    request.adapter_id
                 ));
                 continue;
             }
-            if let Some(suggestion) = question.suggestion.clone()
-                && !question.choices.contains(&suggestion)
+            if !question
+                .suggestion
+                .as_ref()
+                .is_some_and(|suggestion| references.contains(suggestion))
             {
-                question.choices.push(suggestion);
+                question.suggestion = references.first().cloned();
             }
-            for reference in fitting {
-                if !question.choices.contains(&reference) {
-                    question.choices.push(reference);
-                }
-            }
-            if question.suggestion.is_none() {
-                question.suggestion = question.choices.first().cloned();
-            }
+            question.choices = references;
         }
     }
 
