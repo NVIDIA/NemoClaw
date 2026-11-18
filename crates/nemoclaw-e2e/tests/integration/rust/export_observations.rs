@@ -21,7 +21,7 @@ async fn export_skips_gateway_readiness_and_changes_nothing() {
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
@@ -89,7 +89,7 @@ async fn a_credentialed_deployment_exports_and_tears_down_without_its_secret() {
         include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    nemoclaw_e2e::point_gateway_at(&mut document, &fixture.endpoint);
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let provider = document.spec.inference_providers.get_mut("local").unwrap();
     provider.endpoint = "https://unreachable.invalid/v1".into();

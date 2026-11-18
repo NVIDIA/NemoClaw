@@ -29,7 +29,7 @@ async fn image_pull_policy_controls_registry_requests_and_requires_a_local_image
                     serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
                 let mut spec: Spec = serde_json::from_value(value).unwrap();
                 if policy != "default" {
-                    spec.gateway.image_pull_policy =
+                    spec.gateway.target.local_mut().unwrap().image_pull_policy =
                         Some(serde_json::from_value(json!(policy)).unwrap());
                 }
                 let policy = if policy == "default" {
@@ -112,7 +112,7 @@ async fn network_creation_rechecks_conflicts_that_appear_after_planning() {
     assert!(matches!(
         engine.ensure_network(&spec).await,
         Err(Error::Conflict(
-            "managed gateway subnet overlaps an existing Docker network; set spec.gateway.networkCIDR to a free private /24"
+            "managed gateway subnet overlaps an existing Docker network; set the gateway target's networkCIDR to a free private /24"
         ))
     ));
 }
@@ -178,7 +178,7 @@ async fn managed_gateway_accepts_a_native_linux_amd64_image() {
     .await;
 
     fixture
-        .engine_for(&spec.gateway.engine)
+        .engine_for(spec.gateway.engine())
         .ensure_image(&spec)
         .await
         .unwrap();
@@ -213,7 +213,7 @@ async fn managed_gateway_rejects_an_image_for_a_different_engine_architecture() 
 
     assert!(matches!(
         fixture
-            .engine_for(&spec.gateway.engine)
+            .engine_for(spec.gateway.engine())
             .ensure_image(&spec)
             .await,
         Err(Error::Conflict(
@@ -237,7 +237,7 @@ async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage
     config.as_object_mut().unwrap().remove("NetworkingConfig");
     let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":config,"HostConfig":launch["HostConfig"],"NetworkSettings":{"Networks":{spec.network():{"IPAddress":spec.gateway_address().unwrap()}}},"State":{"Running":false,"StartedAt":"2026-09-14T00:00:00Z"},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/var/lib/docker/volumes/fixture/_data","RW":true},{"Type":"bind","Source":"/var/run/docker.sock","Destination":"/var/run/docker.sock","RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
-    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr(),"Gateway":spec.gateway.bridge().unwrap()}]}});
     let state = Arc::new(Mutex::new(State {
         container: Some(container.clone()),
         volume: Some(volume),
@@ -289,7 +289,7 @@ async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage
             _=>panic!("unexpected runtime mutation {} {}",request.method,request.path),
         };Some((status,if status==204 {Vec::new()} else {serde_json::to_vec(&value).unwrap()}))
     }).await;
-    let engine = fixture.engine_for(&spec.gateway.engine);
+    let engine = fixture.engine_for(spec.gateway.engine());
     let first = engine.ensure_gateway(&spec, "").await.unwrap();
     assert!(!first.running);
     assert_eq!(state.lock().unwrap().starts, 1);

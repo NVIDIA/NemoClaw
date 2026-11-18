@@ -7,7 +7,7 @@ use nemoclaw_authoring::{
 };
 use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
-    config::{ComputeDriver, Document, Gateway},
+    config::{Document, Gateway, ManagedTarget},
     discovery::{
         DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
         FabricObservation, ObservationStatus,
@@ -250,7 +250,7 @@ fn editing_the_target_leaves_only_the_edited_observation_unfound() {
                 let Gateway::Managed(gateway) = &mut document.spec.gateway else {
                     panic!("the example uses a managed gateway")
                 };
-                gateway.engine = "unix:///another-target.sock".into();
+                gateway.target.local_mut().unwrap().engine = "unix:///another-target.sock".into();
             },
             engine_unobserved: true,
             // The image is read from the gateway's engine.
@@ -277,7 +277,11 @@ fn editing_the_target_leaves_only_the_edited_observation_unfound() {
             before: document(),
             engine_observed: true,
             change: |document| {
-                document.spec.gateway.runtime_mut().provider = ComputeDriver::Podman;
+                let Gateway::Managed(gateway) = &mut document.spec.gateway else {
+                    panic!("the example uses a managed gateway")
+                };
+                // The same engine settings, run with Podman instead.
+                gateway.target = ManagedTarget::Podman(gateway.target.local().unwrap().clone());
             },
             engine_unobserved: true,
             // The image is read through the same driver.
@@ -374,14 +378,13 @@ fn renaming_the_target_keeps_it_compatible() {
 
 fn external_document(engine: &str) -> Document {
     let mut document = document();
+    // The image store need not run the gateway's compute driver.
     document.spec.gateway = serde_json::from_value(serde_json::json!({
         "management": "external",
         "endpoint": "https://gateway.example:8080",
-        "engine": engine,
+        "target": {"podman": {"engine": engine}},
     }))
     .unwrap();
-    // The image store need not run the gateway's selected compute driver.
-    document.spec.gateway.runtime_mut().provider = ComputeDriver::Podman;
     document
 }
 
@@ -413,5 +416,5 @@ fn external_gateway_without_an_image_engine_stays_unverified_and_names_the_missi
     let document = external_document("");
     let assessment = assess_target(&document, &DiscoveryObservations::new()).unwrap();
     assert_eq!(assessment.status, CompatibilityStatus::Unverified);
-    assert_says(&assessment, "spec.gateway.engine");
+    assert_says(&assessment, "spec.gateway.target.podman.engine");
 }

@@ -23,23 +23,17 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: kubernetes
-    endpoint: https://127.0.0.1:17671
-    kubernetes:
-      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
-      context: replace-with-explicit-context
-      namespace: nemoclaw-oidc
-      # Secrets in the namespace that the gateway, helper and sandbox pods
-      # pull with; NemoClaw never reads them.
-      imagePullSecrets:
-        - registry-credentials
-      authentication:
-        profile: oidc
-        # A ConfigMap in the namespace whose ca.crt verifies the issuer's
-        # certificate; omit it for a publicly trusted issuer.
-        caConfigMap: issuer-ca
-        token: {env: NEMOCLAW_GATEWAY_TOKEN}
+    target:
+      kubernetes:
+        kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+        context: replace-with-explicit-context
+        namespace: nemoclaw-oidc
+        authentication:
+          profile: oidc
+          # A ConfigMap in the namespace whose ca.crt verifies the issuer's
+          # certificate; omit it for a publicly trusted issuer.
+          caConfigMap: issuer-ca
+          token: {env: NEMOCLAW_GATEWAY_TOKEN}
     config:
       # OpenShell's OIDC settings, in OpenShell's names.
       openshell.gateway.oidc:
@@ -48,6 +42,11 @@ spec:
         roles_claim: groups
         admin_role: openshell-admins
         user_role: openshell-users
+      openshell.drivers.kubernetes:
+        # Secrets in the namespace that sandbox pods pull with; NemoClaw
+        # never reads them.
+        image_pull_secrets:
+          - registry-credentials
   inferenceProviders:
     hosted-nvidia:
       provider: openai

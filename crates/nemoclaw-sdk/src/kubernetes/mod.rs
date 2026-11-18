@@ -59,7 +59,7 @@ impl Spec {
             || !identifier(r"^nc-[a-f0-9]{16}-gateway$", &self.name)
             || !identifier(r"^[a-f0-9-]{36}$", &self.owner)
             || !identifier(r"^[a-f0-9]{32}$", &self.generation)
-            || self.settings.kubernetes.is_none()
+            || self.settings.cluster().is_none()
         {
             return Err(Error::Conflict(
                 "invalid managed Kubernetes identity or layout",
@@ -96,13 +96,9 @@ impl Spec {
         self.validate()?;
         let target = self
             .settings
-            .kubernetes
-            .as_ref()
+            .cluster()
             .ok_or(Error::State("missing Kubernetes settings"))?;
-        let driver = serde_json::to_value(self.settings.runtime.provider)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_owned))
-            .ok_or(Error::State("cannot encode Kubernetes compute driver"))?;
+        let driver = self.settings.compute_driver().as_str().to_owned();
         let profile = serde_json::to_value(target.authentication.profile)
             .ok()
             .and_then(|value| value.as_str().map(str::to_owned))
@@ -114,7 +110,6 @@ impl Spec {
                 self.owner.clone(),
                 self.generation.clone(),
                 driver,
-                self.settings.endpoint.clone(),
                 target
                     .kubeconfig
                     .as_ref()
@@ -191,6 +186,16 @@ impl Spec {
         authentication["profile"] = parse("authentication_profile")?;
         let authentication: crate::config::KubernetesAuthentication =
             serde_json::from_value(authentication).map_err(|_| invalid())?;
+        let cluster = Box::new(crate::config::ManagedKubernetes {
+            kubeconfig: optional("kubeconfig_env")?.map(|env| crate::config::FileRef { env }),
+            context: optional("context")?,
+            namespace: get("namespace")?,
+            authentication,
+            environment,
+            // Exposure configures the Helm release, not these platform
+            // resources.
+            expose: None,
+        });
         let spec = Self {
             layout: 1,
             kind: kind.into(),
@@ -198,22 +203,12 @@ impl Spec {
             owner: get("owner")?,
             generation: get("generation")?,
             settings: ManagedGateway {
-                runtime: crate::config::Runtime { provider },
-                endpoint: get("endpoint")?,
-                kubernetes: Some(Box::new(crate::config::ManagedKubernetes {
-                    kubeconfig: optional("kubeconfig_env")?
-                        .map(|env| crate::config::FileRef { env }),
-                    context: optional("context")?,
-                    namespace: get("namespace")?,
-                    authentication,
-                    environment,
-                    // Pull Secrets configure the Helm release, not these
-                    // platform resources; their values stay in Kubernetes.
-                    image_pull_secrets: Vec::new(),
-                    // Exposure configures the Helm release, not these
-                    // platform resources; they keep only its endpoint.
-                    expose: None,
-                })),
+                target: match provider {
+                    crate::config::ComputeDriver::OpenShift => {
+                        crate::config::ManagedTarget::OpenShift(cluster)
+                    }
+                    _ => crate::config::ManagedTarget::Kubernetes(cluster),
+                },
                 ..Default::default()
             },
         };
@@ -222,13 +217,13 @@ impl Spec {
     }
 }
 
-/// String attributes of the managed Kubernetes resources.
-pub const ATTRIBUTES: [&str; 9] = [
+/// String attributes of the managed Kubernetes resources. Each command
+/// forwards a free local port to the gateway, so none names an endpoint.
+pub const ATTRIBUTES: [&str; 8] = [
     "name",
     "owner",
     "generation",
     "compute_driver",
-    "endpoint",
     "kubeconfig_env",
     "context",
     "namespace",
@@ -289,7 +284,7 @@ pub(crate) fn kubeconfig_path(value: &str) -> Result<PathBuf, ObservationError> 
 
 /// Connect to the target's context. The kubeconfig's exec credential plugins
 /// run as written, with this process's environment: the caller's in the SDK,
-/// and the platform variables plus `gateway.kubernetes.environment` inside
+/// and the platform variables plus the gateway target's `environment` inside
 /// OpenTofu's providers.
 pub async fn connect(target: &ClusterTarget) -> Result<kube::Client, ObservationError> {
     let kubeconfig =
@@ -331,7 +326,7 @@ pub fn gateway_spec(
         .spec
         .gateway
         .as_managed()
-        .filter(|settings| settings.kubernetes.is_some())
+        .filter(|settings| settings.cluster().is_some())
     else {
         return Ok(None);
     };

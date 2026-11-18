@@ -81,7 +81,7 @@ fn image_pull_policy_does_not_change_container_configuration() {
             crate::config::ImagePullPolicy::Always,
             crate::config::ImagePullPolicy::Never,
         ] {
-            spec.gateway.image_pull_policy = Some(policy);
+            spec.gateway.target.local_mut().unwrap().image_pull_policy = Some(policy);
             if let Some(service) = &mut spec.process {
                 service.image_pull_policy = Some(policy);
             }
@@ -194,12 +194,9 @@ fn runtime_identity_survives_serialization_but_tracks_changed_configuration() {
             process.image.pop();
             process.image.push(last);
         } else {
-            let current = url::Url::parse(&spec.gateway.endpoint)
-                .unwrap()
-                .port()
-                .unwrap();
+            let current = spec.gateway.local().unwrap().port;
             let port = if current == 19001 { 19002 } else { 19001 };
-            changed.gateway.endpoint = format!("http://127.0.0.1:{port}");
+            changed.gateway.target.local_mut().unwrap().port = port;
         }
         changed.validate().unwrap();
         assert_ne!(changed.labels().unwrap()[SPEC_LABEL], labels[SPEC_LABEL]);
@@ -306,7 +303,7 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
                 .unwrap();
             assert_eq!(
                 Some(port),
-                url::Url::parse(&spec.gateway.endpoint).unwrap().port()
+                url::Url::parse(&spec.endpoint()).unwrap().port()
             );
             let bindings = host.port_bindings.as_ref().unwrap()[&format!("{port}/tcp")]
                 .as_ref()
@@ -330,7 +327,7 @@ fn runtime_launch_preserves_declared_bindings_limits_and_isolation() {
                 Some(spec.gateway_address().unwrap().as_str())
             );
             assert!(mounts.iter().any(|mount| mount.source.as_deref()
-                == spec.gateway.engine.strip_prefix("unix://")
+                == spec.gateway.engine().strip_prefix("unix://")
                 && mount.target.as_deref() == Some("/var/run/docker.sock")));
             assert!(
                 launch
@@ -363,7 +360,7 @@ fn managed_gateway_uses_driver_default_host_callback() {
         } else {
             assert_eq!(
                 driver["grpc_endpoint"].as_str(),
-                Some(spec.gateway.endpoint.as_str())
+                Some(spec.endpoint().as_str())
             );
         }
     }
@@ -384,7 +381,7 @@ fn managed_docker_gateway_namespaces_are_stable_and_distinct() {
             .to_owned()
     };
     let mut replacement = first.clone();
-    replacement.gateway.endpoint = "http://127.0.0.1:19002".into();
+    replacement.gateway.target.local_mut().unwrap().port = 19002;
     assert_eq!(namespace(&first), namespace(&replacement));
     let mut second = first.clone();
     second.name = "nc-0123456789abcdef-gateway".into();
@@ -452,7 +449,11 @@ fn gateway_attributes_reproduce_the_gateway_and_its_storage() {
     for driver in [ComputeDriver::Docker, ComputeDriver::Podman] {
         let mut gateway = gateway.clone();
         gateway.compute_driver = driver;
-        gateway.gateway.runtime.provider = driver;
+        let local = gateway.gateway.local().unwrap().clone();
+        gateway.gateway.target = match driver {
+            ComputeDriver::Podman => crate::config::ManagedTarget::Podman(local),
+            _ => crate::config::ManagedTarget::Docker(local),
+        };
         let storage = gateway.storage();
         for (kind, spec) in [(GATEWAY_KIND, &gateway), (GATEWAY_STORAGE_KIND, &storage)] {
             let row = spec.gateway_row(kind).unwrap();
@@ -494,30 +495,19 @@ fn docker_gateway_launch_matches_the_compiled_container() {
     assert_eq!(spec.compute_driver, ComputeDriver::Docker);
     let data = "/var/lib/docker/volumes/gateway-data/_data";
     let container = spec.container(data).unwrap();
-    let launch = docker_gateway_launch(&spec.name, &spec.gateway.endpoint, data).unwrap();
+    let endpoint = spec.endpoint();
+    let launch = docker_gateway_launch(&spec.name, &endpoint, data).unwrap();
     assert_eq!(container.entrypoint, Some(launch.entrypoint));
     assert_eq!(container.cmd, Some(launch.command));
     assert_eq!(container.env, Some(launch.env));
     for (name, endpoint, data_path) in [
-        ("unrelated", spec.gateway.endpoint.as_str(), data),
+        ("unrelated", endpoint.as_str(), data),
         (spec.name.as_str(), "http://127.0.0.1:80", data),
         (spec.name.as_str(), "http://10.0.0.8:17670", data),
         (spec.name.as_str(), "https://127.0.0.1:17670", data),
-        (
-            spec.name.as_str(),
-            spec.gateway.endpoint.as_str(),
-            "relative",
-        ),
-        (
-            spec.name.as_str(),
-            spec.gateway.endpoint.as_str(),
-            "/data/../etc",
-        ),
-        (
-            spec.name.as_str(),
-            spec.gateway.endpoint.as_str(),
-            "/data path",
-        ),
+        (spec.name.as_str(), endpoint.as_str(), "relative"),
+        (spec.name.as_str(), endpoint.as_str(), "/data/../etc"),
+        (spec.name.as_str(), endpoint.as_str(), "/data path"),
     ] {
         assert!(
             docker_gateway_launch(name, endpoint, data_path).is_err(),

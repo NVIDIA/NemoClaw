@@ -5,11 +5,9 @@
 use nemoclaw_build::hcl_cases::{Runner, needs, on};
 use std::fs;
 
-/// A case document from its gateway runtime provider and extra `spec` YAML.
-fn document(provider: &str, spec: &str) -> String {
-    format!(
-        "kind: NemoClawConfig\nspec:\n  gateway:\n    runtime:\n      provider: {provider}\n{spec}"
-    )
+/// A case document from its gateway target and extra `spec` YAML.
+fn document(target: &str, spec: &str) -> String {
+    format!("kind: NemoClawConfig\nspec:\n  gateway:\n    target:\n      {target}: {{}}\n{spec}")
 }
 
 const NVIDIA_KEY: &str = "  inferenceProviders:\n    nvidia:\n      provider: openai\n      credential:\n        env: NVIDIA_INFERENCE_API_KEY\n";

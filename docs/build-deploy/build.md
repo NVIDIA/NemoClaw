@@ -110,7 +110,7 @@ If catalog generation reports a missing runtime manifest, required path, or exec
 See the [image metadata contract](../../internal-docs/design/fabric-management.md#image-metadata) before changing the image layout.
 
 Plan requires the selected image's runtime metadata to supply its `fabric-agent-ctl` command, environment, default policy, and executable grants.
-For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
+For an external gateway, also set the `engine` of its `docker` or `podman` target to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
 This engine is used only for image inspection and does not authorize managing the external gateway.
 A missing image, missing metadata, or omitted external engine stops planning with a diagnostic; load a matching image or rebuild it, then retry.
 

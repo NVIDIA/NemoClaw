@@ -112,8 +112,8 @@ fn configured_specification(kind: &str, row: &Row) -> Result<Spec, Error> {
     let policy = crate::config::ImagePullPolicy::from_row(row)?;
     if let Some(process) = &mut spec.process {
         process.image_pull_policy = policy;
-    } else {
-        spec.gateway.image_pull_policy = policy;
+    } else if let Some(local) = spec.gateway.target.local_mut() {
+        local.image_pull_policy = policy;
     }
     Ok(spec)
 }
@@ -314,7 +314,13 @@ mod tests {
         ] {
             let mut gateway = gateway.clone();
             gateway.compute_driver = driver;
-            gateway.gateway.runtime.provider = driver;
+            let local = gateway.gateway.local().unwrap().clone();
+            gateway.gateway.target = match driver {
+                nemoclaw_sdk::config::ComputeDriver::Podman => {
+                    nemoclaw_sdk::config::ManagedTarget::Podman(local)
+                }
+                _ => nemoclaw_sdk::config::ManagedTarget::Docker(local),
+            };
             for (kind, spec) in [
                 (GATEWAY_KIND, gateway.clone()),
                 (GATEWAY_STORAGE_KIND, gateway.storage()),

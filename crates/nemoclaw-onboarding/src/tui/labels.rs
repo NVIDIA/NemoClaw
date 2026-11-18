@@ -296,8 +296,8 @@ mod tests {
         assert_eq!(readable("adapter:x:/base_url"), "Base URL");
         assert_eq!(readable("adapter:x:/cli"), "CLI");
         assert_eq!(
-            readable("/spec/gateway/networkCIDR"),
-            "Gateway: network CIDR"
+            readable("/spec/gateway/target/docker/networkCIDR"),
+            "Docker: network CIDR"
         );
     }
 }

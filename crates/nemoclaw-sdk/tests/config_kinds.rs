@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_sdk::config::{Harness, InferenceProvider, Runtime};
+use nemoclaw_sdk::config::{ExternalTarget, Harness, InferenceProvider, ManagedTarget};
 use serde_json::json;
 
 #[test]
 fn closed_selectors_reject_unknown_values_and_harnesses_reject_malformed_identifiers() {
     assert!(serde_json::from_value::<Harness>(json!({"kind":" \t"})).is_err());
-    assert!(serde_json::from_value::<Runtime>(json!({"provider":"unknown"})).is_err());
+    assert!(serde_json::from_value::<ManagedTarget>(json!({"unknown": {}})).is_err());
+    assert!(serde_json::from_value::<ExternalTarget>(json!({"unknown": {}})).is_err());
     assert!(serde_json::from_value::<InferenceProvider>(json!({"provider":"unknown"})).is_err());
 }
 
@@ -63,49 +64,47 @@ fn selector_names_round_trip_without_changing_wire_values() {
 }
 
 #[test]
-fn omitted_runtime_selects_docker_without_changing_intent_digest() {
+fn an_omitted_target_selects_docker_without_changing_intent_digest() {
     use nemoclaw_sdk::config::{ComputeDriver, Document};
     let document =
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
-    for runtime in [json!({}), json!({"provider":"docker"})] {
+    for target in [None, Some(json!({"docker": {}}))] {
         let mut input = serde_json::to_value(&document).unwrap();
-        input["spec"]["gateway"]["runtime"] = runtime;
+        let gateway = input["spec"]["gateway"].as_object_mut().unwrap();
+        match target {
+            Some(target) => gateway.insert("target".into(), target),
+            None => gateway.remove("target"),
+        };
         let parsed = Document::parse(input.to_string().as_bytes()).unwrap();
-        assert_eq!(
-            parsed.spec.gateway.runtime().provider,
-            ComputeDriver::Docker
-        );
+        assert_eq!(parsed.spec.gateway.compute_driver(), ComputeDriver::Docker);
         assert_eq!(parsed.digest(), document.digest());
         assert_eq!(parsed.yaml().unwrap(), document.yaml().unwrap());
     }
 }
 
 #[test]
-fn the_runtime_is_chosen_once_on_the_gateway() {
+fn the_target_is_chosen_once_on_the_gateway() {
     use nemoclaw_sdk::config::{ComputeDriver, Document, schema::input_schema};
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let base: serde_json::Value =
         serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
-    // Both gateway kinds carry the runtime.
+    // Both gateway kinds carry the target.
     for management in ["managed", "external"] {
         let mut input = base.clone();
-        input["spec"]["gateway"]["management"] = json!(management);
-        if management == "external" {
-            input["spec"]["gateway"] =
-                json!({"management": "external", "endpoint": "https://gateway.example:8080"});
+        input["spec"]["gateway"] = if management == "external" {
+            json!({"management": "external", "endpoint": "https://gateway.example:8080", "target": {"podman": {}}})
         } else {
-            input["spec"]["gateway"]["engine"] = json!("unix:///run/user/1000/podman/podman.sock");
-        }
-        input["spec"]["gateway"]["runtime"] = json!({"provider": "podman"});
+            json!({"management": "managed", "target": {"podman": {"engine": "unix:///run/user/1000/podman/podman.sock"}}})
+        };
         assert!(validator.is_valid(&input), "{management}");
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         assert_eq!(
-            document.spec.gateway.runtime().provider,
+            document.spec.gateway.compute_driver(),
             ComputeDriver::Podman,
             "{management}"
         );
     }
-    // A sandbox no longer selects its own runtime.
+    // A sandbox selects no runtime of its own.
     let mut input = base;
     input["spec"]["sandboxes"]["assistant"]["runtime"] = json!({"provider": "docker"});
     assert!(!validator.is_valid(&input));
@@ -113,18 +112,25 @@ fn the_runtime_is_chosen_once_on_the_gateway() {
 }
 
 #[test]
-fn empty_runtime_driver_is_rejected_without_defaulting() {
+fn a_target_without_exactly_one_known_key_is_rejected_without_defaulting() {
     use nemoclaw_sdk::config::{Document, schema::input_schema};
-    assert!(serde_json::from_value::<Runtime>(json!({"provider":""})).is_err());
-    let mut input: serde_json::Value =
-        serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
-    input["spec"]["gateway"]["runtime"] = json!({"provider":""});
-    assert!(
-        !jsonschema::validator_for(&input_schema())
-            .unwrap()
-            .is_valid(&input)
-    );
-    assert!(Document::parse(input.to_string().as_bytes()).is_err());
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for target in [
+        json!({}),
+        json!(""),
+        json!("docker"),
+        json!({"docker": {}, "podman": {}}),
+        json!({"provider": "docker"}),
+    ] {
+        let mut input: serde_json::Value =
+            serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
+        input["spec"]["gateway"]["target"] = target.clone();
+        assert!(!validator.is_valid(&input), "{target}");
+        assert!(
+            Document::parse(input.to_string().as_bytes()).is_err(),
+            "{target}"
+        );
+    }
 }
 
 #[test]

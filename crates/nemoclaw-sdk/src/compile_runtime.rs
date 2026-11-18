@@ -65,11 +65,7 @@ fn runtime_targets_with_plans(
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
-        let namespace = &settings
-            .kubernetes
-            .as_ref()
-            .expect("Kubernetes settings")
-            .namespace;
+        let namespace = &settings.cluster().expect("Kubernetes settings").namespace;
         targets.push(Target {
             kind: "helm_release".into(),
             address: crate::kubernetes::gateway::ADDRESS.into(),
@@ -86,7 +82,7 @@ fn runtime_targets_with_plans(
     };
     let gateway = Spec {
         layout: 2,
-        compute_driver: document.spec.gateway.runtime().provider,
+        compute_driver: document.spec.gateway.compute_driver(),
         kind: GATEWAY_KIND.into(),
         name: format!("{}-gateway", document.workspace()),
         owner: document.metadata.uid.clone(),
@@ -100,7 +96,7 @@ fn runtime_targets_with_plans(
     let target = |kind: &str, spec: &Spec| -> Result<Target, Error> {
         let mut values = spec.gateway_row(kind)?;
         if (kind != GATEWAY_STORAGE_KIND || storage.layout == 0)
-            && let Some(policy) = settings.image_pull_policy
+            && let Some(policy) = settings.image_pull_policy()
         {
             values.insert("image_pull_policy".into(), policy.as_str().into());
         }
@@ -238,7 +234,7 @@ pub(crate) fn compiled_runtime(
     crate::docker_compute::configure(&mut graph, &targets)?;
     crate::docker_compute::authenticate(&mut graph, &document.spec.registries);
     if let Some(gateway) = targets.iter().find(|target| target.kind == GATEWAY_KIND)
-        && document.spec.gateway.runtime().provider == ComputeDriver::Docker
+        && document.spec.gateway.compute_driver() == ComputeDriver::Docker
     {
         // The process must serve its API before the authenticated capability
         // read; its readiness fails quickly when the container stops.
@@ -249,7 +245,7 @@ pub(crate) fn compiled_runtime(
             "container_id": "${docker_container.managed_gateway_runtime.id}",
             "name": literal(&spec.name),
             "owner": literal(&spec.owner),
-            "endpoint": literal(&spec.gateway.endpoint),
+            "endpoint": literal(&spec.endpoint()),
             "wait_timeout_seconds": 90,
         });
         let capabilities = &mut graph["data"]["openshell_gateway"]["current"];

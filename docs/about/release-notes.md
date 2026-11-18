@@ -48,9 +48,14 @@ Inference and models:
 
 Kubernetes and OpenShift:
 
-- `gateway.kubernetes.expose.route` publishes a managed OpenShift gateway at `gateway.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI; its optional `annotations` reach the Route.
+- `spec.gateway.target` selects where a gateway runs, with exactly one of `docker`, `podman`, `kubernetes` and `openshift`, each holding only the settings NemoClaw uses there; omitting it selects Docker with its defaults.
+  Editors offer only the selected target's fields, and an invalid field reports that target's rule.
+  A managed `kubernetes` or `openshift` gateway without `expose` names no address or port: each command forwards a free local port to the gateway pod, and plan and apply report the gateway as `not published`.
+  The `openshift` target takes the fields of `kubernetes`.
+  See [adapting a document to another target](../build-deploy/usage.md#adapt-a-document-to-another-target) and the [breaking change](#breaking-changes-since-v010-rc10).
+- On the `openshift` target, `expose.route` publishes a managed gateway at `expose.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI; its optional `annotations` reach the Route.
   The gateway certificate names the endpoint's host, and NemoClaw's own commands keep their port forward.
-  Plan refuses `expose.route` unless `gateway.runtime.provider` is `openshift` and the endpoint's host is a DNS name.
+  Plan refuses `expose.route` on the `kubernetes` target or with an endpoint whose host isn't a DNS name.
   See [publishing through an OpenShift Route](../build-deploy/kubernetes.md#through-an-openshift-route).
 
 Examples and builds:
@@ -186,8 +191,74 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
   Write `endpoint: https://bookings.example.com/mcp` as `endpoints: [https://bookings.example.com/mcp]`.
   An `openshell_api` with an `mcp` block takes exactly one URL.
 
-- The intent record is now version 25, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
+- The intent record is now version 26, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
+- `spec.gateway.target` replaces `spec.gateway.runtime` and the gateway's flat settings; the parser rejects the old fields, and plan refuses a changed target on an existing deployment.
+  A managed Docker or Podman gateway takes an integer `port`, 17681 by default, instead of `endpoint`, with `engine`, `networkCIDR` and `imagePullPolicy` beside it.
+  Before:
+
+  ```yaml
+  gateway:
+    management: managed
+    runtime: {provider: docker}
+    endpoint: http://127.0.0.1:17671
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.20.0.0/24
+  ```
+
+  After:
+
+  ```yaml
+  gateway:
+    management: managed
+    target:
+      docker:
+        port: 17671
+        engine: unix:///var/run/docker.sock
+        networkCIDR: 172.20.0.0/24
+  ```
+
+  A managed Kubernetes gateway's `kubernetes` settings move under `target.kubernetes`, and a published gateway's `endpoint` moves into `expose`.
+  Without `expose`, remove `endpoint`: each command forwards its own free local port.
+  Before:
+
+  ```yaml
+  gateway:
+    management: managed
+    runtime: {provider: kubernetes}
+    endpoint: https://gateway.agents.example.com:30080
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: my-cluster
+      namespace: agents
+      authentication: {profile: development}
+      expose:
+        service: {type: NodePort}
+  ```
+
+  After:
+
+  ```yaml
+  gateway:
+    management: managed
+    target:
+      kubernetes:
+        kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+        context: my-cluster
+        namespace: agents
+        authentication: {profile: development}
+        expose:
+          endpoint: https://gateway.agents.example.com:30080
+          service: {type: NodePort}
+  ```
+
+  - With `runtime: {provider: openshift}`, write the same settings under `target: {openshift: {...}}` instead of `target: {kubernetes: {...}}`.
+  - Move `kubernetes: {imagePullSecrets: [registry-credentials]}` to `config: {openshell.drivers.kubernetes: {image_pull_secrets: [registry-credentials]}}`.
+    The gateway and its helper pods no longer get pull Secrets; see [current limits](../resources/limits.md#platforms-models-and-placement).
+  - On an external gateway, `runtime` and `engine` become the target: `runtime: {provider: podman}` with `engine: unix:///run/user/1000/podman/podman.sock` becomes `target: {podman: {engine: unix:///run/user/1000/podman/podman.sock}}`, and `runtime: {provider: kubernetes}` becomes `target: {kubernetes: {}}`.
+  - JSON results omit `connection.gatewayEndpoint` for a managed Kubernetes or OpenShift gateway without `expose`.
+  - In hand-written HCL, `openshell_kubernetes_storage`, `openshell_kubernetes_auth` and `openshell_kubernetes_gateway` take no `endpoint`, and `openshell_gateway` takes `kubernetes` without `endpoint`, with `target` in the specification's `settings`, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
+  - In the Rust SDK, `ManagedGateway` and `ExternalGateway` hold `target`, a `ManagedTarget` or an `ExternalTarget`, `Runtime` is removed, and `ManagedKubernetes` has no `image_pull_secrets`.
 - `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
   `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up.
   Before:

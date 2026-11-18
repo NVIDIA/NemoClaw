@@ -93,7 +93,7 @@ fn application_identity_uses_launch_settings_without_unrelated_gateway_settings(
     let mut value = managed_ollama_service();
     value["spec"]["services"]["voice"] = container_service();
     let original = application(&value);
-    value["spec"]["gateway"]["endpoint"] = json!("http://127.0.0.1:18892");
+    value["spec"]["gateway"]["target"]["docker"]["port"] = json!(18892);
     assert_eq!(application(&value), original);
     value["spec"]["services"]["voice"]["environment"] = json!({"LOG_LEVEL":"debug"});
     assert_ne!(application(&value)["labels"], original["labels"]);

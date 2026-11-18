@@ -85,7 +85,7 @@ fn load_journey(
         // Only these run as full agents in a deployment today; a template that
         // names another harness keeps it.
         .offer_harnesses(["nvidia.fabric.openclaw", "nvidia.fabric.hermes"])
-        .ask(["/spec/gateway/runtime/provider", "inference:preset"])
+        .ask(["/spec/gateway/target", "inference:preset"])
         .ask([JourneyScope::InferenceApi])
         .ask([JourneyScope::RouteModels])
         // Adapter settings keep their defaults, including messaging channels
@@ -93,7 +93,12 @@ fn load_journey(
         // keep theirs too; Fabric-required and invalid ones are still asked.
         .omit([JourneyScope::ActiveAdapterSettings])
         .ask([JourneyScope::DeploymentFields])
-        .omit(["/spec/gateway/endpoint", "/spec/gateway/networkCIDR"])
+        .omit([
+            "/spec/gateway/target/docker/port",
+            "/spec/gateway/target/docker/networkCIDR",
+            "/spec/gateway/target/podman/port",
+            "/spec/gateway/target/podman/networkCIDR",
+        ])
         .omit(tier)
         .start(capabilities)
         .map_err(Into::into)
@@ -135,11 +140,7 @@ mod tests {
         let resolution = journey.resolve(&capabilities).unwrap();
         assert!(resolution.question("/metadata/name").is_some());
         assert!(resolution.question("inference:preset").is_some());
-        assert!(
-            resolution
-                .question("/spec/gateway/runtime/provider")
-                .is_some()
-        );
+        assert!(resolution.question("/spec/gateway/target").is_some());
     }
 
     #[test]

@@ -14,11 +14,11 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
-    endpoint: http://127.0.0.1:17692
-    engine: unix:///var/run/docker.sock
-    networkCIDR: 172.30.187.0/24
+    target:
+      docker:
+        port: 17692
+        engine: unix:///var/run/docker.sock
+        networkCIDR: 172.30.187.0/24
   inferenceProviders:
     hosted-nvidia-prod:
       provider: openai

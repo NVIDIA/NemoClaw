@@ -502,12 +502,10 @@ fn a_kubernetes_records_generations_reload_and_stay_stable() {
     )
     .unwrap();
     value["spec"]["gateway"] = serde_json::json!({
-        "management": "managed", "runtime": {"provider": "kubernetes"},
-        "endpoint": "https://127.0.0.1:17671",
-        "kubernetes": {
+        "management": "managed", "target": {"kubernetes": {
             "kubeconfig": {"env": "TEST_KUBECONFIG"}, "context": "test-cluster",
             "namespace": "test-agents", "authentication": {"profile": "development"}
-        }
+        }}
     });
     value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         serde_json::json!({"env": "TEST_IMAGE_METADATA"});
@@ -749,14 +747,13 @@ fn kubernetes_bindings_compare_how_they_reach_the_cluster() {
         )
         .unwrap();
         value["spec"]["gateway"] = serde_json::json!({
-            "management": "managed", "runtime": {"provider": "kubernetes"},
-            "endpoint": "https://127.0.0.1:17671",
-            "kubernetes": {"namespace": "test-agents", "authentication": {"profile": "development"}}
+            "management": "managed", "target": {"kubernetes": {"namespace": "test-agents", "authentication": {"profile": "development"}}}
         });
         if kubeconfig {
-            value["spec"]["gateway"]["kubernetes"]["kubeconfig"] =
+            value["spec"]["gateway"]["target"]["kubernetes"]["kubeconfig"] =
                 serde_json::json!({"env": "TEST_KUBECONFIG"});
-            value["spec"]["gateway"]["kubernetes"]["context"] = serde_json::json!("test-cluster");
+            value["spec"]["gateway"]["target"]["kubernetes"]["context"] =
+                serde_json::json!("test-cluster");
         }
         value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
             serde_json::json!({"env": "TEST_IMAGE_METADATA"});

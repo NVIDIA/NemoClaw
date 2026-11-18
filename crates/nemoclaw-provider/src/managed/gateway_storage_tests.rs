@@ -13,7 +13,7 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
     let create = serde_json::to_value(initializer(&spec, data_path).unwrap()).unwrap();
     let helper = json!({"Id":"helper","Config":create,"HostConfig":create["HostConfig"],"State":{"Status":"exited","Running":false,"ExitCode":0},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":data_path,"RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":data_path,"CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
-    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr(),"Gateway":spec.gateway.bridge().unwrap()}]}});
     let state = Arc::new(Mutex::new((
         Some(helper),
         Some(volume),
@@ -95,7 +95,7 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
         Some((code, serde_json::to_vec(&value).unwrap()))
     })
     .await;
-    let engine = fixture.engine_for(&spec.gateway.engine);
+    let engine = fixture.engine_for(spec.gateway.engine());
     let id = engine
         .gateway_storage(&spec, "", false)
         .await
@@ -166,7 +166,7 @@ async fn missing_persistent_key_never_imports_or_generates_for_an_existing_gatew
         }
     })
     .await;
-    let engine = fixture.engine_for(&spec.gateway.engine);
+    let engine = fixture.engine_for(spec.gateway.engine());
     for bound in [true, false] {
         requests.lock().unwrap().clear();
         assert!(
@@ -219,7 +219,7 @@ async fn storage_left_by_another_state_directory_names_the_object_and_the_way_ou
     assert_ne!(earlier.generation, spec.generation);
     let data_path = "/var/lib/docker/volumes/fixture/_data";
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":data_path,"CreatedAt":"2026-09-14T00:00:00Z","Labels":earlier.labels().unwrap(),"Options":{}});
-    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":earlier.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":earlier.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr(),"Gateway":spec.gateway.bridge().unwrap()}]}});
     let state = Arc::new(Mutex::new((None::<Value>, Some(network))));
     let shared = state.clone();
     let fixture = Fixture::engine(move |request| {
@@ -245,7 +245,7 @@ async fn storage_left_by_another_state_directory_names_the_object_and_the_way_ou
         })
     })
     .await;
-    let engine = fixture.engine_for(&spec.gateway.engine);
+    let engine = fixture.engine_for(spec.gateway.engine());
     for object in [
         format!("network {}", spec.network()),
         format!("volume {}", spec.volume()),

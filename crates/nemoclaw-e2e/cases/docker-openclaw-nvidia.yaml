@@ -10,10 +10,10 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
-    endpoint: http://127.0.0.1:17691
-    engine: unix:///var/run/docker.sock
+    target:
+      docker:
+        port: 17691
+        engine: unix:///var/run/docker.sock
   inferenceProviders:
     nvidia:
       provider: openai

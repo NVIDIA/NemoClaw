@@ -205,12 +205,10 @@ pub mod platform {
             "layout": 1, "kind": kind, "name": NAME, "owner": OWNER,
             "generation": "0123456789abcdef0123456789abcdef",
             "settings": {
-                "runtime": {"provider": provider},
-                "endpoint": "https://127.0.0.1:17671",
-                "kubernetes": {
+                "target": {provider: {
                     "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
                     "authentication": {"profile": "development"}
-                }
+                }}
             }
         }))
         .unwrap()
@@ -262,16 +260,7 @@ pub mod platform {
                 .map(drop)?,
             Call::Ensure(kind) => operations.ensure(&spec(kind), None).await.map(drop)?,
             Call::Remove(kind) => operations.remove(&spec(kind), None).await?,
-            Call::Connect => {
-                let port = std::net::TcpListener::bind("127.0.0.1:0")
-                    .unwrap()
-                    .local_addr()
-                    .unwrap()
-                    .port();
-                let mut gateway = spec(GATEWAY_KIND);
-                gateway.settings.endpoint = format!("https://127.0.0.1:{port}");
-                operations.connect(&gateway).await.map(drop)?
-            }
+            Call::Connect => operations.connect(&spec(GATEWAY_KIND)).await.map(drop)?,
         }
         Ok(())
     }

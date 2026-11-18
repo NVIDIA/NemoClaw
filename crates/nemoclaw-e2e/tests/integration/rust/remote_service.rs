@@ -118,8 +118,8 @@ impl Scenario {
             value["spec"]["services"]["qwen"]["imagePullPolicy"] = json!("IfNotPresent");
         }
         value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = harness.into();
-        value["spec"]["gateway"] = json!({"management":"external","endpoint":gateway.endpoint});
-        value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
+        value["spec"]["gateway"] =
+            json!({"management":"external","endpoint":gateway.endpoint,"target":{"podman":{}}});
         value["spec"]["services"]["qwen"]["placement"] =
             json!({"engine":"ssh://operator@gpu-box","networkCIDR":"172.30.119.0/24"});
         value["spec"]["services"]["qwen"]["publication"] =
@@ -135,7 +135,7 @@ impl Scenario {
         let mut image_document =
             Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
         let image_engine = nemoclaw_e2e::image_runtime::engine(&mut image_document).await;
-        value["spec"]["gateway"]["engine"] = json!(image_engine.endpoint);
+        value["spec"]["gateway"]["target"]["podman"]["engine"] = json!(image_engine.endpoint);
         save(root, "config.yaml", &value);
         let mut files = json!({});
         let mut stats = json!({});

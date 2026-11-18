@@ -27,7 +27,7 @@ impl JourneyState {
             && let Some(question) = resolution
                 .questions
                 .iter_mut()
-                .find(|question| question.id == RUNTIME_PROVIDER)
+                .find(|question| question.id == GATEWAY_TARGET)
         {
             question.suggestion = Some(Value::String((*only).into()));
         }
@@ -36,20 +36,20 @@ impl JourneyState {
         {
             resolution.target_assessment = Some(crate::assess_target(document, observations)?);
         }
-        // Without an engine for its runtime, a managed gateway falls back to the
-        // SDK's default socket, whose read reports a mismatch rather than the
-        // cause. That default is Docker's socket, so it is not offered as the
-        // engine either: accepting it would author a socket no engine answered on.
-        if let Some(runtime) = self.runtime_without_local_engine() {
+        // Without an engine for its target, a managed Docker gateway falls back
+        // to the SDK's default socket, whose read reports a mismatch rather
+        // than the cause. So that socket is not offered as the engine either:
+        // accepting it would author a socket no engine answered on.
+        if let Some((target, path)) = self.target_without_local_engine() {
             let reason = format!(
-                "No {runtime} engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
+                "No {target} engine answered on this machine. Start it, or set spec.gateway.target.{target}.engine to its socket."
             );
             // The question states the cause where the user answers; the
             // assessment keeps it for review.
             if let Some(question) = resolution
                 .questions
                 .iter_mut()
-                .find(|question| question.id == GATEWAY_ENGINE_PATH)
+                .find(|question| question.id == path)
             {
                 question.suggestion = None;
                 question.note = Some(reason.clone());
@@ -165,24 +165,25 @@ impl JourneyState {
         }
     }
 
-    /// The chosen runtime of a managed gateway without an authored engine, when
-    /// this machine was asked and no engine answered for that runtime.
-    fn runtime_without_local_engine(&self) -> Option<&str> {
+    /// The chosen local target of a managed gateway without an authored
+    /// engine, and that engine's path, when this machine was asked and no
+    /// engine answered for that target.
+    fn target_without_local_engine(&self) -> Option<(&str, String)> {
         let answered = self.answered_engines.as_deref()?;
         let values = &self.authored.values;
         if values
             .pointer("/spec/gateway/management")
             .and_then(Value::as_str)
             != Some("managed")
-            || values.pointer(GATEWAY_ENGINE_PATH).is_some()
         {
             return None;
         }
-        let runtime = values.pointer(RUNTIME_PROVIDER).and_then(Value::as_str)?;
-        (!answered
-            .iter()
-            .any(|engine| engine.compute_driver.as_str() == runtime))
-        .then_some(runtime)
+        let (target, path) = gateway_engine(values)?;
+        (values.pointer(&path).is_none()
+            && !answered
+                .iter()
+                .any(|engine| engine.compute_driver.as_str() == target))
+        .then_some((target, path))
     }
 
     /// Accept remaining suggestions as one explicit, fact-gated action.

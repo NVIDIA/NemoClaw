@@ -379,8 +379,9 @@ async fn storage_refuses_a_namespace_other_than_the_one_it_bound() {
         .unwrap_err()
         .to_string();
     assert!(
-        message
-            .contains("Namespace agents is bound; gateway.kubernetes.namespace names other-agents"),
+        message.contains(
+            "Namespace agents is bound; the gateway target's namespace names other-agents"
+        ),
         "{message}"
     );
     assert_eq!(objects.len(), count, "nothing was created in other-agents");

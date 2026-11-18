@@ -140,7 +140,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                 graph["data"][&source]["current"] = json!({
                     "engine": literal(&request.engine),
                     "compute_driver": request.compute_driver,
-                    "endpoint": literal(&gateway.endpoint),
+                    "endpoint": literal(&gateway.endpoint().expect("a local gateway's endpoint")),
                     "name": literal(&format!("{}-gateway", document.workspace())),
                     "owner": literal(&document.metadata.uid),
                     // OpenTofu evaluates the message even when the condition
@@ -176,9 +176,9 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                     serde_json::to_string(&context).expect("diagnostic context"),
                 );
                 // As `compile::sandbox_image_pulls` selects them.
-                let pulled = metadata_env.is_none()
-                    && !engine.is_empty()
-                    && !document.spec.gateway.runtime().provider.is_kubernetes();
+                let driver = document.spec.gateway.compute_driver();
+                let pulled =
+                    metadata_env.is_none() && !engine.is_empty() && !driver.is_kubernetes();
                 // The plan pulls this image before the reads that need its
                 // label, so an engine that doesn't hold it yet passes here.
                 let condition = if pulled {
@@ -192,10 +192,10 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                         "error_message": rejection
                     }, {
                         "condition": condition,
-                        "error_message": if metadata_env.is_some() || document.spec.gateway.runtime().provider.is_kubernetes() {
+                        "error_message": if metadata_env.is_some() || driver.is_kubernetes() {
                             format!("sandbox/{}: image runtime metadata is unavailable. Set image.metadata.env to an absolute metadata bundle path and verify that it matches the immutable image digest. Resources retained.", sandbox.name)
                         } else {
-                            format!("sandbox/{}: image runtime metadata is unavailable. Set spec.gateway.engine to the sandbox image engine, and use an image built with its runtime manifest, its io.nemoclaw.fabric.catalog label, by its immutable digest; a derived image must keep its base image's labels. Resources retained.", sandbox.name)
+                            format!("sandbox/{}: image runtime metadata is unavailable. Set spec.gateway.target.{driver}.engine to the sandbox image engine, and use an image built with its runtime manifest, its io.nemoclaw.fabric.catalog label, by its immutable digest; a derived image must keep its base image's labels. Resources retained.", sandbox.name)
                         }
                     }] });
                 })?;

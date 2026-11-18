@@ -27,12 +27,10 @@ fn spec_on(kind: &str, provider: &str) -> Spec {
         "layout": 1, "kind": kind, "name": NAME, "owner": OWNER,
         "generation": "0123456789abcdef0123456789abcdef",
         "settings": {
-            "runtime": {"provider": provider},
-            "endpoint": "https://127.0.0.1:17671",
-            "kubernetes": {
+            "target": {provider: {
                 "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
                 "authentication": {"profile": "development"}
-            }
+            }}
         }
     }))
     .unwrap()
@@ -41,7 +39,7 @@ fn spec_on(kind: &str, provider: &str) -> Spec {
 /// A spec whose gateway trusts an existing OIDC issuer.
 fn oidc_spec(kind: &str) -> Spec {
     let mut spec = spec(kind);
-    spec.settings.kubernetes.as_mut().unwrap().authentication = serde_json::from_value(json!({
+    spec.settings.target.cluster_mut().unwrap().authentication = serde_json::from_value(json!({
         "profile": "oidc", "token": {"env": "OIDC_TOKEN"}
     }))
     .unwrap();
@@ -214,13 +212,7 @@ async fn missing_bound_auth_files_fail_without_regeneration() {
     std::fs::remove_dir_all(&authentication).unwrap();
 
     let read = operations.read(&spec(AUTH_KIND), auth.id.as_deref()).await;
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let mut gateway = spec(GATEWAY_KIND);
-    gateway.settings.endpoint = format!("https://127.0.0.1:{port}");
+    let gateway = spec(GATEWAY_KIND);
     let connection = operations.connect(&gateway).await;
     let refresh_failed = read.is_err();
     let connection_failed = connection.is_err();

@@ -131,7 +131,7 @@ cp examples/kubernetes/gpu-autoscaling/openclaw-ollama.yaml .local/gpu-autoscali
 In the copy, set:
 
 - `metadata.uid` to a new UUID;
-- `gateway.kubernetes.context` to the exact context;
+- `gateway.target.kubernetes.context` to the exact context;
 - each sandbox's `image.ref` to the pushed image's digest;
 - if you will [invoke agents](#invoke-an-agent) yourself, the `oidc` profile and your issuer, as [Authenticate Through an Existing OIDC Issuer](../../../docs/build-deploy/kubernetes.md#authenticate-through-an-existing-oidc-issuer) describes.
 

@@ -45,25 +45,16 @@ async fn the_forwarder_carries_bytes_both_ways_for_each_connection() {
     }
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
-fn spec(kind: &str, port: u16) -> Spec {
-    authenticated(kind, port, json!({"profile": "development"}))
+fn spec(kind: &str) -> Spec {
+    authenticated(kind, json!({"profile": "development"}))
 }
 
 /// A spec whose gateway trusts an existing OIDC issuer, with its token in
 /// the variable `token_env` names.
-fn oidc_spec(token_env: &str) -> impl Fn(&str, u16) -> Spec {
-    move |kind, port| {
+fn oidc_spec(token_env: &str) -> impl Fn(&str) -> Spec {
+    move |kind| {
         authenticated(
             kind,
-            port,
             json!({
                 "profile": "oidc", "token": {"env": token_env}
             }),
@@ -71,17 +62,15 @@ fn oidc_spec(token_env: &str) -> impl Fn(&str, u16) -> Spec {
     }
 }
 
-fn authenticated(kind: &str, port: u16, authentication: serde_json::Value) -> Spec {
+fn authenticated(kind: &str, authentication: serde_json::Value) -> Spec {
     serde_json::from_value(json!({
         "layout": 1, "kind": kind, "name": NAME, "owner": OWNER,
         "generation": "0123456789abcdef0123456789abcdef",
         "settings": {
-            "runtime": {"provider": "kubernetes"},
-            "endpoint": format!("https://127.0.0.1:{port}"),
-            "kubernetes": {
+            "target": {"kubernetes": {
                 "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
                 "authentication": authentication
-            }
+            }}
         }
     }))
     .unwrap()
@@ -92,27 +81,21 @@ fn authenticated(kind: &str, port: u16, authentication: serde_json::Value) -> Sp
 async fn running(
     objects: &Objects,
     directory: &Path,
-    spec: impl Fn(&str, u16) -> Spec,
+    spec: impl Fn(&str) -> Spec,
 ) -> (crate::transport::Fixture, Operations) {
     let fixture = objects.serve().await;
     let operations = Operations {
         client: client(&fixture),
         state: directory.join("state"),
     };
-    operations
-        .ensure(&spec(STORAGE_KIND, 1), None)
-        .await
-        .unwrap();
-    operations.ensure(&spec(AUTH_KIND, 1), None).await.unwrap();
+    operations.ensure(&spec(STORAGE_KIND), None).await.unwrap();
+    operations.ensure(&spec(AUTH_KIND), None).await.unwrap();
     objects.insert(json!({"apiVersion": "apps/v1", "kind": "StatefulSet",
         "metadata": {"name": NAME, "namespace": "agents", "uid": "gateway-uid", "generation": 1,
             "labels": {"app.kubernetes.io/instance": NAME},
             "annotations": {"meta.helm.sh/release-name": NAME, "meta.helm.sh/release-namespace": "agents"}},
         "status": {"readyReplicas": 1, "observedGeneration": 1}}));
-    operations
-        .ensure(&spec(GATEWAY_KIND, 1), None)
-        .await
-        .unwrap();
+    operations.ensure(&spec(GATEWAY_KIND), None).await.unwrap();
     objects.insert(
         json!({"apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/tls",
         "metadata": {"name": format!("{NAME}-client-tls"), "namespace": "agents"},
@@ -130,10 +113,7 @@ async fn a_connection_supplies_private_client_credentials_and_a_token() {
     let objects = Objects::default();
     let directory = tempfile::tempdir().unwrap();
     let (_fixture, operations) = running(&objects, directory.path(), spec).await;
-    let connection = operations
-        .connect(&spec(GATEWAY_KIND, free_port()))
-        .await
-        .unwrap();
+    let connection = operations.connect(&spec(GATEWAY_KIND)).await.unwrap();
     // Each connection listens on its own free loopback port.
     let port = connection
         .endpoint()
@@ -171,45 +151,45 @@ async fn a_connection_supplies_private_client_credentials_and_a_token() {
     assert_eq!(claims["aud"], OWNER);
 }
 
-/// Several providers connect at once, so none may need the authored port.
+/// Several providers connect at once, and the document names no port, so
+/// each connection forwards its own free loopback port.
 #[tokio::test]
-async fn connections_do_not_need_the_authored_loopback_port() {
+async fn each_connection_forwards_its_own_free_loopback_port() {
     let objects = Objects::default();
     let directory = tempfile::tempdir().unwrap();
     let (_fixture, operations) = running(&objects, directory.path(), spec).await;
-    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let authored = held.local_addr().unwrap().port();
-    let first = operations
-        .connect(&spec(GATEWAY_KIND, authored))
-        .await
-        .unwrap();
-    let second = operations
-        .connect(&spec(GATEWAY_KIND, authored))
-        .await
-        .unwrap();
-    assert_ne!(first.endpoint(), format!("https://127.0.0.1:{authored}"));
+    let first = operations.connect(&spec(GATEWAY_KIND)).await.unwrap();
+    let second = operations.connect(&spec(GATEWAY_KIND)).await.unwrap();
+    for connection in [&first, &second] {
+        assert!(
+            connection.endpoint().starts_with("https://127.0.0.1:"),
+            "{}",
+            connection.endpoint()
+        );
+    }
     assert_ne!(first.endpoint(), second.endpoint());
 }
 
-/// A gateway published through `kubernetes.expose` serves other clients at
+/// A gateway published through `expose` serves other clients at
 /// its endpoint; NemoClaw's own connections still forward a loopback port to
 /// the gateway pod, whose certificate always names 127.0.0.1.
 #[tokio::test]
 async fn an_exposed_gateway_is_still_reached_through_a_loopback_forward() {
-    let exposed = |kind: &str, port: u16| {
-        let mut spec = spec(kind, port);
-        spec.settings.endpoint = "https://gateway.agents.example.com:30851".into();
-        spec.settings.kubernetes.as_mut().unwrap().expose =
-            Some(serde_json::from_value(json!({"service": {"type": "NodePort"}})).unwrap());
+    let exposed = |kind: &str| {
+        let mut spec = spec(kind);
+        spec.settings.target.cluster_mut().unwrap().expose = Some(
+            serde_json::from_value(json!({
+                "endpoint": "https://gateway.agents.example.com:30851",
+                "service": {"type": "NodePort"}
+            }))
+            .unwrap(),
+        );
         spec
     };
     let objects = Objects::default();
     let directory = tempfile::tempdir().unwrap();
     let (_fixture, operations) = running(&objects, directory.path(), exposed).await;
-    let connection = operations
-        .connect(&exposed(GATEWAY_KIND, 30851))
-        .await
-        .unwrap();
+    let connection = operations.connect(&exposed(GATEWAY_KIND)).await.unwrap();
     let port = connection
         .endpoint()
         .strip_prefix("https://127.0.0.1:")
@@ -226,12 +206,7 @@ async fn a_gateway_that_is_not_running_cannot_be_connected() {
     objects.insert(json!({"apiVersion": "apps/v1", "kind": "StatefulSet",
         "metadata": {"name": NAME, "namespace": "agents", "uid": "gateway-uid", "generation": 2},
         "status": {"readyReplicas": 0, "observedGeneration": 2}}));
-    assert!(
-        operations
-            .connect(&spec(GATEWAY_KIND, free_port()))
-            .await
-            .is_err()
-    );
+    assert!(operations.connect(&spec(GATEWAY_KIND)).await.is_err());
 }
 
 /// Every regular file under `directory`.
@@ -263,10 +238,7 @@ async fn an_oidc_connection_passes_the_variable_tokenenv_names() {
     let directory = tempfile::tempdir().unwrap();
     let spec = oidc_spec(name);
     let (_fixture, operations) = running(&objects, directory.path(), &spec).await;
-    let connection = operations
-        .connect(&spec(GATEWAY_KIND, free_port()))
-        .await
-        .unwrap();
+    let connection = operations.connect(&spec(GATEWAY_KIND)).await.unwrap();
     let environment = connection.environment();
     assert_eq!(environment[TOKEN_ENV], token);
     let state = files(&directory.path().join("state"));
@@ -297,7 +269,7 @@ async fn an_oidc_connection_without_its_token_names_tokenenv() {
         let directory = tempfile::tempdir().unwrap();
         let spec = oidc_spec(name);
         let (_fixture, operations) = running(&objects, directory.path(), &spec).await;
-        let Err(error) = operations.connect(&spec(GATEWAY_KIND, free_port())).await else {
+        let Err(error) = operations.connect(&spec(GATEWAY_KIND)).await else {
             panic!("a connection without its token in {name}");
         };
         assert!(

@@ -18,18 +18,18 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: kubernetes
-    endpoint: https://127.0.0.1:17701
-    kubernetes:
-      kubeconfig:
-        env: NEMOCLAW_TEST_KUBECONFIG
-      context: kind-nemoclaw
-      namespace: nc-hcl-kind
-      imagePullSecrets:
-        - agent-registry
-      authentication:
-        profile: development
+    target:
+      kubernetes:
+        kubeconfig:
+          env: NEMOCLAW_TEST_KUBECONFIG
+        context: kind-nemoclaw
+        namespace: nc-hcl-kind
+        authentication:
+          profile: development
+    config:
+      openshell.drivers.kubernetes:
+        image_pull_secrets:
+          - agent-registry
   inferenceProviders:
     stub:
       provider: openai

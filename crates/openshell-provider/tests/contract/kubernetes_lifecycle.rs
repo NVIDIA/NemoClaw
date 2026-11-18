@@ -133,7 +133,6 @@ impl Platform {
         let target = format!(
             r#"  name                   = "{NAME}"
   compute_driver         = "kubernetes"
-  endpoint               = "https://127.0.0.1:17671"
   kubeconfig_env         = "TEST_CLUSTER_KUBECONFIG"
   context                = "selected"
   namespace              = "{NAMESPACE}"

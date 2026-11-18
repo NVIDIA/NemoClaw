@@ -23,19 +23,17 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: kubernetes
-    endpoint: https://127.0.0.1:17671
-    kubernetes:
-      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
-      context: replace-with-explicit-context
-      namespace: nemoclaw-gpu-autoscaling
-      authentication:
-        profile: oidc
-        # A ConfigMap in the namespace whose ca.crt verifies the issuer's
-        # certificate; omit it for a publicly trusted issuer.
-        caConfigMap: issuer-ca
-        token: {env: NEMOCLAW_GATEWAY_TOKEN}
+    target:
+      kubernetes:
+        kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+        context: replace-with-explicit-context
+        namespace: nemoclaw-gpu-autoscaling
+        authentication:
+          profile: oidc
+          # A ConfigMap in the namespace whose ca.crt verifies the issuer's
+          # certificate; omit it for a publicly trusted issuer.
+          caConfigMap: issuer-ca
+          token: {env: NEMOCLAW_GATEWAY_TOKEN}
     config:
       openshell.gateway.oidc:
         issuer: https://login.example.com/realms/openshell

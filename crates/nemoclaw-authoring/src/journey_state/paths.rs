@@ -67,6 +67,33 @@ pub(super) fn escape_pointer(segment: &str) -> String {
     segment.replace('~', "~0").replace('/', "~1")
 }
 
+/// The key naming the gateway's target, such as `docker` in
+/// `target: {docker: {}}`, when the target is an object with one key.
+pub(super) fn gateway_target(values: &Value) -> Option<&str> {
+    let mut keys = values.pointer(GATEWAY_TARGET)?.as_object()?.keys();
+    keys.next()
+        .filter(|_| keys.next().is_none())
+        .map(String::as_str)
+}
+
+/// The selected target and the path of its engine, such as `docker` and
+/// `/spec/gateway/target/docker/engine`. A cluster target has no engine.
+pub(super) fn gateway_engine(values: &Value) -> Option<(&str, String)> {
+    let target = gateway_target(values)?;
+    let path = format!("{GATEWAY_TARGET}/{}/engine", escape_pointer(target));
+    sdk_field_schema_for(values, &path)
+        .is_some()
+        .then_some((target, path))
+}
+
+/// Whether `path` names a gateway target's engine, whichever target it is.
+pub(super) fn is_gateway_engine(path: &str) -> bool {
+    path.strip_prefix(GATEWAY_TARGET)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(target, field)| !target.is_empty() && field == "engine")
+}
+
 pub(super) fn scalar_question(schema: &Value, choices: &[Value]) -> bool {
     matches!(
         schema["type"].as_str(),

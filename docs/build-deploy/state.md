@@ -221,7 +221,7 @@ Destroy removes workloads but leaves some bound data and infrastructure for expl
 | Managed Kubernetes gateway | Release and development issuer removed; namespace, credential key Secret, and the gateway's persistent volumes retained |
 | Local deployment state, bundle, and container images | Remain; removing the CLI bundle is separate from destroying its deployment |
 
-The retained network keeps its `spec.gateway.networkCIDR` subnet on that engine.
+The retained network keeps the `networkCIDR` subnet of the gateway's `docker` or `podman` target on that engine.
 A new deployment on the same host needs a different `networkCIDR`, or [remove the retained resources](usage.md#remove-retained-resources) first.
 Redeploying the same deployment, with the same `metadata.uid` and state directory, reuses the network.
 
@@ -245,7 +245,7 @@ On Podman, the same objects exist with the same names and label, in the Podman e
 
 ### Find Retained Kubernetes Objects
 
-On a managed Kubernetes or OpenShift gateway, destroy keeps these objects, all in the namespace that `gateway.kubernetes.namespace` names:
+On a managed Kubernetes or OpenShift gateway, destroy keeps these objects, all in the namespace that the gateway's `kubernetes` or `openshift` target names:
 
 | Object | Holds |
 |---|---|

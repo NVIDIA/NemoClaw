@@ -297,7 +297,7 @@ fn prepare(
         let template = fs::read_to_string(
             Path::new(nemoclaw_build::hcl_cases::DOCUMENTS).join(format!("{case}.yaml")),
         )?;
-        let endpoint = format!("http://127.0.0.1:{}", live::free_port()?);
+        let port = live::free_port()?;
         let document = match case.as_str() {
             // The dummy reports native health, so its whole HCL E2E lifecycle
             // completes.
@@ -309,7 +309,7 @@ fn prepare(
                     "--format",
                     "{{(index .IPAM.Config 0).Gateway}}",
                 ])?;
-                dummy_case(&template, &uid, &endpoint, &subnet, &dummy, &bridge)?
+                dummy_case(&template, &uid, port, &subnet, &dummy, &bridge)?
             }
             INTERFACES_CASE => {
                 let host = subnet
@@ -317,7 +317,7 @@ fn prepare(
                     .map(|prefix| format!("{prefix}.1"))
                     .ok_or("a gateway subnet is a /24")?;
                 let model = (host.as_str(), live::free_port()?);
-                interfaces_case(&template, &uid, &endpoint, &subnet, model, &agent, &hermes)?
+                interfaces_case(&template, &uid, port, &subnet, model, &agent, &hermes)?
             }
             other => {
                 return Err(format!(
@@ -364,7 +364,7 @@ fn prepare(
 /// The reference image's case, which this suite binds to the derived image.
 const DUMMY_CASE: &str = "docker-dummy";
 
-/// The dummy case bound to one run's UID, gateway endpoint, subnet, and image,
+/// The dummy case bound to one run's UID, gateway port, subnet, and image,
 /// a workspace volume named for the UID, so runs never share one, and free
 /// ports for the middleware and effect recorder that `hcl_live::case` serves.
 /// The sandbox reaches the recorder at the gateway network's host address,
@@ -373,7 +373,7 @@ const DUMMY_CASE: &str = "docker-dummy";
 fn dummy_case(
     template: &str,
     uid: &str,
-    endpoint: &str,
+    port: u16,
     subnet: &str,
     image: &str,
     bridge: &str,
@@ -392,7 +392,7 @@ fn dummy_case(
             ("172.30.122.1", &host),
             ("172.17.0.1", bridge),
             ("0b3f1c52-7d0e-4c6a-9a51-2f6c8e4d7a10", uid),
-            ("http://127.0.0.1:17697", endpoint),
+            ("port: 17697", &format!("port: {port}")),
             ("172.30.122.0/24", subnet),
             (&zero, image),
             (
@@ -406,14 +406,14 @@ fn dummy_case(
 /// The case whose agents reach this suite's stub model.
 const INTERFACES_CASE: &str = "docker-openclaw-hermes-interfaces";
 
-/// The interface case bound to one run's UID, gateway endpoint, subnet, stub
+/// The interface case bound to one run's UID, gateway port, subnet, stub
 /// model address and port, which its model provider and a grant name,
 /// OpenClaw and Hermes images, and skills volumes named for the UID, so runs
 /// never share one.
 fn interfaces_case(
     template: &str,
     uid: &str,
-    endpoint: &str,
+    port: u16,
     subnet: &str,
     (model_host, model_port): (&str, u16),
     openclaw: &str,
@@ -430,7 +430,7 @@ fn interfaces_case(
             ("172.30.123.1", model_host),
             ("17699", &model_port),
             ("9d4c1f2e-6b3a-4c8d-a5e7-2f1b0c9d8e76", uid),
-            ("http://127.0.0.1:17698", endpoint),
+            ("port: 17698", &format!("port: {port}")),
             ("172.30.123.0/24", subnet),
             (&format!("nc-fabric@sha256:{zero}"), openclaw),
             (&format!("nc-fabric-hermes@sha256:{zero}"), hermes),
@@ -585,18 +585,12 @@ mod tests {
     #[test]
     fn the_dummy_case_binds_its_identity_gateway_and_image() {
         let template = include_str!("../../../nemoclaw-e2e/cases/docker-dummy.yaml");
-        let bound = super::dummy_case(
-            template,
-            "u-1",
-            "http://127.0.0.1:1",
-            "172.30.9.0/24",
-            "i@1",
-            "172.17.9.1",
-        )
-        .unwrap();
+        let bound =
+            super::dummy_case(template, "u-1", 1025, "172.30.9.0/24", "i@1", "172.17.9.1").unwrap();
         for line in [
             "  uid: u-1",
-            "    networkCIDR: 172.30.9.0/24",
+            "        port: 1025",
+            "        networkCIDR: 172.30.9.0/24",
             "        ref: i@1",
             "              source: hcl-dummy-workspace-u-1",
             "                  include: [172.30.9.1, 172.17.9.1]",
@@ -613,7 +607,7 @@ mod tests {
         let bound = super::interfaces_case(
             template,
             "u-1",
-            "http://127.0.0.1:1",
+            1025,
             "172.30.9.0/24",
             ("172.30.9.1", 2),
             "o@1",
@@ -622,7 +616,8 @@ mod tests {
         .unwrap();
         for line in [
             "  uid: u-1",
-            "    networkCIDR: 172.30.9.0/24",
+            "        port: 1025",
+            "        networkCIDR: 172.30.9.0/24",
             "      endpoint: http://172.30.9.1:2/v1",
             "        ref: o@1",
             "        ref: h@1",

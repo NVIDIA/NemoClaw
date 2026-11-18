@@ -3,7 +3,7 @@
 
 use crate::{Diagnostics, diagnostics::diagnostic};
 use nemoclaw_sdk::{
-    config::{Document, Gateway},
+    config::Document,
     discovery::{DiscoveryObservations, DiscoveryQuery, ObservationStatus, plan_queries},
     fabric_capabilities::Support,
 };
@@ -41,10 +41,7 @@ pub(crate) fn target_of(document: &Document) -> Result<Target, Diagnostics> {
         ));
     }
     Ok(Target {
-        engine: match &document.spec.gateway {
-            Gateway::Managed(gateway) => gateway.engine.clone(),
-            Gateway::External(gateway) => gateway.engine.clone(),
-        },
+        engine: document.spec.gateway.engine().to_owned(),
         managed_gateway: document.spec.gateway.as_managed().is_some(),
     })
 }
@@ -76,9 +73,16 @@ pub fn assess_target(
     // infer its execution platform or prerequisites from that image store.
     let engine_available = if !key.managed_gateway {
         if key.engine.is_empty() {
-            reasons.push(
-                "Set spec.gateway.engine to inspect the external gateway's sandbox image.".into(),
-            );
+            let driver = document.spec.gateway.compute_driver();
+            reasons.push(if driver.is_kubernetes() {
+                format!(
+                    "The external gateway's sandbox image is not inspected: a {driver} target has no engine."
+                )
+            } else {
+                format!(
+                    "Set spec.gateway.target.{driver}.engine to inspect the external gateway's sandbox image."
+                )
+            });
             false
         } else {
             true

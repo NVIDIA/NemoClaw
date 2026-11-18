@@ -220,12 +220,10 @@ pub fn kubernetes_document(name: &str, namespace: &str) -> Document {
     let mut value = crate::support::fixture("local.yaml");
     value["metadata"]["name"] = json!(name);
     value["spec"]["gateway"] = json!({
-        "management": "managed", "runtime": {"provider": "kubernetes"},
-        "endpoint": "https://127.0.0.1:17671",
-        "kubernetes": {
+        "management": "managed", "target": {"kubernetes": {
             "kubeconfig": {"env": "TEST_KUBECONFIG"}, "context": "test-cluster",
             "namespace": namespace, "authentication": {"profile": "development"}
-        }
+        }}
     });
     value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         json!({"env": "TEST_IMAGE_METADATA"});

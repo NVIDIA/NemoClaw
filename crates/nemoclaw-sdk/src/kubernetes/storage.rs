@@ -74,7 +74,7 @@ pub(crate) fn same_namespace(bound: &Owned, target: &str) -> Result<(), Observat
         Ok(())
     } else {
         Err(bound.changed(&format!(
-            "is bound; gateway.kubernetes.namespace names {target}"
+            "is bound; the gateway target's namespace names {target}"
         )))
     }
 }

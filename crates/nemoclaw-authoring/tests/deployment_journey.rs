@@ -110,7 +110,11 @@ fn external_gateway_questions_preserve_deployment_and_reject_invalid_or_stale_an
     let mut state = journey("fabric-pi.yaml");
     let resolution = state.resolve(&capabilities).unwrap();
     assert!(resolution.question("/spec/gateway/endpoint").is_some());
-    assert!(resolution.question("/spec/gateway/engine").is_none());
+    assert!(
+        resolution
+            .question("/spec/gateway/target/docker/engine")
+            .is_none()
+    );
     assert!(resolution.question("/metadata/uid").is_none());
     let before = state.values().clone();
     assert!(
@@ -175,13 +179,13 @@ fn managed_service_questions_use_sdk_types_and_keep_recipe_as_one_value() {
 fn optional_supplied_deployment_field_can_be_omitted_through_the_shared_question() {
     let capabilities = Capabilities::available();
     let mut supplied = example("onboarding/openclaw.yaml").supplied().clone();
-    supplied["spec"]["gateway"]["imagePullPolicy"] = json!("Never");
+    supplied["spec"]["gateway"]["target"]["docker"]["imagePullPolicy"] = json!("Never");
     let base = PartialDocument::from_yaml(supplied.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("optional-deployment", base)
         .ask([JourneyScope::DeploymentFields])
         .start(&capabilities)
         .unwrap();
-    let path = "/spec/gateway/imagePullPolicy";
+    let path = "/spec/gateway/target/docker/imagePullPolicy";
     let resolution = state.resolve(&capabilities).unwrap();
     let question = resolution.question(path).expect("deployment question");
     assert!(!question.required());

@@ -16,8 +16,8 @@ fn managed(driver: &str, config: Option<Value>) -> Result<Document, String> {
         serde_saphyr::from_str(include_str!("../../../examples/fabric.yaml")).unwrap();
     value["spec"]["gateway"] = json!({"management": "managed"});
     if driver == "podman" {
-        value["spec"]["gateway"]["engine"] = json!("unix:///run/user/1000/podman/podman.sock");
-        value["spec"]["gateway"]["runtime"] = json!({"provider": "podman"});
+        value["spec"]["gateway"]["target"] =
+            json!({"podman": {"engine": "unix:///run/user/1000/podman/podman.sock"}});
     }
     if let Some(config) = config {
         value["spec"]["gateway"]["config"] = config;

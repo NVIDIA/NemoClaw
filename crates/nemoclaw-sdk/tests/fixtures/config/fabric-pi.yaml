@@ -9,8 +9,8 @@ metadata:
 spec:
   gateway:
     management: external
-    runtime:
-      provider: docker
+    target:
+      docker: {}
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
     local:

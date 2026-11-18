@@ -129,7 +129,7 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `complete` | Whether a planned result has no deferred work; inspect this alongside the exit code |
 | `warnings` | Operator-action messages collected during the operation; also present on failures, omitted when empty; does not change `complete` |
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
-| `connection` | Plan/apply gateway endpoint and UID-derived workspace selectors; does not establish access or configure OpenShell CLI credentials |
+| `connection` | Plan/apply gateway endpoint and UID-derived workspace selectors; does not establish access or configure OpenShell CLI credentials; `gatewayEndpoint` is omitted for a managed Kubernetes or OpenShift gateway without `expose` |
 | `serviceUrls` | Apply-only URLs the gateway reports for sandbox service exposures, by sandbox and service name, with `""` for the unnamed endpoint; the URLs carry no credential, so the service must authenticate its own clients; omitted when empty, and when apply can't read them, `warnings` says so |
 | `agents` | Each sandbox's agent, by sandbox name: `agent`, its name, and `runtimeId`, the runtime ID that `fabric-agent-ctl invoke --runtime-id` takes; a plan reports the runtimes the last apply left, and apply the runtimes after its changes; `runtimeId` is omitted while state records no runtime; never a credential; omitted when empty, and when apply can't read state, `warnings` says so; see [invoke an agent](../agents-inference/interfaces.md#invoke-an-agent) |
 | `deferred` | Unresolved planning prerequisites; omitted when empty |

@@ -124,11 +124,11 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
-    engine: unix:///var/run/docker.sock
-    endpoint: http://127.0.0.1:{port}
-    networkCIDR: {subnet}
+    target:
+      docker:
+        engine: unix:///var/run/docker.sock
+        port: {port}
+        networkCIDR: {subnet}
   inferenceProviders:
     hosted:
       provider: openai

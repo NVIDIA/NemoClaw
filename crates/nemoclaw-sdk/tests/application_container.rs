@@ -50,12 +50,9 @@ fn the_example_application_names_its_own_workspace_sandbox_agent_and_gateway() {
         environment["APP_AGENT_NAME"], value["spec"]["sandboxes"][sandbox]["agent"]["name"],
         "the agent must run in the named sandbox"
     );
-    // The managed gateway listens on its endpoint's port at host 2 of its network.
-    let gateway = &value["spec"]["gateway"];
-    let port = url::Url::parse(gateway["endpoint"].as_str().unwrap())
-        .unwrap()
-        .port()
-        .unwrap();
+    // The managed gateway listens on its port at host 2 of its network.
+    let gateway = &value["spec"]["gateway"]["target"]["docker"];
+    let port = gateway["port"].as_u64().unwrap();
     let network = gateway["networkCIDR"].as_str().unwrap();
     let host = network
         .split('/')
@@ -138,18 +135,15 @@ fn a_container_service_refuses_options_outside_the_contract() {
 #[test]
 fn a_container_service_requires_a_managed_local_docker_gateway() {
     for gateway in [
-        json!({"management": "external", "runtime": {"provider": "docker"},
+        json!({"management": "external", "target": {"docker": {}},
             "endpoint": "http://127.0.0.1:17671"}),
-        json!({"management": "managed", "runtime": {"provider": "podman"},
-            "engine": "unix:///run/user/1000/podman/podman.sock",
-            "endpoint": "http://127.0.0.1:17681"}),
-        json!({"management": "managed", "runtime": {"provider": "kubernetes"},
-            "endpoint": "https://127.0.0.1:17671",
-            "kubernetes": {"kubeconfig": {"env": "TEST_KUBECONFIG"}, "context": "test-cluster",
-                "namespace": "nemoclaw", "authentication": {"profile": "development"}}}),
+        json!({"management": "managed", "target": {"podman": {
+            "engine": "unix:///run/user/1000/podman/podman.sock", "port": 17681}}}),
+        json!({"management": "managed", "target": {"kubernetes": {"kubeconfig": {"env": "TEST_KUBECONFIG"}, "context": "test-cluster",
+                "namespace": "nemoclaw", "authentication": {"profile": "development"}}}}),
     ] {
         let mut value = example();
-        if gateway["runtime"]["provider"] == "kubernetes" {
+        if gateway["target"].get("kubernetes").is_some() {
             value["spec"]["sandboxes"]["assistant"]["image"] = json!({
                 "ref": format!("fixture/assistant@sha256:{}", "a".repeat(64)),
                 "metadata": {"env": "TEST_IMAGE_METADATA"}

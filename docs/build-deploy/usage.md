@@ -59,8 +59,16 @@ See [service constraints](../agents-inference/inference.md#combine-local-and-hos
 Use a local rootless Linux Podman engine through its Unix API socket.
 Rootful operation, remote Podman engines, and other operating systems are untested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-Set `gateway.runtime.provider: podman` and set `gateway.engine` to the local Podman API service's Unix socket.
-See [the Podman example](../../examples/managed-podman.yaml).
+Set `gateway.target` to `podman`, with `engine` naming the local Podman API service's Unix socket, as [the Podman example](../../examples/managed-podman.yaml) does:
+
+```yaml
+gateway:
+  management: managed
+  target:
+    podman:
+      engine: unix:///run/user/1000/podman/podman.sock
+```
+
 The API service is an operator prerequisite; NemoClaw manages its gateway, network, and credential storage through that service.
 Load the harness image into the selected Podman image store and use the digest reported there.
 
@@ -68,7 +76,7 @@ Rootless operation requires an API that reports `pasta` networking, as required 
 Podman 5 and later report it; older APIs omit it and fail during plan, including Ubuntu 24.04's Podman 4.9.3, even with `pasta` installed.
 The host must have a private IPv4 address on its default-route interface.
 OpenShell uses that address for sandbox-only callbacks while keeping its user API on loopback.
-Every managed gateway uses one compute driver; use separate deployments to select different drivers.
+Every managed gateway uses one compute driver; to use another, [adapt the document](#adapt-a-document-to-another-target) for a separate deployment.
 Native managed inference on Podman remains unsupported.
 A Podman gateway can consume managed vLLM or Ollama through explicit SSH Docker placement and publication; see [remote services](../agents-inference/remote-service.md).
 
@@ -196,7 +204,7 @@ See [sandbox policy configuration](../security/sandbox-network.md) for changes a
 
 ## Control Container Image Downloads
 
-Set `imagePullPolicy` under `spec.gateway`, or beside `image` under `spec.services.<name>`.
+Set `imagePullPolicy` in a managed gateway's `docker` or `podman` target, or beside `image` under `spec.services.<name>`.
 The service setting applies to `kind: vllm`, `ollama`, and `ollamaProxy`.
 The setting controls image acquisition on that container's engine, including an SSH Docker engine selected by the service's `placement.engine`.
 Images still require immutable SHA-256 references.
@@ -335,7 +343,7 @@ Check whether the desired edit updates a running resource, replaces it, or requi
 | Sandbox network policy | Replaces the sandbox, deleting its files and conversations (except on mounted volumes); see [policy changes](../security/sandbox-network.md#verify-and-change-the-configuration) |
 | Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy), and [model constraints](../agents-inference/models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation may replace the proxy container while retaining its independently bound credential storage |
-| Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
+| Deployment UID, gateway management or target, established gateway port or endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment, and for another target, see [Adapt a Document to Another Target](#adapt-a-document-to-another-target) |
 | A bundle with a different gateway image pin than the bundle that created a Docker or Podman deployment | Plan, apply, export, and destroy refuse, because deployment state binds the gateway to its original image pin. Keep operating the deployment with its original bundle, or create a separate deployment |
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
 | Remove a sandbox | Deletes it, with its files and conversations |
@@ -354,6 +362,31 @@ OpenShell refuses deletion of a registration still attached to a sandbox or a pr
 Apply can recreate a missing registration after confirmed absence.
 Disposable Docker compute uses provider reconciliation within the declared deployment graph.
 A model change does not migrate conversations or guarantee that the new model supports the old model's tools, context, or reasoning settings.
+
+### Adapt a Document to Another Target
+
+The gateway target is fixed after the first plan: plan refuses another with `state is bound to a different gateway target`, and NemoClaw moves no resources or data between targets.
+To run the same sandboxes on another target, create a new deployment: copy the document, give it a fresh `metadata.uid`, and make these edits before planning it with a new state directory:
+
+- Replace `spec.gateway.target` with the new target and its settings:
+  - A managed `podman` target requires `engine`, the Podman API service's socket.
+  - A managed `kubernetes` or `openshift` target requires `namespace` and `authentication`, and `kubeconfig` with `context` unless NemoClaw runs in a pod; see [Deploy with a Managed Gateway](kubernetes.md#deploy-with-a-managed-gateway).
+  - An external `docker` or `podman` target takes `engine`, the engine holding the sandbox images, which plan inspects.
+  - Between a managed and an external gateway, also set `management`; an external gateway takes `endpoint`, and `credential` and `tls` when it needs them.
+- For `kubernetes` or `openshift`:
+  - Give each sandbox an `image.ref` the cluster can pull, and its `image.metadata`; see [Prepare Agent Images](kubernetes.md#prepare-agent-images).
+  - Remove `spec.services`, which these targets don't run, and replace each inference provider's `serviceRef` with the `endpoint` of a server the sandboxes reach, such as [a model server in the cluster](kubernetes.md#use-a-model-server-in-the-cluster).
+  - A document holds at most 256 sandboxes.
+  - Only `openshift` takes `expose.route`; on `kubernetes`, publish through `expose.service` or remove `expose`.
+- For `docker` or `podman`:
+  - Remove each sandbox's `image.metadata`, and list private registries in [`spec.registries`](#pull-from-private-registries).
+  - A document holds at most 32 sandboxes; split a larger one.
+- With a managed `podman` target or an external `docker` or `podman` target, a managed vLLM or Ollama service needs an explicit `placement` and `publication` on an [SSH Docker engine](../agents-inference/remote-service.md), an `ollamaProxy` service needs its own `engine`, and a `kind: container` service needs the managed `docker` target; otherwise, replace the service with an inference endpoint as for `kubernetes`.
+- Move OpenShell's driver settings, in `config` and each sandbox's `driverConfig`, to the new driver's table and key, such as `openshell.drivers.kubernetes` in `config` and `kubernetes` in `driverConfig`; OpenShell validates the new driver's settings and ignores other drivers'.
+  An external gateway takes no `config`: its operator configures it.
+- `policyAuthority.apf.registration: managed` requires the managed `docker` target; elsewhere, set `registration: external` and [register APF](#let-apf-author-sandbox-policy) yourself, in `config` on a managed gateway, or through the operator of an external one.
+
+Destroy the original deployment with its own bundle and state directory once you no longer need it.
 
 ### Verify an Unchanged Reapply
 
@@ -384,10 +417,10 @@ Keep the original YAML until verification succeeds.
 
 ### Recover an Interrupted Operation
 
-Changing an established gateway endpoint is rejected.
-Two deployments on one engine need different endpoint ports and non-overlapping subnets.
-A plan that fails binds nothing, so when a deployment's first plan reports that `spec.gateway.endpoint`'s port or `spec.gateway.networkCIDR` is taken, change that field and plan again.
-Once a plan has succeeded, the endpoint is bound: free the port instead.
+Changing an established gateway's target, port, or endpoint is rejected.
+Two deployments on one engine need different ports and non-overlapping subnets.
+A plan that fails binds nothing, so when a deployment's first plan reports that its target's `port` or `networkCIDR` is taken, change that field and plan again.
+Once a plan has succeeded, the port is bound: free it instead.
 There is no lost-state adoption, migration, pruning, or purge command.
 
 After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and reapply.
@@ -585,7 +618,7 @@ It does not revoke upstream keys or remove images, external gateways, engines, o
 #### On Docker
 
 The commands select objects by UID alone, so confirm that no other deployment, including one copied from the same example, uses this `metadata.uid`.
-Run the commands with Docker access to each engine the deployment selects: the managed gateway's `spec.gateway.engine`, each service's `placement.engine`, and each Ollama proxy's `engine`.
+Run the commands with Docker access to each engine the deployment selects: the managed gateway's `engine` in `spec.gateway.target.docker`, `unix:///var/run/docker.sock` by default, each service's `placement.engine`, and each Ollama proxy's `engine`.
 For SSH placement, connect to that host using the already configured SSH identity; do not substitute the client's local Docker daemon.
 From any directory, set `deployment_engine` to one of those engines and `deployment_uid` to the UID, then list the deployment's objects:
 
@@ -620,7 +653,7 @@ The [live Docker suite](../../internal-docs/contributing/testing.md) removes its
 #### On Podman
 
 A managed Podman gateway keeps the same objects, with the same names and label, as on Docker ([retained Docker objects](state.md#find-retained-docker-objects)).
-Follow the Docker steps with `podman --url "$deployment_engine"` in place of `docker --host "$deployment_engine"`, where `deployment_engine` is the gateway's `spec.gateway.engine`, such as `unix:///run/user/1000/podman/podman.sock`.
+Follow the Docker steps with `podman --url "$deployment_engine"` in place of `docker --host "$deployment_engine"`, where `deployment_engine` is the gateway's `engine` in `spec.gateway.target.podman`, such as `unix:///run/user/1000/podman/podman.sock`.
 It has been run against a managed rootless Podman 5.8.8 gateway.
 
 #### On Kubernetes or OpenShift
@@ -628,7 +661,7 @@ It has been run against a managed rootless Podman 5.8.8 gateway.
 Destroy keeps the deployment's namespace, the gateway's key Secret and its persistent volume claims ([retained Kubernetes objects](state.md#find-retained-kubernetes-objects)).
 It deletes each sandbox's workspace claim, but under the `Retain` reclaim policy the claim's volume stays `Released` with the workspace files on it.
 Deleting the namespace removes the objects in it; volumes are cluster-wide, so you check them separately.
-Use the kubeconfig and context the deployment uses, and set `deployment_namespace` to its `gateway.kubernetes.namespace`:
+Use the kubeconfig and context the deployment uses, and set `deployment_namespace` to the `namespace` of its `kubernetes` or `openshift` target:
 
 ```sh
 deployment_context=my-cluster

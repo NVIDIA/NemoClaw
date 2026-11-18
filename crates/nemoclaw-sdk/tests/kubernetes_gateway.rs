@@ -12,12 +12,10 @@ fn spec() -> Spec {
         "owner": "11111111-1111-4111-8111-111111111111",
         "generation": "0123456789abcdef0123456789abcdef",
         "settings": {
-            "runtime": {"provider": "kubernetes"},
-            "endpoint": "https://127.0.0.1:17671",
-            "kubernetes": {
+            "target": {"kubernetes": {
                 "kubeconfig": {"env": "TEST_KUBECONFIG"}, "context": "selected", "namespace": "agents",
                 "authentication": {"profile": "development"}
-            }
+            }}
         }
     }))
     .unwrap()
@@ -128,6 +126,6 @@ fn invalid_managed_identity_cannot_produce_chart_values() {
         assert!(gateway::values(&broken).is_err());
     }
     let mut missing_target = valid;
-    missing_target.settings.kubernetes = None;
+    missing_target.settings.target = Default::default();
     assert!(gateway::values(&missing_target).is_err());
 }

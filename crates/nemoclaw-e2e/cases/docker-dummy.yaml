@@ -19,11 +19,11 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
-    endpoint: http://127.0.0.1:17697
-    engine: unix:///var/run/docker.sock
-    networkCIDR: 172.30.122.0/24
+    target:
+      docker:
+        port: 17697
+        engine: unix:///var/run/docker.sock
+        networkCIDR: 172.30.122.0/24
     config:
       openshell.drivers.docker:
         allow_driver_config: true

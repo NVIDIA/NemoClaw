@@ -38,13 +38,20 @@ pub(crate) const IMAGE: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{6
 /// comma-separated value would go straight into Docker's `device=` syntax.
 pub const GPU_DEVICE: &str =
     r"^(?:GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|0|[1-9][0-9]{0,2})$";
-pub(crate) const GATEWAY_ENDPOINT: &str = "http://127.0.0.1:17681";
+/// The loopback port a managed Docker or Podman gateway listens on when its
+/// target names none.
+pub const GATEWAY_PORT: u16 = 17681;
+/// The ports a managed Docker or Podman gateway accepts: unprivileged ones.
+pub(crate) const GATEWAY_PORTS: nemoclaw_runtime::schema::DefaultedInteger =
+    nemoclaw_runtime::schema::DefaultedInteger {
+        default: GATEWAY_PORT as i64,
+        min: 1024,
+        max: 65535,
+    };
 /// The engine a managed gateway uses when none is configured: Docker's default socket.
 pub const GATEWAY_ENGINE: &str = "unix:///var/run/docker.sock";
-pub(crate) const KUBERNETES_GATEWAY_ENDPOINT: &str = r"^https://127\.0\.0\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$";
-/// The address clients dial for a managed Kubernetes gateway with
-/// `kubernetes.expose`: a lowercase DNS name or IPv4 address and an explicit
-/// nonzero port.
+/// The address clients dial for a managed cluster gateway with `expose`: a
+/// lowercase DNS name or IPv4 address and an explicit nonzero port.
 pub(crate) const KUBERNETES_EXPOSED_GATEWAY_ENDPOINT: &str = r"^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$";
 pub(crate) const NETWORK_TIER: &str = "isolated";
 /// Sandboxes in a document with a Kubernetes or OpenShift gateway. The cluster

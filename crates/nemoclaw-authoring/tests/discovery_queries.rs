@@ -44,7 +44,7 @@ fn an_external_gateway_reads_only_its_image_store_like_plan() {
     document.spec.gateway = serde_json::from_value(serde_json::json!({
         "management": "external",
         "endpoint": "https://gateway.example:8080",
-        "engine": "ssh://images@example.com",
+        "target": {"docker": {"engine": "ssh://images@example.com"}},
     }))
     .unwrap();
     let mut expected = plan_queries(&document).unwrap();
@@ -90,7 +90,7 @@ fn hardware_of_service_engines_is_the_first_named_exclusion() {
 
 /// An external gateway with no engine has nowhere to read its image from. Plan
 /// still compiles the read, with an empty engine, so that it can fail with
-/// "set spec.gateway.engine". Onboarding makes no read, because it never
+/// "set spec.gateway.target.podman.engine". Onboarding makes no read, because it never
 /// targets a local daemon for an unresolved engine, and reports the missing
 /// engine itself.
 #[test]

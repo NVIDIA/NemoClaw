@@ -7,18 +7,34 @@
     "/spec/gateway/endpoint": {
       "title": "Gateway endpoint"
     },
-    "/spec/gateway/engine": {
-      "title": "Gateway engine socket"
-    },
-    "/spec/gateway/kubernetes/expose/route/annotations/*": {
-      "title": "Route annotation",
-      "description": "A value NemoClaw passes unchanged to the gateway's OpenShift Route, such as a setting the cluster's router reads."
-    },
     "/spec/gateway/management": {
       "title": "How should NemoClaw reach its gateway?"
     },
-    "/spec/gateway/networkCIDR": {
+    "/spec/gateway/target": {
+      "title": "Where should the sandbox run?",
+      "description": "The gateway runs every sandbox on a container engine or an existing cluster."
+    },
+    "/spec/gateway/target/docker/engine": {
+      "title": "Gateway engine socket"
+    },
+    "/spec/gateway/target/docker/networkCIDR": {
       "title": "Gateway network (CIDR)"
+    },
+    "/spec/gateway/target/docker/port": {
+      "title": "Gateway port"
+    },
+    "/spec/gateway/target/openshift/expose/route/annotations/*": {
+      "title": "Route annotation",
+      "description": "A value NemoClaw passes unchanged to the gateway's OpenShift Route, such as a setting the cluster's router reads."
+    },
+    "/spec/gateway/target/podman/engine": {
+      "title": "Gateway engine socket"
+    },
+    "/spec/gateway/target/podman/networkCIDR": {
+      "title": "Gateway network (CIDR)"
+    },
+    "/spec/gateway/target/podman/port": {
+      "title": "Gateway port"
     },
     "/spec/inferenceProviders/*/api": {
       "title": "Which inference API should the harness speak?"
@@ -56,10 +72,6 @@
     "/spec/sandboxes/*/network/tier": {
       "title": "Network tier",
       "description": "Isolated lets the agent reach only the endpoints this configuration declares."
-    },
-    "/spec/gateway/runtime/provider": {
-      "title": "Where should the sandbox run?",
-      "description": "The runtime owns the gateway and local sandbox resources."
     },
     "/spec/services/*/authentication": {
       "title": "Service authentication"
@@ -266,7 +278,7 @@
       "brave": "Brave",
       "tavily": "Tavily"
     },
-    "/spec/gateway/runtime/provider": {
+    "/spec/gateway/target": {
       "docker": "Docker",
       "podman": "Podman",
       "kubernetes": "Kubernetes",

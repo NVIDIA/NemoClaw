@@ -27,7 +27,7 @@ pub(super) fn check_unbound(
     let Some(spec) = crate::kubernetes::gateway_spec(document, generations)? else {
         return Ok(());
     };
-    let target = spec.settings.kubernetes.as_ref().ok_or(Error::State(
+    let target = spec.settings.cluster().ok_or(Error::State(
         "managed Kubernetes gateway settings are missing",
     ))?;
     let observed = plan.resource_changes.iter().any(|change| {

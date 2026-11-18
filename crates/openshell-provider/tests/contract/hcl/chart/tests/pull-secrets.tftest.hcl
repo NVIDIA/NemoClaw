@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Registry pull Secrets the configuration names reach the gateway's and
-# helper's pod templates and the sandbox driver; the chart owns none of them.
+# Registry pull Secrets that the configuration names in OpenShell's driver
+# table reach the sandbox driver. The gateway's and helper's pod templates,
+# which pull OpenShell's public images, name none, and the chart owns none.
 
 run "pull_secrets" {
   command = plan
@@ -12,12 +13,11 @@ run "pull_secrets" {
   }
 
   assert {
-    condition = length([
-      for object in output.objects : object
+    condition = alltrue([
+      for object in output.objects : length(try(object.spec.template.spec.imagePullSecrets, [])) == 0
       if contains(["StatefulSet", "Job"], object.kind)
-      && jsonencode(try(object.spec.template.spec.imagePullSecrets, [])) == jsonencode([{ name = "registry-team" }, { name = "registry.backup" }])
-    ]) >= 2
-    error_message = "The gateway and helper pod templates must name both pull Secrets."
+    ])
+    error_message = "The gateway and helper pod templates must name no pull Secrets."
   }
 
   assert {

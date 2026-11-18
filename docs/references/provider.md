@@ -94,7 +94,7 @@ The OpenShell types manage gateway-scoped resources and observe gateway capabili
 The `openshell` provider takes only `destroy`, which permits deleting sandboxes and workspaces during explicit teardown.
 Each object names the gateway that holds it with `gateway`, the `ref` of `data.openshell_gateway`.
 That data source takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, the `tls_ca_env` variable naming the CA file that verifies the gateway, and, set together, the `tls_certificate_env` and `tls_key_env` variables naming a client certificate and key for mutual TLS; its `ref` carries those names, never their values.
-For a managed Kubernetes gateway, it takes `kubernetes`, the gateway's specification, instead of the credential and TLS variables.
+For a managed Kubernetes or OpenShift gateway, it takes `kubernetes`, the gateway's specification as JSON, instead of `endpoint` and the credential and TLS variables; the specification's `settings` hold the gateway's `target`, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
 Each provider that reaches such a gateway opens its own port forward on a free loopback port, with the kubeconfig the specification names, or the service account of the pod it runs in when the specification names none, and the development credentials in the SDK's state directory, and keeps it open while OpenTofu runs.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
 Objects keep their gateway connection in state, so refresh and removal reach the same gateway without provider configuration.
@@ -580,7 +580,8 @@ Catalog identifiers are not restricted to a compiled SDK list.
 The runtime consumes the same canonical public configuration through Fabric; see [discovered harness configuration](sdk.md#configure-a-discovered-fabric-harness).
 
 Generated graphs observe each sandbox image independently of resource creation or image acquisition.
-Managed gateways use their configured engine; external gateways require `spec.gateway.engine` for image inspection and do not run managed-gateway prerequisite checks.
+Managed Docker and Podman gateways use their configured engine; external ones require the `engine` of their `docker` or `podman` target for image inspection and do not run managed-gateway prerequisite checks.
+Kubernetes and OpenShift sandboxes use `image.metadata` instead.
 With `config_json`, image discovery also returns `runtime_json`, the selected adapter and advertised runtime layout, and `binaries_json`, its resolved executable list.
 The sandbox consumes `runtime_json`; its `policy` block retains authored policy and managed endpoint inputs, resolved against that layout before creation.
 Provider profiles require a nonempty `binaries` list, which graphs decode from `binaries_json`; search registrations take their scoped profile's `ref` as `profile`.
@@ -913,7 +914,6 @@ The three NemoClaw resources take the same cluster target and identity:
 
 - `name`: `nc-`, 16 lowercase hexadecimal characters, and `-gateway`.
 - `compute_driver`: `kubernetes` or `openshift`.
-- `endpoint`: the gateway's `https://127.0.0.1:PORT` loopback endpoint.
 - Optional `kubeconfig_env`: the environment variable whose value is the kubeconfig file path. Omit it to use the service account of the pod that runs OpenTofu; the provider then finds the API server through `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`.
 - Optional `context`: the exact kubeconfig context, set exactly when `kubeconfig_env` is.
 - `namespace`: the namespace for the gateway.

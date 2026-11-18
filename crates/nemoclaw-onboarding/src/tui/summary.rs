@@ -216,8 +216,8 @@ fn credential_row(
 fn runs_on(document: &Document) -> String {
     let gateway = &document.spec.gateway;
     let runtime = labels::field_value(
-        "/spec/gateway/runtime/provider",
-        &serde_json::to_value(gateway.runtime().provider).unwrap_or_default(),
+        "/spec/gateway/target",
+        &serde_json::Value::String(gateway.compute_driver().as_str().into()),
     );
     if gateway.as_kubernetes().is_some() {
         format!("{runtime} cluster, with a gateway NemoClaw manages")
@@ -226,7 +226,7 @@ fn runs_on(document: &Document) -> String {
     } else {
         format!(
             "{runtime} through the gateway at {}",
-            host(gateway.endpoint())
+            host(&gateway.endpoint().unwrap_or_default())
         )
     }
 }

@@ -49,7 +49,7 @@ fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
     for (file, path) in [
         (
             "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
-            "/spec/gateway",
+            "/spec/gateway/target/docker",
         ),
         (
             "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
@@ -86,7 +86,7 @@ fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
         }
     }
     let mut external = input("local.yaml");
-    external["spec"]["gateway"]["imagePullPolicy"] = json!("Never");
+    external["spec"]["gateway"]["target"]["docker"]["imagePullPolicy"] = json!("Never");
     agrees(&validator, &external, false);
     let mut sandbox = input("local.yaml");
     sandbox["spec"]["sandboxes"]["assistant"]["imagePullPolicy"] = json!("Never");
@@ -205,7 +205,7 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "local.yaml",
-            "/spec/gateway/engine",
+            "/spec/gateway/target/docker/engine",
             json!("unix:///var/run/docker.sock"),
             true,
         ),
@@ -217,14 +217,14 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
         ),
         (
             "local.yaml",
-            "/spec/gateway/runtime/provider",
-            json!("podman"),
+            "/spec/gateway/target",
+            json!({"podman": {}}),
             true,
         ),
         (
             "local.yaml",
-            "/spec/gateway/runtime/provider",
-            json!("future"),
+            "/spec/gateway/target",
+            json!({"future": {}}),
             false,
         ),
         (
@@ -471,8 +471,8 @@ fn documented_parser_checks_remain_required_after_schema_validation() {
         ),
         (
             "spark/vllm.yaml",
-            "/spec/gateway/runtime/provider",
-            json!("podman"),
+            "/spec/gateway/target",
+            json!({"podman": {"engine": "unix:///run/user/1000/podman/podman.sock"}}),
         ),
     ] {
         let mut value = input(file);
@@ -813,8 +813,9 @@ fn a_sandbox_cannot_choose_a_runtime_apart_from_its_gateway() {
 #[test]
 fn managed_podman_requires_an_explicit_engine() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let rule = "target.podman.engine must name the local Podman API service socket";
     let mut value = input("managed-podman.yaml");
-    value["spec"]["gateway"]
+    value["spec"]["gateway"]["target"]["podman"]
         .as_object_mut()
         .unwrap()
         .remove("engine");
@@ -822,10 +823,7 @@ fn managed_podman_requires_an_explicit_engine() {
     let error = Document::parse(value.to_string().as_bytes())
         .unwrap_err()
         .to_string();
-    assert!(
-        error.contains("Podman requires spec.gateway.engine"),
-        "{error}"
-    );
+    assert!(error.contains(rule), "{error}");
     let mut document: Document = serde_json::from_value(value.clone()).unwrap();
     document.defaults();
     assert!(
@@ -834,18 +832,17 @@ fn managed_podman_requires_an_explicit_engine() {
             .gateway
             .as_managed()
             .unwrap()
-            .engine
+            .engine()
             .is_empty()
     );
 
-    value["spec"]["gateway"]["engine"] = json!("");
+    value["spec"]["gateway"]["target"]["podman"]["engine"] = json!("");
     agrees(&validator, &value, false);
     let error = Document::parse(value.to_string().as_bytes())
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("schema at spec.gateway.engine (line")
-            && error.contains("Podman requires spec.gateway.engine"),
+        error.contains("schema at spec.gateway.target.podman.engine (line") && error.contains(rule),
         "{error}"
     );
 }
@@ -897,7 +894,8 @@ fn ollama_and_vllm_services_state_the_same_placement_requirement() {
 fn an_ollama_service_without_placement_is_refused_beside_podman_or_an_external_gateway() {
     let managed = input("managed-ollama.yaml");
     let mut podman = managed.clone();
-    podman["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
+    let target = &mut podman["spec"]["gateway"]["target"];
+    *target = json!({"podman": target["docker"].take()});
     let mut external = managed;
     external["spec"]["gateway"] = json!({
         "management": "external",
@@ -1000,9 +998,8 @@ fn an_end_anchored_pattern_rejects_a_trailing_newline() {
     Document::parse(managed.to_string().as_bytes()).unwrap();
     for pointer in [
         "/metadata/uid",
-        "/spec/gateway/endpoint",
-        "/spec/gateway/kubernetes/context",
-        "/spec/gateway/kubernetes/namespace",
+        "/spec/gateway/target/kubernetes/context",
+        "/spec/gateway/target/kubernetes/namespace",
     ] {
         let mut value = managed.clone();
         let field = value.pointer_mut(pointer).unwrap();
@@ -1013,7 +1010,10 @@ fn an_end_anchored_pattern_rejects_a_trailing_newline() {
         );
     }
     let mut value = managed;
-    value["spec"]["gateway"]["kubernetes"]["imagePullSecrets"] = json!(["registry-login\n"]);
+    value["spec"]["gateway"]["target"]["kubernetes"]["expose"] = json!({
+        "endpoint": "https://gateway.agents.example.com:30080\n",
+        "service": {"type": "NodePort"}
+    });
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }
 

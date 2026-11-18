@@ -125,7 +125,7 @@ mod tests {
             panic!("the walkthrough uses an operator-owned gateway");
         };
         assert!(
-            !gateway.engine.is_empty(),
+            !gateway.target.engine().is_empty(),
             "supply the engine holding the sandbox image"
         );
         let queries = plan_queries(&document).unwrap();
@@ -137,7 +137,11 @@ mod tests {
             })
             .collect();
         assert_eq!(images.len(), document.spec.sandboxes.len());
-        assert!(images.iter().all(|engine| *engine == &gateway.engine));
+        assert!(
+            images
+                .iter()
+                .all(|engine| *engine == gateway.target.engine())
+        );
     }
 
     #[test]

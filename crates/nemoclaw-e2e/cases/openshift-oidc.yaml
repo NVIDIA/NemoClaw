@@ -23,23 +23,20 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: openshift
-    endpoint: https://nc-hcl-openshift.apps-crc.testing:443
-    kubernetes:
-      kubeconfig:
-        env: NEMOCLAW_TEST_KUBECONFIG
-      context: openshift
-      namespace: nc-hcl-openshift
-      imagePullSecrets:
-        - agent-registry
-      authentication:
-        profile: oidc
-        caConfigMap: issuer-oidc-ca
-        token:
-          env: NEMOCLAW_TEST_OIDC_TOKEN
-      expose:
-        route: {}
+    target:
+      openshift:
+        kubeconfig:
+          env: NEMOCLAW_TEST_KUBECONFIG
+        context: openshift
+        namespace: nc-hcl-openshift
+        authentication:
+          profile: oidc
+          caConfigMap: issuer-oidc-ca
+          token:
+            env: NEMOCLAW_TEST_OIDC_TOKEN
+        expose:
+          endpoint: https://nc-hcl-openshift.apps-crc.testing:443
+          route: {}
     config:
       openshell.gateway.oidc:
         issuer: https://issuer-oidc.nc-hcl-openshift-issuer.svc.cluster.local:8443
@@ -48,6 +45,9 @@ spec:
         admin_role: nemoclaw-development-admin
         user_role: nemoclaw-development-user
         scopes_claim: scope
+      openshell.drivers.kubernetes:
+        image_pull_secrets:
+          - agent-registry
   inferenceProviders:
     stub:
       provider: openai

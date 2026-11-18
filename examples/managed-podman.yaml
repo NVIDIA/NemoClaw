@@ -12,10 +12,10 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: podman
-    engine: unix:///run/user/1000/podman/podman.sock
-    endpoint: http://127.0.0.1:17681
+    target:
+      podman:
+        engine: unix:///run/user/1000/podman/podman.sock
+        port: 17681
   inferenceProviders:
     local:
       provider: openai

@@ -52,7 +52,7 @@ impl GatewayCapabilities {
                             .collect::<Vec<_>>()
                             .join(" / ");
                         format!(
-                            "gateway compute driver is {observed}, but spec.gateway.runtime.provider is {driver}"
+                            "gateway compute driver is {observed}, but spec.gateway.target selects {driver}"
                         )
                     }),
             ),

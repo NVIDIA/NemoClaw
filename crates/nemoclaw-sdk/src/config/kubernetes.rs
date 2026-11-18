@@ -5,7 +5,7 @@ use super::{FileRef, SecretRef};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Existing-cluster target for a managed development gateway: an explicit kubeconfig and context, or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. `runtime.provider: openshift` selects the OpenShift profile.
+/// An existing cluster for a managed gateway, reached with an explicit kubeconfig and context or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. Without expose, NemoClaw reaches the gateway through a port forward on a free local port for each command, so the document names no port.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ManagedKubernetes {
@@ -34,25 +34,23 @@ pub struct ManagedKubernetes {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 32))]
     pub environment: Vec<String>,
-    /// Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them in the namespace before the first apply, or after the SDK creates it, before its pods need to pull images.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schemars(length(max = 32))]
-    pub image_pull_secrets: Vec<String>,
-    /// How clients outside the cluster reach the gateway. With it, `endpoint` is the address they dial and the gateway certificate names its host. NemoClaw's own commands still forward a free local port to the gateway pod. Whether a Service or a Route publishes the gateway, and the Service's type, are fixed after the first successful plan.
+    /// How clients outside the cluster reach the gateway: the endpoint they dial, and the Service or Route that publishes it. The gateway certificate names the endpoint's host. NemoClaw's own commands still forward a free local port to the gateway pod. The endpoint, whether a Service or a Route publishes the gateway, and the Service's type are fixed after the first plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "KubernetesExpose")]
     pub expose: Option<KubernetesExpose>,
 }
 
-/// Publication of a managed Kubernetes gateway's endpoint, through exactly one of `service` and `route`.
+/// Publication of a managed cluster gateway's endpoint, through exactly one of `service` and `route`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KubernetesExpose {
+    /// The address clients outside the cluster dial: `https://HOST:PORT`, with a lowercase DNS name or IPv4 address and an explicit nonzero port, and no path. The gateway certificate names its host.
+    pub endpoint: String,
     /// The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ExposureService")]
     pub service: Option<ExposureService>,
-    /// The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's host is a DNS name, since clients send no SNI host name for an IP address, and its port is the one the router serves. Requires `runtime.provider: openshift`.
+    /// The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's host is a DNS name, since clients send no SNI host name for an IP address, and its port is the one the router serves. Only the openshift target takes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "ExposureRoute")]
     pub route: Option<ExposureRoute>,
@@ -77,7 +75,7 @@ pub struct ExposureRoute {
     pub annotations: BTreeMap<String, String>,
 }
 
-/// The Service that publishes a managed Kubernetes gateway.
+/// The Service that publishes a managed cluster gateway.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExposureService {
@@ -103,7 +101,7 @@ impl ExposureServiceType {
     }
 }
 
-/// Authentication provisioned for a managed Kubernetes gateway.
+/// Authentication provisioned for a managed cluster gateway.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KubernetesAuthentication {

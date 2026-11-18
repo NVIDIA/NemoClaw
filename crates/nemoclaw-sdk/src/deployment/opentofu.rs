@@ -205,7 +205,7 @@ impl Deployment {
                             .ok_or(Error::State(
                                 "the pod's in-cluster Kubernetes configuration is missing: \
                                  KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be set; \
-                                 outside a pod, name gateway.kubernetes.kubeconfig and context",
+                                 outside a pod, name the gateway target's kubeconfig and context",
                             ))?;
                         environment.insert(name.into(), value);
                     }

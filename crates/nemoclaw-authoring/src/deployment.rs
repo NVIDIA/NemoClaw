@@ -147,7 +147,12 @@ fn title(path: &str) -> String {
     }
     let parts: Vec<_> = path.split('/').filter(|part| !part.is_empty()).collect();
     let (prefix, rest) = if parts.get(1) == Some(&"gateway") {
-        ("Gateway".to_owned(), &parts[2..])
+        // The target's key names the backend; the wrapper adds nothing.
+        let rest = match parts.get(2) {
+            Some(&"target") => &parts[3..],
+            _ => &parts[2..],
+        };
+        ("Gateway".to_owned(), rest)
     } else if parts.get(1) == Some(&"services") {
         (
             format!("Service {}", parts.get(2).unwrap_or(&"")),

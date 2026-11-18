@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
 # An agent on a managed OpenShift gateway that a pass-through Route publishes
-# at gateway.endpoint, so that the OpenShell CLI dials the cluster's router
+# at expose.endpoint, so that the OpenShell CLI dials the cluster's router
 # instead of a port forward. The oidc profile lets you sign in there with your
 # own token; see "Publish the Gateway Outside the Cluster" and "Reach the
 # Gateway from the OpenShell CLI" in docs/build-deploy/kubernetes.md.
@@ -27,23 +27,22 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: openshift
-    endpoint: https://nemoclaw-gateway.apps.example.com:443
-    kubernetes:
-      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
-      context: replace-with-explicit-context
-      namespace: nemoclaw-published-route
-      authentication:
-        profile: oidc
-        caConfigMap: issuer-ca
-        token: {env: NEMOCLAW_GATEWAY_TOKEN}
-      expose:
-        route:
-          # Optional; they reach the Route unchanged, and the cluster's
-          # router reads its haproxy.router.openshift.io settings from them.
-          annotations:
-            haproxy.router.openshift.io/timeout: 1h
+    target:
+      openshift:
+        kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+        context: replace-with-explicit-context
+        namespace: nemoclaw-published-route
+        authentication:
+          profile: oidc
+          caConfigMap: issuer-ca
+          token: {env: NEMOCLAW_GATEWAY_TOKEN}
+        expose:
+          endpoint: https://nemoclaw-gateway.apps.example.com:443
+          route:
+            # Optional; they reach the Route unchanged, and the cluster's
+            # router reads its haproxy.router.openshift.io settings from them.
+            annotations:
+              haproxy.router.openshift.io/timeout: 1h
     config:
       openshell.gateway.oidc:
         issuer: https://login.example.com/realms/openshell

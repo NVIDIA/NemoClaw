@@ -15,8 +15,8 @@ metadata:
 spec:
   gateway:
     management: external
-    runtime:
-      provider: openshift
+    target:
+      openshift: {}
     endpoint: https://openshell.example.com
     credential: {env: GATEWAY_TOKEN}
     tls:

@@ -29,6 +29,22 @@ fn authored_document(raw: &[u8], current: &[u8]) -> Document {
         Document::parse(current).expect("authored v1 input must use current agent syntax");
     let mut projected: serde_json::Value =
         serde_saphyr::from_str(std::str::from_utf8(raw).unwrap()).unwrap();
+    // v0 named the managed gateway's runtime and loopback endpoint; v1 tags
+    // its target and takes the endpoint's port.
+    let gateway = projected["spec"]["gateway"].as_object_mut().unwrap();
+    let runtime = gateway
+        .remove("runtime")
+        .expect("raw v0 export names its runtime");
+    let endpoint = gateway
+        .remove("endpoint")
+        .expect("raw v0 export names its endpoint");
+    let port: u16 = endpoint
+        .as_str()
+        .and_then(|endpoint| endpoint.strip_prefix("http://127.0.0.1:"))
+        .and_then(|port| port.parse().ok())
+        .expect("a loopback endpoint");
+    let driver = runtime["provider"].as_str().unwrap().to_owned();
+    gateway.insert("target".into(), json!({ driver: {"port": port} }));
     // v0 listed providers and sandboxes with their names; v1 keys them by name.
     for collection in ["inferenceProviders", "sandboxes"] {
         projected["spec"][collection] =
@@ -142,7 +158,7 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     let gateway = &document.spec.gateway;
     assert!(matches!(gateway, Gateway::Managed(_)));
     let gateway = gateway.as_managed().unwrap();
-    assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
+    assert_eq!(gateway.engine(), "unix:///var/run/docker.sock");
 
     let provider = &document.spec.inference_providers["hosted-nvidia-prod"];
     assert_eq!(provider.provider, InferenceProviderKind::Openai);
@@ -157,7 +173,7 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
     assert!(sandbox.image.ref_.contains("@sha256:"));
     assert_eq!(sandbox.image.ref_.rsplit(':').next().unwrap().len(), 64);
     assert_eq!(
-        document.spec.gateway.runtime().provider,
+        document.spec.gateway.compute_driver(),
         ComputeDriver::Docker
     );
     let nemoclaw_sdk::config::NetworkPolicy::Explicit(explicit) = &sandbox.network.policy else {

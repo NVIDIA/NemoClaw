@@ -15,11 +15,11 @@ metadata:
 spec:
   gateway:
     management: managed
-    runtime:
-      provider: docker
-    endpoint: http://127.0.0.1:17682
-    engine: unix:///var/run/docker.sock
-    networkCIDR: 172.30.133.0/24
+    target:
+      docker:
+        port: 17682
+        engine: unix:///var/run/docker.sock
+        networkCIDR: 172.30.133.0/24
   services:
     ollama-server:
       kind: ollama

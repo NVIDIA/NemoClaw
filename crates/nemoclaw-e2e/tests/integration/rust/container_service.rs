@@ -367,8 +367,9 @@ impl Scenario {
             "apiVersion":"nemoclaw.nvidia.com/v1alpha1","kind":"NemoClawConfig",
             "metadata":{"name":"container-lifecycle","uid":OWNER},
             "spec":{
-                "gateway":{"management":"managed","runtime":{"provider":"docker"},
-                    "endpoint":gateway.endpoint,"engine":engine.endpoint,"networkCIDR":"172.30.123.0/24"},
+                "gateway":{"management":"managed","target":{"docker":{
+                    "port":nemoclaw_e2e::loopback_port(&gateway.endpoint),
+                    "engine":engine.endpoint,"networkCIDR":"172.30.123.0/24"}}},
                 "inferenceProviders":{"hosted":{"provider":"openai","endpoint":"https://inference.example.test/v1"}},
                 "services":{
                     "web":{"kind":"container","image":application_image('a'),

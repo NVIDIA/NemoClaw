@@ -18,23 +18,24 @@ fn route() -> Option<Value> {
     Some(json!({"route": {}}))
 }
 
+/// A managed Kubernetes gateway, published at `endpoint` through `expose`
+/// when it has one.
 fn input(endpoint: &str, expose: Option<Value>) -> Value {
     let document =
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut input = serde_json::to_value(document).unwrap();
     input["spec"]["gateway"] = json!({
         "management": "managed",
-        "runtime": {"provider": "kubernetes"},
-        "endpoint": endpoint,
-        "kubernetes": {
+        "target": {"kubernetes": {
             "kubeconfig": {"env": "CLUSTER_KUBECONFIG"},
             "context": "explicit-context",
             "namespace": "owned-gateway",
             "authentication": {"profile": "development"}
-        }
+        }}
     });
-    if let Some(expose) = expose {
-        input["spec"]["gateway"]["kubernetes"]["expose"] = expose;
+    if let Some(mut expose) = expose {
+        expose["endpoint"] = json!(endpoint);
+        input["spec"]["gateway"]["target"]["kubernetes"]["expose"] = expose;
     }
     input["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         json!({"env": "TEST_IMAGE_METADATA"});
@@ -43,8 +44,19 @@ fn input(endpoint: &str, expose: Option<Value>) -> Value {
 
 /// The same input with a managed OpenShift gateway.
 fn openshift(mut input: Value) -> Value {
-    input["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
+    let target = input["spec"]["gateway"]["target"]["kubernetes"].take();
+    input["spec"]["gateway"]["target"] = json!({"openshift": target});
     input
+}
+
+/// Where the input's target holds its exposure.
+fn expose(input: &Value) -> &Value {
+    let target = &input["spec"]["gateway"]["target"];
+    target
+        .get("kubernetes")
+        .unwrap_or(&target["openshift"])
+        .get("expose")
+        .unwrap_or(&Value::Null)
 }
 
 fn parse(input: &Value) -> Result<Document, String> {
@@ -68,8 +80,8 @@ fn an_exposed_endpoint_names_the_host_and_port_clients_dial() {
         assert!(validator.is_valid(&accepted), "schema refused {accepted}");
         let document = parse(&accepted).unwrap();
         assert_eq!(
-            serde_json::to_value(&document).unwrap()["spec"]["gateway"]["kubernetes"]["expose"],
-            accepted["spec"]["gateway"]["kubernetes"]["expose"],
+            expose(&serde_json::to_value(&document).unwrap()),
+            expose(&accepted),
             "exposure settings survive parsing and export unchanged"
         );
     }
@@ -80,25 +92,20 @@ fn an_exposed_endpoint_names_the_host_and_port_clients_dial() {
 fn exposure_rules_refuse_documents_with_the_rule_they_break() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
     let mut load_balancer = input("https://gateway.agents.example.com:443", node_port());
-    load_balancer["spec"]["gateway"]["kubernetes"]["expose"]["service"]["type"] =
+    load_balancer["spec"]["gateway"]["target"]["kubernetes"]["expose"]["service"]["type"] =
         json!("LoadBalancer");
     for (refused, rule) in [
-        // Without exposure, providers forward a loopback port.
-        (
-            input("https://gateway.agents.example.com:30851", None),
-            "127.0.0.1",
-        ),
         (
             input("http://gateway.agents.example.com:30851", node_port()),
-            "lowercase host",
+            "lowercase DNS name",
         ),
         (
             input("https://gateway.agents.example.com", node_port()),
-            "lowercase host",
+            "lowercase DNS name",
         ),
         (
             input("https://Gateway.example.com:30851", node_port()),
-            "lowercase host",
+            "lowercase DNS name",
         ),
         // The chart's Service can't take a load balancer's settings yet.
         (load_balancer, "expose.service.type"),
@@ -106,7 +113,7 @@ fn exposure_rules_refuse_documents_with_the_rule_they_break() {
         // Service.
         (
             input("https://gateway.apps.example.com:443", route()),
-            "expose.service",
+            "only the openshift target publishes the gateway through a route",
         ),
         // The Route's host is the endpoint's, and clients send no SNI host
         // name for an IP address.
@@ -120,7 +127,7 @@ fn exposure_rules_refuse_documents_with_the_rule_they_break() {
                 "https://gateway.apps.example.com:443",
                 Some(json!({"service": {"type": "NodePort"}, "route": {}})),
             )),
-            "kubernetes.expose",
+            "expose takes exactly one of service and route",
         ),
     ] {
         assert!(!validator.is_valid(&refused), "schema accepted {refused}");
@@ -175,7 +182,7 @@ fn the_chart_publishes_an_exposed_gateway_at_its_endpoint() {
     let values = chart_values(&input("https://127.0.0.1:30851", node_port()));
     assert_eq!(values["pkiInitJob"], json!({"enabled": true}));
     // Without exposure, the chart keeps its ClusterIP Service and metrics.
-    let values = chart_values(&input("https://127.0.0.1:17671", None));
+    let values = chart_values(&input("", None));
     assert!(values.get("service").is_none(), "{values}");
 }
 

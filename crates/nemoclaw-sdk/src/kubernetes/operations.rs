@@ -46,11 +46,7 @@ impl Operations {
     /// names, or without one the pod's service account, and the state
     /// directory the SDK passes through [`STATE_ENV`](super::STATE_ENV).
     pub async fn from_environment(spec: &Spec) -> Result<Self, ObservationError> {
-        let target = spec
-            .settings
-            .kubernetes
-            .as_ref()
-            .ok_or(ObservationError::Query)?;
+        let target = spec.settings.cluster().ok_or(ObservationError::Query)?;
         let kubeconfig: Option<PathBuf> = match &target.kubeconfig {
             Some(reference) => Some(
                 std::env::var_os(&reference.env)
@@ -79,10 +75,7 @@ impl Operations {
         &self,
         spec: &'a Spec,
     ) -> Result<&'a crate::config::ManagedKubernetes, ObservationError> {
-        spec.settings
-            .kubernetes
-            .as_deref()
-            .ok_or(ObservationError::Query)
+        spec.settings.cluster().ok_or(ObservationError::Query)
     }
 
     fn cluster(&self, spec: &Spec) -> Cluster {
@@ -473,8 +466,8 @@ impl Operations {
         self.read(spec, prior).await
     }
 
-    /// Open a connection to the running gateway for one command: forward
-    /// the authored loopback port to the gateway pod, and supply its client
+    /// Open a connection to the running gateway for one command: forward a
+    /// free loopback port to the gateway pod, and supply its client
     /// certificate and a development token.
     pub async fn connect(&self, spec: &Spec) -> Result<Connection, Error> {
         let (authentication, material) = self.read_auth(spec, false).await?;
@@ -489,12 +482,10 @@ impl Operations {
             .into());
         }
         let target = self.target(spec)?;
-        let mut endpoint =
-            url::Url::parse(&spec.settings.endpoint).map_err(|_| ObservationError::Query)?;
         // Each provider process connects on its own, so each takes a free
-        // loopback port, also when kubernetes.expose publishes the gateway
-        // elsewhere for other clients. The gateway certificate always names
-        // 127.0.0.1, not the port.
+        // loopback port, also when expose publishes the gateway elsewhere for
+        // other clients. The gateway certificate always names 127.0.0.1, not
+        // the port.
         let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .await
             .map_err(|_| ObservationError::Transport)?;
@@ -502,12 +493,7 @@ impl Operations {
             .local_addr()
             .map_err(|_| ObservationError::Transport)?
             .port();
-        endpoint
-            .set_ip_host(std::net::Ipv4Addr::LOCALHOST.into())
-            .map_err(|()| ObservationError::Query)?;
-        endpoint
-            .set_port(Some(port))
-            .map_err(|()| ObservationError::Query)?;
+        let endpoint = format!("https://127.0.0.1:{port}");
         let directory = self.state.join("client");
         super::receipt::private_directory(&directory)?;
         let secret = self
@@ -573,11 +559,7 @@ impl Operations {
                     .ok_or_else(|| std::io::Error::other("no forwarded stream"))
             }
         });
-        Ok(Connection::new(
-            endpoint.as_str().trim_end_matches('/').to_owned(),
-            environment,
-            forward,
-        ))
+        Ok(Connection::new(endpoint, environment, forward))
     }
 
     /// Validate the gateway before Helm removes it, or clean up its issuer

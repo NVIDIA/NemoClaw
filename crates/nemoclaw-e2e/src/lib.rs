@@ -10,6 +10,31 @@ pub use nemoclaw_test_fixtures::{openshell, tofu};
 #[path = "../../test-support/http.rs"]
 pub mod http_fixture;
 
+/// Point a document's gateway at a fixture's `endpoint`: an external
+/// gateway's endpoint, or a managed Docker or Podman gateway's loopback port.
+pub fn point_gateway_at(document: &mut nemoclaw_sdk::config::Document, endpoint: &str) {
+    match &mut document.spec.gateway {
+        nemoclaw_sdk::config::Gateway::External(gateway) => gateway.endpoint = endpoint.into(),
+        nemoclaw_sdk::config::Gateway::Managed(gateway) => {
+            let port = loopback_port(endpoint);
+            gateway
+                .target
+                .local_mut()
+                .expect("a managed Docker or Podman gateway")
+                .port = port;
+        }
+    }
+}
+
+/// The port of a fixture's loopback `endpoint`, the one a managed Docker or
+/// Podman gateway's `port` names.
+pub fn loopback_port(endpoint: &str) -> u16 {
+    endpoint
+        .strip_prefix("http://127.0.0.1:")
+        .and_then(|port| port.trim_end_matches('/').parse().ok())
+        .expect("a loopback fixture endpoint with a port")
+}
+
 // Tested here, not in image_runtime.rs, which nemoclaw-provider's contract
 // binary also includes.
 #[test]

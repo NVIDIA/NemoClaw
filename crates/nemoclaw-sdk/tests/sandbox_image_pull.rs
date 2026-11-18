@@ -38,14 +38,16 @@ fn example(text: &str) -> Value {
 /// Docker and Podman gateways whose engine holds the sandbox images.
 fn local_gateways() -> Vec<Value> {
     let mut external = example(include_str!("../../../examples/fabric-openclaw.yaml"));
-    external["spec"]["gateway"]["engine"] = "unix:///var/run/docker.sock".into();
+    external["spec"]["gateway"]["target"]["docker"]["engine"] =
+        "unix:///var/run/docker.sock".into();
     let mut managed = example(include_str!("../../../examples/fabric-openclaw.yaml"));
     managed["spec"]["gateway"] = serde_json::json!({
         "management": "managed",
-        "runtime": {"provider": "docker"},
-        "endpoint": "http://127.0.0.1:17681",
-        "engine": "unix:///var/run/docker.sock",
-        "networkCIDR": "172.30.250.0/24",
+        "target": {"docker": {
+            "port": 17681,
+            "engine": "unix:///var/run/docker.sock",
+            "networkCIDR": "172.30.250.0/24",
+        }},
     });
     let podman = example(include_str!("../../../examples/managed-podman.yaml"));
     vec![external, managed, podman]

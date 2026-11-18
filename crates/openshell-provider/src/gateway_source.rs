@@ -87,11 +87,22 @@ impl GatewayState {
 }
 
 fn requirements(diags: &mut Diagnostics, config: &GatewayState) -> Option<()> {
-    if !config.settings().unknown()
-        && let Err(error) = config.settings().connection()
-    {
-        diags.error_short(error, AttributePath::new("tls_ca_env"));
-        return None;
+    if !config.settings().unknown() {
+        match config.settings().connection() {
+            Err(error) => {
+                diags.error_short(error, AttributePath::new("tls_ca_env"));
+                return None;
+            }
+            Ok(None) => {
+                diags.error(
+                    "Missing gateway connection",
+                    "Set endpoint, or kubernetes for a managed Kubernetes gateway.",
+                    AttributePath::new("endpoint"),
+                );
+                return None;
+            }
+            Ok(Some(_)) => {}
+        }
     }
     let valid = match &config.required_compute_drivers {
         Value::Unknown => true,
@@ -138,10 +149,12 @@ impl DataSource for GatewayDataSource {
             version: 0,
             block: Block {
                 attributes: [
+                    // A managed Kubernetes gateway's `kubernetes` specification
+                    // replaces it: providers forward a free port to its pod.
                     (
                         "endpoint",
                         AttributeType::String,
-                        AttributeConstraint::Required,
+                        AttributeConstraint::Optional,
                     ),
                     (
                         "credential_env",
@@ -368,6 +381,7 @@ mod tests {
             ),
         ] {
             let config = GatewayState {
+                endpoint: Value::Value("http://127.0.0.1:17670".into()),
                 required_compute_drivers: drivers,
                 wait_timeout_seconds: Value::Null,
                 read_trigger: Value::Null,
@@ -390,6 +404,48 @@ mod tests {
     }
 }
 
+/// A managed Kubernetes gateway's specification replaces the endpoint,
+/// which every other gateway needs.
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_gateway_needs_an_endpoint_or_a_kubernetes_specification() {
+        let source = GatewayDataSource(Arc::new(GatewayClient::default()));
+        for (endpoint, kubernetes, valid) in [
+            (
+                Value::Value("http://127.0.0.1:17670".into()),
+                Value::Null,
+                true,
+            ),
+            (Value::Null, Value::Value("{}".into()), true),
+            (Value::Unknown, Value::Null, true),
+            (Value::Null, Value::Null, false),
+            (Value::Value(String::new()), Value::Null, false),
+        ] {
+            let config = GatewayState {
+                endpoint,
+                kubernetes,
+                required_compute_drivers: Value::Value(vec![Value::Value("kubernetes".into())]),
+                ..Default::default()
+            };
+            let mut diagnostics = Diagnostics::default();
+            assert_eq!(
+                source.validate(&mut diagnostics, config).await.is_some(),
+                valid,
+                "{diagnostics:?}"
+            );
+            if !valid {
+                assert!(
+                    format!("{diagnostics:?}").contains("Set endpoint, or kubernetes"),
+                    "{diagnostics:?}"
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod wait_tests {
     use super::*;
@@ -406,6 +462,7 @@ mod wait_tests {
             (Value::Value(301), false),
         ] {
             let config = GatewayState {
+                endpoint: Value::Value("http://127.0.0.1:17670".into()),
                 required_compute_drivers: Value::Value(vec![Value::Value("docker".into())]),
                 wait_timeout_seconds: timeout,
                 read_trigger: Value::Null,

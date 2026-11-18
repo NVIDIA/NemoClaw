@@ -52,7 +52,7 @@ While you answer, `nemoclaw onboard` reads, without changing anything:
 - for a managed gateway, the engine's prerequisites.
 
 It needs no bundle, runs no OpenTofu, and neither pulls images nor starts containers.
-For an external gateway, set `spec.gateway.engine` in the template to an engine that holds the agent image; without it, the image stays unverified.
+For an external Docker or Podman gateway, set `spec.gateway.target.docker.engine` or `spec.gateway.target.podman.engine` in the template to an engine that holds the agent image; without it, the image stays unverified.
 
 A confirmed conflict, such as an image without the chosen harness, blocks saving until you change the answer.
 A read that fails or cannot run leaves the target unverified, and you can still save.

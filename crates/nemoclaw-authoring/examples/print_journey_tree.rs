@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ask([
             "/metadata/name",
             "/spec/sandboxes/assistant/harness/kind",
-            "/spec/gateway/runtime/provider",
+            "/spec/gateway/target",
             "/spec/inferenceProviders/nvidia-prod/provider",
             "/spec/inferenceProviders/nvidia-prod/api",
             "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",

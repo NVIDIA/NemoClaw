@@ -88,7 +88,7 @@ impl OllamaProxy {
     ) -> Result<&'a str, crate::config::ConfigError> {
         self.engine
             .as_deref()
-            .map_or_else(|| Ok(document.spec.gateway.managed()?.engine.as_str()), Ok)
+            .map_or_else(|| Ok(document.spec.gateway.managed()?.engine()), Ok)
     }
 
     pub(crate) fn validate_definition(&self) -> Result<(), crate::config::ConfigError> {

@@ -14,7 +14,7 @@ async fn exited_gateway_stops_readiness_without_waiting_for_a_stalled_api() {
     let mut spec: crate::managed::Spec =
         serde_json::from_str(references[0]["spec"].as_str().unwrap()).unwrap();
     let gateway = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    spec.gateway.endpoint = format!("http://{}", gateway.local_addr().unwrap());
+    spec.gateway.target.local_mut().unwrap().port = gateway.local_addr().unwrap().port();
     let name = spec.name.clone();
     let owner = spec.owner.clone();
     let reads = Arc::new(AtomicUsize::new(0));
@@ -39,7 +39,7 @@ async fn exited_gateway_stops_readiness_without_waiting_for_a_stalled_api() {
     // Readiness takes its gateway endpoint as an input, not from the provider.
     let config = serde_json::from_value(json!({
         "engine":fixture.endpoint, "container_id":"provider-gateway-id",
-        "name":spec.name, "owner":spec.owner, "endpoint":spec.gateway.endpoint,
+        "name":spec.name, "owner":spec.owner, "endpoint":spec.endpoint(),
         "wait_timeout_seconds":90, "read_trigger":true, "ready":null
     }))
     .unwrap();
