@@ -3,7 +3,8 @@
 # Security review, scan binding, and controlled draft publication added for #13523.
 # Stage a release from a semver tag such as v0.1.0-rc1 on the v1 branch. Promote
 # the images CI checked on the tagged history to v1/<image>:<tag>, build the runtime
-# images, and create a draft release listing every digest. The protected
+# images, and create a draft release listing every digest, with the CLI bundles
+# CI / Bundle built and checked at the tagged commit. The protected
 # publisher stays disabled until v1 signoff; no job changes package visibility.
 # Nothing pushes to a package an
 # administrator hasn't created as internal: packages a workflow creates inherit
@@ -150,15 +151,27 @@ jobs:
             sh .github/scripts/image-sbom.sh "$CI_PACKAGE:$name-$tag" "linux/${PLATFORM#linux_}"
           done
           docker logout ghcr.io
+  # The CLI bundles CI / Bundle built and checked at the tagged commit, without
+  # rebuilding them; without them, staging pushes no release images and drafts
+  # no release.
+  bundles:
+    name: CLI bundles
+    permissions:
+      actions: read
+    uses: ./.github/workflows/release-bundles.yml
+    with:
+      commit: ${{ github.sha }}
+      version: ${{ github.ref_name }}
   stage:
     name: Stage the release
     outputs:
       inventory_sha256: ${{ steps.draft.outputs.inventory_sha256 }}
       sboms_sha256: ${{ steps.draft.outputs.sboms_sha256 }}
-    needs: [select, build, runtimes, security-controller]
+    needs: [select, build, runtimes, bundles, security-controller]
     if: >-
       !cancelled() && needs.security-controller.result == 'success' &&
       needs.select.result == 'success' && needs.runtimes.result == 'success' &&
+      needs.bundles.result == 'success' &&
       (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
@@ -195,6 +208,11 @@ jobs:
           names: ${{ steps.images.outputs.names }}
           required: "true"
           token: ${{ github.token }}
+      - name: Download the CLI bundles
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.bundles.outputs.artifact }}
+          path: ${{ runner.temp }}/cli-bundles
       - name: Join each image's platforms and draft the release
         id: draft
         env:
@@ -202,6 +220,7 @@ jobs:
           AGENTS: ${{ steps.images.outputs.agents }}
           GH_TOKEN: ${{ github.token }}
           SOURCE: ${{ needs.select.outputs.source }}
+          CLI_SOURCE: ${{ needs.bundles.outputs.source }}
           TAG: ${{ github.ref_name }}
           PACKAGE: ${{ env.CI_PACKAGE }}
           SYFT: ${{ steps.syft.outputs.cmd }}
@@ -212,8 +231,21 @@ jobs:
           mkdir "$bundles"
           inventory="$RUNNER_TEMP/inventory.json"
           echo '[]' > "$inventory"
+          cli="$RUNNER_TEMP/cli-bundles"
           {
             echo "Staged from \`$GITHUB_SHA\`. The agent and proxy images are the ones CI checked at \`$SOURCE\`."
+            echo
+            echo '## CLI'
+            echo
+            echo "Each archive holds one platform's \`nemoclaw\` CLI with OpenTofu and the providers, as [CI / Bundle]($CLI_SOURCE) built and checked them at \`$GITHUB_SHA\`. \`SHA256SUMS\` lists their SHA-256 checksums."
+            echo
+            echo '| Archive | SHA-256 |'
+            echo '|---|---|'
+            while read -r sum archive; do
+              echo "| \`$archive\` | \`$sum\` |"
+            done < "$cli/SHA256SUMS"
+            echo
+            echo '## Images'
             echo
             echo "A Kubernetes sandbox names its agent image's metadata bundle in \`image.metadata\`; each one is attached to this release."
             echo
@@ -291,6 +323,7 @@ jobs:
               --title "NemoClaw $TAG" --notes-file "$notes"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$bundles"/*.metadata.json
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$cli"/nemoclaw-* "$cli/SHA256SUMS"
           cp "$inventory" "$sboms/inventory.json"
           echo "inventory_sha256=$(sha256sum "$inventory" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "sboms_sha256=$(sha256sum "$sboms/sboms.json" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"

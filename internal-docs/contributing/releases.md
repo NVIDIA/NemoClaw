@@ -39,16 +39,37 @@ The [staging workflow](../../.github/workflows/release.yml):
 1. Finds the latest commit in the tag's `v1` history with per-commit images, and checks with `nemoclaw-build changes images` that nothing since could change them; otherwise it builds and checks the images at the tag.
 2. Builds the vLLM and Ollama runtime images on each native platform; their builds are reproducible.
 3. Joins each image's ARM64 and AMD64 images into one index at `ghcr.io/nvidia/nemoclaw/v1/<image>:<tag>`, without rebuilding.
-4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
+4. Packages the CLI bundles that [CI / Bundle](../../.github/workflows/rust.yml) built and checked at the tagged commit, without rebuilding them, as [CLI bundles](#cli-bundles) describes.
+5. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the CLI archives, `SHA256SUMS`, and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
 
 Only users with push access see a draft release, and the `v1` packages stay internal.
+
+## CLI Bundles
+
+[Release / CLI bundles](../../.github/workflows/release-bundles.yml) takes each platform's bundle from the latest passing push or manual CI / Bundle run at the tagged commit; pull request runs build a merge commit, so they don't count.
+It packages each bundle as `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, and `darwin_arm64`, and as `nemoclaw-<tag>-windows_amd64.zip`, and lists their SHA-256 checksums in `SHA256SUMS`.
+The executables are neither signed nor notarized.
+
+CI keeps the bundles of a `v1` push or manual run for 7 days.
+If CI / Bundle hasn't passed at the commit, or its bundles have expired, staging fails before it pushes release images or drafts the release, and names the missing platforms.
+Run CI / Bundle at the tag, and rerun the staging workflow once it passes:
+
+```sh
+gh workflow run rust.yml --ref v0.1.0-rc1
+```
+
+To check a commit before tagging it, run the workflow by hand; it packages the archives as an artifact of its own run and stages nothing:
+
+```sh
+gh workflow run release-bundles.yml --ref v1 -f commit=<full commit hash>
+```
 
 ## Test a Staged Release
 
 Use [image assessment](image-assessment.md) to evaluate the saved SPDX inventories.
 Local assessment does not authorize publication.
 
-Deploy with the digests the draft lists.
+Deploy with the CLI archive for your platform and the digests the draft lists.
 Docker deployments pull private images through `spec.registries`; Kubernetes deployments use `imagePullSecrets`.
 
 ## Publish
