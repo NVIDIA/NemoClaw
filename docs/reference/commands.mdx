@@ -3459,6 +3459,7 @@ If the command cannot confirm the source type, it exits without publishing.
 If the source does not exist, the command exits with status `2`.
 Other failures use a different nonzero status.
 The command downloads to a fresh private temporary directory on the host, verifies that OpenShell wrote an artifact, publishes the artifact to your destination, and removes the temporary directory.
+Directory downloads preserve member filenames that fit the host filesystem limit.
 An existing destination directory is resolved to its canonical path before publication.
 The command refuses an existing file destination that is a symbolic link and a new destination below a symbolic-link parent.
 It checks every component of the destination parent, so it refuses the destination whether or not the directories below the symbolic link already exist.
