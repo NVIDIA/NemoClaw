@@ -1119,7 +1119,7 @@ Paths:
 
 ## PolicyMiddlewareEndpoints
 
-Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax.
+Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax, without a port.
 
 Guide: [Sandbox policy](../security/sandbox-network.md).
 
