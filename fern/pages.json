@@ -43,6 +43,16 @@
           "title": "Assess Migration from an Earlier Version",
           "source": "docs/get-started/migration.md",
           "slug": "migration"
+        },
+        {
+          "title": "Compare Classic and v1",
+          "source": "docs/get-started/classic-v1-matrix.md",
+          "slug": "classic-v1-matrix"
+        },
+        {
+          "title": "Classic-to-v1 Capability Details",
+          "source": "docs/get-started/classic-v1-capabilities.md",
+          "slug": "classic-v1-capabilities"
         }
       ]
     },

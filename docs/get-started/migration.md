@@ -6,6 +6,7 @@
 The desired-state SDK, schema, and state format do not promise compatibility with the earlier product.
 The current CLI has no general state adoption or migration command.
 Keep the earlier deployment's tooling, configuration, and state while evaluating a separate v1 deployment.
+Use the draft [Classic-to-v1 matrix](classic-v1-matrix.md) to identify available paths, planned parity, and scope decisions still under review.
 
 NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
 The evaluation steps below create a separate deployment; they do not provide an in-place upgrade or data conversion.

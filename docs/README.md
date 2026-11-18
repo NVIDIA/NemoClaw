@@ -26,6 +26,7 @@ Check the prerequisites before following the first deployment; migration is a se
 | Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
 | Deploy OpenClaw with existing gateway and inference services | [First deployment](get-started/first-deployment.md) |
 | Assess a move from an earlier version | [Migration](get-started/migration.md) |
+| Compare Classic workflows with current and planned v1 support | [Classic-to-v1 matrix](get-started/classic-v1-matrix.md) |
 
 ## Build and Deploy
 

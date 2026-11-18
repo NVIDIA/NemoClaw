@@ -21,6 +21,8 @@ Use the [public guide](../docs/README.md) for deployment tasks. The pages here r
 
 ## Design Decisions
 
+The draft [v1 roadmap](v1-roadmap.md) proposes release and parity increments, their dependencies, and a sequence for coordinating Fabric work.
+
 | Topic | Record |
 |---|---|
 | Scope and upstream boundaries | [Accepted scope](design/scope.md) |
