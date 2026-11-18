@@ -96,6 +96,7 @@ docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 
 Use the printed immutable reference in `sandboxes.<name>.image.ref`.
 Every sandbox requires `image.ref`; no default agent image is published.
+`nemoclaw onboard` suggests such a reference when the gateway's engine holds an image whose label installs the chosen harness.
 Select an explicit image containing the chosen Fabric adapter; a harness identifier does not select a different image.
 The selected image must still exist on the compute daemon.
 The sandbox compute daemon must have access to that exact image.

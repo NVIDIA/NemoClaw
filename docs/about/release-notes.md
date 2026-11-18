@@ -30,6 +30,10 @@ Agents and interfaces:
 - Apply prints the command that opens Hermes's terminal UI for a Hermes agent that enables Fabric's `terminal` interface, which Fabric marks experimental.
   See [Hermes's terminal UI](../agents-inference/interfaces.md#hermess-terminal-ui).
 
+Onboarding:
+
+- At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
+
 Sandbox policy:
 
 - `spec.gateway.policyAuthority.apf` lets NVIDIA Agent Policy Fabric (APF) author each sandbox's policy and serve the inference, web search, and API profiles, and `registration: managed` has NemoClaw register APF with a managed Docker gateway.
