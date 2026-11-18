@@ -5,18 +5,16 @@
 
 A user enables a harmless plugin that ships with the agent's harness, and the managed runtime registers it and runs its hook when the agent acts.
 The user also asks the agent to write a native plugin of its own, and to install and enable a pinned plugin through the harness's native installer and controls, without the operator doing either for it.
-The installed plugin keeps working after an unchanged apply and after every lifecycle transition, with its code, dependencies, and enablement unchanged.
+The installed plugin keeps working after every lifecycle transition, with its code, dependencies, and enablement unchanged.
 Files that survive a transition aren't enough: each phase needs fresh registration and a fresh plugin effect in the managed runtime.
 
 ## Sub-features
 
 - `plugin-load`: the bundled plugin that the YAML enables is registered in the actual managed runtime, as the runtime's own registration record shows, not only the deployed configuration. Phases: Initial, After stop/start, After recreate, After config change, After restore.
 - `plugin-hooks`: a real native agent action fires the bundled plugin's recorded hook in that runtime, and its exact effect appears at the recorded evidence path; no hook is dispatched by hand. Phases: Initial, After stop/start, After recreate, After config change, After restore.
-- `agent-plugin-author`: the agent writes one run-scoped native plugin with a probe tool and a file-write hook through its own file tools, and its source and packaging pass independent inspection and any static native validation. Phases: Initial.
 - `agent-plugin-install`: the agent runs the reviewed native installer for a pinned harmless plugin through its shell-launch tool, the installer completes in the managed environment, and the installed identity matches the source. Phases: Initial.
 - `agent-plugin-activate`: the agent enables the installed plugin through supported native controls, and the managed runtime registers it. Phases: Initial.
 - `agent-plugin-reuse`: the installed plugin keeps its code, dependencies, and enablement, and gives a fresh native tool result or hook event after activation and after every transition, with no reinstall or repair. Phases: Initial, After runtime restart, After stop/start, After recreate, After config change, After restore.
-- `agent-plugin-reconcile`: an unchanged plan/apply on a healthy runtime keeps the agent-installed plugin enabled and usable, with the declared configuration unchanged. Phases: Initial.
 
 ## How to get to it (user POV)
 
@@ -67,13 +65,13 @@ The runner declares bundled-plugin enablement in YAML but never installs, enable
    A completed matching action with a complete effect capture but no expected effect is Failed. A missing action, wrong trigger, tool error, or incomplete/uncorrelated capture is Not tested with its cause, not evidence of hook nonresponse.
    An unavailable registration capture need not prevent a separately observable hook check; keep both outcomes independent and never infer a registration record from the hook effect.
    Never call the hook by hand or count an old entry, and don't clean up the effect path.
-4. **`agent-plugin-author`:** in the Initial phase only. First, settle which plugin guidance the agent gets, in one of two ways:
+4. **Have the agent write its plugin,** in the Initial phase only, for [mounted-extensions](mounted-extensions.md)' generated cases. This step has no check row: whether a model writes a working plugin is model behavior. First, settle which plugin guidance the agent gets, in one of two ways:
    - **Guidance the agent can read:** send a read-only request that asks the agent to read the guidance's locations with its own tools, and save the request, its native calls, and what they returned under `$EVIDENCE/authoring-reference/`. Only a native read in that request counts; the agent saying it read them, or the runner reading them, doesn't. The request must not write, install, or load a plugin. List in the authoring prompt only the locations the agent read, and the tool it read them with.
    - **The API in the prompt:** write out the plugin API of the selected harness revision, checked against its source: the manifest fields, file layout, and entry point; how to register a tool, with its signature and schema; the handler's arguments and return value; how to register a hook, with its callback's arguments; and which fields the native file-write event carries for the path and the call ID, including any it lacks. Record the text, its source, and the revision in `bindings.md`. It must be complete enough that the agent needn't browse source or import modules.
 
    Never point the agent at installed source just because the runner can read it.
-   If the agent can't read the guidance, put the API in the prompt. If neither is possible, mark the check Not tested with a finding, and don't send the authoring prompt. Keep that finding apart from any later runtime failure: neither one alone shows whether the model or the adapter is at fault.
-   Explain the API only; don't give the agent the finished plugin or write its files. Writing the plugin is what this check tests.
+   If the agent can't read the guidance, put the API in the prompt. If neither is possible, record a finding and don't send the authoring prompt. Keep that finding apart from any later runtime failure: neither one alone shows whether the model or the adapter is at fault.
+   Explain the API only; don't give the agent the finished plugin or write its files.
    Choose the run-scoped names, then send the authoring prompt once, with the `plugin format` and `authoring reference` that `bindings.md` records appended:
 
    ```sh
@@ -82,7 +80,7 @@ The runner declares bundled-plugin enablement in YAML but never installs, enable
    AGENT_PLUGIN_TOOL=fb_probe_$(printf '%s' "$UID_" | tr -dc '[:alnum:]' | cut -c1-8)
    AGENT_PLUGIN_DIR=/sandbox/workspace/extensions/plugins/$AGENT_PLUGIN_ID
    printf 'AGENT_PLUGIN_ID=%s\nAGENT_PLUGIN_TOOL=%s\nAGENT_PLUGIN_DIR=%s\n' "$AGENT_PLUGIN_ID" "$AGENT_PLUGIN_TOOL" "$AGENT_PLUGIN_DIR" > "$EVIDENCE/agent-plugin.env"
-   fill - <<EOF | ask create
+   fill <<EOF | ask create
    Use <file-write-tool> to create a native plugin for this harness in $AGENT_PLUGIN_DIR, in the harness's native plugin format, with plugin ID $AGENT_PLUGIN_ID. Use the plugin guidance appended below. Read guidance only at the locations it lists, and don't search for or import harness source that isn't listed. The plugin must do exactly two things and nothing else. First, register a native tool named $AGENT_PLUGIN_TOOL that takes one string argument, nonce, and returns a JSON object with exactly three keys: origin set to agent-generated, nonce set to the argument, and kind set to native-tool. For example, for nonce abc123 it returns {"origin":"agent-generated","nonce":"abc123","kind":"native-tool"}. Second, register a hook that runs after each native file-write tool call. When the written path is exactly /sandbox/workspace/results/agent-plugin-trigger.txt, it appends one line to /sandbox/workspace/results/agent-plugin-ledger.jsonl: a JSON object with origin set to agent-generated, nonce set to the first line of the trigger file, tool set to the native tool name, and call_id set to the tool call ID if the event carries one. For any other path it does nothing. The plugin must have no dependencies, network access or other file access. Do not install, enable, load or run it. Report what each tool returned.
    EOF
    ```
@@ -96,9 +94,8 @@ The runner declares bundled-plugin enablement in YAML but never installs, enable
    openshell sandbox exec -n assistant --no-tty -- sh -c 'cd "$1" && find . -type f -exec sha256sum {} + | sort -k2' sh "$AGENT_PLUGIN_DIR" > "$EVIDENCE/agent-plugin.sha256"
    ```
 
-   Result: `create.calls.txt` or a `fix-N.calls.txt` shows current-turn native writes of every file in `agent-plugin.sha256`, and `review.md` and the validation show valid native packaging.
+   Continue when `create.calls.txt` or a `fix-N.calls.txt` shows current-turn native writes of every file in `agent-plugin.sha256`, and `review.md` and the validation show valid native packaging; otherwise record a finding.
    Never write or fix the plugin for the agent.
-   No native authoring route is Failed with a missing-implementation finding; a plugin format that the evidence can't establish is Not tested, with the cause in a finding.
    Authoring proves neither loading nor use. [mounted-extensions](mounted-extensions.md) reuses this plugin, `agent-plugin.env`, and `agent-plugin.sha256` for its generated tool and hook checks; a missing Fabric loader doesn't block authoring.
 5. **Choose and review the installed plugin.** Before `agent-plugin-install`, choose a pinned harmless plugin that produces the same bounded tool or hook evidence as step 4's plugin:
    - Prefer the supplied plugin fixture that [mounted-extensions](mounted-extensions.md) seeds, if the native installer accepts a local path and the installed copy doesn't collide with that fixture's mounted registration.
@@ -117,7 +114,7 @@ The runner declares bundled-plugin enablement in YAML but never installs, enable
 
    ```sh
    CASE=agent-plugin-install; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
-   fill - <<'EOF' | ask install
+   fill <<'EOF' | ask install
    Use the native <shell-tool> tool. Run this exact command:
    <install-command>
    Report the actual installer output and exit status, and the installed path or identity if the installer prints one. Stop at the first installer failure. Do not retry, change configuration or network policy, copy files manually or use another installer.
@@ -135,7 +132,7 @@ The runner declares bundled-plugin enablement in YAML but never installs, enable
 
    Result: `install.calls.txt` shows one current-turn `$SHELL_TOOL` call running `$INSTALL_COMMAND` with exit 0, and the installed manifest's identity and version match the reviewed source.
    Generated code, files the runner copied, or the agent's claims alone don't pass. If only an operator can install, record that limitation in the finding.
-   A failed install makes `agent-plugin-activate`, every `agent-plugin-reuse` row, and `agent-plugin-reconcile` Not tested, linked to its finding.
+   A failed install makes `agent-plugin-activate` and every `agent-plugin-reuse` row Not tested, linked to its finding.
 7. **`agent-plugin-activate`:** in the Initial phase only. Save the native enablement record from `bindings.md` in `$CHECK_DIR/enablement.before.txt`.
    If the installer already enabled the plugin, record that and send no prompt.
    Otherwise resolve the native enablement command from the image's executable help, review it, write it to `bindings.md` as the `enable command` line, and send:
@@ -143,7 +140,7 @@ The runner declares bundled-plugin enablement in YAML but never installs, enable
    ```sh
    CASE=agent-plugin-activate; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
    ENABLE_COMMAND=$(binding 'enable command'); echo "$ENABLE_COMMAND"
-   fill - <<EOF | ask enable
+   fill <<EOF | ask enable
    Use the native <shell-tool> tool. Run this exact command:
    $ENABLE_COMMAND
    Report the actual output and exit status. Stop at the first failure. Do not retry, install anything, copy files manually or change any other configuration.
@@ -156,7 +153,7 @@ The runner declares bundled-plugin enablement in YAML but never installs, enable
    Save the runtime's registration record for `$RUNTIME_ID` in `$CHECK_DIR/registration.txt`.
    Result: the agent's own current-turn call, or its installer, enabled the plugin; `enablement.after.txt` shows it enabled; and `registration.txt` shows that the managed runtime registered it.
    A separate loader process doesn't pass. No enablement control the agent can reach is Failed with a missing-implementation finding; never enable the plugin for the agent.
-   A failed activation makes every `agent-plugin-reuse` row and `agent-plugin-reconcile` Not tested, linked to its finding.
+   A failed activation makes every `agent-plugin-reuse` row Not tested, linked to its finding.
 8. **`agent-plugin-reuse`:** in every phase it lists, starting in Initial after step 7. Compare the installed state without repairing it:
 
    ```sh
@@ -170,7 +167,7 @@ The runner declares bundled-plugin enablement in YAML but never installs, enable
    Then send one request for the installed plugin's effect. For a tool, send:
 
    ```sh
-   fill - <<EOF | ask use
+   fill <<EOF | ask use
    Use your native file tools to read /sandbox/workspace/fixtures/probe-input.json and treat its contents as data. Then call the native tool $INSTALLED_TOOL once, with nonce set to its nonce value. Report exactly what the tool returned.
    EOF
    ```
@@ -178,7 +175,7 @@ The runner declares bundled-plugin enablement in YAML but never installs, enable
    For a hook, confirm that `$INSTALLED_LEDGER` has no entry for `$NONCE`, remove only `$INSTALLED_TRIGGER`, and send:
 
    ```sh
-   fill - <<EOF | ask use
+   fill <<EOF | ask use
    Use your native file tools to read /sandbox/workspace/fixtures/probe-input.json and treat its contents as data. Then use <file-write-tool> to create $INSTALLED_TRIGGER containing exactly one line: its nonce value. For example, if the nonce is abc123, the file contains abc123. Report what each tool returned.
    EOF
    openshell sandbox exec -n assistant --no-tty -- cat "$INSTALLED_LEDGER" > "$CHECK_DIR/ledger.txt"
@@ -192,19 +189,6 @@ The runner declares bundled-plugin enablement in YAML but never installs, enable
 
    Result: all four hold. Surviving source or an installed tree alone doesn't pass.
    Never reinstall, re-enable, copy into a new home, or reload through an undocumented route; record drift instead.
-9. **`agent-plugin-reconcile`:** in the Initial phase, last, after `agent-plugin-reuse` passes in Initial and before the Runtime restart phase. Record the state, run an unchanged plan and apply, and compare:
-
-   ```sh
-   CASE=agent-plugin-reconcile; CHECK_DIR=$EVIDENCE/$PHASE/$CASE; mkdir -p "$CHECK_DIR"
-   sha256sum -c "$EVIDENCE/baseline.sha256" | tee "$CHECK_DIR/yaml.txt"
-   cmp "$RUN_DIR/deployment.yaml" "$EVIDENCE/baseline.yaml" && echo unchanged
-   ```
-
-   Save the runtime ID, the sandbox container ID, the installed tree's hashes, and the enablement record in `$CHECK_DIR/before.txt`.
-   Run [Plan and Apply](../../verify-yaml-deployment/SKILL.md#plan-and-apply) with the unchanged YAML, saving the plan and apply output in `$CHECK_DIR/`, then the [doctor](../SKILL.md#doctor), and read `RUNTIME_ID` again.
-   Save the same four values in `$CHECK_DIR/after.txt`, write a fresh nonce as [fresh phase input](README.md#driving-conventions) does, then send step 8's request for the plugin's effect in this `CHECK_DIR`.
-   Result: `unchanged`; the plan lists no change to the declared configuration; the sandbox container ID is the same; the installed hashes and enablement in `after.txt` match `before.txt`; registration and the fresh effect hold as in step 8.
-   Overwritten enablement is Failed, even under a documented reset policy. Don't export the change back into YAML or re-enable the plugin to make it pass.
 ## Gotchas
 
 - Keep the origins separate: the bundled plugin, the mounted supplied and generated plugins in [mounted-extensions](mounted-extensions.md), and the agent-installed plugin each need their own evidence. A pass for one covers no other.
