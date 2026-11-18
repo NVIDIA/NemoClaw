@@ -12,6 +12,7 @@ mod composite;
 mod connected;
 mod driver_config;
 mod gateway_source;
+mod gpu;
 mod network;
 mod profile;
 mod provider;
@@ -280,6 +281,7 @@ fn sandbox_row(
     let spec = sandbox.spec.ok_or(ObservationError::Incomplete)?;
     let template = spec.template.ok_or(ObservationError::Incomplete)?;
     let driver_config = driver_config::observed(template.driver_config.as_ref());
+    let gpu_count = gpu::observed(spec.resource_requirements.as_ref())?;
     let image = template.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
@@ -337,6 +339,7 @@ fn sandbox_row(
     row.insert("provider_names_json".into(), inference);
     row.insert("image".into(), image);
     row.insert("driver_config_json".into(), driver_config);
+    row.insert("gpu_count".into(), gpu_count);
     row.insert("policy_json".into(), policy_input);
     row.insert("launch_json".into(), launch_json);
     row.insert(POLICY_AUTHORITY.into(), authority.into());
@@ -696,6 +699,7 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
                 "policy_json",
                 "provider_names_json",
                 "driver_config_json",
+                "gpu_count",
                 POLICY_AUTHORITY,
                 services::FIELD,
             ],
@@ -709,14 +713,15 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             "policy_json",
             "provider_names_json",
             "driver_config_json",
+            "gpu_count",
             services::FIELD,
             POLICY_HASH,
             POLICY_PROVENANCE,
             EXITED,
         ])
-        // Omission means NemoClaw authors the policy, not the previous value.
-        .reset_when_omitted(&[POLICY_AUTHORITY])
-        .validate_inputs(network::validate_grant_names)
+        // Omission restores NemoClaw-authored policy and requests no GPU.
+        .reset_when_omitted(&[POLICY_AUTHORITY, "gpu_count"])
+        .validate_inputs(gpu::validate_inputs)
         // The URLs the gateway reports for the exposures; changed exposures
         // report theirs when applied.
         .computed(services::URLS, nemoclaw_tofu::carry_prior)

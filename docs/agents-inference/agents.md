@@ -189,6 +189,31 @@ The YAML `kind: api` integration creates a full-access REST rule for the endpoin
 For OAuth-refresh credentials, use an [operator-managed OpenShell provider](oauth-refresh.md).
 NemoClaw does not wrap its refresh contract, and manual sandbox attachments affect drift checks.
 
+## GPU Access for Agent Tools
+
+Request GPUs for programs the agent runs inside its sandbox:
+
+```yaml
+spec:
+  sandboxes:
+    assistant:
+      resources:
+        gpu:
+          count: 1
+```
+
+Merge this fragment into a complete deployment configuration.
+The count must be a positive integer. Omit `resources` to request no GPU.
+NemoClaw passes the request to OpenShell; the selected compute driver must support it, and its host must have the required GPU drivers and device configuration.
+OpenShell selects the devices. To select specific devices, use the selected driver's documented `driverConfig` settings alongside the GPU request.
+
+This request gives sandbox programs GPU access; it does not install CUDA libraries, reserve GPU memory, or configure an inference service.
+Provide compatible analytics libraries in the agent image or on a read-only [mounted volume](../build-deploy/state.md#keep-agent-files-on-mounted-volumes).
+A mount supplies files; the GPU request supplies device access. Fabric and the agent's terminal tool launch programs in that sandbox without a separate GPU setting.
+
+Changing or removing the request replaces the sandbox and its agent. Keep conversations, generated skills, and other files that must survive on mounted volumes.
+Export preserves the request and refuses to export when the observed GPU count differs from the saved configuration.
+
 ## Skills on a Mounted Volume
 
 Fabric passes the skills in `fabric_agent`'s `skills` block to the harness.

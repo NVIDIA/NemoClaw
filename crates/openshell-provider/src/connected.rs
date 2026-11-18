@@ -43,6 +43,7 @@ pub(super) fn create_sandbox_request(
                 driver_config: crate::driver_config::request(value(want, "driver_config_json"))?,
                 ..Default::default()
             }),
+            resource_requirements: crate::gpu::request(value(want, "gpu_count"))?,
             command: launch.command,
             providers: inference::provider_names(value(want, "provider_names_json"))?,
             environment: inference_environment(want)?.into_iter().collect(),
