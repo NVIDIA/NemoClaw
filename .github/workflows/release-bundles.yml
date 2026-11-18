@@ -24,6 +24,9 @@ on:
       source:
         description: The CI / Bundle run that built and checked the bundles.
         value: ${{ jobs.bundles.outputs.source }}
+  # Temporary: a push run registers the workflow so it can be dispatched.
+  push:
+    branches: [cv/release-attach-bundles]
   workflow_dispatch:
     inputs:
       commit:
