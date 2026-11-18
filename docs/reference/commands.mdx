@@ -749,9 +749,10 @@ For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents named recreation restores saved native preferences, including model and endpoint settings in `config.toml`.
-A conflicting requested selection can fail validation before registry publication.
-To change the provider or model, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+For a managed image, named recreation for a verified provider or model change keeps the replacement's generated `config.toml`.
+The backup retains the previous file for manual recovery of custom settings.
+For unchanged or unverifiable selections, or custom images, recreation restores saved preferences and can fail validation before registry publication.
+To change the provider or model, follow [Recreate a Deep Agents Sandbox](../inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox).
 
 </AgentOnly>
 
@@ -1402,7 +1403,7 @@ During that lease, another `launch` still verifies these conditions:
 </AgentOnly>
 <AgentOnly variant="hermes,deepagents">
 
-- The recorded inference selection matches its provider path, and every configured route serves a valid response to a bounded request for the recorded model.
+- The recorded inference selection matches its provider path, and every configured single-model route serves a valid response to a bounded request for the recorded model.
   NVIDIA Endpoints, supported fixed hosted selections, new hosted compatible selections outside the Personal tier, and qualifying new local selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
   Owned Local NVIDIA NIM, retained legacy routes, and other custom routes without an attachment use `inference.local`.
   Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
@@ -1411,9 +1412,31 @@ During that lease, another `launch` still verifies these conditions:
 </AgentOnly>
 - The agent runtime and its required host-side forwards pass their semantic health checks.
 
+<AgentOnly variant="hermes">
+
+For Switchyard routing, inference readiness verifies the recorded provider identities, revisions, profiles, and sandbox attachments.
+This check does not send a model request.
+
+Before each gateway launch, including supervised recovery, NemoClaw makes bounded model calls.
+These calls verify judge classification and separate routing and answer usage accounting.
+If judge qualification fails, the gateway remains stopped.
+
+</AgentOnly>
+
+
 <AgentOnly variant="openclaw">
 
-For OpenClaw, `connect --probe-only` also settles the existing allowlisted pairing flow before it publishes the lease. The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration. Its credential-free pairing qualification binds the canonical CLI client, exact paired device identity, required operator role and scopes, owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch. Before accepting that evidence, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway. It skips the complete pairing approval pass only when the evidence still matches exactly and no relevant allowlisted request is pending. Missing, unreadable, malformed, ambiguous, or changed pairing evidence runs the complete pairing approval pass. A relevant allowlisted pending request also runs that complete path, so late scope requests remain eligible for approval.
+For OpenClaw, `connect --probe-only` also settles the existing allowlisted pairing flow before it publishes the lease.
+The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration.
+Its credential-free pairing qualification binds the settled CLI or native terminal user interface (TUI) client, exact paired device identity, and required operator role and scopes.
+It also binds the owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch.
+Native TUI state must have the required grants and no pending pairing requests.
+Qualification does not change its credentials or grants.
+
+Before accepting that evidence, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway.
+It skips the complete pairing approval pass only when the evidence still matches exactly and no relevant allowlisted request is pending.
+Missing, unreadable, malformed, ambiguous, or changed pairing evidence runs the complete pairing approval pass.
+A relevant allowlisted pending request also runs that complete path, so late scope requests remain eligible for approval.
 
 </AgentOnly>
 
@@ -1748,9 +1771,10 @@ For Hermes, the command validates the complete candidate configuration with the 
 <AgentOnly variant="deepagents">
 
 For Deep Agents sandboxes, `config set` is unavailable.
-Managed startup creates the initial `dcode` configuration, but native preference saves and native-home restoration preserve its model and endpoint settings.
+Managed startup creates the initial `dcode` configuration, and native preference saves can update it.
+For a managed image, recreation for a verified provider or model change keeps the replacement's generated configuration and retains the previous file in the backup.
 Managed route and upstream provider metadata remain in protected files outside the native home.
-To change the provider or model without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+To change the provider or model, follow [Recreate a Deep Agents Sandbox](../inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox).
 Use `$$nemoclaw <name> config get` to read the current values.
 
 </AgentOnly>
@@ -4006,7 +4030,7 @@ The command is also available in sandbox-first form as `$$nemoclaw <name> infere
 
 By default, the command syncs the default registered sandbox.
 
-During onboarding, NVIDIA Endpoints, the five fixed hosted providers, and new hosted compatible selections outside the Personal tier use sandbox-attached providers without changing the shared route. Qualified new local selections also receive native attachments during onboarding. At runtime, `inference set` can attach a custom native provider when the sandbox already records a valid native attachment; a retained shared-route sandbox stays on the shared route. Hermes also supports native local switches through `inference set`. For Deep Agents Code provider or model changes, follow [Validate a Different Deep Agents Selection](/user-guide/deepagents/inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection). The following route-conflict rules apply whenever the command changes the shared gateway route, including owned Local NVIDIA NIM, retained legacy and other custom shared routes, and Pi local routes.
+During onboarding, NVIDIA Endpoints, the five fixed hosted providers, and new hosted compatible selections outside the Personal tier use sandbox-attached providers without changing the shared route. Qualified new local selections also receive native attachments during onboarding. At runtime, `inference set` can attach a custom native provider when the sandbox already records a valid native attachment; a retained shared-route sandbox stays on the shared route. Hermes also supports native local switches through `inference set`. For Deep Agents Code provider or model changes, follow [Recreate a Deep Agents Sandbox](/user-guide/deepagents/inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox). The following route-conflict rules apply whenever the command changes the shared gateway route, including owned Local NVIDIA NIM, retained legacy and other custom shared routes, and Pi local routes.
 Before changing the route, NemoClaw compares it with every same-gateway registry entry, including stopped sandboxes.
 When only the provider or model differs, the command names the affected sandboxes and warns immediately before it re-points the shared route.
 Those sandboxes use the new live route until `connect`, onboarding, or another `inference set` command re-points it.
@@ -4108,11 +4132,12 @@ $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>
 <AgentOnly variant="deepagents">
 
 Deep Agents has no runtime `inference set` path.
-Named recreation with `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` restores the saved `/sandbox/.deepagents/config.toml`.
-Saved model and endpoint preferences can conflict with a requested provider or model.
-In that case, validation stops before registry publication and leaves the replacement sandbox with an unverified route.
+For a managed image, named recreation keeps the replacement's generated configuration when NemoClaw can verify a provider or model change from the recorded selection.
+It restores the remaining saved state and retains the previous `/sandbox/.deepagents/config.toml` in the backup for manual recovery of custom settings.
+For unchanged or unverifiable selections, or custom images, recreation restores the saved configuration.
+If restored preferences conflict with the requested selection, validation stops before registry publication and leaves the replacement sandbox with an unverified route.
 Keep the backup and follow the printed recovery instructions; do not rebuild without verified registry metadata.
-To validate a different selection without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+Follow [Recreate a Deep Agents Sandbox](../inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox) to change the selection.
 Use `$$nemoclaw <name> status` to inspect the selected sandbox's route.
 
 </AgentOnly>
