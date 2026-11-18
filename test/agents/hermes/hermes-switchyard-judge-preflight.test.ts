@@ -278,6 +278,7 @@ describe("Switchyard judge startup qualification", () => {
   ])("keeps routing stopped after %s evidence and cleans the probe (#13863)", (failure) => {
     expect(runFixture({ failure })).toMatchObject({
       result: "rejected",
+      requests: failure === "disabled" ? 0 : 1,
       shutdown: 1,
       deregister: 1,
       subscriber_removed: true,

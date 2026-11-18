@@ -39,14 +39,24 @@ stored bot token. The rebuild still reads that token from its credential store.
 
 The `hermes-e2e` target also exercises the packaged native Switchyard plugin through real
 OpenShell credential injection and egress enforcement. A host-side HTTP fixture supplies a
-healthy provider and a separately listening forbidden destination. The test checks successful
-judge/answer routing, a forbidden redirect, direct destination denial, recovery, caller-auth
-non-disclosure, and a salted credential scan. It restores the fixture policy and removes its
-provider in `finally`. Only temporary child-process transport configuration changes; production
+healthy provider and a separately listening destination forbidden by the fixture's effective policy.
+Two attached providers have independent issued handles and endpoint bindings. Each handle works
+at its own endpoint; using it at the other healthy endpoint must fail before that peer sees a request.
+The test also checks successful judge/answer routing, a forbidden redirect, direct destination
+denial, provider failure and recovery, caller-auth non-disclosure, and salted scans for both credentials.
+Disabled managed execution and an unmatched model exercise the original-provider continuation
+against an allowed endpoint and the forbidden peer. These controlled callbacks qualify the native
+continuation and OpenShell boundary, not universal Hermes interception or the supervised adaptive journey.
+It restores the fixture policy and removes both providers in `finally`. Only temporary child-process transport configuration changes; production
 provider validation and protected startup files stay unchanged. This does not qualify hosted
 provider TLS, adaptive onboarding, or `inference.local` isolation in a routed sandbox. The
-standard Hermes sandbox still uses `inference.local`. Support tests own fixture responses,
-redacted evidence, and probe syntax; they are not live OpenShell evidence.
+standard Hermes sandbox can retain that legacy route on the current OpenShell 0.0.116 pin.
+This phase adds no shared-route control or new `inference.local` offering and imposes no policy tier restriction.
+Probe output contains only fixed answers, booleans, observed callback status and bounded failure categories.
+Relay 0.8.x can omit upstream details for unmatched routes; unobserved status stays unavailable rather
+than being reconstructed from provider bodies. Captured probe streams are capped at 4096 bytes.
+Support tests own fixture responses, redacted evidence, and probe syntax; they are not live OpenShell evidence.
+Judge-preflight tests distinguish a withheld probe from a sent request that failed and verify cleanup for both.
 
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
