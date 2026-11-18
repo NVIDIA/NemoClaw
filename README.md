@@ -20,6 +20,13 @@ It provides guided onboarding, managed inference, network policy, managed integr
 
 For capabilities, architecture, security controls, and the full feature list, see the [NemoClaw documentation](https://docs.nvidia.com/nemoclaw/latest/).
 
+## NemoClaw Agent Config
+
+[NemoClaw Agent Config](https://github.com/NVIDIA/NemoClaw/tree/v1) is the desired-state configuration workflow in development for deploying agents in OpenShell sandboxes.
+It uses YAML with a CLI or Rust SDK to plan, apply, export, and destroy deployments, and currently requires source-built bundles.
+
+Before evaluating a separate deployment, review the [Classic and NemoClaw Agent Config capability matrix](https://github.com/NVIDIA/NemoClaw/blob/v1/docs/get-started/classic-v1-matrix.md) and [migration guide](https://github.com/NVIDIA/NemoClaw/blob/v1/docs/get-started/migration.md).
+
 ## Get Started
 
 ### Start with Your Coding Agent
