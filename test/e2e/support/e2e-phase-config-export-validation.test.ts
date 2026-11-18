@@ -465,6 +465,28 @@ if (process.argv.includes("--output")) {
     );
     expect(rejected.writes.at(-1)).not.toHaveProperty("export");
   });
+  it("matches an export whose endpoint TLS spellings the exporter rewrote (#14580)", async () => {
+    const withEndpoints = (endpoints: object[]) => ({
+      ...POLICY,
+      network_policies: { inference: { ...POLICY.network_policies.inference, endpoints } },
+    });
+    const host = { host: "a.example", port: 443 };
+    const exported = document();
+    Object.assign(exported.spec.sandboxes.sandbox!.network.policy, {
+      explicit: withEndpoints([{ ...host, tls: "skip" }, host]),
+    });
+    const source = withEndpoints([
+      { ...host, tls: "passthrough" },
+      { ...host, tls: "terminate" },
+    ]);
+    const realParse = { ...dependencies(), parseConfig: parseConfigExport };
+    const raw = `${JSON.stringify(exported)}\n`;
+    const test = fixture({ dependencies: realParse, host: successfulHost(raw, source) });
+    const evidence = await test.phase.from(target("required"), instance());
+    expect(evidence.verifications).toContainEqual(
+      expect.objectContaining({ id: "policySha256", passed: true }),
+    );
+  });
   it("observes the base policy through the fixture-owned OpenShell boundary (#11485, #14580)", async () => {
     const test = fixture();
     const evidence = await test.phase.from(target("required"), instance());

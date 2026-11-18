@@ -11,7 +11,10 @@ import YAML from "yaml";
 
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
 import { hasExportExcludedMessaging } from "../../../src/lib/domain/config/verify-export-source.ts";
-import { V1_IMAGE_REF_PLACEHOLDER } from "../../../src/lib/domain/config/export-document.ts";
+import {
+  exportedExplicitPolicy,
+  V1_IMAGE_REF_PLACEHOLDER,
+} from "../../../src/lib/domain/config/export-document.ts";
 import { V1ALPHA1_CHECKED_REVISION } from "../../../src/lib/domain/config/v1alpha1-checked-revision.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
@@ -395,7 +398,10 @@ export async function verifyHermesConfigExportLive(
     sandboxName: input.sandboxName,
     scope: "base",
   });
-  const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
+  // Compare in the export's own projection (TLS spellings, omitted sections), not a second copy.
+  const expectedPolicy = policy.ok
+    ? exportedExplicitPolicy(YAML.parse(policy.value.document))
+    : null;
   const consumer = validateHermesConsumers(input, nemoclawRaw, nemohermesRaw);
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");

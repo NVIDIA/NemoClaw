@@ -200,8 +200,12 @@ function targetEndpoint(endpoint: Record<string, unknown>): void {
   if (endpoint.tls === "terminate") delete endpoint.tls;
 }
 
-function targetPolicy(source: VerifiedExportSource): Record<string, unknown> {
-  const policy = structuredClone(source.policy) as Record<string, unknown>;
+/**
+ * Project an OpenShell sandbox policy to the explicit v1 policy the export writes. Live checks
+ * reuse it so their expected policy cannot drift from the export. The input is not changed.
+ */
+export function exportedExplicitPolicy(sourcePolicy: unknown): Record<string, unknown> {
+  const policy = structuredClone(sourcePolicy) as Record<string, unknown>;
   const composed = policy.network_policies as
     | Record<string, { endpoints?: Record<string, unknown>[] }>
     | undefined;
@@ -218,7 +222,7 @@ function targetPolicy(source: VerifiedExportSource): Record<string, unknown> {
 
 function exportSandbox(source: VerifiedExportSource, providerName: string): V1Alpha1ExportSandbox {
   return {
-    network: { policy: { explicit: targetPolicy(source) } },
+    network: { policy: { explicit: exportedExplicitPolicy(source.policy) } },
     image: { ref: V1_IMAGE_REF_PLACEHOLDER },
     harness: exportHarness(source),
     agent: exportAgent(source, providerName),

@@ -15,7 +15,10 @@ import {
   type V1Alpha1Export,
 } from "../../../../src/lib/config/v1alpha1-export.ts";
 import { unsafeEndpointUrlViolation } from "../../../../src/lib/core/endpoint-url-safety.ts";
-import { V1_IMAGE_REF_PLACEHOLDER } from "../../../../src/lib/domain/config/export-document.ts";
+import {
+  exportedExplicitPolicy,
+  V1_IMAGE_REF_PLACEHOLDER,
+} from "../../../../src/lib/domain/config/export-document.ts";
 import { V1ALPHA1_CHECKED_REVISION } from "../../../../src/lib/domain/config/v1alpha1-checked-revision.ts";
 import type { SandboxEntry } from "../../../../src/lib/state/registry/types.ts";
 import {
@@ -583,18 +586,6 @@ function expectedParseSummary(entry: ConfigExportRegistryEntry, imageRef: string
   };
 }
 
-/**
- * The export keeps every base network rule and leaves out the sections that describe the V0
- * image (#14580). The base policy already excludes OpenShell's provider-composed entries.
- */
-function targetPolicyForV1Alpha1(value: unknown): unknown {
-  const policy = structuredClone(requiredRecord(value, "base policy"));
-  delete policy.filesystem_policy;
-  delete policy.process;
-  delete policy.landlock;
-  return policy;
-}
-
 function readProducer(): ConfigExportProducer {
   const buildIdentity = JSON.parse(
     fs.readFileSync(path.join(REPO_ROOT, "dist", "build-identity.json"), "utf8"),
@@ -772,7 +763,9 @@ async function expectedSemantics(
       throw new Error("the live Deep Agents sandbox is not at the exportable disabled baseline");
     }
   }
-  const expectedPolicy = targetPolicyForV1Alpha1(YAML.parse(policyDocument));
+  const expectedPolicy = exportedExplicitPolicy(
+    requiredRecord(YAML.parse(policyDocument), "base policy"),
+  );
   return {
     sandboxName: instance.sandboxName,
     agent: exportedHarnessKind(manifest.document.spec.onboarding.agent),
