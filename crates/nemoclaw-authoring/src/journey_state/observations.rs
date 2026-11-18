@@ -66,6 +66,7 @@ impl JourneyState {
                 .reasons
                 .insert(0, reason);
         }
+        self.offer_agent_images(&mut resolution.questions, observations);
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
         };
@@ -120,6 +121,48 @@ impl JourneyState {
             }
         }
         Ok(resolution)
+    }
+
+    /// Offer each sandbox image question the images on the engine that install
+    /// its harness, suggesting the newest unless the suggestion is one of
+    /// them; with none, link the build instructions.
+    fn offer_agent_images(
+        &self,
+        questions: &mut [JourneyQuestion],
+        observations: &DiscoveryObservations,
+    ) {
+        for question in questions {
+            let Some(request) = self.agent_images_request(&question.id) else {
+                continue;
+            };
+            let Some(observed) = observations
+                .get(&request)
+                .filter(|observed| observed.status == ObservationStatus::Available)
+            else {
+                continue;
+            };
+            let references: Vec<Value> = observed
+                .references
+                .iter()
+                .cloned()
+                .map(Value::String)
+                .collect();
+            if references.is_empty() {
+                question.note = Some(format!(
+                    "No image on this engine installs {}; see {BUILD_AGENT_IMAGES}.",
+                    request.adapter_id
+                ));
+                continue;
+            }
+            if !question
+                .suggestion
+                .as_ref()
+                .is_some_and(|suggestion| references.contains(suggestion))
+            {
+                question.suggestion = references.first().cloned();
+            }
+            question.choices = references;
+        }
     }
 
     /// The chosen runtime of a managed gateway without an authored engine, when
@@ -255,6 +298,10 @@ impl JourneyState {
         Ok(())
     }
 }
+
+/// Where the documentation says how to build an agent image.
+const BUILD_AGENT_IMAGES: &str =
+    "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images";
 
 /// Only a reachable server's explicit authentication requirement establishes
 /// this condition. A denied key or unreachable catalog remains a real failure.

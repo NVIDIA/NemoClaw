@@ -144,7 +144,7 @@ An SDK document or a ready authoring result does not establish successful deploy
 
 ## Observations and Consumer Responsibilities
 
-An SDK `DiscoveryQuery` names a read of the target by everything that determines its answer, and [`DiscoveryObservations`](../../crates/nemoclaw-sdk/src/discovery.rs) holds what each query returned: engine, hardware, image, inference endpoint, gateway, and credential-availability observations.
+An SDK `DiscoveryQuery` names a read of the target by everything that determines its answer, and [`DiscoveryObservations`](../../crates/nemoclaw-sdk/src/discovery.rs) holds what each query returned: engine, hardware, image, an engine's agent images, inference endpoint, gateway, and credential-availability observations.
 Each observation is keyed by its query, so an observation about one engine, image, or endpoint is never read as one about another, and a lookup by a query of one kind returns that kind's observation type.
 A read that could not be made is recorded as an unknown observation with its reason, so it stays distinct from a query never asked and is not repeated on every pass.
 `nemoclaw_discovery::observe` reads the real target; tests build or deserialize recorded observations, so decisions can be tested for any hardware without owning it.

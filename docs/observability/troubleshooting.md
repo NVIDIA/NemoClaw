@@ -170,6 +170,25 @@ A failed first apply can be [destroyed](../build-deploy/usage.md#destroy) when t
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
 
+### Continue After `session_recovery_required`
+
+An agent that [keeps its state](../build-deploy/state.md#agent-files) keeps one native conversation across its invocations.
+When an invocation doesn't finish, for example because the model timed out, the adapter can't tell what that turn did.
+Every later invocation then returns `result.status: failed` with `result.error.code: session_recovery_required`, even after the model answers again.
+The runtime keeps running, and the agent's native interfaces, such as OpenClaw's Control UI, still answer.
+
+First check what the unfinished turn could have changed, such as workspace files or requests to external services.
+Then send the next request with `acknowledge_recovery`, selecting the gateway and workspace as for [invoking an agent](../agents-inference/interfaces.md#invoke-an-agent):
+
+```sh
+openshell sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent AGENT --runtime-id RUNTIME_ID --request - <<'JSON'
+{"input": "Continue.", "acknowledge_recovery": true}
+JSON
+```
+
+Requests with `--input` work again after that one succeeds.
+NemoClaw can't send the acknowledgment itself ([current limits](../resources/limits.md#agents-and-integrations)).
+
 ## Inspect an OpenShell Sandbox Failure
 
 Use the original deployment's gateway and workspace, following [interface selection](../agents-inference/interfaces.md#select-the-gateway-and-workspace).
