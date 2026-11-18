@@ -103,9 +103,7 @@ describe("export report header (#14580)", () => {
     const header = headerOf(yaml);
     const endpoint = /endpoint: (http:\/\/127\.0\.0\.1:\d+)/.exec(yaml)![1]!;
     const port = Number(endpoint.split(":").pop());
-    expect(header).toMatch(
-      new RegExp(`^# gateway endpoint="${endpoint.replace(/\./g, "\\.")}" port=${port}: `, "m"),
-    );
+    expect(header).toContain(`\n# gateway endpoint="${endpoint}" port=${port}: `);
     expect(header).toMatch(/free port/);
   });
 

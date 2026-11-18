@@ -1164,7 +1164,8 @@ describe("live export snapshot reader", () => {
         kind: "nvidia.fabric.openclaw",
         runtime: { timeout_seconds: 600 },
       });
-      expect(yaml).not.toContain("otlp");
+      // The report header names the omitted OTLP settings; the document must not carry them.
+      expect(JSON.stringify(document)).not.toContain("otlp");
       expect(document.spec.sandboxes.alpha?.network.policy.explicit).toMatchObject({
         process: { run_as_user: "1000", run_as_group: "1000" },
       });
