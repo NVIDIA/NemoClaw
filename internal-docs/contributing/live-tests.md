@@ -157,7 +157,7 @@ NVIDIA_INFERENCE_API_KEY=... \
 Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deployment` with the same bundle, whether or not the scenario passed.
 
 
-### DGX Station on Colossus
+### DGX Station and Spark on Colossus
 
 Station runs only through a manual **Live / HCL** dispatch. It does not run on PRs or `v1` pushes; [#14346](https://github.com/NVIDIA/NemoClaw/issues/14346) owns trigger and gating policy. Dispatch the candidate branch:
 
@@ -165,13 +165,29 @@ Station runs only through a manual **Live / HCL** dispatch. It does not run on P
 gh workflow run hcl-e2e.yml --ref <branch> -f target=dgx-station -f hosted=false
 ```
 
+Spark uses the same workflow and persistent-runner path, with the `colossus-gb10` label. It accepts only a manual dispatch on canonical `v1`, without CI / Bundle artifacts:
+
+```bash
+gh workflow run hcl-e2e.yml --repo NVIDIA/NemoClaw --ref v1 -f target=dgx-spark -f hosted=false
+```
+
 Build, inference, and cleanup failures fail that manual run. An offline runner leaves its hardware job queued.
 
-Colorunner must prepare Ubuntu 24.04 ARM64, GB300, Docker GPU access, and the containerd image store. CI does not provision the host or manage its lease.
-The shared HCL workflow binds the existing GTC Station example to its pinned Nemotron 3.5 model/runtime and candidate images, fresh UID, state, and nonoverlapping subnet. The scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup.
+Colorunner must prepare Ubuntu 24.04 ARM64, the intended GPU (GB300 for Station or GB10 for Spark), Docker/Buildx, NVIDIA Container Toolkit, container GPU access, and the containerd image store. CI does not provision the host or manage its lease.
+Before Spark dispatch, complete the capacity checks in [#13934](https://github.com/NVIDIA/NemoClaw/issues/13934): record the SSA owner, admitted lease window, limits and recovery procedure; verify host identity and GPU access; and qualify the persistent runner with a manual smoke on its unique label. Keep the exact smoke commit, runner ID and run URL. Smoke runs `true` and proves job delivery only; capacity, inference and cleanup need their own evidence.
+
+The shared HCL workflow builds on the selected host and binds its existing GTC example to candidate images, a fresh UID, state, and nonoverlapping subnet:
+
+| Target | Runner label | Example and model |
+|---|---|---|
+| Station | `colossus-gb300` | `openclaw-dgx-station.yaml`, with the existing Nemotron 3.5 Super VL override |
+| Spark | `colossus-gb10` | `openclaw-dgx-spark.yaml`, retaining its pinned Nemotron 3 Super NVFP4 model and Spark memory settings |
+
+Each scenario applies, requires OpenClaw to reply `READY`, and destroys; independent Docker observations verify owned runtime cleanup. Record the E2E commit, job URL, actual runner identity, and uploaded identity, inference and cleanup outcomes. A successful run establishes that case on that host; it does not establish renewal or replacement readiness. Leave #13934 open until its remaining capacity acceptance criteria have evidence.
 
 Each attempt retains its bundle, executable, configuration and private state under `$HOME/.local/state/nemoclaw-ci/hcl/<run-id>-<attempt>/`. Published reports contain outcomes and candidate/UID/case identity only.
 Model/authentication/gateway storage remains after destroy; later attempts use fresh volumes. Reclaim retained resources only after confirming ownership and recovery needs.
+Spark OpenClaw inference and cold-start timing remain unqualified. Its template's model download and load must fit the existing 60-minute job budget, including build and cleanup; the model startup timeout does not extend that job budget. Do not reuse an existing deployment as evidence of a fresh run.
 To recover a failed run, set `run` to its retained directory and use the original executables:
 
 ```bash
@@ -183,7 +199,7 @@ NEMOCLAW_HCL_RUN="$run" NEMOCLAW_HCL_DOCUMENT="$run/case.yaml" \
 ## Spark and Fabric
 
 The `docker-openclaw-vllm-shared` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
-Spark hardware has no CI runner yet.
+Spark's manual Colossus case is described [above](#dgx-station-and-spark-on-colossus); host and runner qualification remain tracked in [#13934](https://github.com/NVIDIA/NemoClaw/issues/13934).
 
 The SDK's `runtime_compile::an_image_pin_or_gateway_port_change_reaches_only_replaceable_processes` test owns what changing only a model's image pin reaches: its container and image, not its storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](integration-tests.md#runtime-boundaries) and [generic models](#generic-models).
