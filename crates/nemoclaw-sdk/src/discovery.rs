@@ -23,6 +23,9 @@ pub enum DiscoveryQuery {
     Gateway(GatewayRequest),
     /// Whether a credential reference resolves locally; never its value.
     Credential(CredentialRequest),
+    /// The agent images an engine holds, which onboarding offers for a
+    /// sandbox image; a plan never lists them.
+    AgentImages(AgentImagesRequest),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +56,11 @@ pub struct GatewayRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CredentialRequest {
     pub reference: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentImagesRequest {
+    pub engine: String,
 }
 
 /// The reads a plan makes of the target for `document`, in the order it names
@@ -128,6 +136,7 @@ pub enum DiscoveryObservation {
     Inference(crate::inference_discovery::EndpointObservation),
     Gateway(GatewayObservation),
     Credential(crate::inference_discovery::CredentialObservation),
+    AgentImages(AgentImagesObservation),
 }
 
 impl DiscoveryObservation {
@@ -139,6 +148,7 @@ impl DiscoveryObservation {
             Self::Inference(value) => value.status,
             Self::Gateway(value) => value.status,
             Self::Credential(value) => value.status,
+            Self::AgentImages(value) => value.status,
         }
     }
 }
@@ -183,6 +193,7 @@ query_kinds! {
     Inference(EndpointRequest) => EndpointObservation,
     Gateway(GatewayRequest) => GatewayObservation,
     Credential(CredentialRequest) => CredentialObservation,
+    AgentImages(AgentImagesRequest) => AgentImagesObservation,
 }
 
 /// Any kind of read, answered by any kind of observation.
@@ -339,7 +350,7 @@ impl EngineObservation {
     }
 }
 
-pub use nemoclaw_fabric::FabricObservation;
+pub use nemoclaw_fabric::{AgentImage, AgentImagesObservation, FabricObservation};
 
 /// Compatibility of a managed inference image with the compiled runtime contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

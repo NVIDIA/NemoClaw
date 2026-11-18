@@ -5,7 +5,9 @@ use super::{
     app::JourneyWizard,
     labels::{label, terminal_text},
     logo::BrandImage,
-    terminal::{ask_target, credential_probe, local_engine_probe, model_catalog_probe},
+    terminal::{
+        agent_images_probe, ask_target, credential_probe, local_engine_probe, model_catalog_probe,
+    },
 };
 use crate::{Source, load_journey};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -18,8 +20,9 @@ use nemoclaw_sdk::{
     CancellationToken, Error,
     config::{ComputeDriver, Document},
     discovery::{
-        CredentialRequest, DiscoveryObservation, DiscoveryQuery, DiscoveryRequest,
-        EngineObservation, ObservationStatus,
+        AgentImage, AgentImagesObservation, AgentImagesRequest, CredentialRequest,
+        DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation,
+        ObservationStatus,
     },
     inference_discovery::{CredentialObservation, EndpointObservation},
 };
@@ -1442,6 +1445,114 @@ async fn unreachable(
         observed.record(query, observation);
     }
     Ok(observed)
+}
+
+const DOCKER_ENGINE: &str = "unix:///home/me/.colima/docker.sock";
+const HERMES_IMAGE: &str =
+    "nc-fabric@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const OPENCLAW_IMAGE: &str =
+    "nc-fabric@sha256:2222222222222222222222222222222222222222222222222222222222222222";
+
+/// The default journey for `harness` on a machine whose one Docker engine
+/// answered, at the sandbox image question.
+fn at_the_image_question(harness: &str) -> JourneyWizard {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let candidate = DiscoveryRequest {
+        engine: DOCKER_ENGINE.into(),
+        compute_driver: ComputeDriver::Docker,
+    };
+    let mut wizard = JourneyWizard::new(capabilities, state)
+        .with_local_engine_candidates(vec![candidate.clone()]);
+    wizard.remember(DiscoveryObservations::new().with(
+        DiscoveryQuery::Engine(candidate),
+        DiscoveryObservation::Engine(engine_observation(ObservationStatus::Available)),
+    ));
+    wizard.started = true;
+    wizard.submit(Some(serde_json::json!(harness))).unwrap();
+    for _ in 0..12 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.id().ends_with("/image/ref"))
+        {
+            return wizard;
+        }
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    }
+    panic!("the journey did not reach the image question");
+}
+
+/// The engine holds one agent image per `(reference, adapter)`.
+fn agent_images(images: &[(&str, &str)]) -> DiscoveryObservation {
+    DiscoveryObservation::AgentImages(AgentImagesObservation {
+        status: ObservationStatus::Available,
+        reason: None,
+        images: images
+            .iter()
+            .map(|(reference, adapter)| AgentImage {
+                references: vec![(*reference).into()],
+                adapters: vec![(*adapter).into()],
+            })
+            .collect(),
+    })
+}
+
+#[test]
+fn the_image_question_suggests_the_local_image_that_installs_the_chosen_harness() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).expect("the image question reads the engine's images");
+    assert_eq!(
+        query,
+        DiscoveryQuery::AgentImages(AgentImagesRequest {
+            engine: DOCKER_ENGINE.into()
+        })
+    );
+    wizard.record(
+        query,
+        agent_images(&[
+            (OPENCLAW_IMAGE, "nvidia.fabric.openclaw"),
+            (HERMES_IMAGE, "nvidia.fabric.hermes"),
+        ]),
+    );
+    assert_eq!(
+        agent_images_probe(&wizard),
+        None,
+        "the images are read once"
+    );
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(
+        question.suggestion(),
+        Some(&serde_json::json!(HERMES_IMAGE))
+    );
+    assert!(
+        !question
+            .choices()
+            .contains(&serde_json::json!(OPENCLAW_IMAGE)),
+        "an image without the harness is offered: {:?}",
+        question.choices()
+    );
+}
+
+#[test]
+fn without_a_local_image_for_the_harness_the_image_question_says_how_to_build_one() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(
+        query,
+        agent_images(&[(OPENCLAW_IMAGE, "nvidia.fabric.openclaw")]),
+    );
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.suggestion(), None);
+    assert!(question.choices().is_empty(), "{:?}", question.choices());
+    let note = question
+        .note()
+        .expect("the question says why it suggests no image");
+    assert!(
+        note.contains("https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images"),
+        "{note}"
+    );
 }
 
 /// Ask the target without a terminal: nobody types during the read.

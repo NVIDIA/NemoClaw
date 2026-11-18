@@ -456,6 +456,23 @@ pub struct FabricObservation {
     pub compatibility: Option<CompatibilityReport>,
 }
 
+/// The agent images an engine holds: the images whose catalog label installs
+/// a Fabric runtime and that the engine records by digest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentImagesObservation {
+    pub status: nemoclaw_backend::ObservationStatus,
+    pub reason: Option<String>,
+    pub images: Vec<AgentImage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentImage {
+    /// The image's `NAME@sha256:DIGEST` references, as its engine records them.
+    pub references: Vec<String>,
+    /// The IDs of the Fabric adapters whose runtime the image installs.
+    pub adapters: Vec<String>,
+}
+
 impl FabricObservation {
     /// A read that could not be made, recorded as unknown rather than absent.
     pub fn unknown(reason: &str) -> Self {

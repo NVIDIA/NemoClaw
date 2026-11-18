@@ -274,9 +274,24 @@ pub(super) fn local_engine_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> 
     wizard.observations().missing(&queries)
 }
 
+/// The agent images on the sandbox image engine, once the journey is at a
+/// sandbox image question and they have not been read.
+pub(super) fn agent_images_probe(wizard: &JourneyWizard) -> Option<DiscoveryQuery> {
+    if !wizard.question().is_ok_and(|question| {
+        question.is_some_and(|question| {
+            question.id().starts_with("/spec/sandboxes/") && question.id().ends_with("/image/ref")
+        })
+    }) {
+        return None;
+    }
+    let query = DiscoveryQuery::AgentImages(wizard.state().agent_images_request()?);
+    (!wizard.observations().contains(&query)).then_some(query)
+}
+
 /// Every read the journey needs from the target now and has not made.
 fn target_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> {
     let mut queries = local_engine_probe(wizard);
+    queries.extend(agent_images_probe(wizard));
     queries.extend(model_catalog_probe(wizard));
     queries.extend(credential_probe(wizard));
     queries

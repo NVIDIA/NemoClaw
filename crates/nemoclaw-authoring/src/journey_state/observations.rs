@@ -66,6 +66,7 @@ impl JourneyState {
                 .reasons
                 .insert(0, reason);
         }
+        self.offer_agent_images(&mut resolution.questions, observations);
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
         };
@@ -120,6 +121,65 @@ impl JourneyState {
             }
         }
         Ok(resolution)
+    }
+
+    /// Offer each sandbox image question the local agent images that install
+    /// its harness, by digest, suggesting the first; with none, say how to
+    /// build one. Only an image the engine listed is offered.
+    fn offer_agent_images(
+        &self,
+        questions: &mut [JourneyQuestion],
+        observations: &DiscoveryObservations,
+    ) {
+        let Some(observed) = self
+            .agent_images_request()
+            .and_then(|request| observations.get(&request))
+            .filter(|observed| observed.status == ObservationStatus::Available)
+        else {
+            return;
+        };
+        for question in questions.iter_mut() {
+            let Some(sandbox) = question
+                .id
+                .strip_prefix("/spec/sandboxes/")
+                .and_then(|rest| rest.strip_suffix("/image/ref"))
+            else {
+                continue;
+            };
+            let Some(harness) = self
+                .authored
+                .values
+                .pointer(&format!("/spec/sandboxes/{sandbox}/harness/kind"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let fitting: Vec<Value> = observed
+                .images
+                .iter()
+                .filter(|image| image.adapters.iter().any(|adapter| adapter == harness))
+                .flat_map(|image| image.references.iter().cloned().map(Value::String))
+                .collect();
+            if fitting.is_empty() {
+                question.note = Some(format!(
+                    "No image on this engine installs {harness}. Build one as described at {BUILD_AGENT_IMAGES}, then enter its digest reference."
+                ));
+                continue;
+            }
+            if let Some(suggestion) = question.suggestion.clone()
+                && !question.choices.contains(&suggestion)
+            {
+                question.choices.push(suggestion);
+            }
+            for reference in fitting {
+                if !question.choices.contains(&reference) {
+                    question.choices.push(reference);
+                }
+            }
+            if question.suggestion.is_none() {
+                question.suggestion = question.choices.first().cloned();
+            }
+        }
     }
 
     /// The chosen runtime of a managed gateway without an authored engine, when
@@ -255,6 +315,10 @@ impl JourneyState {
         Ok(())
     }
 }
+
+/// Where the documentation says how to build an agent image.
+const BUILD_AGENT_IMAGES: &str =
+    "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images";
 
 /// Only a reachable server's explicit authentication requirement establishes
 /// this condition. A denied key or unreachable catalog remains a real failure.

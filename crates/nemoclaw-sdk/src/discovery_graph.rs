@@ -62,6 +62,7 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, &'static str, Value),
                 "a plan reads the gateway, credentials, and model catalogs outside its discovery reads"
             )
         }
+        DiscoveryQuery::AgentImages(_) => unreachable!("a plan never lists agent images"),
     })
 }
 
@@ -219,6 +220,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
             DiscoveryQuery::Credential(_) => {
                 unreachable!("a plan reads credentials separately from its provider reads")
             }
+            DiscoveryQuery::AgentImages(_) => unreachable!("a plan never lists agent images"),
         }
     }
     graph["output"]["discovery"] = json!({ "value": observations });

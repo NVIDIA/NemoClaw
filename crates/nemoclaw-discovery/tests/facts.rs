@@ -3,8 +3,8 @@
 #![cfg(unix)]
 use crate::transport;
 use nemoclaw_discovery::{
-    Direct, observe_engine, observe_engine_facts, observe_fabric, observe_gateway_prerequisites,
-    observe_hardware,
+    Direct, observe_agent_images, observe_engine, observe_engine_facts, observe_fabric,
+    observe_gateway_prerequisites, observe_hardware,
 };
 use nemoclaw_sdk::{
     config::ComputeDriver, discovery::DiscoveryRequest, discovery::ObservationStatus,
@@ -157,6 +157,79 @@ async fn image_capabilities_come_from_selected_image_and_missing_metadata_stays_
     let absent = observe_fabric(&Direct, &fixture.endpoint, "old:image").await;
     assert_eq!(absent.status, ObservationStatus::Unknown);
     assert!(absent.catalog.is_none());
+}
+
+/// An agent image is a labeled image that installs a Fabric runtime and that
+/// the engine records by digest; it offers the adapters it installs. The
+/// newest comes first.
+#[tokio::test]
+async fn agent_images_are_digested_images_whose_catalog_installs_a_runtime_newest_first() {
+    use nemoclaw_sdk::{
+        discovery::AgentImage,
+        fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL},
+    };
+    let installed = |adapter: &str| {
+        let mut catalog = FabricCatalog::bundled().for_adapter(adapter);
+        let mut runtime: serde_json::Value =
+            serde_json::from_str(include_str!("../../../image/fabric/runtime.json")).unwrap();
+        runtime["binaries"] = json!({adapter: ["/usr/local/bin/python3.99"]});
+        catalog.runtime = Some(serde_json::from_value(runtime).unwrap());
+        serde_json::to_string(&catalog).unwrap()
+    };
+    let older = format!("nc-old@sha256:{}", "4".repeat(64));
+    let hermes = format!("nc-fabric@sha256:{}", "1".repeat(64));
+    let mut images = json!([
+        {"Id":"sha256:older", "RepoTags":["nc-old:hermes"], "RepoDigests":[older], "Created":1,
+         "Labels":{IMAGE_CATALOG_LABEL: installed("nvidia.fabric.hermes")}},
+        {"Id":"sha256:hermes", "RepoTags":["nc-fabric:hermes"], "RepoDigests":[hermes], "Created":2,
+         "Labels":{IMAGE_CATALOG_LABEL: installed("nvidia.fabric.hermes")}},
+        // No digest to pin, as in Docker's classic image store.
+        {"Id":"sha256:classic", "RepoTags":["nc-fabric:openclaw"], "RepoDigests":["<none>@<none>"],
+         "Labels":{IMAGE_CATALOG_LABEL: installed("nvidia.fabric.openclaw")}},
+        // Descriptors without an installed runtime.
+        {"Id":"sha256:bundled", "RepoTags":[], "RepoDigests":[format!("bundled@sha256:{}", "2".repeat(64))],
+         "Labels":{IMAGE_CATALOG_LABEL: serde_json::to_string(&FabricCatalog::bundled()).unwrap()}},
+        {"Id":"sha256:other", "RepoTags":["other:latest"], "RepoDigests":[format!("other@sha256:{}", "3".repeat(64))],
+         "Labels":{}},
+    ]);
+    // The fields every engine reports for an image.
+    for image in images.as_array_mut().unwrap() {
+        for (field, value) in [
+            ("ParentId", json!("")),
+            ("Created", json!(0)),
+            ("Size", json!(1)),
+            ("SharedSize", json!(-1)),
+            ("Containers", json!(-1)),
+        ] {
+            image.as_object_mut().unwrap().entry(field).or_insert(value);
+        }
+    }
+    let fixture = transport::Fixture::start(move |request| {
+        assert_eq!(request.method, "GET");
+        assert!(request.path.starts_with("/images/json"), "{}", request.path);
+        Some((200, serde_json::to_vec(&images).unwrap()))
+    })
+    .await;
+    let observed = observe_agent_images(&Direct, &fixture.endpoint).await;
+    assert_eq!(
+        observed.status,
+        ObservationStatus::Available,
+        "{:?}",
+        observed.reason
+    );
+    assert_eq!(
+        observed.images,
+        [
+            AgentImage {
+                references: vec![hermes],
+                adapters: vec!["nvidia.fabric.hermes".into()],
+            },
+            AgentImage {
+                references: vec![older],
+                adapters: vec!["nvidia.fabric.hermes".into()],
+            },
+        ]
+    );
 }
 
 #[tokio::test]

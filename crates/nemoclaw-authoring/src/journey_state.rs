@@ -6,8 +6,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
-use nemoclaw_sdk::discovery::{DiscoveryObservations, DiscoveryRequest, ObservationStatus};
+use nemoclaw_sdk::config::{ComputeDriver, Document, InferenceApi, InferenceProviderKind};
+use nemoclaw_sdk::discovery::{
+    AgentImagesRequest, DiscoveryObservations, DiscoveryRequest, ObservationStatus,
+};
 use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
 use nemoclaw_sdk::json_schema::schema_accepts;
 use serde_json::{Map, Value};
@@ -321,6 +323,21 @@ impl JourneyState {
                 .cloned()
                 .collect(),
         );
+    }
+
+    /// The read of the agent images on the engine a Docker or Podman gateway
+    /// inspects sandbox images on, once that engine is authored. Its answer
+    /// suggests each sandbox's image.
+    pub fn agent_images_request(&self) -> Option<AgentImagesRequest> {
+        let values = &self.authored.values;
+        let engine = values.pointer(GATEWAY_ENGINE_PATH)?.as_str()?;
+        let kubernetes = values
+            .pointer(RUNTIME_PROVIDER)
+            .and_then(|runtime| serde_json::from_value::<ComputeDriver>(runtime.clone()).ok())
+            .is_some_and(ComputeDriver::is_kubernetes);
+        (!engine.is_empty() && !kubernetes).then(|| AgentImagesRequest {
+            engine: engine.into(),
+        })
     }
 
     pub fn values(&self) -> &Value {
