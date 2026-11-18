@@ -21,6 +21,9 @@ spec:
         env: NVIDIA_API_KEY
   sandboxes:
     assistant:
+      image:
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: nvidia.fabric.openclaw
       agent:

@@ -311,6 +311,12 @@ fn openshell_rejects_well_formed_but_invalid_middleware_bindings() {
             }),
         ),
         ("duplicate order", duplicate_order),
+        (
+            "selector with a port",
+            guard_changed(|binding| {
+                binding["endpoints"] = json!({"include": ["docs.example.com:443"]});
+            }),
+        ),
     ] {
         assert!(
             validator.is_valid(&value),

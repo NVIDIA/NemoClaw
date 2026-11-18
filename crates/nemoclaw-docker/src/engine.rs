@@ -6,8 +6,12 @@
 #[path = "engine_tests.rs"]
 mod tests;
 use bollard::{
-    models::{ContainerInspectResponse, ImageInspect, NetworkInspect, SystemInfo, Volume},
-    query_parameters::{DownloadFromContainerOptions, UploadToContainerOptions},
+    models::{
+        ContainerInspectResponse, ImageInspect, ImageSummary, NetworkInspect, SystemInfo, Volume,
+    },
+    query_parameters::{
+        DownloadFromContainerOptions, ListImagesOptionsBuilder, UploadToContainerOptions,
+    },
 };
 use futures_util::StreamExt;
 use nemoclaw_backend::{Error, ObservationError};
@@ -83,6 +87,16 @@ impl Engine {
 
     pub async fn image(&self, name: &str) -> Result<Option<ImageInspect>, Error> {
         optional(self.api.inspect_image(name).await)
+    }
+
+    /// The images this engine holds that carry `label`.
+    pub async fn images_labeled(&self, label: &str) -> Result<Vec<ImageSummary>, Error> {
+        let filters = std::collections::HashMap::from([("label", vec![label])]);
+        let options = ListImagesOptionsBuilder::new().filters(&filters).build();
+        self.api
+            .list_images(Some(options))
+            .await
+            .map_err(|error| remote(&error))
     }
 
     /// Read Podman's native API, which reports what its Docker-compatible API omits.

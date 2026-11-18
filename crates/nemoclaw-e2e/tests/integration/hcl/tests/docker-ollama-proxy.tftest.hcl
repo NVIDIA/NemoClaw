@@ -79,7 +79,7 @@ run "verify" {
         data.ollama_proxy_runtime.ollama_proxy_ollama-auth,
         ollama_proxy_credential_storage.ollama-auth,
         docker_container.ollama_proxy_ollama-auth,
-        openshell_inference.inference_local-5834fdcc94534d6506776906,
+        openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e,
         fabric_agent.assistant,
       ] : strcontains(jsonencode(value), module.fixtures.key)
     ])

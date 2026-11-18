@@ -30,6 +30,10 @@ Agents and interfaces:
 - Apply prints the command that opens Hermes's terminal UI for a Hermes agent that enables Fabric's `terminal` interface, which Fabric marks experimental.
   See [Hermes's terminal UI](../agents-inference/interfaces.md#hermess-terminal-ui).
 
+Onboarding:
+
+- At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
+
 Sandbox policy:
 
 - `spec.gateway.policyAuthority.apf` lets NVIDIA Agent Policy Fabric (APF) author each sandbox's policy and serve the inference, web search, and API profiles, and `registration: managed` has NemoClaw register APF with a managed Docker gateway.
@@ -51,7 +55,8 @@ Kubernetes and OpenShift:
 
 Examples and builds:
 
-- Pinned components: OpenShell 0.1.8, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
+- A staged release attaches the CLI bundles that CI built and checked at its tag, one archive each for Linux ARM64 and AMD64, macOS ARM64, and Windows AMD64, with their SHA-256 checksums in `SHA256SUMS`.
+- Pinned components: OpenShell 0.1.9, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
 - OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
 - [Building from source](../build-deploy/build.md) uses Rust 1.100.0, as do the Rust stages of the agent, supervisor, and Ollama proxy images.
 - The vLLM runtime image builds on vLLM 0.34.0; rebuild it to use it.
@@ -64,6 +69,17 @@ OpenShell 0.1.8:
 - The OpenShell CLI renews a token it got through client credentials while `OPENSHELL_OIDC_CLIENT_SECRET` is set.
   See [reaching the gateway from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli).
 - The gateway no longer keeps memory for deleted sandboxes.
+
+OpenShell 0.1.9:
+
+- On a managed Kubernetes gateway, the CA in `caConfigMap` verifies only the OIDC issuer's discovery and signing keys, alongside the gateway's own trusted CAs; before, OpenShell's chart set it as the gateway's process-wide `SSL_CERT_FILE`.
+  See [authenticating through an existing OIDC issuer](../build-deploy/kubernetes.md#authenticate-through-an-existing-oidc-issuer).
+- Stopping a sandbox no longer ends in `SIGKILL`: its supervisor finishes shutting down within 8 seconds, and Docker waits 10.
+- A long-running sandbox no longer exits when its supervisor loses its connection a second time.
+- On Kubernetes, a sandbox that times out because its pod can't be scheduled reports the scheduler's reason.
+- Supervisor middleware services can use OpenShell's streaming HTTP hooks, which they opt into with the `openshell.supervisor-middleware.http-hooks` capability.
+  The legacy `EvaluateHttpRequest` and `HttpResponsePreReturn` hooks still work but are deprecated, and OpenShell 0.2.0 removes them; see OpenShell's [supported operations](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/extensibility/supervisor-middleware/operations.mdx#http).
+- The gateway's OCSF events report a denied write as Create, Update, or Delete rather than Other, so select denials by `class_uid: 6003` and `status_id: 2` rather than `type_uid: 600399`.
 
 ### Changes in v0.1.0-rc10
 
@@ -205,10 +221,16 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
 
 - In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
   Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
+- Every sandbox must set `image.ref` to an agent image pinned by digest, on Docker and Podman as on Kubernetes.
+  The SDK no longer supplies a default agent image, and the parser rejects an omitted `image`, `image: {}`, and an empty `ref`; see [build agent images](../build-deploy/build.md#build-agent-images).
+  In the Rust SDK, `config::DEFAULT_AGENT_IMAGE` is removed.
 - With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
   A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
 - With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
   An endpoint host written as an IPv4-mapped IPv6 address, such as `::ffff:203.0.113.7`, no longer matches; write the IPv4 address.
+- With OpenShell 0.1.9, a `network_middlewares` endpoint selector that names a port, such as `api.example.com:443`, fails plan with `explicit sandbox policy failed OpenShell validation`; remove the port.
+  Such a selector never matched any traffic.
+- With OpenShell 0.1.9, a policy endpoint whose host is a DNS glob no longer admits a request to a private IP address written as a literal, such as `10.0.0.5`; add an endpoint for that address or list it in the endpoint's `allowed_ips`.
 - With Fabric at NVIDIA/NeMo-Fabric `main` `135147a0`, an OpenClaw agent's `skills.bundled` also selects the skills that OpenClaw's own extensions ship, such as `canvas`; an extension skill that the selection leaves out no longer loads.
   An agent doesn't start when `nvidia.fabric.nooa` has no `workflow.target_id`, or when the Deep Agents `local_shell` backend has neither `tools.enabled` nor `execute` in `tools.blocked`.
 - The bundle carries Docker provider 4.7.0, so hand-written HCL must require `registry.opentofu.org/kreuzwerker/docker` version `4.7.0`, as the [HCL examples](../../examples/hcl/travel/main.tf) do.

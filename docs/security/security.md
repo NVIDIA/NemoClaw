@@ -60,7 +60,7 @@ To rotate any of these credentials, follow the [rotation runbook](credential-rot
 For a corporate CA, see [Trust a Corporate Certificate Authority](#trust-a-corporate-certificate-authority).
 
 Keep credential values out of committed or shared YAML, shell arguments, shared URLs, and published diagnostics.
-Generic application containers currently have no protected credential delivery; their temporary literal-environment approach exposes values in configuration and state.
+Generic application containers have no protected credential delivery: their environment values are literal and appear in configuration and state.
 Use credential references where the selected provider supports them, rather than copying that plaintext approach into gateway or inference settings.
 The example authoring TUI saves credential references and never resolves their values.
 Authoring and lifecycle operations are separate commands; accepting an authored document does not authorize apply.
@@ -109,7 +109,7 @@ Each layer that makes outbound TLS connections has its own trust store:
 | The machine running NemoClaw: catalog reads during onboarding, and OpenTofu's providers | The system trust store, or `SSL_CERT_FILE`; see [custom CA trust](../agents-inference/inference.md#trust-a-custom-certificate-authority) |
 | The engine pulling images | The Docker or Podman daemon's own registry trust, configured on the engine host |
 | The OIDC issuer of a managed Kubernetes gateway | `caConfigMap` in the [OIDC profile](../build-deploy/kubernetes.md) |
-| OpenShell's gateway and sandbox egress | OpenShell's images' trust store. For sandbox egress, OpenShell also trusts the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas); no managed gateway can receive it ([current limits](../resources/limits.md#security)). A CA in the bundle authenticates every policy-permitted destination whose certificate chains to it, so include only CAs that sandboxes should trust |
+| OpenShell's gateway and sandbox egress | OpenShell's images' trust store. For sandbox egress, OpenShell also trusts the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas); no managed gateway can receive it ([current limits](../resources/limits.md#security)). A CA in the bundle authenticates every policy-permitted destination whose certificate chains to it, so include only CAs that sandboxes should trust |
 | A corporate proxy that OpenShell chains egress through | OpenShell's `proxy_ca_bundle` driver setting, a file on the gateway; no managed gateway can receive it ([current limits](../resources/limits.md#security)) |
 | Model downloads inside managed vLLM and Ollama | The runtime image's trust store; not configurable |
 | Image builds (`docker buildx bake`) | Not supported behind TLS-intercepting proxies; build on a network that doesn't intercept TLS |

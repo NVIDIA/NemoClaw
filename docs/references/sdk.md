@@ -121,7 +121,7 @@ A new identifier needs no SDK release or frontend allowlist.
 Parser acceptance does not establish installation, compatibility or readiness.
 
 Supply an explicit immutable sandbox image containing the generic launcher and selected Fabric adapter.
-The omitted-image default is a generic image pin, not a per-adapter image lookup.
+Every sandbox requires `image.ref`; the SDK has no default image and no per-adapter image lookup.
 Optional `harness.settings` carries a JSON object, including nested values, to Fabric's `harness.settings` unchanged.
 The agent's and the harness's [Fabric sections](../agents-inference/agents.md#configure-the-agent-and-the-harness) reach Fabric unchanged, but cannot replace deployment-owned identities, models, workspace paths or artifact paths.
 Model `overrides.settings` likewise passes native settings through without interpretation.
