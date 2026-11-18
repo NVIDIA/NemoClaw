@@ -36,6 +36,17 @@ fn a_vendor_preset_decides_the_api_and_a_compatible_endpoint_still_asks() {
     let capabilities = Capabilities::available();
     for preset in nemoclaw_authoring::ProviderPreset::ALL {
         let mut state = preset_journey(JourneyDefinition::new("api", base(&example())));
+        // OpenClaw is not offered an anthropic provider, so Claude's harness
+        // takes the Anthropic presets.
+        if matches!(
+            preset,
+            nemoclaw_authoring::ProviderPreset::Anthropic
+                | nemoclaw_authoring::ProviderPreset::AnthropicCompatible
+        ) {
+            state
+                .answer(&capabilities, HARNESS, Some(json!("nvidia.fabric.claude")))
+                .unwrap();
+        }
         state
             .answer(&capabilities, "inference:preset", Some(json!(preset.id())))
             .unwrap();

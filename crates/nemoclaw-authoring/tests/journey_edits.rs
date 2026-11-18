@@ -180,10 +180,12 @@ fn accepted_and_omitted_native_settings_can_be_revisited() {
 #[test]
 fn exact_and_scope_api_guidance_use_the_same_selected_provider_policy() {
     let capabilities = Capabilities::available();
-    let values: Value = serde_saphyr::from_slice(include_bytes!(
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
         "../../../examples/spark/local-and-hosted.yaml"
     ))
     .unwrap();
+    // OpenClaw is not offered an anthropic provider.
+    values["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("nvidia.fabric.hermes");
     let api = "/spec/inferenceProviders/hosted/api";
     for scopes in [
         vec![JourneyScope::RouteModels],

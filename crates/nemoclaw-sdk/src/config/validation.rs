@@ -14,6 +14,9 @@ pub(crate) fn require(valid: bool, reason: &'static str) -> Result<(), ConfigErr
 
 pub use nemoclaw_backend::{validate_endpoint, validate_endpoint_url};
 
+/// Fabric's OpenClaw harness, which sends OpenAI chat completions to every route.
+pub const OPENCLAW_HARNESS: &str = "nvidia.fabric.openclaw";
+
 pub fn is_fabric_harness(harness: &str) -> bool {
     harness.parse::<super::HarnessKind>().is_ok()
 }
@@ -107,9 +110,22 @@ impl Document {
             let agent = &sandbox.agent;
 
             let inference = self.scoped_inference(sandbox)?;
+            let harness = self.sandbox_harness(sandbox)?;
             for route in &inference.inference.routes {
                 let selected = self.route_provider(route, &inference)?;
                 let provider = selected.definition;
+                // Fabric's OpenClaw adapter sends OpenAI chat completions with the
+                // key in `Authorization`, whatever the provider. OpenShell
+                // substitutes an `anthropic` provider's key only in `x-api-key`
+                // and answers any other placement with 403.
+                if harness.kind.as_str() == OPENCLAW_HARNESS
+                    && provider.provider == InferenceProviderKind::Anthropic
+                {
+                    return Err(ConfigError(format!(
+                        "{}: the {OPENCLAW_HARNESS} harness sends OpenAI chat completions with the key in Authorization, and OpenShell refuses that for an anthropic provider; route to an endpoint that accepts them with provider: openai",
+                        inference.route_path(route)
+                    )));
+                }
                 if agent.auth.is_some() {
                     require(
                         crate::services::provider_authenticated(self, provider)?,

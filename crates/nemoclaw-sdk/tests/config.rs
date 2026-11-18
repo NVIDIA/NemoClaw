@@ -549,6 +549,40 @@ fn harness_selection_does_not_determine_service_ownership() {
     );
 }
 
+/// OpenShell 0.1.8 substitutes an `anthropic` provider's key only in
+/// `x-api-key`, and Fabric's OpenClaw adapter sends OpenAI chat completions
+/// with the key in `Authorization`, so OpenShell refuses every request.
+#[test]
+fn an_openclaw_route_to_an_anthropic_provider_is_refused_at_plan() {
+    let mut document =
+        Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
+    document.validate().unwrap();
+    let provider = document.spec.inference_providers.get_mut("local").unwrap();
+    provider.provider = InferenceProviderKind::Anthropic;
+    provider.api = Some(nemoclaw_sdk::config::InferenceApi::AnthropicMessages);
+
+    let error = document.validate().unwrap_err().to_string();
+    for part in [
+        "spec.sandboxes[assistant].agent.inference.routes[primary]",
+        "nvidia.fabric.openclaw",
+        "provider: openai",
+    ] {
+        assert!(error.contains(part), "{part}: {error}");
+    }
+
+    // A harness that sends the key where the provider places it stays valid.
+    let harness = document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .harness
+        .as_mut()
+        .unwrap();
+    harness.kind = "nvidia.fabric.claude".parse().unwrap();
+    document.validate().unwrap();
+}
+
 #[test]
 fn external_gateways_reject_installation_fields_even_when_empty() {
     let input = include_str!("fixtures/config/local.yaml").replace(

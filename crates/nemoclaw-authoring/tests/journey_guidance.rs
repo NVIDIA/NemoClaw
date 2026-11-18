@@ -103,6 +103,16 @@ fn every_advertised_harness_keeps_provider_protocol_choices() {
     let capabilities = Capabilities::available();
     for harness in capabilities.harnesses() {
         for preset in ProviderPreset::ALL {
+            // OpenClaw's key placement is refused for an anthropic provider, so
+            // it is not offered those presets.
+            if harness.as_str() == "nvidia.fabric.openclaw"
+                && matches!(
+                    preset,
+                    ProviderPreset::Anthropic | ProviderPreset::AnthropicCompatible
+                )
+            {
+                continue;
+            }
             let mut state = journey(supplied(), &capabilities);
             state
                 .answer(

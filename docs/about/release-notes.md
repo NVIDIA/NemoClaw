@@ -205,6 +205,10 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
 
 - In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
   Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
+- With OpenShell 0.1.8, which substitutes a provider's key only where the provider places it, plan rejects an OpenClaw route to an `anthropic` inference provider.
+  OpenClaw sends OpenAI chat completions with the key in `Authorization`, and an `anthropic` provider places its key in `x-api-key`, so OpenShell answered every model request with `403` `credential_placement_mismatch`.
+  Set `provider: openai` for an endpoint that accepts OpenAI chat completions, as the [multiple-provider example](../../examples/multiple-providers.yaml) does.
+  Onboarding no longer offers the Anthropic presets for OpenClaw.
 - With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
   A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
 - With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.

@@ -158,6 +158,10 @@ Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with 
 The provider's key under `inferenceProviders` is the local name routes reference; it does not select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
 
+OpenClaw sends OpenAI chat completions with the key in `Authorization`, whatever the provider.
+OpenShell substitutes an `anthropic` provider's key only in `x-api-key` and answers any other placement with `403` `credential_placement_mismatch`, so planning rejects an OpenClaw route to an `anthropic` provider.
+For an endpoint that accepts OpenAI chat completions, use `provider: openai`.
+
 ### Prepare an External Endpoint
 
 Before writing its provider declaration, obtain the base URL, API, exact model ID, required credential, and model limits from the endpoint operator.
@@ -592,6 +596,7 @@ The [offline harness fixture](../../internal-docs/contributing/integration-tests
 ## Onboarding Model Catalogs
 
 Guided onboarding offers curated models for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research.
+Onboarding doesn't offer the Anthropic and Anthropic-compatible presets for an OpenClaw agent, for the reason given in [choose the request API](#choose-the-request-api).
 The [provider presets](../../crates/nemoclaw-authoring/src/provider_presets.rs) own these reviewed lists; they are available without credentials or endpoint discovery.
 The selected model is checked for catalog membership.
 An unlisted identifier remains a custom model and produces an informational notice rather than a deployment restriction.

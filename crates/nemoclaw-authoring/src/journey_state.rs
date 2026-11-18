@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
+use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind, OPENCLAW_HARNESS};
 use nemoclaw_sdk::discovery::{DiscoveryObservations, DiscoveryRequest, ObservationStatus};
 use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
 use nemoclaw_sdk::json_schema::schema_accepts;

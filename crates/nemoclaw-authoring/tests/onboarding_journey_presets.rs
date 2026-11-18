@@ -22,9 +22,30 @@ fn guided() -> nemoclaw_authoring::JourneyState {
         .unwrap()
 }
 
-fn choose_preset(preset: ProviderPreset) -> nemoclaw_authoring::JourneyState {
+/// A journey for `preset`. OpenClaw sends every route's key in `Authorization`,
+/// which OpenShell refuses for an anthropic provider, so the Anthropic presets
+/// are offered on Claude's harness instead.
+fn guided_for(preset: ProviderPreset) -> nemoclaw_authoring::JourneyState {
     let capabilities = Capabilities::available();
     let mut state = guided();
+    if matches!(
+        preset,
+        ProviderPreset::Anthropic | ProviderPreset::AnthropicCompatible
+    ) {
+        state
+            .answer(
+                &capabilities,
+                "/spec/sandboxes/assistant/harness/kind",
+                Some(json!("nvidia.fabric.claude")),
+            )
+            .unwrap();
+    }
+    state
+}
+
+fn choose_preset(preset: ProviderPreset) -> nemoclaw_authoring::JourneyState {
+    let capabilities = Capabilities::available();
+    let mut state = guided_for(preset);
     state
         .answer(&capabilities, "inference:preset", Some(json!(preset.id())))
         .unwrap();
@@ -291,14 +312,68 @@ fn the_journey_advertises_every_fabric_harness_and_curated_provider() {
             .map(|kind| json!(kind.as_str()))
             .collect::<Vec<_>>()
     );
+    // The base document's OpenClaw harness is not offered the Anthropic presets.
     let presets = resolution.question("inference:preset").unwrap();
     assert_eq!(
         presets.choices(),
         ProviderPreset::ALL
             .iter()
+            .filter(|preset| !is_anthropic(**preset))
             .map(|preset| json!(preset.id()))
             .collect::<Vec<_>>()
     );
+}
+
+fn is_anthropic(preset: ProviderPreset) -> bool {
+    matches!(
+        preset,
+        ProviderPreset::Anthropic | ProviderPreset::AnthropicCompatible
+    )
+}
+
+#[test]
+fn openclaw_is_not_offered_an_anthropic_preset_but_other_harnesses_are() {
+    let capabilities = Capabilities::available();
+    let mut state = guided();
+    let presets = |state: &nemoclaw_authoring::JourneyState| {
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("inference:preset")
+            .unwrap()
+            .choices()
+            .to_vec()
+    };
+    for preset in [
+        ProviderPreset::Anthropic,
+        ProviderPreset::AnthropicCompatible,
+    ] {
+        assert!(!presets(&state).contains(&json!(preset.id())));
+        assert!(
+            state
+                .answer(&capabilities, "inference:preset", Some(json!(preset.id())))
+                .is_err(),
+            "{} is refused for OpenClaw",
+            preset.id()
+        );
+    }
+    for harness in ["nvidia.fabric.claude", "nvidia.fabric.hermes"] {
+        state
+            .answer(
+                &capabilities,
+                "/spec/sandboxes/assistant/harness/kind",
+                Some(json!(harness)),
+            )
+            .unwrap();
+        assert_eq!(
+            presets(&state),
+            ProviderPreset::ALL
+                .iter()
+                .map(|preset| json!(preset.id()))
+                .collect::<Vec<_>>(),
+            "{harness}"
+        );
+    }
 }
 
 #[test]
@@ -306,7 +381,7 @@ fn every_curated_preset_and_protocol_roundtrips_through_the_sdk() {
     let capabilities = Capabilities::available();
     for preset in ProviderPreset::ALL {
         for api in preset.apis() {
-            let mut state = guided();
+            let mut state = guided_for(preset);
             state
                 .answer(&capabilities, "inference:preset", Some(json!(preset.id())))
                 .unwrap();

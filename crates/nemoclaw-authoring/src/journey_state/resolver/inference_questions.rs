@@ -95,8 +95,15 @@ impl QuestionResolver<'_> {
         }
 
         if policy.preset_pending() {
+            // OpenShell refuses the key OpenClaw sends to an anthropic provider,
+            // which plan rejects, so OpenClaw is not offered those presets.
+            let offered = |preset: &ProviderPreset| {
+                harness_kind(&self.authored.values) != Some(OPENCLAW_HARNESS)
+                    || preset.profile().kind != InferenceProviderKind::Anthropic
+            };
             let suggestion = self
                 .current_preset()
+                .filter(offered)
                 .map(|preset| Value::String(preset.id().into()));
             questions.push(JourneyQuestion {
                 target: QuestionTarget::InferencePreset {
@@ -117,6 +124,7 @@ impl QuestionResolver<'_> {
                 required: true,
                 choices: ProviderPreset::ALL
                     .into_iter()
+                    .filter(offered)
                     .map(|preset| Value::String(preset.id().into()))
                     .collect(),
                 suggestion,

@@ -20,7 +20,7 @@ fn generations() -> Generations {
     .into()
 }
 fn hosted(mut value: Value) -> Value {
-    value["spec"]["inferenceProviders"]["hosted"] = json!({"provider":"anthropic","api":"anthropic-messages","endpoint":"https://hosted.example/v1","credential":{"env":"HOSTED_KEY"}});
+    value["spec"]["inferenceProviders"]["hosted"] = json!({"provider":"openai","endpoint":"https://hosted.example/v1","credential":{"env":"HOSTED_KEY"}});
     let inference = &mut value["spec"]["sandboxes"]["assistant"]["agent"]["inference"];
     inference["default"] = json!("smart");
     inference["routes"]

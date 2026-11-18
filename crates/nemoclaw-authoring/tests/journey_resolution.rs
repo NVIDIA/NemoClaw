@@ -3121,9 +3121,12 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
 #[test]
 fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+    // OpenClaw is not offered an anthropic provider, so this journey runs on Claude's harness.
+    let mut values: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
+    values["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!("nvidia.fabric.claude");
+    let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let preset = "inference:preset";
     let api = "/spec/inferenceProviders/nvidia-prod/api";
     let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
@@ -3131,18 +3134,12 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
     let mut state = JourneyDefinition::new("preset", base)
         .ask([name, preset, api, model])
         .omit([
-            "adapter:nvidia.fabric.openclaw:/agent_id",
-            "adapter:nvidia.fabric.openclaw:/channel_config",
-            "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
-            "adapter:nvidia.fabric.openclaw:/interfaces",
-            "adapter:nvidia.fabric.openclaw:/openclaw_command",
-            "adapter:nvidia.fabric.openclaw:/port_range",
-            "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
-            "adapter:nvidia.fabric.openclaw:/shutdown_timeout_seconds",
-            "adapter:nvidia.fabric.openclaw:/startup_timeout_seconds",
-            "adapter:nvidia.fabric.openclaw:/agents",
-            "adapter:nvidia.fabric.openclaw:/plugins",
-            "adapter:nvidia.fabric.openclaw:/tools",
+            "adapter:nvidia.fabric.claude:/insecure_http_model_hosts",
+            "adapter:nvidia.fabric.claude:/max_budget_usd",
+            "adapter:nvidia.fabric.claude:/max_buffer_size",
+            "adapter:nvidia.fabric.claude:/permission_mode",
+            "adapter:nvidia.fabric.claude:/reasoning_effort",
+            "adapter:nvidia.fabric.claude:/setting_sources",
         ])
         .start(&capabilities)
         .unwrap();
