@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
+import { isDeepStrictEqual } from "node:util";
+import { createHash } from "node:crypto";
 import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/contract";
 import {
   providerContract,
@@ -9,7 +11,6 @@ import {
   resolveExportInferenceSelection,
   type NativeInferenceReceipt,
 } from "./live-export-inference-contract";
-import { isValidNemoClawPort } from "../../config/model";
 
 import { createProviders, type Provider } from "../openshell/providers";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../openshell/inference-route-cli";
@@ -37,12 +38,16 @@ import type {
 import { observeManagedVllmForExport } from "../../inference/serving/vllm-export-runtime";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { observeOllamaProxy } from "../../inference/ollama/proxy-observation";
-import type { normalizeInferenceSelection } from "../../inference/selection";
-import { resolveGatewayName } from "../../onboard/gateway-binding/identity";
+import { observeExternalComponentGatewayConfiguration } from "../../onboard/docker-driver-gateway-config";
+import { resolveGatewayPortFromName } from "../../onboard/gateway-binding/identity";
 import {
   managedGatewayStateRootOwnershipFailure,
   resolveGatewayStateDirForPort,
 } from "../../onboard/gateway/state-dir";
+import {
+  gatewayConfigurationForExternalComponent,
+  loadExternalComponentDeclaration,
+} from "../../onboard/external-component";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
@@ -57,20 +62,44 @@ function registryEvidence(entry: Readonly<SandboxEntry>): ObservedExportRegistry
   } as ObservedExportRegistry;
 }
 
-function resolveGatewayBinding(entry: Readonly<SandboxEntry>): { name: string; port: number } {
-  const port = entry.gatewayPort;
-  if (!isValidNemoClawPort(port)) {
-    throw new Error("The persisted gateway port is incomplete or invalid.");
-  }
-  const name = resolveGatewayName(port);
-  if (entry.gatewayName !== name) {
-    throw new Error("The persisted gateway name and port disagree.");
-  }
-  return { name, port };
+function externalComponentForGateway(
+  stateDir: string,
+  openShellDriver: SandboxEntry["openshellDriver"],
+): ObservedExportGateway["externalComponent"] {
+  const configured = observeExternalComponentGatewayConfiguration(stateDir, openShellDriver);
+  if (!configured) return null;
+  const registration = loadExternalComponentDeclaration();
+  registration?.revalidateBeforeActivation();
+  return {
+    componentId: configured.componentId,
+    schemaVersion: "interceptor" in configured ? 2 : 1,
+    registrationMatches:
+      registration !== null &&
+      isDeepStrictEqual(
+        configured,
+        gatewayConfigurationForExternalComponent(registration.declaration),
+      ),
+    evidenceDigest: createHash("sha256")
+      .update(
+        JSON.stringify({
+          configuration: configured,
+          declaration: registration?.declaration ?? null,
+        }),
+      )
+      .digest("hex"),
+  };
 }
 
 function gatewayFor(entry: Readonly<SandboxEntry>): ObservedExportGateway {
-  const { name, port } = resolveGatewayBinding(entry);
+  const port = entry.gatewayPort;
+  const name = entry.gatewayName;
+  if (
+    typeof port !== "number" ||
+    typeof name !== "string" ||
+    resolveGatewayPortFromName(name) !== port
+  ) {
+    throw new Error("The persisted gateway identity is incomplete, invalid, or inconsistent.");
+  }
   const configuredStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
   const stateDir = resolveGatewayStateDirForPort({
     configured: configuredStateDir,
@@ -87,6 +116,9 @@ function gatewayFor(entry: Readonly<SandboxEntry>): ObservedExportGateway {
     port,
     management: stateRootOwned ? "nemoclaw" : "unknown",
     stateRootOwned,
+    externalComponent: stateRootOwned
+      ? externalComponentForGateway(stateDir, entry.openshellDriver)
+      : null,
   };
 }
 
@@ -183,7 +215,7 @@ function endpointSourceFor(
 }
 
 async function readProviderEvidence(
-  normalized: ReturnType<typeof normalizeInferenceSelection>,
+  normalized: ReturnType<typeof resolveExportInferenceSelection>["normalized"],
   routeProvider: string,
   gatewayName: string,
   signal: AbortSignal,
@@ -247,22 +279,22 @@ async function resolveLiveInference(
 
 async function inferenceFor(
   entry: Readonly<SandboxEntry>,
+  gatewayName: string,
   beforeRead: (stage: ExportSnapshotReadStage) => void,
   signal: AbortSignal,
   sandbox: ObservedExportSandboxIdentity,
   managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportInference> {
   const { normalized, nativeReceipt } = resolveExportInferenceSelection(entry);
-  const gateway = resolveGatewayBinding(entry);
   if (nativeReceipt && !sandbox.providerNames.includes(nativeReceipt.providerName)) {
     throw new Error("The native provider is not attached to the sandbox.");
   }
-  const live = await resolveLiveInference(entry, gateway.name, nativeReceipt);
+  const live = await resolveLiveInference(entry, gatewayName, nativeReceipt);
   beforeRead("provider-metadata");
   const endpointEvidence = await readProviderEvidence(
     normalized,
     live.provider,
-    gateway.name,
+    gatewayName,
     signal,
     managedServing,
     nativeReceipt,
@@ -372,6 +404,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     stage = "inference-route";
     const inference = await inferenceFor(
       entry,
+      gateway.name,
       (nextStage) => {
         stage = nextStage;
       },

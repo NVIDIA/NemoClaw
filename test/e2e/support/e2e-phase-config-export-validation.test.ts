@@ -414,6 +414,7 @@ if (process.argv.includes("--output")) {
     expect(persistedEvidence.verifications.map((entry) => entry.id)).toEqual(
       expect.arrayContaining([
         "sandboxName",
+        "externalComponentRef",
         "agent",
         "runtimeProvider",
         "imageRef",
@@ -460,6 +461,30 @@ if (process.argv.includes("--output")) {
       expect.objectContaining({ id: "consumerNativeSettings", passed: false }),
     );
     expect(rejected.writes.at(-1)).not.toHaveProperty("export");
+  });
+  it("rejects an external component reference that differs from the source selection (#11453)", async () => {
+    const exported = document({ externalComponentRef: "different-component" });
+    const deps = dependencies({ parsedDocument: exported });
+    const registry = deps.loadRegistry();
+    registry.sandboxes.sandbox!.externalComponentSelection = {
+      schemaVersion: 1,
+      componentId: "policy-governance",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation",
+      sandboxIdentityFingerprint: "a".repeat(64),
+    };
+    deps.loadRegistry = () => registry;
+    const test = fixture({ dependencies: deps });
+    await captureFailure(test.phase.from(target("required"), instance()));
+    expect(test.writes.at(-1)?.verifications).toContainEqual(
+      expect.objectContaining({
+        id: "externalComponentRef",
+        passed: false,
+        expected: "policy-governance",
+        actual: "different-component",
+      }),
+    );
+    expect(test.writes.at(-1)).not.toHaveProperty("export");
   });
   it("observes effective policy through the fixture-owned OpenShell boundary (#11485)", async () => {
     const test = fixture();

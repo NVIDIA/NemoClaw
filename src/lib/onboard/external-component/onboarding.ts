@@ -101,6 +101,10 @@ interface RegistryAccess {
     readonly lifecycleLiveIdentityFingerprint?: string;
   } | null;
   setDefault(name: string): void;
+  recordCompletedExternalComponentSelection(
+    name: string,
+    selection: import("../../state/registry/types").SandboxExternalComponentSelection,
+  ): boolean;
 }
 
 type CaptureOpenShell = (args: string[], options?: { ignoreError?: boolean }) => string;
@@ -134,6 +138,7 @@ export function finalDeps(
         session.externalComponentActivation = evidence;
       });
     },
+    recordCompletedExternalComponentSelection: registry.recordCompletedExternalComponentSelection,
     setDefaultSandbox: registry.setDefault,
   };
 }

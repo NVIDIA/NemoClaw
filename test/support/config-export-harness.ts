@@ -53,6 +53,14 @@ vi.mock("../../src/lib/onboard/gateway/state-dir", () => ({
   managedGatewayStateRootOwnershipFailure: vi.fn(() => null),
   resolveGatewayStateDirForPort: vi.fn(() => "/managed/gateway"),
 }));
+vi.mock("../../src/lib/onboard/docker-driver-gateway-config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/onboard/docker-driver-gateway-config")>()),
+  observeExternalComponentGatewayConfiguration: vi.fn(() => null),
+}));
+vi.mock("../../src/lib/onboard/external-component", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/onboard/external-component")>()),
+  loadExternalComponentDeclaration: vi.fn(() => null),
+}));
 
 export const raw = {
   getProvider: vi.fn(),

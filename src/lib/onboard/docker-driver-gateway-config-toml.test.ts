@@ -25,6 +25,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
   hasStateScopedSandboxNamespace,
+  observeExternalComponentGatewayConfiguration,
   NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
@@ -107,6 +108,31 @@ function writePreScopedGatewayConfig(
 }
 
 describe("docker-driver-gateway config TOML", () => {
+  it.each([
+    { driver: "podman", ambient: "docker", recorded: "podman" },
+    { driver: "docker", ambient: "podman", recorded: "docker" },
+    { driver: "docker", ambient: "docker", recorded: undefined },
+  ] as const)(
+    "observes a legacy $driver gateway with recorded driver $recorded and ambient $ambient (#11453)",
+    ({ driver, ambient, recorded }) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-export-driver-"));
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "docker");
+      try {
+        const { configPath } = writePreScopedGatewayConfig(stateDir, false, driver);
+        const before = fs.readFileSync(configPath, "utf8");
+        vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", ambient);
+        expect(observeExternalComponentGatewayConfiguration(stateDir, recorded)).toBeNull();
+        expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+      } finally {
+        vi.unstubAllEnvs();
+        Object.defineProperty(process, "platform", platform);
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("renders only the fixed external component interceptor settings (#11340)", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-component-"));
     try {

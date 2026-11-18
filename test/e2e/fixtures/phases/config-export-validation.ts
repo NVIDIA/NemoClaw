@@ -308,6 +308,13 @@ const ConfigExportDocumentSchema = Type.Object(
           {
             management: Type.Literal("managed"),
             endpoint: NonEmptyStringSchema,
+            externalComponentRef: Type.Optional(
+              Type.String({
+                minLength: 1,
+                maxLength: 64,
+                pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              }),
+            ),
           },
           { additionalProperties: false },
         ),
@@ -351,6 +358,7 @@ export interface ConfigExportProducer {
 
 export interface ConfigExportSemantics {
   sandboxName: string | null;
+  externalComponentRef: string | null;
   agent: string | null;
   runtimeProvider: string | null;
   imageRef: string | null;
@@ -423,6 +431,7 @@ export type ConfigExportRegistryEntry = Pick<
   | "agent"
   | "openshellDriver"
   | "gatewayName"
+  | "externalComponentSelection"
   | "provider"
   | "preferredInferenceApi"
   | "endpointUrl"
@@ -811,6 +820,7 @@ function semanticsFromDocument(document: ConfigExportDocument): ConfigExportSema
   );
   return {
     sandboxName: sandbox?.name ?? null,
+    externalComponentRef: document.spec.gateway.externalComponentRef ?? null,
     agent: sandbox?.harness.kind ?? null,
     runtimeProvider: sandbox?.runtime.provider ?? null,
     imageRef: sandbox?.image?.ref ?? null,
@@ -886,6 +896,7 @@ async function expectedSemantics(
   const expectedPolicy = targetPolicyForV1Alpha1(YAML.parse(policyDocument), entry.agent);
   return {
     sandboxName: instance.sandboxName,
+    externalComponentRef: entry.externalComponentSelection?.componentId ?? null,
     agent: exportedHarnessKind(manifest.document.spec.onboarding.agent),
     runtimeProvider: entry.openshellDriver ?? null,
     imageRef:
@@ -913,6 +924,7 @@ function compareSemantics(
 ): ConfigExportVerification[] {
   const scalarFields = [
     "sandboxName",
+    "externalComponentRef",
     "agent",
     "runtimeProvider",
     "imageRef",
