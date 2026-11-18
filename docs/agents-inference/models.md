@@ -55,7 +55,12 @@ The `kind: nim` implementation under [#14556](https://github.com/NVIDIA/NemoClaw
 Its qualification covers native NIM 2.0.12 on AMD64 L40S with OpenShell 0.1.8 and ARM64 GB10 Spark with OpenShell 0.1.9, using the case's Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
 The Spark run also passed authenticated inventory/streaming, private-network isolation, export/reapply and restart recovery in 152 seconds with its key preserved.
 Both runs returned the arithmetic answer with unrelated session commentary; neither establishes reliable instruction following or tool execution.
-The default 8K NIM agent case remains unqualified, and OpenShell 0.1.9 on L40S still needs a separate run.
+Additional Spark checks passed three native BF16 arithmetic tool round trips and verified an agent-created file, but an NVFP4 agent returned unrelated text instead of the requested contents of a fresh marker file. A successful invocation is not a successful tool task.
+The default 8K NIM agent case remains unqualified: on Spark, OpenClaw's prompt plus the requested output exceeded that window, including when output was reduced from 4096 to 1024 tokens.
+This identifies the Spark request failure, not every earlier agent failure; OpenShell 0.1.9 on L40S still needs a separate run.
+The pinned FP8 and NVFP4 TP1/PP1 profiles also passed the five-step Spark agent lifecycle at 32K with the same 40 GiB budget; their native checkpoint formats are experimental, and they do not inherit BF16's separate recovery and tool checks.
+The pinned OpenClaw may also request its default OpenAI utility model, which a single-model local endpoint does not serve.
+OpenClaw documents `utilityModel` for those auxiliary requests, but the pinned Fabric adapter's settings schema rejects it; do not patch the native image or substitute a model alias to hide that mismatch.
 The maintained [agent lifecycle case](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/docker-openclaw-nim.tftest.hcl) covers an OpenClaw reply, unchanged reconciliation and teardown with storage retained.
 Other NIM engines and distributed inference are unsupported.
 
