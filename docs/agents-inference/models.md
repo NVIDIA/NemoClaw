@@ -28,6 +28,8 @@ Its image references are CI placeholders and must be replaced with candidate-bui
 Qualification of the current OpenShell 0.1.9 pin on AMD64/L40S remains pending; the earlier Muse/L40S configuration used OpenShell 0.1.8.
 Classic's experimental Spark recipe does not qualify this case.
 The case requests 32768 context tokens and low reasoning strength rather than copying Spark's 131072-token setting.
+The native ARM64 Muse case passed the agent lifecycle on one GB10 Spark with OpenShell 0.1.9 at that context, one slot, a 32 GiB serving budget and a 32 GiB host reserve.
+Export/reapply, inference-key refusal and restart recovery also passed; this does not qualify other GGUFs, tool use or Classic settings.
 
 The first implementation serves one model on one CUDA GPU, with full GPU-layer offload requested, one slot, f16 KV, embedded Jinja and no multimodal projector.
 `serving.batchTokens` and `microBatchTokens` control batching; `reasoningStrength` optionally supplies the native template argument.
@@ -38,7 +40,9 @@ Host memory pressure protection remains active.
 With `authentication: bearer`, the runtime generates and retains a key in separate credential storage and passes it to llama-server through a private file.
 Plans and exported configuration carry the managed credential reference.
 The child receives no key in argv.
-Readiness requires health and the declared model in authenticated inventory; it does not prove an agent reply, tool calling or model quality.
+The pinned native server deliberately leaves `/models`, `/v1/models` and health public, even with a key configured; bearer authentication protects inference requests, not inventory confidentiality.
+Readiness requires health and the declared model, and bearer mode also requires missing-key and wrong-key inference requests to return 401.
+Those refusal probes use an empty request and generate no tokens; a successful authenticated completion and agent reply remain live qualification gates.
 
 The service uses the existing managed Docker placement and `Preserve`/`Recreate` update policy.
 Unchanged apply keeps the running service; explicit recreation allows downtime.
@@ -48,8 +52,10 @@ Delete retained data separately only when it is no longer needed.
 ## Native NIM candidate
 
 The `kind: nim` implementation under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) remains a candidate.
-Its qualification is limited to native NIM 2.0.12 on AMD64 L40S with the case's Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
-GPU qualification of the updated OpenShell 0.1.9 gateway pin remains pending; the recorded GPU configuration used OpenShell 0.1.8.
+Its qualification covers native NIM 2.0.12 on AMD64 L40S with OpenShell 0.1.8 and ARM64 GB10 Spark with OpenShell 0.1.9, using the case's Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
+The Spark run also passed authenticated inventory/streaming, private-network isolation, export/reapply and restart recovery in 152 seconds with its key preserved.
+Both runs returned the arithmetic answer with unrelated session commentary; neither establishes reliable instruction following or tool execution.
+The default 8K NIM agent case remains unqualified, and OpenShell 0.1.9 on L40S still needs a separate run.
 The maintained [agent lifecycle case](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/docker-openclaw-nim.tftest.hcl) covers an OpenClaw reply, unchanged reconciliation and teardown with storage retained.
 Other NIM engines and distributed inference are unsupported.
 

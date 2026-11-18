@@ -126,6 +126,7 @@ async fn prepare_from(
         staged
             .persist_noclobber(&path)
             .map_err(|_| Error::State("cannot commit verified GGUF"))?;
+        #[cfg(unix)]
         std::fs::File::open(&directory)
             .and_then(|d| d.sync_all())
             .map_err(|_| Error::State("cannot sync GGUF directory"))?;

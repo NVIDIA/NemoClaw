@@ -38,6 +38,27 @@ pub(super) async fn matches(
     {
         return false;
     }
+    if let Some(key) = key {
+        // Native llama.cpp deliberately leaves inventory public. Check the
+        // inference boundary with invalid requests that cannot generate tokens.
+        let wrong_key = format!("{key}-invalid");
+        for credential in [None, Some(wrong_key.as_str())] {
+            let mut request = client
+                .post(format!("{endpoint}/v1/chat/completions"))
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body("{}");
+            if let Some(credential) = credential {
+                request = request.bearer_auth(credential);
+            }
+            if !request
+                .send()
+                .await
+                .is_ok_and(|response| response.status() == reqwest::StatusCode::UNAUTHORIZED)
+            {
+                return false;
+            }
+        }
+    }
     let Some(mut response) = get(client, format!("{endpoint}/v1/models"), key).await else {
         return false;
     };
@@ -67,7 +88,41 @@ pub(super) async fn matches(
 mod tests {
     use super::*;
     #[tokio::test]
-    async fn readiness_requires_health_and_the_authenticated_expected_model() {
+    async fn public_inventory_does_not_establish_inference_authentication() {
+        for (reject_missing, reject_wrong) in
+            [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let server = crate::http_fixture::Fixture::start_tcp(move |r| {
+                Some(match r.path.as_str() {
+                    "/health" => (200, b"{}".to_vec()),
+                    "/v1/models" => (200, br#"{"data":[{"id":"muse-glimmer"}]}"#.to_vec()),
+                    "/v1/chat/completions" => {
+                        let rejected = if r.header("authorization").is_none() {
+                            reject_missing
+                        } else {
+                            reject_wrong
+                        };
+                        (if rejected { 401 } else { 400 }, Vec::new())
+                    }
+                    _ => (404, Vec::new()),
+                })
+            })
+            .await;
+            assert_eq!(
+                matches(
+                    &client().unwrap(),
+                    &server.endpoint,
+                    "muse-glimmer",
+                    Some("test-credential")
+                )
+                .await,
+                reject_missing && reject_wrong,
+                "public inventory must not hide inference authentication failures"
+            );
+        }
+    }
+    #[tokio::test]
+    async fn readiness_requires_health_and_the_expected_model() {
         let server = crate::http_fixture::Fixture::start_tcp(|r| {
             let authorized = r.header("authorization") == Some("Bearer test-credential");
             Some(if !authorized {
