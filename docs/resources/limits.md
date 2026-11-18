@@ -70,6 +70,7 @@ Select the adapter and image together, then verify its integrations and native r
 | Agent interfaces are reached by Fabric's P0 conventions; runtime handles don't report them yet | [NVIDIA/NeMo-Fabric#565](https://github.com/NVIDIA/NeMo-Fabric/issues/565) |
 | Interface tokens that the agent's own tools can't read, an interface health check, and exposed service URLs for Hermes's dashboard | [NVIDIA/NeMo-Fabric#566](https://github.com/NVIDIA/NeMo-Fabric/issues/566) |
 | OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) |
+| OpenClaw's `web_fetch` refuses every host, including hosts the network policy allows; the agent's exec tool still reaches them | [#14537](https://github.com/NVIDIA/NemoClaw/issues/14537) |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
 | Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | OpenShell refuses new connections to an address its policy DNS answered once the answer's TTL has passed, so a client that reconnects to the address it kept fails, as OpenClaw's Node.js does. For an OpenClaw agent, the model request fails and its runtime stops; the next apply starts a new runtime without the conversation | [NVIDIA/OpenShell#4674](https://github.com/NVIDIA/OpenShell/issues/4674) |
