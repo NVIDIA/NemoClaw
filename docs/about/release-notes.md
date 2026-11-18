@@ -22,6 +22,12 @@ Onboarding:
   The review notes a typed model that the endpoint does not list.
   See [onboarding model catalogs](../agents-inference/inference.md#onboarding-model-catalogs).
 
+Agents:
+
+- OpenClaw works with `anthropic` providers ([#14529](https://github.com/NVIDIA/NemoClaw/issues/14529)).
+- OpenClaw's `web_fetch` reaches hosts that the sandbox's network policy allows ([#14537](https://github.com/NVIDIA/NemoClaw/issues/14537)).
+- OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does; see [agent files](../build-deploy/state.md#agent-files).
+
 ### Changes in v0.1.0-rc11
 
 These changes reached `v1` between the `v0.1.0-rc10` and `v0.1.0-rc11` tags; [breaking changes](#breaking-changes-in-v010-rc11) are listed separately.

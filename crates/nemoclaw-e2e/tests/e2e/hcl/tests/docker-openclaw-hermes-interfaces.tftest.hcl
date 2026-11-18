@@ -13,11 +13,12 @@
 # `openshell sandbox exec --tty`, shows the stub's reply to a prompt and exits
 # on Ctrl-D, and so does Hermes's, opened with the command apply reports for
 # its terminal interface. The stub refuses requests without the run's key, so
-# the reply also shows NemoClaw sent the configured key. In hermes-messages, whose
-# agent reaches the stub through an anthropic provider, Hermes's API server
-# answers a chat completion with the stub's reply too; the stub accepts a
-# Messages request's key only in x-api-key, so the reply shows that Hermes
-# called Anthropic's Messages API with the key where the provider places it.
+# the reply also shows NemoClaw sent the configured key. OpenClaw, in claw,
+# and Hermes, in hermes-messages, reach the stub through an anthropic
+# provider, and hermes-messages's API server answers a chat completion with
+# the stub's reply too; the stub accepts a Messages request's key only in
+# x-api-key, so OpenClaw's and Hermes's replies show that each called
+# Anthropic's Messages API with the key where the provider places it.
 # In claw and hermes,
 # the agent's user can write and read a file in the agent's workspace, and
 # the key is not in the environment a command sees. In claw, python3 reaches
@@ -269,13 +270,14 @@ run "terminal" {
 
 # The SDK's Fabric configuration (crates/nemoclaw-sdk/src/fabric_config.rs)
 # makes /sandbox/workspace each agent's workspace, and the agent image runs
-# agents as UID 10001 (image/fabric/runtime.json). A sandbox sees the model
-# registration's key in a NEMOCLAW_INFERENCE_MODEL_..._KEY variable
-# (crates/nemoclaw-openshell/src/profile.rs); the environment must have that
-# variable but not the key itself.
+# agents as UID 10001 (image/fabric/runtime.json). A sandbox sees its
+# provider registration's key in a NEMOCLAW_INFERENCE_<PROVIDER>_..._KEY
+# variable (crates/nemoclaw-openshell/src/profile.rs), MESSAGES for claw and
+# MODEL for hermes; the environment must have that variable but not the key
+# itself.
 #
 # Each sandbox's managed inference grant gives the image's executables,
-# python3 among them, the model's /v1/** paths. Only claw's document also
+# python3 among them, its provider endpoint's paths. Only claw's document also
 # grants python3 the stub's /health; the stub refuses requests without the
 # key, so its 401 shows that python3 reached it. The managed gateway listens
 # at the gateway network's second address (crates/nemoclaw-sdk/src/config/mod.rs),
@@ -297,7 +299,7 @@ run "commands" {
       claw_environment = {
         sandbox  = "claw"
         command  = ["env"]
-        contains = "NEMOCLAW_INFERENCE_MODEL_"
+        contains = "NEMOCLAW_INFERENCE_MESSAGES_"
         excludes = var.model_key
       }
       hermes_workspace = {
