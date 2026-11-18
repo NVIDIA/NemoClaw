@@ -7,7 +7,7 @@ use super::{
     logo::BrandImage,
     terminal::{
         agent_images_probe, ask_target, credential_probe, discover_before_input,
-        local_engine_probe, model_catalog_probe,
+        local_engine_probe, model_catalog_probe, take_latest_resize,
     },
 };
 use crate::{Source, load_journey};
@@ -1999,27 +1999,32 @@ async fn a_resize_queued_during_the_read_survives_the_one_image_being_chosen() {
     );
 }
 
+/// What an engine that holds `images` for the hermes harness, and an inference
+/// endpoint that cannot be reached, say to `queries`.
+fn observe_fixture(queries: Vec<DiscoveryQuery>, images: &[&str]) -> DiscoveryObservations {
+    let mut observed = DiscoveryObservations::new();
+    for query in queries {
+        let observation = match &query {
+            DiscoveryQuery::AgentImages(_) => agent_images(images),
+            DiscoveryQuery::Inference(_) => {
+                DiscoveryObservation::Inference(EndpointObservation::unknown("unreachable"))
+            }
+            other => panic!("unexpected read {other:?}"),
+        };
+        observed.record(query, observation);
+    }
+    observed
+}
+
 /// Run the probe-then-read step the terminal takes before it accepts input,
-/// against an engine that holds `images` for the hermes harness and an
-/// inference endpoint that cannot be reached. Returns the wizard, each batch of
-/// queries that was read and how many screens were drawn.
+/// against the engine and endpoint of `observe_fixture`. Returns the wizard,
+/// each batch of queries that was read and how many screens were drawn.
 async fn discover_with_images(images: &[&str]) -> (JourneyWizard, Vec<Vec<DiscoveryQuery>>, usize) {
     let mut wizard = at_the_image_question("nvidia.fabric.hermes");
     let reads = std::cell::RefCell::new(Vec::new());
     let read = async |queries: Vec<DiscoveryQuery>, _: &CancellationToken| {
         reads.borrow_mut().push(queries.clone());
-        let mut observed = DiscoveryObservations::new();
-        for query in queries {
-            let observation = match &query {
-                DiscoveryQuery::AgentImages(_) => agent_images(images),
-                DiscoveryQuery::Inference(_) => {
-                    DiscoveryObservation::Inference(EndpointObservation::unknown("unreachable"))
-                }
-                other => panic!("unexpected read {other:?}"),
-            };
-            observed.record(query, observation);
-        }
-        Ok(observed)
+        Ok(observe_fixture(queries, images))
     };
     let drawn = std::cell::Cell::new(0);
     assert!(
@@ -2029,7 +2034,7 @@ async fn discover_with_images(images: &[&str]) -> (JourneyWizard, Vec<Vec<Discov
             &CancellationToken::new(),
             &mut std::collections::VecDeque::new(),
             || Ok(None),
-            |_| {
+            |_, _| {
                 drawn.set(drawn.get() + 1);
                 Ok(())
             },
@@ -2038,6 +2043,69 @@ async fn discover_with_images(images: &[&str]) -> (JourneyWizard, Vec<Vec<Discov
         .unwrap()
     );
     (wizard, reads.into_inner(), drawn.get())
+}
+
+#[tokio::test]
+async fn a_resize_typed_during_the_one_image_read_sizes_the_screen_drawn_before_the_next_read() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    // The image read ends once the resize was taken off the input, and the
+    // model catalog read ends at once.
+    let first_read = std::cell::Cell::new(true);
+    let taken = tokio::sync::Notify::new();
+    let read = async |queries: Vec<DiscoveryQuery>, _: &CancellationToken| {
+        if first_read.replace(false) {
+            taken.notified().await;
+        }
+        Ok(observe_fixture(queries, &[HERMES_IMAGE]))
+    };
+    let mut typed = vec![crossterm::event::Event::Resize(100, 40)];
+    let mut queued = std::collections::VecDeque::new();
+    let drawn = std::cell::RefCell::new(Vec::new());
+    assert!(
+        discover_before_input(
+            &mut wizard,
+            read,
+            &CancellationToken::new(),
+            &mut queued,
+            || {
+                let event = typed.pop();
+                if event.is_some() {
+                    taken.notify_one();
+                }
+                Ok(event)
+            },
+            |_, resize| {
+                drawn.borrow_mut().push(resize);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(
+        drawn.into_inner(),
+        [None, Some((100, 40))],
+        "the screen drawn before the model catalog read is sized by the resize"
+    );
+    assert!(queued.is_empty(), "{queued:?}");
+}
+
+#[test]
+fn taking_the_latest_resize_leaves_the_keys_queued_in_order() {
+    use crossterm::event::Event;
+    let key = |character| Event::Key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+    let mut queue = std::collections::VecDeque::from([
+        key('a'),
+        Event::Resize(80, 24),
+        key('b'),
+        Event::Resize(100, 40),
+    ]);
+    assert_eq!(take_latest_resize(&mut queue), Some((100, 40)));
+    assert_eq!(queue.into_iter().collect::<Vec<_>>(), [key('a'), key('b')]);
+    assert_eq!(
+        take_latest_resize(&mut std::collections::VecDeque::from([key('c')])),
+        None
+    );
 }
 
 #[tokio::test]

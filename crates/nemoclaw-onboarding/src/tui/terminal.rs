@@ -88,7 +88,10 @@ pub(crate) async fn run(
                 cancel,
                 &mut queued_events,
                 poll_pending_event,
-                |wizard| {
+                |wizard, resize| {
+                    if let Some((width, height)) = resize {
+                        terminal.resize(Rect::new(0, 0, width, height))?;
+                    }
                     terminal
                         .draw(|frame| wizard.render_with_brand(frame, brand))
                         .map(|_| ())
@@ -330,21 +333,23 @@ pub(super) fn model_catalog_probe(wizard: &JourneyWizard) -> Option<DiscoveryQue
 /// the question that follows can need a read of its own, such as the model
 /// catalog. So go back to the probe after every read that changed the
 /// question, and take input only once the question on screen has been read
-/// for. `false` means the user escaped while the target was being read.
+/// for. Each screen drawn before a read is handed the latest resize that was
+/// typed during the one before, so it is drawn at the current size.
+/// `false` means the user escaped while the target was being read.
 pub(super) async fn discover_before_input(
     wizard: &mut JourneyWizard,
     read: impl AsyncFn(Vec<DiscoveryQuery>, &CancellationToken) -> Result<DiscoveryObservations, Error>,
     cancel: &CancellationToken,
     queued_events: &mut VecDeque<Event>,
     mut poll: impl FnMut() -> io::Result<Option<Event>>,
-    mut draw: impl FnMut(&JourneyWizard) -> io::Result<()>,
+    mut draw: impl FnMut(&JourneyWizard, Option<(u16, u16)>) -> io::Result<()>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     loop {
         let queries = target_probe(wizard);
         if queries.is_empty() {
             return Ok(true);
         }
-        draw(wizard)?;
+        draw(wizard, take_latest_resize(queued_events))?;
         let asked = current_question(wizard);
         if !ask_target(wizard, &read, queries, cancel, queued_events, &mut poll).await? {
             return Ok(false);
@@ -353,6 +358,17 @@ pub(super) async fn discover_before_input(
             return Ok(true);
         }
     }
+}
+
+/// Take the resizes out of `queue` and return the size of the last one. The
+/// keys stay queued, in order, for the loop that handles input.
+pub(super) fn take_latest_resize(queue: &mut VecDeque<Event>) -> Option<(u16, u16)> {
+    let latest = queue.iter().rev().find_map(|event| match event {
+        Event::Resize(width, height) => Some((*width, *height)),
+        _ => None,
+    });
+    queue.retain(|event| !matches!(event, Event::Resize(..)));
+    latest
 }
 
 /// Ask the target with `read` and keep what it says. `false` means the user
