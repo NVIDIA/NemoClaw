@@ -1125,7 +1125,7 @@ test(
       const beforeProviderError = boundary.evidence.errors;
       const providerFailed = await boundaryProbe(boundary.baseUrl, "provider-failure");
       expect(providerFailed.failed).toBe(true);
-      expect(boundary.evidence.errors).toBeGreaterThan(beforeProviderError);
+      expect(boundary.evidence.errors).toBe(beforeProviderError + 1);
       boundary.respondWithError(false);
       const afterFailure = await boundaryProbe(boundary.baseUrl, "provider-failure-recovery");
       expect(afterFailure.answer).toBe(SWITCHYARD_BOUNDARY_ANSWER);
