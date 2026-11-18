@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   readJsonObject,
+  jsonObject,
   rewriteRegularFile,
   rejectUnsafePackageTree,
   requireRealDirectory,
@@ -18,6 +19,8 @@ import {
   FIXED_UNDICI_VERSION,
   patchBundledNpmUndiciFromRegistry,
 } from "./patch-bundled-npm-undici.mts";
+
+import { patchBundledNpmNodeGyp } from "./patch-bundled-npm-node-gyp.mts";
 
 import {
   patchOpenClaw105PluginDependencies,
@@ -170,8 +173,31 @@ export function remediateOpenClawRuntimeDependencies(
     ) {
       throw new Error("OpenClaw runtime npm remediation lock identity has drifted");
     }
+    const nodeGypLocation = "node_modules/npm/node_modules/node-gyp";
+    const tinyglobbyLocation = "node_modules/npm/node_modules/tinyglobby";
+    const nodeGyp = packages[nodeGypLocation];
+    const nodeGypDependencies = jsonObject(nodeGyp?.dependencies, "npm node-gyp lock dependencies");
+    if (
+      nodeGyp?.version !== "13.0.0" ||
+      (nodeGypDependencies.tinyglobby !== undefined &&
+        nodeGypDependencies.tinyglobby !== "^0.2.12") ||
+      (!options.updateLock &&
+        (nodeGypDependencies.tinyglobby !== undefined ||
+          Object.keys(packages).some(
+            (location) =>
+              location === tinyglobbyLocation || location.startsWith(`${tinyglobbyLocation}/`),
+          )))
+    ) {
+      throw new Error("OpenClaw runtime node-gyp remediation lock identity has drifted");
+    }
     patchBundledNpmUndiciFromRegistry(join(root, "node_modules", "npm"));
+    patchBundledNpmNodeGyp(join(root, "node_modules", "npm"));
     if (options.updateLock) {
+      delete nodeGypDependencies.tinyglobby;
+      for (const location of Object.keys(packages)) {
+        if (location === tinyglobbyLocation || location.startsWith(`${tinyglobbyLocation}/`))
+          delete packages[location];
+      }
       npmUndici.version = FIXED_UNDICI_VERSION;
       npmUndici.resolved = FIXED_UNDICI_TARBALL;
       npmUndici.integrity = FIXED_UNDICI_INTEGRITY;

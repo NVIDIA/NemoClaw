@@ -55,6 +55,7 @@ COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/patch-bundled-npm-undici.mts /scripts/lib/
+COPY scripts/lib/patch-bundled-npm-node-gyp.mts /scripts/lib/patch-bundled-npm-node-gyp.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
 COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
@@ -318,6 +319,8 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
     fi; \
     node /scripts/lib/patch-bundled-npm-undici.mts \
       --npm-root /usr/local/lib/node_modules/npm
+# hadolint ignore=DL3059
+RUN node /scripts/lib/patch-bundled-npm-node-gyp.mts --npm-root /usr/local/lib/node_modules/npm
 
 # Published base images can lag Dockerfile.base while local feature branches
 # still layer this final image on top. Invalid state: the selected base has

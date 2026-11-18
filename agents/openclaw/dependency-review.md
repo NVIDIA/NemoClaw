@@ -284,3 +284,24 @@ Their vulnerable versions remain in upstream archive inventory entries; those en
 The final image scan also found npm 12.0.2’s private `undici@6.27.0`, affected by CVE-2026-87018.
 All managed base and final images now invoke the existing registry- and SRI-verified `patch-bundled-npm-undici.mts` helper after the npm upgrade to install `6.29.1`.
 Final images repeat the check so older bases cannot restore the affected package.
+
+## npm bundled picomatch removal
+
+GHSA-fc5q-39xc-vjpf affects every released picomatch version through 4.0.7.
+The reviewed npm 12.0.2 archive and runtime npm 12.2.1 both include picomatch 4.0.5.
+Their only consumer is node-gyp 13.0.0, through tinyglobby 0.2.17.
+Its two patterns, `build/*.sln` and `build/*.mk`, are fixed in the source.
+
+`patch-bundled-npm-node-gyp.mts` replaces this consumer with Node's native filesystem globbing.
+It checks the complete original and patched build-source hashes and rejects package drift.
+It preserves file-only matching, dangling-link handling, solution selection, and Makefile fallback.
+It removes tinyglobby and its private picomatch tree after publishing code and dependency metadata.
+The runtime, messaging, and legacy migration locks describe that installed graph.
+All managed image compositions apply the same patch to global npm after its existing repairs.
+The raw upstream npm archive inventory remains unchanged.
+
+NemoClaw's image dependency maintainers own this temporary patch.
+Remove it when a reviewed npm archive eliminates the affected dependency and passes these behavior tests.
+`test/install/patch-bundled-npm-node-gyp.test.ts` covers discovery, package drift, unsafe trees, and repeated application.
+PR audits execute the trusted base's recipe; a candidate cannot approve or replace it.
+A changed remediation recipe needs adoption in the trusted base before that check can use it.

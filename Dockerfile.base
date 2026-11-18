@@ -421,6 +421,7 @@ COPY --chmod=0444 scripts/openclaw-cli-wrapper.sh /usr/local/lib/nemoclaw/opencl
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/lib/patch-bundled-npm-undici.mts /scripts/lib/patch-bundled-npm-undici.mts
+COPY scripts/lib/patch-bundled-npm-node-gyp.mts /scripts/lib/patch-bundled-npm-node-gyp.mts
 COPY scripts/lib/remediate-openclaw-runtime-dependencies.mts /scripts/lib/remediate-openclaw-runtime-dependencies.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
@@ -460,6 +461,8 @@ RUN node /scripts/lib/patch-bundled-npm-ip-address.mts \
 # hadolint ignore=DL3059
 RUN node /scripts/lib/patch-bundled-npm-undici.mts \
     --npm-root /usr/local/lib/node_modules/npm
+# hadolint ignore=DL3059
+RUN node /scripts/lib/patch-bundled-npm-node-gyp.mts --npm-root /usr/local/lib/node_modules/npm
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
 # names do not persist in runtime snapshots or leak-scan inputs.
@@ -497,7 +500,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     if [ -z "$EXPECTED_INTEGRITY" ]; then \
         echo "Error: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin"; exit 1; \
     fi; \
-    OPENCLAW_LOCK_SHA256=16b8c902f7760658e54ccc697a6ec7dbe38768e3fcd78876e1b8a1fd018c6a21; \
+    OPENCLAW_LOCK_SHA256=93f3e3fea8e4a5262edcb280b8fdac137c6905fcce8eb575656cb5aec07a86b9; \
     ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
     [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
         || { echo "Error: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)"; exit 1; }; \

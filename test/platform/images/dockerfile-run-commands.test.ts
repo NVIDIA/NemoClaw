@@ -17,6 +17,7 @@ const finalNpmRepairCommands = [
   "node /scripts/patch-bundled-npm-brace-expansion.mts",
   "node /scripts/lib/patch-bundled-npm-ip-address.mts",
   "node /scripts/lib/patch-bundled-npm-undici.mts",
+  "node /scripts/lib/patch-bundled-npm-node-gyp.mts",
 ];
 const finalNpmRepairRun =
   `RUN if [ -f ${corporateCaPath} ]; then export CURL_CA_BUNDLE=${corporateCaPath}; ` +

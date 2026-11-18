@@ -94,7 +94,7 @@ import subprocess
 import sys
 
 comparison = sys.argv[1] + "...HEAD"
-git = ["git", "--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--submodule=short"]
+git = ["git", "--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--submodule=short", "--ignore-submodules=none"]
 paths = subprocess.check_output(git + ["--name-only", "-z", "--end-of-options", comparison, "--"]).split(b"\0")
 for raw_path in paths:
     if not raw_path:

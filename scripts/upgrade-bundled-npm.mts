@@ -30,6 +30,8 @@ import {
   REVIEWED_NPM_VERSION,
 } from "./lib/reviewed-npm-identity.mts";
 
+import { verifyBundledNpmNodeGyp } from "./lib/patch-bundled-npm-node-gyp.mts";
+
 export {
   REVIEWED_NPM_ARCHIVE_SHA256,
   REVIEWED_NPM_INTEGRITY,
@@ -95,7 +97,7 @@ export type ReviewedNpmState = Readonly<{
   packages: Readonly<Record<ReviewedPackageName, readonly string[]>>;
 }>;
 
-export function verifyReviewedNpm(npmRoot: string): ReviewedNpmState {
+export function verifyReviewedNpm(npmRoot: string, allowNativeNodeGyp = false): ReviewedNpmState {
   const root = realDirectory(npmRoot, "npm package root");
   const version = npmVersion(root);
   if (version !== REVIEWED_NPM_VERSION) {
@@ -109,6 +111,10 @@ export function verifyReviewedNpm(npmRoot: string): ReviewedNpmState {
 
   for (const [name, expectedVersion] of Object.entries(REVIEWED_NPM_PACKAGES)) {
     const observed = packages.get(name as ReviewedPackageName) ?? [];
+    if (name === "picomatch" && observed.length === 0 && allowNativeNodeGyp) {
+      verifyBundledNpmNodeGyp(root);
+      continue;
+    }
     if (observed.length === 0 || observed.some((item) => item !== expectedVersion)) {
       throw new Error(
         `npm@${version} bundled ${name} versions ${JSON.stringify(observed)}; expected only ${expectedVersion}`,
@@ -228,7 +234,7 @@ export function upgradeBundledNpm(
   const explicitArchiveSource =
     dependencies.archivePath !== undefined || dependencies.prepareArchive !== undefined;
   if (currentVersion === REVIEWED_NPM_VERSION && !explicitArchiveSource) {
-    const reviewed = verifyReviewedNpm(root);
+    const reviewed = verifyReviewedNpm(root, true);
     commandRunner("npm", ["--version"]);
     commandRunner("npx", ["--version"]);
     return reviewed;

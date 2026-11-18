@@ -47,6 +47,18 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)scripts\/lib\/patch-bundled-npm-node-gyp\.mts$/,
+    testsToRun: runTests("test/platform/images/bundled-npm-ip-address-dockerfile-contract.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)test\/fixtures\/node-gyp\/build\.cjs\.fixture$/,
+    testsToRun: runTests("test/install/patch-bundled-npm-node-gyp.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/lib\/install-openclaw-migration-runtimes\.sh$/,
+    testsToRun: runTests("test/agents/openclaw/openclaw-lifecycle-policy.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-security-code-review\/SKILL\.md$/,
     testsToRun: runTests("test/security/security-review-paths.test.ts"),
   },

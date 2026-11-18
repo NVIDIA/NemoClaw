@@ -146,6 +146,7 @@ it("renders submodule pointers without executing nested diff helpers", () => {
   git("update-index", "--cacheinfo", `160000,${childCandidate},child`);
   git("-c", "core.hooksPath=/dev/null", "commit", "-m", "candidate");
   git("config", "diff.submodule", "diff");
+  git("config", "diff.ignoreSubmodules", "all");
   git("-C", child, "config", "diff.external", "./helper.sh");
   git("-C", child, "config", "diff.fixture.textconv", "./helper.sh");
   const output = execFileSync("bash", ["-c", reviewCommand()], {
