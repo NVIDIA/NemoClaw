@@ -125,7 +125,8 @@ describe("Hermes retained interface export", () => {
     const exported = await exportSnapshots([hermesSnapshot({ hermesApiPort: 8643 })]);
     expect(exported.outcome.ok).toBe(true);
     const document = asExportedConfig(YAML.parse(exported.writeStdout.mock.calls[0]![0]));
-    expect(document.spec.sandboxes.alpha!.harness).toMatchObject({});
+    // Interface settings have no confirmed v1 equivalent, so the harness carries only its kind.
+    expect(document.spec.sandboxes.alpha!.harness).toEqual({ kind: "nvidia.fabric.hermes" });
   });
 
   it("exports the same disabled dashboard when onboarding allocated a port other than 18789", async () => {

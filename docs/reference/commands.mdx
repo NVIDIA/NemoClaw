@@ -356,7 +356,8 @@ Experimental runtime identity is not supported by this export command.
 For its separate OpenClaw workflow, refer to [Configure Experimental Runtime Identity](/user-guide/openclaw/reference/configure-runtime-identity).
 
 The v0 command projects verified source state into the pre-release v1alpha1 YAML shape.
-Managed OpenClaw and Hermes exports omit `image` so v1 applies its managed image default.
+Every exported sandbox carries the placeholder `image.ref`, because no v0 agent image ships Fabric.
+Replace it with a compatible v1 agent image digest before planning.
 
 If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
 The directory can have moved from the requested output location.
@@ -379,27 +380,17 @@ Export verifies the source's provider and profile binding, including the Hermes-
 Missing or mismatched search evidence prevents publication.
 Disabled search remains ungranted.
 Hermes with Brave and search-enabled Deep Agents sources remain unsupported.
-When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
-For hosted OpenClaw inference, the export preserves context-window, maximum-token, reasoning, and reasoning-effort settings when omitting them would change the target's effective behavior.
-It preserves nondefault agent timeout and heartbeat settings under `execution`.
+The export leaves out settings that have no confirmed v1 equivalent and lists each one in the export report.
+These are the managed proxy, the context-window, reasoning, and reasoning-effort settings, the heartbeat, tool disclosure, OpenClaw OTLP observability, and the OpenClaw and Hermes interface settings.
+For hosted inference, each route keeps its model and maximum-token setting.
+A retained agent timeout is exported as `harness.runtime.timeout_seconds`.
 The command rejects a managed OpenClaw sandbox with secondary agents and produces no document.
 Secondary-agent export remains deferred until the v1 schema defines that representation.
-For OpenClaw, it retains the managed dashboard marker because omitting it disables the target dashboard; the default marker includes port `18789` while the loopback bind remains implicit.
-When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
-It omits the default progressive disclosure setting.
-When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
-It never includes collector credentials.
-Before applying the export, run an OTLP/HTTP collector on port `4318` of the destination host.
-The sandbox must reach it as `host.openshell.internal:4318`.
-The export does not install or configure that collector. Verify trace delivery after applying the configuration.
-It omits settings only when the v1 target has the same effective behavior without them.
 Hermes export fails when Hermes tool gateways are enabled.
-It preserves Hermes dashboard and in-browser TUI behavior, including explicit disabled values when omission would enable them, plus nondefault API and enabled-dashboard ports.
-For a disabled Hermes dashboard, export writes `interfaces.dashboard.enabled: false` and omits the recorded dashboard port because v1 rejects a port on a disabled dashboard.
+Export still verifies the retained Hermes interface settings before it leaves them out.
 The retained dashboard URL must be `http://127.0.0.1:<port>` with a port from `1024` through `65535`; a retained `browserUrl` must match it.
 The registry `dashboardPort` must match the URL port, except that it may be absent for port `18789`.
 Export rejects other URL forms, invalid ports, and mismatches.
-The default API port is omitted.
 It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
 The exporter validates that source binding, then emits API-key authentication without a provider reference because v1 derives the association from the provider configuration.
 OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.

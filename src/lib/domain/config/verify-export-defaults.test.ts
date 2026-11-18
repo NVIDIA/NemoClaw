@@ -35,8 +35,14 @@ describe("effective v1alpha1 export defaults (#12132)", () => {
         ),
         "utf8",
       );
+      // The fixture uses the current export shape, so only the Google provider can be rejected.
       expect(() => consumer.parse(fixture)).toThrow(
-        /configuration rejected: configuration violates schema/u,
+        /configuration violates schema at spec\.inferenceProviders\.hosted-gemini-api\.provider/u,
+      );
+      const withSupportedProvider = fixture.replace("provider: google", "provider: openai");
+      expect(withSupportedProvider).not.toBe(fixture);
+      expect(consumer.parse(withSupportedProvider).document.spec.inferenceProviders).toHaveProperty(
+        "hosted-gemini-api",
       );
     },
   );
