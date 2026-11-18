@@ -21,7 +21,7 @@ Use the [public guide](../docs/README.md) for deployment tasks. The pages here r
 
 ## Design Decisions
 
-The draft [v1 roadmap](v1-roadmap.md) proposes release and parity increments, their dependencies, and a sequence for coordinating Fabric work.
+The [matrix fallback definitions](v1-roadmap.md) cover capabilities without a matching primary issue; existing GitHub issues own the remaining scope and acceptance.
 
 | Topic | Record |
 |---|---|
