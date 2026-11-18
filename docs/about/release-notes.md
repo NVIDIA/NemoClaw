@@ -29,6 +29,9 @@ Agents and interfaces:
   See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
 - Apply prints the command that opens Hermes's terminal UI for a Hermes agent that enables Fabric's `terminal` interface, which Fabric marks experimental.
   See [Hermes's terminal UI](../agents-inference/interfaces.md#hermess-terminal-ui).
+- OpenClaw works with `anthropic` providers again ([#14529](https://github.com/NVIDIA/NemoClaw/issues/14529)).
+- OpenClaw's `web_fetch` reaches hosts that the sandbox's network policy allows ([#14537](https://github.com/NVIDIA/NemoClaw/issues/14537)).
+- OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does; see [agent files](../build-deploy/state.md#agent-files).
 
 Sandbox policy:
 

@@ -163,7 +163,7 @@ The gateway selection follows [Select the Gateway and Workspace](#select-the-gat
 1. Run the forward in its own terminal and keep it running.
 2. Read the token with the `Token` command, in another terminal with the same selection.
    The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
-   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
+   For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes or OpenClaw, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user; stopping the runtime removes it.
    After the runtime restarts, apply prints the new path; read the token again.
 3. Sign in:
