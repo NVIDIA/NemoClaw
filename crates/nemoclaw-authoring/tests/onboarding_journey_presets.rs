@@ -314,17 +314,24 @@ fn a_recommended_default_the_endpoint_does_not_list_is_not_suggested() {
 }
 
 #[test]
-fn a_list_that_names_no_recommended_model_leaves_only_typing() {
+fn a_list_that_names_no_recommended_model_offers_the_models_it_lists() {
     let capabilities = Capabilities::available();
-    let state = choose_preset(ProviderPreset::OpenAi);
-    let observations = listing(&state, &["text-embedding-3-small"]);
-    let resolution = state
-        .resolve_with_observations(&capabilities, &observations)
-        .unwrap();
-    let question = resolution.question(MODEL).unwrap();
-    assert!(question.choices().is_empty());
-    assert_eq!(question.suggestion(), None);
-    assert!(question.allows_custom_answer());
+    for preset in [ProviderPreset::OpenAi, ProviderPreset::Nous] {
+        let state = choose_preset(preset);
+        let observations = listing(&state, &["vendor/alpha", "vendor/beta"]);
+        let resolution = state
+            .resolve_with_observations(&capabilities, &observations)
+            .unwrap();
+        let question = resolution.question(MODEL).unwrap();
+        assert_eq!(
+            question.choices(),
+            [json!("vendor/alpha"), json!("vendor/beta")],
+            "{}",
+            preset.id()
+        );
+        assert_eq!(question.suggestion(), None, "{}", preset.id());
+        assert!(question.allows_custom_answer());
+    }
 }
 
 #[test]

@@ -113,13 +113,16 @@ impl JourneyState {
             .collect();
         // A vendor with recommendations offers only those the endpoint lists,
         // since its full catalog holds models that cannot drive an agent.
-        // Endpoints without recommendations offer what they list.
+        // Endpoints without recommendations offer what they list, and so does
+        // a vendor whose endpoint lists none of its recommendations, rather
+        // than leaving the user with an empty menu.
         let vendor = self.catalog_preset().filter(|_| !listed.is_empty());
         if let Some(question) = resolution
             .questions
             .iter_mut()
             .find(|question| question.id == path)
         {
+            let mut offer_listed = true;
             if let Some(preset) = vendor {
                 let recommended = preset.recommended_models();
                 let missing = |value: &Value| {
@@ -131,7 +134,13 @@ impl JourneyState {
                 if question.suggestion.as_ref().is_some_and(missing) {
                     question.suggestion = question.choices.first().cloned();
                 }
-            } else {
+                offer_listed = !question.choices.iter().any(|choice| {
+                    choice
+                        .as_str()
+                        .is_some_and(|model| recommended.contains(&model))
+                });
+            }
+            if offer_listed {
                 if let Some(suggestion) = question.suggestion.clone()
                     && !question.choices.contains(&suggestion)
                 {

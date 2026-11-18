@@ -158,7 +158,7 @@ Hosts are built from the engines they named and what each answered, and one reco
 Hardware and gateway observations do not affect questions or readiness yet.
 `resolve_with_observations` applies the matching inference observation to the current model suggestions and assesses target compatibility with `assess_target`.
 A provider preset with a recommended list offers only the recommended models the endpoint lists, since an endpoint's catalog carries no tool-calling metadata.
-An endpoint with no recommended list offers what it lists.
+An endpoint with no recommended list, or one that lists none of the recommended models, offers what it lists.
 A settled model the endpoint does not list adds an informational note that does not echo the identifier.
 An empty `DiscoveryObservations` leaves compatibility unverified.
 Observations do not silently replace authored values.

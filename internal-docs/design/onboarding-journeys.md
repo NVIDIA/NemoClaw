@@ -145,6 +145,7 @@ Generic compatible endpoints keep manual model entry and have no curated vendor 
 A supplied identifier stays the suggested menu choice, including when it is not curated.
 Model choices remain suggestions rather than a schema enum, and the symbolic tree keeps this free-input frontier instead of printing supplied model identifiers as finite branches.
 An endpoint's catalog carries no tool-calling metadata, so a vendor with curated entries offers only the curated models its endpoint lists, and none of the rest of its catalog.
+When the endpoint lists none of the curated entries, the menu offers the models it lists, so the user is not left with only free text.
 A list with no usable entry leaves the curated entries as they are.
 A settled model that the endpoint does not list adds an informational note on the review, without echoing its identifier.
 Keys typed while a model list is being read are dropped when the list arrives, so a keystroke meant for the earlier menu cannot choose from the narrowed one.
