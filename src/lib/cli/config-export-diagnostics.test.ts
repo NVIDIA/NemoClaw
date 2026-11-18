@@ -119,7 +119,7 @@ describe("config export diagnostics", () => {
     ).toBe("Config export failed (unsafe-output): The export could not be written to stdout.");
   });
 
-  it("lists each observation category once while preserving every finding", () => {
+  it("lists each observation category once and names each finding's field and category", () => {
     expect(
       formatConfigExportFailure({
         kind: "observation",
@@ -131,7 +131,10 @@ describe("config export diagnostics", () => {
         ],
       }),
     ).toBe(
-      "Config export failed (drifted, unsupported).\nImage changed.\nEndpoint changed.\nProfile is unsupported.",
+      "Config export failed (drifted, unsupported).\n" +
+        "image (drifted): Image changed.\n" +
+        "endpoint (drifted): Endpoint changed.\n" +
+        "profile (unsupported): Profile is unsupported.",
     );
   });
 

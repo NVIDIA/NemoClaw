@@ -91,17 +91,19 @@ export type HermesConfigExportLiveEvidence =
   | HermesConfigExportPublishedEvidence
   | HermesConfigExportExpectedRefusalEvidence;
 
+// Each refusal line names the finding's field and category before its diagnostic.
 const CREDENTIAL_HTTP_REFUSAL =
-  "V1alpha1 requires HTTPS when an inference provider declares a credential.";
+  "spec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.";
 const PODMAN_REFUSAL =
-  "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
-const MESSAGING_REFUSAL = "V1 export does not support messaging.";
+  "spec.sandboxes[].runtime.provider (unsupported): V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
+const MESSAGING_REFUSAL =
+  "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.";
 const POLICY_REFUSAL =
-  "Verified effective policy is malformed, unknown, or cannot be represented losslessly.";
+  "spec.sandboxes[].network.policy (policy-not-representable): Verified effective policy is malformed, unknown, or cannot be represented losslessly.";
 // The exporter reports these v1 compatibility limits alongside excluded messaging.
 const MESSAGING_ADDITIONAL_REFUSALS = [
-  "The sandbox provider attachments do not match its supported configuration.",
-  "The managed startup profile is not the canonical profile supported by v1 export.",
+  "source.sandbox.providers (unsupported): The sandbox provider attachments do not match its supported configuration.",
+  "source.workload.startupProfile (unsupported): The managed startup profile is not the canonical profile supported by v1 export.",
   POLICY_REFUSAL,
 ];
 

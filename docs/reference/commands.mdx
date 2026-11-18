@@ -309,6 +309,36 @@ $$nemoclaw config export my-assistant --output -
 Exports never contain credential values. They include credential environment-variable references only when the target configuration requires one. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 With `--json` and file output, the version 1 result includes `sourceSandbox`, `outputPath`, `documentDigest`, and `specDigest`.
 
+Each export starts with a comment block, the export report, whose first line is `# nemoclaw-export-report: 1`.
+The number changes only when the report format changes incompatibly.
+The report has one line for each setting the export left out, replaced with a placeholder, or rewrote:
+
+```text
+# <kind> <field> [value=<json>] [before=<json> after=<json|omitted>]: <reason>
+```
+
+- `kind` is `omitted`, `placeholder`, or `changed`.
+- `value` is the setting's value in the source sandbox.
+- `before` and `after` appear on `changed` lines and show the source value and its exported form.
+  `after=omitted` means the export drops the field to get the same v1 behavior.
+
+The last line starts with `# gateway`.
+It records that the export reuses the source gateway port in `spec.gateway.endpoint`.
+If the source deployment is still running, start the v1 gateway on a different, free port.
+
+The report never contains credential values or credential environment-variable names.
+URL values in the report have user information, query strings, and fragments removed.
+v1 treats the report as YAML comments.
+`specDigest` covers the configuration's `spec` and is not affected by the report.
+`documentDigest` is the SHA-256 digest of the file as written, including the report.
+Each report entry also appears as a `Warning:` line on standard error.
+When the command refuses a source, it writes no YAML.
+It prints `Config export failed (<categories>).` on standard error, followed by one line per finding:
+
+```text
+<field> (<category>): <reason>
+```
+
 Export validates retained corporate certificate authority (CA) state but omits the CA bundle and digest from YAML.
 When retained CA state is present, a successful export reports that omission on standard error.
 Export does not change the source sandbox's trust.
@@ -318,8 +348,7 @@ Before deploying the YAML, prepare the destination:
 - Supply values for `credential.env` references through the destination command's environment.
   Keep credential values out of YAML.
   Unset exported credentials after the destination command finishes.
-- If `network.proxy` is present, ensure its host and port are reachable from the destination sandbox.
-  Export does not install the proxy.
+- Read the export report and decide how to handle each entry, including the placeholder `image.ref`.
 - Review destination CA trust requirements before deployment.
 
 The exporter refuses sources that require host proxy credential replay.

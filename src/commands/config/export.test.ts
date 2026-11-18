@@ -39,11 +39,18 @@ vi.mock("../../lib/actions/config/observe-export-source", async (importOriginal)
   observeStableExportSource: mocks.observeStableExportSource,
 }));
 
+import { createHash } from "node:crypto";
 import { Check } from "typebox/value";
 import { ConfigExportResultSchema } from "../../lib/actions/config/export";
 import ConfigExportCommand from "./export";
 
 const documentDigest = "sha256:" + "a".repeat(64);
+/** The result's documentDigest covers the published bytes, report header included. */
+const publishedDigest = () =>
+  "sha256:" +
+  createHash("sha256")
+    .update(String(mocks.publishExportFile.mock.calls[0]![1]), "utf8")
+    .digest("hex");
 const specDigest = "sha256:" + "b".repeat(64);
 const caOmissionNotice =
   "The source's corporate CA configuration is not included in the exported YAML. Review destination trust requirements before deployment.";
@@ -61,7 +68,10 @@ describe("config export command", () => {
       attempts: 1,
     });
     mocks.exportOmissions.mockReset().mockReturnValue([]);
-    mocks.buildExportConfig.mockReset().mockReturnValue({ kind: "NemoClawConfig" });
+    mocks.buildExportConfig.mockReset().mockReturnValue({
+      kind: "NemoClawConfig",
+      spec: { gateway: { endpoint: "http://127.0.0.1:18080" } },
+    });
     mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
       yaml: "kind: NemoClawConfig\n",
       documentDigest,
@@ -101,7 +111,10 @@ describe("config export command", () => {
         { sandboxName: "alpha" },
         expect.objectContaining({ documentName: "team-alpha", documentUid: expect.any(String) }),
       );
-      expect(write).toHaveBeenCalledWith("kind: NemoClawConfig\n", expect.any(Function));
+      expect(write).toHaveBeenCalledWith(
+        expect.stringMatching(/^# nemoclaw-export-report: 1\n[\s\S]*kind: NemoClawConfig\n$/),
+        expect.any(Function),
+      );
       expect(write).toHaveBeenCalledTimes(1);
       expect(notice.mock.calls).toEqual(notices);
       expect(mocks.publishExportFile).not.toHaveBeenCalled();
@@ -239,7 +252,9 @@ describe("config export command", () => {
 
     await expect(
       ConfigExportCommand.run(["alpha", "--output", "-"], process.cwd()),
-    ).rejects.toThrow("Config export failed (not-found).\nThe sandbox was not found.");
+    ).rejects.toThrow(
+      "Config export failed (not-found).\nsource.registry (not-found): The sandbox was not found.",
+    );
     expect(mocks.buildExportConfig).not.toHaveBeenCalled();
     expect(notice).not.toHaveBeenCalled();
   });
@@ -262,7 +277,9 @@ describe("config export command", () => {
     );
 
     expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
-      error: { message: "Config export failed (not-found).\nSandbox missing." },
+      error: {
+        message: "Config export failed (not-found).\nsource.registry (not-found): Sandbox missing.",
+      },
     });
     expect(process.exitCode).not.toBe(0);
     expect(mocks.buildExportConfig).not.toHaveBeenCalled();
@@ -307,7 +324,7 @@ describe("config export command", () => {
         status: "succeeded",
         sourceSandbox: "alpha",
         outputPath: "/tmp/alpha.yaml",
-        documentDigest,
+        documentDigest: publishedDigest(),
         specDigest,
       });
       expect(Check(ConfigExportResultSchema, result)).toBe(true);
@@ -315,7 +332,7 @@ describe("config export command", () => {
       expect(notice.mock.calls).toEqual(notices);
       expect(mocks.publishExportFile).toHaveBeenCalledWith(
         "/tmp/alpha.yaml",
-        "kind: NemoClawConfig\n",
+        expect.stringMatching(/^# nemoclaw-export-report: 1\n[\s\S]*kind: NemoClawConfig\n$/),
         false,
       );
     },
@@ -342,7 +359,7 @@ describe("config export command", () => {
         status: "succeeded",
         sourceSandbox: "alpha",
         outputPath: "/tmp/alpha.yaml",
-        documentDigest,
+        documentDigest: publishedDigest(),
         specDigest,
       });
       expect(Check(ConfigExportResultSchema, result)).toBe(true);
@@ -351,7 +368,7 @@ describe("config export command", () => {
       expect(notice.mock.calls).toEqual(notices);
       expect(mocks.publishExportFile).toHaveBeenCalledWith(
         "/tmp/alpha.yaml",
-        "kind: NemoClawConfig\n",
+        expect.stringMatching(/^# nemoclaw-export-report: 1\n[\s\S]*kind: NemoClawConfig\n$/),
         false,
       );
     },

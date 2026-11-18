@@ -868,7 +868,7 @@ export function isPodmanConfigExportRefusal(
       !result.timedOut &&
       !outputExists &&
       output?.error?.message ===
-        "Config export failed (unsupported).\nV1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred."
+        "Config export failed (unsupported).\nspec.sandboxes[].runtime.provider (unsupported): V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred."
     );
   } catch {
     return false;

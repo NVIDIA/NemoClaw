@@ -3,27 +3,48 @@
 
 import type { VerifiedExportSource } from "./export-evidence";
 
+/** A JSON value from the V0 source that is safe to repeat in the export report. */
+export type ExportOmissionValue =
+  | string
+  | number
+  | boolean
+  | { readonly [key: string]: ExportOmissionValue | undefined };
+
 /** One source setting the v1 export leaves out or replaces because v1 has no equivalent. */
 export interface ExportOmission {
   /** The v0 source setting, as named in the sandbox's configuration. */
   readonly field: string;
   readonly kind: "omitted" | "placeholder" | "changed";
   readonly message: string;
+  /** The V0 value, when it is safe to repeat. Never a credential. */
+  readonly value?: ExportOmissionValue;
+  /** For `changed` entries: the V0 value and its exported spelling (`null` means omitted). */
+  readonly before?: string;
+  readonly after?: string | null;
 }
 
-const omitted = (field: string, why: string): ExportOmission => ({
+const omitted = (field: string, why: string, value?: ExportOmission["value"]): ExportOmission => ({
   field,
   kind: "omitted",
   message: `${field} is not included in the exported YAML: ${why}`,
+  ...(value === undefined ? {} : { value }),
 });
 
 function tuningOmissions(source: VerifiedExportSource): ExportOmission[] {
   const overrides = "overrides" in source.inference ? source.inference.overrides : undefined;
   const found = (["contextWindow", "reasoning", "reasoningEffort"] as const)
     .filter((key) => overrides?.[key] !== undefined)
-    .map((key) => omitted(`inference.${key}`, "v1 route overrides do not accept it."));
+    .map((key) =>
+      omitted(`inference.${key}`, "v1 route overrides do not accept it.", overrides?.[key]),
+    );
   if (source.execution?.heartbeatEvery !== undefined) {
-    found.push(omitted("execution.heartbeatEvery", "v1 has no equivalent setting."));
+    found.push(
+      omitted(
+        "execution.heartbeatEvery",
+        "v1 has no equivalent setting.",
+        source.execution.heartbeatEvery,
+      ),
+    );
   }
   return found;
 }
@@ -31,18 +52,26 @@ function tuningOmissions(source: VerifiedExportSource): ExportOmission[] {
 function harnessOmissions(source: VerifiedExportSource): ExportOmission[] {
   const found: ExportOmission[] = [];
   if (source.proxy !== undefined) {
-    found.push(omitted("proxy", "v1 has no sandbox proxy setting."));
+    found.push(
+      omitted("proxy", "v1 has no sandbox proxy setting.", {
+        host: source.proxy.host,
+        port: source.proxy.port,
+      }),
+    );
   }
   if (source.observability !== undefined) {
     found.push(
       omitted(
         "observability",
         "no confirmed v1 equivalent (v1 has an opaque harness.telemetry section, but its mapping from v0 OTLP settings is unverified).",
+        source.observability,
       ),
     );
   }
   if (source.tools !== undefined) {
-    found.push(omitted("tools.disclosure", "v1 has no equivalent setting."));
+    found.push(
+      omitted("tools.disclosure", "v1 has no equivalent setting.", source.tools.disclosure),
+    );
   }
   return found;
 }
@@ -54,6 +83,7 @@ function fabricImageOmissions(source: VerifiedExportSource): ExportOmission[] {
       omitted(
         "interfaces",
         "no confirmed v1 equivalent: v0 interface ports and v1 interface ports are not known to mean the same thing.",
+        source.interfaces,
       ),
     );
   }
@@ -87,6 +117,8 @@ function policyChanges(source: VerifiedExportSource): ExportOmission[] {
           {
             field,
             kind: "changed" as const,
+            before: "passthrough",
+            after: "skip",
             message: `${field}: passthrough is written as skip, the v1 name for a raw TLS tunnel.`,
           },
         ]
@@ -96,6 +128,8 @@ function policyChanges(source: VerifiedExportSource): ExportOmission[] {
           {
             field,
             kind: "changed" as const,
+            before: "terminate",
+            after: null,
             message: `${field}: terminate is written by omitting tls, which is v1's automatic TLS termination.`,
           },
         ]

@@ -28,8 +28,13 @@ describe("OpenClaw observability export (#12144, #14580)", () => {
     const exported = await exportSnapshots([openClawTelemetrySnapshot()]);
     expect(exported.outcome.ok).toBe(true);
     const raw = exported.writeStdout.mock.calls[0]![0];
-    expect(raw).not.toContain("otlp");
-    expect(raw).not.toContain("research-assistant");
+    // The report header names the omitted settings; the YAML document must not carry them.
+    const body = raw
+      .split("\n")
+      .filter((line) => !line.startsWith("#"))
+      .join("\n");
+    expect(body).not.toContain("otlp");
+    expect(body).not.toContain("research-assistant");
     expect(YAML.parse(raw).spec.sandboxes.alpha.harness).toEqual({
       kind: "nvidia.fabric.openclaw",
       runtime: { timeout_seconds: 600 },

@@ -323,7 +323,7 @@ describe("Hermes config export live evidence", () => {
       exitCode: 2,
       stdout: "",
       stderr:
-        "Config export failed (unsupported).\nV1alpha1 requires HTTPS when an inference provider declares a credential.\n",
+        "Config export failed (unsupported).\nspec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.\n",
     };
     mocks.command.mockResolvedValue(refusal);
 
@@ -373,8 +373,12 @@ describe("Hermes config export live evidence", () => {
         stdout: "",
         stderr: [
           "Config export failed (unsupported).",
-          ...(extraMessagingRefusal ? ["V1 export does not support messaging."] : []),
-          "V1alpha1 requires HTTPS when an inference provider declares a credential.",
+          ...(extraMessagingRefusal
+            ? [
+                "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
+              ]
+            : []),
+          "spec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.",
         ].join("\n"),
       });
 
@@ -406,9 +410,11 @@ describe("Hermes config export live evidence", () => {
       });
       const diagnostics = [
         "Config export failed (unsupported).",
-        "V1 export does not support messaging.",
+        "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
         ...(scheme === "http"
-          ? ["V1alpha1 requires HTTPS when an inference provider declares a credential."]
+          ? [
+              "spec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.",
+            ]
           : []),
       ].join("\n");
       mocks.command.mockResolvedValue({ exitCode: 2, stdout: "", stderr: diagnostics });
@@ -454,12 +460,12 @@ describe("Hermes config export live evidence", () => {
       stdout: "",
       stderr: [
         `Config export failed (${categories}).`,
-        "V1 export does not support messaging.",
-        "The sandbox provider attachments do not match its supported configuration.",
-        "The managed startup profile is not the canonical profile supported by v1 export.",
+        "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
+        "source.sandbox.providers (unsupported): The sandbox provider attachments do not match its supported configuration.",
+        "source.workload.startupProfile (unsupported): The managed startup profile is not the canonical profile supported by v1 export.",
         ...(categories.includes("policy-not-representable")
           ? [
-              "Verified effective policy is malformed, unknown, or cannot be represented losslessly.",
+              "spec.sandboxes[].network.policy (policy-not-representable): Verified effective policy is malformed, unknown, or cannot be represented losslessly.",
             ]
           : []),
       ].join("\n"),
@@ -486,14 +492,15 @@ describe("Hermes config export live evidence", () => {
       name: "missing refusal category",
       scheme: "https",
       driver: "docker",
-      diagnostics: "Config export failed (drifted).\nV1 export does not support messaging.",
+      diagnostics:
+        "Config export failed (drifted).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
     },
     {
       name: "policy category without unsupported messaging category",
       scheme: "https",
       driver: "docker",
       diagnostics:
-        "Config export failed (policy-not-representable).\nV1 export does not support messaging.",
+        "Config export failed (policy-not-representable).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
     },
     {
       name: "vague messaging detail",
@@ -505,7 +512,8 @@ describe("Hermes config export live evidence", () => {
       name: "missing HTTP credential refusal",
       scheme: "http",
       driver: "docker",
-      diagnostics: "Config export failed (unsupported).\nV1 export does not support messaging.",
+      diagnostics:
+        "Config export failed (unsupported).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
     },
     {
       name: "unexpected identity drift alongside messaging refusal",
@@ -513,7 +521,7 @@ describe("Hermes config export live evidence", () => {
       driver: "docker",
       diagnostics: [
         "Config export failed (unsupported, drifted).",
-        "V1 export does not support messaging.",
+        "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
         "Registry and live gateway bindings differ.",
       ].join("\n"),
     },
@@ -523,7 +531,7 @@ describe("Hermes config export live evidence", () => {
       driver: "docker",
       diagnostics: [
         "Config export failed (unsupported).",
-        "V1 export does not support messaging.",
+        "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
         "Unexpected export observation failure.",
       ].join("\n"),
     },
@@ -532,14 +540,14 @@ describe("Hermes config export live evidence", () => {
       scheme: "https",
       driver: "docker",
       diagnostics:
-        "Config export failed (unsupported, drifted).\nV1 export does not support messaging.",
+        "Config export failed (unsupported, drifted).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
     },
     {
       name: "policy category without its finding",
       scheme: "https",
       driver: "docker",
       diagnostics:
-        "Config export failed (unsupported, policy-not-representable).\nV1 export does not support messaging.",
+        "Config export failed (unsupported, policy-not-representable).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
     },
     {
       name: "policy finding without its category",
@@ -547,15 +555,16 @@ describe("Hermes config export live evidence", () => {
       driver: "docker",
       diagnostics: [
         "Config export failed (unsupported).",
-        "V1 export does not support messaging.",
-        "Verified effective policy is malformed, unknown, or cannot be represented losslessly.",
+        "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
+        "spec.sandboxes[].network.policy (policy-not-representable): Verified effective policy is malformed, unknown, or cannot be represented losslessly.",
       ].join("\n"),
     },
     {
       name: "missing Podman refusal",
       scheme: "https",
       driver: "podman",
-      diagnostics: "Config export failed (unsupported).\nV1 export does not support messaging.",
+      diagnostics:
+        "Config export failed (unsupported).\nspec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.",
     },
   ])(
     "rejects $name as expected messaging refusal evidence",
@@ -599,7 +608,7 @@ describe("Hermes config export live evidence", () => {
       stdout: "",
       stderr: [
         "Config export failed (unsupported).",
-        "The sandbox provider attachments do not match its supported configuration.",
+        "source.sandbox.providers (unsupported): The sandbox provider attachments do not match its supported configuration.",
       ].join("\n"),
     });
 
@@ -620,9 +629,11 @@ describe("Hermes config export live evidence", () => {
     });
     const diagnostics = [
       "Config export failed (unsupported).",
-      "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.",
+      "spec.sandboxes[].runtime.provider (unsupported): V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.",
       ...(scheme === "http"
-        ? ["V1alpha1 requires HTTPS when an inference provider declares a credential."]
+        ? [
+            "spec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.",
+          ]
         : []),
     ].join("\n");
     mocks.command.mockResolvedValue({ exitCode: 2, stdout: "", stderr: diagnostics });
@@ -672,7 +683,7 @@ describe("Hermes config export live evidence", () => {
         exitCode,
         stdout: "",
         stderr:
-          "Config export failed (unsupported).\nV1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred." +
+          "Config export failed (unsupported).\nspec.sandboxes[].runtime.provider (unsupported): V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred." +
           extra,
       };
     });
@@ -712,7 +723,7 @@ describe("Hermes config export live evidence", () => {
         exitCode: 2,
         stdout: "",
         stderr:
-          "Config export failed (unsupported).\nV1alpha1 requires HTTPS when an inference provider declares a credential.\n",
+          "Config export failed (unsupported).\nspec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.\n",
       })
       .mockImplementationOnce(async (_command: string, args: string[]) => {
         fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}");
@@ -742,7 +753,7 @@ describe("Hermes config export live evidence", () => {
       },
     });
     const refusal =
-      "Config export failed (unsupported).\nV1alpha1 requires HTTPS when an inference provider declares a credential.";
+      "Config export failed (unsupported).\nspec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.";
     mocks.command
       .mockResolvedValueOnce({ exitCode: 2, stdout: "", stderr: `${refusal}\n` })
       .mockResolvedValueOnce({

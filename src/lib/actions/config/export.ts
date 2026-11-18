@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
 import {
   SandboxNameSchema,
@@ -9,8 +10,10 @@ import {
 } from "../../config/model";
 import { renderCanonicalNemoClawConfig } from "../../config/canonical";
 import type { NonEmptyExportFindings } from "../../domain/config/export-evidence";
+import type { V1Alpha1Export } from "../../config/v1alpha1-export";
 import { buildExportConfig } from "../../domain/config/export-document";
 import { exportOmissions, type ExportOmission } from "../../domain/config/export-omissions";
+import { renderExportReportHeader } from "../../domain/config/export-report";
 import type {
   YamlExportFailure,
   YamlExportPublication,
@@ -76,6 +79,18 @@ export type ConfigExportOutcome =
     }
   | { readonly ok: false; readonly failure: ConfigExportFailure };
 
+/**
+ * The report is comments only, so specDigest is unchanged. documentDigest covers the bytes written,
+ * header included, so it matches a digest of the file.
+ */
+function withReportHeader(
+  config: V1Alpha1Export,
+  omissions: readonly ExportOmission[],
+  yaml: string,
+): string {
+  return renderExportReportHeader(omissions, config.spec.gateway.endpoint) + yaml;
+}
+
 export async function runConfigExport(
   request: ConfigExportRequest,
   dependencies: ConfigExportDependencies,
@@ -96,14 +111,16 @@ export async function runConfigExport(
     documentUid: dependencies.createDocumentUid(),
   });
   const rendered = renderCanonicalNemoClawConfig(config);
+  const omissions = exportOmissions(observation.source);
   const omittedCa = {
     ...(observation.corporateCaOmitted ? { corporateCaOmitted: true as const } : {}),
-    omissions: exportOmissions(observation.source),
+    omissions,
   };
+  const yaml = withReportHeader(config, omissions, rendered.yaml);
 
   if (request.target.kind === "stdout") {
     try {
-      await dependencies.writeStdout(rendered.yaml);
+      await dependencies.writeStdout(yaml);
       return { ok: true, completion: { kind: "stdout" }, ...omittedCa };
     } catch {
       return {
@@ -114,7 +131,7 @@ export async function runConfigExport(
   }
 
   const { outputPath, force } = request.target;
-  const published = dependencies.publish(outputPath, rendered.yaml, force);
+  const published = dependencies.publish(outputPath, yaml, force);
   if (!published.ok) {
     return { ok: false, failure: { kind: "output", target: "file", ...published.failure } };
   }
@@ -128,7 +145,7 @@ export async function runConfigExport(
         status: "succeeded",
         sourceSandbox: request.sandboxName,
         outputPath: published.outputPath,
-        documentDigest: rendered.documentDigest,
+        documentDigest: "sha256:" + createHash("sha256").update(yaml, "utf8").digest("hex"),
         specDigest: rendered.specDigest,
       },
     },
