@@ -96,6 +96,14 @@ NemoClaw sanitizes machine-local authority from the durable OpenClaw database co
 For Deep Agents Code, NemoClaw scans `sessions.db-journal`, `sessions.db-shm`, and `sessions.db-wal` for credential material before it publishes a backup.
 A detected credential or scan that exceeds the backup deadline stops the backup and identifies the affected sidecar.
 
+<AgentOnly variant="deepagents">
+
+Before retrying a Deep Agents Code backup, follow [Resolve a Deep Agents Code Backup Refusal](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#resolve-a-deep-agents-code-backup-refusal).
+Credential bytes can remain in `sessions.db-wal` after you delete conversation content.
+Do not edit SQLite rows or remove the session database to bypass the refusal.
+
+</AgentOnly>
+
 If a backup credential scan detects credential material, move credentials into supported OpenShell credential storage or bindings.
 Remove them from the native home.
 Then retry the backup.
