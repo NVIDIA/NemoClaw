@@ -55,6 +55,7 @@ printf '%s\n' "$@" > arguments
 { printf '%s\n' "$@"; printf -- '--\n'; } >> invocations
 printf '%s\n' "${NEXTEST_TEST_THREADS-unset}" > test-threads-env
 printf '%s\n' "${CARGO_PROFILE_DEV_DEBUG-unset}" > profile-debug-env
+printf '%s\n' "${NEMOCLAW_BUNDLE_VERSION-unset}" > bundle-version-env
 [ -n "${NEMOCLAW_HCL_CASE-}" ] && printf '%s\n' "$NEMOCLAW_HCL_CASE" >> hcl-cases
 if [ "$1" = build ]; then
     /bin/mkdir -p target/debug
@@ -908,6 +909,13 @@ fn bundle_builds_its_build_tool_so_it_can_run_without_the_build_step() {
 #[test]
 fn bundle_executables_compile_only_those_with_the_whole_bundles_features() {
     let fixture = Fixture::new();
+    // A part names the bundle's version, which hashes the source inputs.
+    for root in nemoclaw_build::SOURCE_ROOTS {
+        let path = fixture.0.path().join(root);
+        if !path.exists() {
+            fs::create_dir_all(path).unwrap();
+        }
+    }
     let output = fixture.run(&[
         "bundle",
         "--executables",
@@ -927,6 +935,11 @@ fn bundle_executables_compile_only_those_with_the_whole_bundles_features() {
         )]
     );
     assert!(!fixture.0.path().join("bundled").exists());
+    let version = fs::read_to_string(fixture.0.path().join("bundle-version-env")).unwrap();
+    assert!(
+        version.starts_with("0.1.0-dev."),
+        "an untagged part names the sources' version: {version}"
+    );
 }
 
 #[test]

@@ -19,7 +19,7 @@ pub mod release_assessment;
 #[cfg(feature = "sdk")]
 pub mod schema;
 mod source;
-pub use source::{hex, source_inputs, source_version};
+pub use source::{SOURCE_ROOTS, hex, source_inputs, source_version};
 #[cfg(feature = "sdk")]
 pub const BUILDER_SOURCE_VERSION: &str = env!("NEMOCLAW_BUILD_SOURCE_VERSION");
 pub fn extract_tofu(bytes: &[u8], windows: bool) -> Result<Vec<u8>, String> {
