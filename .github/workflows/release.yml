@@ -423,11 +423,12 @@ jobs:
             2) echo "::warning::The release security policy would block publishing; the draft holds the assessment." ;;
             *) echo "::error::The security assessment is incomplete; the draft holds what it recorded."; exit 1 ;;
           esac
-  publish:
-    name: Assess and publish the release
+  assess:
+    name: Assess the release
     needs: [stage, security-controller]
     # Anyone who may push a final tag may release: the release publishes once
-    # a release candidate staged its images and they pass the release policy.
+    # a release candidate staged its images, they pass the release policy, and
+    # their provenance is attested.
     # Without !cancelled(), a skipped Build would skip this job too.
     if: >-
       !cancelled() && !contains(github.ref_name, '-') &&
@@ -438,6 +439,8 @@ jobs:
       contents: write
       packages: read
       security-events: write
+    outputs:
+      images: ${{ steps.recheck.outputs.images }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -521,6 +524,7 @@ jobs:
           RESULT: ${{ steps.gate.outputs.result }}
         run: test "$RESULT" = 0
       - name: Recheck the registry digests
+        id: recheck
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -540,7 +544,8 @@ jobs:
           docker logout ghcr.io
           cargo run --locked -q -p nemoclaw-build --no-default-features -- release-verify-promotion \
             --expected "$inputs/inventory.json" --actual "$RUNNER_TEMP/observed-inventory.json"
-      - name: Publish the draft and its assessment evidence
+          echo "images=$(jq -c '[.[] | {name, repository, digest: .index_digest}]' "$RUNNER_TEMP/observed-inventory.json")" >> "$GITHUB_OUTPUT"
+      - name: Attach the assessment evidence to the draft
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -548,4 +553,34 @@ jobs:
           test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$RUNNER_TEMP/security-report/gate.json" \
             "$RUNNER_TEMP/security-report/assessment.json" "$RUNNER_TEMP/security-report/assessment.sarif"
+  # Only final releases are attested: Sigstore's log is public, and release
+  # candidates and internal packages stay private (#13521).
+  attest:
+    name: Attest
+    needs: assess
+    if: >-
+      !cancelled() && needs.assess.result == 'success'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release-attest.yml
+    with:
+      images: ${{ needs.assess.outputs.images }}
+  release:
+    name: Publish the release
+    needs: [assess, attest]
+    if: >-
+      !cancelled() && needs.assess.result == 'success' && needs.attest.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
