@@ -34,12 +34,15 @@ function requireLoadedSession(): NonNullable<ReturnType<OnboardSessionModule["lo
 
 describe("managed vLLM resume checkpoint persistence", () => {
   it("retains a secret-free model across failure and clears it on success", () => {
-    session.saveSession(session.createSession({ mode: "non-interactive" }));
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", pendingNvidiaModel: null }),
+    );
     session.markStepStarted("provider_selection");
     session.checkpointVllmInstallModel("Inferact/Muse-Glimmer-30B-NVFP4-W4A4");
     session.markStepFailed("provider_selection", "image pull failed");
 
     let loaded = requireLoadedSession();
+    expect(loaded.pendingNvidiaModel).toBeUndefined();
     expect(loaded.vllmInstallModel).toBe("Inferact/Muse-Glimmer-30B-NVFP4-W4A4");
     expect(session.summarizeForDebug()?.vllmInstallModel).toBe(
       "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
@@ -103,7 +106,7 @@ describe("managed vLLM resume checkpoint persistence", () => {
 });
 
 describe("managed llama.cpp resume checkpoint persistence", () => {
-  it("retains the exact selected recipe during an interrupted provider install", () => {
+  it("retains the interrupted install recipe until the operator selects NVIDIA Endpoints", async () => {
     const provenance = {
       schemaVersion: 1 as const,
       catalogDigest: `sha256:${"a".repeat(64)}`,
@@ -124,7 +127,11 @@ describe("managed llama.cpp resume checkpoint persistence", () => {
       estimatedModelDownloadBytes: 1024,
     };
     session.saveSession(
-      session.createSession({ mode: "non-interactive", sandboxName: "n1x-agent" }),
+      session.createSession({
+        mode: "non-interactive",
+        sandboxName: "n1x-agent",
+        pendingNvidiaModel: null,
+      }),
     );
     session.markStepStarted("provider_selection");
 
@@ -134,10 +141,21 @@ describe("managed llama.cpp resume checkpoint persistence", () => {
     });
     session.markStepFailed("provider_selection", "image pull interrupted");
 
-    expect(requireLoadedSession()).toMatchObject({
+    const loaded = requireLoadedSession();
+    expect(loaded.pendingNvidiaModel).toBeUndefined();
+    expect(loaded).toMatchObject({
       provider: "llama-cpp-local",
       model: "qwen3.6-35b-a3b",
       servingProfileProvenance: provenance,
+    });
+    const { checkpointPendingNvidiaModel } = await import("../onboard/provider-recovery");
+    session.markStepStarted("provider_selection");
+    checkpointPendingNvidiaModel(loaded.sessionId, null);
+    expect(requireLoadedSession()).toMatchObject({
+      provider: null,
+      model: null,
+      servingProfileProvenance: null,
+      pendingNvidiaModel: null,
     });
   });
 });

@@ -31,7 +31,7 @@ jobs:
     permissions:
       pull-requests: read
     outputs:
-      code: ${{ steps.filter.outputs.code }}
+      code: ${{ steps.filter.outputs.code == 'true' || steps.filter.outputs.security_review == 'true' }}
       hugging_face_models: ${{ steps.filter.outputs.hugging_face_models }}
     steps:
       - name: Checkout
@@ -51,6 +51,8 @@ jobs:
               - '!docs/**'
               - '!fern/docs.yml'
               - '!fern/assets/**'
+            security_review:
+              - '.agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md'
             hugging_face_models:
               - '{managed-inference/models/**,src/lib/inference/serving/catalog-loader.ts,src/lib/inference/serving/generate-catalog.ts,src/lib/inference/serving/hugging-face-model-verification.ts,tools/managed-inference/verify-hugging-face-models.ts,package.json,package-lock.json}'
 
