@@ -12,9 +12,19 @@ The workspace package version alone does not establish that a release has been p
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
 Refer to [the overview](overview.md) for implemented boundaries and [the CLI reference](../references/cli.md) for commands.
 
-### Changes Since v0.1.0-rc10
+### Changes Since v0.1.0-rc11
 
-These changes reached `v1` after the `v0.1.0-rc10` tag; [breaking changes](#breaking-changes-since-v010-rc10) are listed separately.
+These changes reached `v1` after the `v0.1.0-rc11` tag; [breaking changes](#breaking-changes-since-v010-rc11) are listed separately.
+
+Onboarding:
+
+- At the model question for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research, `nemoclaw onboard` offers the recommended models the endpoint lists and **Type another model**, instead of the endpoint's whole catalog, which can include models that cannot drive an agent.
+  The review notes a typed model that the endpoint does not list.
+  See [onboarding model catalogs](../agents-inference/inference.md#onboarding-model-catalogs).
+
+### Changes in v0.1.0-rc11
+
+These changes reached `v1` between the `v0.1.0-rc10` and `v0.1.0-rc11` tags; [breaking changes](#breaking-changes-in-v010-rc11) are listed separately.
 
 Agents and interfaces:
 
@@ -31,12 +41,15 @@ Agents and interfaces:
   See [Hermes's terminal UI](../agents-inference/interfaces.md#hermess-terminal-ui).
 - Apply stops an agent's failed Fabric runtime before it starts another in the sandbox.
   After provider errors, Fabric marks a runtime failed but leaves its processes running; before, every later apply failed with `state_in_use` for an agent that keeps state until someone ran `fabric-agent-ctl stop`, and without kept state, the next start failed because OpenClaw's Gateway still held its ports, after which Fabric refused every start until the sandbox was replaced.
+- Agent errors keep the codes Fabric uses when it refuses to start or stop a runtime, instead of reporting `fabric_configuration_failed`.
+  `start_uncertain` says to replace the sandbox and apply again, `state_in_use` means another runtime still holds the agent's kept state, and `runtime_busy` means the agent was handling a request, so its runtime is unchanged.
+  See [identifying the failure](../observability/troubleshooting.md#identify-the-failure).
+- A Hermes agent whose route uses an `anthropic` inference provider starts; before, apply failed with `start_failed` because the Hermes image lacked the Anthropic SDK.
+  Hermes sends the requests to the provider's endpoint only when its path ends in `/anthropic` or `/anthropic/v1` or its host is Anthropic's, Claude's, or Azure's; see [pointing Hermes at an Anthropic endpoint](../agents-inference/inference.md#point-hermes-at-an-anthropic-endpoint).
 
 Onboarding:
 
-- At the model question for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research, `nemoclaw onboard` offers the recommended models the endpoint lists and **Type another model**, instead of the endpoint's whole catalog, which can include models that cannot drive an agent.
-  The review notes a typed model that the endpoint does not list.
-  See [onboarding model catalogs](../agents-inference/inference.md#onboarding-model-catalogs).
+- The `nemoclaw onboard` review opens with a summary of the agent, model, API key, web search, where the deployment runs, image, network access, and output file; the saved YAML follows, collapsed until you press Tab.
 - At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
 
 Sandbox policy:
@@ -57,6 +70,11 @@ Kubernetes and OpenShift:
   The gateway certificate names the endpoint's host, and NemoClaw's own commands keep their port forward.
   Plan refuses `expose.route` unless `gateway.runtime.provider` is `openshift` and the endpoint's host is a DNS name.
   See [publishing through an OpenShift Route](../build-deploy/kubernetes.md#through-an-openshift-route).
+
+Plan and apply:
+
+- An apply that OpenTofu completes no longer fails with `invalid or unsupported OpenTofu UI stream` when a message in OpenTofu's UI stream is longer than 1 MiB: NemoClaw skips such a message.
+  OpenTofu's final `outputs` message passed 1 MiB at about 87 OpenClaw sandboxes on a Kubernetes or OpenShift gateway.
 
 Examples and builds:
 
@@ -183,20 +201,22 @@ Examples and builds:
 Earlier CLI commands, schemas, and state formats have no compatibility guarantees.
 See [migration](../get-started/migration.md) for where each earlier task lives now, and [state](../build-deploy/state.md) for data preservation.
 
-### Breaking Changes Since v0.1.0-rc10
+### Breaking Changes Since v0.1.0-rc11
 
-These changes since the `v0.1.0-rc10` tag affect existing deployments or documents:
+No change since the `v0.1.0-rc11` tag affects existing deployments or documents yet.
+
+### Breaking Changes in v0.1.0-rc11
+
+These changes between the `v0.1.0-rc10` and `v0.1.0-rc11` tags affect existing deployments or documents:
 
 - A `kind: api` integration takes `endpoints`, a list of URLs, instead of `endpoint`, and `openshell_api` takes `endpoints` instead of `endpoint`; the parser rejects `endpoint`.
   Write `endpoint: https://bookings.example.com/mcp` as `endpoints: [https://bookings.example.com/mcp]`.
   An `openshell_api` with an `mcp` block takes exactly one URL.
-
 - The intent record is now version 25, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
   `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up.
   Before:
-
   ```yaml
   harness:
     kind: nvidia.fabric.hermes
@@ -207,9 +227,7 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
   agent:
     name: flights
   ```
-
   After:
-
   ```yaml
   harness:
     kind: nvidia.fabric.hermes
@@ -219,11 +237,8 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
     instructions: {system: {mode: replace, content: "Research flights."}}
     skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
   ```
-
 - `harness.execution` is removed. Set Fabric's `runtime.timeout_seconds` on the harness instead: replace `harness: {kind: nvidia.fabric.openclaw, execution: {timeoutSeconds: 600}}` with `harness: {kind: nvidia.fabric.openclaw, runtime: {timeout_seconds: 600}}`.
-
 - `agent.tools` is Fabric's tools section, and its `allow` list is removed. Rename `allow` to Fabric's `enabled`, so `tools: {allow: [read, write]}` becomes `tools: {enabled: [read, write]}`; `blocked` and `definitions` are now available too.
-
 - In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
   Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
 - Every sandbox must set `image.ref` to an agent image pinned by digest, on Docker and Podman as on Kubernetes.
