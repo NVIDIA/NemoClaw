@@ -239,7 +239,7 @@ Anyone who can run commands in the sandbox, including the agent's own tools, can
 
 Each terminal UI starts a new conversation in the agent's Hermes home, with the agent's configuration, skills, and model; it doesn't continue the conversations of `fabric-agent-ctl invoke` or browser chat.
 Press Ctrl-D to quit; quitting leaves the runtime and the backend running.
-Stopping the runtime stops the backend and removes the attachment files, so open the terminal UI again after the runtime restarts; what an open terminal UI does when its runtime stops isn't settled yet ([#14202](https://github.com/NVIDIA/NemoClaw/issues/14202)).
+Stopping the runtime stops the backend and removes the attachment files, so open the terminal UI again after the runtime restarts; what an open terminal UI does when its runtime stops isn't settled yet ([NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656)).
 
 ### Hermes's Browser Chat
 

@@ -189,7 +189,7 @@ For a local external Ollama daemon, use the [managed proxy](#use-external-ollama
 Use the route's `overrides.model` for the upstream model ID.
 Native agents send the configured model ID to the native endpoint using an OpenShell placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
 Confirm a native agent reply after apply using [verification levels](#verify-the-result).
-Guides for named hosted providers are tracked in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038).
+NemoClaw has no guides for named hosted providers.
 
 ### Trust a Custom Certificate Authority
 
@@ -616,7 +616,11 @@ The menu keeps an authored model selected, including a custom identifier.
 You can choose **Type another model**; generic OpenAI-compatible and Anthropic-compatible endpoints have no vendor catalog.
 Changing a vendor or endpoint recomputes the recommendations and membership check for the selected route.
 
-Endpoint discovery can add advertised identifiers without changing the curated list.
+The endpoint's own list of models is read to check the selected model.
+It does not widen the menu: a vendor with a curated list offers only the curated models the endpoint lists, plus **Type another model**.
+A curated model the endpoint leaves out is not offered; if the endpoint lists none of them, the menu offers the models it does list instead. A model you type that the endpoint does not list is noted on the review screen.
+Keys you press while the list is being read are discarded when it arrives, so they cannot select from the narrowed menu.
+Generic OpenAI-compatible and Anthropic-compatible endpoints have no curated list, so they offer the models their endpoint lists.
 A missing catalog credential leaves offline recommendations available and reports the missing credential; it does not allow bulk acceptance without the existing target and endpoint evidence.
 Catalog membership does not verify account access, current availability, API compatibility, tool support, or successful inference.
 Use an explicit request to qualify inference.
@@ -626,6 +630,7 @@ Use an explicit request to qualify inference.
 The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
-Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
-A managed NVIDIA NIM service is not planned: use NIM as an external OpenAI-compatible endpoint ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)).
+Managed llama.cpp and NVIDIA NIM services are tracked in [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); until then, use either as an external OpenAI-compatible endpoint.
+NemoClaw has no Model Router and no provider for Gemini's native API; onboarding's Google Gemini preset uses Gemini's OpenAI-compatible endpoint.
+Distributed inference, separate inference hosts and other model formats are tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
 None of these limits prevents using a separately verified external endpoint with an accepted API.

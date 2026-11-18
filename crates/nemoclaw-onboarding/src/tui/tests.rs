@@ -5,7 +5,9 @@ use super::{
     app::JourneyWizard,
     labels::{label, terminal_text},
     logo::BrandImage,
-    terminal::{ask_target, credential_probe, local_engine_probe, model_catalog_probe},
+    terminal::{
+        agent_images_probe, ask_target, credential_probe, local_engine_probe, model_catalog_probe,
+    },
 };
 use crate::{Source, load_journey};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -18,8 +20,8 @@ use nemoclaw_sdk::{
     CancellationToken, Error,
     config::{ComputeDriver, Document},
     discovery::{
-        CredentialRequest, DiscoveryObservation, DiscoveryQuery, DiscoveryRequest,
-        EngineObservation, ObservationStatus,
+        AgentImagesObservation, AgentImagesRequest, CredentialRequest, DiscoveryObservation,
+        DiscoveryQuery, DiscoveryRequest, EngineObservation, ObservationStatus,
     },
     inference_discovery::{CredentialObservation, EndpointObservation},
 };
@@ -1250,16 +1252,25 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
             source: "fixture".into(),
             reachable: Some(true),
             authentication: AuthenticationStatus::Accepted,
-            models: vec!["vendor/discovered".into()],
+            models: vec![
+                "nvidia/nemotron-3-ultra-550b-a55b".into(),
+                "vendor/discovered".into(),
+            ],
             api_verified: false,
         }),
     );
     let question = wizard.question().unwrap().unwrap();
-    assert!(
-        question
-            .choices()
-            .contains(&serde_json::json!("vendor/discovered"))
+    // The endpoint lists a model that is not recommended, so only the
+    // recommended model it lists is offered.
+    assert_eq!(
+        question.choices(),
+        [serde_json::json!("nvidia/nemotron-3-ultra-550b-a55b")]
     );
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let screen = terminal.backend().to_string();
+    assert!(!screen.contains("vendor/discovered"), "{screen}");
+    assert!(screen.contains("Type another model"), "{screen}");
     wizard.selected = question.choices().len();
     wizard.selection_changed = true;
     wizard.advance();
@@ -1270,6 +1281,75 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
         wizard.state().values().pointer(question.id()),
         Some(&serde_json::json!("private/custom"))
     );
+}
+
+#[tokio::test]
+async fn a_key_typed_while_the_model_catalog_is_read_does_not_choose_from_the_resolved_menu() {
+    let capabilities = Capabilities::available();
+    let state = load_defaults(&capabilities);
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    for _ in 0..12 {
+        if wizard
+            .question()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|question| question.allows_custom_answer())
+        {
+            break;
+        }
+        wizard.advance();
+    }
+    let query = model_catalog_probe(&wizard).unwrap();
+    let shown = wizard.question().unwrap().unwrap().suggestion().cloned();
+    // The endpoint answers slowly and lists only a model other than the
+    // suggestion on screen, so the resolved menu suggests a different one.
+    let document = wizard
+        .state()
+        .resolve(&wizard.capabilities)
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let request = inference_request_for_document(&document, wizard.state().current_route())
+        .unwrap()
+        .unwrap();
+    let read = {
+        let request = request.clone();
+        async move |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            Ok(DiscoveryObservations::new().with(
+                DiscoveryQuery::Inference(request),
+                DiscoveryObservation::Inference(EndpointObservation {
+                    status: ObservationStatus::Available,
+                    reason: None,
+                    source: "fixture".into(),
+                    reachable: Some(true),
+                    authentication:
+                        nemoclaw_sdk::inference_discovery::AuthenticationStatus::Accepted,
+                    models: vec!["nvidia/nemotron-3-ultra-550b-a55b".into()],
+                    api_verified: false,
+                }),
+            ))
+        }
+    };
+    let enter = crossterm::event::Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let mut queue = std::collections::VecDeque::new();
+    assert!(
+        ask_target(
+            &mut wizard,
+            read,
+            vec![query],
+            &CancellationToken::new(),
+            &mut queue,
+            || Ok(Some(enter.clone())),
+        )
+        .await
+        .unwrap()
+    );
+    let resolved = wizard.question().unwrap().unwrap();
+    assert_ne!(resolved.suggestion().cloned(), shown);
+    assert!(queue.is_empty(), "{queue:?}");
 }
 
 #[test]
@@ -1442,6 +1522,94 @@ async fn unreachable(
         observed.record(query, observation);
     }
     Ok(observed)
+}
+
+const DOCKER_ENGINE: &str = "unix:///home/me/.colima/docker.sock";
+const HERMES_IMAGE: &str =
+    "nc-fabric@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+
+/// The default journey for `harness` on a machine whose one Docker engine
+/// answered, at the sandbox image question.
+fn at_the_image_question(harness: &str) -> JourneyWizard {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let candidate = DiscoveryRequest {
+        engine: DOCKER_ENGINE.into(),
+        compute_driver: ComputeDriver::Docker,
+    };
+    let mut wizard = JourneyWizard::new(capabilities, state)
+        .with_local_engine_candidates(vec![candidate.clone()]);
+    wizard.remember(DiscoveryObservations::new().with(
+        DiscoveryQuery::Engine(candidate),
+        DiscoveryObservation::Engine(engine_observation(ObservationStatus::Available)),
+    ));
+    wizard.started = true;
+    wizard.submit(Some(serde_json::json!(harness))).unwrap();
+    for _ in 0..12 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.id().ends_with("/image/ref"))
+        {
+            return wizard;
+        }
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    }
+    panic!("the journey did not reach the image question");
+}
+
+/// The engine's images that install the harness asked about.
+fn agent_images(references: &[&str]) -> DiscoveryObservation {
+    DiscoveryObservation::AgentImages(AgentImagesObservation {
+        status: ObservationStatus::Available,
+        reason: None,
+        references: references
+            .iter()
+            .map(|reference| (*reference).into())
+            .collect(),
+    })
+}
+
+#[test]
+fn the_image_question_suggests_the_local_image_that_installs_the_chosen_harness() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).expect("the image question reads the engine's images");
+    assert_eq!(
+        query,
+        DiscoveryQuery::AgentImages(AgentImagesRequest {
+            engine: DOCKER_ENGINE.into(),
+            adapter_id: "nvidia.fabric.hermes".into(),
+        })
+    );
+    wizard.record(query, agent_images(&[HERMES_IMAGE]));
+    assert_eq!(
+        agent_images_probe(&wizard),
+        None,
+        "the images are read once"
+    );
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(
+        question.suggestion(),
+        Some(&serde_json::json!(HERMES_IMAGE))
+    );
+    assert_eq!(question.choices(), [serde_json::json!(HERMES_IMAGE)]);
+}
+
+#[test]
+fn without_a_local_image_for_the_harness_the_image_question_says_how_to_build_one() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[]));
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.suggestion(), None);
+    let note = question
+        .note()
+        .expect("the question says why it suggests no image");
+    assert!(
+        note.contains("https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images"),
+        "{note}"
+    );
 }
 
 /// Ask the target without a terminal: nobody types during the read.

@@ -39,26 +39,63 @@ The [staging workflow](../../.github/workflows/release.yml):
 1. Finds the latest commit in the tag's `v1` history with per-commit images, and checks with `nemoclaw-build changes images` that nothing since could change them; otherwise it builds and checks the images at the tag.
 2. Builds the vLLM and Ollama runtime images on each native platform; their builds are reproducible.
 3. Joins each image's ARM64 and AMD64 images into one index at `ghcr.io/nvidia/nemoclaw/v1/<image>:<tag>`, without rebuilding.
-4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
+4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles) and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
 
 Only users with push access see a draft release, and the `v1` packages stay internal.
+
+## CLI Bundles
+
+Staging attaches each platform's bundle as the latest passing push or manual run of [CI / Bundle](../../.github/workflows/rust.yml) at the tagged commit built and checked it, gzipped without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
+`SHA256SUMS` lists their SHA-256 checksums.
+Pull request runs build a merge commit, so they don't count.
+The executables are neither signed nor notarized.
+
+CI keeps the bundles of a `v1` push or manual run for 7 days.
+Before tagging a commit, check that CI / Bundle passed at it in a `push` or `workflow_dispatch` run within that window:
+
+```sh
+gh run list --workflow rust.yml --commit <full commit hash> --status success
+```
+
+Without such a run, staging fails before it pushes release images or drafts the release, and names the missing platforms.
+Run CI / Bundle at the tag, and rerun the staging workflow once it passes:
+
+```sh
+gh workflow run rust.yml --ref v0.1.0-rc1
+```
 
 ## Test a Staged Release
 
 Use [image assessment](image-assessment.md) to evaluate the saved SPDX inventories.
 Local assessment does not authorize publication.
 
-Deploy with the digests the draft lists.
+Deploy with the CLI archive for your platform and the digests the draft lists.
 Docker deployments pull private images through `spec.registries`; Kubernetes deployments use `imagePullSecrets`.
 
 ## Publish
 
 Push a final tag only from a commit whose release candidate has completed installer, onboarding, QA, and product sign-off; until then, the draft and packages stay private.
-The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the [security assessment](image-assessment.md#hosted-enforcement) passes, and the registry digests are unchanged.
+The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the [security assessment](image-assessment.md#hosted-enforcement) passes, the registry digests are unchanged, and every image's [provenance](#verify-provenance) is attested.
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
 Publishing a draft by hand and package-administrator privileges bypass the workflow.
 An administrator handles package visibility changes; making a package public cannot be undone.
-Before pushing a final tag, complete the provenance, SBOM, scanning, and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13522](https://github.com/NVIDIA/NemoClaw/issues/13522), [#13523](https://github.com/NVIDIA/NemoClaw/issues/13523), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+Before pushing a final tag, complete the [license review](image-licenses.md) of every image the release publishes.
+
+## Verify Provenance
+
+A final release attests each image index's build provenance with a GitHub artifact attestation before it publishes the draft.
+The attestation is signed through Sigstore's public-good instance, whose log is public, so release candidates get none.
+It is stored beside the image in `ghcr.io` as an OCI referrer, so the index digest stays the one staging pushed; `ghcr.io` has no referrers API, so the image's package shows it under the tag `sha256-<index digest hex>`.
+
+Verify an image by the index digest the release lists:
+
+```sh
+gh attestation verify oci://ghcr.io/nvidia/nemoclaw/v1/<image>@<digest> --owner NVIDIA
+```
+
+Add `--bundle-from-oci` to read the attestation from the registry instead of GitHub's API; the workflow verifies each attestation this way after creating it.
+While the packages are internal, sign in with `docker login ghcr.io` first.
+Platform manifests have no attestation of their own: verify the index that lists them.
 
 ## SBOM Assets
 
@@ -75,6 +112,6 @@ Those Rust entries describe the retained build sources, including build dependen
 Image scanning cannot recover components whose upstream images contain neither package metadata nor recognizable binaries; inspect representative OS, Python, Node, and Rust entries before publishing.
 
 The assets stay private with the draft: release candidates and internal packages publish nothing about their images.
-Only a final release attests the inventories, together with provenance ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521)).
+No release attests the inventories yet ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521)).
 A Syft failure fails the job that runs it, before staging uploads any SBOM asset; rerun it.
 Assets are named by digest, so a rerun can't overwrite another image's inventory.
