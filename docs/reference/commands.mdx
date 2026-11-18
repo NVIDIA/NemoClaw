@@ -1390,7 +1390,7 @@ During that lease, another `launch` still verifies these conditions:
 </AgentOnly>
 <AgentOnly variant="hermes,deepagents">
 
-- The recorded inference selection matches its provider path, and every configured route serves a valid response to a bounded request for the recorded model.
+- The recorded inference selection matches its provider path, and every configured single-model route serves a valid response to a bounded request for the recorded model.
   NVIDIA Endpoints, supported fixed hosted selections, new hosted compatible selections outside the Personal tier, and qualifying new local selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
   Owned Local NVIDIA NIM, retained legacy routes, and other custom routes without an attachment use `inference.local`.
   Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
@@ -1399,9 +1399,31 @@ During that lease, another `launch` still verifies these conditions:
 </AgentOnly>
 - The agent runtime and its required host-side forwards pass their semantic health checks.
 
+<AgentOnly variant="hermes">
+
+For Switchyard routing, inference readiness verifies the recorded provider identities, revisions, profiles, and sandbox attachments.
+This check does not send a model request.
+
+Before each gateway launch, including supervised recovery, NemoClaw makes bounded model calls.
+These calls verify judge classification and separate routing and answer usage accounting.
+If judge qualification fails, the gateway remains stopped.
+
+</AgentOnly>
+
+
 <AgentOnly variant="openclaw">
 
-For OpenClaw, `connect --probe-only` also settles the existing allowlisted pairing flow before it publishes the lease. The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration. Its credential-free pairing qualification binds the canonical CLI client, exact paired device identity, required operator role and scopes, owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch. Before accepting that evidence, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway. It skips the complete pairing approval pass only when the evidence still matches exactly and no relevant allowlisted request is pending. Missing, unreadable, malformed, ambiguous, or changed pairing evidence runs the complete pairing approval pass. A relevant allowlisted pending request also runs that complete path, so late scope requests remain eligible for approval.
+For OpenClaw, `connect --probe-only` also settles the existing allowlisted pairing flow before it publishes the lease.
+The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration.
+Its credential-free pairing qualification binds the settled CLI or native terminal user interface (TUI) client, exact paired device identity, and required operator role and scopes.
+It also binds the owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch.
+Native TUI state must have the required grants and no pending pairing requests.
+Qualification does not change its credentials or grants.
+
+Before accepting that evidence, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway.
+It skips the complete pairing approval pass only when the evidence still matches exactly and no relevant allowlisted request is pending.
+Missing, unreadable, malformed, ambiguous, or changed pairing evidence runs the complete pairing approval pass.
+A relevant allowlisted pending request also runs that complete path, so late scope requests remain eligible for approval.
 
 </AgentOnly>
 
