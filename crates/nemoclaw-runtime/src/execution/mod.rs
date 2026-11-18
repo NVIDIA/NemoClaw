@@ -4,6 +4,8 @@
 //! Package-neutral runtime entry point. Package dispatch remains inside the
 //! service component alongside each installer's implementation.
 
+pub(crate) mod authentication;
+pub(crate) mod output;
 pub(super) mod supervisor;
 
 use crate::{CancellationToken, Error};
@@ -20,8 +22,12 @@ pub async fn run(cancel: &CancellationToken, trip: &CancellationToken) -> Result
         }
     };
     match crate::RuntimeSpec::decode(&text)? {
+        crate::RuntimeSpec::Nim(service) => crate::nim::runtime::run(&service, cancel, trip).await,
         crate::RuntimeSpec::Ollama(service) => {
             crate::ollama::runtime::run(&service, cancel, trip).await
+        }
+        crate::RuntimeSpec::LlamaCpp(service) => {
+            crate::llama_cpp::runtime::run(&service, cancel, trip).await
         }
         crate::RuntimeSpec::Vllm(service) => {
             crate::vllm::runtime::run(&service, cancel, trip).await

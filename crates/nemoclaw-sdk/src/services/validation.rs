@@ -20,7 +20,16 @@ pub fn validate_resource_spec(kind: &str, encoded: &str) -> Result<(), Error> {
     spec.validate()?;
     match kind {
         vllm::SERVICE_KIND => {
-            vllm::configured_service(&spec)?;
+            match nemoclaw_runtime::RuntimeSpec::decode(spec.runtime_configuration()?)? {
+                nemoclaw_runtime::RuntimeSpec::Vllm(_)
+                | nemoclaw_runtime::RuntimeSpec::LlamaCpp(_)
+                | nemoclaw_runtime::RuntimeSpec::Nim(_) => {}
+                _ => {
+                    return Err(Error::Conflict(
+                        "runtime configuration is not a managed inference service",
+                    ));
+                }
+            }
         }
         ollama::SERVICE_KIND => {
             ollama::configured_service(&spec)?;

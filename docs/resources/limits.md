@@ -52,9 +52,9 @@ A configured connection or ready container does not establish successful model r
 | Limit | Issue |
 |---|---|
 | Hermes doesn't reject a managed Ollama window below its 64,000-token minimum; see [sizing the context for Hermes](../agents-inference/inference.md#size-the-context-for-hermes) | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) |
-| Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
+| Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |
-| Managed NVIDIA NIM service; use NIM as an external OpenAI-compatible endpoint | Not planned ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)) |
+| Native NIM qualification is limited to the [AMD64 L40S Llama 3.1 8B BF16 configuration](../agents-inference/models.md#native-nim-candidate) with `llama3_json` and a 32K context. Tool-use quality, cache restoration on another host, other catalog profiles and platforms remain unqualified | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) |
 | More than 32 providers attached to one sandbox: OpenShell refuses more, and its inference providers, its web search and each `api` integration count one each | By design: OpenShell's limit per sandbox |
 
 ## Agents and Integrations
@@ -130,3 +130,6 @@ Select the v1 guide explicitly and match its source revision to the bundle befor
 | Public publication of the combined documentation site, with a check of its legacy routes | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) |
 | Search and docs MCP scoped to v1 | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) |
 | Packaged installation of the documentation skill for assistant clients | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) |
+
+Managed [llama.cpp](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp) accepts pinned public GGUF files on one CUDA GPU.
+Its candidate Muse/L40S case awaits live qualification; tool use, multimodal input and Classic host parity are not established by schema acceptance.

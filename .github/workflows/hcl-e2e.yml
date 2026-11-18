@@ -362,6 +362,7 @@ jobs:
           sed -i "${bindings[@]}" -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id nc-fabric:openclaw)#" \
             -e "s#nc-fabric-hermes@sha256:0\{64\}#nc-fabric@$(id nc-fabric:hermes)#" \
             -e "s#nc-prototype-vllm@sha256:0\{64\}#nc-prototype-vllm@$(id nc-prototype-vllm:rust-v1)#" \
+            -e "s#nc-prototype-llama-cpp@sha256:0\{64\}#nc-prototype-llama-cpp@$(id nc-prototype-llama-cpp:rust-v1)#" \
             -e "s#nc-prototype-ollama@sha256:a\{64\}#nc-prototype-ollama@$(id nc-prototype-ollama:rust-v1)#" \
             -e "s#^  uid: .*#  uid: $(cat /proc/sys/kernel/random/uuid)#" \
             "$document"

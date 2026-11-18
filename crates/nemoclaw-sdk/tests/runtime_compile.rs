@@ -235,6 +235,8 @@ fn omitted_docker_model_limits_use_independent_defaults() {
 #[test]
 fn docker_model_update_policy_does_not_change_runtime_resources() {
     for input in [
+        include_str!("../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml"),
+        include_str!("../../nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml"),
         include_str!("fixtures/config/spark.yaml"),
         include_str!("fixtures/config/managed-ollama.yaml"),
     ] {

@@ -5,6 +5,17 @@ use nemoclaw_authoring::{PartialDocument, PartialIssueKind};
 use nemoclaw_sdk::config::Document;
 
 #[test]
+fn a_pinned_nim_document_materializes_with_an_operator_credential_reference() {
+    let yaml = include_bytes!("../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml");
+    let assessment = PartialDocument::from_yaml(yaml).unwrap().assess();
+    assert!(assessment.issues().is_empty(), "{:?}", assessment.issues());
+    assert_eq!(
+        assessment.document(),
+        Some(&Document::parse(yaml.as_slice()).unwrap())
+    );
+}
+
+#[test]
 fn sparse_input_reports_missing_values_without_constructing_a_document() {
     let partial = PartialDocument::from_yaml(
         b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    assistant:\n      harness:\n        kind: nvidia.fabric.openclaw\n",
@@ -89,4 +100,18 @@ fn inference_form_is_pending_when_absent_and_invalid_when_both_forms_are_supplie
         issue.path() == "/spec/sandboxes/assistant/agent"
             && issue.kind() == PartialIssueKind::Invalid
     }));
+}
+
+#[test]
+fn a_pinned_llama_cpp_document_materializes_without_loading_credentials() {
+    let yaml = include_bytes!("../../nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml");
+    let assessment = PartialDocument::from_yaml(yaml).unwrap().assess();
+    assert!(assessment.issues().is_empty(), "{:?}", assessment.issues());
+    let document = assessment
+        .document()
+        .expect("complete managed GGUF desired state");
+    assert!(
+        document.credential_names().is_empty(),
+        "serving key is owned by the runtime"
+    );
 }

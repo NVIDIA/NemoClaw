@@ -9,6 +9,8 @@ mod contract;
 mod dependencies;
 #[path = "entrypoint.rs"]
 mod entrypoint;
+mod llama_cpp;
+mod nim;
 #[path = "per_gpu_memory.rs"]
 mod per_gpu_memory;
 #[path = "rtx_spark.rs"]

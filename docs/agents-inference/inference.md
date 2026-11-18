@@ -611,6 +611,7 @@ Use an explicit request to qualify inference.
 The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
-Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
-A managed NVIDIA NIM service is not planned: use NIM as an external OpenAI-compatible endpoint ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)).
+For managed GGUF serving, see [llama.cpp](models.md#serve-a-pinned-gguf-with-llamacpp). Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
+Managed NVIDIA NIM is qualified for one pinned AMD64 L40S configuration with a 32K context under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); see [its scope and requirements](models.md#native-nim-candidate).
+Other NIM model/platform combinations need separate qualification.
 None of these limits prevents using a separately verified external endpoint with an accepted API.

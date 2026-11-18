@@ -63,6 +63,7 @@ fn build() -> Value {
     defs.insert("ServiceDefinition".into(), json!({"oneOf":variants}));
     crate::vllm::schema::constrain(defs, true);
     crate::ollama::constrain_schema(defs, true);
+    crate::llama_cpp::schema::constrain(defs);
     let variants = defs.remove("ServiceDefinition").unwrap()["oneOf"].clone();
     root["oneOf"] = variants;
     root

@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Candidate-built images are bound by CI. L40S settings await live qualification.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-openclaw-llama-cpp
+  uid: b238c8a1-dd46-43e9-89c1-f5d9d4f34e4d
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17695
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.30.121.0/24
+  services:
+    muse:
+      kind: llamaCpp
+      hardware:
+        architecture: amd64
+        minComputeCapability: 89
+        minDriverMajor: 580
+        minGpuMemoryBytes: 34359738368
+      image: nc-prototype-llama-cpp@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      authentication: bearer
+      model:
+        repository: meta-models/Muse-Glimmer-30B-GGUF
+        revision: 43c7eadd41352a299ea8e0a36b3157978dd63596
+        file: Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf
+        sha256: 4cc57c0f51040a226e5a72cc47b7613f7772950e460a665f7083de89f183f60e
+        sizeBytes: 16756683904
+      serving:
+        modelName: muse-glimmer
+        port: 18898
+        contextTokens: 32768
+        reasoningStrength: low
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 32
+        hostReserveGiB: 32
+  inferenceProviders:
+    muse:
+      provider: openai
+      serviceRef: muse
+  sandboxes:
+    assistant:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: muse
+              overrides:
+                model: muse-glimmer
+                maxTokens: 16384

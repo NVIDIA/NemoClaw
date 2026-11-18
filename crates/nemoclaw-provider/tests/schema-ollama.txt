@@ -36,6 +36,8 @@ data ollama_proxy_readiness (version 0)
   endpoint: string, optional
   engine: string, optional
   name: string, optional
+  publication_container_id: string, optional
+  publication_endpoint: string, optional
   read_trigger: bool, optional
   ready: bool, computed
   ref: object({ credential_env = string, credential_source = string, endpoint = string, model = string, type = string }), computed
@@ -61,6 +63,8 @@ data ollama_readiness (version 0)
   endpoint: string, optional
   engine: string, optional
   name: string, optional
+  publication_container_id: string, optional
+  publication_endpoint: string, optional
   read_trigger: bool, optional
   ready: bool, computed
   ref: object({ credential_env = string, credential_source = string, endpoint = string, model = string, type = string }), computed

@@ -63,7 +63,15 @@ pub(crate) fn configure_readiness(
             continue;
         }
         let source = if target.kind == super::installers::vllm::SERVICE_KIND {
-            super::installers::vllm::RUNTIME_DATA_SOURCE
+            match nemoclaw_runtime::RuntimeSpec::decode(spec.runtime_configuration()?)? {
+                nemoclaw_runtime::RuntimeSpec::LlamaCpp(_) => {
+                    super::installers::llama_cpp::RUNTIME_DATA_SOURCE
+                }
+                nemoclaw_runtime::RuntimeSpec::Nim(_) => {
+                    super::installers::nim::RUNTIME_DATA_SOURCE
+                }
+                _ => super::installers::vllm::RUNTIME_DATA_SOURCE,
+            }
         } else {
             ollama::RUNTIME_DATA_SOURCE
         };
@@ -79,6 +87,21 @@ pub(crate) fn configure_readiness(
             "read_trigger":"${timestamp() != \"\"}",
             "wait_timeout_seconds":9 * 3600
         });
+        if matches!(
+            nemoclaw_runtime::RuntimeSpec::decode(spec.runtime_configuration()?)?,
+            nemoclaw_runtime::RuntimeSpec::Nim(_)
+        ) {
+            let process = spec
+                .process
+                .as_ref()
+                .ok_or(Error::State("missing NIM process"))?;
+            graph["data"][readiness][logical]["publication_container_id"] =
+                json!(format!("${{{container}_proxy.id}}"));
+            graph["data"][readiness][logical]["publication_endpoint"] = json!(literal(&format!(
+                "http://{}:{}/v1",
+                process.bind_address, process.port
+            )));
+        }
     }
     for target in targets
         .iter()

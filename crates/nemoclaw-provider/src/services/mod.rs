@@ -37,6 +37,7 @@ fn storage_definition(kind: &str) -> crate::Definition {
 /// The runtime a service contract describes, and so which provider reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ServiceRuntime {
+    /// Managed inference contracts served by the vllm provider, including llama.cpp.
     Vllm,
     Ollama,
     OllamaProxy,
@@ -54,7 +55,7 @@ impl ServiceRuntime {
         let value: serde_json::Value = serde_json::from_str(contract).map_err(|_| invalid())?;
         match value.get("kind").map(|kind| kind.as_str()) {
             None => Ok(Self::OllamaProxy),
-            Some(Some("vllm")) => Ok(Self::Vllm),
+            Some(Some("vllm" | "llamaCpp" | "nim")) => Ok(Self::Vllm),
             Some(Some("ollama")) => Ok(Self::Ollama),
             Some(_) => Err(invalid()),
         }
