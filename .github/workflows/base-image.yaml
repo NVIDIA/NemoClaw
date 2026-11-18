@@ -103,6 +103,7 @@ on:
       - "scripts/security/zlib-write-error.c"
       - "scripts/patch-bundled-npm-brace-expansion.mts"
       - "scripts/lib/patch-bundled-npm-ip-address.mts"
+      - "scripts/lib/patch-bundled-npm-node-gyp.mts"
       - "scripts/patch-bundled-npm-tar.mts"
       - "scripts/upgrade-bundled-npm.mts"
       - "scripts/lib/sandbox-rlimits.sh"

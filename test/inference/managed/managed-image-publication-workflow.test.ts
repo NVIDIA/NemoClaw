@@ -784,6 +784,7 @@ describe("complete managed-image publication workflow", () => {
     const baseImagePaths = readWorkflow("base-image.yaml").on?.push?.paths ?? [];
     expect(baseImagePaths).toEqual(
       expect.arrayContaining([
+        "scripts/lib/patch-bundled-npm-node-gyp.mts",
         "test/helpers/openclaw-real-agent-reload-proof.ts",
         "test/helpers/openclaw-real-legacy-migration-proof.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
