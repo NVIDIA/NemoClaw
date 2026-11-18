@@ -29,9 +29,14 @@ Agents and interfaces:
   See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
 - Apply prints the command that opens Hermes's terminal UI for a Hermes agent that enables Fabric's `terminal` interface, which Fabric marks experimental.
   See [Hermes's terminal UI](../agents-inference/interfaces.md#hermess-terminal-ui).
+- Apply stops an agent's failed Fabric runtime before it starts another in the sandbox.
+  After provider errors, Fabric marks a runtime failed but leaves its processes running; before, every later apply failed with `state_in_use` for an agent that keeps state until someone ran `fabric-agent-ctl stop`, and without kept state, the next start failed because OpenClaw's Gateway still held its ports, after which Fabric refused every start until the sandbox was replaced.
 
 Onboarding:
 
+- At the model question for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research, `nemoclaw onboard` offers the recommended models the endpoint lists and **Type another model**, instead of the endpoint's whole catalog, which can include models that cannot drive an agent.
+  The review notes a typed model that the endpoint does not list.
+  See [onboarding model catalogs](../agents-inference/inference.md#onboarding-model-catalogs).
 - At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
 
 Sandbox policy:
