@@ -170,8 +170,9 @@ describe("sandbox mutation lock acquisition", () => {
     ],
   ] as const;
 
-  const writeForeignLock = (pid: number) => {
+  const writeForeignLock = (pid: number, suffix = "") => {
     const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+    const ownerPath = `${lockPath}${suffix}`;
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     const record = JSON.stringify({
       ...createMcpLifecycleLockOwner("alpha", `foreign-${String(pid)}`),
@@ -179,9 +180,18 @@ describe("sandbox mutation lock acquisition", () => {
       hostIdentity: "foreign-host",
     });
     fs.writeFileSync(`${lockPath}.next`, record);
-    fs.renameSync(`${lockPath}.next`, lockPath);
-    return lockPath;
+    fs.renameSync(`${lockPath}.next`, ownerPath);
+    return ownerPath;
   };
+
+  const blockedWaits = lockers.flatMap(([name, run]) =>
+    (
+      [
+        ["lock", ""],
+        ["reaper", ".reaper"],
+      ] as const
+    ).map(([owner, suffix]) => [`${name}, ${owner}`, run, suffix] as const),
+  );
 
   const steppedClock = (stepMs: number) => {
     let now = 0;
@@ -194,33 +204,36 @@ describe("sandbox mutation lock acquisition", () => {
     return { read, monotonicNow: read };
   };
 
-  it.each(lockers)("prints one wait notice after the default delay (%s)", async (_name, run) => {
-    const lockPath = writeForeignLock(4242);
-    const clock = elapsedClock(100);
-    const notices: Array<{ message: string; at: number }> = [];
-    await expect(
-      run({
-        ...options({ timeoutMs: 20_000 }),
-        monotonicNow: clock.monotonicNow,
-        writeNotice: (message) => notices.push({ message, at: clock.read() }),
-      }),
-    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
-    expect(notices).toHaveLength(1);
-    expect(notices[0].at).toBeGreaterThanOrEqual(10_000);
-    expect(notices[0].message).toContain("PID 4242");
-    expect(notices[0].message).toContain(lockPath);
+  it.each(blockedWaits)(
+    "prints one wait notice after the default delay (%s)",
+    async (_name, run, suffix) => {
+      const ownerPath = writeForeignLock(4242, suffix);
+      const clock = elapsedClock(100);
+      const notices: Array<{ message: string; at: number }> = [];
+      await expect(
+        run({
+          ...options({ timeoutMs: 20_000 }),
+          monotonicNow: clock.monotonicNow,
+          writeNotice: (message) => notices.push({ message, at: clock.read() }),
+        }),
+      ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+      expect(notices).toHaveLength(1);
+      expect(notices[0].at).toBeGreaterThanOrEqual(10_000);
+      expect(notices[0].message).toContain("PID 4242");
+      expect(notices[0].message).toContain(`Lock file: ${ownerPath}.`);
 
-    notices.length = 0;
-    const shortClock = elapsedClock(100);
-    await expect(
-      run({
-        ...options({ timeoutMs: 9_900 }),
-        monotonicNow: shortClock.monotonicNow,
-        writeNotice: (message) => notices.push({ message, at: shortClock.read() }),
-      }),
-    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
-    expect(notices).toEqual([]);
-  });
+      notices.length = 0;
+      const shortClock = elapsedClock(100);
+      await expect(
+        run({
+          ...options({ timeoutMs: 9_900 }),
+          monotonicNow: shortClock.monotonicNow,
+          writeNotice: (message) => notices.push({ message, at: shortClock.read() }),
+        }),
+      ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+      expect(notices).toEqual([]);
+    },
+  );
 
   it.each(lockers)("times the notice from each new lock owner (%s)", async (_name, run) => {
     writeForeignLock(4242);
@@ -299,31 +312,24 @@ describe("sandbox mutation lock acquisition", () => {
     ).resolves.toBeUndefined();
   });
 
-  it.each(lockers)("contains a stderr stream error from the notice (%s)", async (_name, run) => {
-    writeForeignLock(4242);
-    const listeners = process.stderr.listenerCount("error");
-    const write = vi.spyOn(process.stderr, "write").mockImplementation(((
-      _chunk: unknown,
-      callback?: () => void,
-    ) => {
-      process.nextTick(() => {
-        callback?.();
-        process.nextTick(() => process.stderr.emit("error", new Error("EPIPE")));
-      });
-      return true;
-    }) as typeof process.stderr.write);
+  it.each(lockers)("does not wait for a stalled stderr write (%s)", async (_name, run) => {
+    const lockPath = writeForeignLock(4242);
+    const write = vi.spyOn(fs, "write").mockImplementationOnce((() => {
+      fs.rmSync(lockPath);
+    }) as unknown as typeof fs.write);
     try {
       const clock = steppedClock(1_000);
       await expect(
         run({
-          ...options({ timeoutMs: 8_000, waitNoticeMs: 2_000 }),
+          ...options({ timeoutMs: 30_000, waitNoticeMs: 1_000 }),
           monotonicNow: clock.monotonicNow,
         }),
-      ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(write).toHaveBeenCalledOnce();
-      expect(process.stderr.listenerCount("error")).toBe(listeners);
+      ).resolves.toBeUndefined();
+      expect(write).toHaveBeenCalledWith(
+        2,
+        expect.stringContaining(lockPath),
+        expect.any(Function),
+      );
     } finally {
       write.mockRestore();
     }

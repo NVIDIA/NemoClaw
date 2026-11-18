@@ -38,6 +38,7 @@ const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_CORRUPT_LOCK_GRACE_MS = 30_000;
 const DEFAULT_WAIT_NOTICE_MS = 10_000;
+const STDERR_FD = 2;
 
 interface AcquiredMcpLifecycleLock {
   lockPath: string;
@@ -116,10 +117,8 @@ function timeoutError(sandboxName: string, ownerPid: number | null): Error {
 }
 
 function writeStderrNotice(message: string): void {
-  // Closed-pipe errors surface as stream "error" events after the write callback.
-  const ignore = () => {};
-  process.stderr.on("error", ignore);
-  process.stderr.write(message, () => setImmediate(() => process.stderr.off("error", ignore)));
+  // A terminal stderr write blocks the main thread. fs.write runs on the libuv pool instead.
+  fs.write(STDERR_FD, message, () => {});
 }
 
 function createWaitNotifier(
@@ -241,14 +240,15 @@ async function acquireMcpLifecycleLock(
   const corruptMainTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   const corruptReaperTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
+  const reaperPath = `${lockPath}.reaper`;
   const notifyWaiting = createWaitNotifier(sandboxName, lockPath, options, monotonicNow);
+  const notifyReaperWaiting = createWaitNotifier(sandboxName, reaperPath, options, monotonicNow);
   const assertBeforeTimeout = () => {
     if (monotonicNow() >= deadline) throw timeoutError(sandboxName, lastOwnerPid);
   };
 
   for (;;) {
     assertBeforeTimeout();
-    const reaperPath = `${lockPath}.reaper`;
     const reaperObservation = await readMcpLifecycleLockObservation(reaperPath);
     if (reaperObservation) {
       const reaperDecision = decideObservedMcpLifecycleLock(
@@ -271,6 +271,7 @@ async function acquireMcpLifecycleLock(
         );
         continue;
       }
+      notifyReaperWaiting(reaperObservation, reaperDecision);
       await sleep(pollIntervalMs);
       continue;
     }
@@ -350,14 +351,15 @@ function acquireMcpLifecycleLockSync(
   const corruptMainTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   const corruptReaperTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
+  const reaperPath = `${lockPath}.reaper`;
   const notifyWaiting = createWaitNotifier(sandboxName, lockPath, options, monotonicNow);
+  const notifyReaperWaiting = createWaitNotifier(sandboxName, reaperPath, options, monotonicNow);
   const assertBeforeTimeout = () => {
     if (monotonicNow() >= deadline) throw timeoutError(sandboxName, lastOwnerPid);
   };
 
   for (;;) {
     assertBeforeTimeout();
-    const reaperPath = `${lockPath}.reaper`;
     const reaperObservation = readMcpLifecycleLockObservationSync(reaperPath);
     if (reaperObservation) {
       const reaperDecision = decideObservedMcpLifecycleLock(
@@ -380,6 +382,7 @@ function acquireMcpLifecycleLockSync(
         );
         continue;
       }
+      notifyReaperWaiting(reaperObservation, reaperDecision);
       sleepSync(pollIntervalMs);
       continue;
     }
