@@ -172,12 +172,9 @@ describe("Deep Agents config export (#11860)", () => {
         ],
       },
     });
-    expect(sandbox.network.policy.explicit).toMatchObject({
-      process: { run_as_user: "1000", run_as_group: "1000" },
-      filesystem_policy: {
-        read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw"]),
-      },
-    });
+    // The V0 image's process and filesystem sections are left out (#14580).
+    expect(sandbox.network.policy.explicit).not.toHaveProperty("process");
+    expect(sandbox.network.policy.explicit).not.toHaveProperty("filesystem_policy");
     expect(sandbox.network.policy.explicit).not.toMatchObject({
       filesystem_policy: { read_only: expect.arrayContaining(["/opt/hermes", "/app"]) },
     });

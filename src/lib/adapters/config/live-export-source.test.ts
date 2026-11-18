@@ -1166,9 +1166,7 @@ describe("live export snapshot reader", () => {
       });
       // The report header names the omitted OTLP settings; the document must not carry them.
       expect(JSON.stringify(document)).not.toContain("otlp");
-      expect(document.spec.sandboxes.alpha?.network.policy.explicit).toMatchObject({
-        process: { run_as_user: "1000", run_as_group: "1000" },
-      });
+      expect(document.spec.sandboxes.alpha?.network.policy.explicit).not.toHaveProperty("process");
       expect(yaml).not.toContain(readFailureCanary);
       expect(yaml).not.toContain("NEMOCLAW_OPENCLAW_OTEL");
       expect(publish).not.toHaveBeenCalled();

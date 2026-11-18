@@ -2,20 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { VerifiedExportSource } from "./export-evidence";
-import { OLLAMA_SERVICE_NAME, VLLM_SERVICE_NAME } from "./export-document";
+import {
+  IMAGE_POLICY_SECTIONS,
+  isOpenShellProviderRule,
+  OLLAMA_SERVICE_NAME,
+  VLLM_SERVICE_NAME,
+} from "./export-document";
 
 /** A JSON value from the V0 source that is safe to repeat in the export report. */
 export type ExportOmissionValue =
   | string
   | number
   | boolean
+  | readonly ExportOmissionValue[]
   | { readonly [key: string]: ExportOmissionValue | undefined };
 
 /** One source setting the v1 export leaves out or replaces because v1 has no equivalent. */
 export interface ExportOmission {
   /** The v0 source setting, as named in the sandbox's configuration. */
   readonly field: string;
-  readonly kind: "omitted" | "placeholder" | "changed";
+  readonly kind: "omitted" | "placeholder" | "changed" | "review";
   readonly message: string;
   /** The V0 value, when it is safe to repeat. Never a credential. */
   readonly value?: ExportOmissionValue;
@@ -110,12 +116,61 @@ function endpointTls(source: VerifiedExportSource): Set<unknown> {
   const networks = (source.policy as { network_policies?: Record<string, { endpoints?: unknown }> })
     .network_policies;
   const found = new Set<unknown>();
-  for (const network of Object.values(networks ?? {})) {
+  for (const [name, network] of Object.entries(networks ?? {})) {
+    // Provider-composed entries are not exported, so their TLS spelling is not changed.
+    if (isOpenShellProviderRule(name)) continue;
     for (const endpoint of Array.isArray(network.endpoints) ? network.endpoints : []) {
       found.add((endpoint as { tls?: unknown }).tls);
     }
   }
   return found;
+}
+
+function providerRuleOmissions(source: VerifiedExportSource): ExportOmission[] {
+  const networks = (source.policy as { network_policies?: Record<string, unknown> })
+    .network_policies;
+  return Object.keys(networks ?? {})
+    .filter(isOpenShellProviderRule)
+    .map((name) =>
+      omitted(
+        `network_policies.${name}`,
+        "OpenShell composed it from a provider attached to the source sandbox. OpenShell rejects that reserved prefix in a submitted policy and builds the entry again for each provider the destination attaches.",
+      ),
+    );
+}
+
+function imagePolicyOmissions(source: VerifiedExportSource): ExportOmission[] {
+  const policy = source.policy as Record<string, ExportOmissionValue | undefined>;
+  return IMAGE_POLICY_SECTIONS.filter((section) => policy[section] !== undefined).map((section) =>
+    omitted(
+      `network.policy.explicit.${section}`,
+      "it describes the V0 image, and the v1 image has its own user and paths. v1 applies OpenShell defaults to sections an explicit policy omits.",
+      policy[section],
+    ),
+  );
+}
+
+function binaryReview(source: VerifiedExportSource): ExportOmission[] {
+  const networks = (source.policy as { network_policies?: Record<string, { binaries?: unknown }> })
+    .network_policies;
+  const paths = new Set<string>();
+  for (const [name, network] of Object.entries(networks ?? {})) {
+    if (isOpenShellProviderRule(name) || !Array.isArray(network.binaries)) continue;
+    for (const binary of network.binaries) {
+      const path = (binary as { path?: unknown }).path;
+      if (typeof path === "string") paths.add(path);
+    }
+  }
+  if (paths.size === 0) return [];
+  const field = "network_policies[].binaries";
+  return [
+    {
+      field,
+      kind: "review",
+      message: `${field} are executable paths in the V0 image. Check that each exists in the v1 image, or replace it.`,
+      value: [...paths].sort(),
+    },
+  ];
 }
 
 function policyChanges(source: VerifiedExportSource): ExportOmission[] {
@@ -157,6 +212,9 @@ export function exportOmissions(source: VerifiedExportSource): readonly ExportOm
     ...harnessOmissions(source),
     ...tuningOmissions(source),
     ...fabricImageOmissions(source),
+    ...imagePolicyOmissions(source),
+    ...providerRuleOmissions(source),
+    ...binaryReview(source),
     ...policyChanges(source),
   ];
 }

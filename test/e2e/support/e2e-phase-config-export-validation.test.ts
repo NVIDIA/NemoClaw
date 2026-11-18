@@ -373,7 +373,7 @@ if (process.argv.includes("--output")) {
   it("publishes exact bytes only when the pinned v1 parse matches (#11485)", async () => {
     const exported = document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" });
     Object.assign(exported.spec.sandboxes.sandbox!.network.policy, {
-      explicit: { ...POLICY, landlock: { compatibility: "hard_requirement" } },
+      explicit: POLICY,
     });
     const raw = `${JSON.stringify(exported)}\n`;
     const publishedExport = {
@@ -388,7 +388,17 @@ if (process.argv.includes("--output")) {
     const test = fixture({
       artifacts: new ArtifactSink(artifactRoot),
       dependencies: independentDependencies,
-      host: successfulHost(raw, { ...POLICY, landlock: { compatibility: "strict" } }),
+      // The export leaves out the V0 image's Landlock, process and filesystem sections (#14580).
+      host: successfulHost(raw, {
+        ...POLICY,
+        landlock: { compatibility: "strict" },
+        process: { run_as_user: "sandbox", run_as_group: "sandbox" },
+        filesystem_policy: {
+          include_workdir: false,
+          read_only: ["/usr"],
+          read_write: ["/sandbox"],
+        },
+      }),
     });
     const evidence = await test.phase.from(target("required"), instance());
     const persistedEvidence = JSON.parse(
@@ -455,12 +465,13 @@ if (process.argv.includes("--output")) {
     );
     expect(rejected.writes.at(-1)).not.toHaveProperty("export");
   });
-  it("observes effective policy through the fixture-owned OpenShell boundary (#11485)", async () => {
+  it("observes the base policy through the fixture-owned OpenShell boundary (#11485, #14580)", async () => {
     const test = fixture();
     const evidence = await test.phase.from(target("required"), instance());
+    // The export leaves out OpenShell's provider-composed entries, which --base also excludes.
     expect(test.host.command).toHaveBeenCalledWith(
       "openshell",
-      ["policy", "get", "-g", "nemoclaw", "--full", "sandbox"],
+      ["policy", "get", "-g", "nemoclaw", "--base", "sandbox"],
       expect.objectContaining({
         captureLimitBytes: 1024 * 1024,
         persistArtifacts: false,

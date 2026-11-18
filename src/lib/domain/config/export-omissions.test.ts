@@ -29,6 +29,9 @@ describe("export omissions (#14580)", () => {
       "execution.heartbeatEvery",
       "interfaces",
       "image.ref",
+      "network.policy.explicit.filesystem_policy",
+      "network.policy.explicit.process",
+      "network_policies[].binaries",
     ]);
   });
 

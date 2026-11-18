@@ -226,12 +226,11 @@ describe("config export source verification (#10938)", () => {
     expect(agent.runtime).toEqual({ timeout_seconds: 900 });
     expect(Object.hasOwn(agent, "execution")).toBe(false);
     expect(Object.hasOwn(agent, "observability")).toBe(false);
-    expect(config.spec.sandboxes.alpha!.network.policy.explicit).toMatchObject({
-      process: { run_as_user: "1000", run_as_group: "1000" },
-      filesystem_policy: {
-        read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/app"]),
-      },
-    });
+    // The V0 image's process and filesystem sections are left out (#14580).
+    expect(config.spec.sandboxes.alpha!.network.policy.explicit).not.toHaveProperty("process");
+    expect(config.spec.sandboxes.alpha!.network.policy.explicit).not.toHaveProperty(
+      "filesystem_policy",
+    );
     expect(Object.values(config.spec.inferenceProviders)[0]).toEqual(
       expect.objectContaining({ credential: { env: "OPENAI_API_KEY" } }),
     );
@@ -410,11 +409,7 @@ describe("config export source verification (#10938)", () => {
     const [yaml] = result.writeStdout.mock.calls[0]!;
     const config = asExportedConfig(YAML.parse(yaml));
     expect(config.spec.sandboxes.alpha!.network).not.toHaveProperty("proxy");
-    expect(config.spec.sandboxes.alpha!.network).toMatchObject({
-      policy: {
-        explicit: { process: { run_as_user: "1000", run_as_group: "1000" } },
-      },
-    });
+    expect(config.spec.sandboxes.alpha!.network.policy.explicit).not.toHaveProperty("process");
     expect(Object.isFrozen(verifiedSource(verify(observed)).proxy)).toBe(true);
   });
 
@@ -422,11 +417,9 @@ describe("config export source verification (#10938)", () => {
     const result = await exportSnapshots([snapshot()]);
     expect(result.outcome.ok).toBe(true);
     const [yaml] = result.writeStdout.mock.calls[0]!;
-    expect(asExportedConfig(YAML.parse(yaml)).spec.sandboxes.alpha!.network).toMatchObject({
-      policy: {
-        explicit: { process: { run_as_user: "1000", run_as_group: "1000" } },
-      },
-    });
+    expect(
+      asExportedConfig(YAML.parse(yaml)).spec.sandboxes.alpha!.network.policy.explicit,
+    ).not.toHaveProperty("process");
     expect(verifiedSource(verify(snapshot()))).not.toHaveProperty("proxy");
   });
 
@@ -598,12 +591,9 @@ describe("config export source verification (#10938)", () => {
       const sandbox = config.spec.sandboxes.alpha!;
       expect(sandbox.harness.kind).toBe("nvidia.fabric.hermes");
       expect(sandbox.agent).not.toHaveProperty("tools");
-      expect(sandbox.network.policy.explicit).toMatchObject({
-        process: { run_as_user: "1000", run_as_group: "1000" },
-        filesystem_policy: {
-          read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/opt/hermes"]),
-        },
-      });
+      // The V0 image's process and filesystem sections are left out (#14580).
+      expect(sandbox.network.policy.explicit).not.toHaveProperty("process");
+      expect(sandbox.network.policy.explicit).not.toHaveProperty("filesystem_policy");
     },
   );
 

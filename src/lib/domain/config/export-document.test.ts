@@ -115,23 +115,19 @@ describe("export config builder", () => {
     },
   );
 
-  it.each([
-    { compatibility: "strict", expected: "hard_requirement" },
-    { compatibility: "best_effort", expected: "best_effort" },
-  ])(
-    "exports Landlock $compatibility as $expected without changing source policy",
-    ({ compatibility, expected }) => {
-      const original = { ...policy, landlock: { compatibility } };
-      const result = buildExportConfig(
-        { ...source, policy: original as unknown as VerifiedExportSource["policy"] },
-        { documentName: alphaDocumentName, documentUid: firstUid },
-      );
-      expect(result.spec.sandboxes.alpha?.network.policy.explicit).toMatchObject({
-        landlock: { compatibility: expected },
-      });
-      expect(original.landlock.compatibility).toBe(compatibility);
-    },
-  );
+  it("leaves out the V0 image's filesystem, process and Landlock sections without changing source policy (#14580)", () => {
+    const original = { ...policy, landlock: { compatibility: "strict" } };
+    const before = structuredClone(original);
+    const result = buildExportConfig(
+      { ...source, policy: original as unknown as VerifiedExportSource["policy"] },
+      { documentName: alphaDocumentName, documentUid: firstUid },
+    );
+    expect(result.spec.sandboxes.alpha?.network.policy.explicit).toEqual({
+      version: 1,
+      network_policies: policy.network_policies,
+    });
+    expect(original).toEqual(before);
+  });
 
   it.each(["openclaw", "hermes"] as const)(
     "emits one singular %s agent for the v1alpha1 consumer (#12131)",
@@ -176,14 +172,8 @@ describe("export config builder", () => {
           alpha: {
             network: {
               policy: {
-                explicit: {
-                  ...policy,
-                  process: { run_as_user: "1000", run_as_group: "1000" },
-                  filesystem_policy: {
-                    ...policy.filesystem_policy,
-                    read_only: ["/usr", "/opt/fabric", "/opt/nemoclaw", "/app"],
-                  },
-                },
+                // The V0 image's filesystem and process sections are left out (#14580).
+                explicit: { version: 1, network_policies: policy.network_policies },
               },
             },
             harness: { kind: "nvidia.fabric.openclaw" },
@@ -306,11 +296,9 @@ describe("export config builder", () => {
     expect(result.spec.sandboxes.alpha?.harness.kind).toBe("nvidia.fabric.hermes");
     expect(result.spec.sandboxes.alpha?.image).toEqual({ ref: V1_IMAGE_REF_PLACEHOLDER });
     expect(result.spec.sandboxes.alpha?.harness).not.toHaveProperty("observability");
-    expect(result.spec.sandboxes.alpha?.network.policy.explicit).toMatchObject({
-      process: { run_as_user: "1000", run_as_group: "1000" },
-      filesystem_policy: {
-        read_only: ["/usr", "/opt/fabric", "/opt/nemoclaw", "/opt/hermes"],
-      },
+    expect(result.spec.sandboxes.alpha?.network.policy.explicit).toEqual({
+      version: 1,
+      network_policies: policy.network_policies,
     });
   });
 

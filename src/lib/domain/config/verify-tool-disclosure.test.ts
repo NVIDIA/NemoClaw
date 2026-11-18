@@ -65,12 +65,11 @@ describe("managed tool-disclosure export", () => {
     const document = asExportedConfig(YAML.parse(yaml));
     // v1 has no tool-disclosure field; the control is adapter-native, so it is not exported.
     expect(document.spec.sandboxes.alpha!.agent).not.toHaveProperty("tools");
-    expect(document.spec.sandboxes.alpha!.network.policy.explicit).toMatchObject({
-      process: { run_as_user: "1000", run_as_group: "1000" },
-      filesystem_policy: {
-        read_only: expect.arrayContaining(["/opt/fabric", "/opt/nemoclaw", "/app"]),
-      },
-    });
+    // The V0 image's process and filesystem sections are left out (#14580).
+    expect(document.spec.sandboxes.alpha!.network.policy.explicit).not.toHaveProperty("process");
+    expect(document.spec.sandboxes.alpha!.network.policy.explicit).not.toHaveProperty(
+      "filesystem_policy",
+    );
     expect(Object.isFrozen(verifiedSource(verify(observed)).tools)).toBe(true);
   });
 

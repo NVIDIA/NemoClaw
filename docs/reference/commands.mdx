@@ -317,7 +317,8 @@ The report has one line for each setting the export left out, replaced with a pl
 # <kind> <field> [value=<json>] [before=<json> after=<json|omitted>]: <reason>
 ```
 
-- `kind` is `omitted`, `placeholder`, or `changed`.
+- `kind` is `omitted`, `placeholder`, `changed`, or `review`.
+  A `review` line names exported values that come from the source image and may not exist in the v1 image.
 - `value` is the setting's value in the source sandbox.
 - `before` and `after` appear on `changed` lines and show the source value and its exported form.
   `after=omitted` means the export drops the field to get the same v1 behavior.
@@ -367,6 +368,11 @@ Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports Docker-managed OpenClaw sandboxes and canonical managed Hermes or LangChain Deep Agents Code sandboxes in the default workspace.
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+The exported explicit policy keeps every network rule from the source's base policy.
+It leaves out the `_provider_` entries that OpenShell composes from attached providers, because OpenShell rejects that reserved prefix and composes the entries again for the destination's providers.
+It also leaves out `filesystem_policy`, `process`, and `landlock`, because they describe the source image's user and paths.
+v1 applies OpenShell defaults to sections that an explicit policy omits.
+The export report lists each omitted entry and section, and flags the network-rule binaries as source-image paths to review.
 OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile include a named service whose `image` is the placeholder `REPLACE-ME@sha256:` followed by 64 zeros.
 The export report lists it as `placeholder services.<name>.image`.
 Replace that value with an official, immutable, compatible v1 service image before planning.

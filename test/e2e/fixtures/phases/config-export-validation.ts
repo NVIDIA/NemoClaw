@@ -583,29 +583,15 @@ function expectedParseSummary(entry: ConfigExportRegistryEntry, imageRef: string
   };
 }
 
-function targetPolicyForV1Alpha1(value: unknown, agent: string | null | undefined): unknown {
-  const policy = structuredClone(requiredRecord(value, "effective policy"));
-  const landlock = policy.landlock as Record<string, unknown> | undefined;
-  if (landlock?.compatibility === "strict") landlock.compatibility = "hard_requirement";
-  const process = policy.process as Record<string, unknown> | undefined;
-  if (process && typeof process === "object" && !Array.isArray(process)) {
-    if (process.run_as_user === "sandbox") process.run_as_user = "1000";
-    if (process.run_as_group === "sandbox") process.run_as_group = "1000";
-  }
-  const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
-  if (filesystem && typeof filesystem === "object" && !Array.isArray(filesystem)) {
-    const readOnly = Array.isArray(filesystem.read_only) ? [...filesystem.read_only] : [];
-    const readWrite = Array.isArray(filesystem.read_write) ? filesystem.read_write : [];
-    const roots = [
-      "/opt/fabric",
-      "/opt/nemoclaw",
-      ...(agent === "openclaw" ? ["/app"] : agent === "hermes" ? ["/opt/hermes"] : []),
-    ];
-    for (const root of roots) {
-      if (!readOnly.includes(root) && !readWrite.includes(root)) readOnly.push(root);
-    }
-    filesystem.read_only = readOnly;
-  }
+/**
+ * The export keeps every base network rule and leaves out the sections that describe the V0
+ * image (#14580). The base policy already excludes OpenShell's provider-composed entries.
+ */
+function targetPolicyForV1Alpha1(value: unknown): unknown {
+  const policy = structuredClone(requiredRecord(value, "base policy"));
+  delete policy.filesystem_policy;
+  delete policy.process;
+  delete policy.landlock;
   return policy;
 }
 
@@ -698,7 +684,7 @@ async function readEffectivePolicyDocument(
   const policy = await reader.readSandboxPolicy({
     target: namedOpenShellGateway(gatewayName),
     sandboxName,
-    scope: "effective",
+    scope: "base",
   });
   if (!policy.ok) {
     throw new Error("the effective sandbox policy could not be read");
@@ -786,7 +772,7 @@ async function expectedSemantics(
       throw new Error("the live Deep Agents sandbox is not at the exportable disabled baseline");
     }
   }
-  const expectedPolicy = targetPolicyForV1Alpha1(YAML.parse(policyDocument), entry.agent);
+  const expectedPolicy = targetPolicyForV1Alpha1(YAML.parse(policyDocument));
   return {
     sandboxName: instance.sandboxName,
     agent: exportedHarnessKind(manifest.document.spec.onboarding.agent),

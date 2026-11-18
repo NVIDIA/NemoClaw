@@ -393,7 +393,7 @@ export async function verifyHermesConfigExportLive(
   const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(entry.gatewayName ?? ""),
     sandboxName: input.sandboxName,
-    scope: "effective",
+    scope: "base",
   });
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
   const consumer = validateHermesConsumers(input, nemoclawRaw, nemohermesRaw);

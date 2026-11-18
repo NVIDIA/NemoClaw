@@ -44,7 +44,7 @@ export function renderExportReportHeader(
   return (
     [
       EXPORT_REPORT_MARKER,
-      "# What nemoclaw config export left out, replaced or changed. These lines are comments; v1 ignores them.",
+      "# What nemoclaw config export left out, replaced, changed, or flagged for review. These lines are comments; v1 ignores them.",
       ...omissions.map(entryLine),
       `# gateway endpoint=${json(gatewayEndpoint)} port=${port}: the export reuses the V0 gateway port. A v1 gateway started beside a running V0 gateway must use a free port.`,
     ].join("\n") + "\n"
