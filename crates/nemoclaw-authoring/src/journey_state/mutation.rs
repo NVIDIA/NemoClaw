@@ -43,6 +43,8 @@ impl JourneyState {
                 == Some(InferenceProviderKind::Anthropic.as_str());
             if anthropic {
                 self.decisions.accepted_presets.remove(&route);
+                // A finished route is not offered again, so it could not be repaired.
+                self.position.completed_routes.remove(&route);
             }
         }
     }

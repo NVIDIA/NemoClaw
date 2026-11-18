@@ -420,6 +420,106 @@ fn switching_to_openclaw_reopens_an_accepted_anthropic_preset() {
     );
 }
 
+const OPENCLAW_SETTINGS: [&str; 12] = [
+    "agent_id",
+    "agents",
+    "channel_config",
+    "connect_timeout_seconds",
+    "interfaces",
+    "openclaw_command",
+    "plugins",
+    "port_range",
+    "read_timeout_seconds",
+    "shutdown_timeout_seconds",
+    "startup_timeout_seconds",
+    "tools",
+];
+
+#[test]
+fn switching_to_openclaw_makes_a_completed_anthropic_route_selectable_again() {
+    let capabilities = Capabilities::available();
+    let harness = "/spec/harnesses/assistant/kind";
+    let hosted = "/spec/inferenceProviders/hosted";
+    let mut document =
+        Document::parse(&include_bytes!("../../../examples/multiple-providers.yaml")[..]).unwrap();
+    document
+        .spec
+        .sandboxes
+        .retain(|name, _| name == "researcher");
+    let mut values = serde_json::to_value(&document).unwrap();
+    values["spec"]["harnesses"]["assistant"]["kind"] = json!("nvidia.fabric.claude");
+    values["spec"]["inferenceProviders"]["hosted"]["provider"] = json!("anthropic");
+    values["spec"]["inferenceProviders"]["hosted"]["api"] = json!("anthropic-messages");
+    let base = PartialDocument::from_yaml(&serde_json::to_vec(&values).unwrap()).unwrap();
+    let mut state = JourneyDefinition::new("two-routes", base)
+        .ask([harness, "inference:preset"])
+        .ask([JourneyScope::RouteModels])
+        .omit(OPENCLAW_SETTINGS.map(|setting| format!("adapter:nvidia.fabric.openclaw:/{setting}")))
+        .start(&capabilities)
+        .unwrap();
+    let routes = |state: &nemoclaw_authoring::JourneyState| {
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .question("route:selection")
+            .map(|question| question.choices().to_vec())
+            .unwrap_or_default()
+    };
+    state
+        .answer(&capabilities, harness, Some(json!("nvidia.fabric.claude")))
+        .unwrap();
+    state
+        .answer(&capabilities, "route:selection", Some(json!("smart")))
+        .unwrap();
+    state
+        .answer(&capabilities, "inference:preset", Some(json!("anthropic")))
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
+            "/spec/inferences/smart-and-fast/routes/0/overrides/model",
+            Some(json!("claude-model")),
+        )
+        .unwrap();
+    state
+        .answer(&capabilities, "route:selection", Some(json!("fast")))
+        .unwrap();
+    state
+        .answer(&capabilities, "inference:preset", Some(json!("openai")))
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
+            "/spec/inferences/smart-and-fast/routes/1/overrides/model",
+            Some(json!("gpt-model")),
+        )
+        .unwrap();
+    assert!(!routes(&state).contains(&json!("smart")));
+    state
+        .answer(
+            &capabilities,
+            harness,
+            Some(json!("nvidia.fabric.openclaw")),
+        )
+        .unwrap();
+    assert!(routes(&state).contains(&json!("smart")));
+    state
+        .answer(&capabilities, "route:selection", Some(json!("smart")))
+        .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    let question = resolution
+        .question("inference:preset")
+        .expect("the earlier route is asked for a new preset");
+    assert!(!question.choices().contains(&json!("anthropic")));
+    state
+        .answer(&capabilities, "inference:preset", Some(json!("openai")))
+        .unwrap();
+    assert_eq!(
+        state.values().pointer(&format!("{hosted}/provider")),
+        Some(&json!("openai"))
+    );
+}
+
 #[test]
 fn every_curated_preset_and_protocol_roundtrips_through_the_sdk() {
     let capabilities = Capabilities::available();

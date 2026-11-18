@@ -88,7 +88,6 @@ impl JourneyState {
                 candidate
                     .authored
                     .put_harness(&candidate.position, value.expect("required"))?;
-                candidate.reopen_presets_openclaw_refuses();
             }
             QuestionTarget::StructuralForm { path } => {
                 let selected = value
@@ -206,6 +205,8 @@ impl JourneyState {
                 }
             }
         }
+        // The harness may be answered as the sandbox's own or a shared one's field.
+        candidate.reopen_presets_openclaw_refuses();
         candidate
             .decisions
             .record_answer(id, &question.target, omitted);
