@@ -57,6 +57,7 @@ It checks the intended product version and available commands and options before
 Review the cited version and task guide in its answer before operational work.
 
 The skill only routes documentation; reading it does not install software or change deployment resources.
+To move a deployment from the earlier product, ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md`; see [migration](../get-started/migration.md#start-from-the-earlier-export).
 Automatic discovery, packaged installation across assistant clients and a rehearsed installation prompt are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
 ## Contribute
