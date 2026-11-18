@@ -362,11 +362,14 @@ export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   targetAgentType: string;
   /** Exact OpenShell target frozen by the enclosing rebuild transaction. */
   runtimeSelection?: OpenShellRuntimeSelection;
+  /** Keep the replacement's generated Deep Agents config for a recorded selection change. */
+  keepReplacementDeepAgentsConfig?: true;
 }
 
 interface InternalRestoreOptions {
   targetAgentType: string;
   runtimeSelection?: OpenShellRuntimeSelection;
+  keepReplacementDeepAgentsConfig?: true;
   authority?: SnapshotRestoreAuthority;
   validateBeforeMutation?: () => void | Promise<void>;
 }
@@ -3441,6 +3444,9 @@ export async function restoreRecreatedSandboxState(
   return restoreSandboxStateInternal(sandboxName, backupPath, {
     targetAgentType: options.targetAgentType,
     ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+    ...(options.keepReplacementDeepAgentsConfig
+      ? { keepReplacementDeepAgentsConfig: true as const }
+      : {}),
     ...(options.authority ? { authority: options.authority } : {}),
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
@@ -3589,6 +3595,7 @@ async function restoreNativeSandboxState(
         const restoreScript = [
           verifyTransfer,
           "root=$3",
+          "keep_dcode_config=${5:-}",
           '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
           'archive="$transfer/archive.tar"',
           '[ -f "$archive" ] && [ ! -L "$archive" ]',
@@ -3604,6 +3611,12 @@ async function restoreNativeSandboxState(
           "exec 3<&-",
           'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
           'mkdir -p -- "$stage/.nemoclaw" "$stage/.openclaw/agents/main/sessions" "$stage/.hermes/runtime"',
+          'if [ "$keep_dcode_config" = 1 ]; then',
+          // Preserve the selected config without following archive or target links.
+          '  if [ -L "$stage/.deepagents" ] || [ -L "$root/.deepagents" ]; then echo "cannot preserve Deep Agents config through a symbolic link" >&2; exit 23; fi',
+          '  mkdir -p -- "$stage/.deepagents"',
+          '  rm -f -- "$stage/.deepagents/config.toml"',
+          "fi",
           'uid="$(id -u)"',
           "inspect_restore_owner() {",
           // Bash can prove effective-user ownership without a subprocess. Its
@@ -3615,6 +3628,7 @@ async function restoreNativeSandboxState(
           '  case "$1" in',
           "    .nemoclaw/config.json|.nemoclaw/blueprints|.openclaw/.nemoclaw-post-upgrade-doctor|.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*|.hermes/gateway.pid|.hermes/runtime/gateway.pid|.hermes/runtime/gateway.lock) return 0 ;;",
           "  esac",
+          '  [ "$keep_dcode_config" = 1 ] && [ "$1" = .deepagents/config.toml ] && return 0',
           "  return 1",
           "}",
           "restore_dir() {",
@@ -3668,6 +3682,10 @@ async function restoreNativeSandboxState(
           transferIdentity,
           rootResult.root,
           manifest.nativeState!.sha256,
+          options.keepReplacementDeepAgentsConfig &&
+          options.targetAgentType === "langchain-deepagents-code"
+            ? "1"
+            : "",
         ]);
         const restoreError = commandError(result);
         return restoreError

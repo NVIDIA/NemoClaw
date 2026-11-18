@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
 import type { SandboxEntry } from "../state/registry";
+import { inspectNativeSandboxState } from "../state/sandbox";
 import * as notReadyRecreate from "./not-ready-recreate";
 import {
   backupSandboxBeforeRecreate,
@@ -77,6 +80,35 @@ export function createSandboxRecreateProtection(
     });
 
   return {
+    preflightDeepAgentsConfigPreservation(
+      backupPath: string | null,
+      selection: {
+        agentName: string;
+        customImage: boolean;
+        freshSelection: boolean;
+        selectionChanged: boolean;
+        recordedSelection: boolean;
+      },
+    ): void {
+      if (
+        !backupPath ||
+        selection.agentName !== "langchain-deepagents-code" ||
+        selection.customImage ||
+        !(selection.recordedSelection || (selection.freshSelection && selection.selectionChanged))
+      )
+        return;
+      inspectNativeSandboxState(
+        backupPath,
+        (root) => {
+          if (fs.lstatSync(path.join(root, ".deepagents")).isSymbolicLink()) {
+            throw new Error(
+              "Cannot preserve Deep Agents config through a symbolic link. Source sandbox was not deleted.",
+            );
+          }
+        },
+        ".deepagents",
+      );
+    },
     selectPreUpgradeBackup,
     // The journal opens only when selection actually asks for a source proof, so
     // a run that restores nothing leaves no transaction behind to complete.
