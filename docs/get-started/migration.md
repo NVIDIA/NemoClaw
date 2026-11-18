@@ -48,7 +48,7 @@ That YAML can't be planned as written: its image is a placeholder, and it reuses
 The [V0 migration skill](../../.agents/skills/nemoclaw-v0-migration/SKILL.md) completes it; an assistant with this checkout can follow it, or you can follow its steps yourself.
 It leaves the earlier deployment untouched and moves no native data.
 
-1. On the earlier deployment's host, export the sandbox with that version's CLI:
+1. On the earlier deployment's host, export the sandbox with the CLI of a V0 release with the export report:
 
    ```sh
    nemoclaw config export SANDBOX --output v0-export.yaml
@@ -59,7 +59,7 @@ It leaves the earlier deployment untouched and moves no native data.
    Check those capabilities in the task map above before continuing without them.
 2. Read the comment block at the top of the export.
    Each line names a setting the export left out, replaced with a placeholder, or rewrote.
-   An export without the first line `# nemoclaw-export-report: 1` comes from an earlier version without the report; export again with a version that writes it.
+   An export without the first line `# nemoclaw-export-report: 1` comes from a release without the report; export again with a release that writes it.
 3. Ask the assistant to read `.agents/skills/nemoclaw-v0-migration/SKILL.md` and complete the export.
    It assigns a fresh UUID, state directory, and free gateway port, selects an agent image, replaces the parts of the policy that describe the earlier image, writes the settings v1 can hold, and lists the ones it can't.
 4. Review the completed YAML and the list of lost settings, then plan it as step 4 below describes.

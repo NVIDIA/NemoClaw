@@ -24,7 +24,8 @@ Use the docs in this checkout and a bundle built from the same revision; the [us
 ## 1. Get the Export
 
 Ask the user for the export file.
-Without one, they run on the V0 host, with V0's CLI:
+It must come from a V0 release with the export report: its first line is `# nemoclaw-export-report: 1`.
+Without one, they run on the V0 host, with that release's CLI:
 
 ```sh
 nemoclaw config export SANDBOX --output v0-export.yaml
@@ -139,7 +140,7 @@ The table shows what the pinned Fabric adapters accept; the image's descriptor d
 |---|---|---|
 | `image.ref` (placeholder) | `sandboxes.<name>.image.ref` | Step 4 |
 | `execution.heartbeatEvery` | OpenClaw: `harness.settings.agents.defaults.heartbeat.every` | Same duration format, such as `30m`. Hermes has no heartbeat setting. |
-| `tools.disclosure` | `progressive`: nothing to write. `direct`: OpenClaw `harness.settings.tools.toolSearch: false`; Hermes `harness.settings.tools.tool_search.enabled: off` | `progressive` is V0's default and uses the agent's native tool search, which the adapters leave on by default. `direct` shows every tool without it. See [agent tool restrictions](../../../docs/agents-inference/agents.md#agent-tool-restrictions). |
+| `tools.disclosure` | `progressive`: OpenClaw `harness.settings.tools.toolSearch: true`; Hermes `harness.settings.tools.tool_search.enabled: on`. `direct`: `false` and `off` | V0's `progressive` uses the agent's native tool search and `direct` shows every tool, which matches these fields' descriptions in the adapters' `settings_schema`. Write the value explicitly: when it's omitted, the adapters keep the native release's default, which neither the schema nor Fabric's adapter docs state. Tell the user the setting is now explicit. See [agent tool restrictions](../../../docs/agents-inference/agents.md#agent-tool-restrictions). |
 | `interfaces` | `harness.settings.interfaces`: OpenClaw `dashboard`; Hermes `api`, `dashboard` | Write each interface V0 had on, with its `port`, after the user confirms; skip one with `enabled: false`. The port is inside the sandbox; when forwarding it, choose a local port that V0's forward doesn't hold. See [native interfaces](../../../docs/agents-inference/agents.md#native-interfaces) and [interfaces](../../../docs/agents-inference/interfaces.md). |
 | `inference.reasoning`, `inference.reasoningEffort` | None for OpenClaw | The OpenClaw adapter's model schema has no reasoning field. Hermes's `harness.settings.reasoning_config` exists, but V0 reports these only for OpenClaw. |
 | `inference.contextWindow` | None for OpenClaw or Hermes | Neither adapter's model schema has one. |
@@ -152,7 +153,7 @@ Report a line that isn't in this table to the user unchanged, without guessing a
 ## 6. Check the Rest of the Document
 
 - **Credentials.** `credential.env` names an environment variable. The user exports it before `plan`; never ask for the value in chat or write it to YAML.
-- **Managed services.** An exported `spec.services` entry has `image: null`. Build or select its image as [models](../../../docs/agents-inference/models.md) or [inference](../../../docs/agents-inference/inference.md) describes, and check the vLLM `hardware.architecture` against the host. No migration with a managed service has been run yet.
+- **Managed services.** An exported `spec.services` entry has a placeholder image, reported as `# placeholder services.<name>.image`; older exports wrote `image: null`. Build or select its image as [models](../../../docs/agents-inference/models.md) or [inference](../../../docs/agents-inference/inference.md) describes, and check the vLLM `hardware.architecture` against the host. No migration with a managed service has been run yet.
 - **Policy.** The export keeps V0's explicit policy, which describes V0's image: its user, `1000`, and its writable directories.
   The v1 agent starts only with the selected image's identity and directories, and `plan` doesn't check either: with V0's values, apply fails with `start_failed`.
   Replace `filesystem_policy`, `process`, and `landlock` with the image's runtime policy, and tell the user what changed:
