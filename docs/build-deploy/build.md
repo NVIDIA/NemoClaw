@@ -8,7 +8,7 @@ Native bundles also require Protocol Buffers compiler 36.2.
 Native builds also require a C toolchain for TLS dependencies.
 Run `cargo ci tools` to install the pinned compiler in `.tools/protoc-36.2`; `cargo ci` finds it there.
 Other Cargo commands, including the bundle builder's `cargo run`, find only a compiler on `PATH`; otherwise set `PROTOC` to `.tools/protoc-36.2/bin/protoc` or another protoc 36.2.
-[versions.json](../../versions.json) records tool versions, download checksums, and the SDK's image pins: the default agent image, which `image.ref` replaces, and the gateway, sandbox runtime, and supervisor images, which documents do not name.
+[versions.json](../../versions.json) records tool versions, download checksums, and the SDK's image pins: the gateway, sandbox runtime, and supervisor images, which documents do not name.
 The SDK generates its artifact constants from that manifest at build time.
 A Docker or Podman deployment keeps the gateway image pin of the bundle that created it; see [the change path](usage.md#choose-the-change-path) before operating it with a bundle built from a different pin.
 
@@ -95,7 +95,7 @@ docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes.<name>.image.ref`.
-Examples that omit `image` use the generic default agent image pin from `versions.json`.
+Every sandbox requires `image.ref`; no default agent image is published.
 Select an explicit image containing the chosen Fabric adapter; a harness identifier does not select a different image.
 The selected image must still exist on the compute daemon.
 The sandbox compute daemon must have access to that exact image.

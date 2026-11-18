@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::config::{DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, Document};
+use nemoclaw_sdk::config::{DEFAULT_GATEWAY_IMAGE, Document};
 use serde_json::{Value, json};
 
 fn input(name: &str) -> Value {
@@ -12,45 +12,32 @@ fn parse(value: &Value) -> Result<Document, nemoclaw_sdk::config::ConfigError> {
     Document::parse(value.to_string().as_bytes())
 }
 
+/// No published agent image exists to default to, so a document that omits
+/// the image would validate and then fail in the engine's pull, after the
+/// gateway exists. Every runtime therefore rejects it up front and points at
+/// the instructions for building one.
 #[test]
-fn omitted_image_uses_the_pin_for_the_selected_harness() {
-    let mut openclaw = input("fabric-openclaw.yaml");
-    openclaw["spec"]["sandboxes"]["assistant"]
-        .as_object_mut()
-        .unwrap()
-        .remove("image");
-    assert_eq!(
-        parse(&openclaw).unwrap().spec.sandboxes["assistant"]
-            .image
-            .ref_,
-        DEFAULT_AGENT_IMAGE
-    );
-
-    let mut hermes = input("managed-hermes.yaml");
-    hermes["spec"]["sandboxes"]["assistant"]
-        .as_object_mut()
-        .unwrap()
-        .remove("image");
-    assert_eq!(
-        parse(&hermes).unwrap().spec.sandboxes["assistant"]
-            .image
-            .ref_,
-        DEFAULT_AGENT_IMAGE
-    );
-
-    let harness = hermes["spec"]["sandboxes"]["assistant"]
-        .as_object_mut()
-        .unwrap()
-        .remove("harness")
-        .unwrap();
-    hermes["spec"]["harnesses"]["assistant"] = harness;
-    hermes["spec"]["sandboxes"]["assistant"]["harnessRef"] = json!("assistant");
-    assert_eq!(
-        parse(&hermes).unwrap().spec.sandboxes["assistant"]
-            .image
-            .ref_,
-        DEFAULT_AGENT_IMAGE
-    );
+fn omitted_or_empty_image_is_rejected_on_every_runtime() {
+    for name in ["fabric-openclaw.yaml", "managed-podman.yaml"] {
+        for image in [None, Some(json!({})), Some(json!({"ref": ""}))] {
+            let mut document = input(name);
+            let sandbox = document["spec"]["sandboxes"]["assistant"]
+                .as_object_mut()
+                .unwrap();
+            match image {
+                Some(image) => sandbox.insert("image".into(), image),
+                None => sandbox.remove("image"),
+            };
+            let error = parse(&document).unwrap_err().to_string();
+            assert!(
+                error.contains("spec.sandboxes.assistant")
+                    && error
+                        .contains("image.ref must name an agent image pinned by a SHA-256 digest")
+                    && error.contains("docs/build-deploy/build.md#build-agent-images"),
+                "{name}: {error}"
+            );
+        }
+    }
 }
 
 /// The SDK pins the managed gateway image, so neither a defaulted document nor
@@ -96,7 +83,7 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
             .unwrap()
             .remove(key);
     }
-    for key in ["image", "runtime", "network"] {
+    for key in ["runtime", "network"] {
         omitted["spec"]["sandboxes"]["assistant"]
             .as_object_mut()
             .unwrap()
@@ -113,7 +100,6 @@ fn omitted_empty_and_zero_values_produce_the_same_defaults() {
     for key in ["endpoint", "engine", "networkCIDR"] {
         explicit["spec"]["gateway"][key] = json!("");
     }
-    explicit["spec"]["sandboxes"]["assistant"]["image"] = json!({"ref": ""});
     explicit["spec"]["gateway"]["runtime"] = json!({"provider": "docker"});
     explicit["spec"]["sandboxes"]["assistant"]["network"] = json!({"tier": ""});
     explicit["spec"]["services"]["qwen"]["serving"] = json!({

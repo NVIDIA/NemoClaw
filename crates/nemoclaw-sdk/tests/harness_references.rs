@@ -121,9 +121,7 @@ fn unused_harness_is_validated_without_granting_access() {
 }
 
 #[test]
-fn default_image_follows_the_selected_harness_and_tolerates_incomplete_selection() {
-    use nemoclaw_sdk::config::DEFAULT_AGENT_IMAGE;
-
+fn defaults_tolerate_an_incomplete_harness_selection() {
     let mut inline = input();
     inline["spec"]["sandboxes"]["assistant"]["harness"] = json!({"kind":"nvidia.fabric.hermes"});
     let mut missing = shared(inline.clone(), false);
@@ -144,17 +142,8 @@ fn default_image_follows_the_selected_harness_and_tolerates_incomplete_selection
         (absent, false),
     ] {
         let mut document: Document = serde_json::from_value(value).unwrap();
-        document
-            .spec
-            .sandboxes
-            .get_mut("assistant")
-            .unwrap()
-            .image
-            .ref_
-            .clear();
         document.defaults();
         let sandbox = document.sandbox("assistant").unwrap();
-        assert_eq!(sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
         let selected = document.sandbox_harness(sandbox);
         if valid {
             assert_eq!(
