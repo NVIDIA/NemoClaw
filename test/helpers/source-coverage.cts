@@ -64,10 +64,17 @@ export declare const sourceCoverageCacheIdentity: typeof sourceCoverageCacheIden
 function enableSourceCoverageImpl(options: CoverageOptions, isEnabled = () => true) {
   // Compile once before enabling the hook that examines every native import.
   const { Minimatch } = require("minimatch");
+  // Keep literal # paths and distinguish negative extglobs from whole-pattern negation.
   const include = [options.include ?? "**"]
     .flat()
-    .map((pattern) => new Minimatch(pattern, { dot: true }));
-  const exclude = (options.exclude ?? []).map((pattern) => new Minimatch(pattern, { dot: true }));
+    .map(
+      (pattern) =>
+        new Minimatch(pattern, { dot: true, nocomment: true, nonegate: pattern.startsWith("!(") }),
+    );
+  const exclude = (options.exclude ?? []).map(
+    (pattern) =>
+      new Minimatch(pattern, { dot: true, nocomment: true, nonegate: pattern.startsWith("!(") }),
+  );
   const matcher = (relative: string, absolute: string) =>
     include.some((pattern) => pattern.match(relative) || pattern.match(absolute)) &&
     !exclude.some((pattern) => pattern.match(relative) || pattern.match(absolute));
