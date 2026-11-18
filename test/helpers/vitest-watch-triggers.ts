@@ -163,7 +163,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr\.ya?ml$/,
-    testsToRun: runTests("test/automation/pull-requests/pr-code-classification.test.ts"),
+    testsToRun: runTests("test/automation/pull-requests/pr-workflow-contract.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/,

@@ -166,7 +166,7 @@ describe("Vitest opaque-input watch triggers", () => {
     (workflowPath) => {
       expect(resolveVitestWatchTests(path.resolve(workflowPath))).toContain(WORKFLOW_NAME_TEST);
       expect(resolveVitestWatchTests(path.resolve(workflowPath))).toContain(
-        "test/automation/pull-requests/pr-code-classification.test.ts",
+        "test/automation/pull-requests/pr-workflow-contract.test.ts",
       );
     },
   );
