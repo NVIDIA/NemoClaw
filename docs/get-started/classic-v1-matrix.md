@@ -36,6 +36,7 @@
 | [Connect and manage messaging](https://github.com/NVIDIA/NemoClaw/issues/12037) | Enroll, chat, restrict senders, reconnect, rotate credentials, disconnect. | [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037) |
 | [Agent assisted migration](https://github.com/NVIDIA/NemoClaw/issues/14580) | Use Classic export to recreate a separate deployment. | [#14580](https://github.com/NVIDIA/NemoClaw/issues/14580) |
 | [Trace and review activity](https://github.com/NVIDIA/NemoClaw/issues/14609) | Route selected traces and activity signals through Relay. | [#14609](https://github.com/NVIDIA/NemoClaw/issues/14609) |
+| [Collect a diagnostic bundle for support](https://github.com/NVIDIA/NemoClaw/issues/14618) | Collect debugging artifacts for review and manual sharing; product approval pending. | [#14618](https://github.com/NVIDIA/NemoClaw/issues/14618) |
 | [Broader local model support](https://github.com/NVIDIA/NemoClaw/issues/14608) | Qualify additional model, hardware, and harness combinations. | [#14608](https://github.com/NVIDIA/NemoClaw/issues/14608) |
 | [Run llama.cpp and NIM](https://github.com/NVIDIA/NemoClaw/issues/14556) | Manage both runners through the model-service lifecycle. | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) |
 
@@ -44,7 +45,6 @@
 | Capability | Status | Scope |
 |---|---|---|
 | [Retain application data](https://github.com/NVIDIA/NemoClaw/pull/14617) | Migration guide item | Migrate tools and applications used inside the agent sandbox, with mounted storage for persistent data; migration task mapping covered by draft [PR #14617](https://github.com/NVIDIA/NemoClaw/pull/14617). |
-| [Share diagnostic bundles](https://github.com/NVIDIA/NemoClaw/issues/14581) | Needs review | Collect debugging artifacts that are safe to share. |
 | [Review distributed inference](../../internal-docs/v1-roadmap.md#review-distributed-inference) | Needs review | Decide scope for experimental multi-machine model serving. |
 | [Verify native memory search](../../internal-docs/v1-roadmap.md#verify-native-memory-search) | Needs review | Verify the required native indexing and search behavior. |
 | [Verify credential rotation](../../internal-docs/v1-roadmap.md#verify-credential-rotation) | Needs review | Verify MCP credential replacement and revocation. |
