@@ -86,6 +86,22 @@ export function parseDcodeInferenceIdentity(
   };
 }
 
+/**
+ * The managed startup profile stores the routed base URL without trailing
+ * slashes, while catalog endpoints such as Gemini's keep one. Compare the two
+ * the way the profile normalizes them so only a real route change counts as
+ * drift. Anything that does not parse as a URL is compared as written.
+ */
+function canonicalEndpoint(endpoint: string): string {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return endpoint;
+  }
+  return `${url.origin}${url.pathname.replace(/\/+$/u, "")}${url.search}${url.hash}`;
+}
+
 export function getExpectedDcodeInferenceIdentity(
   requestedProvider: string | null,
   requestedModel: string | null,
@@ -155,7 +171,7 @@ export async function getDcodeSelectionDrift(
   const providerChanged =
     existing.provider !== expected.provider ||
     existing.route !== expected.route ||
-    existing.endpoint !== expected.endpoint;
+    canonicalEndpoint(existing.endpoint) !== canonicalEndpoint(expected.endpoint);
   const modelChanged = existing.model !== expected.model;
   return {
     changed: providerChanged || modelChanged,
