@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Release staging packages the CLI bundles that CI / Bundle checked at the
+//! Release staging attaches the CLI bundles that CI / Bundle checked at the
 //! tagged commit, run here against a fake GitHub.
 
 use serde_json::{Value, json};
@@ -21,34 +21,37 @@ const PLATFORMS: [&str; 4] = [
     "windows_amd64",
 ];
 
-/// Answers the GitHub API and `gh run download` from files under
-/// $FAKE_GITHUB: runs.json, artifacts-RUN.json, and RUN/NAME/bundle.tar.
+/// Answers `gh run list` from $FAKE_GITHUB/runs.json, and `gh run download`
+/// from $FAKE_GITHUB/RUN/NAME/bundle.tar, the run's unexpired artifacts.
 const FAKE_GH: &str = r#"#!/bin/sh
 set -eu
-if [ "$1" = run ] && [ "$2" = download ]; then
-  run=$3
-  shift 3
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --name) name=$2; shift 2 ;;
-      --dir) dir=$2; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  test -f "$FAKE_GITHUB/$run/$name/bundle.tar" || { echo "no artifact $name in run $run" >&2; exit 1; }
-  mkdir -p "$dir"
-  cp "$FAKE_GITHUB/$run/$name/bundle.tar" "$dir/"
-  exit 0
-fi
-[ "$1" = api ] || { echo "unexpected gh $*" >&2; exit 2; }
-for argument in "$@"; do
-  case "$argument" in
-    repos/NVIDIA/NemoClaw/actions/workflows/rust.yml/runs\?*) exec cat "$FAKE_GITHUB/runs.json" ;;
-    repos/NVIDIA/NemoClaw/actions/runs/*/artifacts*)
-      run=${argument#repos/NVIDIA/NemoClaw/actions/runs/}
-      exec cat "$FAKE_GITHUB/artifacts-${run%%/*}.json" ;;
-  esac
-done
+case "$1 $2" in
+  "run list")
+    while [ $# -gt 0 ]; do
+      [ "$1" = --jq ] && filter=$2
+      shift
+    done
+    exec jq -r "$filter" "$FAKE_GITHUB/runs.json" ;;
+  "run download")
+    run=$3
+    shift 3
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --pattern) pattern=$2 ;;
+        --dir) dir=$2 ;;
+      esac
+      shift
+    done
+    found=
+    for artifact in "$FAKE_GITHUB/$run"/*; do
+      name=${artifact##*/}
+      case "$name" in
+        $pattern) mkdir -p "$dir/$name"; cp "$artifact/bundle.tar" "$dir/$name/"; found=1 ;;
+      esac
+    done
+    [ -n "$found" ] || { echo "no valid artifacts found to download" >&2; exit 1; }
+    exit 0 ;;
+esac
 echo "unexpected gh $*" >&2
 exit 2
 "#;
@@ -70,27 +73,16 @@ impl Github {
         self.root.path().join("github")
     }
 
-    /// A CI / Bundle run at COMMIT whose artifacts are (name, expired, the
-    /// bundled `nemoclaw`'s contents); bundle artifacts hold a bundle.
-    fn run(
-        &mut self,
-        id: u64,
-        event: &str,
-        conclusion: &str,
-        artifacts: &[(String, bool, String)],
-    ) {
+    /// A CI / Bundle run at COMMIT whose unexpired artifacts are (name, the
+    /// bundled `nemoclaw`'s contents), each holding a bundle as CI packs it.
+    fn run(&mut self, id: u64, event: &str, conclusion: &str, artifacts: &[(String, String)]) {
         self.runs.push(json!({
-            "id": id,
+            "databaseId": id,
             "event": event,
-            "head_sha": COMMIT,
-            "status": "completed",
             "conclusion": conclusion,
-            "html_url": format!("https://github.com/NVIDIA/NemoClaw/actions/runs/{id}"),
-            "head_commit": {"id": COMMIT, "timestamp": "2026-11-18T03:16:00Z"},
+            "url": format!("https://github.com/NVIDIA/NemoClaw/actions/runs/{id}"),
         }));
-        let mut listed = Vec::new();
-        for (name, expired, contents) in artifacts {
-            listed.push(json!({"name": name, "expired": expired}));
+        for (name, contents) in artifacts {
             let platform = PLATFORMS
                 .iter()
                 .find(|platform| name.contains(&format!("-{platform}-")))
@@ -119,63 +111,50 @@ impl Github {
             }
             tar.finish().unwrap();
         }
-        fs::create_dir_all(self.data()).unwrap();
-        fs::write(
-            self.data().join(format!("artifacts-{id}.json")),
-            json!({"total_count": listed.len(), "artifacts": listed}).to_string(),
-        )
-        .unwrap();
     }
 
-    /// Run the workflow's packaging step for COMMIT.
-    fn package(&self) -> Output {
-        self.package_in("runner-temp")
-    }
-
-    /// Run the packaging step with RUNNER_TEMP at TEMP under the fake's root.
-    fn package_in(&self, temp: &str) -> Output {
+    /// Run the stage job's step that downloads the CLI bundles.
+    fn stage(&self) -> Output {
         fs::create_dir_all(self.data()).unwrap();
         fs::write(
             self.data().join("runs.json"),
-            json!({"total_count": self.runs.len(), "workflow_runs": self.runs}).to_string(),
+            Value::Array(self.runs.clone()).to_string(),
         )
         .unwrap();
         let bin = self.root.path().join("bin");
         fs::create_dir_all(&bin).unwrap();
         fs::write(bin.join("gh"), FAKE_GH).unwrap();
         fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o700)).unwrap();
-        let temp = self.root.path().join(temp);
+        let temp = self.root.path().join("runner-temp");
         fs::create_dir_all(&temp).unwrap();
         let workflow: Value = serde_saphyr::from_str(
             &fs::read_to_string(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../.github/workflows/release-bundles.yml"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/release.yml"),
             )
             .unwrap(),
         )
         .unwrap();
-        let script = workflow["jobs"]["bundles"]["steps"]
+        let script = workflow["jobs"]["stage"]["steps"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|step| step["id"] == "package")
+            .find(|step| step["id"] == "cli")
             .unwrap()["run"]
             .as_str()
             .unwrap()
             .to_owned();
+        // GitHub runs a step without a shell setting as `bash -e`.
         Command::new("/bin/bash")
-            .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", &script])
+            .args(["--noprofile", "--norc", "-e", "-c", &script])
             .env_clear()
             .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("FAKE_GITHUB", self.data())
             .env("RUNNER_TEMP", &temp)
             .env("GITHUB_OUTPUT", self.root.path().join("output"))
-            .env("GITHUB_STEP_SUMMARY", self.root.path().join("summary"))
             .env("GITHUB_REPOSITORY", "NVIDIA/NemoClaw")
-            .env("GITHUB_RUN_ATTEMPT", "3")
+            .env("GITHUB_SHA", COMMIT)
+            .env("GITHUB_REF_NAME", VERSION)
             .env("GH_TOKEN", "token")
-            .env("COMMIT", COMMIT)
-            .env("VERSION", VERSION)
             .current_dir(self.root.path())
             .output()
             .unwrap()
@@ -186,13 +165,12 @@ impl Github {
     }
 }
 
-fn bundles(label: &str, attempt: u32) -> Vec<(String, bool, String)> {
+fn bundles(label: &str, attempt: u32) -> Vec<(String, String)> {
     PLATFORMS
         .iter()
         .map(|platform| {
             (
                 format!("bundle-{platform}-{COMMIT}-{attempt}"),
-                false,
                 format!("{label} {platform}"),
             )
         })
@@ -201,27 +179,19 @@ fn bundles(label: &str, attempt: u32) -> Vec<(String, bool, String)> {
 
 /// The bundled `nemoclaw`'s contents and mode in a platform's archive.
 fn bundled_cli(archives: &Path, platform: &str) -> (String, u32) {
-    let root = format!("nemoclaw-{VERSION}-{platform}");
-    let mut contents = String::new();
-    if platform.starts_with("windows") {
-        let mut zip =
-            zip::ZipArchive::new(fs::File::open(archives.join(format!("{root}.zip"))).unwrap())
-                .unwrap();
-        let mut file = zip.by_name(&format!("{root}/bin/nemoclaw")).unwrap();
-        file.read_to_string(&mut contents).unwrap();
-        return (contents, 0);
-    }
-    let archive = fs::File::open(archives.join(format!("{root}.tar.gz"))).unwrap();
+    let archive =
+        fs::File::open(archives.join(format!("nemoclaw-{VERSION}-{platform}.tar.gz"))).unwrap();
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
     for entry in tar.entries().unwrap() {
         let mut entry = entry.unwrap();
-        if entry.path().unwrap() == Path::new(&root).join("bin/nemoclaw") {
+        if entry.path().unwrap() == Path::new(&format!("dist/{platform}/bin/nemoclaw")) {
             let mode = entry.header().mode().unwrap();
+            let mut contents = String::new();
             entry.read_to_string(&mut contents).unwrap();
             return (contents, mode);
         }
     }
-    panic!("{root} holds no bin/nemoclaw");
+    panic!("the {platform} archive holds no dist/{platform}/bin/nemoclaw");
 }
 
 fn report(output: &Output) -> String {
@@ -241,12 +211,11 @@ fn each_platform_archive_holds_the_bundle_from_the_passing_ci_run_at_the_commit(
     passing.extend(bundles("rerun", 2));
     passing.push((
         format!("bundle-part-windows_amd64-{COMMIT}-2-cli"),
-        false,
         "part".into(),
     ));
     github.run(13, "push", "success", &passing);
 
-    let output = github.package();
+    let output = github.stage();
     assert!(output.status.success(), "{}", report(&output));
 
     let archives = github.archives();
@@ -257,13 +226,11 @@ fn each_platform_archive_holds_the_bundle_from_the_passing_ci_run_at_the_commit(
             format!("rerun {platform}"),
             "{platform}'s archive holds the passing push run's latest bundle"
         );
-        if !platform.starts_with("windows") {
-            assert_eq!(
-                mode & 0o111,
-                0o111,
-                "{platform}'s nemoclaw stays executable"
-            );
-        }
+        assert_eq!(
+            mode & 0o111,
+            0o111,
+            "{platform}'s nemoclaw stays executable"
+        );
     }
     let sums = fs::read_to_string(archives.join("SHA256SUMS")).unwrap();
     assert_eq!(
@@ -283,41 +250,22 @@ fn each_platform_archive_holds_the_bundle_from_the_passing_ci_run_at_the_commit(
     );
 }
 
-/// A rerun replaces the draft's archives, so the same bundles must yield the
-/// same checksums however long after the first run it packages them.
-#[test]
-fn packaging_the_same_bundles_again_later_yields_the_same_checksums() {
-    let mut github = Github::new();
-    github.run(13, "push", "success", &bundles("checked", 1));
-
-    let first = github.package_in("first");
-    assert!(first.status.success(), "{}", report(&first));
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    let second = github.package_in("second");
-    assert!(second.status.success(), "{}", report(&second));
-
-    let sums = |temp: &str| {
-        fs::read_to_string(github.root.path().join(temp).join("cli-bundles/SHA256SUMS")).unwrap()
-    };
-    assert_eq!(sums("first"), sums("second"), "the checksums match");
-}
-
 #[test]
 fn staging_fails_when_only_a_pull_request_run_passed_at_the_commit() {
     let mut github = Github::new();
     github.run(12, "pull_request", "success", &bundles("pull request", 1));
     github.run(11, "push", "failure", &bundles("failed run", 1));
 
-    let output = github.package();
+    let output = github.stage();
     let report = report(&output);
-    assert!(!output.status.success(), "packaging fails: {report}");
+    assert!(!output.status.success(), "staging fails: {report}");
     assert!(
         report.contains("::error::") && report.contains(COMMIT),
         "the error names the commit: {report}"
     );
     assert!(
         !github.archives().join("SHA256SUMS").exists(),
-        "nothing is packaged"
+        "nothing is staged"
     );
 }
 
@@ -325,12 +273,13 @@ fn staging_fails_when_only_a_pull_request_run_passed_at_the_commit() {
 fn staging_fails_naming_each_platform_whose_checked_bundle_expired() {
     let mut github = Github::new();
     let mut artifacts = bundles("checked", 1);
-    artifacts[1].1 = true;
+    // gh run download skips expired artifacts.
+    artifacts.remove(1);
     github.run(13, "push", "success", &artifacts);
 
-    let output = github.package();
+    let output = github.stage();
     let report = report(&output);
-    assert!(!output.status.success(), "packaging fails: {report}");
+    assert!(!output.status.success(), "staging fails: {report}");
     let error = report
         .lines()
         .find(|line| line.starts_with("::error::"))
