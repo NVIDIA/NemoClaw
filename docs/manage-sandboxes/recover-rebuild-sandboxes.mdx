@@ -220,12 +220,12 @@ This check is stricter than the HTTP 200–499 reachability diagnostic used by o
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-For Switchyard routing, inference readiness verifies the recorded provider identities, revisions, profiles, and sandbox attachments.
-This check does not send a model request.
+For Switchyard routing, [launch readiness](../../reference/commands#$$nemoclaw-launch-name) checks the recorded provider bindings.
+Gateway startup separately qualifies the judge with bounded model calls.
 
-Before each gateway launch, including supervised recovery, NemoClaw makes bounded model calls.
-These calls verify judge classification and separate routing and answer usage accounting.
 If judge qualification fails, the gateway remains stopped.
+Check model access, or select a supported judge in your Switchyard configuration and onboard with a new sandbox name.
+For configuration requirements, refer to [`--switchyard-config`](../../reference/commands#--switchyard-config-file).
 
 </AgentOnly>
 
