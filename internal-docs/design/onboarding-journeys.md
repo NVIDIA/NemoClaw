@@ -147,6 +147,7 @@ Model choices remain suggestions rather than a schema enum, and the symbolic tre
 An endpoint's catalog carries no tool-calling metadata, so a vendor with curated entries offers only the curated models its endpoint lists, and none of the rest of its catalog.
 A list with no usable entry leaves the curated entries as they are.
 A settled model that the endpoint does not list adds an informational note on the review, without echoing its identifier.
+Keys typed while a model list is being read are dropped when the list arrives, so a keystroke meant for the earlier menu cannot choose from the narrowed one.
 Neither source establishes inference support or replaces Fabric validation, target compatibility, or the endpoint evidence required for bulk acceptance.
 See [onboarding model catalogs](../../docs/agents-inference/inference.md#onboarding-model-catalogs).
 

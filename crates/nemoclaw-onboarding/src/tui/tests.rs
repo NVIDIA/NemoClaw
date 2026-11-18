@@ -1283,6 +1283,75 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
     );
 }
 
+#[tokio::test]
+async fn a_key_typed_while_the_model_catalog_is_read_does_not_choose_from_the_resolved_menu() {
+    let capabilities = Capabilities::available();
+    let state = load_defaults(&capabilities);
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    for _ in 0..12 {
+        if wizard
+            .question()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|question| question.allows_custom_answer())
+        {
+            break;
+        }
+        wizard.advance();
+    }
+    let query = model_catalog_probe(&wizard).unwrap();
+    let shown = wizard.question().unwrap().unwrap().suggestion().cloned();
+    // The endpoint answers slowly and lists only a model other than the
+    // suggestion on screen, so the resolved menu suggests a different one.
+    let document = wizard
+        .state()
+        .resolve(&wizard.capabilities)
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let request = inference_request_for_document(&document, wizard.state().current_route())
+        .unwrap()
+        .unwrap();
+    let read = {
+        let request = request.clone();
+        async move |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            Ok(DiscoveryObservations::new().with(
+                DiscoveryQuery::Inference(request),
+                DiscoveryObservation::Inference(EndpointObservation {
+                    status: ObservationStatus::Available,
+                    reason: None,
+                    source: "fixture".into(),
+                    reachable: Some(true),
+                    authentication:
+                        nemoclaw_sdk::inference_discovery::AuthenticationStatus::Accepted,
+                    models: vec!["nvidia/nemotron-3-ultra-550b-a55b".into()],
+                    api_verified: false,
+                }),
+            ))
+        }
+    };
+    let enter = crossterm::event::Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let mut queue = std::collections::VecDeque::new();
+    assert!(
+        ask_target(
+            &mut wizard,
+            read,
+            vec![query],
+            &CancellationToken::new(),
+            &mut queue,
+            || Ok(Some(enter.clone())),
+        )
+        .await
+        .unwrap()
+    );
+    let resolved = wizard.question().unwrap().unwrap();
+    assert_ne!(resolved.suggestion().cloned(), shown);
+    assert!(queue.is_empty(), "{queue:?}");
+}
+
 #[test]
 fn tui_preserves_podman_as_an_authored_target_choice() {
     let capabilities = Capabilities::available();

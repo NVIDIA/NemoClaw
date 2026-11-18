@@ -622,6 +622,7 @@ Changing a vendor or endpoint recomputes the recommendations and membership chec
 The endpoint's own list of models is read to check the selected model.
 It does not widen the menu: a vendor with a curated list offers only the curated models the endpoint lists, plus **Type another model**.
 A curated model the endpoint leaves out is not offered, and a model you type that the endpoint does not list is noted on the review screen.
+Keys you press while the list is being read are discarded when it arrives, so they cannot select from the narrowed menu.
 Generic OpenAI-compatible and Anthropic-compatible endpoints have no curated list, so they offer the models their endpoint lists.
 A missing catalog credential leaves offline recommendations available and reports the missing credential; it does not allow bulk acceptance without the existing target and endpoint evidence.
 Catalog membership does not verify account access, current availability, API compatibility, tool support, or successful inference.
