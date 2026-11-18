@@ -12,7 +12,7 @@ use crate::auth::{BearerSlot, EdgeAuthInterceptor, bearer_metadata};
 use crate::config::{AuthConfig, ClientConfig};
 use crate::error::{Result, SdkError};
 use crate::pagination::{Page, Pager};
-use crate::raw::{AuthedGrpcClient, AuthedSandboxUpdatesClient};
+use crate::raw::{AuthedGrpcClient, AuthedSandboxUpdatesClient, AuthedServiceDiscoveryClient};
 use crate::refresh::{RefreshedToken, TokenSource};
 use crate::routing::OwnerCache;
 use crate::types::{
@@ -147,6 +147,23 @@ impl OpenShellClient {
     pub async fn raw_sandbox_updates_fresh(&self) -> Result<AuthedSandboxUpdatesClient> {
         self.ensure_fresh().await?;
         Ok(self.raw_sandbox_updates())
+    }
+
+    /// Authenticated client for the separate ingress discovery service.
+    /// Shares the channel and live auth slot; like [`Self::raw_grpc`], does not
+    /// refresh or retry credentials by itself.
+    pub fn raw_service_discovery(&self) -> AuthedServiceDiscoveryClient {
+        proto::service_discovery_client::ServiceDiscoveryClient::with_interceptor(
+            self.channel.clone(),
+            self.interceptor.clone(),
+        )
+    }
+
+    /// Like [`Self::raw_service_discovery`], refreshing bearer credentials first.
+    /// Reactive retry remains the raw caller's responsibility.
+    pub async fn raw_service_discovery_fresh(&self) -> Result<AuthedServiceDiscoveryClient> {
+        self.ensure_fresh().await?;
+        Ok(self.raw_service_discovery())
     }
 
     /// Force an OIDC refresh and write the new token into the live bearer

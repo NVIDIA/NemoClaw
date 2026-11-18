@@ -12,7 +12,7 @@ OpenShell gives each process the credential revision current when the process st
 After a key is updated, a running agent keeps using the old key, and only processes started afterwards receive the new one.
 An agent restarts only when its sandbox is replaced, for example when its configuration changes.
 Keep the old upstream key valid until every sandbox that uses it has been replaced, then revoke it.
-See OpenShell's [runtime limitations](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/providers/profiles.mdx#runtime-limitations).
+See OpenShell's [runtime limitations](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/providers/profiles.mdx#runtime-limitations).
 
 ## Inference, Web Search, and API Keys You Supply
 

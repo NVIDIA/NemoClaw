@@ -21,6 +21,7 @@
 pub use openshell_core::proto;
 pub use openshell_core::proto::open_shell_client::OpenShellClient as GrpcClient;
 pub use openshell_core::proto::sandbox_updates_client::SandboxUpdatesClient;
+pub use openshell_core::proto::service_discovery_client::ServiceDiscoveryClient;
 pub use openshell_core::proto::{
     CreateSandboxRequest, CreateSandboxTemplateRequest, CreateWorkspaceRequest,
     DeleteSandboxRequest, DeleteSandboxTemplateRequest, DeleteWorkspaceRequest, ExecSandboxRequest,
@@ -48,6 +49,14 @@ pub type AuthedGrpcClient = GrpcClient<
 /// Sandbox-updates client using the same live auth slot and transport as the
 /// main service client.
 pub type AuthedSandboxUpdatesClient = SandboxUpdatesClient<
+    tonic::service::interceptor::InterceptedService<
+        tonic::transport::Channel,
+        crate::EdgeAuthInterceptor,
+    >,
+>;
+
+/// Application ingress discovery using the SDK transport and live auth slot.
+pub type AuthedServiceDiscoveryClient = ServiceDiscoveryClient<
     tonic::service::interceptor::InterceptedService<
         tonic::transport::Channel,
         crate::EdgeAuthInterceptor,
