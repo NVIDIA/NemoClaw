@@ -25,7 +25,8 @@ No image is published by this operation.
 
 The [Muse Glimmer case](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) shows the complete desired-state shape.
 Its image references are CI placeholders and must be replaced with candidate-built digests.
-The AMD64/L40S settings await live qualification; Classic's experimental Spark recipe does not qualify this case.
+Qualification of the current OpenShell 0.1.9 pin on AMD64/L40S remains pending; the earlier Muse/L40S configuration used OpenShell 0.1.8.
+Classic's experimental Spark recipe does not qualify this case.
 The case requests 32768 context tokens and low reasoning strength rather than copying Spark's 131072-token setting.
 
 The first implementation serves one model on one CUDA GPU, with full GPU-layer offload requested, one slot, f16 KV, embedded Jinja and no multimodal projector.

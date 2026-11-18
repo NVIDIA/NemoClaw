@@ -634,7 +634,8 @@ The documented service paths are external API endpoints, managed Ollama, [extern
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
 For managed GGUF serving, see [llama.cpp](models.md#serve-a-pinned-gguf-with-llamacpp).
-Managed NVIDIA NIM is qualified for one pinned AMD64 L40S configuration with a 32K context under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); see [its scope and requirements](models.md#native-nim-candidate).
+Managed NVIDIA NIM qualification covers one pinned AMD64 L40S configuration with a 32K context and OpenShell 0.1.8 under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); see [its scope and requirements](models.md#native-nim-candidate).
+The current OpenShell 0.1.9 pin needs GPU requalification.
 Other NIM model/platform combinations need separate qualification.
 NemoClaw has no Model Router and no provider for Gemini's native API; onboarding's Google Gemini preset uses Gemini's OpenAI-compatible endpoint.
 Distributed inference, separate inference hosts and other model formats are tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
