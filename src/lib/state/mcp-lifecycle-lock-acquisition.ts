@@ -10,7 +10,9 @@ import { performance } from "node:perf_hooks";
 import {
   decideMcpLifecycleAcquisition,
   decideMcpLifecycleLock,
+  mcpLifecycleLockGeneration,
   type CorruptGenerationState,
+  type McpLifecycleLockDecision,
 } from "./mcp-lifecycle-lock/decisions";
 import {
   classifyMcpLifecycleLock,
@@ -113,23 +115,46 @@ function timeoutError(sandboxName: string, ownerPid: number | null): Error {
   );
 }
 
+function writeStderrNotice(message: string): void {
+  // Closed-pipe errors surface as stream "error" events after the write callback.
+  const ignore = () => {};
+  process.stderr.on("error", ignore);
+  process.stderr.write(message, () => setImmediate(() => process.stderr.off("error", ignore)));
+}
+
 function createWaitNotifier(
   sandboxName: string,
   lockPath: string,
   options: McpLifecycleLockOptions,
   monotonicNow: () => number,
-): (ownerPid: number | null) => void {
+): (observation: LockObservation, decision: McpLifecycleLockDecision) => void {
   const noticeAfterMs = positiveInteger(options.waitNoticeMs, DEFAULT_WAIT_NOTICE_MS);
-  const writeNotice = options.writeNotice ?? ((message: string) => process.stderr.write(message));
-  const startedAt = monotonicNow();
+  const writeNotice = options.writeNotice ?? writeStderrNotice;
+  let waitingOn: string | null = null;
+  let waitStartedAt = 0;
   let announced = false;
-  return (ownerPid) => {
-    if (announced || monotonicNow() - startedAt < noticeAfterMs) return;
+  return (observation, decision) => {
+    const generation = mcpLifecycleLockGeneration(observation);
+    if (generation !== waitingOn) {
+      waitingOn = generation;
+      waitStartedAt = monotonicNow();
+      announced = false;
+    }
+    if (announced || monotonicNow() - waitStartedAt < noticeAfterMs) return;
     announced = true;
-    const owner = ownerPid ? `PID ${String(ownerPid)}` : "an unreadable lock record";
-    writeNotice(
-      `Still waiting for the sandbox mutation lock for '${sandboxName}' held by ${owner}. Lock file: ${lockPath}. If no nemoclaw command for this sandbox is running here, the owner may be in another PID namespace or on another host. Stop it there; NemoClaw does not remove that lock automatically.\n`,
-    );
+    const detail =
+      decision.kind === "wait" && decision.disposition === "active"
+        ? `PID ${String(decision.ownerPid)} holds it. If no nemoclaw command for this sandbox is running here, the owner may be in another PID namespace or on another host. Check it there. If it has exited, verify that, then remove the lock file. NemoClaw does not remove it automatically.`
+        : observation.reclaimable
+          ? "The lock record is unreadable. NemoClaw retries reclaiming it after a grace period."
+          : "The lock path is not a file. NemoClaw cannot reclaim it. Remove it if no nemoclaw command is running.";
+    try {
+      writeNotice(
+        `Still waiting for the sandbox mutation lock for '${sandboxName}'. Lock file: ${lockPath}. ${detail}\n`,
+      );
+    } catch {
+      // A failed notice must not end the wait.
+    }
   };
 }
 
@@ -297,7 +322,7 @@ async function acquireMcpLifecycleLock(
         );
         continue;
       }
-      notifyWaiting(lastOwnerPid);
+      notifyWaiting(observation, mainDecision);
     } else {
       lastOwnerPid = null;
       resetCorruptGenerationTracker(corruptMainTracker);
@@ -406,7 +431,7 @@ function acquireMcpLifecycleLockSync(
         );
         continue;
       }
-      notifyWaiting(lastOwnerPid);
+      notifyWaiting(observation, mainDecision);
     } else {
       lastOwnerPid = null;
       resetCorruptGenerationTracker(corruptMainTracker);
