@@ -3,7 +3,7 @@
 
 # Current Limits
 
-v1 is in development and has no release.
+v1 is in development; the inspected release records contain draft release candidates but no published final release.
 This page lists what it does not do yet or has not tested, with the GitHub issue that tracks each.
 Other pages state a limit where it affects a procedure and link the same issue.
 
@@ -13,7 +13,7 @@ The source-build workflow does not supply an installer or a published package; k
 
 | Limit | Issue |
 |---|---|
-| No release, installer or release downloads; build the bundle from source | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) |
+| No published final release, installer, or release downloads; build the bundle from source | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) |
 | The SDK and provider packages are not published | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) |
 | No support policy or enterprise deployment qualification | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) |
 

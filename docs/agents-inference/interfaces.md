@@ -14,12 +14,19 @@ Run them in every terminal used for forwarding or sandbox commands, from any dir
 
 For a managed Kubernetes or OpenShift gateway, first create its profile as [Reach the Gateway from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli) shows, then select it as below.
 
-For an existing authenticated gateway profile supplied by its operator:
+For an existing authenticated gateway profile supplied by its operator, follow these steps:
 
-```sh
-unset OPENSHELL_GATEWAY_ENDPOINT
-export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME
-```
+1. Clear any endpoint override.
+
+   ```sh
+   unset OPENSHELL_GATEWAY_ENDPOINT
+   ```
+
+2. Select the operator-provided profile.
+
+   ```sh
+   export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME
+   ```
 
 The profile's endpoint must match `spec.gateway.endpoint` in the deployment YAML.
 Its stored authentication must grant access to the deployment workspace.
@@ -27,29 +34,43 @@ The endpoint override takes precedence over the profile, which is why this examp
 NemoClaw's YAML credential and TLS environment references do not configure the OpenShell CLI's stored profile or credentials.
 To create a profile for an authenticated gateway, including its issuer or mTLS client certificates, follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx).
 
-For an existing plaintext loopback gateway instead, select its actual endpoint directly:
+For an existing plaintext loopback gateway instead, follow these steps:
 
-```sh
-unset OPENSHELL_GATEWAY
-export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
-```
+1. Clear the profile selector.
 
-Replace the example port with the one in your YAML.
+   ```sh
+   unset OPENSHELL_GATEWAY
+   ```
+
+2. Select the gateway's actual endpoint.
+
+   ```sh
+   export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
+   ```
+
+   Replace the example port with the one in your YAML.
 Use this variant only when that gateway is already listening on the client host's loopback interface.
 Do not replace an authenticated remote endpoint with plaintext or disable TLS verification to make access work.
 
-Copy the **OpenShell gateway** and **OpenShell workspace** selectors from the plan or apply result.
-To print them again without changing runtime resources, run from the directory containing the applied YAML, with the same state directory and credential environment:
+Use the **OpenShell gateway** and **OpenShell workspace** selectors from the plan or apply result. If you need them again, follow these steps:
 
-```sh
-nemoclaw plan deployment.yaml --state-dir .nemoclaw --non-interactive
-```
+1. Run plan from the directory containing the applied YAML, with the same state directory and credential environment.
 
-The workspace derives from `metadata.uid`; copy the reported value into each client terminal:
+   ```sh
+   nemoclaw plan deployment.yaml --state-dir .nemoclaw --non-interactive
+   ```
 
-```sh
-export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
-```
+   Plan does not change runtime resources.
+
+2. Confirm that the reported gateway matches the selected endpoint or profile.
+
+3. Select the reported workspace in each client terminal.
+
+   ```sh
+   export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
+   ```
+
+   The workspace derives from `metadata.uid`.
 
 JSON results expose the same values as `connection.gatewayEndpoint` and `connection.workspace`.
 These selectors describe the configured target, including when a plan is incomplete; they do not establish access or create an authenticated OpenShell CLI profile.
@@ -82,15 +103,21 @@ The selected Fabric adapter owns how the harness handles the request.
 
 ## Forward a Native Service
 
-An adapter that serves a native listener inside the sandbox can be reached by forwarding it from a private terminal on the client host:
+An adapter can serve a native listener inside its sandbox. Reach it from a private terminal on the client host:
 
-```sh
-openshell forward service REPLACE_WITH_SANDBOX --target-port REPLACE_WITH_PORT --local 127.0.0.1:REPLACE_WITH_PORT
-```
+1. [Select the gateway and workspace](#select-the-gateway-and-workspace) in that terminal.
 
-The foreground command forwards through the authenticated OpenShell connection to the sandbox's loopback service.
-Keep forwarding bound to loopback, follow the adapter's authentication requirements, and stop forwarding with Ctrl-C.
-Stopping a client forward does not stop the sandbox or its Fabric runtime.
+2. Forward the sandbox's loopback service, bound to client loopback.
+
+   ```sh
+   openshell forward service REPLACE_WITH_SANDBOX --target-port REPLACE_WITH_PORT --local 127.0.0.1:REPLACE_WITH_PORT
+   ```
+
+   The command stays in the foreground and forwards through the authenticated OpenShell connection.
+
+3. Follow the selected adapter's authentication requirements before using the service.
+
+4. Stop forwarding with Ctrl-C when finished. This does not stop the sandbox or its Fabric runtime.
 
 Apply prints this command for each interface that an agent's configuration enables; see [Reach an Agent Interface](#reach-an-agent-interface).
 
@@ -160,19 +187,23 @@ Agent interfaces:
 JSON results carry the same facts under `interfaces`.
 The gateway selection follows [Select the Gateway and Workspace](#select-the-gateway-and-workspace); for a gateway that needs an OpenShell profile, the output asks for your profile's name.
 
-1. Run the forward in its own terminal and keep it running.
-2. Read the token with the `Token` command, in another terminal with the same selection.
+1. [Select the gateway and workspace](#select-the-gateway-and-workspace) in the terminal that will run the forward.
+2. Run the `Forward` command in that terminal and keep it running. Bind it to loopback; stopping the forward does not stop the runtime.
+3. Select the same gateway and workspace in a separate private terminal.
+4. If the interface requires a token, read it with the `Token` command in that terminal. Do not paste a token into shell history or shared logs.
    The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
    For an agent that [keeps its state](../build-deploy/state.md#agent-files), such as Hermes, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user; stopping the runtime removes it.
-   After the runtime restarts, apply prints the new path; read the token again.
-3. Sign in:
-   - OpenClaw: open `http://127.0.0.1:PORT/#token=TOKEN` in a browser. The Control UI removes the token from the address bar. OpenClaw accepts any loopback origin with the token, so a forward to another local port also works.
-   - Hermes's API server: send `Authorization: Bearer TOKEN` with each request, for example to `http://127.0.0.1:PORT/v1/models`.
-   - Hermes's dashboard: open `http://127.0.0.1:PORT/`. It has no sign-in.
+   After the runtime restarts, apply prints a new path. Repeat this step to read the new token.
+5. Sign in using the method for the selected interface:
 
-Keep tokens out of YAML, shell history, and shared logs; NemoClaw stores none in its state.
-Hermes's API server and browser chat call the model the agent's configuration names, with its key.
+   - OpenClaw: Open `http://127.0.0.1:PORT/#token=TOKEN` in a browser. The Control UI removes the token from the address bar. OpenClaw accepts any loopback origin with the token, so a forward to another local port also works.
+   - Hermes's API server: Send `Authorization: Bearer TOKEN` with each request, for example to `http://127.0.0.1:PORT/v1/models`.
+   - Hermes's dashboard: Open `http://127.0.0.1:PORT/`. It has no sign-in. Anyone who can reach its forward can use it.
+
+6. Send a short request through the signed-in interface to verify the model replies. A successful forward or sign-in alone does not establish inference.
+
+NemoClaw stores no interface tokens in its state. Hermes's API server and browser chat call the model the agent's configuration names, with its key.
 
 ### Who Can Use an Interface
 
@@ -190,16 +221,29 @@ Conversations in an interface aren't promised to share history with requests sen
 OpenClaw's terminal UI, `openclaw tui`, is a client of the Gateway that serves the Control UI, so it needs the `dashboard` interface and signs in with its token.
 Apply prints the command that opens it on the dashboard's `Terminal` line, and JSON results carry the command it runs in the sandbox as `terminal`.
 Run it from a terminal on the client host with the gateway and workspace selected; it needs no forward.
-To keep the token out of your shell history, read it into a variable with the `Token` command:
+Keep the token out of shell history:
 
-```sh
-TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
-openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
-unset TOKEN
-```
+1. Read the token into a variable with the `Token` command.
 
-Press Ctrl-D to quit. Opening it again reconnects to the same session and shows its history.
-The token changes each time the runtime starts, so read it again after a restart.
+   ```sh
+   TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
+   ```
+
+2. Open the terminal UI.
+
+   ```sh
+   openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
+   ```
+
+3. Clear the client terminal's token variable.
+
+   ```sh
+   unset TOKEN
+   ```
+
+4. Press Ctrl-D to quit when finished. Opening it again reconnects to the same session and shows its history.
+
+The token changes each time the runtime starts. Repeat the token-reading step after a restart.
 The agent's own tools can read the token, as [Who Can Use an Interface](#who-can-use-an-interface) describes.
 
 OpenShell opens the pseudo-terminal of `openshell sandbox exec --tty` and hands it to the command, so the terminal UI works without `/dev/pts` in the sandbox's filesystem policy. Hermes's browser chat opens its own pseudo-terminal, so it needs `/dev/pts`, as [Hermes's Browser Chat](#hermess-browser-chat) describes.

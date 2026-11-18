@@ -33,16 +33,19 @@ Prepare these inputs before running apply:
 - An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-For the [first-deployment tutorial](first-deployment.md), use OpenShell **0.1.7** for the gateway and native CLI.
+For the [source-pinned first-deployment tutorial](first-deployment.md), use OpenShell **0.1.7** for the gateway and native CLI. The current checkout's `versions.json` pins 0.1.8; do not use it with the older tutorial bundle.
 The tutorial's pinned NemoClaw implementation (`637bdb6276309ea71d1f1fcb68fff518fe2db926`) records this version and OpenShell source revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c` in its `versions.json`.
 Its gateway check rejects a different reported OpenShell version or an incompatible compute driver.
 For another NemoClaw revision, use its own `versions.json` rather than assuming this version applies.
 Select a compatible [inference API](../agents-inference/inference.md) and verify an actual agent reply; endpoint reachability alone is insufficient.
 
-Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.7`.
-The guides assume an operator provides the external gateway and its credentials; register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
-For an existing profile or plaintext loopback gateway, use [gateway/workspace selection](../agents-inference/interfaces.md#select-the-gateway-and-workspace).
-See the [first-deployment guide](first-deployment.md) for its rehearsal status.
+Prepare the pinned CLI before starting the tutorial:
+
+1. Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.7`.
+
+2. If the external gateway needs an authenticated profile, register it in the CLI with `openshell gateway add` for mTLS or OIDC. Follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx).
+
+The operator provides the external gateway and its credentials. After apply, the [first-deployment guide](first-deployment.md#send-a-verification-request) links to gateway and workspace selection and distinguishes readiness from a verified reply.
 
 ## Client and Build Tools
 

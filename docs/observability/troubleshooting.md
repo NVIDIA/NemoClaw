@@ -148,9 +148,9 @@ For an external Ollama digest mismatch, use [the proxy guide](../agents-inferenc
 | Observation | What it establishes | Next check |
 |---|---|---|
 | Model appears in the endpoint inventory | The service reports that model | Confirm API compatibility and an inference request |
-| Apply succeeds | Declared resources pass readiness checks and each agent started | Verify inference and a native agent turn through the intended interface |
+| Apply succeeds | Declared resources pass readiness checks and each agent started | Follow the [native invocation procedure](../agents-inference/agents.md#run-one-agent-request) or [interface access procedure](../agents-inference/interfaces.md#reach-an-agent-interface); check the reply separately |
 | Agent configuration changed inside the sandbox | Not reported: Fabric reports no applied configuration | Change the configuration in the deployment and apply, which replaces the sandbox |
-| Forwarded native service cannot connect | Native service, forwarding, or authentication may be incomplete | Follow [interface diagnosis](../agents-inference/interfaces.md#diagnose-failures); keep local forwarding ports consistent |
+| Forwarded native service cannot connect | Native service, forwarding, or authentication may be incomplete | Check [gateway and workspace selection](../agents-inference/interfaces.md#select-the-gateway-and-workspace), then follow [interface diagnosis](../agents-inference/interfaces.md#diagnose-failures); keep local forwarding ports consistent |
 | Managed runtime stopped after a protection trip | The independent supervisor stopped inference | Inspect [retained status and logs](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime) and correct capacity/startup conditions before explicit recovery |
 
 Terminal sandbox apply errors, and plans that replace an exited sandbox, name the sandbox and report the OpenShell phase, OpenShell's reason code, and the main process exit code, or `unknown` when unavailable.
