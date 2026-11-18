@@ -34,6 +34,9 @@ Agents and interfaces:
 
 Onboarding:
 
+- At the model question for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research, `nemoclaw onboard` offers the recommended models the endpoint lists and **Type another model**, instead of the endpoint's whole catalog, which can include models that cannot drive an agent.
+  The review notes a typed model that the endpoint does not list.
+  See [onboarding model catalogs](../agents-inference/inference.md#onboarding-model-catalogs).
 - At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
 
 Sandbox policy:
