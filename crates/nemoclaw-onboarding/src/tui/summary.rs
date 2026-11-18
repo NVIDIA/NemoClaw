@@ -7,9 +7,7 @@
 use super::labels;
 use nemoclaw_authoring::{CompatibilityStatus, ProviderPreset};
 use nemoclaw_sdk::{
-    config::{
-        DEFAULT_AGENT_IMAGE, Document, InferenceTarget, Integration, NamedSandbox, NetworkPolicy,
-    },
+    config::{Document, InferenceTarget, Integration, NamedSandbox, NetworkPolicy},
     discovery::{CredentialRequest, DiscoveryObservations, ObservationStatus},
 };
 use std::path::Path;
@@ -236,9 +234,7 @@ fn runs_on(document: &Document) -> String {
 /// The image and the target's verdict on it and its engine.
 fn image_row(sandbox: NamedSandbox<'_>, target: Option<CompatibilityStatus>) -> Row {
     let image = &sandbox.image.ref_;
-    let value = if image == DEFAULT_AGENT_IMAGE {
-        "default image".to_owned()
-    } else if image.is_empty() {
+    let value = if image.is_empty() {
         "none".to_owned()
     } else {
         image.clone()

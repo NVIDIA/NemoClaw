@@ -217,6 +217,9 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
 
 - In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
   Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
+- Every sandbox must set `image.ref` to an agent image pinned by digest, on Docker and Podman as on Kubernetes.
+  The SDK no longer supplies a default agent image, and the parser rejects an omitted `image`, `image: {}`, and an empty `ref`; see [build agent images](../build-deploy/build.md#build-agent-images).
+  In the Rust SDK, `config::DEFAULT_AGENT_IMAGE` is removed.
 - With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
   A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
 - With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.
