@@ -49,7 +49,8 @@
 | [Verify native memory search](../../internal-docs/v1-roadmap.md#verify-native-memory-search) | Needs review | Verify the required native indexing and search behavior. |
 | [Verify credential rotation](../../internal-docs/v1-roadmap.md#verify-credential-rotation) | Needs review | Verify MCP credential replacement and revocation. |
 | [Review enterprise parity](../../internal-docs/v1-roadmap.md#review-enterprise-parity) | Needs review | Confirm company enrollment, identity, policy, and recovery needs. |
-| [Built-in backup commands](https://github.com/NVIDIA/NemoClaw/issues/12639) | Not planned in NemoClaw Agent Config | Platform operators own mounted-data backup and restore. |
+| [Built-in backup and restore commands](https://github.com/NVIDIA/NemoClaw/issues/12639) | Not planned in NemoClaw Agent Config | Native agents own their data semantics; platform operators manage storage backup and restore. |
+| [Universal agent runtime management](../../internal-docs/v1-roadmap.md#universal-agent-runtime-management) | Not planned in NemoClaw Agent Config | No common API for agent-specific runtime operations, such as native gateway-process restart. |
 | [Guaranteed automatic migration](https://github.com/NVIDIA/NemoClaw/issues/14580) | Not planned in NemoClaw Agent Config | No general state adoption or native-data conversion guarantee. |
 | [Classic CLI and API compatibility](../../internal-docs/v1-roadmap.md#classic-cli-and-api-compatibility) | Not planned in NemoClaw Agent Config | No compatible Classic command or TypeScript lifecycle interface. |
 | [Built-in policy approval UI](https://github.com/NVIDIA/NemoClaw/issues/12651) | Not planned in NemoClaw Agent Config | Approval and explanation belong to OpenShell. |

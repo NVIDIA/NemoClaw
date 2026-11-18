@@ -111,3 +111,13 @@ Decide that broader scope before committing additional parity work.
 **Not planned in NemoClaw.** NemoClaw Agent Config uses desired-state deployments and the Rust SDK/OpenTofu providers, without compatibility with the Classic imperative CLI or TypeScript lifecycle API.
 Use the [migration task mapping](../docs/get-started/migration.md#map-the-user-task) and [compatibility guidance](../docs/references/compatibility.md) to choose the replacement workflow.
 The NemoClaw Agent Config SDK/provider compatibility issue [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645) covers a different contract; it does not promise Classic API compatibility.
+
+## Universal agent runtime management
+
+**Not planned in NemoClaw Agent Config.** A universal API that normalizes agent-specific runtime operations across every agent is outside scope.
+Examples include native backup/restore behavior and native gateway-process restart; these operations belong to the agent or the component that owns the runtime.
+Native agents define their data semantics, while platform operators manage backup and restore of mounted storage.
+
+This boundary preserves desired-state deployment setup and drift reconciliation, including lifecycle operations supported by the deployment providers.
+It does not exclude all restart or recovery behavior, nor the Rust SDK and OpenTofu interfaces used to manage deployments.
+See the [deployment lifecycle](../docs/build-deploy/usage.md) and [upstream ownership boundaries](design/scope.md#upstream-boundaries).
