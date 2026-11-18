@@ -38,7 +38,8 @@ Onboarding:
   The review notes a typed model that the endpoint does not list.
   See [onboarding model catalogs](../agents-inference/inference.md#onboarding-model-catalogs).
 - At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
-  When exactly one such image exists and your template names no other, onboarding uses it without asking and the review says so.
+  When the read of that engine succeeds, finds exactly one such image after you have chosen the harness, runtime, and engine, and neither your template nor an earlier answer names a different image, onboarding uses it without asking and the review says so.
+  Otherwise it asks for the image.
 
 Sandbox policy:
 

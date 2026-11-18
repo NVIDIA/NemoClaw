@@ -1943,6 +1943,69 @@ fn an_engine_the_journey_still_asks_about_keeps_the_image_question_open() {
     assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
 }
 
+const RUNTIME_QUESTION: &str = "/spec/gateway/runtime/provider";
+
+/// The express OpenClaw template, which names the engine the machine answered
+/// on and no image, at the model question after the one image was chosen,
+/// then back at the runtime question.
+fn at_the_runtime_question_after_the_one_image_was_chosen() -> JourneyWizard {
+    let wizard = edited_template_on_one_docker_engine(|values| {
+        values["spec"]["gateway"]["engine"] = serde_json::json!(DOCKER_ENGINE);
+        values["spec"]["sandboxes"]["assistant"]
+            .as_object_mut()
+            .unwrap()
+            .remove("image");
+    });
+    let mut wizard = to_the_image_question(wizard);
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[OPENCLAW_IMAGE]));
+    for _ in 0..14 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.id() == RUNTIME_QUESTION)
+        {
+            return wizard;
+        }
+        wizard.back();
+    }
+    panic!("the journey did not go back to the runtime question");
+}
+
+#[test]
+fn a_runtime_the_journey_still_asks_about_keeps_the_image_question_open() {
+    let mut wizard = at_the_runtime_question_after_the_one_image_was_chosen();
+    // The runtime chosen next decides which engine holds the image.
+    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
+    wizard.submit(Some(serde_json::json!("podman"))).unwrap();
+    // No Podman engine answered, so the template's Docker engine is asked
+    // about after the image question. The image is still asked, not chosen.
+    for _ in 0..4 {
+        if wizard
+            .question()
+            .unwrap()
+            .is_some_and(|question| question.id() == IMAGE_QUESTION)
+        {
+            break;
+        }
+        wizard.advance();
+    }
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
+}
+
+#[test]
+fn confirming_the_runtime_again_chooses_the_one_image_again() {
+    let mut wizard = at_the_runtime_question_after_the_one_image_was_chosen();
+    wizard.submit(Some(serde_json::json!("docker"))).unwrap();
+    assert_eq!(
+        wizard.state().values().pointer(IMAGE_QUESTION),
+        Some(&serde_json::json!(OPENCLAW_IMAGE))
+    );
+    let asked = questions_to_the_review(&mut wizard);
+    assert!(!asked.iter().any(|id| id == IMAGE_QUESTION), "{asked:?}");
+}
+
 /// Ask for the one hermes image while `buffered` waits in the terminal once the
 /// read is done, as keys typed after the last poll do. Returns the answer, the
 /// events still queued and whether the terminal's input was read.
