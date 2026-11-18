@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# An OpenShift gateway with an Anthropic Messages and an NVIDIA provider.
+# An OpenShift gateway with a hosted OpenAI-compatible provider and an NVIDIA provider.
 # The gateway uses no engine, so nothing is mocked.
 
 # Declare the fixtures before the deployment's first plan reads them.
@@ -51,11 +51,11 @@ run "verify" {
       ] :
       module.observed.registrations[binding.registration].credentials == { (binding.sandbox_env) = "env:${binding.server.credential_env}" }
       && contains(values(module.observed.registrations[binding.registration].config), binding.server.endpoint)
-    ]) && openshell_inference.inference_hosted-0b74148034a2425c901bb05b.api == "anthropic-messages"
+    ]) && openshell_inference.inference_hosted-0b74148034a2425c901bb05b.api == "openai-completions"
     error_message = "A registration's API, base URL, or credential differs from its provider."
   }
 
-  # The OpenClaw sandbox names the Anthropic binding and one NVIDIA binding;
+  # The OpenClaw sandbox names the hosted binding and one NVIDIA binding;
   # the Hermes sandbox names only its own NVIDIA binding.
   assert {
     condition = (
@@ -67,7 +67,7 @@ run "verify" {
     error_message = "A sandbox names another agent's binding or misses its own."
   }
 
-  # OpenClaw starts with both routes, Anthropic by default; Hermes with one.
+  # OpenClaw starts with both routes, the hosted one by default; Hermes with one.
   assert {
     condition = (
       module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)
