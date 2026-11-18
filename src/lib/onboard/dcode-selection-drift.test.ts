@@ -541,6 +541,15 @@ describe("DCode selection through production completion", () => {
       registrationCount: 1,
     },
     {
+      behavior: "accepts a native local identity reported without the endpoint's terminal slash",
+      endpointUrl: "http://localhost:8000/v1",
+      attachmentEndpoint: "http://host.openshell.internal:8000/v1/",
+      observedEndpoint: "http://host.openshell.internal:8000/v1",
+      observedModel: "openai:nvidia/nemotron-3-ultra-550b-a55b",
+      expectedError: "registration reached",
+      registrationCount: 1,
+    },
+    {
       behavior: "accepts the native identity of the credentialless endpoint bridge",
       endpointUrl: "http://localhost:8000/v1",
       attachmentEndpoint: "http://host.openshell.internal:11435/v1",
