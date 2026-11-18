@@ -16,7 +16,7 @@ You need a gateway you can operate, an endpoint that serves a known model, the m
 The image commands below use a native Linux ARM64 build host and a Docker engine that retains image digests.
 The endpoint must be reachable from OpenShell, not only from your client host.
 
-Use a separate worktree at the pinned implementation revision. Do not mix its example, bundle, image, or generated schema with another revision. Run the following steps on the client host unless a step names the image build host.
+Use a separate worktree at the pinned implementation revision. Do not mix its example, bundle, image, or generated schema with another revision. The [build guide in this documentation checkout](../build-deploy/build.md) describes a newer toolchain; use `docs/build-deploy/build.md` in the pinned worktree for this exercise. Run the following steps on the client host unless a step names the image build host.
 
 1. Fetch the v1 branch from the root of your NemoClaw checkout.
 
@@ -38,29 +38,35 @@ Use a separate worktree at the pinned implementation revision. Do not mix its ex
    cd ../nemoclaw-v1
    ```
 
-4. [Build a native bundle](../build-deploy/build.md#build-a-native-bundle) from this worktree.
+4. Prepare the build tools using `docs/build-deploy/build.md` in this worktree ([pinned build prerequisites](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md)).
+
+   Its `rust-toolchain.toml` pins Rust 1.99.1. A native bundle also requires Protocol Buffers compiler 36.2 and a C toolchain.
+
+5. Build the native bundle using the [pinned bundle instructions](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md#build-a-native-bundle).
 
    Keep this bundle unchanged for the deployment. If you rebuild it, keep the original bundle for recovery. This exercise uses source-built tools rather than release downloads or an installer.
 
-5. Add the bundle's CLI to `PATH`.
+6. Add the bundle's CLI to `PATH`.
 
    ```sh
    export PATH="$PWD/dist/linux_arm64/bin:$PATH"
    ```
 
-6. Check that the CLI lists `plan`, `apply`, and `destroy`.
+7. Check that the CLI lists `plan`, `apply`, and `destroy`.
 
    ```sh
    nemoclaw --help
    ```
 
-7. [Build the OpenClaw image](../build-deploy/build.md#build-agent-images) on the native Linux ARM64 build host from the same worktree revision.
+8. Prepare the native Linux ARM64 build host using `docs/build-deploy/build.md` in the pinned worktree ([pinned image prerequisites](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md#build-agent-images)).
+
+9. Build the OpenClaw image on that host from the same worktree revision.
 
    ```sh
    cargo images build --platform linux/arm64 openclaw
    ```
 
-8. Inspect the image digest on the build host.
+10. Inspect the image digest on the build host.
 
    ```sh
    docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
@@ -68,9 +74,9 @@ Use a separate worktree at the pinned implementation revision. Do not mix its ex
 
    The result is a `NAME@sha256:DIGEST` reference. An image build does not start an agent or prove that a model will reply.
 
-9. Record that immutable reference for the deployment YAML.
+11. Record that immutable reference for the deployment YAML.
 
-10. Make the image available to the gateway's sandbox compute daemon and the engine named in the YAML for image inspection.
+12. Make the image available to the gateway's sandbox compute daemon and the engine named in the YAML for image inspection.
 
 ## Configure One Deployment
 

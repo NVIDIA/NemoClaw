@@ -33,7 +33,7 @@ Prepare these inputs before running apply:
 - An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-For the [source-pinned first-deployment tutorial](first-deployment.md), use OpenShell **0.1.7** for the gateway and native CLI. The current checkout's `versions.json` pins 0.1.8; do not use it with the older tutorial bundle.
+For the [source-pinned first-deployment tutorial](first-deployment.md), use OpenShell **0.1.7** for the gateway and native CLI. The current checkout's `versions.json` pins 0.1.8; do not use it with the older tutorial bundle. The tutorial also uses Rust 1.99.1 from its pinned worktree, not this checkout's Rust 1.100.0.
 The tutorial's pinned NemoClaw implementation (`637bdb6276309ea71d1f1fcb68fff518fe2db926`) records this version and OpenShell source revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c` in its `versions.json`.
 Its gateway check rejects a different reported OpenShell version or an incompatible compute driver.
 For another NemoClaw revision, use its own `versions.json` rather than assuming this version applies.
@@ -49,8 +49,7 @@ The operator provides the external gateway and its credentials. After apply, the
 
 ## Client and Build Tools
 
-Follow the [source-build guide](../build-deploy/build.md) for tool versions and a verified CLI/OpenTofu/provider/schema bundle.
-Keep the bundle unchanged while an operation uses it.
+For the pinned first deployment, use `docs/build-deploy/build.md` in the tutorial's worktree ([pinned build guide](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md)). For builds from this documentation checkout, use its [source-build guide](../build-deploy/build.md) for tool versions and a verified CLI/OpenTofu/provider/schema bundle. Do not combine the two toolchains. Keep the bundle unchanged while an operation uses it.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
 `CI / Bundle` builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64; that does not qualify GPU deployment on every platform.
@@ -68,7 +67,7 @@ Choose the gateway and model placement that matches the available engine and end
 | Configuration | Requirements and owning guide |
 |---|---|
 | External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API/model, and an immutable sandbox image; see [usage](../build-deploy/usage.md) and [inference](../agents-inference/inference.md) |
-| Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; see [image prerequisites](../build-deploy/build.md#build-agent-images) |
+| Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; use the selected worktree's image prerequisites ([pinned tutorial](https://github.com/NVIDIA/NemoClaw/blob/637bdb6276309ea71d1f1fcb68fff518fe2db926/docs/build-deploy/build.md#build-agent-images), [this checkout](../build-deploy/build.md#build-agent-images)) |
 | Managed vLLM | Matching runtime image, pinned model revision, and storage/capacity for the selected hardware contract; see [managed models](../agents-inference/models.md) and [AMD64 Nemotron configuration](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host) |
 | Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware/placement/capacity contract as vLLM; see [managed Ollama](../agents-inference/inference.md#run-managed-ollama) |
 | Managed rootless Podman gateway | Podman 5 or later, local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](../build-deploy/usage.md#use-a-managed-podman-gateway) |
