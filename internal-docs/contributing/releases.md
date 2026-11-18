@@ -58,7 +58,7 @@ The workflow publishes a final release's draft without an approval step, once a 
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
 Publishing a draft by hand and package-administrator privileges bypass the workflow.
 An administrator handles package visibility changes; making a package public cannot be undone.
-Before pushing a final tag, complete the provenance, SBOM, scanning, and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13522](https://github.com/NVIDIA/NemoClaw/issues/13522), [#13523](https://github.com/NVIDIA/NemoClaw/issues/13523), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+Before pushing a final tag, complete the provenance and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
 
 ## SBOM Assets
 

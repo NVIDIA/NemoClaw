@@ -60,7 +60,7 @@ To rotate any of these credentials, follow the [rotation runbook](credential-rot
 For a corporate CA, see [Trust a Corporate Certificate Authority](#trust-a-corporate-certificate-authority).
 
 Keep credential values out of committed or shared YAML, shell arguments, shared URLs, and published diagnostics.
-Generic application containers currently have no protected credential delivery; their temporary literal-environment approach exposes values in configuration and state.
+Generic application containers have no protected credential delivery: their environment values are literal and appear in configuration and state.
 Use credential references where the selected provider supports them, rather than copying that plaintext approach into gateway or inference settings.
 The example authoring TUI saves credential references and never resolves their values.
 Authoring and lifecycle operations are separate commands; accepting an authored document does not authorize apply.
