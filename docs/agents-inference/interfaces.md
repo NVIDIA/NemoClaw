@@ -98,7 +98,7 @@ Apply prints this command for each interface that an agent's configuration enabl
 
 OpenClaw's Control UI and Hermes's API server and dashboard are served by the agent's Fabric runtime inside its sandbox, on loopback ports that you choose.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime; NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
-The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
+The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/5245a4ceccf6852316e496ba85c678067c42d2f1/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/5245a4ceccf6852316e496ba85c678067c42d2f1/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
 
 ### Enable an Interface
 
@@ -135,9 +135,10 @@ An interface is on while it is present, unless it sets `enabled: false`.
 OpenClaw reserves the ports from `port` through `port + 110`, and its `port` can't be combined with `port_range`.
 Hermes's `startup_timeout_seconds` setting, 60 by default and at most 75, bounds how long its interfaces have to start.
 
-Planning checks each interface against its schema in the image's adapter descriptor.
-It rejects an interface name or field that the adapter doesn't declare, for example `sandbox/claw: adapter/nvidia.fabric.openclaw compatibility rejected; harness_interfaces: harness.settings.interfaces.api: the image's adapter does not support this interface setting`, and a missing required field, a wrong type, or an out-of-range value, for example `harness_interfaces: harness.settings.interfaces.api.port: is required by the image's adapter`.
-Fabric checks the rest when it starts the agent: settings outside the interfaces, combinations such as OpenClaw's `port` with `port_range`, and a port that is already in use. The agent fails to start if an enabled interface can't start.
+Planning asks Fabric whether the image's adapter accepts the configuration, interfaces included.
+It rejects an interface or field that the adapter doesn't declare, a missing required field, a wrong type, and an out-of-range value, naming the field you wrote, for example `sandbox/claw: adapter/nvidia.fabric.openclaw compatibility rejected; fabric_configuration: spec.sandboxes[claw].harness.settings.interfaces.api: is not declared by the adapter settings schema`.
+Fabric stops at the first refused harness setting, so fix it and plan again.
+A plan that passes doesn't establish that the agent starts: Fabric still finds a port that is already in use, and the agent fails to start if an enabled interface can't start.
 Changing an agent's settings, including its interfaces, replaces its sandbox, deleting its files and conversations.
 
 ### Forward, Read the Token, and Sign In
@@ -207,7 +208,7 @@ OpenShell opens the pseudo-terminal of `openshell sandbox exec --tty` and hands 
 ### Hermes's Terminal UI
 
 Hermes's `terminal` interface attaches Hermes's terminal UI to the backend that serves browser chat, which the agent's runtime starts.
-Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper may change between Fabric releases without compatibility; see [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/docs/integrations/harness/hermes/hermes-tui.mdx).
+Fabric marks this interface experimental: its `terminal` setting, the attachment files, and the attach helper may change between Fabric releases without compatibility; see [Fabric's Hermes terminal guide](https://github.com/NVIDIA/NeMo-Fabric/blob/5245a4ceccf6852316e496ba85c678067c42d2f1/docs/integrations/harness/hermes/hermes-tui.mdx).
 Fabric tracks what it takes for the interface to stop being experimental in [NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656).
 Give it the dashboard's port, so that both use one backend process:
 

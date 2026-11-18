@@ -870,6 +870,7 @@
             "tools.enabled",
             "tools.blocked",
             "mcp",
+            "mcp.auth.service_account",
             "skills"
           ],
           "system_instruction_modes": [
@@ -1904,8 +1905,8 @@
               "type": "number"
             },
             "shutdown_timeout_seconds": {
-              "default": 5,
-              "description": "Maximum graceful Gateway shutdown time before forced termination.",
+              "default": 15,
+              "description": "Maximum graceful Gateway shutdown time before forced termination. Fabric allows 30 seconds for the complete adapter stop; leave time for cleanup within that limit.",
               "exclusiveMinimum": 0,
               "type": "number"
             },
@@ -2648,8 +2649,8 @@
       ]
     }
   ],
-  "fabric_revision": "135147a0fe6ce6bc2ebf21fa1068d1bd5af71780",
+  "fabric_revision": "5245a4ceccf6852316e496ba85c678067c42d2f1",
   "schema_version": 2,
-  "source_sha256": "ef8d058019151e4d51f456020432005d46b632cf4b8bda1f431559298bf92e84",
+  "source_sha256": "b311df3be51a97ffc2d928b76a2ef476c71e0aa8b68e3b5553171924f26df02f",
   "targets": []
 }

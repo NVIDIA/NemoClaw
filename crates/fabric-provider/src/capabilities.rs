@@ -33,6 +33,9 @@ pub struct FabricCapabilitiesState {
     image: Value<String>,
     metadata_env: Value<String>,
     config_json: Value<String>,
+    /// Where the user wrote each field of `config_json`, as a JSON object from
+    /// Fabric path to authored path. Rejections name the authored field.
+    config_provenance_json: Value<String>,
     filesystem_read: Value<Vec<Value<String>>>,
     architecture: Value<String>,
     operating_system: Value<String>,
@@ -96,9 +99,14 @@ fn requirements(config: &FabricCapabilitiesState) -> Result<Option<FabricRequire
         ),
         _ => None,
     };
+    let provenance = match &config.config_provenance_json {
+        Value::Value(json) => serde_json::from_str(json).map_err(|_| ())?,
+        _ => Default::default(),
+    };
     Ok(Some(FabricRequirements {
         configuration,
         filesystem_read,
+        provenance,
     }))
 }
 
@@ -115,6 +123,7 @@ fn valid(config: &FabricCapabilitiesState) -> bool {
         || matches!(&config.image, Value::Value(image) if !image.is_empty());
     // Unknown values are checked again when the read runs.
     let requirements_valid = matches!(&config.config_json, Value::Unknown)
+        || matches!(&config.config_provenance_json, Value::Unknown)
         || matches!(&config.filesystem_read, Value::Value(paths) if paths.iter().any(|p| matches!(p, Value::Unknown)))
         || requirements(config).is_ok();
     let metadata_valid = match &config.metadata_env {
@@ -146,6 +155,7 @@ impl DataSource for FabricCapabilitiesDataSource {
                     ("image", String, Required),
                     ("metadata_env", String, Optional),
                     ("config_json", String, Optional),
+                    ("config_provenance_json", String, Optional),
                     (
                         "filesystem_read",
                         AttributeType::List(Box::new(String)),
@@ -208,6 +218,7 @@ impl DataSource for FabricCapabilitiesDataSource {
         if [
             &config.metadata_env,
             &config.config_json,
+            &config.config_provenance_json,
             &config.architecture,
             &config.operating_system,
             &config.image_id,
@@ -608,15 +619,13 @@ mod tests {
                 digest.as_str(),
                 "supported",
             ),
-            // Settings are Fabric's to check, when the agent is configured.
+            // Settings are Fabric's to check against the descriptor.
             (
                 serde_json::json!({"unknown_setting":true}),
                 "aarch64",
                 digest.as_str(),
-                "supported",
+                "unsupported",
             ),
-            // Except interfaces, which the descriptor must declare; this
-            // adapter declares none.
             (
                 serde_json::json!({"interfaces":{"dashboard":{"port":9119}}}),
                 "aarch64",
@@ -636,6 +645,11 @@ mod tests {
             config.image = Value::Value(image.into());
             config.config_json =
                 Value::Value(serde_json::json!({"schema_version":"fabric.agent/v1alpha1","metadata":{"name":"main"},"harness":{"adapter_id":"nvidia.fabric.langchain.deepagents","settings":settings},"runtime":{},"models":{"default":{"provider":"openai","model":"fixture-model","base_url":"http://localhost/v1","api_key_env":"MODEL_KEY"}}}).to_string());
+            // The data source reports the authored field, not Fabric's path.
+            config.config_provenance_json = Value::Value(
+                serde_json::json!({"harness.settings":"spec.sandboxes[main].harness.settings"})
+                    .to_string(),
+            );
             config.architecture = Value::Value(architecture.into());
             config.operating_system = Value::Value("linux".into());
             let mut diagnostics = Diagnostics::default();
@@ -658,7 +672,7 @@ mod tests {
                             && check["reason"]
                                 .as_str()
                                 .unwrap()
-                                .starts_with("harness.settings.interfaces.dashboard:")),
+                                .starts_with("spec.sandboxes[main].harness.settings.interfaces")),
                     "{observation}"
                 );
             }

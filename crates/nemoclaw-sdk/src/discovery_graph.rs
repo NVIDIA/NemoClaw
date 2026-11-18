@@ -39,6 +39,11 @@ fn inputs(query: &DiscoveryQuery) -> Result<(&'static str, &'static str, Value),
                         .expect("Fabric configuration")
                 ),
             });
+            if !requirements.provenance.is_empty() {
+                inputs["config_provenance_json"] = json!(literal(
+                    &serde_json::to_string(&requirements.provenance).expect("Fabric provenance")
+                ));
+            }
             if let Some(paths) = &requirements.filesystem_read {
                 inputs["filesystem_read"] =
                     json!(paths.iter().map(|path| literal(path)).collect::<Vec<_>>());
