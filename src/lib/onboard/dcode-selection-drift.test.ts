@@ -198,6 +198,11 @@ describe("live DCode selection drift", () => {
   it.each([
     "https://generativelanguage.googleapis.com/v1beta/other",
     "https://generativelanguage.googleapis.com/v1beta/openai/extra",
+    "https://generativelanguage.googleapis.com/v1beta/openai//",
+    "https://generativelanguage.googleapis.com/v1beta/openai/?route=other",
+    "https://generativelanguage.googleapis.com/v1beta/openai#route",
+    "https://user:password@generativelanguage.googleapis.com/v1beta/openai",
+    "https://generativelanguage.googleapis.com:8443/v1beta/openai",
     "https://example.test/v1beta/openai",
     "http://generativelanguage.googleapis.com/v1beta/openai",
   ])(
