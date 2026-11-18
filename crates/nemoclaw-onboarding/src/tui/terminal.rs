@@ -386,6 +386,7 @@ pub(super) async fn ask_target(
 ) -> Result<bool, Error> {
     let discovery_cancel = cancel.child_token();
     let asked = current_question(wizard);
+    let queries_for_replay = queries.clone();
     let Some(observed) = wait_for_discovery(
         read(queries, &discovery_cancel),
         cancel,
@@ -397,6 +398,13 @@ pub(super) async fn ask_target(
     else {
         return Ok(false);
     };
+    // The menu this read produces can differ from the one on screen while it
+    // ran: a recommended model the endpoint does not list is dropped, and the
+    // suggestion moves. A key typed before that menu was drawn must not choose
+    // from it, so the user confirms again once they see it.
+    if selects_a_model(&queries_for_replay) {
+        queued_events.clear();
+    }
     wizard.remember(observed);
     // The keys typed during the read answer the question that was on screen.
     // When the read answered it, they would answer the next one unseen.
@@ -445,6 +453,14 @@ fn discard_answer_keys(
 fn current_question(wizard: &JourneyWizard) -> Option<String> {
     let question = wizard.question().ok()??;
     Some(question.id().to_owned())
+}
+
+/// Whether answering the question that follows these reads means choosing a
+/// model from the endpoint's catalog.
+fn selects_a_model(queries: &[DiscoveryQuery]) -> bool {
+    queries
+        .iter()
+        .any(|query| matches!(query, DiscoveryQuery::Inference(_)))
 }
 
 /// Read the target directly. A read that fails is an unknown observation,
