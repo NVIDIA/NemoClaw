@@ -6,7 +6,8 @@ use super::{
     labels::{label, terminal_text},
     logo::BrandImage,
     terminal::{
-        agent_images_probe, ask_target, credential_probe, local_engine_probe, model_catalog_probe,
+        agent_images_probe, ask_target, credential_probe, discover_before_input,
+        local_engine_probe, model_catalog_probe,
     },
 };
 use crate::{Source, load_journey};
@@ -1959,8 +1960,11 @@ async fn a_resize_queued_during_the_read_survives_the_one_image_being_chosen() {
     let query = agent_images_probe(&wizard).unwrap();
     let mut queued = std::collections::VecDeque::new();
     let mut typed = vec![crossterm::event::Event::Resize(100, 40), enter()];
+    // The read ends only once both events have been taken off the input, so
+    // the test does not depend on how fast the polling runs.
+    let drained = tokio::sync::Notify::new();
     let read = async |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        drained.notified().await;
         Ok(DiscoveryObservations::new().with(
             DiscoveryQuery::AgentImages(AgentImagesRequest {
                 engine: DOCKER_ENGINE.into(),
@@ -1976,7 +1980,13 @@ async fn a_resize_queued_during_the_read_survives_the_one_image_being_chosen() {
             vec![query],
             &CancellationToken::new(),
             &mut queued,
-            || Ok(typed.pop()),
+            || {
+                let event = typed.pop();
+                if typed.is_empty() {
+                    drained.notify_one();
+                }
+                Ok(event)
+            },
         )
         .await
         .unwrap()
@@ -1987,6 +1997,77 @@ async fn a_resize_queued_during_the_read_survives_the_one_image_being_chosen() {
         queued.into_iter().collect::<Vec<_>>(),
         [crossterm::event::Event::Resize(100, 40)]
     );
+}
+
+/// Run the probe-then-read step the terminal takes before it accepts input,
+/// against an engine that holds `images` for the hermes harness and an
+/// inference endpoint that cannot be reached. Returns the wizard, each batch of
+/// queries that was read and how many screens were drawn.
+async fn discover_with_images(images: &[&str]) -> (JourneyWizard, Vec<Vec<DiscoveryQuery>>, usize) {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let reads = std::cell::RefCell::new(Vec::new());
+    let read = async |queries: Vec<DiscoveryQuery>, _: &CancellationToken| {
+        reads.borrow_mut().push(queries.clone());
+        let mut observed = DiscoveryObservations::new();
+        for query in queries {
+            let observation = match &query {
+                DiscoveryQuery::AgentImages(_) => agent_images(images),
+                DiscoveryQuery::Inference(_) => {
+                    DiscoveryObservation::Inference(EndpointObservation::unknown("unreachable"))
+                }
+                other => panic!("unexpected read {other:?}"),
+            };
+            observed.record(query, observation);
+        }
+        Ok(observed)
+    };
+    let drawn = std::cell::Cell::new(0);
+    assert!(
+        discover_before_input(
+            &mut wizard,
+            read,
+            &CancellationToken::new(),
+            &mut std::collections::VecDeque::new(),
+            || Ok(None),
+            |_| {
+                drawn.set(drawn.get() + 1);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap()
+    );
+    (wizard, reads.into_inner(), drawn.get())
+}
+
+#[tokio::test]
+async fn the_next_question_is_read_for_before_input_when_the_one_image_answers_the_image_question()
+{
+    let (wizard, reads, drawn) = discover_with_images(&[HERMES_IMAGE]).await;
+
+    assert_eq!(reads.len(), 2, "{reads:?}");
+    assert!(
+        matches!(reads[0][..], [DiscoveryQuery::AgentImages(_)]),
+        "{reads:?}"
+    );
+    assert!(
+        matches!(reads[1][..], [DiscoveryQuery::Inference(_)]),
+        "the model catalog is read before the model question takes input: {reads:?}"
+    );
+    assert_eq!(drawn, 2, "each read starts from a screen of its question");
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.kind(), JourneyQuestionKind::InferenceModel);
+    assert_eq!(model_catalog_probe(&wizard), None);
+    assert_eq!(agent_images_probe(&wizard), None);
+}
+
+#[tokio::test]
+async fn a_read_that_leaves_the_question_alone_is_not_followed_by_another() {
+    let (wizard, reads, drawn) = discover_with_images(&[HERMES_IMAGE, OLDER_HERMES_IMAGE]).await;
+
+    assert_eq!(reads.len(), 1, "{reads:?}");
+    assert_eq!(drawn, 1);
+    assert_eq!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
 }
 
 #[test]

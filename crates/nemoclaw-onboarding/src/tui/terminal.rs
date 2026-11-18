@@ -80,23 +80,23 @@ pub(crate) async fn run(
         // question, and credentials at review. The answers depend only on the
         // state and observations, which change only when a render is pending.
         // Each read is attempted once, even when it fails.
-        if discover && needs_render {
-            let queries = target_probe(&wizard);
-            if !queries.is_empty() {
-                terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
-                if !ask_target(
-                    &mut wizard,
-                    read_target,
-                    queries,
-                    cancel,
-                    &mut queued_events,
-                    poll_pending_event,
-                )
-                .await?
-                {
-                    return Ok(None);
-                }
-            }
+        if discover
+            && needs_render
+            && !discover_before_input(
+                &mut wizard,
+                read_target,
+                cancel,
+                &mut queued_events,
+                poll_pending_event,
+                |wizard| {
+                    terminal
+                        .draw(|frame| wizard.render_with_brand(frame, brand))
+                        .map(|_| ())
+                },
+            )
+            .await?
+        {
+            return Ok(None);
         }
         if needs_render {
             terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
@@ -323,6 +323,36 @@ pub(super) fn model_catalog_probe(wizard: &JourneyWizard) -> Option<DiscoveryQue
         inference_request_for_document(document, wizard.state().current_route()).ok()??;
     let query = DiscoveryQuery::Inference(request);
     (!wizard.observations().contains(&query)).then_some(query)
+}
+
+/// Read what the journey needs from the target before it takes any input.
+/// A read can answer the question on screen, as the one local image does, and
+/// the question that follows can need a read of its own, such as the model
+/// catalog. So go back to the probe after every read that changed the
+/// question, and take input only once the question on screen has been read
+/// for. `false` means the user escaped while the target was being read.
+pub(super) async fn discover_before_input(
+    wizard: &mut JourneyWizard,
+    read: impl AsyncFn(Vec<DiscoveryQuery>, &CancellationToken) -> Result<DiscoveryObservations, Error>,
+    cancel: &CancellationToken,
+    queued_events: &mut VecDeque<Event>,
+    mut poll: impl FnMut() -> io::Result<Option<Event>>,
+    mut draw: impl FnMut(&JourneyWizard) -> io::Result<()>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    loop {
+        let queries = target_probe(wizard);
+        if queries.is_empty() {
+            return Ok(true);
+        }
+        draw(wizard)?;
+        let asked = current_question(wizard);
+        if !ask_target(wizard, &read, queries, cancel, queued_events, &mut poll).await? {
+            return Ok(false);
+        }
+        if current_question(wizard) == asked {
+            return Ok(true);
+        }
+    }
 }
 
 /// Ask the target with `read` and keep what it says. `false` means the user
