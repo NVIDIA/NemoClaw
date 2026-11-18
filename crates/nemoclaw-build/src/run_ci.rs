@@ -218,7 +218,10 @@ fn run_step(
             if let (Step::Bundle, Some(executables)) = (step, executables) {
                 // One part of a bundle, which CI compiles on its own runner;
                 // the job that assembles the bundle brings the build tool.
-                return build(executables, target(platform)?, &configure);
+                let root = Path::new(".");
+                let source = nemoclaw_build::source_version(&nemoclaw_build::source_inputs(root)?);
+                let version = nemoclaw_build::bundle_version(root, &source);
+                return build(executables, target(platform)?, &version, &configure);
             }
             if step == Step::Bundle {
                 // CI builds the bundle in its own job, without the build step.

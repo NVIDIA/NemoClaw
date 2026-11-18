@@ -198,8 +198,8 @@ jobs:
           required: "true"
           token: ${{ github.token }}
       # The CLI bundles CI / Bundle built and checked at the tag, as it uploaded
-      # them. Push and manual runs build the commit itself; a pull request run
-      # builds a merge commit, so its bundles are another commit's.
+      # them. Only a run at the tag builds bundles that report the tag's
+      # version: the tag's push starts one alongside this workflow.
       - name: Download the CLI bundles CI checked at the tag
         id: cli
         env:
@@ -209,13 +209,17 @@ jobs:
           mkdir "$cli"
           retry="Run CI / Bundle at the tag with 'gh workflow run rust.yml --ref $GITHUB_REF_NAME', and rerun this workflow once it passes."
           found=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow rust.yml --commit "$GITHUB_SHA" \
-            --json databaseId,event,conclusion,url --jq '[.[] | select(.conclusion == "success"
-              and (.event == "push" or .event == "workflow_dispatch"))][0] // empty | "\(.databaseId) \(.url)"')
+            --branch "$GITHUB_REF_NAME" --json databaseId,event,url \
+            --jq '[.[] | select(.event == "push" or .event == "workflow_dispatch")][0] // empty | "\(.databaseId) \(.url)"')
           if [ -z "$found" ]; then
-            echo "::error::CI / Bundle hasn't passed at $GITHUB_SHA, so no checked bundles exist to stage. $retry"
+            echo "::error::CI / Bundle hasn't run at $GITHUB_REF_NAME, so no checked bundles exist to stage. $retry"
             exit 1
           fi
           read -r run source <<< "$found"
+          if ! gh run watch "$run" --repo "$GITHUB_REPOSITORY" --exit-status --interval 60 > /dev/null; then
+            echo "::error::$source failed, so no checked bundles exist to stage. Rerun its failed jobs, and rerun this workflow once it passes."
+            exit 1
+          fi
           missing=
           for platform in linux_arm64 linux_amd64 darwin_arm64 windows_amd64; do
             # gh skips expired artifacts. A rerun bundle job uploads its own
@@ -230,7 +234,7 @@ jobs:
             fi
           done
           if [ -n "$missing" ]; then
-            echo "::error::$source no longer has the bundle for:$missing. CI keeps a v1 commit's bundles for 7 days. $retry"
+            echo "::error::$source no longer has the bundle for:$missing. CI keeps a run's bundles for 7 days. $retry"
             exit 1
           fi
           (cd "$cli" && sha256sum -- * > SHA256SUMS)

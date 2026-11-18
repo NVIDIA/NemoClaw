@@ -61,6 +61,29 @@ fn extract_entry(bytes: &[u8], name: &str, limit: u64) -> Result<Vec<u8>, String
     Ok(output)
 }
 
+/// The version of a bundle built from the checkout at `root`: a clean checkout
+/// of a version tag such as `v0.1.0-rc12` reports `0.1.0-rc12`, so a release
+/// reports its tag, and any other checkout reports `dev`, which names its
+/// sources.
+pub fn bundle_version(root: &std::path::Path, dev: &str) -> String {
+    let described = std::process::Command::new("git")
+        .current_dir(root)
+        .args(["describe", "--tags", "--exact-match", "--dirty"])
+        .args(["--match", "v[0-9]*.[0-9]*.[0-9]*"])
+        .stderr(std::process::Stdio::null())
+        .output();
+    let Ok(described) = described else {
+        return dev.into();
+    };
+    let tag = String::from_utf8_lossy(&described.stdout);
+    match tag.trim().strip_prefix('v') {
+        Some(version) if described.status.success() && !version.ends_with("-dirty") => {
+            version.into()
+        }
+        _ => dev.into(),
+    }
+}
+
 pub fn verify_source_version(expected: &str, files: &[(String, Vec<u8>)]) -> Result<(), String> {
     if source_version(files) != expected {
         return Err("source inputs changed during the build; no artifact published".into());

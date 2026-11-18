@@ -359,8 +359,8 @@ jobs:
       - name: Identify bundle artifact
         id: identity
         run: echo "artifact=bundle-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-      # Release / Stage attaches the bundles of a v1 push or manual run to the
-      # release of a tag on its commit, so they stay for a week.
+      # Release / Stage attaches the bundles of a tag's push or manual run to
+      # the tag's release, so they stay for a week.
       - name: Upload bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
