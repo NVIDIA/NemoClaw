@@ -255,7 +255,9 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
   it("does not serialize provider or optional-service secrets into the shell env file", () => {
     const start = readAgentFile("start.sh");
     expect(start).toContain('chmod 444 "$tmp"');
-    expect(start).toContain("write_export_if_set HTTPS_PROXY");
+    expect(start).toContain(
+      "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy",
+    );
     expect(start).not.toContain("write_proxy_export_pair");
     expect(start).toContain("export DEEPAGENTS_CODE_OFFLINE=1");
     expect(start).toContain("export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system");

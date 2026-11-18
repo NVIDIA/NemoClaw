@@ -331,6 +331,7 @@ async function main(): Promise<void> {
     );
   }
   const started = await startOtlpCaptureServers({
+    allowLoopback: bindIp === "127.0.0.1",
     bindIp,
     captureDir,
     collectorPort,

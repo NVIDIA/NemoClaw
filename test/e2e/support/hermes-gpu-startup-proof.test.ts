@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,10 +20,12 @@ import { openshellMainProcessSpecEnvValue } from "../../../src/lib/onboard/docke
 import type { ManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
 import {
   assertHermesContainerImageAuthority,
+  buildHermesGpuInferenceCommand,
   assertHermesGpuStartupOutputContract,
   assertHermesManagedWorkloadAuthority,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
   hermesRuntimeIntendedCommand,
+  hermesGpuRuntimePair,
   normalizeImmutableImageContentId,
 } from "../live/hermes-gpu-startup-proof.ts";
 
@@ -96,6 +106,7 @@ describe("Hermes GPU failed-container diagnostics", () => {
           "diagnostic",
           "label=openshell.ai/sandbox-name=owned",
           "",
+          root,
           runtime,
         ],
         { encoding: "utf8", timeout: 5_000 },
@@ -104,6 +115,44 @@ describe("Hermes GPU failed-container diagnostics", () => {
       expect(result.stdout.includes(`== exact container ${id} state ==`)).toBe(mode === "found");
       expect(result.stdout.includes("exited 1 false 0")).toBe(mode === "found");
       expect(result.stdout).not.toContain("no runtime container found");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it("copies private generic diagnostics and refuses symlink or unrelated paths", () => {
+    const root = mkdtempSync(join(tmpdir(), "gpu-diagnostic-path-"));
+    try {
+      const directory = join(root, "failure");
+      mkdirSync(directory, { mode: 0o700 });
+      const log = join(directory, "sandbox-container.log");
+      writeFileSync(log, "redacted supervisor evidence", { mode: 0o600 });
+      const runtime = join(root, "runtime");
+      writeFileSync(runtime, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      const run = (dir: string, expectedRoot = root) =>
+        spawnSync(
+          "bash",
+          [
+            "-lc",
+            liveFailedGpuDiagnosticScript(),
+            "diagnostic",
+            "label=openshell.ai/sandbox-name=owned",
+            dir,
+            expectedRoot,
+            runtime,
+          ],
+          { encoding: "utf8", timeout: 5_000 },
+        );
+      expect(run(directory).stdout).toContain("redacted supervisor evidence");
+      expect(run(directory, join(root, "other")).stdout).not.toContain(
+        "redacted supervisor evidence",
+      );
+      const alias = join(root, "alias");
+      symlinkSync(directory, alias);
+      expect(run(alias).stdout).not.toContain("redacted supervisor evidence");
+      rmSync(log);
+      writeFileSync(join(root, "private"), "must not copy", { mode: 0o600 });
+      symlinkSync(join(root, "private"), log);
+      expect(run(directory).stdout).not.toContain("must not copy");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -315,5 +364,120 @@ describe("Hermes GPU managed-image authority proof", () => {
     expect(() =>
       assertHermesContainerImageAuthority("ghcr.io/nvidia/test:latest", MANAGED_IMAGE_REFERENCE),
     ).toThrow();
+  });
+});
+
+function runHermesNativeInferenceProbe(handle: string) {
+  const directory = mkdtempSync(join(tmpdir(), "hermes-gpu-native-probe-"));
+  try {
+    writeFileSync(join(directory, "curl"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o700 });
+    return spawnSync(
+      "/bin/bash",
+      [
+        "-c",
+        buildHermesGpuInferenceCommand(
+          "http://host.openshell.internal:42103/v1",
+          'model/$(exit 99)"quoted',
+        ),
+      ],
+      {
+        env: { PATH: `${directory}:/usr/bin:/bin`, NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle },
+        encoding: "utf8",
+      },
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+it("sends the Hermes GPU request through its scoped native credential", () => {
+  const handle = "openshell:resolve:env:v3_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+  const result = runHermesNativeInferenceProbe(handle);
+  expect(result.status).toBe(0);
+  expect(result.stdout.trim().split("\n")).toEqual([
+    "-fsS",
+    "--max-time",
+    "60",
+    "http://host.openshell.internal:42103/v1/chat/completions",
+    "-H",
+    "Content-Type: application/json",
+    "-H",
+    `Authorization: Bearer ${handle}`,
+    "--data",
+    JSON.stringify({
+      model: 'model/$(exit 99)"quoted',
+      messages: [{ role: "user", content: "reply with OK" }],
+      max_tokens: 8,
+    }),
+  ]);
+});
+
+it.each([
+  "",
+  "raw-host-key",
+  "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  "openshell:resolve:env:v3_NEMOCLAW_LOCAL_INFERENCE_TOKEN\nraw-host-key",
+])("rejects an unscoped Hermes GPU credential before curl (%j)", (handle) => {
+  const result = runHermesNativeInferenceProbe(handle);
+  expect(result.status).toBe(2);
+  expect(result.stdout).toBe("");
+});
+
+describe("Hermes GPU supervisor identity", () => {
+  const sandboxId = "11111111-1111-4111-8111-111111111111";
+  const pair = () =>
+    ["sandbox", "supervisor"].map((role, index) => ({
+      Id: String(index + 1).repeat(64),
+      Config: {
+        Env:
+          role === "supervisor"
+            ? [
+                `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(["nemoclaw-start"], false)}`,
+              ]
+            : [],
+        Labels: {
+          "openshell.ai/managed-by": "openshell",
+          "openshell.ai/sandbox-name": "owned",
+          "openshell.ai/sandbox-id": sandboxId,
+          "openshell.ai/sandbox-namespace": "gateway-namespace",
+          ...(role === "sandbox" ? { "openshell.ai/sandbox-workspace": "default" } : {}),
+          "openshell.ai/isolation-role": role,
+        },
+      },
+    }));
+  it("reads command transport from the supervisor without attributing its image to the workload", () => {
+    const rows = pair();
+    const result = hermesGpuRuntimePair(rows, "owned", sandboxId)!;
+    expect(result.workload).toBe(rows[0]);
+    expect(result.supervisor).toBe(rows[1]);
+    expect(result.workload.Config.Env).toEqual([]);
+    expect(
+      hermesRuntimeIntendedCommand(
+        Object.fromEntries(
+          result.supervisor.Config.Env.map((entry) => entry.split(/=(.*)/su).slice(0, 2)),
+        ),
+      ),
+    ).toEqual(["nemoclaw-start"]);
+  });
+  it.each([
+    ["openshell.ai/managed-by", "foreign"],
+    ["openshell.ai/sandbox-name", "other"],
+    ["openshell.ai/sandbox-id", "other"],
+    ["openshell.ai/sandbox-namespace", "other"],
+    ["openshell.ai/sandbox-workspace", "other"],
+    ["openshell.ai/isolation-role", "sandbox"],
+  ])("rejects a supervisor with mismatched %s", (key, value) => {
+    const rows = pair();
+    Object.assign(rows[1].Config.Labels, { [key]: value });
+    expect(hermesGpuRuntimePair(rows, "owned", sandboxId)).toBeNull();
+  });
+  it("rejects missing, duplicate and truncated container identities", () => {
+    const rows = pair();
+    expect(hermesGpuRuntimePair(rows.slice(0, 1), "owned", sandboxId)).toBeNull();
+    expect(hermesGpuRuntimePair(rows, "owned", null)).toBeNull();
+    rows[1].Id = rows[0].Id;
+    expect(hermesGpuRuntimePair(rows, "owned", sandboxId)).toBeNull();
+    rows[1].Id = "a".repeat(12);
+    expect(hermesGpuRuntimePair(rows, "owned", sandboxId)).toBeNull();
   });
 });

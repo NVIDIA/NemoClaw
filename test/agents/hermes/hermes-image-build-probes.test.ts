@@ -593,6 +593,15 @@ describe("Hermes image build probes", () => {
       ),
     ).toEqual([digest, digest]);
     const normalizedDockerfile = imageDockerfile.replace(/\\\n/gu, " ");
+    expect(normalizedDockerfile).toContain(
+      "chown root:root /usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+    );
+    expect(normalizedDockerfile).toContain(
+      "chmod 700 /usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+    );
+    expect(normalizedDockerfile).toContain(
+      "check_metadata /usr/local/lib/nemoclaw/hermes-cron-restore-control.py 'root:root 700'",
+    );
     expect(normalizedDockerfile).toContain("install -d -o root -g root -m 0755 /etc/nemoclaw");
     expect(normalizedDockerfile).toMatch(
       /touch \/etc\/nemoclaw\/hermes-mcp-transaction\.lock[\s\S]*chown root:root[\s\S]*\/etc\/nemoclaw\/hermes-mcp-transaction\.lock[\s\S]*chmod 444[\s\S]*\/etc\/nemoclaw\/hermes-mcp-transaction\.lock/u,

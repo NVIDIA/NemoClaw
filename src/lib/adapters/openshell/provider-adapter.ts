@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CheckedInProviderProfileContract } from "./provider-profile";
+import type {
+  CheckedInProviderProfileContract,
+  InferenceProviderProfileProjection,
+} from "./provider-profile";
 
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
@@ -89,6 +92,8 @@ export type OpenShellProviderMetadata = Readonly<{
 
 export type OpenShellProviderProfileInspection = Readonly<{
   credentialKeys: readonly string[];
+  /** Non-secret declared inference projection; never an ownership grant. */
+  inference?: InferenceProviderProfileProjection;
 }>;
 
 export type CreateOpenShellProviderRequest = OpenShellProviderRequest &
@@ -121,6 +126,7 @@ export type ImportOpenShellProviderProfileRequest = OpenShellProviderRequest &
 export type InspectOpenShellProviderProfileRequest = OpenShellProviderRequest &
   Readonly<{
     profileType: string;
+    includeInferenceProjection?: boolean;
     expectedProfile?: CheckedInProviderProfileContract;
     /** Verify operator-owned registration inputs and retain an advisory profile snapshot. */
     registrationCredentials?: readonly string[] | "from-existing";

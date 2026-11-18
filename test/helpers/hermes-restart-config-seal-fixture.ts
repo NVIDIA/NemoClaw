@@ -99,6 +99,8 @@ export function hashInputs(configPath: string, envPath: string): string {
 
 export function createRestartFixture(): RestartFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-restart-seal-"));
+  // Match the nonroot sandbox identity before descendants inherit this group.
+  fs.chownSync(root, process.geteuid!(), process.getegid!());
   const sandboxDir = path.join(root, "sandbox");
   const hermesDir = path.join(sandboxDir, ".hermes");
   const configPath = path.join(hermesDir, "config.yaml");

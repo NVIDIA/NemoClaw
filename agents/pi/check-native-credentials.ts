@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { HOSTED_NATIVE_PROVIDERS } from "../../src/lib/inference/native-provider/hosted.ts";
+import { HOSTED_NATIVE_PROVIDERS } from "../../src/lib/inference/native-provider/catalog.ts";
 import {
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,

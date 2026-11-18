@@ -16,12 +16,40 @@ const DENIED_GIT_LINE =
   "[1783046885.833] [sandbox] [OCSF ] [ocsf] NET:OPEN [MED] DENIED /usr/lib/git-core/git-remote-http(3973) -> github.com:443 [policy:- engine:opa] [reason:endpoint github.com:443 is not allowed by any policy]";
 const SSH_RELAY_INFO_LINE =
   "[1783046565.338] [sandbox] [OCSF ] [ocsf] NET:OPEN [INFO] [msg:ssh relay open (channel_id=8e95bfe4, target=unix:/run/openshell/ssh.sock)]";
+// OpenShell 0.1.3 policy_dns::build_dns_denial_event and OCSF shorthand format.
+const DNS_POLICY_DENIAL_LINE =
+  "[1783046573.602] [sandbox] [OCSF ] [ocsf] NET:REFUSE [MED] DENIED host.openshell.internal [reason:policy_dns_ineligible]";
 // Exact proxy JSON body captured alongside the OCSF lines above. Keep this
 // fixture strict: speculative wording variants would widen false positives.
 const PROXY_JSON_LINE =
   '{"detail":"CONNECT example.com:443 not permitted by policy","error":"policy_denied"}';
 const INTERLEAVED_CURL_PROXY_JSON_LINE =
   'curl: (22) The reque{"detail":"POST host.openshell.internal:4318/v1/traces not permitted by policy","error":"policy_denied"}sted URL returned error: 403';
+
+// Captured from the OpenShell 0.1.3 Deep Agents Code observability denial in run 39474622328.
+const REST_DENIAL = {
+  error: "policy_denied",
+  policy: "observability-otlp-local",
+  rule: "POST /not-traces",
+  detail: "POST /not-traces not permitted by policy",
+  layer: "l7",
+  protocol: "rest",
+  method: "POST",
+  path: "/not-traces",
+  host: "host.openshell.internal",
+  port: 4318,
+  binary: "/opt/venv/bin/python3",
+  rule_missing: {
+    type: "rest_allow",
+    layer: "l7",
+    method: "POST",
+    path: "/not-traces",
+    host: "host.openshell.internal",
+    port: 4318,
+    binary: "/opt/venv/bin/python3",
+  },
+  next_steps: [],
+};
 
 // A denial timestamp of 1783046573.602s parses to 1783046573602ms. Anchor the
 // command-start stamps around it to exercise the recency window.
@@ -31,6 +59,24 @@ const START_AFTER_DENIAL = 1783046800000;
 describe("isPolicyDenialLine (#5978)", () => {
   it.each([
     ["OCSF NET:OPEN DENIED audit line", DENIED_CURL_LINE, true],
+    ["OCSF policy DNS refusal", DNS_POLICY_DENIAL_LINE, true],
+    ...[
+      "policy_dns_upstream_nxdomain",
+      "policy_dns_upstream_no_data",
+      "policy_dns_upstream_timeout",
+      "policy_dns_trusted_gateway_unavailable",
+      "policy_dns_ineligible_extra",
+    ].map(
+      (reason) =>
+        [reason, DNS_POLICY_DENIAL_LINE.replace("policy_dns_ineligible", reason), false] as const,
+    ),
+    [
+      "DNS error without a policy event",
+      "FAILED:URLError:<urlopen error [Errno -5] No address associated with hostname>",
+      false,
+    ],
+    ["allowed DNS event", DNS_POLICY_DENIAL_LINE.replace("DENIED", "ALLOWED"), false],
+    ["DNS policy text in a message", `[msg:${DNS_POLICY_DENIAL_LINE}]`, false],
     [
       "bracketed OCSF NET:OPEN DENIED audit line",
       "[policy:-] [NET:OPEN] DENIED [reason:example.com:443 is not allowed by any policy]",
@@ -41,6 +87,43 @@ describe("isPolicyDenialLine (#5978)", () => {
       "[1783046573.602] [sandbox] NET:OPEN [MED] DENIED /usr/bin/curl(9) -> [2001:db8::1]:443 [reason:not allowed by any policy]",
       true,
     ],
+    ["OpenShell 0.1.3 REST denial", JSON.stringify(REST_DENIAL), true],
+    [
+      "REST denial after Python HTTPError text",
+      `FAILED:HTTPError:HTTP Error 403: Forbidden:${JSON.stringify(REST_DENIAL)}`,
+      true,
+    ],
+    ...[
+      { error: "middleware_denied" },
+      { policy: "" },
+      { layer: "l4" },
+      { protocol: "mcp" },
+      { method: "GET" },
+      { method: "post" },
+      { path: "/other" },
+      { path: "/bad\npath" },
+      { rule: "POST /other" },
+      { detail: "arbitrary denial prose" },
+      { detail: "POST /other not permitted by policy" },
+      { detail: "x".repeat(1025) },
+      { rule_missing: null },
+      { rule_missing: [] },
+      { rule_missing: { ...REST_DENIAL.rule_missing, type: "mcp_allow" } },
+      { rule_missing: { ...REST_DENIAL.rule_missing, layer: "l4" } },
+      { rule_missing: { ...REST_DENIAL.rule_missing, method: "GET" } },
+      { rule_missing: { ...REST_DENIAL.rule_missing, path: "/other" } },
+      { rule_missing: { ...REST_DENIAL.rule_missing, host: "other.example" } },
+      { next_steps: null },
+      { extra: true },
+    ].map(
+      (change) =>
+        [
+          `REST denial with inconsistent ${JSON.stringify(change)}`,
+          JSON.stringify({ ...REST_DENIAL, ...change }),
+          false,
+        ] as const,
+    ),
+    ["truncated REST denial", JSON.stringify(REST_DENIAL).slice(0, -1), false],
     ["proxy JSON policy_denied body", PROXY_JSON_LINE, true],
     ["proxy JSON interleaved with curl stderr", INTERLEAVED_CURL_PROXY_JSON_LINE, true],
     [
@@ -210,13 +293,36 @@ describe("isPolicyDenialLine (#5978)", () => {
     ],
     ["unrelated log line", "[123.0] [sandbox] [INFO ] flushed activity summary", false],
     ["empty line", "", false],
-  ])("classifies %s", (_label, line, expected) => {
+  ] as const)("classifies %s", (_label, line, expected) => {
     expect(isPolicyDenialLine(line)).toBe(expected);
   });
 });
 
 describe("extractDeniedEndpoint (#5978)", () => {
   it.each([
+    ...(
+      [
+        ["host.openshell.internal", 4318, "host.openshell.internal:4318"],
+        [undefined, undefined, null],
+        ["unsafe\nhost", 4318, null],
+        ["host.openshell.internal", 99999, null],
+        ["host.openshell.internal", "4318", null],
+      ] as const
+    ).map(
+      ([host, port, endpoint]) =>
+        [
+          `REST endpoint fields ${String(host)}:${String(port)} with unrelated remediation URLs`,
+          JSON.stringify({
+            ...REST_DENIAL,
+            host,
+            port,
+            rule_missing: { ...REST_DENIAL.rule_missing, host, port },
+            next_steps: ["https://other.example:443"],
+            agent_guidance: "-> misleading.example:8080",
+          }),
+          endpoint,
+        ] as const,
+    ),
     ["arrow target of a curl denial", DENIED_CURL_LINE, "example.com:443"],
     ["arrow target of a git denial", DENIED_GIT_LINE, "github.com:443"],
     [
@@ -244,7 +350,7 @@ describe("extractDeniedEndpoint (#5978)", () => {
       "2026-07-03T04:00:00Z proxy CONNECT [2001:db8::1]:443 policy_denied",
       "[2001:db8::1]:443",
     ],
-  ])("extracts the safe host:port from %s", (_label, line, expected) => {
+  ] as const)("extracts the safe host:port from %s", (_label, line, expected) => {
     expect(extractDeniedEndpoint(line)).toBe(expected);
   });
 
@@ -278,6 +384,16 @@ describe("extractDeniedEndpoint (#5978)", () => {
 });
 
 describe("findRecentPolicyDenial (#5978)", () => {
+  it.each([
+    [1783046573602, { endpoint: null }],
+    [1783046573603, null],
+  ])(
+    "correlates DNS policy denial with command start %i without inventing a port",
+    (startedAt, expected) => {
+      expect(findRecentPolicyDenial(DNS_POLICY_DENIAL_LINE, startedAt)).toEqual(expected);
+    },
+  );
+
   it("matches a denial logged after the command started and returns its endpoint", () => {
     const match = findRecentPolicyDenial(
       [SSH_RELAY_INFO_LINE, DENIED_CURL_LINE].join("\n"),

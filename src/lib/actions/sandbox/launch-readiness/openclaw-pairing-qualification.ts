@@ -142,16 +142,55 @@ interface OpenClawPairingQualificationDeps {
   spawnSync: typeof spawnSync;
 }
 
+export const OPENCLAW_PAIRING_OBSERVATION_FAILURE_CATEGORIES = [
+  "input-unavailable",
+  "deadline-exceeded",
+  "output-limit-exceeded",
+  "child-error",
+  "child-signal",
+  "child-exit-failed",
+  "state-changing",
+  "incompatible-state",
+  "invalid-output",
+  "unclassified",
+] as const;
+export type OpenClawPairingObservationFailureCategory =
+  (typeof OPENCLAW_PAIRING_OBSERVATION_FAILURE_CATEGORIES)[number];
+
 export class OpenClawPairingQualificationError extends Error {
-  constructor(readonly failureReason?: OpenClawPairingObservationFailureReason) {
+  readonly failureCategory: OpenClawPairingObservationFailureCategory;
+  readonly failureReason?: OpenClawPairingObservationFailureReason;
+  constructor(
+    failure:
+      | OpenClawPairingObservationFailureCategory
+      | OpenClawPairingObservationFailureReason = "unclassified",
+    reason?: OpenClawPairingObservationFailureReason,
+  ) {
     super("OpenClaw pairing qualification is unavailable.");
     this.name = "OpenClawPairingQualificationError";
+    this.failureCategory =
+      OPENCLAW_PAIRING_OBSERVATION_FAILURE_CATEGORIES.find((entry) => entry === failure) ??
+      (failure === "timeout"
+        ? "deadline-exceeded"
+        : failure === "state-changed"
+          ? "state-changing"
+          : failure === "process-failed"
+            ? "child-exit-failed"
+            : "input-unavailable");
+    this.failureReason =
+      reason ??
+      OBSERVATION_FAILURE_REASONS.find((entry) => entry === failure) ??
+      (failure === "state-changing"
+        ? "state-changed"
+        : failure === "deadline-exceeded"
+          ? "timeout"
+          : undefined);
   }
 }
 
 export class OpenClawPairingIncompatibleError extends OpenClawPairingQualificationError {
   constructor(readonly field: string | null = null) {
-    super();
+    super("incompatible-state");
     this.name = "OpenClawPairingIncompatibleError";
   }
 }
@@ -178,7 +217,7 @@ function parseOpenClawPairingMismatchField(output: unknown): string | null {
 
 export class OpenClawPairingObservationRetryableError extends OpenClawPairingQualificationError {
   constructor() {
-    super("state-changed");
+    super("state-changing");
     this.name = "OpenClawPairingObservationRetryableError";
   }
 }
@@ -297,16 +336,16 @@ export function buildOpenClawPairingObservationScript(
 ): string {
   const pairingStateModule = readOpenClawPairingStateModule();
   if (!path.posix.isAbsolute(stateDirectory)) {
-    throw new OpenClawPairingQualificationError();
+    throw new OpenClawPairingQualificationError("input-unavailable");
   }
   if (
     !approvalPolicyModuleB64 ||
     Buffer.from(approvalPolicyModuleB64, "base64").toString("base64") !== approvalPolicyModuleB64
   ) {
-    throw new OpenClawPairingQualificationError();
+    throw new OpenClawPairingQualificationError("input-unavailable");
   }
   if (!pairingStateModule) {
-    throw new OpenClawPairingQualificationError();
+    throw new OpenClawPairingQualificationError("input-unavailable");
   }
   const stateDirectoryB64 = Buffer.from(stateDirectory, "utf8").toString("base64");
   const marker = mode === "qualification" ? QUALIFICATION_MARKER : SETTLEMENT_MARKER;
@@ -798,19 +837,18 @@ try:
             reject(field)
     failure_stage = 'client-auth'
     auth_tokens = auth.get('tokens')
-    # Native client token persistence follows the paired-device commit. Ordinary
-    # startup can observe that pairing-only intermediate state; wait within the
-    # existing observation budget without authorizing or producing a request.
+    # OpenClaw commits approval before the client stores the hello response token.
+    # Ordinary onboarding can observe that gap; qualification still requires the token.
     if (
-        ORDINARY_SETTLEMENT
-        and first.get('layout') == 'sqlite'
+        ORDINARY_SETTLEMENT and first.get('layout') == 'sqlite'
         and type(auth.get('version')) is int and auth.get('version') == 1
         and auth.get('deviceId') == device_id
         and auth_tokens == {}
-        and all(exact_string_set(view, PAIRING_ONLY_SCOPES) for view in (
-            paired_device.get('scopes'), paired_device.get('approvedScopes'),
-            paired_operator.get('scopes'),
-        ))
+        and (all(exact_string_set(view, PAIRING_ONLY_SCOPES) for view in (
+            paired_device.get('scopes'), paired_device.get('approvedScopes'), paired_operator.get('scopes'),
+        )) or (exact_string_set(paired_device.get('scopes'), REQUEST_SCOPES)
+            and exact_string_set(paired_device.get('approvedScopes'), REQUEST_SCOPES)
+            and exact_string_set(paired_operator.get('scopes'), TOKEN_SCOPES)))
     ):
         retry_observation()
     auth_operator = auth_tokens.get('operator') if isinstance(auth_tokens, dict) and set(auth_tokens) == {'operator'} else None
@@ -1051,7 +1089,7 @@ function runOpenClawPairingObservation(
     normalizedVersion.length > 128 ||
     (mode === "qualification" && !normalizedVersion)
   ) {
-    throw new OpenClawPairingQualificationError();
+    throw new OpenClawPairingQualificationError("input-unavailable");
   }
   const approvalPolicyModuleB64 = Buffer.from(approvalPolicy, "utf8").toString("base64");
   const script = buildOpenClawPairingObservationScript(
@@ -1100,9 +1138,19 @@ function runOpenClawPairingObservation(
       );
     }
     if (result.error || result.signal || result.status !== 0) {
-      if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
-        throw new OpenClawPairingQualificationError("timeout");
+      if (result.error) {
+        const code = (result.error as NodeJS.ErrnoException).code;
+        throw new OpenClawPairingQualificationError(
+          code === "ETIMEDOUT"
+            ? "deadline-exceeded"
+            : code === "ENOBUFS"
+              ? "output-limit-exceeded"
+              : "child-error",
+          code === "ETIMEDOUT" ? "timeout" : "process-failed",
+        );
       }
+      if (result.signal)
+        throw new OpenClawPairingQualificationError("child-signal", "process-failed");
       const output = String(result.stdout ?? "").trim();
       const reason = OBSERVATION_FAILURE_REASONS.find(
         (value) => output === `${FAILURE_MARKER}${value}`,

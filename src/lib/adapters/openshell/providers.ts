@@ -99,7 +99,16 @@ async function readBuiltinNvidiaEndpoint(
   readValue(
     BuiltinNvidiaProfileResponseSchema,
     await client.raw.getProviderProfile(
-      { id: "nvidia", workspace: profileWorkspace },
+      {
+        id: "nvidia",
+        ...(profileWorkspace === ""
+          ? {}
+          : {
+              workspaceScope: {
+                selection: { case: "workspace" as const, value: profileWorkspace },
+              },
+            }),
+      },
       { signal: request.signal },
     ),
   );
@@ -133,7 +142,16 @@ async function readManagedProfile(
   try {
     response = await client.raw.getProviderProfile(
       // Resolve the actual profile binding; the default-workspace import is managed state.
-      { id: profileId, workspace: profileWorkspace },
+      {
+        id: profileId,
+        ...(profileWorkspace === ""
+          ? {}
+          : {
+              workspaceScope: {
+                selection: { case: "workspace" as const, value: profileWorkspace },
+              },
+            }),
+      },
       { signal: request.signal },
     );
   } catch (error) {
@@ -333,7 +351,10 @@ export function createProviders(
         try {
           // The pinned SDK has no curated gateway provider reader.
           response = await client.raw.getProvider(
-            { name, workspace: request.workspace },
+            {
+              name,
+              workspaceScope: { selection: { case: "workspace", value: request.workspace } },
+            },
             { signal: request.signal },
           );
         } catch (error) {

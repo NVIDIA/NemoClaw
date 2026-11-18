@@ -89,8 +89,9 @@ function officialPluginFixture(channelId: string, version = "2026.9.1") {
       'fs.appendFileSync(process.env.OPENCLAW_TRACE, `openclaw|${args.join("|")}|offline=${process.env.NPM_CONFIG_OFFLINE || ""}/${process.env.npm_config_offline || ""}\\n`);',
       'if (args[0] === "plugins" && args[1] === "install" && process.env.OPENCLAW_CACHE_MISS === "1") { if (process.env.NPM_CONFIG_OFFLINE !== "true" || process.env.npm_config_offline !== "true") fs.appendFileSync(process.env.OPENCLAW_TRACE, "registry-fallback\\n"); process.stdout.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stderr.write("npm error code ENOTCACHED\\nnpm error request to https://registry.npmjs.org/@openclaw%2fdiscord?token=" + process.env.OPENCLAW_INSPECTION_CANARY); process.exit(44); }',
       'if (args[0] === "plugins" && args[1] === "install") process.exit(args[4] === `npm:${process.env.OPENCLAW_PLUGIN_SPEC}` ? 0 : 41);',
+      'if (args[1] === "inspect" && process.env.OPENCLAW_PLUGIN_LIFECYCLE_TRACE === "1") { process.stderr.write(\'[plugins:lifecycle] phase="config read" ms=2.50 status=ok secret=\' + process.env.OPENCLAW_INSPECTION_CANARY + "\\n"); process.stderr.write(\'[plugins:lifecycle] phase="secret-phase" ms=3 status=ok\\n\'); }',
       `if (args[1] === "inspect" && process.env.OPENCLAW_INSPECTION_HANG === "1") { if (process.env.OPENCLAW_INSPECTION_CHILD_PID) { const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify('process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)')}], { stdio: "ignore" }); fs.writeFileSync(process.env.OPENCLAW_INSPECTION_CHILD_PID, String(child.pid)); } setInterval(() => {}, 1000); return; }`,
-      'if (args[0] === "plugins" && args[1] === "inspect") { process.stderr.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stdout.write(JSON.stringify({ plugin: { id: process.env.OPENCLAW_PLUGIN_ID, trustedOfficialInstall: process.env.OPENCLAW_TRUSTED !== "false", diagnostic: process.env.OPENCLAW_INSPECTION_CANARY }, install: { ...(process.env.OPENCLAW_ARCHIVE_FIELD ? { [process.env.OPENCLAW_ARCHIVE_FIELD]: "retained-local-archive" } : {}), source: "npm", resolvedSpec: process.env.OPENCLAW_PLUGIN_SPEC, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY, installPath: process.env.OPENCLAW_PLUGIN_INSTALL_PATH } })); process.exit(0); }',
+      'if (args[0] === "plugins" && args[1] === "inspect") { process.stderr.write(process.env.OPENCLAW_INSPECTION_CANARY || ""); process.stdout.write(JSON.stringify({ plugin: { id: process.env.OPENCLAW_PLUGIN_ID, trustedOfficialInstall: process.env.OPENCLAW_TRUSTED !== "false", diagnostic: process.env.OPENCLAW_INSPECTION_CANARY }, install: { ...(process.env.OPENCLAW_ARCHIVE_FIELD ? { [process.env.OPENCLAW_ARCHIVE_FIELD]: "retained-local-archive" } : {}), source: "npm", resolvedSpec: process.env.OPENCLAW_PLUGIN_SPEC, integrity: process.env.OPENCLAW_PLUGIN_INTEGRITY, installPath: process.env.OPENCLAW_PLUGIN_INSTALL_PATH } })); process.exit(process.env.OPENCLAW_INSPECTION_FAIL === "1" ? 45 : 0); }',
       "process.exit(42);",
       "",
     ].join("\n"),
@@ -197,6 +198,17 @@ it.each(["slack", "discord", "teams", "whatsapp", "googlechat"])(
         "Report this failure, the plugin name and your NemoClaw version",
       );
       expect(failedInspection.stdout + failedInspection.stderr).not.toContain(canary);
+      const failedExit = spawnSync(process.execPath, CLI_ARGS, {
+        encoding: "utf8",
+        env: { ...env, OPENCLAW_INSPECTION_FAIL: "1", OPENCLAW_INSPECTION_CANARY: canary },
+      });
+      expect(failedExit.status).toBe(2);
+      expect(failedExit.stderr).toContain("inspection failed");
+      expect(failedExit.stderr).toContain('"lastCompletedPhase":"config read"');
+      expect(failedExit.stderr).toContain('"phaseStatus":"ok","phaseMs":2.5');
+      expect(failedExit.stderr).toContain('"stdoutJson":true,"provenanceValid":true');
+      expect(failedExit.stdout + failedExit.stderr).not.toContain(canary);
+      expect(failedExit.stdout + failedExit.stderr).not.toContain("secret-phase");
       const failedInstall = spawnSync(process.execPath, CLI_ARGS, {
         encoding: "utf8",
         env: { ...env, OPENCLAW_CACHE_MISS: "1", OPENCLAW_INSPECTION_CANARY: canary },
@@ -222,18 +234,22 @@ it.skipIf(process.platform === "win32")(
     try {
       const timedOut = spawnSync(process.execPath, CLI_ARGS, {
         encoding: "utf8",
-        timeout: 70_000,
+        timeout: 100_000,
         killSignal: "SIGKILL",
         env: {
           ...env,
           OPENCLAW_INSPECTION_HANG: "1",
           OPENCLAW_INSPECTION_CHILD_PID: childPidFile,
+          OPENCLAW_INSPECTION_CANARY: "inspection-timeout-secret-canary",
         },
       });
       const childPid = Number(fs.readFileSync(childPidFile, "utf8"));
       expect(Number.isSafeInteger(childPid) && childPid > 0).toBe(true);
       expect(timedOut.status).toBe(2);
       expect(timedOut.stderr).toContain("Official OpenClaw plugin 'slack' inspection timed out");
+      expect(timedOut.stderr).toContain('"lastCompletedPhase":"config read"');
+      expect(timedOut.stderr).toContain('"stdoutJson":false,"provenanceValid":false');
+      expect(timedOut.stdout + timedOut.stderr).not.toContain("inspection-timeout-secret-canary");
       expect(remainingPackedDirectories(packedDirectories)).toEqual([]);
       await expect.poll(() => processIsAlive(childPid), { timeout: 3_000 }).toBe(false);
     } finally {
@@ -241,7 +257,7 @@ it.skipIf(process.platform === "win32")(
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   },
-  75_000,
+  105_000,
 );
 
 it.runIf(process.platform === "win32")(
@@ -251,7 +267,7 @@ it.runIf(process.platform === "win32")(
     try {
       const timedOut = spawnSync(process.execPath, CLI_ARGS, {
         encoding: "utf8",
-        timeout: 70_000,
+        timeout: 100_000,
         killSignal: "SIGKILL",
         env: { ...env, OPENCLAW_INSPECTION_HANG: "1" },
       });
@@ -262,7 +278,7 @@ it.runIf(process.platform === "win32")(
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   },
-  75_000,
+  105_000,
 );
 
 it("patches the installed official Slack bundle only after registry provenance is verified", async () => {

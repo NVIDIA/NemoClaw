@@ -522,15 +522,18 @@ const fixtureMocks = require(${onboardScriptMocksPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const childProcess = require("node:child_process"), { EventEmitter } = require("node:events");
 const commands = [], credentialKeys = ${JSON.stringify(providerCredentialKeys)}; let registered = null;
+const { buildCredentialFamilyProfile } = require(${JSON.stringify(path.join(repoRoot, "src/lib/messaging/applier/credential-family-profile.ts"))});
+const telegramProfile = buildCredentialFamilyProfile(require("node:fs").readFileSync(${JSON.stringify(path.join(repoRoot, "nemoclaw-blueprint/provider-profiles/nemoclaw-messaging-v1.yaml"))}, "utf8"), "TELEGRAM_BOT_TOKEN", credentialKeys["my-assistant-telegram-bridge"]);
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" }); createdSandbox.installRuntimeObservation();
 const providers = Object.keys(credentialKeys), revisions = new Map(providers.map((name) => [name, 1])), providerGetCounts = new Map();
 const rawGatewayCredential = ${JSON.stringify(rawGatewayCredential)}, gatewaySecrets = new Map(providers.map((name) => [name, rawGatewayCredential]));
 registry.registerSandbox({ name: "my-assistant", messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["slack", "telegram", "whatsapp"])} } });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command); commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false); if (profileResult !== null) return profileResult;
+  if (normalized.includes("profile") && normalized.includes("export " + telegramProfile.profileType + " ")) return { status: 0, stdout: telegramProfile.source };
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-messaging-v1", false); if (profileResult !== null) return profileResult;
   const providerGet = normalized.match(/provider get -g nemoclaw ([^ ]+)$/)?.[1]; if (providerGet) providerGetCounts.set(providerGet, (providerGetCounts.get(providerGet) || 0) + 1); if (providerGet === process.env.NEMOCLAW_TEST_FAIL_PROVIDER && providerGetCounts.get(providerGet) >= 4) return { status: 2, stderr: "transport unavailable" };
-  if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : "nemoclaw-mcp-v1") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
+  if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : providerGet === "my-assistant-telegram-bridge" ? telegramProfile.profileType : "nemoclaw-messaging-v1") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
   if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
   if (normalized.includes("provider get")) return { status: 1 };
@@ -605,7 +608,7 @@ const { createSandbox } = require(${onboardPath});
         .map(({ entry }: { entry: CommandEntry }) => providerName(entry.command))
         .sort();
       const denied = await runScenario("my-assistant-telegram-bridge");
-      assert.equal(denied.status, 1);
+      assert.equal(denied.status, 1, denied.stdout);
       const deniedPayload = parseStdoutJson(denied.stdout);
       const deniedCommands = (deniedPayload.commands as CommandEntry[]).map(
         ({ command }) => command,
@@ -712,7 +715,7 @@ registry.registerSandbox({
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
+  if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-messaging-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   const providerGetResult = fixtureMocks.mockNvidiaOrMissingProviderGetRun(command, "nemoclaw"); if (providerGetResult !== null) return providerGetResult;
   return createdSandbox.run(command) ?? { status: 0 };
 };
@@ -1258,6 +1261,7 @@ const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 
 const commands = [];
 const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" }); existingSandbox.installRuntimeObservation();
@@ -1265,16 +1269,15 @@ const messagingProviderRunner = require(${onboardScriptMocksPath}).createStatefu
   commands,
   createdSandbox: existingSandbox,
   initialProviders: [
-    ["my-assistant-discord-bridge", "nemoclaw-mcp-v1", "DISCORD_BOT_TOKEN"],
-    ["my-assistant-slack-bridge", "nemoclaw-mcp-v1", "SLACK_BOT_TOKEN"],
-    ["my-assistant-slack-app", "nemoclaw-mcp-v1", "SLACK_APP_TOKEN"],
+    ["my-assistant-discord-bridge", "nemoclaw-messaging-v1", "DISCORD_BOT_TOKEN"],
+    ["my-assistant-slack-bridge", "nemoclaw-messaging-v1", "SLACK_BOT_TOKEN"],
+    ["my-assistant-slack-app", "nemoclaw-messaging-v1", "SLACK_APP_TOKEN"],
   ],
 });
 runner.run = messagingProviderRunner;
 runner.runCapture = (command) => {
   const sandboxCapture = existingSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  // All messaging providers already exist in gateway
   if (_n(command).includes("provider get")) return "Provider: exists";
   if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
@@ -1443,7 +1446,6 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(result.status, 0, result.stderr);
       const payload = parseStdoutJson(result.stdout);
 
-      // Only telegram provider should be created
       const providerCommands = payload.commands.filter((e: CommandEntry) =>
         e.command.includes("provider create"),
       );
@@ -1452,7 +1454,6 @@ const { createSandbox } = require(${onboardPath});
       );
       assert.ok(telegramProvider, "expected telegram provider to be created");
 
-      // Discord and slack providers should NOT be created
       const discordProvider = providerCommands.find((e: CommandEntry) =>
         e.command.includes("my-assistant-discord-bridge"),
       );
@@ -1463,7 +1464,6 @@ const { createSandbox } = require(${onboardPath});
       );
       assert.ok(!slackProvider, "slack provider should be filtered out");
 
-      // Sandbox create should only have the telegram --provider flag
       const createCommand = payload.commands.find((e: CommandEntry) =>
         e.command.includes("sandbox create"),
       );

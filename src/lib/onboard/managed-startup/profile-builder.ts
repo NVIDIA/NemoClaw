@@ -7,7 +7,7 @@ import {
 } from "../../hermes-switchyard-routing";
 
 import { Buffer } from "node:buffer";
-import { createHash, X509Certificate } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import { assertNoPerAgentMaxSpawnDepth } from "../../extra-agents-validation";
 import { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../../inference/ollama-runtime-context";
@@ -18,13 +18,8 @@ import {
   HERMES_SWITCHYARD_ROUTING_ENV,
   readHermesSwitchyardRoutingEnvironment,
 } from "../../hermes-switchyard-routing";
-import {
-  MAX_CORPORATE_CA_BYTES,
-  MAX_CORPORATE_CA_CERTS,
-  PEM_CERTIFICATE_RE_GLOBAL,
-} from "../corporate-ca-policy";
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
-import { normalizeCertificateBlocks } from "../corporate-ca-validation";
+import { validateCorporateCaPem } from "../corporate-ca-validation";
 import {
   encodeManagedStartupProfile,
   MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY,
@@ -74,10 +69,10 @@ export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
  * change; otherwise construction fails before a sandbox is launched.
  */
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
-  openclaw: "b4a3fa7060c7b7f5654c271513398666ccf52e36dcc2ff4ac8064b1d801841cf",
-  hermes: "566904b99ca27b8cb12e3e8929eef6a73d7fd9ab1a0d0f4362939be6f2a912e2",
-  "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
-  pi: "6302d387182c596fd67ad18577ecf82107bad6271aeeb5e69714115f91557abb",
+  openclaw: "d119329b26a6e73dcdb7e644f6bc618651c7a82b0698785bd9d09ca6d81d7b48",
+  hermes: "46dd1d1c789bf4abfd86194522d3f71f3730b14db80cb48d2acf17bf3a3aa472",
+  "langchain-deepagents-code": "1aa0b36b1ba387a8ab67149af5cb549ca9ab729057a9fed51eb32ceb1427fc32",
+  pi: "822d29b6c5d8309a676a47a2e6f5dc74854dd0e59d71e6b2c8c6d148a7e6f37c",
 } as const satisfies Record<ManagedStartupAgent, string>;
 
 const INVENTORY_INPUTS = new Set(
@@ -504,30 +499,11 @@ function resolveCorporateCaMaterial(corporateCa: ResolvedCorporateCa | null | un
   readonly corporateCaB64?: string;
 } {
   if (!corporateCa) return { bundleSha256: null };
-  const bytes = Buffer.byteLength(corporateCa.pem, "utf8");
-  if (bytes === 0 || bytes > MAX_CORPORATE_CA_BYTES) {
-    fail(`corporate CA material must be between 1 and ${String(MAX_CORPORATE_CA_BYTES)} bytes`);
-  }
-  const blocks = corporateCa.pem.match(PEM_CERTIFICATE_RE_GLOBAL);
-  if (!blocks || blocks.length === 0 || blocks.length > MAX_CORPORATE_CA_CERTS) {
-    fail(
-      `corporate CA material must contain between 1 and ${String(MAX_CORPORATE_CA_CERTS)} certificates`,
-    );
-  }
-  for (const block of blocks) {
-    let certificate: X509Certificate;
-    try {
-      certificate = new X509Certificate(block);
-    } catch {
-      fail("corporate CA material contains an invalid X.509 certificate");
-    }
-    if (!certificate.ca) {
-      fail("corporate CA material contains a certificate without CA basic constraints");
-    }
-  }
-  const normalizedPem = normalizeCertificateBlocks(blocks);
-  if (corporateCa.pem.trim() !== normalizedPem.trim()) {
-    fail("corporate CA material must contain only normalized PEM certificate blocks");
+  let normalizedPem: string;
+  try {
+    normalizedPem = validateCorporateCaPem(corporateCa.pem);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
   return {
     bundleSha256: createHash("sha256").update(normalizedPem, "utf8").digest("hex"),

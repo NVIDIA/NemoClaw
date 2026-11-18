@@ -7,7 +7,7 @@ import {
   registerCheckedInProviderProfile,
 } from "../adapters/openshell/provider-profile-registration";
 
-export const MESSAGING_CREDENTIAL_PROVIDER_TYPE = "nemoclaw-mcp-v1"; // gitleaks:allow
+export const MESSAGING_CREDENTIAL_PROVIDER_TYPE = "nemoclaw-messaging-v1"; // gitleaks:allow
 
 export function messagingCredentialProviderProfilePath(root: string): string {
   return endpointlessProviderProfilePath(root, MESSAGING_CREDENTIAL_PROVIDER_TYPE);

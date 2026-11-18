@@ -354,13 +354,13 @@ except module.UnsafeEnvInputError:
 });
 
 describe("Hermes env secret-boundary namespace pinning", () => {
-  const validateHermesRootMode = (mode: number) => {
+  const validateHermesRootMode = (mode: number, sandboxMode = 0o770) => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-legacy-")));
     const sandbox = path.join(root, "sandbox");
     const hermes = path.join(sandbox, ".hermes");
     const envPath = path.join(hermes, ".env");
     fs.mkdirSync(hermes, { recursive: true });
-    fs.chmodSync(sandbox, 0o770);
+    fs.chmodSync(sandbox, sandboxMode);
     fs.chmodSync(hermes, mode);
     fs.writeFileSync(envPath, "SAFE=1\n", { mode: 0o640 });
     fs.chmodSync(envPath, 0o640);
@@ -400,6 +400,19 @@ raise SystemExit(module.validate_env_file(sys.argv[3]))`,
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(
       /\/sandbox\/\.hermes does not match a trusted owner\/group\/mode posture/u,
+    );
+  });
+
+  it("accepts the sandbox-owned 0700 workspace used by rootless Podman", () => {
+    const result = validateHermesRootMode(0o750, 0o700);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("reports the rejected sandbox owner, group, and mode", () => {
+    const result = validateHermesRootMode(0o750, 0o701);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      `/sandbox does not match a trusted owner/group/mode posture (uid=${String(os.userInfo().uid)}, gid=${String(os.userInfo().gid)}, mode=0701)`,
     );
   });
 

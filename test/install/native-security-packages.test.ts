@@ -67,37 +67,31 @@ function runLibssh2Harness(nestedFailure = false) {
     { mode: 0o700 },
   );
 
-  const result = spawnSync(
-    "bash",
-    [
-      "-c",
-      [
-        "set -euo pipefail",
-        'source "$1"',
-        'calls="$HARNESS_LOG/calls"',
-        'mapfile() { local target="$2" line; eval "$target=()"; while IFS= read -r line; do eval "$target+=(\\"\\$line\\")"; done; }',
-        'chmod() { printf "chmod %s\\n" "$*" >>"$calls"; }',
-        "id() { return 0; }",
-        'useradd() { printf "useradd %s\\n" "$*" >>"$calls"; }',
-        'chpasswd() { cat >/dev/null; printf "chpasswd\\n" >>"$calls"; }',
-        'install() { printf "install %s\\n" "$*" >>"$calls"; }',
-        'sed() { printf "sed %s\\n" "$*" >>"$calls"; }',
-        'make() { printf "make %s\\n" "$*" >>"$calls"; }',
-        'run_libssh2_tests "$2"',
-      ].join("\n"),
-      "libssh2-harness",
-      BUILD_SCRIPT,
-      fixture,
-    ],
-    {
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HARNESS_LOG: harnessLog,
-        NESTED_FAILURE: nestedFailure ? "1" : "0",
-      },
+  const result = spawnSync("bash", ["-s", "--", BUILD_SCRIPT, fixture], {
+    input: [
+      "set -euo pipefail",
+      // Keep the sourced builder's temporary files inside this owned fixture.
+      'mktemp() { command mktemp -d "$HARNESS_LOG/build.XXXXXX"; }',
+      'source "$1"',
+      "unset -f mktemp",
+      'calls="$HARNESS_LOG/calls"',
+      'mapfile() { local target="$2" line; eval "$target=()"; while IFS= read -r line; do eval "$target+=(\\"\\$line\\")"; done; }',
+      'chmod() { printf "chmod %s\\n" "$*" >>"$calls"; }',
+      "id() { return 0; }",
+      'useradd() { printf "useradd %s\\n" "$*" >>"$calls"; }',
+      'chpasswd() { cat >/dev/null; printf "chpasswd\\n" >>"$calls"; }',
+      'install() { printf "install %s\\n" "$*" >>"$calls"; }',
+      'sed() { printf "sed %s\\n" "$*" >>"$calls"; }',
+      'make() { printf "make %s\\n" "$*" >>"$calls"; }',
+      'run_libssh2_tests "$2"',
+    ].join("\n"),
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      HARNESS_LOG: harnessLog,
+      NESTED_FAILURE: nestedFailure ? "1" : "0",
     },
-  );
+  });
   return { fixture, harnessLog, result };
 }
 
@@ -117,7 +111,10 @@ function runPythonFixPackageHarness(architecture: "amd64" | "arm64", sourceHashF
         'harness_output="$1"',
         'architecture="$2"',
         'set -- "$harness_output"',
+        // Keep the sourced builder's temporary files inside this owned fixture.
+        'mktemp() { command mktemp -d "$HARNESS_LOG/build.XXXXXX"; }',
         "source scripts/security/build-native-security-packages.sh",
+        "unset -f mktemp",
         'download() { printf "download %s\\n" "$1" >>"$HARNESS_LOG/calls"; : >"$2"; }',
         'verify_sha256() { printf "verify %s %s\\n" "$1" "${2##*/}" >>"$HARNESS_LOG/calls"; if [[ "${FAIL_SOURCE_HASH:-0}" == "1" && "$2" == *python-stdlib-original.deb ]]; then return 1; fi; }',
         "dpkg-deb() {",
@@ -197,7 +194,7 @@ describe("native security package remediation", () => {
     ["amd64", "db161322a3481d2c0c3b9a3b9a03c3ab0e2b1718f54b88755fb4a3f939165b84"],
     ["arm64", "d1178d24e4d143cc6c577d9dc0f26dd982efccc2e600d25ce86361f168a22be0"],
   ] as const)(
-    "builds the Python fix from the reviewed %s snapshot artifact",
+    "builds the Python fix from the reviewed %s Debian artifact",
     (architecture, hash) => {
       const { fixture, harnessLog, outputDir, result } = runPythonFixPackageHarness(architecture);
       try {

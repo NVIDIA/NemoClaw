@@ -12,13 +12,10 @@ import {
 const WSL_DOCKER_DESKTOP_DETECTION_TIMEOUT_MS = 30_000;
 export const WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND = `docker run --rm --gpus all --entrypoint /bin/sh ${NVIDIA_CONTAINER_GPU_PROOF_IMAGE} -c '${NVIDIA_CONTAINER_GPU_PROOF_SCRIPT.replaceAll("'", `'\\''`)}'`;
 
-// Source-of-truth for this compatibility branch: Docker Desktop-backed WSL can
-// advertise Docker CDI directories while the WSL distro cannot see a usable
-// nvidia.com/gpu CDI spec. Retire this workaround only after Docker Desktop
-// exposes usable nvidia.com/gpu CDI specs into WSL, or after OpenShell owns a
-// Docker Desktop WSL GPU path that no longer relies on host-visible CDI specs.
+// x86 WSL retains compatibility routing. ARM64 uses verified daemon-side CDI
+// through wsl-nvidia-cdi/prepare, without depending on Ubuntu-visible specs.
 export const WSL_DOCKER_DESKTOP_GPU_COMPATIBILITY_REMOVAL_CONDITION =
-  "Remove this compatibility path when Docker Desktop exposes usable nvidia.com/gpu CDI specs into WSL, or OpenShell no longer requires host-visible CDI specs for Docker Desktop WSL GPU passthrough.";
+  "Remove the x86 compatibility path after native OpenShell GPU creation is qualified with Docker Desktop's daemon-side NVIDIA CDI inventory on x86 WSL.";
 
 export type WslDockerDesktopStatus = "docker-desktop" | "not-docker-desktop" | "unknown";
 
@@ -49,7 +46,7 @@ export function isWslDockerDesktopRuntime(host: WslDockerDesktopHost): boolean {
   return host.isWsl && host.runtime === "docker-desktop";
 }
 
-function detectWsl(deps: WslDockerDesktopDetectionDeps): boolean {
+export function detectWsl(deps: WslDockerDesktopDetectionDeps = {}): boolean {
   const platform = deps.platform ?? process.platform;
   if (platform !== "linux") return false;
   const env = deps.env ?? process.env;
@@ -99,7 +96,8 @@ export function wslDockerDesktopGpuCompatibilityRemediationLines(
 ): string[] | null {
   if (status === "docker-desktop") {
     return [
-      "Docker Desktop WSL detected; NemoClaw uses Docker --gpus compatibility instead of CDI spec validation.",
+      "Docker Desktop WSL detected. x86 uses Docker --gpus compatibility. ARM64 requires NAT and verified daemon-side NVIDIA CDI for native OpenShell GPU creation.",
+      "On ARM64, follow the CDI preparation error before retrying; NemoClaw does not fall back to compatibility or repair Ubuntu's CDI files.",
       "If sandbox GPU setup later fails, verify from WSL:",
       `  ${WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND}`,
       "Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.",
@@ -120,13 +118,14 @@ export function wslDockerDesktopGpuCompatibilityRemediationLines(
 export function wslDockerDesktopGpuCompatibilityAction(): WslDockerDesktopGpuCompatibilityAction {
   return {
     id: "wsl_docker_desktop_gpu_compatibility",
-    title: "Use Docker Desktop WSL GPU compatibility path",
+    title: "Verify Docker Desktop WSL GPU support",
     kind: "info",
     reason:
       "Docker Desktop is configured for CDI device injection (CDISpecDirs is set) but no " +
-      "nvidia.com/gpu CDI spec is visible from WSL. On Docker Desktop-backed WSL, NemoClaw " +
-      "uses Docker's `--gpus` compatibility path instead of trying to repair Linux host CDI " +
-      "from inside the WSL distro.",
+      "nvidia.com/gpu CDI spec is visible from WSL. On x86, NemoClaw uses Docker's `--gpus` compatibility path. " +
+      "On ARM64, NemoClaw requires NAT and verifies daemon-side NVIDIA CDI before native OpenShell GPU creation. " +
+      "Missing CDI is prepared only on approved Docker Desktop versions; preparation failures stop GPU setup. " +
+      "Neither route repairs Linux host CDI from inside the WSL distro.",
     commands: [
       `If sandbox GPU setup later fails, verify Docker Desktop GPU support from WSL with \`${WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND}\`.`,
       "Rerun with `--no-gpu` to skip GPU passthrough.",

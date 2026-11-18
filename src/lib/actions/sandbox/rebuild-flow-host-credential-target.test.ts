@@ -8,14 +8,18 @@ import {
   installRebuildFlowTestHooks,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import {
+  cliOpenShellInstalledVersionObserver,
   rebuildCustomImagePreflight,
-  rebuildProviderPreflight,
+  rebuildHostCredentialPreflight,
 } from "../../../../test/helpers/rebuild-flow-harness";
 import type { preflightRebuildImage } from "./rebuild-custom-image-preflight";
-import type { HostCredentialTarget } from "./rebuild-provider-preflight";
-import { nativeProviderRebuildScenario } from "./rebuild-flow-test-fixtures";
+import type { HostCredentialTarget } from "./rebuild/host-credential-preflight";
+import {
+  customProviderRebuildEntry,
+  nativeProviderRebuildScenario,
+} from "./rebuild-flow-test-fixtures";
 
-function createRemoteRebuildHarness() {
+function createRemoteRebuildHarness(native = true) {
   const selection = {
     provider: "compatible-endpoint",
     model: "test/model",
@@ -23,22 +27,32 @@ function createRemoteRebuildHarness() {
     endpointUrl: "https://inference.example.test/v1",
   };
   const harness = createRebuildFlowHarness({
-    sandboxEntry: selection,
-    hydrateCredentialEnv: (name) => (name === selection.credentialEnv ? "host-provider-key" : null),
-    runOpenshell: (args) => {
-      const stdout =
-        args[1] === "list"
-          ? JSON.stringify([
-              { name: selection.provider, credential_keys: [selection.credentialEnv] },
-            ])
-          : [
-              `Name: ${selection.provider}`,
-              "Type: openai",
-              `Credential keys: ${selection.credentialEnv}`,
-              "Config keys: OPENAI_BASE_URL",
-            ].join("\n");
-      return args[0] === "provider" ? { status: 0, stdout, output: stdout, stderr: "" } : undefined;
+    sandboxEntry: {
+      ...selection,
+      ...(native ? customProviderRebuildEntry(selection.endpointUrl, "openai-responses") : {}),
     },
+    hydrateCredentialEnv: (name) => (name === selection.credentialEnv ? "host-provider-key" : null),
+    runOpenshell: native
+      ? undefined
+      : (args) => {
+          const stdout =
+            args[1] === "list"
+              ? JSON.stringify({
+                  providers: [
+                    { name: selection.provider, credential_keys: [selection.credentialEnv] },
+                  ],
+                  next_page_token: "",
+                })
+              : [
+                  `Name: ${selection.provider}`,
+                  "Type: openai",
+                  `Credential keys: ${selection.credentialEnv}`,
+                  "Config keys: OPENAI_BASE_URL",
+                ].join("\n");
+          return args[0] === "provider"
+            ? { status: 0, stdout, output: stdout, stderr: "" }
+            : undefined;
+        },
   });
   Object.assign(harness.session, {
     sandboxName: "alpha",
@@ -57,7 +71,9 @@ describe("rebuildSandbox flow: host credential target", () => {
       ...overrides,
       hydrateCredentialEnv: () => "invalid-host-key",
     });
-    const validate = vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential);
+    const validate = vi.mocked(
+      rebuildHostCredentialPreflight.validateRebuildHostInferenceCredential,
+    );
     validate.mockResolvedValue(false);
 
     await expect(
@@ -78,9 +94,15 @@ describe("rebuildSandbox flow: host credential target", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
-  it("rebuilds a legacy row with the inference API recovered from its matching session", async () => {
-    const harness = createRemoteRebuildHarness();
-    const validate = vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential);
+  it("rebuilds a legacy row on OpenShell 0.0.116 with the API from its matching session", async () => {
+    vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
+      ok: true,
+      version: "0.0.116",
+    });
+    const harness = createRemoteRebuildHarness(false);
+    const validate = vi.mocked(
+      rebuildHostCredentialPreflight.validateRebuildHostInferenceCredential,
+    );
     validate.mockImplementation(
       async (target: HostCredentialTarget) => target.preferredInferenceApi === "openai-responses",
     );
@@ -106,9 +128,13 @@ describe("rebuildSandbox flow: host credential target", () => {
       ...overrides,
       hydrateCredentialEnv: () => "nvapi-host-test-key",
     });
-    vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential).mockImplementation(
+    vi.mocked(
+      rebuildHostCredentialPreflight.validateRebuildHostInferenceCredential,
+    ).mockImplementation(
       async (
-        ...args: Parameters<typeof rebuildProviderPreflight.validateRebuildHostInferenceCredential>
+        ...args: Parameters<
+          typeof rebuildHostCredentialPreflight.validateRebuildHostInferenceCredential
+        >
       ) => {
         const onIndeterminate = args[3] as (() => void) | undefined;
         onIndeterminate?.();
@@ -132,9 +158,9 @@ describe("rebuildSandbox flow: host credential target", () => {
     async (_mode, flags) => {
       const harness = createRemoteRebuildHarness();
       let credentialAccepted = true;
-      vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential).mockImplementation(
-        async () => credentialAccepted,
-      );
+      vi.mocked(
+        rebuildHostCredentialPreflight.validateRebuildHostInferenceCredential,
+      ).mockImplementation(async () => credentialAccepted);
       const prepareImage = vi.mocked(rebuildCustomImagePreflight.preflightRebuildImage);
       const originalPrepareImage = prepareImage.getMockImplementation()!;
       prepareImage.mockImplementation(async (...args: Parameters<typeof preflightRebuildImage>) => {

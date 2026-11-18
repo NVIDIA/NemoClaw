@@ -38,6 +38,7 @@ function httpResult(status: number, body = "", result = "") {
   return {
     exitCode: 0,
     signal: null,
+    timedOut: false,
     stdout: body,
     stderr: `${HERMES_MCP_HTTP_STATUS_MARKER}${status}\n${result}`,
   };
@@ -381,7 +382,7 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         "--filter",
         "label=openshell.ai/sandbox-name=owned-hermes",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Label "openshell.ai/isolation-role"}}',
       ]);
     },
   );
@@ -409,12 +410,13 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         'cp "$FAKE_BODY_FILE" "$output"',
         'printf "1\\n" >> "$FAKE_COUNT_FILE"',
         'printf "%s" "$FAKE_STATUS"',
+        'exit "$FAKE_CURL_EXIT"',
       ].join("\n"),
     );
     chmodSync(curl, 0o755);
 
     const apiKey = "fixture-api-key-value";
-    const run = (body: string, status: string) => {
+    const run = (body: string, status: string, curlExit = "0") => {
       writeFileSync(bodyFile, body);
       return spawnSync("sh", ["-c", script], {
         encoding: "utf8",
@@ -424,6 +426,7 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
           FAKE_BODY_FILE: bodyFile,
           FAKE_COUNT_FILE: countFile,
           FAKE_STATUS: status,
+          FAKE_CURL_EXIT: curlExit,
           PATH: `${directory}:${SYSTEM_PATH}`,
         },
         killSignal: "SIGKILL",
@@ -439,6 +442,10 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
       expect(failed.stderr).toContain(`${HERMES_MCP_HTTP_STATUS_MARKER}500`);
 
       expect(readFileSync(countFile, "utf8")).toBe("1\n");
+      const transportFailed = run(`failed with ${apiKey}`, "000", "7");
+      expect(transportFailed.status, transportFailed.stderr).toBe(7);
+      expect(transportFailed.stdout).toBe("");
+      expect(readFileSync(countFile, "utf8")).toBe("1\n1\n");
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -472,6 +479,19 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         [],
       ),
     ).not.toThrow();
+  });
+
+  it.each([
+    ["times out", { timedOut: true, signal: null }, "timeout"],
+    ["receives SIGTERM", { timedOut: false, signal: "SIGTERM" as const }, "signal=SIGTERM"],
+  ])("rejects a complete HTTP response when the command %s", (_label, interruption, detail) => {
+    const result = {
+      ...httpResult(200, "", `${HERMES_MCP_RESULT_TOKEN_MARKER}present\n`),
+      ...interruption,
+    };
+    expect(() => assertHermesMcpHttpResponse(result, [])).toThrow(
+      `Hermes real MCP tool call transport failed (${detail})`,
+    );
   });
 
   it("classifies only the exact Hermes gateway draining response", () => {

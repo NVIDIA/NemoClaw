@@ -111,7 +111,7 @@ export async function readHermesNativeLocalCredentialHandleIfNeeded(
   return handle;
 }
 
-async function readNativeCredentialHandle(
+export async function readNativeCredentialHandle(
   sandboxName: string,
   gatewayName: string,
   deps: {
@@ -225,6 +225,7 @@ export async function probeInferenceSetSandboxRouteUntilConverged(
     input: SandboxInferenceInvocationInput;
     previousProvider: string;
     previousModel: string;
+    providerAttachmentChanged?: boolean;
     previousInferenceApi: string | null;
     targetInferenceApi: string | null;
   },
@@ -242,6 +243,7 @@ export async function probeInferenceSetSandboxRouteUntilConverged(
   },
 ): Promise<SandboxInferenceInvocationResult> {
   const routeSelectionChanged =
+    options.providerAttachmentChanged === true ||
     options.previousProvider !== options.input.provider ||
     options.previousModel !== options.input.model;
   if (routeSelectionChanged) {

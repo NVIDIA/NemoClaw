@@ -6,6 +6,7 @@ import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-ad
 import { customNativeProvider } from "../inference/native-provider/custom";
 import {
   HOSTED_NATIVE_PROVIDERS,
+  hostedNativeProvider,
   type HostedProviderDefinition,
 } from "../inference/native-provider/hosted";
 import { createSetupInference, type SetupInferenceDeps } from "./setup-inference";
@@ -17,6 +18,14 @@ vi.mock("./sandbox-lifecycle", async (importOriginal) => ({
 
 const providers: HostedProviderDefinition[] = [
   ...HOSTED_NATIVE_PROVIDERS,
+  ...[
+    { endpoint: "https://8.8.8.8/team/v1", allowedIps: ["8.8.8.8"] },
+    { endpoint: "http://8.8.8.8/team/v1", allowedIps: ["8.8.8.8"] },
+    { endpoint: "http://host.openshell.internal:42103/team/v1", allowedIps: undefined },
+  ].map(({ endpoint, allowedIps }) => ({
+    ...hostedNativeProvider("hermes-provider", endpoint)!,
+    allowedIps,
+  })),
   ...[
     ["compatible-endpoint", "openai-completions", "https://custom.example/v1"],
     ["compatible-endpoint", "openai-responses", "https://custom.example/v1"],
@@ -46,7 +55,9 @@ describe.each(providers)("native $label onboarding", (provider) => {
           ? ["default-api"]
           : []),
       ]
-    : ["explicit", "omitted"];
+    : provider.endpointUrl
+      ? ["explicit"]
+      : ["explicit", "omitted"];
   it.each(endpointModes)("uses %s native endpoint (#12589)", async (endpointMode) => {
     const receipt = {
       schemaVersion: 1,

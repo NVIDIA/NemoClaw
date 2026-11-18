@@ -9,6 +9,10 @@ import { parseEnv } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
+  HERMES_STRUCTURED_TOOL_SEARCH,
+  REMOTE_PLATFORM_TOOLSETS,
+} from "../fixtures/hermes-config-expectations";
+import {
   MIN_HERMES_CONTEXT_WINDOW,
   readHermesBuildSettings,
 } from "../../agents/hermes/config/build-env.ts";
@@ -46,13 +50,7 @@ import {
   withLegacyMessagingPlanEnvDirect,
 } from "../messaging-plan-test-helper";
 
-const SCRIPT_PATH = path.join(
-  import.meta.dirname,
-  "../..",
-  "agents",
-  "hermes",
-  "generate-config.ts",
-);
+const SCRIPT_PATH = path.resolve(import.meta.dirname, "../../agents/hermes/generate-config.ts");
 const SCRIPT_DIR = path.dirname(SCRIPT_PATH);
 const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "../..", "agents", "hermes", "config");
 
@@ -68,12 +66,6 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({}),
 };
 
-const HERMES_STRUCTURED_TOOL_SEARCH = {
-  enabled: "on",
-  search_default_limit: 5,
-  max_search_limit: 20,
-};
-
 it("uses a resolvable credential in every native NVIDIA inference configuration", () => {
   const { config } = runConfigScript({
     NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
@@ -84,24 +76,6 @@ it("uses a resolvable credential in every native NVIDIA inference configuration"
   expect(config.providers["nvidia-prod"].api_key).toBe(placeholder);
   expect(config.custom_providers[0].api_key).toBe(placeholder);
 });
-
-const REMOTE_PLATFORM_TOOLSETS = [
-  "web",
-  "browser",
-  "terminal",
-  "file",
-  "code_execution",
-  "vision",
-  "image_gen",
-  "skills",
-  "todo",
-  "memory",
-  "session_search",
-  "delegation",
-  "cronjob",
-  "nemoclaw",
-  "audio",
-];
 
 let tmpDir: string;
 
@@ -292,12 +266,8 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(fixtureRoot, nativeConfigDir, "agent-config.ts"),
   );
   fs.copyFileSync(
-    path.join(import.meta.dirname, "../..", nativeConfigDir, "hosted.ts"),
-    path.join(fixtureRoot, nativeConfigDir, "hosted.ts"),
-  );
-  fs.copyFileSync(
-    path.join(import.meta.dirname, "../..", nativeConfigDir, "contract.ts"),
-    path.join(fixtureRoot, nativeConfigDir, "contract.ts"),
+    path.join(import.meta.dirname, "../..", nativeConfigDir, "catalog.ts"),
+    path.join(fixtureRoot, nativeConfigDir, "catalog.ts"),
   );
   const nativeNvidiaConfigDir = path.join("src", "lib", "inference", "native-nvidia");
   fs.mkdirSync(path.join(fixtureRoot, nativeNvidiaConfigDir), { recursive: true });
@@ -1497,4 +1467,16 @@ describe("agents/hermes/generate-config.ts", () => {
       "field 'match' must be a non-empty object",
     );
   });
+});
+
+it("does not project a credential for the retired Router provider", () => {
+  const { config } = runConfigScript({
+    NEMOCLAW_UPSTREAM_PROVIDER: "team-router",
+    NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:43123/team/v1",
+    NEMOCLAW_LOCAL_INFERENCE_TOKEN: "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  });
+  expect(config.model.base_url).toBe("http://host.openshell.internal:43123/team/v1");
+  expect(config.model.api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
+  expect(config.providers["team-router"].api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
+  expect(JSON.stringify(config)).not.toContain("v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN");
 });

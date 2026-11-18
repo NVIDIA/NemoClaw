@@ -3,7 +3,33 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { InferenceSetError, runInferenceSet } from "./inference-set";
-import { createDeps } from "../../../test/helpers/inference-set";
+import { createDeps as createFixtureDeps } from "../../../test/helpers/inference-set";
+
+// Existing compatible-endpoint sandboxes retain the shared-route transaction.
+// Hermes and Model Router now require native provider admission.
+function createDeps(options: Parameters<typeof createFixtureDeps>[0]) {
+  const retained = {
+    name: "alpha",
+    agent: "openclaw",
+    provider: "compatible-endpoint",
+    endpointUrl: "https://retained-compatible.example/v1",
+    preferredInferenceApi: "openai-completions",
+    credentialEnv: "COMPATIBLE_API_KEY",
+  };
+  return createFixtureDeps({
+    ...options,
+    entry: options.entry === undefined ? retained : options.entry,
+    ...(options.entries
+      ? {
+          entries: options.entries.map((entry) => ({
+            ...retained,
+            ...entry,
+            provider: "compatible-endpoint",
+          })),
+        }
+      : {}),
+  });
+}
 
 describe("runInferenceSet failure handling", () => {
   it("fails before OpenShell or config mutation for an unknown durable runtime provider", async () => {
@@ -97,7 +123,7 @@ describe("runInferenceSet failure handling", () => {
     const deps = createDeps({ config: {}, openshellStatus: 17 });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-nim", model: "openai/model-a" }, deps),
+      runInferenceSet({ provider: "compatible-endpoint", model: "openai/model-a" }, deps),
     ).rejects.toThrow(/OpenShell inference route update with verification failed/);
 
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
@@ -108,7 +134,7 @@ describe("runInferenceSet failure handling", () => {
     const deps = createDeps({ config: {}, openshellStatus: 17 });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-nim", model: "openai/model-a" }, deps),
+      runInferenceSet({ provider: "compatible-endpoint", model: "openai/model-a" }, deps),
     ).rejects.toThrow(
       /route state is unknown.*Inspect gateway 'nemoclaw', then rerun the same `nemoclaw inference set` command\./su,
     );
@@ -123,7 +149,9 @@ describe("runInferenceSet failure handling", () => {
     const createProvider = vi.fn();
     const base = createDeps({
       config: {},
-      entries: [{ name: "alpha", agent: "openclaw", provider: "nvidia-nim", model: "old-model" }],
+      entries: [
+        { name: "alpha", agent: "openclaw", provider: "compatible-endpoint", model: "old-model" },
+      ],
       inferenceRouteMutator: { setInferenceRoute },
       inferenceRouteObserver: {
         observeInferenceRoute: vi.fn(async () => ({
@@ -142,7 +170,7 @@ describe("runInferenceSet failure handling", () => {
     };
 
     await expect(
-      runInferenceSet({ provider: "nvidia-nim", model: "new-model" }, deps),
+      runInferenceSet({ provider: "compatible-endpoint", model: "new-model" }, deps),
     ).rejects.toThrow(/Cannot reconcile.*gateway 'nemoclaw'.*gateway unavailable/su);
 
     expect(createProvider).not.toHaveBeenCalled();
@@ -162,7 +190,7 @@ describe("runInferenceSet failure handling", () => {
         ok: true as const,
         value: {
           state: "configured" as const,
-          route: { provider: "nvidia-nim", model: "old-model" },
+          route: { provider: "compatible-endpoint", model: "old-model" },
         },
       };
     });
@@ -185,13 +213,15 @@ describe("runInferenceSet failure handling", () => {
       });
     const deps = createDeps({
       config: {},
-      entries: [{ name: "alpha", agent: "openclaw", provider: "nvidia-nim", model: "old-model" }],
+      entries: [
+        { name: "alpha", agent: "openclaw", provider: "compatible-endpoint", model: "old-model" },
+      ],
       inferenceRouteObserver: { observeInferenceRoute },
       inferenceRouteMutator: { setInferenceRoute },
     });
 
     await expect(
-      runInferenceSet({ provider: "nvidia-nim", model: "new-model" }, deps),
+      runInferenceSet({ provider: "compatible-endpoint", model: "new-model" }, deps),
     ).rejects.toThrow(
       /gateway schema mismatch.*Inspect gateway 'nemoclaw', then rerun the same `nemoclaw inference set` command\./su,
     );
@@ -199,8 +229,8 @@ describe("runInferenceSet failure handling", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
 
     await expect(
-      runInferenceSet({ provider: "nvidia-nim", model: "new-model" }, deps),
-    ).resolves.toMatchObject({ provider: "nvidia-nim", model: "new-model" });
+      runInferenceSet({ provider: "compatible-endpoint", model: "new-model" }, deps),
+    ).resolves.toMatchObject({ provider: "compatible-endpoint", model: "new-model" });
 
     expect(events).toEqual([
       "observe:nemoclaw",
@@ -225,7 +255,7 @@ describe("runInferenceSet failure handling", () => {
         status: null,
         output: "",
         stdout: "",
-        stderr: `error: provider 'nvidia-nim' not found at https://${username}:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(3_000)}`,
+        stderr: `error: provider 'compatible-endpoint' not found at https://${username}:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(3_000)}`,
         error: Object.assign(new Error("spawnSync openshell ENOBUFS"), { code: "ENOBUFS" }),
         signal: "SIGTERM",
       })
@@ -237,7 +267,7 @@ describe("runInferenceSet failure handling", () => {
       });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-nim", model: "openai/gpt-5.4-mini" },
+      { provider: "compatible-endpoint", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((error: Error) => error);
 
@@ -282,17 +312,17 @@ describe("runInferenceSet failure handling", () => {
       status: 1,
       output: "",
       stdout: "",
-      stderr: "error: provider 'nvidia-nim' not found in gateway",
+      stderr: "error: provider 'compatible-endpoint' not found in gateway",
     });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-nim", model: "openai/gpt-5.4-mini" },
+      { provider: "compatible-endpoint", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
     const message = (err as Error).message;
-    expect(message).toMatch(/provider 'nvidia-nim' not found/);
+    expect(message).toMatch(/provider 'compatible-endpoint' not found/);
     expect(message).toMatch(/Registered providers: nvidia-prod/);
     expect(message).not.toMatch(/stale-local|telegram-bridge/);
     expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
@@ -317,7 +347,7 @@ describe("runInferenceSet failure handling", () => {
     });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-nim", model: "openai/model-a" },
+      { provider: "compatible-endpoint", model: "openai/model-a" },
       deps,
     ).catch((e: Error) => e);
 
@@ -342,8 +372,8 @@ describe("runInferenceSet failure handling", () => {
     deps.calls.captureOpenshell
       .mockReturnValueOnce({
         status: 1,
-        output: "error: provider 'nvidia-nim' not found in gateway",
-        stdout: "error: provider 'nvidia-nim' not found in gateway",
+        output: "error: provider 'compatible-endpoint' not found in gateway",
+        stdout: "error: provider 'compatible-endpoint' not found in gateway",
         stderr: "",
       })
       .mockReturnValueOnce({
@@ -354,7 +384,7 @@ describe("runInferenceSet failure handling", () => {
       });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-nim", model: "openai/gpt-5.4-mini" },
+      { provider: "compatible-endpoint", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((e: Error) => e);
 
@@ -372,14 +402,14 @@ describe("runInferenceSet failure handling", () => {
         status: 1,
         output: "",
         stdout: "",
-        stderr: "error: provider 'nvidia-nim' not found in gateway",
+        stderr: "error: provider 'compatible-endpoint' not found in gateway",
       })
       .mockImplementationOnce(() => {
         throw new Error(`gateway provider query failed token=${querySecret}`);
       });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-nim", model: "openai/gpt-5.4-mini" },
+      { provider: "compatible-endpoint", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((e: Error) => e);
 
@@ -402,7 +432,7 @@ describe("runInferenceSet failure handling", () => {
         status: 1,
         output: "",
         stdout: "",
-        stderr: "error: provider 'nvidia-nim' not found in gateway",
+        stderr: "error: provider 'compatible-endpoint' not found in gateway",
       })
       .mockReturnValueOnce({
         status: null,
@@ -414,7 +444,7 @@ describe("runInferenceSet failure handling", () => {
       });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-nim", model: "openai/gpt-5.4-mini" },
+      { provider: "compatible-endpoint", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((error: Error) => error);
 

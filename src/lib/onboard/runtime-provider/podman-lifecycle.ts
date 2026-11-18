@@ -8,6 +8,7 @@ import type {
 import { isValidName } from "../../name-validation";
 
 export const PODMAN_MANAGED_LABEL = "openshell.managed";
+export const PODMAN_ISOLATION_ROLE_LABEL = "openshell.ai/isolation-role";
 export const PODMAN_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 export const PODMAN_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 export const PODMAN_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
@@ -119,6 +120,10 @@ function parsePodmanManagedContainer(
   const name = safeText(entry.Name, "Podman inspect Name");
   const config = record(entry.Config, "Podman inspect Config");
   const containerLabels = labels(config.Labels);
+  const isolationRole = containerLabels[PODMAN_ISOLATION_ROLE_LABEL];
+  if (isolationRole !== undefined && isolationRole !== "sandbox") {
+    throw new Error("Podman sandbox has an unexpected isolation role.");
+  }
   if (containerLabels[PODMAN_MANAGED_LABEL] !== "true") {
     throw new Error(`Podman sandbox is missing exact label ${PODMAN_MANAGED_LABEL}=true.`);
   }
@@ -239,6 +244,9 @@ export function observePodmanManagedContainer(
       `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
       "--filter",
       `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
+      // Keep legacy workloads without a role label; exclude the 0.1.2 companion.
+      "--filter",
+      `label!=${PODMAN_ISOLATION_ROLE_LABEL}=supervisor`,
       "--format",
       "{{.ID}}",
     ],

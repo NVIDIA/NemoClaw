@@ -10,6 +10,10 @@ import type { PodmanSocketAuthority, PodmanSocketAuthorityDeps } from "../../ada
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import {
   installPortableDemoSandboxLifecycle,
+  listPortableDemoSandboxLifecycleReceipts,
+  preparePortableDemoSandboxRemoval,
+  portableDemoLifecycleInternals,
+  stopPortableDemoSandboxLifecycle,
   type PortableDemoLifecycleDeps,
   recoverPortableDemoSandboxLifecycle as recoverPortableDemoSandboxLifecycleUnchecked,
 } from "./portable-demo-lifecycle";
@@ -83,6 +87,9 @@ function temporaryStateDir(): string {
 
 function createPodman() {
   let sandboxId = SANDBOX_ID;
+  let isolationRole: string | undefined;
+  let companion = false;
+  let duplicateWorkload = false;
   let managedLabel = "true";
   let sandboxNameLabel = "alpha";
   let sandboxNamespaceLabel = "";
@@ -96,7 +103,16 @@ function createPodman() {
       case "version":
         return { status: 0, stdout: JSON.stringify({ Server: { Version: "5.6.1" } }) };
       case "ps":
-        return { status: 0, stdout: `${CONTAINER_ID}\n` };
+        return {
+          status: 0,
+          stdout:
+            CONTAINER_ID +
+            "\n" +
+            (duplicateWorkload ||
+            (companion && !command.includes("label!=openshell.ai/isolation-role=supervisor"))
+              ? "b".repeat(64) + "\n"
+              : ""),
+        };
       case "inspect":
         return {
           status: 0,
@@ -106,6 +122,9 @@ function createPodman() {
               Name: containerName,
               Config: {
                 Labels: {
+                  ...(isolationRole === undefined
+                    ? {}
+                    : { "openshell.ai/isolation-role": isolationRole }),
                   "openshell.managed": managedLabel,
                   "openshell.ai/sandbox-id": sandboxId,
                   "openshell.ai/sandbox-name": sandboxNameLabel,
@@ -125,6 +144,15 @@ function createPodman() {
   });
   return {
     podman,
+    setIsolationRole(value: string | undefined) {
+      isolationRole = value;
+    },
+    addCompanion() {
+      companion = true;
+    },
+    addDuplicateWorkload() {
+      duplicateWorkload = true;
+    },
     setSandboxId(value: string) {
       sandboxId = value;
       containerName = `openshell-default--alpha-${value}`;
@@ -266,5 +294,438 @@ describe("portable demo OpenShell container identity", () => {
     runtime.setContainerName(`openshell-default--alpha-${SANDBOX_ID}-other`);
 
     expectRecoveryIdentityRefusal(stateDir, runtime);
+  });
+});
+
+describe("portable receipt workload discovery", () => {
+  it("installs the workload receipt when a supervisor shares its labels", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    runtime.setIsolationRole("sandbox");
+    runtime.addCompanion();
+    expect(() => installReceipt(stateDir, runtime.podman)).not.toThrow();
+    expect(runtime.podman).toHaveBeenCalledWith(
+      expect.arrayContaining(["update", "--restart=unless-stopped", CONTAINER_ID]),
+      expect.any(Object),
+    );
+  });
+
+  it("retains installation for legacy workloads without an isolation role", () => {
+    const runtime = createPodman();
+    expect(() => installReceipt(temporaryStateDir(), runtime.podman)).not.toThrow();
+  });
+
+  it.each(["supervisor", "unknown", ""])("rejects workload role %j before mutation", (role) => {
+    const runtime = createPodman();
+    runtime.setIsolationRole(role);
+    expect(() => installReceipt(temporaryStateDir(), runtime.podman)).toThrow(
+      "OpenShell identity does not match",
+    );
+    expect(runtime.podman.mock.calls.some(([args]) => args.includes("update"))).toBe(false);
+  });
+
+  it("rejects duplicate workloads after excluding the supervisor", () => {
+    const runtime = createPodman();
+    runtime.addDuplicateWorkload();
+    expect(() => installReceipt(temporaryStateDir(), runtime.podman)).toThrow(
+      "requires one exact Podman container",
+    );
+    expect(runtime.podman.mock.calls.some(([args]) => args.includes("update"))).toBe(false);
+  });
+});
+
+function pairRemovalFixture() {
+  const stateDir = temporaryStateDir();
+  installReceipt(stateDir, createPodman().podman);
+  const receipt = listPortableDemoSandboxLifecycleReceipts(stateDir)[0]!;
+  const supervisorId = "b".repeat(64);
+  const unrelatedId = "c".repeat(64);
+  const labels = {
+    "openshell.managed": "true",
+    "openshell.ai/sandbox-id": SANDBOX_ID,
+    "openshell.ai/sandbox-name": "alpha",
+    "openshell.ai/sandbox-namespace": "",
+    "openshell.ai/sandbox-workspace": "default",
+  };
+  const record = (id: string, name: string, role: string) => ({
+    Id: id,
+    Name: name,
+    Config: {
+      Labels: { ...labels, "openshell.ai/isolation-role": role } as Record<string, string>,
+    },
+    State: { Running: true, Status: "running" },
+  });
+  const workload = record(CONTAINER_ID, "openshell-default--alpha-" + SANDBOX_ID, "sandbox");
+  const supervisor = record(supervisorId, "openshell-supervisor-" + SANDBOX_ID, "supervisor");
+  const records = new Map([
+    [CONTAINER_ID, workload],
+    [supervisorId, supervisor],
+    [unrelatedId, record(unrelatedId, "unrelated", "sandbox")],
+  ]);
+  const index = new Set([CONTAINER_ID, supervisorId]);
+  const handlers: Record<
+    string,
+    (args: readonly string[]) => {
+      status: number;
+      stdout?: string;
+      stderr?: string;
+    }
+  > = {
+    ps: () => ({ status: 0, stdout: [...index].filter((id) => records.has(id)).join("\n") }),
+    inspect: (args) => {
+      const found = records.get(args[1]!);
+      return found
+        ? { status: 0, stdout: JSON.stringify([found]) }
+        : { status: 125, stderr: "no such container" };
+    },
+    rm: (args) => {
+      records.delete(args[2]!);
+      return { status: 0 };
+    },
+  };
+  const unexpected = (args: readonly string[]): never => {
+    throw new Error("Unexpected fixture command: " + args.join(" "));
+  };
+  const podman = vi.fn((args: readonly string[]) => (handlers[args[0]!] ?? unexpected)(args));
+  const assertRuntimeAuthority = vi.fn();
+  return {
+    stateDir,
+    receipt,
+    supervisorId,
+    unrelatedId,
+    workload,
+    supervisor,
+    records,
+    index,
+    podman,
+    assertRuntimeAuthority,
+    prepare: () =>
+      preparePortableDemoSandboxRemoval(
+        receipt,
+        {
+          assertRuntimeAuthority,
+          dockerHost: "unix://" + SOCKET_PATH,
+          podman,
+        },
+        stateDir,
+      ),
+    removals: () => podman.mock.calls.filter(([args]) => args[0] === "rm").map(([args]) => args),
+  };
+}
+
+describe("portable receipt paired removal", () => {
+  it("removes the validated supervisor then workload and preserves unrelated resources", () => {
+    const f = pairRemovalFixture();
+    const prepared = f.prepare();
+    expect(prepared.present).toBe(true);
+    prepared.removeAndVerify();
+    expect(() => prepared.verifyAbsent()).not.toThrow();
+    expect(f.removals()).toEqual([
+      ["rm", "--force", f.supervisorId],
+      ["rm", "--force", CONTAINER_ID],
+    ]);
+    expect([...f.records.keys()]).toEqual([f.unrelatedId]);
+  });
+
+  it("retains removal of a legacy workload without a companion or role label", () => {
+    const f = pairRemovalFixture();
+    f.records.delete(f.supervisorId);
+    delete f.workload.Config.Labels["openshell.ai/isolation-role"];
+    f.prepare().removeAndVerify();
+    expect(f.removals()).toEqual([["rm", "--force", CONTAINER_ID]]);
+  });
+
+  it("removes a receipt-bound companion after the workload was already removed", () => {
+    const f = pairRemovalFixture();
+    f.records.delete(CONTAINER_ID);
+    f.prepare().removeAndVerify();
+    expect(f.removals()).toEqual([["rm", "--force", f.supervisorId]]);
+  });
+
+  it.each([
+    ["openshell.ai/isolation-role", "sandbox"],
+    ["openshell.ai/sandbox-id", "another-sandbox"],
+    ["openshell.ai/sandbox-name", "another-name"],
+    ["openshell.ai/sandbox-namespace", "another-namespace"],
+    ["openshell.ai/sandbox-workspace", "another-workspace"],
+    ["openshell.managed", "false"],
+  ])("rejects a companion with changed %s before removal", (label, value) => {
+    const f = pairRemovalFixture();
+    f.supervisor.Config.Labels[label] = value;
+    expect(() => f.prepare()).toThrow("replaced or ambiguous container");
+    expect(f.removals()).toEqual([]);
+  });
+
+  it("rejects a companion whose engine name does not match its sandbox ID", () => {
+    const f = pairRemovalFixture();
+    f.supervisor.Name = "unrelated";
+    expect(() => f.prepare()).toThrow("replaced or ambiguous container");
+    expect(f.removals()).toEqual([]);
+  });
+
+  it("rechecks the companion ID before deleting either resource", () => {
+    const f = pairRemovalFixture();
+    const prepared = f.prepare();
+    const replacement = "d".repeat(64);
+    f.records.delete(f.supervisorId);
+    f.records.set(replacement, { ...f.supervisor, Id: replacement });
+    f.index.add(replacement);
+    expect(() => prepared.removeAndVerify()).toThrow("container presence changed");
+    expect(f.removals()).toEqual([]);
+  });
+
+  it("does not remove the workload when supervisor removal fails", () => {
+    const f = pairRemovalFixture();
+    const prepared = f.prepare();
+    const original = f.podman.getMockImplementation()!;
+    f.podman.mockImplementation((args) =>
+      args[0] === "rm" ? { status: 125, stderr: "permission denied" } : original(args),
+    );
+    expect(() => prepared.removeAndVerify()).toThrow("still has a recorded Podman container");
+    expect(f.removals()).toEqual([["rm", "--force", f.supervisorId]]);
+    expect(f.records.has(CONTAINER_ID)).toBe(true);
+  });
+
+  it("rejects cleanup proof when an unindexed captured companion still exists", () => {
+    const f = pairRemovalFixture();
+    const prepared = f.prepare();
+    f.records.delete(CONTAINER_ID);
+    f.index.delete(f.supervisorId);
+    expect(() => prepared.verifyAbsent()).toThrow("still has a recorded Podman container");
+    expect(f.removals()).toEqual([]);
+  });
+
+  it("does not mutate after runtime authority is revoked", () => {
+    const f = pairRemovalFixture();
+    const prepared = f.prepare();
+    f.assertRuntimeAuthority.mockImplementation(() => {
+      throw new Error("socket changed");
+    });
+    expect(() => prepared.removeAndVerify()).toThrow("socket changed");
+    expect(f.removals()).toEqual([]);
+  });
+});
+
+function pairLifecycleFixture() {
+  const f = pairRemovalFixture();
+  let now = 0;
+  const sleep = vi.fn((milliseconds: number) => {
+    now += milliseconds;
+  });
+  const detail = { id: SANDBOX_ID, name: "alpha", workspace: "default", phase: "Stopped" };
+  const setState = (running: boolean) => {
+    for (const record of [f.workload, f.supervisor]) {
+      record.State.Running = running;
+      record.State.Status = running ? "running" : "exited";
+    }
+    detail.phase = running ? "Ready" : "Stopped";
+  };
+  setState(false);
+  const transition = vi.fn((action: string): { status: number | null; error?: Error } => {
+    setState(action === "start");
+    return { status: 0 };
+  });
+  const handlers: Record<
+    string,
+    (args: readonly string[]) => {
+      status: number | null;
+      stdout?: string;
+      error?: Error;
+    }
+  > = {
+    get: () => ({ status: 0, stdout: JSON.stringify(detail) }),
+    start: () => transition("start"),
+    stop: () => transition("stop"),
+    exec: (args) => ({ status: 0, stdout: args.includes("curl") ? "200" : "" }),
+  };
+  const unexpected = (args: readonly string[]): never => {
+    throw new Error("Unexpected fixture OpenShell command: " + args.join(" "));
+  };
+  const capture = vi.fn((args: readonly string[], _timeoutMs: number) =>
+    (handlers[args[1]!] ?? unexpected)(args),
+  );
+  const context = {
+    agent: "openclaw",
+    gatewayName: "nemoclaw",
+    lifecycleGeneration: CONTAINER_ID,
+    openshellDriver: "docker",
+  };
+  const deps: PortableDemoLifecycleDeps = {
+    platform: "linux",
+    now: () => now,
+    sleep,
+    stateDir: f.stateDir,
+    env: { HOME: f.stateDir },
+    podman: (args) => f.podman(args[0] === "--url" ? args.slice(2) : args),
+    captureOpenshell: capture,
+    log: vi.fn(),
+    hardenSocketDirectory: vi.fn(),
+    runtimeReadiness: {
+      ...READINESS,
+      podmanCapture: () => ({
+        status: 0,
+        stdout: JSON.stringify({ Server: { Version: "5.6.1" } }),
+        stderr: "",
+      }),
+    },
+  };
+  const beforeStop = vi.fn();
+  return {
+    ...f,
+    detail,
+    setState,
+    transition,
+    capture,
+    beforeStop,
+    sleep,
+    recover: () => recoverPortableDemoSandboxLifecycleUnchecked("alpha", context, deps),
+    stop: () => stopPortableDemoSandboxLifecycle("alpha", context, beforeStop, deps),
+    rawMutations: () =>
+      f.podman.mock.calls.filter(([args]) => ["start", "stop"].includes(args[0]!)),
+  };
+}
+
+describe("portable split-container gateway lifecycle", () => {
+  it("starts through the named gateway with receipt identity checks", () => {
+    const f = pairLifecycleFixture();
+    expect(f.recover()).toEqual({ kind: "already-running" });
+    expect(f.transition).toHaveBeenCalledExactlyOnceWith("start");
+    expect(f.capture).toHaveBeenCalledWith(
+      ["sandbox", "start", "-g", "nemoclaw", "--workspace", "default", "--", "alpha"],
+      90_000,
+    );
+    expect(f.capture.mock.calls.filter(([args]) => args[1] === "get")).toHaveLength(2);
+    expect(f.workload.State.Running && f.supervisor.State.Running).toBe(true);
+    expect(f.rawMutations()).toEqual([]);
+  });
+
+  it("stops both containers through OpenShell before returning stopped", () => {
+    const f = pairLifecycleFixture();
+    f.setState(true);
+    expect(f.stop()).toEqual({ kind: "stopped" });
+    expect(f.transition).toHaveBeenCalledExactlyOnceWith("stop");
+    expect(f.beforeStop).toHaveBeenCalledOnce();
+    expect(f.workload.State.Running || f.supervisor.State.Running).toBe(false);
+    expect(f.rawMutations()).toEqual([]);
+  });
+
+  it("returns already-stopped only after checking the gateway identity and phase", () => {
+    const f = pairLifecycleFixture();
+    expect(f.stop()).toEqual({ kind: "already-stopped" });
+    expect(f.transition).not.toHaveBeenCalled();
+    expect(f.beforeStop).not.toHaveBeenCalled();
+    expect(f.capture.mock.calls.filter(([args]) => args[1] === "get")).toHaveLength(1);
+  });
+
+  it("rejects stop transition success when the supervisor remains running", () => {
+    const f = pairLifecycleFixture();
+    f.setState(true);
+    f.transition.mockImplementation(() => {
+      f.setState(false);
+      f.supervisor.State.Running = true;
+      f.supervisor.State.Status = "running";
+      return { status: 0 };
+    });
+    expect(() => f.stop()).toThrow("did not settle into the exited state");
+    expect(f.sleep).toHaveBeenCalled();
+    expect(f.rawMutations()).toEqual([]);
+    expect(f.records.has(f.supervisorId)).toBe(true);
+  });
+
+  it("rejects already-stopped success when the supervisor remains running", () => {
+    const f = pairLifecycleFixture();
+    f.supervisor.State.Running = true;
+    f.supervisor.State.Status = "running";
+    expect(() => f.stop()).toThrow("did not settle into the exited state");
+    expect(f.sleep).toHaveBeenCalled();
+    expect(f.rawMutations()).toEqual([]);
+    expect(f.records.has(f.supervisorId)).toBe(true);
+  });
+
+  it("waits for the supervisor to exit after the workload stops", () => {
+    const f = pairLifecycleFixture();
+    f.supervisor.State.Running = true;
+    f.supervisor.State.Status = "stopping";
+    const advance = f.sleep.getMockImplementation()!;
+    f.sleep.mockImplementation((milliseconds) => {
+      advance(milliseconds);
+      f.supervisor.State.Running = false;
+      f.supervisor.State.Status = "exited";
+    });
+    expect(f.stop()).toEqual({ kind: "already-stopped" });
+    expect(f.sleep).toHaveBeenCalled();
+    expect(f.rawMutations()).toEqual([]);
+  });
+
+  it.each(["openshell.ai/sandbox-id", "openshell.ai/isolation-role"])(
+    "rejects supervisor %s mismatch before stopping",
+    (label) => {
+      const f = pairLifecycleFixture();
+      f.setState(true);
+      f.supervisor.Config.Labels[label] = "another-identity";
+      expect(() => f.stop()).toThrow();
+      expect(f.transition).not.toHaveBeenCalled();
+      expect(f.beforeStop).not.toHaveBeenCalled();
+      expect(f.rawMutations()).toEqual([]);
+    },
+  );
+
+  it.each(["id", "name", "workspace"] as const)(
+    "rejects gateway %s mismatch before mutation",
+    (key) => {
+      const f = pairLifecycleFixture();
+      f.detail[key] = "another-identity";
+      expect(() => f.recover()).toThrow("does not match the portable receipt");
+      expect(f.transition).not.toHaveBeenCalled();
+      expect(f.rawMutations()).toEqual([]);
+    },
+  );
+
+  it("rejects changed gateway identity after an accepted start", () => {
+    const f = pairLifecycleFixture();
+    const original = f.transition.getMockImplementation()!;
+    f.transition.mockImplementation((action) => {
+      const result = original(action);
+      f.detail.id = "replacement-id";
+      return result;
+    });
+    expect(() => f.recover()).toThrow("does not match the portable receipt");
+    expect(f.transition).toHaveBeenCalledOnce();
+    expect(f.rawMutations()).toEqual([]);
+  });
+
+  it("preserves both containers when the gateway refuses the start", () => {
+    const f = pairLifecycleFixture();
+    f.transition.mockReturnValue({ status: 1 });
+    expect(() => f.recover()).toThrow("no raw Podman fallback");
+    expect(f.transition).toHaveBeenCalledOnce();
+    expect(f.rawMutations()).toEqual([]);
+    expect(f.records.has(CONTAINER_ID) && f.records.has(f.supervisorId)).toBe(true);
+  });
+
+  it("accepts a timed-out stop only when the same sandbox is proven stopped", () => {
+    const f = pairLifecycleFixture();
+    f.setState(true);
+    f.transition.mockImplementation(() => {
+      f.setState(false);
+      return { status: null, error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }) };
+    });
+    expect(f.stop()).toEqual({ kind: "stopped" });
+    expect(f.transition).toHaveBeenCalledOnce();
+    expect(f.rawMutations()).toEqual([]);
+  });
+
+  it("rechecks the receipt after the before-stop hook", () => {
+    const f = pairLifecycleFixture();
+    f.setState(true);
+    f.beforeStop.mockImplementation(() => {
+      const file = portableDemoLifecycleInternals.receiptPath("alpha", f.stateDir);
+      const receipt = JSON.parse(fs.readFileSync(file, "utf8"));
+      receipt.dashboardPort += 1;
+      fs.writeFileSync(file, JSON.stringify(receipt));
+    });
+    expect(() => f.stop()).toThrow("receipt changed");
+    expect(f.transition).not.toHaveBeenCalled();
+    expect(f.rawMutations()).toEqual([]);
   });
 });

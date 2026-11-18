@@ -3,6 +3,10 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  nativeLocalCredentialReference,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../../src/lib/inference/native-local/agent-config.ts";
+import {
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 } from "../../../src/lib/inference/native-nvidia/contract.ts";
@@ -51,7 +55,9 @@ export function buildNativeModelRestartFixture(
             // OpenShell supplies opaque, revision-scoped handles rather than
             // exporting credentials for OpenClaw's environment SecretRefs.
             apiKey: nativeCustom
-              ? "openshell:resolve:env:COMPATIBLE_API_KEY"
+              ? nativeLocalCredentialReference(logicalProvider, endpointUrl, "openclaw")
+                ? "${" + NATIVE_LOCAL_CREDENTIAL_ENV + "}"
+                : "openshell:resolve:env:COMPATIBLE_API_KEY"
               : nativeNvidia
                 ? "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY"
                 : "unused",

@@ -1,108 +1,99 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
+
+import { promisify } from "node:util";
+import { createConnection } from "node:net";
 
 import { describe, expect, it, vi } from "vitest";
 
 import * as policy from "../../../src/lib/policy";
 import {
-  assertExactMainPolicyNftAndIdentityContracts,
+  assertExactMainPolicyAndIdentityContracts,
   buildExactMainLiveExeIdentityScript,
-  buildExactMainNftInspectionScript,
   DIRECT_BYPASS_PROBE_CODE,
-  inspectExactMainNftRuleset,
+  inspectExactMainIsolation,
   parseExactMainPolicyStatus,
+  waitForRestartedPolicy,
 } from "../live/openshell-exact-main-runtime-contracts.ts";
 
-function match(left: Record<string, unknown>, right: string | number): Record<string, unknown> {
-  return { match: { left, op: "==", right } };
-}
-
-function rejectRule(family: "ipv4" | "ipv6", protocol: "tcp" | "udp") {
+function completeIsolation(): Record<string, unknown> {
   return {
-    rule: {
-      chain: "output",
-      expr: [
-        match({ meta: { key: "l4proto" } }, protocol),
-        {
-          reject: {
-            expr: "port-unreachable",
-            type: family === "ipv4" ? "icmp" : "icmpv6",
-          },
-        },
-      ],
-      family: "inet",
-      table: "openshell_bypass",
-    },
+    Id: "a".repeat(64),
+    HostConfig: { NetworkMode: "none", CapDrop: ["ALL"], CapAdd: null, Privileged: false },
   };
 }
 
-function completeRuleset(): Record<string, unknown> {
-  return {
-    nftables: [
-      { metainfo: { json_schema_version: 1 } },
-      { table: { family: "inet", name: "openshell_bypass" } },
-      {
-        chain: {
-          family: "inet",
-          hook: "output",
-          name: "output",
-          policy: "accept",
-          prio: 0,
-          table: "openshell_bypass",
-          type: "filter",
-        },
-      },
-      {
-        rule: {
-          chain: "output",
-          expr: [
-            match({ payload: { field: "daddr", protocol: "ip" } }, "10.200.0.1"),
-            match({ payload: { field: "dport", protocol: "tcp" } }, 3128),
-            { accept: null },
-          ],
-          family: "inet",
-          table: "openshell_bypass",
-        },
-      },
-      {
-        rule: {
-          chain: "output",
-          expr: [match({ meta: { key: "oifname" } }, "lo"), { accept: null }],
-          family: "inet",
-          table: "openshell_bypass",
-        },
-      },
-      rejectRule("ipv4", "tcp"),
-      rejectRule("ipv6", "tcp"),
-      rejectRule("ipv4", "udp"),
-      rejectRule("ipv6", "udp"),
-    ],
-  };
-}
+describe("OpenShell exact-main policy, native isolation, and process-identity proof helpers", () => {
+  it.each([
+    { label: "composed effective policy", revisionHash: "base", effectiveHash: "changed" },
+    { label: "stored base revision", revisionHash: "changed", effectiveHash: "composed" },
+  ])("waits for the same $label hash after restart", async ({ revisionHash, effectiveHash }) => {
+    vi.useFakeTimers();
+    const status = (hash: string, state: string) => ({
+      activeVersion: 4,
+      hash,
+      sandbox: "exact-main-proof",
+      status: state,
+      version: 4,
+    });
+    const effective = status("composed", "effective");
+    const revision = status("base", "loaded");
+    const result = (value: ReturnType<typeof status>) => ({
+      exitCode: 0,
+      stdout: JSON.stringify({ ...value, active_version: value.activeVersion }),
+      stderr: "",
+      timedOut: false,
+      signal: null,
+    });
+    const openshell = vi
+      .fn()
+      .mockResolvedValueOnce(result(status(revisionHash, "loaded")))
+      .mockResolvedValueOnce(result(status(effectiveHash, "effective")))
+      .mockResolvedValueOnce(result(revision))
+      .mockResolvedValueOnce(result(effective));
+    try {
+      const pending = waitForRestartedPolicy(
+        { openshell } as never,
+        "exact-main-proof",
+        effective,
+        revision,
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(pending).resolves.toEqual({ effective, revision });
+      expect(openshell).toHaveBeenCalledTimes(4);
+      expect(openshell.mock.calls.map(([args]) => args)).toEqual([
+        ["policy", "get", "--rev", "4", "exact-main-proof", "--output", "json"],
+        ["policy", "get", "exact-main-proof", "--output", "json"],
+        ["policy", "get", "--rev", "4", "exact-main-proof", "--output", "json"],
+        ["policy", "get", "exact-main-proof", "--output", "json"],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-describe("OpenShell exact-main policy, nft, and process-identity proof helpers", () => {
   it.each([
     {
       label: "stop fails",
       failure: "stop",
       operations: ["stop"],
-      dockerOperations: ["ps", "exec"],
+      dockerOperations: ["ps", "inspect"],
       message: "stop exact-main OpenShell sandbox container failed",
     },
     {
       label: "start fails",
       failure: "start",
       operations: ["stop", "start"],
-      dockerOperations: ["ps", "exec"],
+      dockerOperations: ["ps", "inspect"],
       message: "start exact-main OpenShell sandbox container failed",
     },
     {
       label: "restart completes",
       failure: null,
       operations: ["stop", "start"],
-      dockerOperations: ["ps", "exec", "ps"],
+      dockerOperations: ["ps", "inspect", "ps"],
       message: "inspect restarted container",
     },
   ])(
@@ -125,7 +116,7 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
           JSON.stringify({
             active_version: version,
             config_revision: version,
-            hash: `sha256:policy-${version}`,
+            hash: `sha256:${state}-policy-${version}`,
             policy_source: "sandbox",
             sandbox: "exact-main-proof",
             status: state,
@@ -147,13 +138,17 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
       ].forEach((result) => openshell.mockResolvedValueOnce(result));
       const command = vi
         .fn()
-        .mockResolvedValueOnce(success("a".repeat(64)))
-        .mockResolvedValueOnce(success(JSON.stringify(completeRuleset())))
+        .mockResolvedValueOnce(
+          success(
+            `${"a".repeat(64)}\topenshell-default--exact-main-proof-proofid\tproofid\tdefault`,
+          ),
+        )
+        .mockResolvedValueOnce(success(JSON.stringify(completeIsolation())))
         .mockRejectedValueOnce(new Error("inspect restarted container"));
 
       try {
         await expect(
-          assertExactMainPolicyNftAndIdentityContracts({
+          assertExactMainPolicyAndIdentityContracts({
             artifacts: {} as never,
             cleanup: { add: vi.fn() } as never,
             host: { command } as never,
@@ -225,7 +220,7 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
 
     try {
       await expect(
-        assertExactMainPolicyNftAndIdentityContracts({
+        assertExactMainPolicyAndIdentityContracts({
           artifacts: {} as never,
           cleanup: { add: vi.fn() } as never,
           host: {} as never,
@@ -246,6 +241,138 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
     expect(policyMutations[1]?.operation).toBe("restore the exact-main policy proof");
     const openshellCalls = openshell.mock.calls.map(([args]) => args as string[]);
     expect(openshellCalls.some((args) => args[0] === "policy" && args[1] === "set")).toBe(false);
+  });
+
+  it("closes owned TCP/UDP listeners and restores policy after the complete native proof", async () => {
+    vi.stubEnv("NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF", "1");
+    const base = "version: 1\nnetwork_policies: {}";
+    const result = (stdout: string) => ({
+      artifacts: { result: "", stderr: "", stdout: "" },
+      command: [],
+      exitCode: 0,
+      signal: null,
+      stderr: "",
+      stdout,
+      timedOut: false,
+    });
+    const status = (version: number, state: string) =>
+      result(
+        JSON.stringify({
+          active_version: version,
+          hash: `policy-${version}`,
+          policy_source: "sandbox",
+          sandbox: "exact-main-proof",
+          status: state,
+          version,
+        }),
+      );
+    let port = 0;
+    const mutations = vi
+      .spyOn(policy, "setPolicyDocument")
+      .mockImplementation(async (_name, document) => {
+        port = Number(document.match(/port: (\d+)/u)?.[1] ?? port);
+        return true;
+      });
+    const openshell = vi.fn();
+    [
+      result(base),
+      status(1, "effective"),
+      status(2, "effective"),
+      status(2, "loaded"),
+      result(""),
+      result(""),
+      status(2, "loaded"),
+      status(2, "effective"),
+      result("Acknowledged initial policy revision as loaded [version:2]"),
+      result(base),
+    ].forEach((value) => openshell.mockResolvedValueOnce(value));
+    const command = vi.fn(async (name: string, args: string[]) => {
+      const handlers: Record<string, () => Promise<ReturnType<typeof result>>> = {
+        python3: async () => ({
+          ...result(""),
+          ...(await promisify(execFile)(name, args, { timeout: 5_000 })),
+        }),
+        inspect: async () => result(JSON.stringify(completeIsolation())),
+        ps: async () =>
+          result(
+            `${"a".repeat(64)}\topenshell-default--exact-main-proof-proofid\tproofid\tdefault`,
+          ),
+      };
+      return await handlers[name === "python3" ? name : args[0]]();
+    });
+    const identityConnection = () =>
+      new Promise<void>((resolve, reject) => {
+        const socket = createConnection({ host: "127.0.0.1", port }, () =>
+          socket.write("identity-control"),
+        );
+        socket.on("error", reject);
+        socket.on("data", () => socket.end());
+        socket.on("close", () => resolve());
+      });
+    const execShell = vi.fn(async () => {
+      await identityConnection();
+      await identityConnection();
+      return result(
+        "NEMOCLAW_LIVE_EXE_OLD_FIRST=allowed\nNEMOCLAW_LIVE_EXE_OLD_SECOND=allowed\nNEMOCLAW_LIVE_EXE_NEW=EACCES\nNEMOCLAW_LIVE_EXE_OLD_LINK=/tmp/live-python (deleted)\n",
+      );
+    });
+    const cleanup: Array<() => Promise<void>> = [];
+    const artifacts = { writeJson: vi.fn() };
+    try {
+      await assertExactMainPolicyAndIdentityContracts({
+        artifacts: artifacts as never,
+        cleanup: {
+          add: (_label: string, action: () => Promise<void>) => cleanup.push(action),
+        } as never,
+        host: { command } as never,
+        sandbox: {
+          openshell,
+          execShell,
+          exec: vi.fn(async () =>
+            result(
+              JSON.stringify({
+                tcp: { connected: false, error: { errno: 13 } },
+                udp: { echoed: false, error: { errno: 13 } },
+              }),
+            ),
+          ),
+        } as never,
+        sandboxName: "exact-main-proof",
+        mcpUrl: "https://mcp.example.test/mcp",
+      });
+      expect(command.mock.calls.filter(([name]) => name === "python3")).toHaveLength(2);
+      expect(mutations).toHaveBeenLastCalledWith(
+        "exact-main-proof",
+        base,
+        expect.objectContaining({ operation: "restore the exact-main policy proof" }),
+      );
+      expect(artifacts.writeJson).toHaveBeenCalledWith(
+        "exact-main-policy-native-identity-summary.json",
+        expect.objectContaining({
+          isolationAfterRestart: expect.objectContaining({ networkMode: "none" }),
+        }),
+      );
+      await expect(
+        new Promise<void>((resolve, reject) => {
+          const socket = createConnection({ host: "127.0.0.1", port }, () => {
+            socket.destroy();
+            resolve();
+          });
+          socket.on("error", reject);
+        }),
+      ).rejects.toMatchObject({ code: "ECONNREFUSED" });
+      await cleanup.reduce(async (previous, action) => {
+        await previous;
+        await action();
+      }, Promise.resolve());
+    } finally {
+      await cleanup.reduce(async (previous, action) => {
+        await previous;
+        await action();
+      }, Promise.resolve());
+      mutations.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("parses effective and stored revision identities without discarding version or hash", () => {
@@ -291,44 +418,62 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
     expect(status.configRevision).toBe("7692118364955054884");
   });
 
-  it("requires the policy-accept chain, proxy/loopback accepts, and all four L4 rejects", () => {
-    expect(inspectExactMainNftRuleset(JSON.stringify(completeRuleset()))).toEqual({
-      chainPolicy: "accept",
-      loopbackAcceptIndex: 1,
-      proxyAcceptIndex: 0,
-      rejectIndexes: { ipv4Tcp: 2, ipv4Udp: 4, ipv6Tcp: 3, ipv6Udp: 5 },
-      ruleCount: 6,
+  it("requires the native workload network and capability boundary", () => {
+    expect(
+      inspectExactMainIsolation(JSON.stringify([completeIsolation()]), "a".repeat(64)),
+    ).toEqual({
+      containerId: "a".repeat(64),
+      networkMode: "none",
+      capDrop: ["ALL"],
+      privileged: false,
     });
   });
 
-  it("inspects nft rules in either supported OpenShell network topology", () => {
-    const script = buildExactMainNftInspectionScript();
-    const syntax = spawnSync("sh", ["-n"], { encoding: "utf8", input: script });
-
-    expect(syntax.status, syntax.stderr).toBe(0);
-    expect(script).toContain("/usr/sbin/nft /sbin/nft /usr/bin/nft");
-    expect(script).toContain("nft executable not found");
-    expect(script).toContain("/var/run/netns/sandbox-*");
-    expect(script).toContain('ip netns pids "$namespace" 2>/dev/null');
-    expect(script).toContain('nsenter --net="$namespace_path" -- "$nft_path"');
-    expect(script).toContain('exec "$nft_path" -j list table inet openshell_bypass');
-    expect(script).toContain('if [ "$active_namespace_count" -gt 1 ]');
-  });
-
-  it("accepts immediate refused and permission-denied bypass outcomes", () => {
-    expect(DIRECT_BYPASS_PROBE_CODE).toContain("denial_errnos = {errno.ECONNREFUSED, errno.EPERM}");
-    expect(DIRECT_BYPASS_PROBE_CODE).toContain(
-      'tcp_error.get("errno") not in denial_errnos or udp_error.get("errno") not in denial_errnos',
+  it.each([
+    { NetworkMode: "host" },
+    { CapDrop: [] },
+    { CapAdd: ["NET_ADMIN"] },
+    { Privileged: true },
+  ])("rejects a weakened native isolation boundary [%j]", (changed) => {
+    const value = completeIsolation();
+    value.HostConfig = { ...(value.HostConfig as object), ...changed };
+    expect(() => inspectExactMainIsolation(JSON.stringify([value]), "a".repeat(64))).toThrow(
+      "native network/capability isolation",
     );
   });
 
-  it("rejects the feasible sequential-install partial state instead of calling it green", () => {
-    const partial = completeRuleset();
-    const entries = partial.nftables as Array<Record<string, unknown>>;
-    entries.pop();
-    expect(() => inspectExactMainNftRuleset(JSON.stringify(partial))).toThrow(
-      "expected exactly one ipv6 udp reject rule, got 0",
-    );
+  it.each([
+    [],
+    [completeIsolation(), completeIsolation()],
+    [{ ...completeIsolation(), Id: "b".repeat(64) }],
+  ])("rejects missing, ambiguous or replaced workload identity [%j]", (...value) => {
+    expect(() => inspectExactMainIsolation(JSON.stringify(value), "a".repeat(64))).toThrow();
+  });
+
+  it.each([
+    { name: "broker EACCES", error: "EACCES", status: 0 },
+    { name: "unreachable listener", error: "ECONNREFUSED", status: 1 },
+    { name: "generic permission failure", error: "EPERM", status: 1 },
+    { name: "network timeout", error: "ETIMEDOUT", status: 1 },
+  ])("executes the denial probe and rejects unrelated failures [$name]", ({ error, status }) => {
+    const shim = `import socket, errno, sys
+class DeniedSocket:
+    def settimeout(self, value): pass
+    def connect(self, address): raise OSError(errno.${error}, "controlled failure")
+    def close(self): pass
+def denied(*args, **kwargs): raise OSError(errno.${error}, "controlled failure")
+socket.create_connection = denied
+socket.socket = lambda *args, **kwargs: DeniedSocket()
+sys.argv = ["probe", "host.openshell.internal", "12345"]
+`;
+    const result = spawnSync("python3", ["-c", shim + DIRECT_BYPASS_PROBE_CODE], {
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(status);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      tcp: { connected: false },
+      udp: { echoed: false },
+    });
   });
 
   it("keeps the old live inode and new altered-path denial in one process-level probe", () => {
@@ -340,11 +485,11 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
     expect(script).toContain("NEMOCLAW_LIVE_EXE_OLD_FIRST=%s");
     expect(script).toContain("NEMOCLAW_LIVE_EXE_OLD_SECOND=%s");
     expect(script).toContain("NEMOCLAW_LIVE_EXE_NEW=%s");
-    expect(script).toContain('while [ "$allowed_attempt" -lt 50 ]');
-    expect(script).toContain('[ "$allowed_status" = 200 ] && break');
-    expect(script).toContain('connect_until_allowed "$first_result"');
-    expect(script).toContain('connect_until_allowed "$second_result"');
-    expect(script).toContain("expected initial live-exe CONNECT 200");
-    expect(script).toContain("expected replacement live-exe CONNECT 403");
+    expect(script).toContain("for _ in range(50):");
+    expect(script).toContain('if status == "allowed":');
+    expect(script).toContain("publish(sys.argv[3])");
+    expect(script).toContain("publish(sys.argv[4])");
+    expect(script).toContain("expected initial live-exe broker connection allowed");
+    expect(script).toContain("expected replacement live-exe broker EACCES");
   });
 });

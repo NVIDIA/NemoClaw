@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { isIP } from "node:net";
 
 import YAML from "yaml";
 
@@ -166,15 +167,31 @@ export type ActiveGlobalPolicyInspection =
 
 export type OpenShellGlobalPolicyHistoryState = "absent" | "present" | "invalid";
 
-const OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT = "No global policy history found";
-
-/** Classify the exact OpenShell 0.0.106 global-policy history output contract. */
+/** Classify the first OpenShell 0.1.3 global-policy history page. */
 export function classifyOpenShellGlobalPolicyHistory(
   stdout: string,
   stderr: string,
 ): OpenShellGlobalPolicyHistoryState {
-  if (stdout.trim().length > 0) return "present";
-  return stderr.trim() === OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT ? "absent" : "invalid";
+  if (stderr.trim().length > 0) return "invalid";
+  let page: OpenShellPolicyMapping;
+  try {
+    page = parseJsonMapping(stdout, "Invalid global policy history");
+  } catch {
+    return "invalid";
+  }
+  if (!Array.isArray(page.revisions) || typeof page.next_page_token !== "string") return "invalid";
+  if (page.revisions.length === 0) return page.next_page_token === "" ? "absent" : "invalid";
+  const revision: unknown = page.revisions[0];
+  return page.revisions.length === 1 &&
+    isMapping(revision) &&
+    revision.scope === "global" &&
+    !Object.hasOwn(revision, "sandbox") &&
+    positiveInteger(revision.version) &&
+    typeof revision.hash === "string" &&
+    POLICY_HASH_PATTERN.test(revision.hash) &&
+    ["loaded", "superseded", "pending", "failed", "unspecified"].includes(String(revision.status))
+    ? "present"
+    : "invalid";
 }
 
 const MISSING_POLICY_DOCUMENT =
@@ -254,11 +271,14 @@ export function parseActiveGlobalPolicyMetadata(raw: string): ActiveGlobalPolicy
   if (
     metadata.scope !== "global" ||
     (metadata.status !== "loaded" && metadata.status !== "superseded") ||
-    metadata.policy_source !== "global" ||
     Object.hasOwn(metadata, "sandbox")
   ) {
     throw new Error("OpenShell returned invalid global policy metadata");
   }
+  const policyIdentity = parsePolicyIdentity(
+    { hash: metadata.hash, active_version: metadata.version },
+    "OpenShell returned invalid global policy metadata",
+  );
   if (metadata.status === "superseded") return { state: "absent" };
   if (!isMapping(metadata.policy)) {
     throw new Error("OpenShell returned invalid global policy metadata");
@@ -268,10 +288,7 @@ export function parseActiveGlobalPolicyMetadata(raw: string): ActiveGlobalPolicy
     inspection: {
       policySource: "global",
       effectivePolicy: metadata.policy,
-      policyIdentity: parsePolicyIdentity(
-        metadata,
-        "OpenShell returned invalid global policy metadata",
-      ),
+      policyIdentity,
     },
   };
 }
@@ -481,23 +498,7 @@ function policyHostMatches(pattern: string, host: string): boolean {
   const normalized = pattern.includes(":")
     ? normalizedHost(pattern)
     : pattern.toLowerCase().replace(/\.$/u, "");
-  // Track consumed prefixes to avoid backtracking through repeated wildcards.
-  let positions = [0];
-  for (const part of normalized.split(/(\*+)/u)) {
-    positions = [
-      ...new Set(
-        positions.flatMap((start) => {
-          if (!part.startsWith("*")) {
-            return host.startsWith(part, start) ? [start + part.length] : [];
-          }
-          const dot = part.length === 1 ? host.indexOf(".", start) : -1;
-          const end = dot < 0 ? host.length : dot;
-          return Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
-        }),
-      ),
-    ];
-  }
-  return positions.includes(host.length);
+  return openShellHostMatches(normalized, host);
 }
 
 /** Match OpenShell's set comparison of configured address pins. */
@@ -552,4 +553,78 @@ export function assertOpenShellPolicyEndpointPins(
       );
     }
   }
+}
+
+type LabelToken = "*" | ((character: string) => boolean);
+
+function labelTokens(label: string): LabelToken[] {
+  const tokens: LabelToken[] = [];
+  const chars = Array.from(label);
+  for (let index = 0; index < chars.length; index++) {
+    const character = chars[index]!;
+    if (character === "*") {
+      if (chars[index + 1] === "*") throw new Error("Invalid OpenShell host pattern");
+      tokens.push("*");
+    } else if (character === "?") tokens.push(() => true);
+    else if (character === "[") {
+      const negated = chars[index + 1] === "!";
+      const start = index + (negated ? 2 : 1);
+      const end = chars.indexOf("]", start + 1);
+      if (end < 0) throw new Error("Invalid OpenShell host pattern");
+      const ranges: [string, string][] = [];
+      for (let position = start; position < end; position++) {
+        const first = chars[position]!;
+        if (position + 2 < end && chars[position + 1] === "-") {
+          ranges.push([first, chars[position + 2]!]);
+          position += 2;
+        } else ranges.push([first, first]);
+      }
+      tokens.push(
+        (value) => ranges.some(([first, last]) => value >= first && value <= last) !== negated,
+      );
+      index = end;
+    } else tokens.push((value) => value === character);
+  }
+  return tokens;
+}
+
+function labelMatches(tokens: LabelToken[], label: string): boolean {
+  const characters = Array.from(label);
+  let positions = new Set([0]);
+  for (const token of tokens) {
+    const next = new Set<number>();
+    for (const position of positions) {
+      if (token === "*") {
+        for (let end = position; end <= characters.length; end++) next.add(end);
+      } else if (position < characters.length && token(characters[position]!))
+        next.add(position + 1);
+    }
+    positions = next;
+  }
+  return positions.has(characters.length);
+}
+
+/** Match OpenShell DNS-label globs without regular-expression backtracking. */
+export function openShellHostMatches(pattern: string, hostname: string): boolean {
+  const labels = pattern.toLowerCase().split(".");
+  const host = hostname.toLowerCase().split(".");
+  if (!pattern || /[\s{}]/u.test(pattern) || labels.some((label) => !label))
+    throw new Error("Invalid OpenShell host pattern");
+  if (host.some((label) => !label)) return false;
+  if (pattern.toLowerCase() === hostname.toLowerCase() && isIP(pattern.replace(/^\[|\]$/gu, "")))
+    return true;
+  const compiled = labels.map((label) => (label === "**" ? "**" : labelTokens(label)));
+  let positions = new Set([0]);
+  for (const label of compiled) {
+    const next = new Set<number>();
+    for (const position of positions) {
+      if (label === "**") {
+        // OpenShell requires a recursive wildcard to consume at least one DNS label.
+        for (let end = position + 1; end <= host.length; end++) next.add(end);
+      } else if (position < host.length && labelMatches(label, host[position]!))
+        next.add(position + 1);
+    }
+    positions = next;
+  }
+  return positions.has(host.length);
 }

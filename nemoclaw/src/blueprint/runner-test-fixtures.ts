@@ -1,6 +1,48 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { actionApply, BlueprintNativeInferenceCreator } from "./runner.js";
+
+/** The host transaction is tested in native-provider/blueprint.test.ts; these fixtures own plugin ordering. */
+export const createNativeInferenceFixture: BlueprintNativeInferenceCreator = async (input) => {
+  const receipt = {
+    schemaVersion: 1,
+    gatewayName: input.gatewayName,
+    sandboxName: input.sandboxName,
+    provider: input.provider,
+    model: input.model,
+    api: input.api,
+    endpointUrl: input.endpointUrl,
+    createAttemptNonce: "a".repeat(62),
+    credentialEnv: input.credentialValue ? "OPENAI_API_KEY" : null,
+    providerAttachment: {
+      schemaVersion: 1,
+      profileId: "test-native-profile",
+      providerName: input.provider,
+      providerId: "test-native-provider-id",
+    },
+  };
+  input.persist({ ...receipt, providerAttachment: undefined });
+  await input.createSandbox(input.provider, receipt.createAttemptNonce);
+  const completed = { ...receipt, sandboxId: "sandbox-id-1" };
+  input.persist({ ...completed, providerAttachment: undefined });
+  await input.prepareSandboxPolicy();
+  input.persist(completed);
+  const identity = JSON.stringify(completed);
+  return { identity, observe: async () => identity };
+};
+
+export function withNativeInferenceFixture(
+  apply: typeof actionApply,
+  creator: BlueprintNativeInferenceCreator = createNativeInferenceFixture,
+): typeof actionApply {
+  return (profile, blueprint, options) =>
+    apply(profile, blueprint, {
+      nativeInferenceCreator: creator,
+      ...options,
+    });
+}
+
 /** The smallest valid blueprint: one inference profile, one sandbox, empty policy. */
 export function minimalBlueprint(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -99,13 +141,9 @@ export function successResult(): {
   return { exitCode: 0, stdout: "", stderr: "" };
 }
 
-/** OpenShell 0.0.106 output when no global policy revision exists. */
+/** The empty JSON history page returned by OpenShell 0.1.3. */
 export function absentGlobalPolicyHistoryResult(): CommandResult {
-  return {
-    exitCode: 0,
-    stdout: "",
-    stderr: "No global policy history found\n",
-  };
+  return absentGlobalPolicyResult();
 }
 
 export type CommandResult = { exitCode: number; stdout: string; stderr: string };
@@ -176,9 +214,8 @@ export function globalPolicyResult(networkPolicies: Record<string, unknown> = {}
     stdout: JSON.stringify({
       scope: "global",
       status: "loaded",
-      policy_source: "global",
       hash: "sha256:global-policy",
-      active_version: 1,
+      version: 1,
       policy: { version: 1, network_policies: networkPolicies },
     }),
     stderr: "",
@@ -191,11 +228,19 @@ export function resultWithBlueprintPolicy(
   fallback: CommandResult,
   gateway = "test-gateway",
 ): CommandResult {
+  if (
+    args[0] === "sandbox" &&
+    args[1] === "get" &&
+    args[2] !== "-g" &&
+    fallback.stdout === "" &&
+    fallback.stderr === ""
+  )
+    return failureResult("sandbox not found");
   return args.join(" ") === "status"
     ? gatewayStatusResult(gateway)
     : args.join(" ") === `gateway info -g ${gateway}`
       ? gatewayInfoResult()
-      : args.join(" ") === `policy list -g ${gateway} --global --limit 1`
+      : args.join(" ") === `policy list -g ${gateway} --global --page-size 1 --output json`
         ? absentGlobalPolicyHistoryResult()
         : args[0] === "policy" &&
             args[1] === "get" &&
@@ -283,7 +328,8 @@ export function createMutableIdentityPolicyResult(options: {
   const policyResult = createMutableSandboxPolicyResult(options.readMergedPolicy);
   return (args) => {
     const command = args.join(" ");
-    if (command === "settings get --global --json") return providersV2EnabledResult();
+    if (command === "policy list --global --page-size 1 --output json")
+      return absentGlobalPolicyResult();
     if (command === "provider get test-provider") return failureResult("provider not found");
     if (command === "provider get acme-okta-runtime") {
       runtimeProviderReads += 1;
@@ -338,8 +384,8 @@ export const MATCHING_INFERENCE_ROUTE_LISTING = [
   "",
 ].join("\n");
 
-/** A `settings get` payload with gateway providers v2 enabled. */
-export function providersV2EnabledResult(): {
+/** An empty page of global policy history from OpenShell 0.1.3. */
+export function absentGlobalPolicyResult(): {
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -347,9 +393,8 @@ export function providersV2EnabledResult(): {
   return {
     exitCode: 0,
     stdout: JSON.stringify({
-      scope: "global",
-      settings_revision: 1,
-      settings: { providers_v2_enabled: "true" },
+      revisions: [],
+      next_page_token: "",
     }),
     stderr: "",
   };

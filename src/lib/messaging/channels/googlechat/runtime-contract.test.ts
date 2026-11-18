@@ -47,11 +47,11 @@ describe("googlechat runtime security contract", () => {
     expect(renderFragmentValue("gateway.reload")).toEqual({ mode: "off" });
   });
 
-  it.each(["googlechat-trusted-proxy-fetch", "googlechat-outbound-auth"])(
-    "requires both outbound-security boot preloads and marks them non-optional [%s]",
+  it.each(["googlechat-outbound-auth"])(
+    "requires the outbound credential preload at boot [%s]",
     (module) => {
       const preloads = googlechatManifest.runtime?.openclaw?.nodePreloads;
-      expect(preloads).toBeDefined();
+      expect(preloads?.map((entry) => entry.module)).toEqual(["googlechat-outbound-auth"]);
 
       const preload = preloads?.find((entry) => entry.module === module);
       expect(preload, `missing required preload ${module}`).toBeDefined();

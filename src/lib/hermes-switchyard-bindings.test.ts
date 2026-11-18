@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { switchyardBindingFixture } from "../../test/helpers/hermes-switchyard";
 import {
+  assertSwitchyardInferenceAuthority,
   createHermesSwitchyardRoutingIntent,
   serializeHermesSwitchyardRouting,
 } from "./hermes-switchyard-routing";
@@ -20,6 +21,20 @@ const routing = createHermesSwitchyardRoutingIntent({
 });
 
 describe("Switchyard binding transport", () => {
+  it.each([
+    "registeredInferenceProviderAttachment",
+    "nativeLocalProviderAttachment",
+    "nativeNvidiaProviderAttachment",
+    "nativeHostedProviderAttachment",
+  ] as const)("rejects Switchyard alongside %s", (field) => {
+    const state = { routing, bindings: switchyardBindingFixture(routing) };
+    expect(() =>
+      assertSwitchyardInferenceAuthority({ hermesSwitchyard: state, [field]: {} }),
+    ).toThrow("cannot share a recorded native inference attachment");
+    expect(() => assertSwitchyardInferenceAuthority({ hermesSwitchyard: state })).not.toThrow();
+    expect(() => assertSwitchyardInferenceAuthority({ [field]: {} })).not.toThrow();
+  });
+
   it("round trips the public observations without accepting intent-only activation (#13863)", () => {
     const bindings = switchyardBindingFixture(routing);
     const encoded = encodeSwitchyardProviderBindings(bindings, routing);

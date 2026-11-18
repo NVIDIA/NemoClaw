@@ -7,6 +7,17 @@ import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fi
 import { createSession } from "../../../state/onboard-session";
 import { createPolicyHandlerDeps, basePolicyHandlerOptions } from "./policies-test-fixture";
 import { handlePoliciesState } from "./policies";
+import { nativeLocalTestReceipt } from "../../../../../test/helpers/inference-set";
+
+const nativeNimReceipt = nativeLocalTestReceipt(
+  "vllm-local",
+  "http://host.openshell.internal:8000/v1",
+  {
+    sandboxName: "my-assistant",
+    agent: "openclaw",
+    authMode: "sentinel",
+  },
+);
 
 describe("policy state handler", () => {
   it("verifies a resumed published Pi local route without a native attachment", async () => {
@@ -32,19 +43,34 @@ describe("policy state handler", () => {
     );
   });
 
-  it("requires a native attachment for a fresh Pi local selection", async () => {
-    const { deps, calls } = createPolicyHandlerDeps();
-    await expect(
-      handlePoliciesState({
-        ...basePolicyHandlerOptions(deps),
-        agent: { name: "pi" },
-        provider: "ollama-local",
-        model: "qwen3:8b",
-        endpointUrl: "http://host.openshell.internal:11435/v1",
-      }),
-    ).rejects.toThrow("requires its recorded provider attachment");
-    expect(calls.setupPolicies).not.toHaveBeenCalled();
-  });
+  it.each([
+    ["Pi", "pi", "ollama-local", "http://host.openshell.internal:11435/v1", null],
+    [
+      "Local NIM",
+      "openclaw",
+      "vllm-local",
+      "http://host.openshell.internal:8000/v1",
+      "nemoclaw-nim-owned",
+    ],
+  ] as const)(
+    "requires a native attachment for a fresh %s selection",
+    async (_label, agent, provider, endpointUrl, nimContainer) => {
+      const { deps, calls } = createPolicyHandlerDeps({
+        getActiveSandbox: vi.fn(() => ({ nimContainer })),
+      });
+      await expect(
+        handlePoliciesState({
+          ...basePolicyHandlerOptions(deps),
+          agent: { name: agent },
+          provider,
+          model: "qwen3:8b",
+          endpointUrl,
+        }),
+      ).rejects.toThrow("requires its recorded provider attachment");
+      expect(calls.smoke).not.toHaveBeenCalled();
+      expect(calls.setupPolicies).not.toHaveBeenCalled();
+    },
+  );
 
   it("resumes from the live OpenShell preset selection", async () => {
     const prepare = vi.fn(() => ({
@@ -218,15 +244,18 @@ describe("policy state handler", () => {
     expect(calls.complete).not.toHaveBeenCalled();
   });
 
-  it("verifies an owned Local NIM through the shared route before applying policies", async () => {
+  it("verifies an owned Local NIM after excluding the shared inference policy", async () => {
     const { deps, calls } = createPolicyHandlerDeps({
-      getActiveSandbox: vi.fn(() => ({ nimContainer: "nemoclaw-nim-owned" })),
+      getActiveSandbox: vi.fn(() => ({
+        nimContainer: "nemoclaw-nim-owned",
+        nativeLocalProviderAttachment: nativeNimReceipt,
+      })),
     });
 
     await handlePoliciesState({
       ...basePolicyHandlerOptions(deps),
       provider: "vllm-local",
-      endpointUrl: "http://127.0.0.1:8000/v1",
+      endpointUrl: nativeNimReceipt.endpointUrl,
       agent: { name: "openclaw" },
     });
 
@@ -237,23 +266,29 @@ describe("policy state handler", () => {
       }),
     );
     const smokeOptions = calls.smoke.mock.calls[0]?.[0];
-    expect(smokeOptions).not.toHaveProperty("nativeLocalProviderAttachment");
+    expect(smokeOptions).toHaveProperty("nativeLocalProviderAttachment", nativeNimReceipt);
     expect(smokeOptions).not.toHaveProperty("forceCanonicalRoute");
     expect(smokeOptions).not.toHaveProperty("hostLocalInferenceProofAuthority");
+    expect(calls.setupPolicies.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.smoke.mock.invocationCallOrder[0]!,
+    );
     expect(calls.smoke.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.setupPolicies.mock.invocationCallOrder[0]!,
+      calls.complete.mock.invocationCallOrder[0]!,
     );
     expect(calls.setupPolicies).toHaveBeenCalledWith(
       "my-assistant",
-      expect.objectContaining({ provider: "vllm-local" }),
+      expect.objectContaining({ provider: null, excludedPresets: ["local-inference"] }),
     );
     expect(calls.complete).toHaveBeenCalledOnce();
   });
 
-  it("stops Local NIM policy application when shared-route verification fails", async () => {
-    const failure = new Error("Local NIM shared-route smoke failed");
+  it("does not complete Local NIM policy setup when native route verification fails", async () => {
+    const failure = new Error("Local NIM native route smoke failed");
     const { deps, calls } = createPolicyHandlerDeps({
-      getActiveSandbox: vi.fn(() => ({ nimContainer: "nemoclaw-nim-owned" })),
+      getActiveSandbox: vi.fn(() => ({
+        nimContainer: "nemoclaw-nim-owned",
+        nativeLocalProviderAttachment: nativeNimReceipt,
+      })),
     });
     calls.smoke.mockImplementation(() => {
       throw failure;
@@ -263,13 +298,16 @@ describe("policy state handler", () => {
       handlePoliciesState({
         ...basePolicyHandlerOptions(deps),
         provider: "vllm-local",
-        endpointUrl: "http://127.0.0.1:8000/v1",
+        endpointUrl: nativeNimReceipt.endpointUrl,
         agent: { name: "openclaw" },
       }),
     ).rejects.toBe(failure);
 
     expect(calls.smoke).toHaveBeenCalledOnce();
-    expect(calls.setupPolicies).not.toHaveBeenCalled();
+    expect(calls.setupPolicies).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      expect.objectContaining({ provider: null, excludedPresets: ["local-inference"] }),
+    );
     expect(calls.complete).not.toHaveBeenCalled();
   });
 

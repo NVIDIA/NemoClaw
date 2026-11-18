@@ -10,6 +10,8 @@ import {
   runInferenceSetWithRetry,
   writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
+import { completeInferencePostCommit } from "../../../src/lib/actions/inference-set-gateway-restart";
+import { OPENCLAW_PAIRING_OBSERVATION_FAILURE_CATEGORIES } from "../../../src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 function result(exitCode: number, stderr = ""): ShellProbeResult {
@@ -163,4 +165,73 @@ describe("inference switch retry", () => {
     expect(() => inferenceSetAttemptCount("0")).toThrow(/between 1 and 10/u);
     expect(() => inferenceSetAttemptCount("11")).toThrow(/between 1 and 10/u);
   });
+});
+
+describe("pairing observation diagnostics at the retry boundary", () => {
+  it.each(OPENCLAW_PAIRING_OBSERVATION_FAILURE_CATEGORIES)(
+    "keeps %s failures terminal and records the category",
+    async (failureCategory) => {
+      const appendAuditEntry = vi.fn();
+      const log = vi.fn();
+      let message = "";
+      try {
+        await completeInferencePostCommit(
+          {
+            result: {
+              sandboxName: "alpha",
+              provider: "nvidia-prod",
+              model: "nvidia/model-b",
+              primaryModelRef: "inference/nvidia/model-b",
+              inSandboxConfigSynced: true,
+            },
+            openClawGatewayRestartRequired: true,
+            openClawPairing: {
+              state: "required",
+              target: {
+                sandboxName: "alpha",
+                gatewayName: "gateway",
+                openclawVersion: "2026.9.2",
+                stateDirectory: "/sandbox/.openclaw",
+              },
+            },
+          },
+          {
+            appendAuditEntry,
+            log,
+            restartSandboxGateway: async () => ({
+              ok: true,
+              restarted: true,
+              healthPassed: true,
+              forwardRecovered: true,
+            }),
+            settleOpenClawPairing: () => ({
+              ok: false,
+              failureLayer: "initial-state-unavailable",
+              failureCategory,
+            }),
+          },
+        );
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain(`initial-state-unavailable; observation: ${failureCategory}`);
+      expect(message).toContain("The committed route was not rolled back.");
+      expect(message).toContain("doctor --fix");
+      expect(appendAuditEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: expect.stringContaining(
+            `pairing convergence failed: initial-state-unavailable; observation: ${failureCategory}`,
+          ),
+        }),
+      );
+      expect(log.mock.calls.flat().join("\n")).not.toContain("Inference route synced");
+      const run = vi.fn(async () => result(1, message));
+      const delay = vi.fn();
+      await expect(runInferenceSetWithRetry({ attempts: 3, run, delay })).resolves.toMatchObject({
+        exitCode: 1,
+      });
+      expect(run).toHaveBeenCalledOnce();
+      expect(delay).not.toHaveBeenCalled();
+    },
+  );
 });

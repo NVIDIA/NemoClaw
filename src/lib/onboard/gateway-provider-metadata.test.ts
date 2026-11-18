@@ -95,11 +95,11 @@ describe("gateway provider metadata", () => {
   it("distinguishes exact, missing, incompatible, and indeterminate credential providers", () => {
     const expected = {
       name: "alpha-telegram-bridge",
-      type: "nemoclaw-mcp-v1",
+      type: "nemoclaw-messaging-v1",
       credentialKey: "TELEGRAM_BOT_TOKEN",
     };
     const exact =
-      "Name: alpha-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n";
+      "Name: alpha-telegram-bridge\nType: nemoclaw-messaging-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n";
 
     expect(
       inspectGatewayCredentialFamilyProviderBinding(expected, () => ({ status: 0, stdout: exact })),
@@ -107,7 +107,7 @@ describe("gateway provider metadata", () => {
     expect(
       inspectGatewayCredentialFamilyProviderBinding(expected, () => ({
         status: 0,
-        stdout: exact.replace("Type: nemoclaw-mcp-v1", "Type: generic"),
+        stdout: exact.replace("Type: nemoclaw-messaging-v1", "Type: generic"),
       })),
     ).toEqual({ kind: "collision" });
     expect(
@@ -282,7 +282,7 @@ describe("gateway provider metadata", () => {
       inspectGatewayCredentialFamilyProviderBinding(
         {
           name: "alpha-telegram-bridge",
-          type: "nemoclaw-mcp-v1",
+          type: "nemoclaw-messaging-v1",
           credentialKey: "TELEGRAM_BOT_TOKEN",
         },
         () => result,

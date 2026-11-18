@@ -60,7 +60,7 @@ function document(result: PolicyCommandResult): Record<string, unknown> {
   throw new Error("OpenShell returned invalid provider-policy prerequisites.");
 }
 
-async function requireSandboxPolicyAuthority(run: PolicyCommand): Promise<void> {
+export async function requireSandboxPolicyAuthority(run: PolicyCommand): Promise<void> {
   if (usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)) {
     const history = document(
       await run(["policy", "list", "--global", "--page-size", "1", "--output", "json"]),
@@ -91,7 +91,7 @@ async function requireSandboxPolicyAuthority(run: PolicyCommand): Promise<void> 
   const policy = document(await run(["policy", "get", "--global", "--output", "json"]));
   if (policy.scope === "global" && policy.status === "superseded") return;
   throw new Error(
-    "Native local inference requires sandbox-owned policy. This gateway has a global policy override; ask its administrator to prepare the gateway before retrying.",
+    "Native inference requires sandbox-owned policy. This gateway has a global policy override; ask its administrator to prepare the gateway before retrying.",
   );
 }
 
@@ -127,7 +127,7 @@ export async function requireNativeProviderPolicy(
   await requireSandboxPolicyAuthority(run);
 }
 
-/** Called only by the owner immediately after creating a fresh gateway. */
+/** Verify fresh gateway policy authority without changing gateway settings. */
 export async function initializeNativeProviderPolicy(
   gatewayName: string,
   command?: PolicyCommand,

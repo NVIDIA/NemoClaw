@@ -1,0 +1,68 @@
+function terminateLostBrokerChild(pid, detached, ownerExited) {
+	const termination = killProcessTree(pid, {
+		detached,
+		graceMs: GRACEFUL_CANCEL_TIMEOUT_MS
+	});
+	const graceEndsAt = Date.now() + GRACEFUL_CANCEL_TIMEOUT_MS;
+	return {
+		force: () => termination?.force(),
+		settled: (async () => {
+			let deadline = graceEndsAt + 2e3;
+			if (ownerExited) {
+				await ownerExited;
+				deadline = Math.max(deadline, Date.now() + 2e3);
+			}
+			if (!detached && Date.now() < graceEndsAt) await setTimeout$1(graceEndsAt - Date.now());
+			for (;;) {
+				if (isPidDefinitelyDead(pid) && (!detached || groupGone(pid))) break;
+				if (Date.now() >= deadline) throw new SpawnBrokerError(`Spawn broker child cleanup could not be confirmed for pid=${pid}`);
+				await setTimeout$1(50);
+			}
+		})()
+	};
+}
+function terminateBrokerProcessGroup(pgid) {
+	let retired = false;
+	let signalError;
+	let forceTimer;
+	const signal = (value) => {
+		try {
+			process.kill(-pgid, value);
+		} catch (error) {
+			if (extractErrorCode(error) !== "ESRCH") signalError = error;
+		}
+	};
+	const retire = () => {
+		retired = true;
+		clearTimeout(forceTimer);
+	};
+	const force = () => {
+		if (retired) return;
+		if (groupGone(pgid)) {
+			retire();
+			return;
+		}
+		clearTimeout(forceTimer);
+		signal("SIGKILL");
+	};
+	return {
+		force,
+		settled: (async () => {
+			if (groupGone(pgid)) {
+				retire();
+				return;
+			}
+			signal("SIGTERM");
+			forceTimer = setTimeout(force, GRACEFUL_CANCEL_TIMEOUT_MS);
+			const deadline = Date.now() + GRACEFUL_CANCEL_TIMEOUT_MS + 2e3;
+			try {
+				while (!groupGone(pgid)) {
+					if (Date.now() >= deadline) throw new SpawnBrokerError(`Spawn broker group cleanup could not be confirmed for pgid=${pgid}`, { cause: signalError });
+					await setTimeout$1(50);
+				}
+			} finally {
+				retire();
+			}
+		})()
+	};
+}

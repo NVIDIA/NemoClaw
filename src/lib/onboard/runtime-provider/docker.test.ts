@@ -184,6 +184,20 @@ describe("Docker runtime provider NVIDIA container capture", () => {
 });
 
 describe("Docker network command bounds", () => {
+  it.each(["linux", "darwin"] as const)("projects supervisor probe topology on %s", (platform) => {
+    const gateway = createDockerRuntimeProviderBundle().gateway as Extract<
+      ReturnType<typeof createDockerRuntimeProviderBundle>["gateway"],
+      { supported: true }
+    >;
+    const runtime = gateway.observeHostRuntime({
+      environment: { NEMOCLAW_GATEWAY_BIND_ADDRESS: "0.0.0.0" },
+      platform,
+    });
+    expect(runtime.network.supervisorNetwork).toEqual(
+      platform === "linux" ? { name: "host", hostAddress: "127.0.0.1" } : undefined,
+    );
+  });
+
   it("uses the selected socket, output limit, and forced timeout for provisioning (#11606)", () => {
     const dockerRun = vi.spyOn(dockerCommands, "dockerRun").mockReturnValue({
       status: null,

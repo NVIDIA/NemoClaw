@@ -15,6 +15,7 @@ import {
   PORTABLE_DOCKER_NETWORK_SUBNET,
   PORTABLE_HOST_GATEWAY_IP,
 } from "./experimental/portable-profile";
+import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
 import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
 
 describe("gateway sandbox reachability route modeling", () => {
@@ -827,6 +828,36 @@ describe("tryAutoApplyUfwRule (#4265)", () => {
   });
 });
 
+const podmanGatewayRuntime = prepareNativePodmanGatewayHostRuntime({
+  environment: {},
+  platform: "linux",
+  socketPath: "/run/user/1000/podman/podman.sock",
+});
+
+describe("split Docker supervisor gateway reachability", () => {
+  it("does not probe or change a retained legacy bridge", async () => {
+    const gatewayRuntime = createDockerRuntimeProviderBundle().gateway.prepareHostRuntime({
+      environment: {},
+      platform: "linux",
+    });
+    const reachabilityImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      reason: "tcp_failed",
+      routeKind: "bridge_gateway",
+      gatewayIp: "172.18.0.1",
+    });
+    const autoApplyImpl = vi.fn();
+    await verifySandboxBridgeGatewayReachableOrExit(false, {
+      gatewayRuntime,
+      reachabilityImpl,
+      autoApplyImpl,
+      autoApplyOptedInImpl: () => true,
+    });
+    expect(reachabilityImpl).not.toHaveBeenCalled();
+    expect(autoApplyImpl).not.toHaveBeenCalled();
+  });
+});
+
 describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
   const hostGatewayTcpFailure = {
     ok: false as const,
@@ -849,6 +880,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       await verifySandboxBridgeGatewayReachableOrExit(true, {
+        gatewayRuntime: podmanGatewayRuntime,
         port: 19080,
         reachabilityImpl,
         retryAttempts: 3,
@@ -882,6 +914,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await verifySandboxBridgeGatewayReachableOrExit(true, {
+      gatewayRuntime: podmanGatewayRuntime,
       reachabilityImpl,
       retryAttempts: 3,
       retryDelayMs: 25,
@@ -901,6 +934,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
     try {
       await expect(
         verifySandboxBridgeGatewayReachableOrExit(false, {
+          gatewayRuntime: podmanGatewayRuntime,
           reachabilityImpl,
           retryAttempts: 3,
           retryDelayMs: 25,
@@ -934,6 +968,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
     try {
       await expect(
         verifySandboxBridgeGatewayReachableOrExit(false, {
+          gatewayRuntime: podmanGatewayRuntime,
           reachabilityImpl,
           sleepMsImpl,
         }),
@@ -963,6 +998,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
     try {
       await expect(
         verifySandboxBridgeGatewayReachableOrExit(false, {
+          gatewayRuntime: podmanGatewayRuntime,
           autoApplyOptedInImpl: () => false,
           reachabilityImpl,
           retryAttempts: 3,
@@ -993,6 +1029,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit UFW auto-apply (#4265)", () 
     const autoApplyImpl = vi.fn();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await verifySandboxBridgeGatewayReachableOrExit(false, {
+      gatewayRuntime: podmanGatewayRuntime,
       autoApplyImpl,
       autoApplyOptedInImpl: () => true,
       reachabilityImpl: () => ({
@@ -1014,6 +1051,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit UFW auto-apply (#4265)", () 
     const autoApplyImpl = vi.fn().mockReturnValue({ applied: true, reason: "applied" });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     await verifySandboxBridgeGatewayReachableOrExit(true, {
+      gatewayRuntime: podmanGatewayRuntime,
       autoApplyImpl,
       autoApplyOptedInImpl: () => true,
       reachabilityImpl,
@@ -1031,6 +1069,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit UFW auto-apply (#4265)", () 
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await expect(
       verifySandboxBridgeGatewayReachableOrExit(false, {
+        gatewayRuntime: podmanGatewayRuntime,
         autoApplyImpl,
         autoApplyOptedInImpl: () => true,
         reachabilityImpl,
@@ -1047,6 +1086,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit UFW auto-apply (#4265)", () 
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await expect(
       verifySandboxBridgeGatewayReachableOrExit(false, {
+        gatewayRuntime: podmanGatewayRuntime,
         autoApplyImpl: () => ({ applied: false, reason: "ufw_inactive" }),
         autoApplyOptedInImpl: () => true,
         reachabilityImpl: () => tcpFailure,

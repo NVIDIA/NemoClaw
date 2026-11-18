@@ -6,6 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createCliOpenShellProviderAdapter, type RunProviderCommand } from "./provider-adapter-cli";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
 
+function inventory(providers: unknown[], nextPageToken = ""): string {
+  return JSON.stringify({ providers, next_page_token: nextPageToken });
+}
+
 function captured(status: number | null, stdout = "", stderr = "") {
   return { status, stdout, stderr };
 }
@@ -26,7 +30,7 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
       .mockReturnValueOnce(
         captured(
           0,
-          JSON.stringify([
+          inventory([
             {
               name: "other-provider",
               credential_keys: ["OTHER_API_KEY"],
@@ -68,10 +72,10 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
         "list",
         "-g",
         "nemoclaw-18080",
-        "--limit",
+        "--page-size",
         "1000",
-        "--offset",
-        "0",
+        "--page-token",
+        "",
         "--output",
         "json",
       ],
@@ -90,7 +94,7 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
       .mockReturnValueOnce(
         captured(
           1,
-          JSON.stringify([
+          inventory([
             {
               name: "search-prod",
               credentials: { TAVILY_API_KEY: credentialValue },
@@ -118,15 +122,15 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
   });
 
   it("finds a requested provider beyond the first inventory page", async () => {
-    const page = Array.from({ length: 1000 }, (_, index) => ({ name: `other-${index}` }));
+    const page = [{ name: "other-provider" }];
     const run = vi
       .fn<RunProviderCommand>()
       .mockReturnValueOnce(captured(0, PROVIDER_GET_OUTPUT))
-      .mockReturnValueOnce(captured(0, JSON.stringify(page)))
+      .mockReturnValueOnce(captured(0, inventory(page, "next-page")))
       .mockReturnValueOnce(
         captured(
           0,
-          JSON.stringify([
+          inventory([
             {
               name: "search-prod",
               credential_keys: ["TAVILY_API_KEY"],
@@ -147,10 +151,10 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
     expect(run.mock.calls[2][0]).toEqual([
       "provider",
       "list",
-      "--limit",
+      "--page-size",
       "1000",
-      "--offset",
-      "1000",
+      "--page-token",
+      "next-page",
       "--output",
       "json",
     ]);
@@ -163,7 +167,7 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
       .mockReturnValueOnce(
         captured(
           0,
-          JSON.stringify([
+          inventory([
             {
               name: "search-prod",
               credential_keys: ["OTHER_API_KEY"],
@@ -189,10 +193,11 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
   });
 
   it("stops at the bounded inventory limit when the provider cannot be found", async () => {
+    let pageNumber = 0;
     const page = Array.from({ length: 1000 }, (_, index) => ({ name: `other-${index}` }));
     const run = vi
       .fn<RunProviderCommand>()
-      .mockReturnValue(captured(0, JSON.stringify(page)))
+      .mockImplementation(() => captured(0, inventory(page, `page-${++pageNumber}`)))
       .mockReturnValueOnce(captured(0, PROVIDER_GET_OUTPUT));
     const result = await createCliOpenShellProviderAdapter({ run }).getProvider({
       target: selectedOpenShellGateway(),
@@ -208,17 +213,37 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
     expect(run).toHaveBeenCalledTimes(11);
   });
 
+  it("rejects a repeated continuation token", async () => {
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValue(captured(0, inventory([], "same-page")))
+      .mockReturnValueOnce(captured(0, PROVIDER_GET_OUTPUT));
+    const result = await createCliOpenShellProviderAdapter({ run }).getProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+      includeCredentialExpirations: true,
+    });
+    expect(result).toMatchObject({ ok: false, error: { kind: "schema" } });
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+
   it.each([
+    ["legacy unpaginated output", JSON.stringify([{ name: "search-prod", credential_keys: [] }])],
+    ["missing continuation token", JSON.stringify({ providers: [] })],
+    ["invalid continuation token", JSON.stringify({ providers: [], next_page_token: 1 })],
+    ["oversized continuation token", inventory([], "a".repeat(4097))],
+    ["NUL in continuation token", inventory([], "bad\0token")],
+    ["missing target on the last page", inventory([{ name: "other-provider" }])],
     [
       "duplicate target",
-      JSON.stringify([
+      inventory([
         { name: "search-prod", credential_keys: [], credential_expires_at_ms: {} },
         { name: "search-prod", credential_keys: [], credential_expires_at_ms: {} },
       ]),
     ],
     [
       "invalid credential keys",
-      JSON.stringify([
+      inventory([
         {
           name: "search-prod",
           credential_keys: "TAVILY_API_KEY",
@@ -228,7 +253,7 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
     ],
     [
       "unsafe credential key",
-      JSON.stringify([
+      inventory([
         {
           name: "search-prod",
           credential_keys: ["TAVILY_API_KEY"],
@@ -238,7 +263,7 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
     ],
     [
       "unsafe expiry timestamp",
-      JSON.stringify([
+      inventory([
         {
           name: "search-prod",
           credential_keys: ["TAVILY_API_KEY"],
@@ -248,7 +273,7 @@ describe("CLI OpenShell provider credential expiration metadata", () => {
     ],
     [
       "out-of-range expiry timestamp",
-      JSON.stringify([
+      inventory([
         {
           name: "search-prod",
           credential_keys: ["TAVILY_API_KEY"],

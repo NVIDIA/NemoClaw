@@ -3,57 +3,38 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initializeNativeProviderPolicy, requireNativeProviderPolicy } from "./provider-policy";
-
 import type { OpenShellProviderAdapter, OpenShellProviderMetadata } from "./provider-adapter";
 import { ensureNativeLocalProvider } from "../../inference/native-local/profile";
-import { redactOnboardErrorText } from "../../onboard/diagnostics/redaction";
-
-import { fixture } from "./provider-policy.test-support";
+import { absentPolicy, fixture } from "./provider-policy.test-support";
 
 afterEach(() => vi.unstubAllEnvs());
 describe("native provider policy prerequisites", () => {
-  it("reads the named existing gateway without changing its settings (#12558)", async () => {
-    const run = fixture();
-    await requireNativeProviderPolicy("selected", run);
-    expect(run.mock.calls.map(([args]) => args)).toEqual([
-      ["settings", "get", "-g", "selected", "--global", "--json"],
-      ["policy", "list", "-g", "selected", "--global", "--limit", "1"],
-    ]);
-  });
-  it.each(["false", "<unset>"])(
-    "refuses %s composition without writing (#12558)",
-    async (value) => {
-      const run = fixture(value);
-      await expect(requireNativeProviderPolicy("selected", run)).rejects.toThrow(
-        /administrator.*enable composition/,
-      );
-      expect(run.mock.calls.every(([args]) => args[1] === "get")).toBe(true);
+  it.each([requireNativeProviderPolicy, initializeNativeProviderPolicy])(
+    "verifies the named gateway without changing settings",
+    async (check) => {
+      const run = fixture();
+      await check("selected", run);
+      expect(run.mock.calls.map(([args]) => args)).toEqual([
+        ["policy", "list", "-g", "selected", "--global", "--page-size", "1", "--output", "json"],
+      ]);
     },
   );
-  it("keeps the full recovery command visible after onboard line bounding (#13540)", async () => {
-    const gatewayName = "g".repeat(19);
-    const run = fixture("<unset>");
-    const error = await requireNativeProviderPolicy(gatewayName, run).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(Error);
-    const displayed = redactOnboardErrorText((error as Error).message);
-    expect(displayed).toContain(
-      `openshell settings set -g ${gatewayName} --global --key providers_v2_enabled --value true --yes`,
-    );
-    expect(displayed).toContain("Then retry.");
-  });
-  it("refuses an active global override even when composition is enabled (#12558)", async () => {
-    const run = fixture("true", {
-      status: 0,
-      stdout: JSON.stringify({ scope: "global", status: "loaded" }),
-      stderr: "",
-    });
-    await expect(requireNativeProviderPolicy("selected", run)).rejects.toThrow(
-      /global policy override/,
-    );
-    expect(run.mock.calls.map(([args]) => args[1])).toEqual(["get", "list", "get"]);
-  });
-  it("accepts deleted global policy history (#12558)", async () => {
-    const run = fixture("true", {
+  it.each(["loaded", "pending", "failed", "unspecified"])(
+    "refuses a global override with status %s",
+    async (status) => {
+      const run = fixture({
+        status: 0,
+        stdout: JSON.stringify({ scope: "global", status }),
+        stderr: "",
+      });
+      await expect(requireNativeProviderPolicy("selected", run)).rejects.toThrow(
+        /global policy override/,
+      );
+      expect(run.mock.calls.map(([args]) => args[1])).toEqual(["list", "get"]);
+    },
+  );
+  it("accepts deleted global policy history", async () => {
+    const run = fixture({
       status: 0,
       stdout: JSON.stringify({ scope: "global", status: "superseded" }),
       stderr: "",
@@ -69,117 +50,42 @@ describe("native provider policy prerequisites", () => {
     },
     { status: 1, stdout: "", stderr: "permission denied" },
     { status: null, stdout: "", stderr: "connection lost" },
-  ])(
-    "stops fresh initialization when policy history cannot be verified (#12558)",
-    async (response) => {
-      const run = vi.fn(async () => response);
-      await expect(initializeNativeProviderPolicy("selected", run)).rejects.toThrow(
-        /prerequisites/,
-      );
-      expect(run).toHaveBeenCalledExactlyOnceWith([
-        "policy",
-        "list",
-        "-g",
-        "selected",
-        "--global",
-        "--limit",
-        "1",
-      ]);
-    },
-  );
-  it("does not accept policy history without a verified current revision (#12558)", async () => {
-    const run = fixture();
-    run.mockResolvedValueOnce({
-      status: 0,
-      stdout: "VERSION HASH STATUS CREATED ERROR\n",
-      stderr: "",
-    });
-    await expect(initializeNativeProviderPolicy("selected", run)).rejects.toThrow(/prerequisites/);
-    expect(run.mock.calls.map(([args]) => args[1])).toEqual(["list", "get"]);
-  });
-  it("initializes a fresh gateway once and verifies applied settings (#12558)", async () => {
-    const run = fixture("<unset>");
-    await initializeNativeProviderPolicy("selected", run);
-    expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
-    expect(run.mock.calls.at(-2)?.[0]).toContain("get");
-  });
-  it("reconciles a lost initialization response without another write (#12558)", async () => {
-    const original = fixture();
-    const run = vi.fn(async (args: string[]) =>
-      args[1] === "set" ? { status: null, error: new Error("connection lost") } : original(args),
-    );
-    await expect(initializeNativeProviderPolicy("selected", run)).resolves.toBeUndefined();
-    expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
-  });
-  it("observes the setting after an initialization transport exception (#12558)", async () => {
-    const run = fixture();
-    run.mockResolvedValueOnce({ status: 0, stdout: "", stderr: "No global policy history found" });
-    run.mockRejectedValueOnce(new Error("connection lost"));
-    await expect(initializeNativeProviderPolicy("selected", run)).resolves.toBeUndefined();
-    expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
-  });
-  it.each([
-    { status: 1, stdout: "", stderr: "connection lost" },
     { status: 0, stdout: "{broken", stderr: "" },
     { status: 0, stdout: "[]", stderr: "" },
-  ])("rejects an unverified gateway response (#12558)", async (response) => {
-    await expect(requireNativeProviderPolicy("selected", async () => response)).rejects.toThrow();
-  });
-  it("continues only after verifying disabled composition and sandbox authority (#12558)", async () => {
-    const original = fixture("false");
-    const run = vi.fn(async (args: string[]) =>
-      args[1] === "set" ? { status: 1, stdout: "", stderr: "unavailable" } : original(args),
-    );
-    await expect(initializeNativeProviderPolicy("selected", run)).resolves.toBe("disabled");
-    expect(run.mock.calls.map(([args]) => args[1])).toEqual(["list", "set", "get", "list"]);
+    { status: 0, stdout: "{}", stderr: "" },
+    { status: 0, stdout: JSON.stringify({ revisions: [], next_page_token: "next" }), stderr: "" },
+    { status: 0, stdout: " ".repeat(65_537), stderr: "" },
+  ])("rejects unverified global policy history", async (response) => {
+    const run = vi.fn(async () => response);
     await expect(requireNativeProviderPolicy("selected", run)).rejects.toThrow(
-      /enable composition/,
+      /prerequisites|policy history|response exceeded/,
     );
-    expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
+    expect(run).toHaveBeenCalledTimes(1);
   });
-  it.each(["<unset>", "", null, false])(
-    "rejects indeterminate composition value %s after initialization (#12558)",
-    async (value) => {
-      const run = fixture();
-      run.mockResolvedValueOnce({
-        status: 0,
-        stdout: "",
-        stderr: "No global policy history found",
-      });
-      run.mockResolvedValueOnce({ status: 1, stdout: "", stderr: "unavailable" });
-      run.mockResolvedValueOnce({
-        status: 0,
-        stdout: JSON.stringify({ scope: "global", settings: { providers_v2_enabled: value } }),
-        stderr: "",
-      });
-      await expect(initializeNativeProviderPolicy("selected", run)).rejects.toThrow(
-        /Could not verify/,
-      );
-      expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
-    },
-  );
-  it("rejects a policy override introduced during disabled initialization (#12558)", async () => {
-    const run = fixture("false", {
+  it("does not accept history without a verified current revision", async () => {
+    const run = fixture({ status: 1, stdout: "", stderr: "permission denied" });
+    await expect(requireNativeProviderPolicy("selected", run)).rejects.toThrow(/prerequisites/);
+    expect(run.mock.calls.map(([args]) => args[1])).toEqual(["list", "get"]);
+  });
+  it("rejects a superseded revision from another scope", async () => {
+    const run = fixture({
       status: 0,
-      stdout: JSON.stringify({ scope: "global", status: "loaded" }),
+      stdout: JSON.stringify({ scope: "sandbox", status: "superseded" }),
       stderr: "",
     });
-    run.mockResolvedValueOnce({ status: 0, stdout: "", stderr: "No global policy history found" });
-    run.mockResolvedValueOnce({ status: 1, stdout: "", stderr: "unavailable" });
-    await expect(initializeNativeProviderPolicy("selected", run)).rejects.toThrow(
+    await expect(requireNativeProviderPolicy("selected", run)).rejects.toThrow(
       /global policy override/,
     );
-    expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
   });
-  it("keeps an unreadable post-write state fatal (#12558)", async () => {
-    const run = fixture();
-    run.mockResolvedValueOnce({ status: 0, stdout: "", stderr: "No global policy history found" });
-    run.mockRejectedValueOnce(new Error("lost response"));
-    run.mockResolvedValueOnce({ status: 1, stdout: "", stderr: "unreachable" });
-    await expect(initializeNativeProviderPolicy("selected", run)).rejects.toThrow(/prerequisites/);
-    expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
+  it("requires successful transport even when the history payload appears empty", async () => {
+    await expect(
+      requireNativeProviderPolicy("selected", async () => ({
+        ...absentPolicy,
+        error: new Error("lost response"),
+      })),
+    ).rejects.toThrow(/prerequisites/);
   });
-  it("rejects an ambient endpoint override before any command (#12558)", async () => {
+  it("rejects an ambient endpoint override before any command", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://another.example:443");
     const run = fixture();
     await expect(requireNativeProviderPolicy("selected", run)).rejects.toThrow();
@@ -188,8 +94,14 @@ describe("native provider policy prerequisites", () => {
 });
 
 // Native local callers verify policy prerequisites without taking ownership of settings.
-function nativeLocalPolicyFixture(enabled: "true" | "false") {
-  const policyCommand = fixture(enabled);
+function nativeLocalPolicyFixture(override: boolean) {
+  const policyCommand = override
+    ? fixture({
+        status: 0,
+        stdout: JSON.stringify({ scope: "global", status: "loaded" }),
+        stderr: "",
+      })
+    : fixture();
   let provider: OpenShellProviderMetadata | undefined;
   const providerAdapter = {
     importProviderProfile: vi.fn(async () => ({ ok: true })),
@@ -228,15 +140,15 @@ function nativeLocalPolicyFixture(enabled: "true" | "false") {
   return { action, providerAdapter, policyCommand };
 }
 
-it("keeps enabled native-local composition read-only (#12558)", async () => {
-  const { action, providerAdapter, policyCommand } = nativeLocalPolicyFixture("true");
+it("keeps native-local composition read-only (#12558)", async () => {
+  const { action, providerAdapter, policyCommand } = nativeLocalPolicyFixture(false);
   await expect(action).resolves.toMatchObject({ sandboxName: "alice" });
   expect(providerAdapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
   expect(policyCommand.mock.calls.some(([args]) => args.includes("set"))).toBe(false);
 });
 
-it("rejects disabled native-local composition without activating it (#12558)", async () => {
-  const { action, providerAdapter, policyCommand } = nativeLocalPolicyFixture("false");
+it("rejects global policy override before native-local provider mutation (#12558)", async () => {
+  const { action, providerAdapter, policyCommand } = nativeLocalPolicyFixture(true);
   await expect(action).rejects.toThrow("administrator");
   expect(providerAdapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
   expect(policyCommand.mock.calls.some(([args]) => args.includes("set"))).toBe(false);

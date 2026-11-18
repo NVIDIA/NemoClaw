@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isLegacyModelRouterProvider } from "../../core/model-router-port";
 import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { isProtectedLocalInferencePort } from "../gateway/local-endpoint-ports";
@@ -35,7 +36,10 @@ export async function prepareNativeLocalSelection(input: {
     input.ownedProxy === true &&
     port === OLLAMA_PROXY_PORT &&
     new URL(binding.endpointUrl).hostname === "host.openshell.internal";
-  if (binding.provider === "nvidia-router" || isProtectedLocalInferencePort(port, { ownedProxy })) {
+  if (
+    isLegacyModelRouterProvider(binding.provider) ||
+    isProtectedLocalInferencePort(port, { ownedProxy })
+  ) {
     throw new Error(
       "The selected local inference endpoint is unavailable or uses a protected host port.",
     );

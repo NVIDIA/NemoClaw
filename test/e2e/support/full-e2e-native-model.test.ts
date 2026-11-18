@@ -112,3 +112,17 @@ it("retains a custom native endpoint and opaque credential reference through a m
     models: [{ id: "team/model", name: "team/model" }],
   });
 });
+
+it("retains the local endpoint and runtime credential through a model edit", () => {
+  const fixture = buildNativeModelRestartFixture(
+    "team/model",
+    "compatible-endpoint",
+    "http://host.openshell.internal:42103/v1",
+  );
+  expect(JSON.parse(fixture.patch).models.providers[fixture.provider]).toMatchObject({
+    baseUrl: "http://host.openshell.internal:42103/v1",
+    apiKey: "${NEMOCLAW_LOCAL_INFERENCE_TOKEN}",
+    api: "openai-completions",
+    models: [{ id: "team/model", name: "team/model" }],
+  });
+});

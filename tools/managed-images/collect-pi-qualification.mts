@@ -56,6 +56,110 @@ function requireCurrentPr(value: unknown, expected: Expectation): void {
   }
 }
 
+function completeRecords(value: unknown, key: "jobs" | "artifacts"): RecordValue[] {
+  const page = record(value);
+  if (
+    !Array.isArray(page[key]) ||
+    page.total_count !== page[key].length ||
+    page[key].length > 100
+  ) {
+    throw new Error(`Pi publication ${key} listing is incomplete`);
+  }
+  return page[key].map(record);
+}
+
+function publicationTime(value: unknown): number {
+  return typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value)
+    ? Date.parse(value)
+    : Number.NaN;
+}
+
+function successfulJob(
+  jobs: RecordValue[],
+  name: string,
+  run: { id: number; attempt: number; headSha: string },
+): RecordValue {
+  const matches = jobs.filter((job) => job.name === name);
+  const job = matches[0];
+  if (
+    matches.length !== 1 ||
+    !job ||
+    job.run_id !== run.id ||
+    job.run_attempt !== run.attempt ||
+    job.head_sha !== run.headSha ||
+    job.status !== "completed" ||
+    job.conclusion !== "success" ||
+    !Number.isSafeInteger(job.id) ||
+    Number(job.id) < 1 ||
+    !Number.isSafeInteger(job.runner_id) ||
+    Number(job.runner_id) < 1 ||
+    !Number.isFinite(publicationTime(job.started_at)) ||
+    !Number.isFinite(publicationTime(job.completed_at)) ||
+    publicationTime(job.completed_at) < publicationTime(job.started_at)
+  )
+    throw new Error("Pi publication needs one successful matching producer job");
+  return job;
+}
+
+async function piArtifactSelection(
+  run: { id: number; attempt: number; headSha: string },
+  request: Request,
+) {
+  const runPath = `/repos/${REPOSITORY}/actions/runs/${run.id}`;
+  const jobs = completeRecords(await request(`${runPath}/jobs?filter=latest&per_page=100`), "jobs");
+  const names = [
+    "Record managed image publication identity",
+    ...ARCHITECTURES.map((arch) => `Build and validate the Pi candidate managed image (${arch})`),
+  ];
+  const producers = names.map((name) => successfulJob(jobs, name, run));
+  const artifacts = completeRecords(
+    await request(`${runPath}/artifacts?per_page=100`),
+    "artifacts",
+  );
+  const selected = ARCHITECTURES.map((arch, index) => {
+    const job = producers[index + 1]!;
+    const pattern = new RegExp(
+      `^managed-candidate-contract-${run.id}-([1-9][0-9]*)-pi-${arch}$`,
+      "u",
+    );
+    const matches = artifacts.filter(
+      (artifact) =>
+        pattern.test(String(artifact.name)) &&
+        publicationTime(artifact.created_at) >= publicationTime(job.started_at) &&
+        publicationTime(artifact.created_at) <= publicationTime(job.completed_at),
+    );
+    if (matches.length !== 1) throw new Error("Pi producer artifact is missing or ambiguous");
+    const artifact = matches[0]!;
+    const attempt = positiveInteger(Number(pattern.exec(String(artifact.name))![1]));
+    if (attempt > run.attempt) throw new Error("Pi artifact attempt is newer than qualification");
+    return { artifact, attempt };
+  });
+  const attempt = selected[0]!.attempt;
+  if (selected.some((entry) => entry.attempt !== attempt)) {
+    throw new Error("Pi receipts must come from one producer attempt");
+  }
+  if (attempt !== run.attempt) {
+    // GitHub copies retained jobs into the rerun with new IDs and run_attempt.
+    // Bind their unchanged executions to the original successful producer jobs.
+    const original = completeRecords(
+      await request(`${runPath}/attempts/${attempt}/jobs?per_page=100`),
+      "jobs",
+    );
+    names.forEach((name, index) => {
+      const source = successfulJob(original, name, { ...run, attempt });
+      if (
+        ["started_at", "completed_at", "runner_id"].some(
+          (key) => source[key] !== producers[index]![key],
+        )
+      ) {
+        throw new Error("Pi producer execution changed during qualification");
+      }
+    });
+  }
+  return { attempt, artifacts: selected.map((entry) => entry.artifact) };
+}
+
 /** Collect both immutable receipts without changing checkout files or granting runtime authority. */
 export async function collectPiQualification(
   expected: Expectation,
@@ -88,14 +192,15 @@ export async function collectPiQualification(
     return run;
   };
   const run = await readRun();
+  const selected = await piArtifactSelection(run, request);
   const receipts: Record<string, string> = {};
   const digests: string[] = [];
   const releases = new Set<string>();
-  for (const architecture of ARCHITECTURES) {
-    const name = `managed-candidate-contract-${run.id}-${run.attempt}-pi-${architecture}`;
+  for (const [index, architecture] of ARCHITECTURES.entries()) {
+    const name = `managed-candidate-contract-${run.id}-${selected.attempt}-pi-${architecture}`;
     const identity = bindNamedExactArtifact(
-      await request(`${runPath}/artifacts?name=${name}&per_page=100`),
-      { headSha: run.headSha, runId: run.id, runAttempt: run.attempt },
+      { total_count: 1, artifacts: [selected.artifacts[index]] },
+      { headSha: run.headSha, runId: run.id, runAttempt: selected.attempt },
       name,
     );
     const archive = await download(identity);
@@ -118,7 +223,7 @@ export async function collectPiQualification(
     if (
       contract.agent !== "pi" ||
       contract.source.revision !== expected.candidateSha ||
-      contract.source.cohort !== `ghrun-${run.id}-${run.attempt}`
+      contract.source.cohort !== `ghrun-${run.id}-${selected.attempt}`
     ) {
       throw new Error("Pi receipt does not match the publication commit and attempt");
     }

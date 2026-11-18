@@ -70,12 +70,6 @@ export function parseTomlString(toml: string, key: string): string {
   return match?.[1] ?? "";
 }
 
-export function parseTomlInteger(toml: string, key: string): number {
-  const match = toml.match(new RegExp(`^${key} = (\\d+)$`, "m"));
-  expect(match, `missing TOML integer key ${key}`).not.toBeNull();
-  return Number(match?.[1] ?? "0");
-}
-
 export function jwtBundlePaths(stateDir: string): JwtBundlePaths {
   return {
     signingKeyPath: path.join(stateDir, "jwt", "signing.pem"),

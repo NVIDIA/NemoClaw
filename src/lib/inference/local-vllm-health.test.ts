@@ -54,12 +54,7 @@ describe("recorded bearerless vLLM health ports", () => {
     (owned) => {
       const recordedPort = VLLM_PORT === 18080 ? 18081 : 18080;
       inspectBearerlessVllmBindings(
-        owned
-          ? [
-              { HostIp: "127.0.0.1", HostPort: String(recordedPort) },
-              { HostIp: "172.18.0.1", HostPort: String(recordedPort) },
-            ]
-          : null,
+        owned ? [{ HostIp: "127.0.0.1", HostPort: String(recordedPort) }] : null,
       );
       const probedEndpoints: string[] = [];
       const result = probeLocalProviderHealth("vllm-local", {
@@ -114,10 +109,7 @@ describe("recorded bearerless vLLM health ports", () => {
   ])(
     "keeps the configured local vLLM port when the recorded route has $reason",
     ({ endpoint: recordedEndpointUrl }) => {
-      inspectBearerlessVllmBindings([
-        { HostIp: "127.0.0.1", HostPort: String(VLLM_PORT) },
-        { HostIp: "172.18.0.1", HostPort: String(VLLM_PORT) },
-      ]);
+      inspectBearerlessVllmBindings([{ HostIp: "127.0.0.1", HostPort: String(VLLM_PORT) }]);
       const result = probeLocalProviderHealth("vllm-local", {
         recordedEndpointUrl,
         runCurlProbeImpl: () => ({

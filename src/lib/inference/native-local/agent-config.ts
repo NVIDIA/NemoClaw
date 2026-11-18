@@ -44,6 +44,7 @@ export function nativeLocalCredentialReference(
   provider: string | null | undefined,
   endpointUrl: string,
   agentName?: string | null,
+  _runtimeCredentialHandle?: string,
 ): string | null {
   if (
     !["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"].includes(
@@ -69,8 +70,9 @@ export const NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN =
   "^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN$";
 
 export const NATIVE_LOCAL_AUTH_HEADER_SCRIPT = [
-  'case "${NEMOCLAW_LOCAL_INFERENCE_TOKEN:-}" in *[!a-zA-Z0-9:_]*) exit 2 ;; esac',
-  `printf '%s' "\${NEMOCLAW_LOCAL_INFERENCE_TOKEN:-}" | LC_ALL=C grep -Eq '${NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN}' || exit 2`,
+  'if [ -z "${NEMOCLAW_LOCAL_INFERENCE_TOKEN:-}" ]; then printf "%s\\n" NEMOCLAW_NATIVE_PROVIDER_HANDLE_MISSING >&2; exit 2; fi',
+  'case "$NEMOCLAW_LOCAL_INFERENCE_TOKEN" in *[!a-zA-Z0-9:_]*) printf "%s\\n" NEMOCLAW_NATIVE_PROVIDER_HANDLE_INVALID >&2; exit 2 ;; esac',
+  `printf '%s' "$NEMOCLAW_LOCAL_INFERENCE_TOKEN" | LC_ALL=C grep -Eq '${NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN}' || { printf "%s\\n" NEMOCLAW_NATIVE_PROVIDER_HANDLE_INVALID >&2; exit 2; }`,
   'AUTH_HEADER="Authorization: Bearer ${NEMOCLAW_LOCAL_INFERENCE_TOKEN}"',
 ].join("; ");
 

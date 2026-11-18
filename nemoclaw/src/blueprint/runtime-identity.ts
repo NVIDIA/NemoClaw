@@ -37,11 +37,10 @@ const RUNTIME_IDENTITY_REFRESH_STATUSES = new Set([
   "refreshed",
   "rotation_requested",
 ]);
-const MAX_SETTINGS_OUTPUT_BYTES = 16 * 1024;
+const MAX_POLICY_OUTPUT_BYTES = 16 * 1024;
 const MAX_PROFILE_BYTES = 64 * 1024;
 const MAX_PROFILE_ENDPOINTS = 32;
 const MAX_DESTINATION_URL_LENGTH = 2048;
-const PROVIDERS_V2_SETTING = "providers_v2_enabled";
 const RUNTIME_IDENTITY_BINARIES = Object.freeze([
   "/usr/local/bin/node",
   "/usr/bin/node",
@@ -437,6 +436,22 @@ function parseRuntimeIdentityProfile(
         if (!isPlainObject(credential.refresh) || !Array.isArray(credential.refresh.material)) {
           continue;
         }
+        // OpenShell 0.1.3 exports protobuf durations instead of legacy seconds.
+        // Only whole-second values can match the reviewed imported profile.
+        for (const field of ["refresh_before", "max_lifetime"]) {
+          if (!(field in credential.refresh)) continue;
+          const duration = credential.refresh[field];
+          const secondsField = `${field}_seconds`;
+          if (
+            typeof duration !== "string" ||
+            !/^[1-9][0-9]*s$/u.test(duration) ||
+            secondsField in credential.refresh
+          ) {
+            throw new Error(`${label} has an unsupported refresh duration`);
+          }
+          credential.refresh[secondsField] = Number(duration.slice(0, -1));
+          delete credential.refresh[field];
+        }
         for (const material of credential.refresh.material) {
           if (
             isPlainObject(material) &&
@@ -775,31 +790,41 @@ function requiredEnvironmentValue(
 }
 
 async function requireProviderDerivedPolicy(deps: RuntimeIdentityCommandDeps): Promise<void> {
-  const result = await deps.run(["openshell", "settings", "get", "--global", "--json"]);
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `Failed to inspect OpenShell provider-policy prerequisite: ${deps.formatError(commandOutput(result))}`,
-    );
-  }
-
-  let enabled = false;
-  if (Buffer.byteLength(result.stdout, "utf8") <= MAX_SETTINGS_OUTPUT_BYTES) {
-    try {
-      const document: unknown = JSON.parse(result.stdout);
-      enabled =
-        isPlainObject(document) &&
-        isPlainObject(document.settings) &&
-        document.settings[PROVIDERS_V2_SETTING] === "true";
-    } catch {
-      enabled = false;
+  const read = async (args: string[]) => {
+    const result = await deps.run(["openshell", "policy", ...args]);
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Failed to inspect OpenShell provider-policy prerequisite: ${deps.formatError(commandOutput(result))}`,
+      );
     }
+    if (Buffer.byteLength(result.stdout, "utf8") <= MAX_POLICY_OUTPUT_BYTES) {
+      try {
+        const document: unknown = JSON.parse(result.stdout);
+        if (isPlainObject(document)) return document;
+      } catch {
+        /* Reject incomplete or incompatible policy responses. */
+      }
+    }
+    throw new Error("OpenShell returned invalid provider-policy prerequisites.");
+  };
+  // OpenShell 0.1.3 composes providers automatically unless a global policy overrides them.
+  const history = await read(["list", "--global", "--page-size", "1", "--output", "json"]);
+  if (
+    !Array.isArray(history.revisions) ||
+    history.revisions.length > 1 ||
+    typeof history.next_page_token !== "string"
+  )
+    throw new Error("OpenShell returned invalid global policy history.");
+  if (history.revisions.length === 0) {
+    if (history.next_page_token !== "")
+      throw new Error("OpenShell returned incomplete global policy history.");
+    return;
   }
-  if (!enabled) {
-    throw new Error(
-      "Runtime identity requires OpenShell global setting 'providers_v2_enabled=true' " +
-        "so the attached provider's enforced network policy and credential injection are active",
-    );
-  }
+  const policy = await read(["get", "--global", "--output", "json"]);
+  if (policy.scope === "global" && policy.status === "superseded") return;
+  throw new Error(
+    "Runtime identity requires sandbox-owned policy. Ask the gateway administrator to review its global policy override before retrying.",
+  );
 }
 
 export function resolveRuntimeIdentityProfilePath(

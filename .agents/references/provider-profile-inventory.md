@@ -39,7 +39,8 @@ IPv6 endpoints remain excluded. Literal private IPv4 endpoints retain their sing
 
 The dual-stack boundary has a distinct profile and provider identity. Existing IPv4-only receipts
 remain valid for verification and cleanup; resume and rebuild retain their recorded permissions.
-To use IPv6 after upgrading, reselect the local provider with `nemoclaw <sandbox> inference set --provider <provider> --model <model>`.
+For OpenClaw and Hermes, reselect the local provider with `nemoclaw inference set --sandbox <sandbox> --provider <provider> --model <model>` to use IPv6 after upgrading.
+Deep Agents Code and Pi require sandbox recreation to change inference.
 If onboarding has not finished, resume with `nemoclaw onboard --resume`; if it retains the old
 attachment, reselect local inference before retrying the proof. Do not overwrite or delete an
 attached profile to change its permissions. Reselection uses the existing ownership and cleanup

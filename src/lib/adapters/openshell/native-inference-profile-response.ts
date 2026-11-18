@@ -21,7 +21,6 @@ export type NativeProfileBoundary<Id extends string = string> = Readonly<{
   headerName: string;
   host: string;
   port?: number;
-  tls?: "terminate";
   allowedIps?: readonly string[];
   binaries?: readonly string[];
   rules: readonly Readonly<{ method: "GET" | "POST"; path: string }>[];
@@ -104,9 +103,9 @@ function nativeEndpoint(value: unknown, expected: NativeProfileBoundary): boolea
     endpoint.port === (expected.port ?? 443) &&
     emptyArray(endpoint.ports) &&
     endpoint.protocol === "rest" &&
-    endpoint.tls === (expected.tls ?? "") &&
-    endpoint.enforcement === "enforce" &&
-    endpoint.access === "" &&
+    endpoint.tls === 0 &&
+    endpoint.enforcement === 1 &&
+    endpoint.access === 0 &&
     Array.isArray(rules) &&
     rules.length === expected.rules.length &&
     expected.rules.every((rule, index) => nativeRule(rules[index], rule.method, rule.path)) &&
@@ -139,6 +138,7 @@ function nativeBinaries(value: unknown, expected?: readonly string[]): boolean {
       "/usr/bin/node",
       "/opt/hermes/.venv/bin/python",
       "/opt/hermes/.venv/bin/python3",
+      "/usr/bin/python3.13",
       "/opt/venv/bin/python3",
       "/usr/local/bin/curl",
       "/usr/bin/curl",
@@ -165,6 +165,7 @@ export function isManagedNativeProfileResponse<Id extends string>(
     /^[1-9][0-9]*$/u.test(String(revision)) &&
     profile.inferenceCapable === true &&
     profile.discovery === undefined &&
+    (profile.files === undefined || emptyArray(profile.files)) &&
     Array.isArray(credentials) &&
     credentials.length === 1 &&
     nativeCredential(credentials[0], expected) &&
@@ -199,7 +200,10 @@ export function isManagedNativeLocalProfileResponse(
     allowedIps: endpoint.allowed_ips,
     rules: [
       { method: "GET", path: `${url.pathname}/models` },
-      { method: "POST", path: `${url.pathname}/chat/completions` },
+      {
+        method: "POST",
+        path: `${url.pathname}/${binding.api === "openai-responses" ? "responses" : "chat/completions"}`,
+      },
     ],
     binaries: expected.document.binaries,
   });

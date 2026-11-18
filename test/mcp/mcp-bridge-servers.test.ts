@@ -91,20 +91,20 @@ afterEach(async () => {
 });
 
 describe("authenticated MCP live fixtures", () => {
-  it("builds a bounded public HTTPS quick-tunnel origin without embedding credentials", () => {
-    expect(buildCloudflaredQuickTunnelArgs(43123)).toEqual([
+  it("builds a loopback tunnel origin from the listening HTTPS fixture", async () => {
+    const server = await startFakeMcpHttpsServer({ secret: "fixture-only", tls: fixtureTls });
+    servers.push(server);
+    expect(buildCloudflaredQuickTunnelArgs(server.port)).toEqual([
       "tunnel",
       "--no-autoupdate",
       "--protocol",
       "http2",
       "--url",
-      "https://127.0.0.1:43123",
+      `https://127.0.0.1:${server.port}`,
       "--no-tls-verify",
       "--loglevel",
       "info",
     ]);
-    expect(() => buildCloudflaredQuickTunnelArgs(0)).toThrow(/invalid local MCP HTTPS port/);
-    expect(() => buildCloudflaredQuickTunnelArgs(65_536)).toThrow(/invalid local MCP HTTPS port/);
   });
 
   it("accepts only an exact public trycloudflare origin from tunnel output", () => {

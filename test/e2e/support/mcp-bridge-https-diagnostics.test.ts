@@ -8,7 +8,10 @@ import path from "node:path";
 import https from "node:https";
 import net from "node:net";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { startFakeMcpHttpsServer } from "../live/mcp-bridge-servers.ts";
+import {
+  startFakeMcpHttpsServer,
+  withCompatibleMockFailureDiagnostics,
+} from "../live/mcp-bridge-servers.ts";
 import { shouldRetryMcpDiscoveryAfterRestart } from "../live/mcp-bridge-tool-discovery.ts";
 import { createMcpFixtureTls } from "../fixtures/mcp-fixture-tls.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -267,4 +270,55 @@ it.each([
     mkdir.mockRestore();
     fs.rmSync(parent, { recursive: true, force: true });
   }
+});
+
+describe("compatible endpoint diagnostic failures", () => {
+  it("preserves the approval error when the diagnostic snapshot throws", async () => {
+    const failure = new Error("approval failed");
+    const diagnostics = vi.fn(() => {
+      throw new Error("snapshot failed");
+    });
+    const writeJson = vi.fn();
+    const operation = vi.fn().mockRejectedValue(failure);
+    await expect(
+      withCompatibleMockFailureDiagnostics({ diagnostics }, { writeJson }, operation),
+    ).rejects.toBe(failure);
+    expect(operation).toHaveBeenCalledOnce();
+    expect(diagnostics).toHaveBeenCalledOnce();
+    expect(writeJson).not.toHaveBeenCalled();
+  });
+
+  it("bounds stalled persistence and preserves the approval error", async () => {
+    vi.useFakeTimers();
+    const failure = new Error("approval failed");
+    const diagnostics = vi
+      .fn()
+      .mockReturnValue({ receivedCount: 0, retainedLimit: 64, requests: [] });
+    let release!: (value: string) => void;
+    const pending = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    const writeJson = vi.fn().mockReturnValue(pending);
+    const operation = vi.fn().mockRejectedValue(failure);
+    const outcome = withCompatibleMockFailureDiagnostics(
+      { diagnostics },
+      { writeJson },
+      operation,
+    ).catch((error: unknown) => error);
+    const settled = vi.fn();
+    void outcome.then(settled);
+    try {
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(writeJson).toHaveBeenCalledOnce();
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await outcome).toBe(failure);
+      expect(operation).toHaveBeenCalledOnce();
+      expect(diagnostics).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      release("evidence.json");
+      vi.useRealTimers();
+    }
+  });
 });

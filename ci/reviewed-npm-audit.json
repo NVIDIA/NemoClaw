@@ -166,10 +166,10 @@
     }
   ],
   "sourceRegistryPackageReplacement": {
-    "artifactName": "nvidia-openshell-sdk-0.1.5.tgz",
-    "label": "OpenShell TypeScript SDK 0.1.5",
-    "packageSpec": "@nvidia/openshell-sdk@0.1.5",
-    "integrity": "sha512-pqeumlEkIoFko9kL8EmemULuEPGf7dbFz1DXac9mB5H5e0+vGs24T1S+jT/UOtjhYEdmBSR3WjMojBBAyh6lSQ==",
-    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.5/141f111b92761575225e0ae977e1cf86d2c6515e"
+    "artifactName": "nvidia-openshell-sdk-0.1.9.tgz",
+    "label": "OpenShell TypeScript SDK 0.1.9",
+    "packageSpec": "@nvidia/openshell-sdk@0.1.9",
+    "integrity": "sha512-UYv+9YuA+s/JCjg3nzK1EIgxMj/iw1/Unw8J5pGhGYLjO+jXxUqiJdtfiIxS4LOyr1Xhn+3DRUhrf61jXE06yQ==",
+    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.9/99882402cf986d8fe061b852b8262ac55622e5a7"
   }
 }

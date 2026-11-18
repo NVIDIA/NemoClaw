@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isManagedInferenceBaseUrl } from "../../onboard/workload/authority";
-import { matchesRecordedNativeProviderEndpoint } from "../../inference/native-provider/recorded-selection";
+import {
+  matchesRecordedNativeProviderEndpoint,
+  recordedNativeProviderAttachment,
+} from "../../inference/native-provider/recorded-selection";
+import { authorizedNativeLocalAttachment } from "../../inference/native-local/recorded-selection";
+import { recordedRegisteredInferenceProviderAttachment } from "../../inference/selection";
+import type { SandboxEntry } from "../../state/registry/types";
 import type {
   TelemetryAgent,
   TelemetryConfiguration,
@@ -291,6 +297,42 @@ export function unknownModel(
     apiFamily: "unknown",
     apiStatus: status,
   };
+}
+
+/**
+ * Native providers are attached to the sandbox and leave the shared gateway route unset, so the
+ * recorded selection is the current route, as in `inference get`. Undefined means no attachment.
+ */
+export function projectRecordedNativeInferenceRoute(entry: SandboxEntry, gatewayName: string) {
+  const local = entry.nativeLocalProviderAttachment;
+  let valid = false;
+  try {
+    if (entry.registeredInferenceProviderAttachment !== undefined) {
+      const binding = recordedRegisteredInferenceProviderAttachment(entry);
+      valid = binding?.gatewayName === gatewayName;
+    } else {
+      if (local === undefined && !recordedNativeProviderAttachment(entry)) return undefined;
+      // The same validation as `inference get`, so both report one route authority.
+      valid = local === undefined || !!authorizedNativeLocalAttachment(entry, gatewayName);
+    }
+  } catch {
+    /* An invalid recorded attachment is reported as a route collection error. */
+  }
+  return valid && entry.provider && entry.model
+    ? {
+        ok: true as const,
+        value: {
+          state: "configured" as const,
+          route: { provider: entry.provider, model: entry.model },
+        },
+      }
+    : {
+        ok: false as const,
+        error: {
+          kind: "validation" as const,
+          message: "Invalid recorded native inference selection.",
+        },
+      };
 }
 
 /** Current gateway routing is observed independently of configured native agent defaults. */

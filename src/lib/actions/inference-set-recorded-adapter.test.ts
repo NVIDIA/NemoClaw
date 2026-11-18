@@ -10,6 +10,7 @@ import {
   createCompatibleProviderCapture,
   createDeps,
   HERMES_TARGET,
+  nativeLocalTestReceipt,
 } from "../../../test/helpers/inference-set";
 
 const ADAPTER_URL = buildHttpsPinRouteBaseUrl("a".repeat(64));
@@ -75,6 +76,14 @@ function recordedRouteDeps(
       gatewayName: GATEWAY_NAME,
       gatewayPort: 18085,
       ...metadata,
+      ...(agent === "hermes"
+        ? {
+            nativeLocalProviderAttachment: nativeLocalTestReceipt(route.provider, endpointUrl, {
+              agent: "hermes",
+              gatewayName: GATEWAY_NAME,
+            }),
+          }
+        : {}),
     },
     session: baseSession({
       agent,
@@ -117,6 +126,12 @@ describe("recorded compatible adapter model changes", () => {
   it("verifies a reused Hermes adapter before writing its model configuration (#13095)", async () => {
     const route = PROVIDERS[0];
     const deps = recordedRouteDeps(route, ADAPTER_URL, "hermes");
+    const attachment = deps.getSandbox("alpha")!.nativeLocalProviderAttachment!;
+    vi.spyOn(deps, "prepareNativeLocalSwitch").mockResolvedValue({
+      receipt: attachment,
+      changed: false,
+      previousDetached: false,
+    });
 
     await expect(
       runInferenceSet({ provider: route.provider, model: TARGET_MODEL }, deps),
@@ -133,8 +148,10 @@ describe("recorded compatible adapter model changes", () => {
       provider: route.provider,
       model: TARGET_MODEL,
       preferredInferenceApi: route.inferenceApi,
-      nativeLocalProviderAttachment: undefined,
-      nativeEndpointUrl: undefined,
+      nativeProvider: true,
+      registeredInferenceProviderAttachment: undefined,
+      nativeLocalProviderAttachment: attachment,
+      nativeEndpointUrl: ADAPTER_URL,
     });
     expect(deps.calls.probeSandboxRoute.mock.invocationCallOrder[0]).toBeLessThan(
       deps.calls.writeSandboxConfig.mock.invocationCallOrder[0],
@@ -142,7 +159,14 @@ describe("recorded compatible adapter model changes", () => {
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       HERMES_TARGET,
-      expect.objectContaining({ model: expect.objectContaining({ default: TARGET_MODEL }) }),
+      expect.objectContaining({
+        model: expect.objectContaining({
+          default: TARGET_MODEL,
+          base_url: ADAPTER_URL,
+          api_key: "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        }),
+      }),
+      { deferReload: true, gatewayName: GATEWAY_NAME },
     );
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",

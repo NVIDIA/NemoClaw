@@ -101,15 +101,27 @@ describe("runtime shared gateway route containment", () => {
     const deps = createDeps({
       config: {},
       entries: [
-        entry("alpha", { provider: "nvidia-nim", model: "router/model-a" }),
-        entry("stopped-peer", { provider: "nvidia-nim", model: "router/model-a" }),
+        entry("alpha", {
+          provider: "compatible-endpoint",
+          model: "router/model-a",
+          endpointUrl: "http://192.168.50.22:8000/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-completions",
+        }),
+        entry("stopped-peer", {
+          provider: "compatible-endpoint",
+          model: "router/model-a",
+          endpointUrl: "http://192.168.50.22:8000/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-completions",
+        }),
       ],
       defaultSandbox: "alpha",
     });
 
     await expect(
       runInferenceSet(
-        { provider: "nvidia-nim", model: "router/model-b", sandboxName: "alpha" },
+        { provider: "compatible-endpoint", model: "router/model-b", sandboxName: "alpha" },
         deps,
       ),
     ).resolves.toMatchObject({ sandboxName: "alpha", model: "router/model-b" });
@@ -121,7 +133,7 @@ describe("runtime shared gateway route containment", () => {
         "-g",
         "nemoclaw",
         "--provider",
-        "nvidia-nim",
+        "compatible-endpoint",
         "--model",
         "router/model-b",
       ],
@@ -135,7 +147,9 @@ describe("runtime shared gateway route containment", () => {
       message.includes("Setting OpenShell inference route"),
     );
     expect(warningIndex).toBeGreaterThanOrEqual(0);
-    expect(messages[warningIndex]).toContain("'stopped-peer' (nvidia-nim / router/model-a)");
+    expect(messages[warningIndex]).toContain(
+      "'stopped-peer' (compatible-endpoint / router/model-a)",
+    );
     expect(warningIndex).toBeLessThan(mutationIndex);
   });
 
@@ -147,7 +161,10 @@ describe("runtime shared gateway route containment", () => {
         entry("alpha", {
           gatewayName: "nemoclaw-9090",
           gatewayPort: 9090,
-          provider: "nvidia-nim",
+          provider: "compatible-endpoint",
+          endpointUrl: "http://192.168.50.22:8000/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-completions",
           model: "router/model-a",
         }),
         entry("default-gateway-peer"),
@@ -158,7 +175,7 @@ describe("runtime shared gateway route containment", () => {
 
     await expect(
       runInferenceSet(
-        { provider: "nvidia-nim", model: "router/model-b", sandboxName: "alpha" },
+        { provider: "compatible-endpoint", model: "router/model-b", sandboxName: "alpha" },
         deps,
       ),
     ).resolves.toMatchObject({ sandboxName: "alpha", model: "router/model-b" });
@@ -170,7 +187,7 @@ describe("runtime shared gateway route containment", () => {
         "-g",
         "nemoclaw-9090",
         "--provider",
-        "nvidia-nim",
+        "compatible-endpoint",
         "--model",
         "router/model-b",
       ],

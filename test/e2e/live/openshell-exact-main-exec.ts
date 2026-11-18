@@ -26,14 +26,16 @@ type ExactMainChildProofReport = {
 };
 
 export const ENTRYPOINT_CHILD_PROBE = String.raw`import json
+import subprocess
+import sys
 from pathlib import Path
 
 expected_argv = ${JSON.stringify(ENTRYPOINT_ARGV)}
 tls_names = {${SUPERVISOR_TLS_ENV_NAMES.map((name) => JSON.stringify(name)).join(", ")}}
 matches = []
-for proc in Path("/proc").iterdir():
-    if not proc.name.isdigit():
-        continue
+processes = subprocess.run(["docker", "top", sys.argv[1], "-eo", "pid"], check=True, capture_output=True, text=True)
+for pid in processes.stdout.splitlines()[1:]:
+    proc = Path("/proc") / str(int(pid.strip()))
     try:
         argv = [item.decode("utf-8", "strict") for item in (proc / "cmdline").read_bytes().split(b"\0") if item]
     except (OSError, UnicodeDecodeError):
@@ -106,7 +108,7 @@ done
 printf '%s\n' "${CONNECT_CHILD_OK} CapBnd=$cap_bnd"
 exit 0`;
 
-function exactMainDockerContainerId(output: string, sandboxName: string): string {
+export function exactMainDockerContainerId(output: string, sandboxName: string): string {
   const rows = output
     .split(/\r?\n/u)
     .map((line) => line.trim())
@@ -138,14 +140,7 @@ function assertChildProofReport(
   surface: ExactMainChildProofReport["surface"],
 ): void {
   expectExitZero(result, `exact-main ${surface} child security boundary`);
-  let report: ExactMainChildProofReport;
-  try {
-    report = JSON.parse(result.stdout.trim()) as ExactMainChildProofReport;
-  } catch (error) {
-    throw new Error(`exact-main ${surface} child emitted an invalid proof report`, {
-      cause: error,
-    });
-  }
+  const report = JSON.parse(result.stdout.trim()) as ExactMainChildProofReport;
   if (report.surface !== surface) {
     throw new Error(`exact-main child proof reported ${report.surface} instead of ${surface}`);
   }
@@ -188,6 +183,8 @@ export async function assertExactMainChildProcessContracts(
       "label=openshell.ai/managed-by=openshell",
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
       "--format",
       `{{.ID}}\t{{.Names}}\t{{.Label "${OPENSHELL_SANDBOX_ID_LABEL}"}}\t{{.Label "${OPENSHELL_SANDBOX_WORKSPACE_LABEL}"}}`,
     ],
@@ -200,12 +197,11 @@ export async function assertExactMainChildProcessContracts(
   expectExitZero(containers, "exact-main entrypoint container discovery");
   const containerId = exactMainDockerContainerId(containers.stdout, sandboxName);
 
-  // OpenShell makes workload children non-dumpable. Inspect the long-running
-  // entrypoint from the Docker container's root control plane so this proves
-  // that process itself rather than inferring its state from a fresh exec.
+  // Non-dumpable children reject container-root inspection after CapDrop=ALL.
+  // Read the selected container's host PIDs without changing workload privileges.
   const entrypoint = await host.command(
-    "docker",
-    ["exec", "--user", "0", containerId, "python3", "-c", ENTRYPOINT_CHILD_PROBE],
+    "sudo",
+    ["-n", "python3", "-c", ENTRYPOINT_CHILD_PROBE, containerId],
     {
       artifactName: "exact-main-entrypoint-child-security-boundary",
       env: buildAvailabilityProbeEnv(),

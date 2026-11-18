@@ -22,6 +22,46 @@ import {
   STABLE_ABSENCE_CHECKS,
 } from "./sandbox-gpu-fallback-constants";
 
+import {
+  DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
+  DOCKER_GPU_PATCH_TIMEOUT_MS,
+} from "./docker-gpu-patch-constants";
+import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
+
+export function requireCompatibilityLifecycleCommand(
+  action: "start" | "stop",
+  sandboxName: string,
+  gatewayName: string,
+  deps: { runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]> },
+): void {
+  const result = deps.runOpenshell(["sandbox", action, "-g", gatewayName, sandboxName], {
+    ignoreError: true,
+    killProcessTreeOnTimeout: true,
+    killSignal: "SIGKILL",
+    suppressOutput: true,
+    // Lifecycle commands wait for a state transition, unlike readiness reads.
+    timeout: action === "stop" ? DOCKER_GPU_PATCH_STOP_TIMEOUT_MS : DOCKER_GPU_PATCH_TIMEOUT_MS,
+  });
+  if (Number(result.status ?? 1) !== 0 || result.error || ("signal" in result && result.signal)) {
+    // Keep native output private while retaining the reason needed to diagnose
+    // a failed cutover. In particular, a timed-out mutation is not a rejection.
+    let outcome = "missing exit status";
+    if (result.error) {
+      outcome =
+        "code" in result.error && result.error.code === "ETIMEDOUT"
+          ? "command timed out"
+          : "process error";
+    } else if ("signal" in result && result.signal) {
+      outcome = "terminated by signal";
+    } else if (Number.isSafeInteger(result.status)) {
+      outcome = `exit status ${result.status}`;
+    }
+    throw new Error(
+      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover (${outcome}).`,
+    );
+  }
+}
+
 export type SandboxGpuCreateFailureStage = "create" | "readiness" | "gpu-proof";
 
 export { getSandboxFailurePhase, hasSandboxListEntry, isSandboxReady };

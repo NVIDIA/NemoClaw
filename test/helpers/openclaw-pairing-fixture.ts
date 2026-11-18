@@ -81,3 +81,83 @@ export function createOpenClawPairingFixture() {
   writeJson(path.join(stateDirectory, "devices", "pending.json"), {});
   return { root, stateDirectory, deviceId, publicKey, privateKeyPem };
 }
+
+export const SQLITE_PAIRING_FIXTURE_SCRIPT = String.raw`
+import json
+import os
+import sqlite3
+import sys
+
+state_dir = sys.argv[1]
+value = json.load(sys.stdin)
+os.umask(0o007)
+sqlite_state_dir = os.path.join(state_dir, 'state')
+os.makedirs(sqlite_state_dir, mode=0o770, exist_ok=True)
+database = os.path.join(sqlite_state_dir, 'openclaw.sqlite')
+connection = sqlite3.connect(database)
+connection.execute('PRAGMA journal_mode = WAL')
+connection.execute('PRAGMA wal_autocheckpoint = 0')
+connection.executescript('''
+CREATE TABLE device_identities (
+  identity_key TEXT PRIMARY KEY, device_id TEXT NOT NULL, public_key_pem TEXT NOT NULL,
+  private_key_pem TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL
+);
+CREATE TABLE device_pairing_paired (
+  device_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, display_name TEXT,
+  operator_label TEXT, platform TEXT, device_family TEXT, client_id TEXT, client_mode TEXT,
+  browser_origin TEXT, role TEXT, roles_json TEXT, scopes_json TEXT,
+  approved_scopes_json TEXT, remote_ip TEXT, tokens_json TEXT, approved_via TEXT,
+  node_surface_json TEXT, pending_node_surface_json TEXT, created_at_ms INTEGER NOT NULL,
+  approved_at_ms INTEGER NOT NULL, last_seen_at_ms INTEGER, last_seen_reason TEXT
+);
+CREATE TABLE device_pairing_pending (
+  request_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, public_key TEXT NOT NULL,
+  display_name TEXT, platform TEXT, device_family TEXT, client_id TEXT, client_mode TEXT,
+  browser_origin TEXT, role TEXT, roles_json TEXT, scopes_json TEXT, remote_ip TEXT,
+  silent INTEGER, is_repair INTEGER, ts INTEGER NOT NULL, refreshed_at_ms INTEGER
+);
+CREATE TABLE device_auth_tokens (
+  device_id TEXT NOT NULL, role TEXT NOT NULL, token TEXT NOT NULL, scopes_json TEXT NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (device_id, role)
+);
+''')
+connection.execute(f"PRAGMA user_version = {value.get('userVersion', 15)}")
+connection.execute(
+  'INSERT INTO device_identities VALUES (?, ?, ?, ?, ?, ?)',
+  ('primary', value['deviceId'], value['publicKeyPem'], value['privateKeyPem'], 1, 1),
+)
+operator = {
+  'operator': {
+    'token': value['token'],
+    'role': 'operator',
+    'scopes': value['pairedTokenScopes'],
+  },
+}
+connection.execute(
+  'INSERT INTO device_pairing_paired VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  (
+    value['deviceId'], value['publicKey'], None, None, None, None, value.get('clientId', 'cli'), value.get('clientMode', 'cli'), None,
+    'operator', json.dumps(['operator']), json.dumps(value['pairedScopes']),
+    json.dumps(value['pairedScopes']), None, json.dumps(operator), None, None, None,
+    1, 1, None, None,
+  ),
+)
+connection.execute(
+  'INSERT INTO device_auth_tokens VALUES (?, ?, ?, ?, ?)',
+  (value['deviceId'], 'operator', value['token'], json.dumps(value['authScopes']), 1),
+)
+for request in value.get('pending') or []:
+  connection.execute(
+    'INSERT INTO device_pairing_pending VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    (
+      request['requestId'], request['deviceId'], request['publicKey'], None, None, None,
+      request.get('clientId'), request.get('clientMode'), None, request.get('role'),
+      json.dumps(request['roles']) if 'roles' in request else None,
+      json.dumps(request['scopes']) if 'scopes' in request else None,
+      None, None, int(request['isRepair']) if 'isRepair' in request else None, 1, None,
+    ),
+  )
+connection.commit()
+os._exit(0)
+`;

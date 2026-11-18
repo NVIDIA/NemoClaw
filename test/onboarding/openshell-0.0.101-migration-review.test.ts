@@ -63,9 +63,9 @@ describe("OpenShell 0.0.101 executable contracts", () => {
         }),
       );
 
-      expect(dockerToml).toContain('compute_drivers = ["docker"]');
+      expect(dockerToml).toContain('compute_driver = "docker"');
       expect(dockerToml).toContain("[openshell.drivers.docker]");
-      expect(podmanToml).toContain('compute_drivers = ["podman"]');
+      expect(podmanToml).toContain('compute_driver = "podman"');
       expect(podmanToml).toContain("[openshell.drivers.podman]");
       expect(podmanToml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
       const toml = ({ Docker: dockerToml, Podman: podmanToml } as const)[scenario]!;

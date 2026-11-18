@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -115,6 +115,52 @@ describe("OpenShell exact-main child contracts", () => {
     }
   });
 
+  it.each([
+    { capBnd: "0000000000000000", tls: false, named: true, success: true },
+    { capBnd: "0000000000000001", tls: false, named: true, success: false },
+    { capBnd: "0000000000000000", tls: true, named: true, success: false },
+    { capBnd: "0000000000000000", tls: false, named: false, success: false },
+  ])("reads only the selected container's entrypoint: %j", ({ capBnd, tls, named, success }) => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-host-proc-"));
+    try {
+      const proc = path.join(directory, "42");
+      mkdirSync(proc);
+      writeFileSync(
+        path.join(proc, "cmdline"),
+        `${named ? "nemoclaw-dcode-entrypoint" : "unrelated"}\0-f\0/dev/null\0`,
+      );
+      writeFileSync(path.join(proc, "status"), `CapBnd:\t${capBnd}\n`);
+      writeFileSync(
+        path.join(proc, "environ"),
+        tls ? "OPENSHELL_TLS_KEY=fixture-secret\0" : "PATH=/usr/bin\0",
+      );
+      const source = ENTRYPOINT_CHILD_PROBE.replace(
+        'Path("/proc")',
+        `Path(${JSON.stringify(directory)})`,
+      );
+      const harness = [
+        "import sys",
+        "from types import SimpleNamespace",
+        "from unittest.mock import patch",
+        "source, container = sys.argv[1:]",
+        "sys.argv = ['entrypoint-proof', container]",
+        "with patch('subprocess.run', return_value=SimpleNamespace(stdout='PID\\n42\\n')) as top:",
+        "    exec(source)",
+        "    top.assert_called_once_with(['docker', 'top', container, '-eo', 'pid'], check=True, capture_output=True, text=True)",
+      ].join("\n");
+      const result = spawnSync("python3", ["-c", harness, source, CONTAINER_ID], {
+        encoding: "utf8",
+      });
+      expect(result.status === 0, result.stderr).toBe(success);
+      expect(result.stdout + result.stderr).not.toContain("fixture-secret");
+      expect(JSON.parse(result.stdout || "null")).toEqual(
+        success ? { capBnd, surface: "entrypoint", supervisorTlsEnvNames: [] } : null,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("proves entrypoint, exec, and NemoClaw connect children", async () => {
     const { command, host, nemoclaw } = fakeHost();
     command
@@ -136,12 +182,19 @@ describe("OpenShell exact-main child contracts", () => {
       "label=openshell.ai/managed-by=openshell",
       "--filter",
       `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
       "--format",
       '{{.ID}}\t{{.Names}}\t{{.Label "openshell.ai/sandbox-id"}}\t{{.Label "openshell.ai/sandbox-workspace"}}',
     ]);
-    expect(command.mock.calls[1]?.[1]).toEqual(
-      expect.arrayContaining(["exec", "--user", "0", CONTAINER_ID, "python3", "-c"]),
-    );
+    expect(command.mock.calls[1]?.[1]).toEqual([
+      "-n",
+      "python3",
+      "-c",
+      ENTRYPOINT_CHILD_PROBE,
+      CONTAINER_ID,
+    ]);
+    expect(command.mock.calls[1]?.[0]).toBe("sudo");
     expect(nemoclaw.mock.calls[0]?.[0]).toEqual(
       expect.arrayContaining([SANDBOX_NAME, "exec", "--", "python3", "-c"]),
     );

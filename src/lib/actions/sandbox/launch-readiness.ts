@@ -79,6 +79,7 @@ import {
   observeOpenClawPairingSettlement,
   OpenClawPairingObservationRetryableError,
   OpenClawPairingQualificationError,
+  type OpenClawPairingObservationFailureCategory,
   type OpenClawPairingObservationFailureReason,
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
@@ -189,6 +190,7 @@ export type LaunchReadinessPublicationResult =
           | "pairing-observation-failed"
           | "pairing-state-incompatible"
           | "runtime-observation-failed";
+        pairingFailureCategory?: OpenClawPairingObservationFailureCategory;
         pairingFailureReason?: OpenClawPairingObservationFailureReason;
         pairingMismatchField?: string;
       };
@@ -845,6 +847,7 @@ async function captureLaunchIdentity(
   const nativeProvider =
     Boolean(getNativeProviderAttachment(entry)) ||
     entry.nativeLocalProviderAttachment !== undefined ||
+    entry.registeredInferenceProviderAttachment !== undefined ||
     entry.hermesSwitchyard !== undefined;
   let liveInference: { provider: string; model: string } | null = null;
   if (!nativeProvider) {
@@ -1528,6 +1531,9 @@ export async function publishLaunchReadiness(
                 kind: "evidence-failed",
                 diagnostic: {
                   stage: "publication-validation",
+                  ...(error instanceof OpenClawPairingQualificationError
+                    ? { pairingFailureCategory: error.failureCategory }
+                    : {}),
                   reason:
                     error instanceof OpenClawPairingIncompatibleError
                       ? "pairing-state-incompatible"

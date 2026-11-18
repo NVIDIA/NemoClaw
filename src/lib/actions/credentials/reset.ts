@@ -29,6 +29,7 @@ import {
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../credentials/store";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import {
+  listRegisteredInferenceProviderAttachmentSandboxNames,
   clearNativeNvidiaProviderAuthority,
   listNativeNvidiaProviderAttachmentSandboxNames,
 } from "../../state/registry/native-provider-authority";
@@ -51,6 +52,7 @@ export type CredentialsResetResult = {
 export type CredentialsResetDeps = Readonly<
   NativeHostedResetDeps & {
     providerAdapter?: OpenShellProviderAdapter;
+    listRegisteredInferenceProviderAttachmentSandboxNames?: typeof listRegisteredInferenceProviderAttachmentSandboxNames;
     clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
     listNativeNvidiaProviderAttachmentSandboxNames?: typeof listNativeNvidiaProviderAttachmentSandboxNames;
     withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
@@ -211,13 +213,28 @@ export async function runCredentialsResetAction(
   if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  if (hostedNativeProvider(key) || isNativeHostedProviderName(key)) {
-    return (deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
-      target.gatewayName,
-      async () => (await resetNativeHostedProvider(key, target, providerAdapter, deps))!,
-    );
-  }
   const resetProvider = async (): Promise<CredentialsResetResult> => {
+    let registeredSandboxes: readonly string[];
+    try {
+      registeredSandboxes = (
+        deps.listRegisteredInferenceProviderAttachmentSandboxNames ??
+        listRegisteredInferenceProviderAttachmentSandboxNames
+      )(target.gatewayName, providerName);
+    } catch {
+      return fail([
+        "Could not inspect registered inference selections. No provider or attachment was changed.",
+      ]);
+    }
+    if (registeredSandboxes.length) {
+      return fail([
+        `Provider '${key}' is recorded by sandbox(es): ${registeredSandboxes.join(", ")}.`,
+        "Switch those sandboxes to another provider or destroy them before resetting this provider.",
+        "No external provider or existing attachment was changed.",
+      ]);
+    }
+    if (hostedNativeProvider(key) || isNativeHostedProviderName(key)) {
+      return (await resetNativeHostedProvider(key, target, providerAdapter, deps))!;
+    }
     if (nativeNvidiaProvider) {
       const blockers = nativeNvidiaResetBlockers(deps, target.gatewayName);
       if (!blockers.ok) {
@@ -269,7 +286,6 @@ export async function runCredentialsResetAction(
     return ok(outcome.lines);
   };
 
-  if (!nativeNvidiaProvider) return resetProvider();
   return (deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
     target.gatewayName,
     resetProvider,

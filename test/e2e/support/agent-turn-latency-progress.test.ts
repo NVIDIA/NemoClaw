@@ -20,7 +20,6 @@ import {
   cleanupTurnSandboxes,
   hermesTurnCommand,
   installSandbox,
-  route,
   turnLatencyInstallAttemptCount,
 } from "../live/agent-turn-latency-helpers.ts";
 
@@ -129,32 +128,6 @@ it.each([
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
-
-it.each(["openclaw", "hermes"] as const)(
-  "reads the %s native route from sandbox status without the host credential",
-  async (agent) => {
-    const calls: Array<{ args: string[]; options: Record<string, unknown> }> = [];
-    const host = {
-      nemoclaw: async (args: string[], options: Record<string, unknown>) => {
-        calls.push({ args, options });
-        return successfulProbe();
-      },
-    } as unknown as HostCliClient;
-
-    await route(host, "e2e-turn-lat", agent, fakeInference(), `${agent}-route`);
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0].args).toEqual(["e2e-turn-lat", "status"]);
-    expect(calls[0].options).toMatchObject({
-      artifactName: `${agent}-route`,
-      env: { NEMOCLAW_SANDBOX_NAME: "e2e-turn-lat" },
-    });
-    expect((calls[0].options.env as NodeJS.ProcessEnv).NEMOCLAW_AGENT).toBe(
-      agent === "hermes" ? "hermes" : undefined,
-    );
-    expect(JSON.stringify(calls[0].options)).not.toContain("secret-api-key");
-  },
-);
 
 describe("live test progress", () => {
   afterEach(() => {

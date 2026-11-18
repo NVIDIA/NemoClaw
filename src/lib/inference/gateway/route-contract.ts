@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getSandboxInferenceConfig, resolveAgentInferenceApi } from "../config";
+import {
+  getSandboxInferenceConfig,
+  resolveAgentInferenceApi,
+  type RegisteredInferenceProviderAttachment,
+} from "../config";
 
 /** Resolve the provider route recorded in one managed startup profile. */
 export function resolveManagedStartupInferenceRoute(
@@ -11,6 +15,7 @@ export function resolveManagedStartupInferenceRoute(
   preferredInferenceApi: string | null,
   nativeProvider = true,
   nativeEndpointUrl?: string | null,
+  registered?: RegisteredInferenceProviderAttachment,
 ) {
   const api =
     agentName === "langchain-deepagents-code"
@@ -23,5 +28,6 @@ export function resolveManagedStartupInferenceRoute(
     nativeProvider,
     nativeEndpointUrl,
     agentName,
+    registered,
   );
 }

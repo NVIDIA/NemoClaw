@@ -559,6 +559,7 @@ export function formatSandboxBridgeUnreachableMessage(
 }
 
 interface SandboxBridgeVerifierOptions {
+  gatewayRuntime?: RuntimeProviderGatewayHostRuntime;
   output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
   skip?: boolean;
   port?: number;
@@ -604,8 +605,16 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
     );
     return;
   }
+  const gatewayRuntime =
+    options.gatewayRuntime ?? observeConfiguredGatewayHostRuntime({ environment: process.env });
+  // The split Docker supervisor uses host networking; its workload has no
+  // network interface. A retained legacy bridge cannot verify this route.
+  if (gatewayRuntime.gatewayConfig.driverConfigLayout === "split-supervisor") return;
   const port = options.port ?? GATEWAY_PORT;
-  const reachability = options.reachabilityImpl ?? isSandboxBridgeGatewayReachable;
+  const reachability =
+    options.reachabilityImpl ??
+    ((probeOptions: { port: number }) =>
+      isSandboxBridgeGatewayReachable({ ...probeOptions, gatewayRuntime }));
   const autoApplyOptedIn = options.autoApplyOptedInImpl ?? isUfwAutoApplyOptedIn;
   const autoApply =
     options.autoApplyImpl ??

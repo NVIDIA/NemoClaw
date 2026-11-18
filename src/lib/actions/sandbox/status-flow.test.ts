@@ -149,6 +149,8 @@ describe("showSandboxStatus flow", () => {
 
     const output = harness.logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Inference: not verified (gateway/sandbox state not verified)");
+    expect(output).toContain("Failure layer: gateway_unreachable");
+    expect(harness.classifyGatewayFailureSpy).toHaveBeenCalledExactlyOnceWith("alpha");
     expect(output).not.toContain(
       "Inference: not probed (another lifecycle operation is in progress)",
     );

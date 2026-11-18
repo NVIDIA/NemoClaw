@@ -119,9 +119,8 @@ describe("docker-driver-gateway compatibility container", () => {
       expect(toml).toContain("[openshell.gateway.auth]");
       expect(toml).toContain("allow_unauthenticated_users = false");
       expect(toml).toContain(`guest_tls_ca = "${path.join(stateDir, "tls", "ca.crt")}"`);
-      expect(toml).toContain(
-        `guest_tls_cert = "${path.join(stateDir, "tls", "client", "tls.crt")}"`,
-      );
+      expect(toml).not.toContain("guest_tls_cert");
+      expect(toml).not.toContain("guest_tls_key");
       expect(launch.env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
       expect(launch.args).not.toContain("OPENSHELL_DISABLE_GATEWAY_AUTH");
       expect(fs.existsSync(path.join(stateDir, "jwt", "public.pem"))).toBe(true);
@@ -239,7 +238,7 @@ describe("docker-driver-gateway compatibility container", () => {
       "  SECURITY NOTICE: compatibility container uses host networking plus Docker API access; enabled only by NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1. Details: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/security/security-controls/gateway-authentication-controls#gateway-compatibility-container.",
     ]);
     expect(messages).toContain(
-      "  Gateway auth boundary: host-side OpenShell CLI uses local mTLS; sandbox callbacks use mTLS plus OpenShell gateway JWT.",
+      "  Gateway auth boundary: host-side OpenShell CLI uses local mTLS; sandbox callbacks use server-verified TLS plus OpenShell gateway JWT.",
     );
   });
 
@@ -272,11 +271,10 @@ describe("docker-driver-gateway compatibility container", () => {
   });
 
   it("fails closed when the configured Unix socket does not answer as a Docker daemon", async () => {
-    // Darwin limits AF_UNIX socket paths to 104 bytes. Vitest's nested temp root
-    // can consume most of that budget before the fixture suffix is appended.
-    const socketTempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
-    const dir = fs.mkdtempSync(path.join(socketTempRoot, "nemoclaw-docker-daemon-probe-"));
-    const socketPath = path.join(dir, "docker.sock");
+    // Keep the fixture suffix short for Darwin's 104-byte socket-path limit
+    // while respecting the runner's private temporary directory.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dd-"));
+    const socketPath = path.join(dir, "s");
     const server = createServer();
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);

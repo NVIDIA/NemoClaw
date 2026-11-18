@@ -11,6 +11,7 @@ import {
   getDockerCdiSpecDirs,
 } from "./docker-cdi";
 import type { SandboxGpuConfig, SandboxGpuFlag } from "./sandbox-gpu-mode";
+import { prepareWslNvidiaCdi } from "./wsl-nvidia-cdi/prepare";
 import {
   detectWslDockerDesktopStatus,
   type WslDockerDesktopDetectionDeps,
@@ -27,6 +28,7 @@ const SANDBOX_GPU_PREFLIGHT_TIMEOUT_MS = 30_000;
 // the field) even though CDI works, so the preflight falls back to these
 // before declaring CDI unsupported (#7330).
 export type SandboxGpuPreflightDeps = WslDockerDesktopDetectionDeps & {
+  prepareWslNvidiaCdi?: typeof prepareWslNvidiaCdi;
   getDockerCdiSpecDirs?: () => string[];
   findReadableNvidiaCdiSpecFiles?: (dirs: string[]) => string[];
 };
@@ -385,6 +387,10 @@ export function validateSandboxGpuPreflight(
 
   const wslDockerDesktopStatus = detectWslDockerDesktopStatus(deps);
   if (wslDockerDesktopStatus === "docker-desktop") {
+    if ((deps.prepareWslNvidiaCdi ?? prepareWslNvidiaCdi)({ env: deps.env })) {
+      console.log("  NVIDIA CDI detected in Docker Desktop; using native OpenShell GPU creation.");
+      return;
+    }
     console.log(
       "  Docker Desktop WSL detected; using Docker --gpus compatibility path instead of CDI spec validation.",
     );

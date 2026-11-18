@@ -3,20 +3,25 @@
 
 /**
  *
- * This stays intentionally direct: the contract is the real
- * Docker/OpenShell/nemoclaw boundary with a local OpenAI-compatible endpoint
- * mock, Telegram messaging config, sandbox inference.local routing, and an
- * OpenClaw agent turn through the compatible endpoint proxy path.
+ * Exercise a local OpenAI-compatible endpoint through OpenShell native mediation,
+ * Telegram configuration, and a real OpenClaw agent turn.
  */
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
+import { customNativeProvider } from "../../../src/lib/inference/native-provider/custom.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+import { discoverHostInterfaceAddress } from "../fixtures/host-address.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  trustedSandboxShellScript,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
@@ -50,17 +55,8 @@ const TEST_TIMEOUT_MS = testTimeout(45 * 60_000);
 
 validateSandboxName(SANDBOX_NAME);
 
-const HOP_BY_HOP_HEADERS = new Set([
-  "proxy-authorization",
-  "proxy-connection",
-  "proxy-authenticate",
-  "connection",
-  "keep-alive",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-]);
+// Native HTTP mediation may generate its own Connection or Transfer-Encoding headers.
+const PROXY_HEADERS = new Set(["proxy-authorization", "proxy-connection", "proxy-authenticate"]);
 
 interface MockRequestLog {
   method: string;
@@ -112,7 +108,7 @@ async function startCompatibleMock(
     const requestPath = new URL(req.url ?? "/", "http://compatible.mock").pathname;
     const auth = req.headers.authorization === `Bearer ${apiKey}` ? "ok" : "missing";
     const hopHeaders = Object.keys(req.headers).filter((name) =>
-      HOP_BY_HOP_HEADERS.has(name.toLowerCase()),
+      PROXY_HEADERS.has(name.toLowerCase()),
     );
 
     if (req.method === "GET" && ["/v1/models", "/models"].includes(requestPath)) {
@@ -274,11 +270,12 @@ async function sourceCliAvailable(host: HostCliClient): Promise<boolean> {
   return result.exitCode === 0;
 }
 
-function onboardEnv(endpointUrl: string): NodeJS.ProcessEnv {
+export function onboardEnv(endpointUrl: string): NodeJS.ProcessEnv {
   return commandEnv({
     COMPATIBLE_API_KEY: COMPATIBLE_KEY,
     DISCORD_BOT_TOKEN: undefined,
     NEMOCLAW_ENDPOINT_URL: endpointUrl,
+    NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: new URL(endpointUrl).hostname,
     NEMOCLAW_MODEL: COMPAT_MODEL,
     NEMOCLAW_POLICY_MODE: "custom",
     NEMOCLAW_POLICY_PRESETS: "telegram",
@@ -373,10 +370,14 @@ function openAiContent(raw: string): string {
     .join("\n");
 }
 
-async function assertOpenClawConfigShape(sandbox: SandboxClient): Promise<void> {
+export async function assertOpenClawConfigShape(
+  sandbox: SandboxClient,
+  endpointUrl: string,
+): Promise<void> {
   const script = String.raw`
 const fs = require("node:fs");
 const model = process.argv[1];
+const endpointUrl = process.argv[2];
 const cfg = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
 const providers = cfg.models?.providers ?? {};
 const errors = [];
@@ -389,11 +390,12 @@ const inference = providers.inference;
 if (!inference || typeof inference !== "object") {
   errors.push("models.providers.inference is missing");
 } else {
-  if (inference.baseUrl !== "https://inference.local/v1") {
+  if (inference.baseUrl !== endpointUrl) {
     errors.push("inference baseUrl is " + JSON.stringify(inference.baseUrl));
   }
-  if (inference.apiKey !== "unused") {
-    errors.push("inference apiKey is not the non-secret placeholder");
+  if (!/^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_COMPATIBLE_API_KEY$/.test(inference.apiKey)
+      || inference.apiKey !== process.env.COMPATIBLE_API_KEY) {
+    errors.push("inference apiKey is not the sandbox credential reference");
   }
 }
 const primary = cfg.agents?.defaults?.model?.primary;
@@ -402,18 +404,21 @@ if (!cfg.channels?.telegram) errors.push("telegram channel config missing");
 console.log(JSON.stringify({
   provider_keys: providerKeys,
   inference_base: inference?.baseUrl,
-  inference_api_key: inference?.apiKey,
   primary,
   telegram_present: Boolean(cfg.channels?.telegram),
   errors,
 }));
 process.exit(errors.length ? 1 : 0);
 `;
-  const result = await sandbox.exec(SANDBOX_NAME, ["node", "-e", script, COMPAT_MODEL], {
-    artifactName: "openclaw-config-compatible-endpoint",
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
+  const result = await sandbox.exec(
+    SANDBOX_NAME,
+    ["node", "-e", script, COMPAT_MODEL, endpointUrl],
+    {
+      artifactName: "openclaw-config-compatible-endpoint",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    },
+  );
   expect(result.exitCode, resultText(result)).toBe(0);
 }
 
@@ -448,7 +453,7 @@ sock.setTimeout(1000, () => finish("TIMEOUT", 1));
   );
 }
 
-async function assertSandboxInference(sandbox: SandboxClient): Promise<void> {
+async function assertSandboxInference(sandbox: SandboxClient, endpointUrl: string): Promise<void> {
   const payload = JSON.stringify({
     model: COMPAT_MODEL,
     messages: [
@@ -456,21 +461,13 @@ async function assertSandboxInference(sandbox: SandboxClient): Promise<void> {
     ],
     max_tokens: 32,
   });
-  const response = await sandbox.exec(
+  const response = await sandbox.execShell(
     SANDBOX_NAME,
-    [
-      "curl",
-      "-sS",
-      "--max-time",
-      "60",
-      "https://inference.local/v1/chat/completions",
-      "-H",
-      "Content-Type: application/json",
-      "--data-raw",
-      payload,
-    ],
+    trustedSandboxShellScript(
+      `exec curl -fsS --max-time 60 ${shellQuote(endpointUrl + "/chat/completions")} -H 'Content-Type: application/json' -H "Authorization: Bearer \${COMPATIBLE_API_KEY:?}" --data-raw ${shellQuote(payload)}`,
+    ),
     {
-      artifactName: "sandbox-inference-local-compatible-chat",
+      artifactName: "sandbox-native-compatible-chat",
       env: commandEnv(),
       timeoutMs: 90_000,
     },
@@ -519,14 +516,14 @@ async function assertOpenClawAgentTurn(
   const newHopHeaderLogs = compatibleMock.hopHeaderLogs.slice(hopCountBefore);
   expect(
     newHopHeaderLogs.length,
-    "Mock logged no proxy_hop_headers line for the agent turn; agent did not reach /v1/chat/completions",
+    "The agent did not reach the mock /v1/chat/completions endpoint",
   ).toBeGreaterThan(0);
   const leaked = newHopHeaderLogs.flat().filter((name) => name.length > 0);
-  expect(leaked, `Proxy hop headers leaked to upstream: ${leaked.join(",")}`).toEqual([]);
+  expect(leaked, `Proxy headers leaked to upstream: ${leaked.join(",")}`).toEqual([]);
 }
 
 test(
-  "messaging compatible endpoint routes Telegram-enabled OpenClaw through inference.local",
+  "messaging compatible endpoint routes Telegram-enabled OpenClaw through native mediation",
   {
     timeout: TEST_TIMEOUT_MS,
     meta: {
@@ -536,7 +533,7 @@ test(
         "confirm host reachability to the compatible endpoint",
         "onboard Telegram-enabled OpenClaw",
         "inspect the provider route and OpenClaw configuration",
-        "prove inference.local and agent traffic",
+        "prove native inference and agent traffic",
         "record authenticated traffic and proxy-header results",
       ],
     },
@@ -555,12 +552,12 @@ test(
         "local OpenAI-compatible mock endpoint starts and is reachable",
         "custom provider + Telegram onboard completes",
         "onboard runs the compatible endpoint sandbox smoke check",
-        "gateway registers compatible-endpoint provider",
-        "openclaw.json uses managed inference.local provider and Telegram config",
+        "gateway registers the endpoint-bound native provider",
+        "openclaw.json uses the native endpoint, a scoped credential reference, and Telegram config",
         "gateway stays up after Telegram provider initialization",
-        "sandbox inference.local chat completion reaches the mock with auth",
+        "sandbox native chat completion reaches the mock with auth",
         "OpenClaw agent turn completes through the compatible endpoint",
-        "http-proxy-fix.js strips RFC 7230 hop-by-hop proxy headers",
+        "native mediation does not forward proxy credentials or proxy connection headers",
       ],
     });
 
@@ -599,7 +596,11 @@ test(
       await compatibleMock.close();
     });
 
-    const endpointUrl = `http://host.openshell.internal:${new URL(compatibleMock.localBaseUrl).port}/v1`;
+    const inferenceHost = await discoverHostInterfaceAddress(
+      host,
+      "messaging-compatible-host-address",
+    );
+    const endpointUrl = `http://${inferenceHost.address}:${new URL(compatibleMock.localBaseUrl).port}/v1`;
     progress.phase("confirm host reachability to the compatible endpoint");
     const hostReachability = await host.command(
       "curl",
@@ -621,20 +622,30 @@ test(
     progress.phase("onboard Telegram-enabled OpenClaw");
     const { result: onboard, runner } = await runCompatibleOnboard(host, endpointUrl);
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
-    expect(resultText(onboard)).toContain("Compatible endpoint responds through inference.local");
 
     progress.phase("inspect the provider route and OpenClaw configuration");
-    const provider = await host.command("openshell", ["provider", "get", "compatible-endpoint"], {
-      artifactName: "openshell-provider-get-compatible-endpoint",
-      env: commandEnv(),
-      timeoutMs: 30_000,
+    const nativeProvider = customNativeProvider({
+      provider: "compatible-endpoint",
+      endpointUrl,
+      api: "openai-completions",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      allowedIps: [inferenceHost.address],
     });
+    const provider = await host.command(
+      host.openshellCommandPath,
+      ["provider", "get", nativeProvider.providerName],
+      {
+        artifactName: "openshell-provider-get-compatible-endpoint",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
     expect(provider.exitCode, resultText(provider)).toBe(0);
 
-    await assertOpenClawConfigShape(sandbox);
-    progress.phase("prove inference.local and agent traffic");
+    await assertOpenClawConfigShape(sandbox, endpointUrl);
+    progress.phase("prove native inference and agent traffic");
     await assertGatewayReady(sandbox);
-    await assertSandboxInference(sandbox);
+    await assertSandboxInference(sandbox, endpointUrl);
     await assertOpenClawAgentTurn(sandbox, compatibleMock);
 
     progress.phase("record authenticated traffic and proxy-header results");
@@ -671,9 +682,7 @@ test(
         authenticatedChatTraffic: compatibleMock.requests.some(
           (request) => request.path === "/v1/chat/completions" && request.auth === "ok",
         ),
-        proxyHopHeadersStripped: compatibleMock.hopHeaderLogs.every(
-          (headers) => headers.length === 0,
-        ),
+        proxyHeadersAbsent: compatibleMock.hopHeaderLogs.every((headers) => headers.length === 0),
       },
     });
   },

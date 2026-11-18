@@ -42,9 +42,12 @@ import "../live/openclaw-inference-switch.test.ts";
 
 const disposables: Array<() => unknown> = [];
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+async function disposeResources(): Promise<void> {
+  for (const dispose of disposables.splice(0).reverse()) await dispose();
+}
 afterEach(async () => {
   Object.defineProperty(process, "platform", platform);
-  for (const dispose of disposables.splice(0).reverse()) await dispose();
+  await disposeResources();
   vi.doUnmock("../live/openclaw-inference-switch-helpers.ts");
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -178,6 +181,8 @@ it.each(
       expect(name).toBe("NVIDIA_API_KEY");
       return "nvapi-public-fixture-key";
     });
+    const cleanupSandbox = vi.fn(async () => undefined);
+    const expectRemoved = vi.fn(async () => undefined);
     await expect(
       run({
         artifacts: { target: { declare: vi.fn() }, writeJson: vi.fn(async () => "artifact.json") },
@@ -189,9 +194,15 @@ it.each(
         host: {
           nemoclaw,
           cleanupGatewayRegistration: vi.fn(async () => undefined),
-          command: vi.fn(async () => result),
+          cleanupSandbox,
+          command: vi.fn(async (_cmd, _args, options) =>
+            options?.artifactName === "native-baseline-endpoint-address"
+              ? { ...result, stdout: "route 10.20.30.40" }
+              : result,
+          ),
         },
         progress,
+        gateway: { expectRemoved },
         runtimeProvider: { id: runtime, requireAvailable: vi.fn() },
         sandbox: { openshell: vi.fn(async () => result), cleanupSandbox: vi.fn() },
         secrets: { required },
@@ -232,6 +243,15 @@ it.each(
     expect(environment.NVIDIA_API_KEY).toBeUndefined();
     expect(options.redactionValues.includes("nvapi-public-fixture-key")).toBe(!nativeCustom);
     expect(options.redactionValues).toContain(environment.COMPATIBLE_API_KEY);
+    await disposeResources();
+    expect(cleanupSandbox).toHaveBeenCalledExactlyOnceWith(
+      expect.any(String),
+      expect.objectContaining({ cleanupGateway: true }),
+    );
+    expect(expectRemoved).toHaveBeenCalledExactlyOnceWith(
+      "nemoclaw",
+      expect.objectContaining({ artifactName: "cleanup-inference-switch-gateway-absent" }),
+    );
   },
 );
 

@@ -46,7 +46,7 @@ import {
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
-  MCP_BRIDGE_PROVIDER_TYPE,
+  mcpBridgeProviderType,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
   providerMatchesCredential,
@@ -384,7 +384,7 @@ async function inspectMcpAddRecovery(
     (!providerInspection.id ||
       (entry.providerId !== undefined && providerInspection.id !== entry.providerId) ||
       providerInspection.resourceVersion === null ||
-      providerInspection.type !== MCP_BRIDGE_PROVIDER_TYPE ||
+      providerInspection.type !== mcpBridgeProviderType(entry.env[0]) ||
       providerInspection.credentialKeys?.length !== 1 ||
       providerInspection.credentialKeys[0] !== entry.env[0])
   ) {
@@ -902,7 +902,7 @@ async function addMcpBridgeUnlocked(
     // again after provider creation to close the intervening race.
     await assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
     const providerAdapter = createMcpProviderAdapterBoundary(providerRuntimeSelection).adapter;
-    await ensureMcpBridgeProviderProfile(providerRuntimeSelection, providerAdapter);
+    await ensureMcpBridgeProviderProfile(providerRuntimeSelection, entry.env[0], providerAdapter);
     // Load the real protocol:mcp policy without a credential binding before
     // provider mutation. OpenShell requires the endpointless provider to be
     // attached before it accepts credential_binding.provider, and withholds

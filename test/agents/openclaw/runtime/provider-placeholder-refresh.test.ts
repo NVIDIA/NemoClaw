@@ -10,6 +10,8 @@ import JSON5 from "json5";
 import { hostedNativeProvider } from "../../../../src/lib/inference/native-provider/hosted.ts";
 import { describe, expect, it, vi } from "vitest";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
+import { buildConfig } from "../../../../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "../../../helpers/openclaw-env-fixture";
 
 const START_SCRIPT = path.resolve(import.meta.dirname, "../../../../scripts/nemoclaw-start.sh");
 const JSON5_MODULE = path.resolve(import.meta.dirname, "../../../../nemoclaw/node_modules/json5");
@@ -74,7 +76,7 @@ describe.concurrent("native provider handle refresh", () => {
       fs.writeFileSync(
         providerPath,
         `const fixture = require("./providers.json");
-exports.hostedNativeProvider = () => fixture.openrouter;
+exports.fixedHostedNativeProvider = () => fixture.openrouter;
 exports.NVIDIA_HOSTED_NATIVE_ENDPOINT = fixture.NVIDIA_HOSTED_NATIVE_ENDPOINT;
 exports.NVIDIA_HOSTED_CREDENTIAL_ENV = fixture.NVIDIA_HOSTED_CREDENTIAL_ENV;`,
       );
@@ -146,6 +148,29 @@ os.fsync = sync_or_fail`
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }
+
+  it.each(["v7", `s${"a".repeat(64)}`])(
+    "materializes the local compatible credential generated without a handle, with scope %s",
+    async (scope) => {
+      const handle = `openshell:resolve:env:${scope}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`;
+      const generated = buildConfig({
+        ...baseOpenClawGenerationEnv(),
+        NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+        NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:45173/v1",
+        NEMOCLAW_INFERENCE_API: "openai-completions",
+      });
+      const run = await runRefresh(generated, { NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle });
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.config.models.providers.inference.apiKey).toBe(handle);
+      expect(run.config.models.providers.inference.baseUrl).toBe(
+        "http://host.openshell.internal:45173/v1",
+      );
+      expect(run.config.models.providers.inference.api).toBe("openai-completions");
+      expect(JSON.stringify(run.config)).not.toContain("COMPATIBLE_API_KEY");
+      expect(run.result.stdout + run.result.stderr).not.toContain(handle);
+    },
+  );
 
   it.each([false, true])(
     "refreshes a persisted native NVIDIA handle after provider revision and supervisor restart (root=%s)",

@@ -7,15 +7,12 @@ import {
 } from "./attachment";
 
 export {
+  gatewayReachableCompatibleEndpointUrl,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
   isPersistedPiSharedLocalInferenceRoute,
 } from "./eligibility";
-export {
-  NATIVE_LOCAL_CREDENTIAL_ENV,
-  isLocalInferenceProvider,
-  nativeLocalCredentialReference,
-} from "./agent-config";
+export { NATIVE_LOCAL_CREDENTIAL_ENV, isLocalInferenceProvider } from "./agent-config";
 export {
   nativeLocalIdentity,
   normalizeNativeLocalBinding,
@@ -24,6 +21,7 @@ export {
   type NativeLocalBinding,
   type NativeLocalProviderAttachment,
 } from "./attachment";
+export { nativeLocalCredentialReference } from "./agent-config";
 
 export function normalizeNativeLocalProviderAuthorities(
   value: unknown,

@@ -57,12 +57,6 @@ function fixture() {
     directory,
   );
   const image = { Id: imageId, Os: "linux", Architecture: "amd64", Environment: ["PATH=/usr/bin"] };
-  const network = {
-    Id: "c".repeat(64),
-    Name: "openshell-docker",
-    Driver: "bridge",
-    Config: [{ Gateway: "172.18.0.1", Subnet: "172.18.0.0/16" }],
-  };
   const container = {
     Id: containerId,
     Name: "/nemoclaw-vllm",
@@ -84,17 +78,12 @@ function fixture() {
     },
     NetworkSettings: {
       Ports: {
-        "8000/tcp": [
-          { HostIp: "127.0.0.1", HostPort: "18000" },
-          { HostIp: "172.18.0.1", HostPort: "18000" },
-        ],
+        "8000/tcp": [{ HostIp: "127.0.0.1", HostPort: "18000" }],
       },
     },
   };
   const capture = vi.fn<NonNullable<VllmExportRuntimeOptions["capture"]>>((args) => {
-    return JSON.stringify(
-      { image, network, container }[args[0] as "image" | "network" | "container"],
-    );
+    return JSON.stringify({ image, container }[args[0] as "image" | "container"]);
   });
   const loadApiKey = vi.fn(() => key);
   const options = {
@@ -103,7 +92,7 @@ function fixture() {
     architecture: "x64",
     authentication: { stateDir: directory, loadApiKey },
   };
-  return { provenance, directory, image, network, container, capture, loadApiKey, options };
+  return { provenance, directory, image, container, capture, loadApiKey, options };
 }
 
 describe("fixed managed vLLM export observation", () => {
@@ -113,7 +102,6 @@ describe("fixed managed vLLM export observation", () => {
     expect(result).toMatchObject({
       containerId,
       imageId,
-      networkId: f.network.Id,
       startedAt: f.container.StartedAt,
       serving: {
         profile: { id: EXPORTED_VLLM_PROFILE_ID },
@@ -133,14 +121,9 @@ describe("fixed managed vLLM export observation", () => {
     expect(serialized).not.toContain(f.directory);
     expect(f.capture.mock.calls.map(([args]) => args.slice(0, 2))).toEqual([
       ["image", "inspect"],
-      ["network", "inspect"],
       ["container", "inspect"],
     ]);
-    expect(f.capture.mock.calls.map(([args]) => args[2])).toEqual([
-      "--format",
-      "--format",
-      "--format",
-    ]);
+    expect(f.capture.mock.calls.map(([args]) => args[2])).toEqual(["--format", "--format"]);
     expect(JSON.stringify(f.capture.mock.calls.map(([args]) => args))).not.toContain(key);
     const boundedCapture = expect.objectContaining({
       env: expect.objectContaining({ DOCKER_CONTEXT: "default" }),
@@ -148,7 +131,6 @@ describe("fixed managed vLLM export observation", () => {
       maxBuffer: 65536,
     });
     expect(f.capture.mock.calls.map(([, options]) => options)).toEqual([
-      boundedCapture,
       boundedCapture,
       boundedCapture,
     ]);
@@ -225,9 +207,12 @@ describe("fixed managed vLLM export observation", () => {
       },
     ],
     [
-      "different bridge listener",
+      "additional private listener",
       (f: ReturnType<typeof fixture>) => {
-        f.network.Config[0]!.Gateway = "172.19.0.1";
+        f.container.NetworkSettings.Ports["8000/tcp"].push({
+          HostIp: "172.19.0.1",
+          HostPort: "18000",
+        });
       },
     ],
     [
@@ -237,9 +222,9 @@ describe("fixed managed vLLM export observation", () => {
       },
     ],
     [
-      "unsafe bridge",
+      "metadata listener",
       (f: ReturnType<typeof fixture>) => {
-        f.network.Config[0]!.Gateway = "169.254.169.254";
+        f.container.NetworkSettings.Ports["8000/tcp"][0]!.HostIp = "169.254.169.254";
       },
     ],
     [

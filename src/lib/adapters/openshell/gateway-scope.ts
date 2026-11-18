@@ -17,7 +17,7 @@ export {
 export type OpenShellGatewayTarget = { kind: "named"; gatewayName: string } | { kind: "selected" };
 
 function inferredGatewayFlagIndex(args: readonly string[]): number | null {
-  if (args[0] === "inference" || args[0] === "provider") return 2;
+  if (args[0] === "inference" || args[0] === "provider" || args[0] === "policy") return 2;
   if (args[0] !== "sandbox" || typeof args[1] !== "string") return null;
   return args[1] === "provider" ? 3 : 2;
 }

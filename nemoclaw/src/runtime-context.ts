@@ -122,6 +122,7 @@ interface ResearchRequestScope extends SuppliedSearchSources {
 type LocalTarget = "source" | "work";
 interface LocalTargetBudget {
   remaining: number;
+  completed: Map<string, LocalTarget | undefined>;
 }
 const LOCAL_TARGET_WORK_LIMIT = 128;
 // A prompt up to the length limit is one parse unit per window. A longer prompt
@@ -261,6 +262,15 @@ function localTarget(raw: string, budget: LocalTargetBudget): LocalTarget | unde
   if (budget.remaining === 0) throw LOCAL_TARGET_BUDGET_EXHAUSTED;
   budget.remaining--;
 
+  // Charge cached visits too, but do not reparse completed quoted fragments.
+  // Cache only completed results so recursive cycles still exhaust the budget.
+  if (budget.completed.has(raw)) return budget.completed.get(raw);
+  const target = parseLocalTarget(raw, budget);
+  budget.completed.set(raw, target);
+  return target;
+}
+
+function parseLocalTarget(raw: string, budget: LocalTargetBudget): LocalTarget | undefined {
   const normalized = normalizeQuotedTargets(raw, budget)
     .trim()
     .replace(/[.!?]+$/u, "")
@@ -620,7 +630,10 @@ export function classifySearchTurn(prompt: unknown): ResearchRequestScope {
   }
   try {
     const scopes = windows.map((window) =>
-      classifySearchRequests(window, { remaining: LOCAL_TARGET_WORK_LIMIT }),
+      classifySearchRequests(window, {
+        remaining: LOCAL_TARGET_WORK_LIMIT,
+        completed: new Map(),
+      }),
     );
     if (scopes.some(({ scope }) => scope === "external")) {
       return { scope: "external", local: false, urls: [] };

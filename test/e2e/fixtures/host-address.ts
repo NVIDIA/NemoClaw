@@ -71,6 +71,14 @@ export async function discoverHostAddress(
     }
     return { source: "runtime-provider", address: runtimeProviderAddress, probe: null };
   }
+  return discoverHostInterfaceAddress(host, artifactName);
+}
+
+/** Host-network listeners need a real interface address, not a sandbox gateway alias. */
+export async function discoverHostInterfaceAddress(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<HostAddressResult> {
   const probe = await host.command(
     "bash",
     [

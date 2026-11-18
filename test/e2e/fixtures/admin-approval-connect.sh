@@ -69,11 +69,17 @@ if sys.argv[2] == 'cron-run':
             reason=run.get('errorReason')
             reason=reason if isinstance(reason, str) and reason in reasons else 'unavailable'
             print(f'ADMIN_CRON_ERROR_REASON={reason}', file=sys.stderr)
+            duration=run.get('durationMs')
+            # Bound the terminal runtime only; exclude booleans and arbitrary metadata.
+            if type(duration) is int and 0 <= duration <= 86400000:
+                print(f'ADMIN_CRON_DURATION_MS={duration}', file=sys.stderr)
             diagnostics=run.get('diagnostics')
             entries=diagnostics.get('entries') if isinstance(diagnostics, dict) else None
             sources=('cron-preflight', 'cron-setup', 'model-preflight', 'agent-run', 'tool', 'exec', 'delivery')
             # Observe fixed error-text signatures, not provider or tool causality.
             messages={
+                'cron isolated agent run aborted': 'message-agent-aborted',
+                'cron: job execution timed out': 'message-cron-deadline',
                 # Pinned incomplete-turn texts: the reply budget ended without visible output.
                 "Agent couldn't generate a response.": 'message-agent-incomplete-turn',
                 "\u26a0\ufe0f Agent couldn't generate a response. Please try again.": 'message-agent-incomplete-turn',
@@ -87,6 +93,7 @@ if sys.argv[2] == 'cron-run':
             http_signatures={str(code): f'error-text-http-{code}' for code in range(400, 600)}
             # Anchored subset of the pinned assistant-error-format HTTP grammar.
             http_patterns=(
+                r'\u26a0\ufe0f [A-Za-z0-9_./:-]+ request failed \(provider internal error, HTTP ([45][0-9]{2})\)\. This is usually temporary \u2014 try again shortly\.',
                 r'(?:http\s*)?([45][0-9]{2})(?:(?:\s*:\s*|\s+)[\s\S]+)?',
                 r'api\s*error\s*\(([45][0-9]{2})\)(?:\s*:\s*[\s\S]*)?',
                 r'(?:status code|unexpected status|http status)\s*[:=]?\s*([45][0-9]{2})\b(?:\s*[:,]?\s*(?:message\s*:\s*)?[\s\S]*)?',
@@ -118,7 +125,9 @@ if sys.argv[2] == 'cron-run':
             print('ADMIN_CRON_ERROR_SIGNATURES=' + (','.join(signatures) or 'unavailable'), file=sys.stderr)
             raise SystemExit(0)
 selection_checks=(
-    ('selection-state-busy', r'OpenClawPairingStateBusyError:'),
+    ('selection-state-busy', r'OpenClawPairingStateBusyError:|OpenClawPairingStateRetryableError: canonical pairing-state database is busy'),
+    ('selection-state-wal-incomplete', r'OpenClawPairingStateRetryableError: canonical pairing-state WAL is missing its shared-memory sidecar'),
+    ('selection-state-unvalidated', r'OpenClawPairingStateRetryableError: SQLite reopened an unvalidated pairing-state file identity'),
     ('selection-state-changed', r'OpenClawPairingStateRetryableError:'),
     ('selection-state-permission', r'PermissionError:'),
     ('selection-state-missing', r'FileNotFoundError:'),
@@ -156,42 +165,48 @@ PY_ADMIN_DIAGNOSTIC
 }
 emit_post_approval_request_state() {
   python3 - "$1" <<'PY_ADMIN_POST_STATE'
-import json, os, signal, subprocess, sys
+import importlib.util, os, signal, sys
+from pathlib import Path
 
 def emit(state):
     print(f'ADMIN_APPROVAL_REQUEST_STATE={state}', file=sys.stderr)
 
+def read_deadline(_signal, _frame):
+    raise TimeoutError
+
 try:
-    process = subprocess.Popen(
-        ['/bin/bash', '--noprofile', '--norc', '-c', 'openclaw devices list --json'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+    signal.signal(signal.SIGALRM, read_deadline)
+    signal.alarm(8)
+    # Reuse the canonical snapshot reader. A diagnostic must not launch a CLI
+    # child whose process group OpenShell deliberately refuses to signal.
+    helper = Path(os.environ.get('NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER')
+                  or '/usr/local/lib/nemoclaw/openclaw_pairing_state.py')
+    spec = importlib.util.spec_from_file_location('nemoclaw_post_approval_state', helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    records, _metadata = module.read_openclaw_pairing_state(
+        os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
+        timeout=8,
+        local_device_only=True,
     )
-    try:
-        output, _ = process.communicate(timeout=8)
-    except subprocess.TimeoutExpired:
-        try: os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError: pass
-        process.communicate()
-        emit('unavailable')
-        raise SystemExit(0)
-    if process.returncode != 0 or len(output) > 65536:
-        emit('unavailable')
-        raise SystemExit(0)
-    data = json.loads(output)
-    if not isinstance(data, dict):
+    if not isinstance(records, dict):
         emit('invalid')
         raise SystemExit(0)
-    pending = data.get('pending')
-    pending = [] if pending is None else pending
-    if not isinstance(pending, list) or any(not isinstance(item, dict) for item in pending):
+    pending = records.get('pending')
+    if not isinstance(pending, dict) or any(
+        not isinstance(item, dict) or item.get('requestId') != key
+        for key, item in pending.items()
+    ):
         emit('invalid')
         raise SystemExit(0)
-    matching = [item for item in pending if item.get('requestId') == sys.argv[1]]
-    emit('pending' if len(matching) == 1 else 'absent' if not matching else 'invalid')
-except (OSError, ValueError, TypeError, UnicodeDecodeError):
+    emit('pending' if sys.argv[1] in pending else 'absent')
+except Exception:
+    # Emit no paths, identities, tokens or exception text. This local snapshot
+    # is diagnostic only; absence never changes the failed approval status.
     emit('unavailable')
+finally:
+    try: signal.alarm(0)
+    except Exception: pass
 PY_ADMIN_POST_STATE
 }
 run_with_bounded_output() {

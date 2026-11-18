@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { describe, expect, it, vi } from "vitest";
 import * as installerPins from "../../../scripts/checks/extract-installer-pins.mts";
 import { runCandidateOpenShellCli } from "../../support/candidate-openshell-version-cli";
-import evidence from "../fixtures/openshell-runtime-provenance-v0.1.7.json" with { type: "json" };
+import evidence from "../fixtures/openshell-runtime-provenance-v0.1.9.json" with { type: "json" };
 import {
   candidateOpenShellVersion,
   reviewedOpenShellMcpRuntime,
@@ -27,7 +27,7 @@ const blueprintVersions = [...blueprint.matchAll(/^max_openshell_version: "(\d+\
 assert.equal(blueprintVersions.length, 1, "Expected one blueprint OpenShell pin");
 const pinnedVersion = blueprintVersions[0]![1]!;
 // Independent upstream evidence is the oracle; production must not read this test fixture.
-const expected017Runtime = {
+const expected019Runtime = {
   supervisorImage: evidence.supervisor.image,
   provenance: {
     schemaVersion: 1,
@@ -70,7 +70,7 @@ describe("candidate OpenShell selection", () => {
       upgradeVersion: undefined,
       expectedVersion: pinnedVersion,
     },
-    { scenario: "reviewed 0.1.7", upgradeVersion: "0.1.7", expectedVersion: "0.1.7" },
+    { scenario: "reviewed 0.1.9", upgradeVersion: "0.1.9", expectedVersion: "0.1.9" },
     {
       scenario: "already selected release",
       upgradeVersion: pinnedVersion,
@@ -81,8 +81,8 @@ describe("candidate OpenShell selection", () => {
     async ({ upgradeVersion, expectedVersion }) => {
       const actual = await runCandidateOpenShellCli({ upgradeVersion });
       const expected =
-        expectedVersion === "0.1.7"
-          ? expected017Runtime
+        expectedVersion === "0.1.9"
+          ? expected019Runtime
           : reviewedOpenShellMcpRuntime(expectedVersion);
       expect(actual.selected).toBe(expectedVersion);
       expect(actual.status, actual.diagnostic).toBe(0);
@@ -275,9 +275,9 @@ describe("reviewed candidate MCP runtime evidence", () => {
     });
   });
 
-  it("binds OpenShell 0.1.7 to the reviewed upstream release evidence", () => {
-    expect(evidence.releaseTag).toBe("v0.1.7");
-    expect(reviewedOpenShellMcpRuntime("0.1.7")).toEqual(expected017Runtime);
+  it("binds OpenShell 0.1.9 to the reviewed upstream release evidence", () => {
+    expect(evidence.releaseTag).toBe("v0.1.9");
+    expect(reviewedOpenShellMcpRuntime("0.1.9")).toEqual(expected019Runtime);
   });
 
   it.each(
@@ -295,7 +295,9 @@ describe("reviewed candidate MCP runtime evidence", () => {
       ["0.1.5", "mcp-bridge", "mcp-bridge-deepagents"],
       ["0.1.5", "openshell-credential-generation-window", "openshell-credential-generation-window"],
       ["0.1.7", "mcp-bridge", "mcp-bridge-deepagents"],
+      ["0.1.9", "mcp-bridge", "mcp-bridge-deepagents"],
       ["0.1.7", "openshell-credential-generation-window", "openshell-credential-generation-window"],
+      ["0.1.9", "openshell-credential-generation-window", "openshell-credential-generation-window"],
     ].flatMap(([version, job, artifact]) => [
       [version, job, artifact, "local"],
       [version, job, artifact, "path"],
@@ -345,6 +347,7 @@ describe("reviewed candidate MCP runtime evidence", () => {
     ].flatMap(([job, artifact, role, binary]) => [
       [binary, job, artifact, "0.1.5", role],
       [binary, job, artifact, "0.1.7", role],
+      [binary, job, artifact, "0.1.9", role],
     ]),
   )(
     "rejects an altered %s binary in %s before writing %s provenance for OpenShell %s (%s)",

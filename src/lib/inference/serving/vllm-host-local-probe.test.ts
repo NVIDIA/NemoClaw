@@ -21,7 +21,6 @@ import {
 } from "../local";
 
 import { MANAGED_VLLM_API_KEY_FILE, managedVllmStateDir } from "../vllm-api-key";
-import type { dockerCapture as captureDocker } from "../../adapters/docker/local-model-runtime";
 import {
   DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
@@ -29,10 +28,9 @@ import {
 import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
 import {
   HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
-  getLegacyHostLocalManagedVllmBridgeHost,
+  getLegacyHostLocalManagedVllmLoopbackHost,
   ManagedVllmInspectionError,
   recoverHostLocalManagedVllmEndpoint,
-  resolveManagedVllmBridgeHost,
 } from "./vllm-host-local-lifecycle";
 
 const subprocess = vi.hoisted(() => ({
@@ -54,7 +52,7 @@ vi.mock("node:child_process", async (importOriginal) => ({
   spawnSync: subprocess.spawnSync,
 }));
 
-function ownedContainer(bridge = "172.18.0.1") {
+function ownedContainer() {
   return {
     Id: "a".repeat(64),
     Name: "/nemoclaw-vllm",
@@ -65,20 +63,10 @@ function ownedContainer(bridge = "172.18.0.1") {
     },
     NetworkSettings: {
       Ports: {
-        "8000/tcp": [
-          { HostIp: "127.0.0.1", HostPort: "18080" },
-          { HostIp: bridge, HostPort: "18080" },
-        ],
+        "8000/tcp": [{ HostIp: "127.0.0.1", HostPort: "18080" }],
       },
     },
   };
-}
-
-function dockerCapture(row: ReturnType<typeof ownedContainer>, gateway = "172.18.0.1") {
-  interceptDocker(row);
-  return vi.fn<typeof captureDocker>((argv, _options) =>
-    argv[0] === "container" ? JSON.stringify([row]) : JSON.stringify([{ Gateway: gateway }]),
-  );
 }
 
 function interceptDocker(
@@ -161,26 +149,18 @@ describe("host-local managed vLLM container probe", () => {
   ])("rejects local publication on %s despite a %s remote container (#14083)", (host, remote) => {
     const row = ownedContainer();
     row.NetworkSettings.Ports["8000/tcp"] = [{ HostIp: host, HostPort: "18080" }];
-    interceptDocker(row, remote === "safe" ? ownedContainer("172.19.0.1") : null);
-    expect(() => getLegacyHostLocalManagedVllmBridgeHost(18080)).toThrow(
+    interceptDocker(row, remote === "safe" ? ownedContainer() : null);
+    expect(() => getLegacyHostLocalManagedVllmLoopbackHost(18080)).toThrow(
       "Managed bearerless vLLM has unsafe host bindings. Follow 'Handle a Running vLLM Server' in the vLLM setup guide before recreating the owned `nemoclaw-vllm` container. Preserve the original model and port settings.",
     );
-    expectLocalSpawns(2);
-  });
-
-  it("inspects the default local daemon and its bridge despite ambient Docker selectors (#14083)", () => {
-    interceptDocker(ownedContainer(), ownedContainer("172.19.0.1"));
-    expect(getLegacyHostLocalManagedVllmBridgeHost(18080)).toBe("172.18.0.1");
-    expectLocalSpawns(2);
-    expect(subprocess.spawnSync.mock.calls[1]?.[2].env).toEqual(
-      subprocess.spawnSync.mock.calls[0]?.[2].env,
-    );
-  });
-
-  it("pins standalone host-local bridge discovery to the same local daemon", () => {
-    interceptDocker(ownedContainer());
-    expect(resolveManagedVllmBridgeHost()).toBe("172.18.0.1");
     expectLocalSpawns(1);
+  });
+
+  it("inspects loopback publication on the default local daemon despite ambient Docker selectors (#14083)", () => {
+    interceptDocker(ownedContainer(), ownedContainer());
+    expect(getLegacyHostLocalManagedVllmLoopbackHost(18080)).toBe("127.0.0.1");
+    expectLocalSpawns(1);
+    expect(subprocess.spawnSync.mock.calls[0]?.[1]).not.toContain("network");
   });
 
   it.each([
@@ -384,7 +364,7 @@ describe("host-local managed vLLM container probe", () => {
           : { status: 1, stdout: "", stderr: "Cannot connect to the Docker daemon" },
       );
       const probe = vi.fn();
-      expect(() => getLegacyHostLocalManagedVllmBridgeHost(8000)).toThrow(
+      expect(() => getLegacyHostLocalManagedVllmLoopbackHost(8000)).toThrow(
         ManagedVllmInspectionError,
       );
       expect(() => getManagedVllmProviderBinding()).toThrow();
@@ -413,17 +393,6 @@ describe("host-local managed vLLM container probe", () => {
     expect(probe).not.toHaveBeenCalled();
   });
 
-  it("preserves an explicitly selected bridge environment for generic installation", () => {
-    interceptDocker(null);
-    const env = { DOCKER_CONTEXT: "requested-builder", PATH: "/usr/bin" };
-    expect(resolveManagedVllmBridgeHost(undefined, env)).toBe("172.19.0.1");
-    expect(subprocess.spawnSync).toHaveBeenCalledExactlyOnceWith(
-      "docker",
-      ["network", "inspect", "--format", "{{json .IPAM.Config}}", "openshell-docker"],
-      expect.objectContaining({ env, shell: false, timeout: 10_000 }),
-    );
-  });
-
   it("preserves local daemon authority for authenticated recovery too", () => {
     const apiKey = "b".repeat(64);
     const row = ownedContainer();
@@ -435,7 +404,7 @@ describe("host-local managed vLLM container probe", () => {
       apiKey,
       containerId: row.Id,
     });
-    expectLocalSpawns(2);
+    expectLocalSpawns(1);
   });
 
   it.each([
@@ -464,11 +433,12 @@ describe("host-local managed vLLM container probe", () => {
       },
     ],
   ] satisfies Array<[string, (row: ReturnType<typeof ownedContainer>) => void]>)(
-    "does not select the bridge for a %s",
+    "does not select loopback for a %s",
     (_label, change) => {
       const row = ownedContainer();
       change(row);
-      expect(getLegacyHostLocalManagedVllmBridgeHost(18080, dockerCapture(row))).toBeNull();
+      interceptDocker(row);
+      expect(getLegacyHostLocalManagedVllmLoopbackHost(18080)).toBeNull();
     },
   );
 
@@ -477,20 +447,22 @@ describe("host-local managed vLLM container probe", () => {
     ["a mismatched host port", { HostIp: "172.18.0.1", HostPort: "19000" }],
   ] as const)("rejects an owned container with %s", (_label, binding) => {
     const row = ownedContainer();
-    row.NetworkSettings.Ports["8000/tcp"][1] = binding;
-    expect(() => getLegacyHostLocalManagedVllmBridgeHost(18080, dockerCapture(row))).toThrow(
-      "unsafe host bindings",
-    );
+    row.NetworkSettings.Ports["8000/tcp"].push(binding);
+    interceptDocker(row);
+    expect(() => getLegacyHostLocalManagedVllmLoopbackHost(18080)).toThrow("unsafe host bindings");
   });
 
-  it("rejects a public OpenShell gateway", () => {
-    expect(() =>
-      getLegacyHostLocalManagedVllmBridgeHost(
-        18080,
-        dockerCapture(ownedContainer(), "203.0.113.1"),
-      ),
-    ).toThrow("requires one private OpenShell bridge address");
-  });
+  it.each(["172.18.0.1", "203.0.113.1", "::1"])(
+    "rejects a non-IPv4-loopback binding at %s",
+    (address) => {
+      const row = ownedContainer();
+      row.NetworkSettings.Ports["8000/tcp"] = [{ HostIp: address, HostPort: "18080" }];
+      interceptDocker(row);
+      expect(() => getLegacyHostLocalManagedVllmLoopbackHost(18080)).toThrow(
+        "unsafe host bindings",
+      );
+    },
+  );
 
   it("preserves the legacy probe when the local container is confirmed absent", () => {
     interceptDocker(null, ownedContainer());
@@ -500,7 +472,7 @@ describe("host-local managed vLLM container probe", () => {
         ? { status: 1, stdout: "[]", stderr: "Error: No such object: nemoclaw-vllm" }
         : capture(file, args, options),
     );
-    expect(getLegacyHostLocalManagedVllmBridgeHost(18080)).toBeNull();
+    expect(getLegacyHostLocalManagedVllmLoopbackHost(18080)).toBeNull();
     expectLocalSpawns(1);
   });
 
@@ -518,7 +490,7 @@ describe("host-local managed vLLM container probe", () => {
   ])("rejects an inspection with $state instead of treating it as absence", (result) => {
     interceptDocker(null, ownedContainer());
     subprocess.spawnSync.mockReturnValue(result as ReturnType<typeof subprocess.spawnSync>);
-    expect(() => getLegacyHostLocalManagedVllmBridgeHost(18080)).toThrow(
+    expect(() => getLegacyHostLocalManagedVllmLoopbackHost(18080)).toThrow(
       "Managed vLLM container inspection failed",
     );
     expectLocalSpawns(1);

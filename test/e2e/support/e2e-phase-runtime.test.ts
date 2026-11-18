@@ -198,6 +198,33 @@ describe("runtime phase fixture", () => {
     expect(call?.options?.artifactName).toBe("custom-chat");
   });
 
+  it("uses the scoped native router handle and retains completion failure checks", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(
+      shellResult(0, JSON.stringify({ choices: [{ message: { content: "routed" } }] })),
+    );
+    await fixture(runner).expectInferenceLocalChatCompletion(instance(), {
+      modelRouter: true,
+      model: "nvidia-routed",
+    });
+    const script = runner.calls[0]?.args.join(" ") ?? "";
+    expect(script).toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+    expect(script).toContain('"$AUTH_HEADER"');
+    expect(script).toContain("http://host.openshell.internal:4000/v1/chat/completions");
+    expect(script).not.toContain("https://inference.local");
+  });
+
+  it.each([shellResult(1, "upstream failed"), shellResult(0, '{"choices":[]}')])(
+    "rejects a failed native router completion %j",
+    async (response) => {
+      const runner = new FakeRunner();
+      runner.enqueue(response);
+      await expect(
+        fixture(runner).expectInferenceLocalChatCompletion(instance(), { modelRouter: true }),
+      ).rejects.toThrow();
+    },
+  );
+
   it("retries inference.local PONG chat completions and accepts reasoning content", async () => {
     const runner = new FakeRunner();
     runner.enqueue(

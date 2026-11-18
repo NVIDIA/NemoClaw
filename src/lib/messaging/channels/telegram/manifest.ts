@@ -119,7 +119,6 @@ export const telegramManifest = {
               healthMonitor: {
                 enabled: false,
               },
-              proxy: "{{proxyUrl}}",
               groupPolicy: "{{telegramConfig.groupPolicy}}",
               dmPolicy: "{{allowedIds.telegram.dmPolicy}}",
               allowFrom: "{{allowedIds.telegram.values}}",

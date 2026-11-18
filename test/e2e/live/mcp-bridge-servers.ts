@@ -8,6 +8,7 @@ import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   closeServer,
@@ -24,6 +25,58 @@ export const HERMES_DEFERRED_TOOL_SEARCH_MISS =
 export interface StartedHttpServer {
   port: number;
   close(): Promise<void>;
+}
+
+interface CompatibleRequestDiagnostic {
+  receivedAtMs: number;
+  method: "GET" | "POST" | "other";
+  route: "models" | "chat-completions" | "responses" | "other";
+  authenticated: boolean;
+  bodyComplete: boolean;
+  stream: boolean | null;
+  responseStatus: number | null;
+  responseFinished: boolean;
+  responseClosed: boolean;
+}
+
+export interface CompatibleMockServer extends StartedHttpServer {
+  diagnostics(): {
+    receivedCount: number;
+    retainedLimit: number;
+    requests: CompatibleRequestDiagnostic[];
+  };
+}
+
+export async function withCompatibleMockFailureDiagnostics(
+  server: Pick<CompatibleMockServer, "diagnostics">,
+  artifacts: Pick<ArtifactSink, "writeJson">,
+  operation: () => Promise<void>,
+): Promise<void> {
+  const adminApprovalStartedAtMs = Date.now();
+  const call = Promise.resolve().then(operation);
+  await call.catch(async () => {
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.allSettled([
+        Promise.race([
+          Promise.resolve().then(() =>
+            artifacts.writeJson("admin-approval-compatible-requests.json", {
+              adminApprovalStartedAtMs,
+              capturedAtMs: Date.now(),
+              ...server.diagnostics(),
+            }),
+          ),
+          new Promise<void>((resolve) => {
+            deadline = setTimeout(resolve, MCP_DIAGNOSTIC_PERSIST_TIMEOUT_MS);
+          }),
+        ]),
+      ]);
+    } finally {
+      clearTimeout(deadline);
+    }
+  });
+  // Preserve the original approval result even when diagnostic publication fails.
+  await call;
 }
 
 export const FAKE_MCP_STATUS_RESULT_TOKEN = "MCP_STATUS_OK";
@@ -542,11 +595,45 @@ export async function startCompatibleMock(options: {
         resultToken: string;
         toolName: string;
       };
-}): Promise<StartedHttpServer> {
+}): Promise<CompatibleMockServer> {
   let selectedOpenClawToolName: string | undefined;
+  let receivedCount = 0;
+  const requestDiagnostics: CompatibleRequestDiagnostic[] = [];
   const server = http.createServer(async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "http://compatible.mock").pathname;
     const auth = req.headers.authorization === `Bearer ${options.apiKey}`;
+    // Keep only fixed transport facts, never URLs, headers, prompts or response bodies.
+    const diagnostic: CompatibleRequestDiagnostic = {
+      receivedAtMs: Date.now(),
+      method: req.method === "GET" || req.method === "POST" ? req.method : "other",
+      route: ["/models", "/v1/models"].includes(requestPath)
+        ? "models"
+        : ["/chat/completions", "/v1/chat/completions"].includes(requestPath)
+          ? "chat-completions"
+          : ["/responses", "/v1/responses"].includes(requestPath)
+            ? "responses"
+            : "other",
+      authenticated: auth,
+      bodyComplete: req.complete,
+      stream: null,
+      responseStatus: null,
+      responseFinished: false,
+      responseClosed: false,
+    };
+    receivedCount = Math.min(receivedCount + 1, 65_535);
+    requestDiagnostics.push(diagnostic);
+    if (requestDiagnostics.length > 64) requestDiagnostics.shift();
+    req.once("end", () => {
+      diagnostic.bodyComplete = true;
+    });
+    res.once("finish", () => {
+      diagnostic.responseStatus = res.statusCode;
+      diagnostic.responseFinished = true;
+    });
+    res.once("close", () => {
+      diagnostic.responseStatus = res.headersSent ? res.statusCode : null;
+      diagnostic.responseClosed = true;
+    });
     if (!auth) {
       jsonResponse(res, 401, { error: { message: "missing bearer credential" } });
       return;
@@ -569,6 +656,7 @@ export async function startCompatibleMock(options: {
         messages?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
         tools?: Array<{ function?: { name?: string } }>;
       };
+      diagnostic.stream = Boolean(body.stream);
       const visibleToolNames = new Set(
         (body.tools ?? [])
           .map((tool) => tool.function?.name)
@@ -1067,6 +1155,11 @@ export async function startCompatibleMock(options: {
   return {
     port,
     close: () => closeServer(server),
+    diagnostics: () => ({
+      receivedCount,
+      retainedLimit: 64,
+      requests: requestDiagnostics.map((request) => ({ ...request })),
+    }),
   };
 }
 

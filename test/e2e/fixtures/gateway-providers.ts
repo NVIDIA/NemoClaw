@@ -92,7 +92,7 @@ async function setFixtureProviderPolicyBinding(
     };
     readonly expectedBinaries?: readonly string[];
     readonly removeBinding?: boolean;
-    readonly restMethods?: readonly ("GET" | "POST")[];
+    readonly allowMethods?: readonly ("GET" | "POST" | "WEBSOCKET_TEXT")[];
   },
 ): Promise<void> {
   const policy = await host.command(
@@ -120,7 +120,7 @@ async function setFixtureProviderPolicyBinding(
       options.endpoint.host,
       options.endpoint.port,
       options.endpoint.protocol,
-      options.restMethods,
+      options.allowMethods,
     );
     if (options.expectedBinaries) {
       assertFixtureProviderPolicyEndpointBinaries(
@@ -162,6 +162,7 @@ export async function rebindFixtureProviderPolicyEndpoint(
   options: {
     readonly artifactName: string;
     readonly credentialEnv: string;
+    readonly allowMethods?: readonly ("GET" | "POST" | "WEBSOCKET_TEXT")[];
     readonly endpoint: {
       readonly host: string;
       readonly port: number | string;
@@ -199,6 +200,7 @@ export async function rebindFixtureProviderPolicyEndpoint(
     ...commandOptions,
     artifactName: `${options.artifactName}-policy-rebound`,
     endpoint: { ...options.endpoint, port: endpointPort },
+    allowMethods: options.allowMethods,
   });
 }
 
@@ -236,7 +238,7 @@ export async function applyFixtureProviderPolicyEndpoint(
   });
 
   const policyHost = "host.openshell.internal";
-  const methods =
+  const methods: readonly ("GET" | "POST" | "WEBSOCKET_TEXT")[] =
     options.protocol === "rest"
       ? (options.restMethods ?? ["GET", "POST"])
       : ["GET", "WEBSOCKET_TEXT"];
@@ -247,8 +249,6 @@ export async function applyFixtureProviderPolicyEndpoint(
     "--add-endpoint",
     `${policyHost}:${String(endpointPort)}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
   ];
-  for (const method of methods)
-    args.push("--add-allow", `${policyHost}:${String(endpointPort)}:${method}:/**`);
   args.push(...allowedBinaries.flatMap((binary) => ["--binary", binary]), "--wait");
   await runFixtureOpenShell(host, args, commandOptions);
   await setFixtureProviderPolicyBinding(host, sandboxName, {
@@ -256,7 +256,7 @@ export async function applyFixtureProviderPolicyEndpoint(
     artifactName: `${options.artifactName}-credential-binding`,
     endpoint: { host: policyHost, port: endpointPort, protocol: options.protocol },
     expectedBinaries: allowedBinaries,
-    restMethods: options.protocol === "rest" ? (options.restMethods ?? ["GET", "POST"]) : undefined,
+    allowMethods: methods,
   });
 }
 
@@ -266,19 +266,22 @@ export async function createExtraGatewayProvider(
   options: {
     artifactName: string;
     env: NodeJS.ProcessEnv;
+    profilePath?: string;
+    credentialEnv?: string;
   },
 ): Promise<void> {
   assertProviderName(providerName);
-  const credential = options.env[EXTRA_PROVIDER_CREDENTIAL_ENV];
+  const credentialEnv = options.credentialEnv ?? EXTRA_PROVIDER_CREDENTIAL_ENV;
+  const profilePath = options.profilePath ?? EXTRA_PROVIDER_PROFILE;
+  if (!CREDENTIAL_ENV.test(credentialEnv)) throw new Error("Unsafe fixture credential environment");
+  const credential = options.env[credentialEnv];
   if (!credential) {
-    throw new Error(`Missing provider credential env value: ${EXTRA_PROVIDER_CREDENTIAL_ENV}`);
+    throw new Error(`Missing provider credential env value: ${credentialEnv}`);
   }
-  const contract = parseCheckedInProviderProfileContract(
-    fs.readFileSync(EXTRA_PROVIDER_PROFILE, "utf8"),
-  );
+  const contract = parseCheckedInProviderProfileContract(fs.readFileSync(profilePath, "utf8"));
   if (!contract) throw new Error("The E2E extra-provider profile is invalid.");
   const profileEnv = { ...options.env };
-  delete profileEnv[EXTRA_PROVIDER_CREDENTIAL_ENV];
+  delete profileEnv[credentialEnv];
   const run = (args: string[], artifactName: string, env: NodeJS.ProcessEnv) =>
     host.command(host.openshellCommandPath, scopeGatewayOpenshellArgs(args, "nemoclaw"), {
       artifactName,
@@ -287,7 +290,7 @@ export async function createExtraGatewayProvider(
       timeoutMs: 60_000,
     });
   const imported = await run(
-    ["provider", "profile", "import", "--file", EXTRA_PROVIDER_PROFILE],
+    ["provider", "profile", "import", "--file", profilePath],
     `${options.artifactName}-profile-import`,
     profileEnv,
   );
@@ -314,7 +317,7 @@ export async function createExtraGatewayProvider(
       "--type",
       contract.profileId,
       "--credential",
-      EXTRA_PROVIDER_CREDENTIAL_ENV,
+      credentialEnv,
     ],
     options.artifactName,
     options.env,

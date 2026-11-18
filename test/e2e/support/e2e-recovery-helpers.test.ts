@@ -157,6 +157,91 @@ function buildGateway(runner: CommandRunner): GatewayClient {
 }
 
 describe("GatewayClient recovery helpers (#2701)", () => {
+  it("gateway client proves registration, listener, and host runtime are removed", async () => {
+    const runner = new ScriptedRunner();
+    const privateRuntimeEnv = { ...process.env, HOME: "/private/export-home" };
+    runner.queue({ exitCode: 1, stderr: "No active gateway" });
+    runner.queue({ exitCode: 1 });
+    runner.queue({ exitCode: 1 });
+    runner.queue({ exitCode: 0 });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+
+    await gateway.expectRemoved("nemoclaw", {
+      artifactName: "final-gateway",
+      env: privateRuntimeEnv,
+      gatewayPort: 18_080,
+    });
+
+    expect(runner.calls.map(({ command, args }) => [command, args])).toEqual([
+      ["openshell", ["status"]],
+      ["lsof", ["-ti", ":18080", "-sTCP:LISTEN"]],
+      ["sh", expect.any(Array)],
+      ["docker", ["container", "ps", "--format", "{{.ID}}\t{{.Names}}"]],
+      ["true", []],
+    ]);
+    expect(runner.calls[0].options).toMatchObject({
+      artifactName: "final-gateway-status",
+      env: { OPENSHELL_GATEWAY: "nemoclaw" },
+    });
+    expect(runner.calls[1].options).toMatchObject({
+      artifactName: "final-gateway-listener",
+    });
+    expect(
+      runner.calls.slice(2).every((call) => call.options?.env?.HOME === privateRuntimeEnv.HOME),
+    ).toBe(true);
+  });
+
+  it("gateway client rejects an inconclusive listener absence probe", async () => {
+    const runner = new ScriptedRunner();
+    runner.queue({ exitCode: 1, stderr: "Status: Disconnected\nGateway: nemoclaw" });
+    runner.queue({ exitCode: 1, stderr: "lsof: command unavailable" });
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+
+    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+      "gateway listener still exists or could not be disproved on port 8080",
+    );
+  });
+
+  it.each([
+    { exitCode: 0, stdout: "Status: Connected\nGateway: nemoclaw" },
+    { exitCode: 127, stderr: "openshell: command not found" },
+    { exitCode: 2, stderr: "Gateway nemoclaw not found: unknown status" },
+    { exitCode: 1, stderr: "configuration file does not exist" },
+  ])("rejects status that does not prove gateway disconnection: %j", async (status) => {
+    const runner = new ScriptedRunner();
+    runner.queue(status);
+    const gateway = buildGateway(runner);
+    await expect(gateway.expectRemoved("nemoclaw", { gatewayPort: 8_080 })).rejects.toThrow(
+      "openshell status did not prove gateway 'nemoclaw' disconnected",
+    );
+    expect(runner.calls).toHaveLength(1);
+  });
+
+  it.each([
+    { exitCode: 1, stderr: "daemon unavailable" },
+    { exitCode: 0, stderr: "incomplete runtime observation" },
+    { exitCode: null, signal: "SIGTERM" as const },
+    { exitCode: 0, timedOut: true },
+    { exitCode: 0, stdout: "unexpected inventory response" },
+  ])("refuses an inconclusive runtime observation after listener absence: %j", async (failure) => {
+    const runner = new ScriptedRunner();
+    runner.queue({ exitCode: 1, stderr: "No active gateway" });
+    runner.queue({ exitCode: 1 });
+    runner.queue({ exitCode: 1 });
+    runner.queue(failure);
+    const gateway = new GatewayClient(
+      new HostCliClient(runner, { cliPath: "nemoclaw" }),
+      new SandboxClient(runner),
+    );
+    await expect(gateway.expectRemoved()).rejects.toThrow("runtime observation failed");
+  });
+
   describe("waitForMissingManagedSupervisor", () => {
     it("waits for the exact missing-supervisor proof and a quiet settle", async () => {
       const events: string[] = [];
@@ -524,12 +609,39 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       });
     });
 
+    it("uses the selected private home and a distinct supervisor identity artifact", async () => {
+      const runner = new ScriptedRunner();
+      runner.queue({ stdout: "1234 987654 987654 S\n" });
+      const gateway = buildGateway(runner);
+      await gateway.resolveGatewayIdentity(
+        { sandboxName: "switch-owner" },
+        { env: { HOME: "/private/switch-home" }, artifactName: "after-switch-identity" },
+      );
+      expect(runner.calls[0]).toMatchObject({
+        args: expect.arrayContaining(["switch-owner"]),
+        options: {
+          env: { HOME: "/private/switch-home", OPENSHELL_GATEWAY: "nemoclaw" },
+          artifactName: "after-switch-identity",
+        },
+      });
+    });
+
     it("returns null when the PID probe fails despite valid-looking output", async () => {
       const runner = new ScriptedRunner();
       runner.queue({ exitCode: 1, stdout: "1234 987654 987654 S\n" });
       const gateway = buildGateway(runner);
 
       await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBeNull();
+    });
+
+    it.each([
+      { timedOut: true },
+      { signal: "SIGTERM" as const },
+      { stderr: "incomplete process observation" },
+    ])("rejects incomplete identity probes despite valid-looking output: %j", async (failure) => {
+      const runner = new ScriptedRunner();
+      runner.queue({ stdout: "1234 987654 987654 S\n", ...failure });
+      await expect(buildGateway(runner).resolveGatewayIdentity(fakeInstance())).resolves.toBeNull();
     });
 
     it("rejects a reused PID whose process start identity no longer matches", async () => {

@@ -13,7 +13,17 @@ const INSTALLER_SOURCE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
   "utf8",
 );
-const CURRENT_TEMPLATE_DIGEST = "f9e5f187d343ed148f10a6a6e990e7a40028d231932b78c21d413c7b90e8018b";
+const TRUSTED_V019_TEMPLATE_DIGEST =
+  "cbf19e19f92e5fa22054964e0ba72cba4f47263cfdda5e60be1ad67e605c4599";
+const originalCurl =
+  'curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \\';
+const boundedCurl = [
+  'curl -fL "${curl_progress[@]}" --connect-timeout 10 --retry 3 --retry-delay 2 \\',
+  "      --speed-limit 1024 --speed-time 60 \\",
+  '      "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \\',
+].join("\n");
+const originalInstaller = INSTALLER_SOURCE.replace(boundedCurl, originalCurl);
+const boundedInstaller = originalInstaller.replace(originalCurl, boundedCurl);
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -64,30 +74,35 @@ function expectTrustedTemplate(source: string, digest: string): void {
 
 describe("installer Homebrew formula reuse trust", () => {
   const supersededV00106Template = INSTALLER_SOURCE.replace(
-    'MIN_VERSION="0.0.116"',
+    'MIN_VERSION="0.1.9"',
     'MIN_VERSION="0.0.106"',
   )
-    .replace('MAX_VERSION="0.0.116"', 'MAX_VERSION="0.0.106"')
-    .replace('DEV_MIN_VERSION="0.0.116"', 'DEV_MIN_VERSION="0.0.106"');
+    .replace('MAX_VERSION="0.1.9"', 'MAX_VERSION="0.0.106"')
+    .replace('DEV_MIN_VERSION="0.1.9"', 'DEV_MIN_VERSION="0.0.106"');
   const untrustedTemplate = INSTALLER_SOURCE.replace(
     'info "Detected $OS_LABEL ($ARCH_LABEL)"',
     'info "Detected $OS_LABEL ($ARCH_LABEL)"\n# unlisted installer template',
   );
 
-  // source-shape-contract: security -- The current installer template must match its reviewed trust record
-  it("accepts only the reviewed OpenShell 0.0.116 installer template", () => {
-    expect(INSTALLER_SOURCE).toContain('MIN_VERSION="0.0.116"');
-    expect(INSTALLER_SOURCE).toContain('MAX_VERSION="0.0.116"');
-    expectTrustedTemplate(INSTALLER_SOURCE, CURRENT_TEMPLATE_DIGEST);
+  // source-shape-contract: security -- Exact current installer bytes must be base-authorized before trusted CI can admit the dependent runtime change
+  it("accepts only the reviewed OpenShell 0.1.9 installer template", () => {
+    expect(INSTALLER_SOURCE).toContain('MIN_VERSION="0.1.9"');
+    expect(INSTALLER_SOURCE).toContain('MAX_VERSION="0.1.9"');
+    expectTrustedTemplate(boundedInstaller, TRUSTED_V019_TEMPLATE_DIGEST);
   });
 
   it.each([
     ["existing template", untrustedTemplate],
+    ["unbounded download", originalInstaller],
+    [
+      "retained sandbox registry guard",
+      boundedInstaller.replace("  verifyRetainedNemoClawRegistry();\n", ""),
+    ],
     [
       "download retry policy",
       INSTALLER_SOURCE.replace("--retry 3 --retry-delay 2", "--retry 4 --retry-delay 2"),
     ],
-  ])("rejects an unreviewed mutation of the OpenShell 0.0.116 %s", (_name, source) => {
+  ])("rejects an unreviewed mutation of the OpenShell 0.1.9 %s", (_name, source) => {
     const result = runTrustCheck(source);
 
     expect(result.status).toBe(1);
@@ -99,7 +114,7 @@ describe("installer Homebrew formula reuse trust", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "installer pin-table release 0.0.116 must match installer MIN_VERSION 0.0.106",
+      "installer pin-table release 0.1.9 must match installer MIN_VERSION 0.0.106",
     );
   });
 });

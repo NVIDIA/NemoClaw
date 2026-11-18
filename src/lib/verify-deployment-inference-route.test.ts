@@ -60,7 +60,7 @@ function makeModelsRouteDeps(code: string, overrides: Record<string, unknown> = 
 
 describe("verifyDeployment inference route model-catalog validation", () => {
   it.each([
-    ["openclaw", false],
+    ["openclaw", true],
     [DCODE_AGENT, true],
     ["pi", true],
     ["hermes", true],
@@ -76,35 +76,53 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(context.invocation.nativeLocalExpected).toBe(expected);
   });
 
-  it("verifies owned Local NIM through the shared route while expecting native standalone vLLM", () => {
-    const flow = {
-      provider: "vllm-local",
-      model: "test-model",
-      endpointUrl: "http://host.openshell.internal:8000/v1",
-      preferredInferenceApi: "openai-completions",
-    };
-    const binding = {
-      ...localBinding,
-      provider: "vllm-local" as const,
-      endpointUrl: "http://host.openshell.internal:8000/v1",
-    };
-    const staleAttachment = {
-      ...binding,
-      ...nativeLocalIdentity(binding),
-      schemaVersion: 1 as const,
-      providerId: "stale-provider",
-    };
-    const nim = onboardInferenceVerificationContext("my-sandbox", "my-gateway", DCODE_AGENT, flow, {
-      nimContainer: "nemoclaw-nim-owned",
-      nativeLocalProviderAttachment: staleAttachment,
-    });
-    const vllm = onboardInferenceVerificationContext("my-sandbox", "my-gateway", DCODE_AGENT, flow);
-    expect(nim.route.nativeLocalExpected).toBe(false);
-    expect(nim.invocation.nativeLocalExpected).toBe(false);
-    expect(nim.route.nativeLocalProviderAttachment).toBeUndefined();
-    expect(nim.invocation.nativeLocalProviderAttachment).toBeUndefined();
-    expect(vllm.route.nativeLocalExpected).toBe(true);
-  });
+  it.each(["sentinel", "authenticated", "missing"] as const)(
+    "verifies Local NIM only with its sentinel attachment: %s",
+    async (mode) => {
+      const flow = {
+        provider: "vllm-local",
+        model: "test-model",
+        nimContainer: "nemoclaw-nim-owned",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        preferredInferenceApi: "openai-completions",
+      };
+      const binding = {
+        ...localBinding,
+        provider: "vllm-local" as const,
+        endpointUrl: flow.endpointUrl,
+        authMode: mode === "authenticated" ? ("authenticated" as const) : ("sentinel" as const),
+      };
+      const receipt = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "selected-provider",
+      };
+      const context = onboardInferenceVerificationContext(
+        "my-sandbox",
+        "my-gateway",
+        DCODE_AGENT,
+        flow,
+        {
+          nimContainer: flow.nimContainer,
+          nativeLocalProviderAttachment: mode === "missing" ? undefined : receipt,
+        },
+      );
+      const probe = vi.fn(async () => ({ ok: true }) as const);
+      const expected = mode === "sentinel" ? receipt : undefined;
+      expect(context.route.nativeLocalExpected).toBe(true);
+      expect(context.invocation.nativeLocalExpected).toBe(true);
+      expect(context.route.nativeLocalProviderAttachment).toEqual(expected);
+      expect(context.invocation.nativeLocalProviderAttachment).toEqual(expected);
+      const result = await probeOnboardInferenceInvocation(context.invocation, probe);
+      expect(result.ok).toBe(mode === "sentinel");
+      expect(probe.mock.calls).toEqual(
+        mode === "sentinel"
+          ? [[expect.objectContaining({ nativeLocalProviderAttachment: receipt })]]
+          : [],
+      );
+    },
+  );
 
   it("uses the recorded native local attachment instead of the shared models route", async () => {
     const scripts: string[] = [];

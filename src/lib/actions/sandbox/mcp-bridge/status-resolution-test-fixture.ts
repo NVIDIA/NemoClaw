@@ -115,7 +115,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     const credentialKey = providerName === "alpha-mcp-slack" ? "SLACK_TOKEN" : providerCredentialKey;
     return {
       status: 0,
-      stdout: "Name: " + providerName + "\nId: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: " + credentialKey + "\nConfig keys: <none>\n",
+      stdout: "Name: " + providerName + "\nId: 11111111-2222-4333-8444-555555555555\nType: " + providerInspection.mcpBridgeProviderType(credentialKey) + "\nResource version: 4\nCredential keys: " + credentialKey + "\nConfig keys: <none>\n",
       stderr: "",
     };
   }

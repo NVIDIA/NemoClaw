@@ -17,6 +17,7 @@ export type DockerGpuRouteConfig = {
 export type DockerGpuRouteOptions = {
   dockerDriverGateway: boolean;
   dockerDesktopWsl?: boolean;
+  wslNvidiaCdiReady?: boolean;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   log?: (message: string) => void;
@@ -78,6 +79,7 @@ export function resolveDockerGpuRoutePlan(
   warnForLegacyNonzeroControl(control, log);
 
   if (dockerDesktopWsl) {
+    if (options.wslNvidiaCdiReady === true) return "native-only";
     if (control === "0") {
       log(
         "  NEMOCLAW_DOCKER_GPU_PATCH=0 ignored on Docker Desktop WSL: GPU passthrough on this runtime requires the compatibility path.",

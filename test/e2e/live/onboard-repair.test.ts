@@ -7,6 +7,7 @@ import {
   withPodmanOwnerDiagnostic,
   captureBoundedPodmanOwnerDiagnostic,
 } from "../fixtures/podman-owner-diagnostic";
+import { registeredCompatibleChatCommand } from "../fixtures/registered-inference.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -161,6 +162,7 @@ test(
     });
 
     const fake = await startFakeOpenAiCompatibleServer({
+      additionalModels: ["changed-test-model"],
       host: "0.0.0.0",
       progress,
       publicHost: "host.openshell.internal",
@@ -412,21 +414,15 @@ test(
     const requestOffset = fake.requests().length;
     const sourceChat = await sandbox.exec(
       SANDBOX_NAME,
-      [
-        "curl",
-        "-fsS",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
+      registeredCompatibleChatCommand(
+        SANDBOX_NAME,
+        "test-model",
         JSON.stringify({
           model: "test-model",
           messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
           max_tokens: 50,
         }),
-      ],
+      ),
       {
         artifactName: "phase-3-source-inference-after-rejected-backup",
         env: env(),
@@ -493,21 +489,15 @@ test(
     const replacementRequestOffset = fake.requests().length;
     const replacementChat = await sandbox.exec(
       SANDBOX_NAME,
-      [
-        "curl",
-        "-fsS",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
+      registeredCompatibleChatCommand(
+        SANDBOX_NAME,
+        "changed-test-model",
         JSON.stringify({
           model: "changed-test-model",
           messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
           max_tokens: 50,
         }),
-      ],
+      ),
       {
         artifactName: "phase-3-replacement-inference-after-successful-recreate",
         env: env(),

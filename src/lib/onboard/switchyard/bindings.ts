@@ -22,6 +22,10 @@ import {
 import { nativeProviderLifecycle } from "../../inference/native-provider";
 import { fixedNativeProvider } from "../../inference/native-provider/fixed";
 import {
+  decodeManagedStartupProfile,
+  ManagedStartupProfileError,
+} from "../managed-startup/profile";
+import {
   type SwitchyardPhysicalProviderBinding,
   type SwitchyardProviderBindings,
   SwitchyardProviderBindingError,
@@ -32,6 +36,23 @@ import {
 
 function fail(message: string): never {
   throw new SwitchyardProviderBindingError(message);
+}
+
+/** Read the profile's recorded roles before comparing them with live provider bindings. */
+export function readSwitchyardManagedStartupProfile(encodedProfile: string) {
+  try {
+    const config = decodeManagedStartupProfile(encodedProfile).agentConfig;
+    return config.agent === "hermes" && config.switchyardRouting
+      ? { routing: config.switchyardRouting, bindings: config.switchyardBindings }
+      : null;
+  } catch (error) {
+    if (
+      error instanceof ManagedStartupProfileError ||
+      error instanceof SwitchyardProviderBindingError
+    )
+      return fail("the managed startup profile cannot be verified.");
+    throw error;
+  }
 }
 
 /** Use the existing fixed profiles; Switchyard does not own another provider catalog. */

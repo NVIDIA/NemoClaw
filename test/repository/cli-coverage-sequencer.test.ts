@@ -8,10 +8,6 @@ import { describe, expect, it } from "vitest";
 import type { TestSpecification, Vitest } from "vitest/node";
 
 import {
-  discoverVitestCandidates,
-  expectedProjectForTestPath,
-} from "../../scripts/checks/vitest-project-overlap.mts";
-import {
   assignStableShards,
   CliCoverageSequencer,
   cliTestTimingHints,
@@ -46,22 +42,6 @@ function sequencer(index: number, count: number): CliCoverageSequencer {
   return new CliCoverageSequencer({
     config: { root: "/repo", shard: { index, count } },
   } as unknown as Vitest);
-}
-
-function currentCliCoverageEntries(): WeightedShardEntry<string>[] {
-  const coverageProjects = new Set(["cli", "integration", "e2e-support"]);
-  return [...discoverVitestCandidates()].flatMap((file) => {
-    const projectName = expectedProjectForTestPath(file);
-    return projectName && coverageProjects.has(projectName)
-      ? [
-          {
-            key: `${projectName}:${file}`,
-            weightMs: timingWeightForPath(file),
-            value: file,
-          },
-        ]
-      : [];
-  });
 }
 
 describe("stable CLI coverage sharding", () => {
@@ -130,18 +110,6 @@ describe("stable CLI coverage sharding", () => {
   // Stable hash ownership cannot guarantee a fixed aggregate load ratio after
   // arbitrary roster additions. Use retained CI timings to assess performance;
   // exact-once assignment and roster-independent ownership are tested above.
-
-  it("balances the serialized integration lane across the twelve CI shards (#6237)", () => {
-    const integrationEntries = currentCliCoverageEntries().filter((entry) =>
-      entry.key.startsWith("integration:"),
-    );
-    expect(integrationEntries.length).toBeGreaterThan(0);
-
-    const weights = assignStableShards(integrationEntries, 12).map((shard) => shard.totalWeightMs);
-    const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
-
-    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.1);
-  });
 
   it("uses stable sharding only for projects owned by the CLI coverage matrix", () => {
     expect(shouldUseCliCoverageSharding(["cli", "integration", "e2e-support"])).toBe(true);

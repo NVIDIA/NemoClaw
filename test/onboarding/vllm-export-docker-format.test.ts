@@ -46,6 +46,14 @@ describe.skipIf(!dockerClientAvailable)("managed vLLM Docker format boundary", (
 
   it.each([
     [
+      "extra published bridge binding",
+      (f: Fixture) =>
+        f.objects.container.NetworkSettings.Ports["8000/tcp"].push({
+          HostIp: "172.18.0.1",
+          HostPort: "18000",
+        }),
+    ],
+    [
       "additional capability",
       (f: Fixture) => Object.assign(f.objects.container.HostConfig, { CapAdd: ["SYS_ADMIN"] }),
     ],

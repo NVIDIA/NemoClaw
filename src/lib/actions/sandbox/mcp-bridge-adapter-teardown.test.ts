@@ -93,6 +93,24 @@ import {
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge-rebuild";
 
+const capturedPolicy = JSON.stringify({
+  version: 1,
+  network_policies: {
+    mcp_bridge_github: {
+      name: "MCP GitHub",
+      binaries: [{ path: "/usr/bin/node" }],
+      endpoints: [
+        {
+          host: "api.githubcopilot.com",
+          port: 443,
+          protocol: "mcp",
+          mcp: { versions: ["2025-11-25"], allow_all_known_mcp_methods: true },
+        },
+      ],
+    },
+  },
+});
+
 const sandbox = { agent: "hermes" } as SandboxEntry;
 const runtimeSelection = {
   gatewayName: "nemoclaw-8091",
@@ -116,9 +134,7 @@ describe("MCP adapter teardown rollback", () => {
     mocks.getMcpProviderInspectionRuntimeSelection.mockReset().mockReturnValue(runtimeSelection);
     mocks.getBridgeAdapter.mockReset().mockReturnValue("hermes-config");
     mocks.getSandboxAgent.mockReset().mockReturnValue("hermes");
-    mocks.captureRecordedSandboxBasePolicy
-      .mockReset()
-      .mockResolvedValue("version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n");
+    mocks.captureRecordedSandboxBasePolicy.mockReset().mockResolvedValue(capturedPolicy);
     mocks.getSandboxOrThrow.mockReset().mockReturnValue(sandbox);
     mocks.inspectExactMcpDestroyProvider.mockReset().mockReturnValue({
       credentialKeys: ["GITHUB_TOKEN"],
@@ -254,10 +270,22 @@ describe("MCP adapter teardown rollback", () => {
     expect(mocks.restoreExistingMcpBridgeRuntime).not.toHaveBeenCalled();
   });
 
+  it("rejects an invalid policy before scrubbing or detaching the source", async () => {
+    mocks.captureRecordedSandboxBasePolicy.mockResolvedValue(
+      "version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n",
+    );
+    await expect(prepareMcpBridgesForRebuild("alpha", [entry])).rejects.toThrow(
+      "does not satisfy the shipped sandbox policy schema",
+    );
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+  });
+
   it("preserves an existing Hermes entry through legacy teardown and replacement restore", async () => {
     mocks.captureRecordedSandboxBasePolicy
       .mockReset()
-      .mockResolvedValueOnce("version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n")
+      .mockResolvedValueOnce(capturedPolicy)
       .mockResolvedValueOnce("version: 1\nnetwork_policies: {}\n");
     mocks.removeGeneratedPolicy.mockReset().mockResolvedValue(undefined);
     mocks.detachProvider.mockReset().mockResolvedValue("detached");
@@ -278,7 +306,7 @@ describe("MCP adapter teardown rollback", () => {
       entries: [entry],
       detachedProviderEntries: [entry],
       scrubbedAdapterEntries: [expect.objectContaining(entry)],
-      policyHandoff: "version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n",
+      policyHandoff: capturedPolicy,
       runtimeSelection,
     });
 

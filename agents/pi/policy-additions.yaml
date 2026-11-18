@@ -24,9 +24,9 @@ filesystem_policy:
 landlock:
   # Pi is a terminal agent, so filesystem policy must fail closed when Landlock
   # cannot be applied. If the kernel or the workspace mount cannot enforce these
-  # read-only system paths, `strict` fails the OpenShell sandbox startup instead
+  # read-only system paths, `hard_requirement` fails the OpenShell sandbox startup instead
   # of starting with the paths unenforced.
-  compatibility: strict
+  compatibility: hard_requirement
 process:
   run_as_user: sandbox
   run_as_group: sandbox

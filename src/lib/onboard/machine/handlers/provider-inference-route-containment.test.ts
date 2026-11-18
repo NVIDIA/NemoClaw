@@ -407,6 +407,51 @@ describe("provider route containment", () => {
   });
 });
 
+it.each([
+  { version: "0.0.14", pending: false, fresh: false },
+  { version: "0.1.3", pending: true, fresh: false },
+  { version: "0.1.3", pending: false, fresh: true },
+])(
+  "permits NVIDIA selection with runtime $version, pending $pending, fresh $fresh",
+  async ({ version, pending, fresh }) => {
+    const { deps } = createDeps();
+    deps.getInstalledOpenshellVersion = () => version;
+    deps.getSandboxRegistryEntry = () => ({
+      name: "target-sandbox",
+      provider: "nvidia-nim",
+      model: "nvidia/test",
+      gatewayName: "nemoclaw-9090",
+      ...(pending ? { pendingRouteReservation: true as const } : {}),
+    });
+    await expect(
+      handleProviderInferenceState({
+        ...resumeOptions(deps, createSession()),
+        fresh,
+      }),
+    ).resolves.toBeDefined();
+  },
+);
+
+it.each(["0.1.3", undefined])(
+  "rejects retained legacy NVIDIA resume before mutation on runtime %s",
+  async (version) => {
+    const { deps, calls } = createDeps();
+    deps.getInstalledOpenshellVersion = () => version ?? null;
+    deps.getSandboxRegistryEntry = () => ({
+      name: "target-sandbox",
+      provider: "nvidia-nim",
+      model: "nvidia/test",
+      gatewayName: "nemoclaw-9090",
+    });
+    await expect(
+      handleProviderInferenceState(resumeOptions(deps, createSession())),
+    ).rejects.toThrow("legacy shared NVIDIA inference route");
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
+  },
+);
+
 it.each([undefined, "2026-10-01T00:00:00Z"])(
   "blocks published legacy DCode resume with timestamp %s before mutation (#13197)",
   async (createdAt) => {
@@ -431,7 +476,7 @@ it.each([undefined, "2026-10-01T00:00:00Z"])(
 );
 
 it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
-  "resumes an owned Local NIM %s shared route without requiring a native attachment",
+  "preserves an owned legacy Local NIM %s route without a native attachment",
   async (agentName) => {
     const { deps, calls } = createDeps();
     deps.getSandboxRegistryEntry = () => ({
@@ -453,22 +498,23 @@ it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     const options = resumeOptions(deps, session);
     options.agent = { name: agentName } as never;
     options.forceInferenceSetup = true;
-    await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
-      provider: "vllm-local",
-      model: "fixture-model",
-    });
-    expect(calls.error).not.toHaveBeenCalled();
+    await expect(handleProviderInferenceState(options)).rejects.toThrow(
+      "legacy shared local inference route",
+    );
     expect(calls.setupNim).not.toHaveBeenCalled();
-    expect(calls.setupInference).toHaveBeenCalledOnce();
-    expect(calls.setupInference.mock.calls[0]?.at(-1)).toMatchObject({
-      agentName,
-      localNimSelected: true,
-    });
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
   },
 );
 
 it("keeps a fresh OpenClaw native local endpoint independent of a shared peer", async () => {
   const { deps, calls } = createDeps();
+  deps.probeLlamaCppSandboxReachability = async () => ({
+    ok: true,
+    reason: "ok",
+    networkName: "host",
+  });
   const selection = {
     ...fallbackSelection,
     provider: "llama-cpp-local",

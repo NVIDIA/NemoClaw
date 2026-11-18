@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
   sleepMs: vi.fn(),
+  sleepSeconds: vi.fn(),
   waitUntil: vi.fn(),
   waitUntilAsync: vi.fn(),
 }));
@@ -26,6 +27,7 @@ vi.mock("../../../src/lib/adapters/sandbox/command-transport", async (importOrig
 
 vi.mock("../../../src/lib/core/wait", () => ({
   sleepMs: mocks.sleepMs,
+  sleepSeconds: mocks.sleepSeconds,
   waitUntil: mocks.waitUntil,
   waitUntilAsync: mocks.waitUntilAsync,
 }));

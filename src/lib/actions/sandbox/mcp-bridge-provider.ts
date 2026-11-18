@@ -16,6 +16,7 @@ export {
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   MCP_BRIDGE_PROVIDER_TYPE,
+  mcpBridgeProviderType,
   preflightMcpEntryTargets,
   providerAttached,
   providerMatchesCredential,

@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import YAML from "yaml";
+import { REPOSITORY_ROOT } from "../../../core/repository-root";
+import { messagingCredentialProviderProfilePath } from "../../../messaging/provider-profile";
 
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import {
@@ -92,13 +96,9 @@ type StubbedRunOpenshellResult = { status: number; stdout: string; stderr: strin
 const OK_RESULT: StubbedRunOpenshellResult = { status: 0, stdout: "", stderr: "" };
 const EXACT_MESSAGING_PROFILE: StubbedRunOpenshellResult = {
   status: 0,
-  stdout: JSON.stringify({
-    id: "nemoclaw-mcp-v1",
-    credentials: [],
-    endpoints: [],
-    binaries: [],
-    inference_capable: false,
-  }),
+  stdout: JSON.stringify(
+    YAML.parse(fs.readFileSync(messagingCredentialProviderProfilePath(REPOSITORY_ROOT), "utf8")),
+  ),
   stderr: "",
 };
 const EXACT_BRAVE_PROFILE: StubbedRunOpenshellResult = {
@@ -165,7 +165,10 @@ function fakeGatewayRunOpenshell() {
 
   const exactProfileExports = new Map([
     ["provider profile -g nemoclaw export brave --output json", EXACT_BRAVE_PROFILE],
-    ["provider profile -g nemoclaw export nemoclaw-mcp-v1 --output json", EXACT_MESSAGING_PROFILE],
+    [
+      "provider profile -g nemoclaw export nemoclaw-messaging-v1 --output json",
+      EXACT_MESSAGING_PROFILE,
+    ],
   ]);
   const rejectUnexpectedProfileCommand = (args: string[]): never => {
     throw new Error(`Unexpected provider profile command: ${args.join(" ")}`);
@@ -951,7 +954,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
               name: "my-assistant-discord-bridge",
               envKey: "DISCORD_BOT_TOKEN",
               token: "discord-secret",
-              providerType: "nemoclaw-mcp-v1",
+              providerType: "nemoclaw-messaging-v1",
             },
           ],
           true,
@@ -991,7 +994,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
       expect(resumedSession.checkpoint?.bindings.registeredProviders).toEqual([
         {
           name: "my-assistant-discord-bridge",
-          type: "nemoclaw-mcp-v1",
+          type: "nemoclaw-messaging-v1",
           credentialEnv: "DISCORD_BOT_TOKEN",
         },
       ]);
@@ -1032,7 +1035,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
     expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
       "my-assistant-discord-bridge",
-      "nemoclaw-mcp-v1",
+      "nemoclaw-messaging-v1",
       "DISCORD_BOT_TOKEN",
     );
     expect(getSession().checkpoint?.effectGroups.messaging_providers).toBeUndefined();

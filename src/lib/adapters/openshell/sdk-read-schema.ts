@@ -62,14 +62,16 @@ const ManagedProfileIdentity = {
   scope: Type.Union([Type.Literal(""), Type.Literal("platform"), Type.Literal("workspace")]),
   resourceVersion: VersionSchema,
   discovery: Type.Optional(Type.Undefined()),
+  files: Type.Optional(Type.Tuple([])),
 };
 const ManagedRestEndpointFields = {
   ...NoUnknownProfileFields,
   port: Type.Literal(443),
   ports: Type.Union([Type.Tuple([]), Type.Tuple([Type.Literal(443)])]),
   protocol: Type.Literal("rest"),
-  tls: Type.Literal(""),
-  enforcement: Type.Literal("enforce"),
+  // OpenShell 0.1.2 raw protobuf responses use numeric network enums.
+  tls: Type.Literal(0), // NetworkTlsMode.UNSPECIFIED
+  enforcement: Type.Literal(1), // NetworkEnforcementMode.ENFORCE
   allowedIps: Type.Tuple([]),
   denyRules: Type.Tuple([]),
   allowEncodedSlash: Type.Literal(false),
@@ -118,7 +120,7 @@ export const ManagedBraveProfileResponseSchema = Type.Object({
       Type.Object({
         ...ManagedRestEndpointFields,
         host: Type.Literal("api.search.brave.com"),
-        access: Type.Literal("read-write"),
+        access: Type.Literal(2), // NetworkAccessPreset.READ_WRITE
         rules: Type.Tuple([]),
         requestBodyCredentialRewrite: Type.Literal(false),
       }),
@@ -161,7 +163,7 @@ function tavilyProfile(id: "tavily" | "tavily-hermes-v1", binaries: readonly str
         Type.Object({
           ...ManagedRestEndpointFields,
           host: Type.Literal("api.tavily.com"),
-          access: Type.Literal(""),
+          access: Type.Literal(0), // NetworkAccessPreset.UNSPECIFIED (explicit rules)
           rules: Type.Tuple([tavilyRule("/search"), tavilyRule("/extract")]),
           requestBodyCredentialRewrite: Type.Literal(true),
         }),

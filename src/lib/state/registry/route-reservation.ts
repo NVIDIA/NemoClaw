@@ -1,12 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { validateSwitchyardBindingState } from "../../hermes-switchyard-routing";
+import {
+  assertSwitchyardInferenceAuthority,
+  validateSwitchyardBindingState,
+} from "../../hermes-switchyard-routing";
 
 /** Bind provider-role observations to the same selection that the registry publishes. */
 export function requireSwitchyardBindingForSelection(
-  entry: Pick<SandboxEntry, "provider" | "model" | "hermesSwitchyard">,
+  entry: Pick<
+    SandboxEntry,
+    | "provider"
+    | "model"
+    | "hermesSwitchyard"
+    | "registeredInferenceProviderAttachment"
+    | "nativeLocalProviderAttachment"
+    | "nativeNvidiaProviderAttachment"
+    | "nativeHostedProviderAttachment"
+  >,
 ): SandboxEntry["hermesSwitchyard"] {
+  assertSwitchyardInferenceAuthority(entry);
   if (entry.hermesSwitchyard === undefined) return undefined;
   const state = validateSwitchyardBindingState(entry.hermesSwitchyard);
   if (
@@ -27,6 +40,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
+import { recordedRegisteredInferenceProviderAttachment } from "../../inference/native-provider/registered";
 import { hostedNativeProvider } from "../../inference/native-provider/hosted";
 import { requireHostedProviderAttachment } from "../../inference/native-provider/hosted-attachment";
 import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
@@ -50,6 +64,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "nativeLocalProviderAttachment",
   "nativeNvidiaProviderAttachment",
   "nativeHostedProviderAttachment",
+  "registeredInferenceProviderAttachment",
   "hermesSwitchyard",
   "openshellDriver",
   "pendingRouteReservation",
@@ -100,6 +115,7 @@ function withVerifiedCreateCheckpoint(
 function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
   try {
     requireHostedProviderAttachment(entry.nativeHostedProviderAttachment, entry.provider);
+    recordedRegisteredInferenceProviderAttachment(entry);
   } catch {
     return false;
   }
@@ -234,12 +250,24 @@ export function isPublishedSandboxRegistration(entry: { pendingRouteReservation?
 /** True when an entry participates in the inference route shared by its gateway. */
 export function isSharedGatewayRouteParticipant(entry: {
   nativeLocalProviderAttachment?: unknown;
+  registeredInferenceProviderAttachment?: unknown;
+  name?: string;
+  gatewayName?: string | null;
+  endpointUrl?: string | null;
+  preferredInferenceApi?: string | null;
+  credentialEnv?: string | null;
   nimContainer?: string | null;
   pendingRouteReservation?: true;
   createdAt?: string;
   provider?: string | null;
   model?: string | null;
 }): boolean {
+  try {
+    if (recordedRegisteredInferenceProviderAttachment(entry)) return false;
+  } catch {
+    // Unproven native identity must not bypass shared-route conflict checks.
+    return true;
+  }
   const ownedLocalNim = entry.provider === "vllm-local" && Boolean(entry.nimContainer?.trim());
   if (!ownedLocalNim && normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment))
     return false;
@@ -415,6 +443,22 @@ export function sandboxRegistrationMatchesInferenceRouteReservation(
 }
 
 export { normalizeNativeLocalProviderAttachment };
+
+/** A model-only reservation keeps the selected operator provider's binding. */
+export function retainedRegisteredInferenceProviderAttachment(
+  existing: SandboxEntry | undefined,
+  selection: Pick<
+    SandboxEntry,
+    "provider" | "endpointUrl" | "credentialEnv" | "preferredInferenceApi" | "gatewayName"
+  >,
+): SandboxEntry["registeredInferenceProviderAttachment"] {
+  if (!existing?.registeredInferenceProviderAttachment) return undefined;
+  try {
+    return recordedRegisteredInferenceProviderAttachment({ ...existing, ...selection });
+  } catch {
+    return undefined;
+  }
+}
 
 /** Keep a native attachment only when reusing its recorded route and gateway. */
 export function retainedNativeLocalProviderAttachment(

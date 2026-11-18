@@ -38,7 +38,6 @@ import {
   recoverHostLocalManagedVllmEndpoint,
   type RecoverHostLocalManagedVllmOptions,
 } from "./vllm-host-local-lifecycle";
-import { validateManagedVllmBridgeHost } from "./vllm-host-local-network";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 const { Check } = require("typebox/value") as typeof TypeBoxValueModule;
@@ -53,15 +52,6 @@ const ImageSchema = Type.Object(
     Os: Type.Literal("linux"),
     Architecture: Type.Literal("amd64"),
     Environment: Type.Array(Text, { maxItems: 128 }),
-  },
-  { additionalProperties: false },
-);
-const NetworkSchema = Type.Object(
-  {
-    Id,
-    Name: Type.Literal("openshell-docker"),
-    Driver: Type.Literal("bridge"),
-    Config: Type.Array(Type.Object({ Gateway: Text, Subnet: Text }), { minItems: 1, maxItems: 1 }),
   },
   { additionalProperties: false },
 );
@@ -84,8 +74,8 @@ const ContainerSchema = Type.Object(
       Ports: Type.Object(
         {
           "8000/tcp": Type.Array(Type.Object({ HostIp: Text, HostPort: Text }), {
-            minItems: 2,
-            maxItems: 2,
+            minItems: 1,
+            maxItems: 1,
           }),
         },
         { additionalProperties: false },
@@ -269,15 +259,6 @@ export function observeManagedVllmForExport(
       image.Environment.some((value) => value.startsWith("VLLM_API_KEY="))
     )
       fail();
-    const network = parse(
-      inspect(
-        "network",
-        "openshell-docker",
-        '{"Id":{{json .Id}},"Name":{{json .Name}},"Driver":{{json .Driver}},"Config":{{json .IPAM.Config}}}',
-      ),
-      NetworkSchema,
-    );
-    const bridge = validateManagedVllmBridgeHost(network.Config[0]!.Gateway);
     const row = parse(
       inspect(
         "container",
@@ -289,7 +270,6 @@ export function observeManagedVllmForExport(
     const recovered = recoverHostLocalManagedVllmEndpoint({
       ...options.authentication,
       dockerInspect: () => JSON.stringify([row]),
-      resolveBridgeHost: () => bridge,
     });
     if (!recovered || recovered.containerId !== row.Id || row.Image !== image.Id) fail();
     if (
@@ -321,7 +301,6 @@ export function observeManagedVllmForExport(
       serving,
       containerId: row.Id,
       imageId: row.Image,
-      networkId: network.Id,
       startedAt: row.StartedAt,
     };
   } catch {

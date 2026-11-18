@@ -16,14 +16,12 @@
  */
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
-import { endpointlessProviderProfilePath } from "../../adapters/openshell/provider-profile";
-import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { mcpBridgeProviderType, withMcpBridgeProviderProfile } from "./mcp-bridge/provider-profile";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
 import {
   createMcpProviderAdapterBoundary,
   inspectMcpProvider,
-  MCP_BRIDGE_PROVIDER_TYPE,
   type McpProviderInspectionRuntimeSelection,
   type McpProviderInspection,
   providerMatchesCredential,
@@ -46,20 +44,21 @@ export {
 /** Ensure the endpointless profile required by OpenShell static credential binding. */
 export async function ensureMcpBridgeProviderProfile(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  credential: string,
   providerAdapter?: OpenShellProviderAdapter,
 ): Promise<void> {
   const boundary = createMcpProviderAdapterBoundary(runtimeSelection, providerAdapter);
-  const result = await boundary.adapter.importProviderProfile({
-    profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, MCP_BRIDGE_PROVIDER_TYPE),
-    target: boundary.target,
-  });
+  const profileType = mcpBridgeProviderType(credential);
+  const result = await withMcpBridgeProviderProfile(credential, (profilePath) =>
+    boundary.adapter.importProviderProfile({ profilePath, target: boundary.target }),
+  );
   if (result.ok) return;
   throw new McpBridgeError(
     result.error.kind === "command" && result.error.reason === "profile_incompatible"
-      ? `OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless credential contract. Refusing to attach MCP credentials to it.`
+      ? `OpenShell provider profile '${profileType}' already exists but does not match NemoClaw's endpointless credential contract. Refusing to attach MCP credentials to it.`
       : result.operation === "import"
-        ? `Could not import OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}'.`
-        : `OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}' could not be exported for validation. Refusing to attach MCP credentials to it.`,
+        ? `Could not import OpenShell provider profile '${profileType}'.`
+        : `OpenShell provider profile '${profileType}' could not be exported for validation. Refusing to attach MCP credentials to it.`,
   );
 }
 
@@ -184,7 +183,7 @@ export async function upsertMcpProvider(
     action === "create"
       ? await boundary.adapter.createProvider({
           name: providerName,
-          type: MCP_BRIDGE_PROVIDER_TYPE,
+          type: mcpBridgeProviderType(envNames[0]),
           credentials,
           config: [],
           fromExisting: false,

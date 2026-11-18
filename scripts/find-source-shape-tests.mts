@@ -79,6 +79,7 @@ type SourceFunction = {
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_NAME_PATTERN = /\.(test|spec)\.(js|ts|mjs|mts|cjs|cts)$/;
 const SKIP_DIRS = new Set([
+  ".e2e",
   ".git",
   ".venv",
   "coverage",

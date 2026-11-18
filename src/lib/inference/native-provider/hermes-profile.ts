@@ -7,10 +7,11 @@ import path from "node:path";
 import YAML from "yaml";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { NativeProviderDefinition } from "./contract";
-import { requireHermesPublicPins } from "./hermes-pins";
+import { requireHermesEndpointPins } from "./hermes-pins";
 import { hostedNativeProvider } from "./hosted";
+import { isAllowedOpenShellSandboxBridgeUrl } from "../../private-networks";
 
-/** Reuse the checked-in Hermes boundary, replacing only its authenticated destination. */
+/** Reuse the checked-in Hermes boundary for its recorded endpoint. */
 export function boundHermesNativeProfile(definition: NativeProviderDefinition): string {
   const expected = hostedNativeProvider("hermes-provider", definition.endpointUrl);
   if (
@@ -30,13 +31,21 @@ export function boundHermesNativeProfile(definition: NativeProviderDefinition): 
     ),
   );
   const endpoint = new URL(expected.endpoint);
+  if (isAllowedOpenShellSandboxBridgeUrl(endpoint)) {
+    // Load host port ownership only when validating a host route; it initializes registry locks.
+    const { isProtectedLocalInferencePort } =
+      require("../gateway/local-endpoint-ports") as typeof import("../gateway/local-endpoint-ports");
+    if (isProtectedLocalInferencePort(Number(endpoint.port)))
+      throw new Error("The recorded Hermes endpoint uses a protected host port");
+  }
   const prefix = endpoint.pathname.replace(/\/+$/, "");
+  const allowedIps = requireHermesEndpointPins(expected.endpoint, definition.allowedIps);
   profile.id = expected.profileId;
   profile.endpoints = [
     {
-      host: endpoint.hostname,
-      port: Number(endpoint.port || 443),
-      allowed_ips: requireHermesPublicPins(definition.allowedIps),
+      host: endpoint.hostname.replace(/^\[|\]$/gu, ""),
+      port: Number(endpoint.port || (endpoint.protocol === "http:" ? 80 : 443)),
+      ...(allowedIps ? { allowed_ips: allowedIps } : {}),
       protocol: "rest",
       enforcement: "enforce",
       rules: [

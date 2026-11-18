@@ -8,6 +8,8 @@ export type DockerSandboxIdentityRow = {
   managedBy: string;
   workspace: string;
   sandboxId: string;
+  namespace?: string;
+  isolationRole?: string;
 };
 
 export type DockerSandboxIdentityObservation =
@@ -37,7 +39,13 @@ function isExactBoundedIdentityText(value: string): boolean {
 /** Inspect and parse the exact Docker rows used by sandbox destroy. */
 export function inspectDockerSandboxIdentities(
   sandboxNameLabel: string,
-  labelKeys: { managedBy: string; workspace: string; sandboxId: string },
+  labelKeys: {
+    managedBy: string;
+    workspace: string;
+    sandboxId: string;
+    namespace: string;
+    isolationRole: string;
+  },
   inspect: DockerSandboxIdentityInspect = dockerRun,
 ): DockerSandboxIdentityObservation {
   const format = [
@@ -45,6 +53,8 @@ export function inspectDockerSandboxIdentities(
     `{{.Label "${labelKeys.managedBy}"}}`,
     `{{.Label "${labelKeys.workspace}"}}`,
     `{{.Label "${labelKeys.sandboxId}"}}`,
+    `{{.Label "${labelKeys.namespace}"}}`,
+    `{{.Label "${labelKeys.isolationRole}"}}`,
   ].join("\t");
   const result = inspect(
     ["ps", "-a", "--no-trunc", "--filter", `label=${sandboxNameLabel}`, "--format", format],
@@ -70,15 +80,29 @@ export function inspectDockerSandboxIdentities(
     if (rawLine.length === 0) continue;
     const fields = rawLine.split("\t");
     if (
-      fields.length !== 4 ||
+      fields.length !== 6 ||
       !DOCKER_CONTAINER_ID_PATTERN.test(fields[0] ?? "") ||
       !fields.every(isExactBoundedIdentityText)
     ) {
       malformedRows += 1;
       continue;
     }
-    const [id, managedBy, workspace, sandboxId] = fields as [string, string, string, string];
-    rows.push({ id, managedBy, workspace, sandboxId });
+    const [id, managedBy, workspace, sandboxId, namespace, isolationRole] = fields as [
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    rows.push({
+      id,
+      managedBy,
+      workspace,
+      sandboxId,
+      ...(namespace ? { namespace } : {}),
+      ...(isolationRole ? { isolationRole } : {}),
+    });
   }
   return { status: "observed", rows, malformedRows };
 }

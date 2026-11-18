@@ -218,6 +218,9 @@ describe("custom native provider policy admission", () => {
     { host: "api-us.example.com", endpoint: { host: "api-*.example.com", port: 443 } },
     { host: "deep.api.example.com", endpoint: { host: "**.example.com", port: 443 } },
     { host: "api.example.com", endpoint: { host: "api.*.com", port: 443 } },
+    { host: "api1.example.com", endpoint: { host: "api?.example.com", port: 443 } },
+    { host: "apia.example.com", endpoint: { host: "api[ab].example.com", port: 443 } },
+    { host: "api1.example.com", endpoint: { host: "api[!a-z].example.com", port: 443 } },
     { host: "api.example.com", endpoint: { host: "", port: 443, allowed_ips: ["1.1.1.1"] } },
     { host: "api.example.com", endpoint: { port: 443, allowed_ips: ["1.1.1.1"] } },
   ])("refuses overlapping $endpoint before changing providers", async ({ host, endpoint }) => {

@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type {
+  LaunchReadinessFence,
+  LaunchReadinessIdentity,
+  LaunchReadinessLease,
+} from "../../src/lib/state/launch-readiness-lease";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 export function entry(agent = "openclaw"): SandboxEntry {
@@ -59,3 +64,49 @@ network_policies:
     binaries:
       - path: /usr/bin/curl
 `;
+
+export function fence(): LaunchReadinessFence {
+  return {
+    schemaVersion: 3,
+    kind: "fence",
+    epochId: "a".repeat(64),
+    sandboxName: "alpha",
+    fencedWallMs: 1,
+    fencedUptimeMs: 1,
+    bootId: "boot-a",
+    uid: 1,
+    homeDevice: "1",
+    homeInode: "2",
+    storeDevice: "1",
+    storeInode: "3",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    publicationState: "ready",
+    preservedLeaseStartedWallMs: null,
+    preservedLeaseExpiresWallMs: null,
+    preservedLeaseElapsedMs: null,
+  };
+}
+
+export function lease(identity: LaunchReadinessIdentity): LaunchReadinessLease {
+  return {
+    schemaVersion: 3,
+    kind: "lease",
+    epochId: "a".repeat(64),
+    sandboxName: "alpha",
+    leaseStartedWallMs: 1,
+    leaseExpiresWallMs: 86_400_001,
+    elapsedAtPublicationMs: 0,
+    publishedWallMs: 1,
+    publishedUptimeMs: 1,
+    bootId: "boot-a",
+    uid: 1,
+    homeDevice: "1",
+    homeInode: "2",
+    storeDevice: "1",
+    storeInode: "3",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    identity,
+  };
+}

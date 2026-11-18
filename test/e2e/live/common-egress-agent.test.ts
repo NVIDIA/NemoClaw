@@ -37,6 +37,7 @@ import {
   classifyHermesAgentAssertion,
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
+  WEATHER_RESPONSE_VALIDATION_PYTHON,
   parseChatContent,
   runHermesAgentAssertionRetry,
   type OpenClawPublicFetchExpectation,
@@ -597,7 +598,7 @@ const hermesTest = process.env.NEMOCLAW_COMMON_EGRESS_SKIP_HERMES === "1" ? test
 
 describe.sequential("common-egress agent live targets", () => {
   openClawTest(
-    "C1 OpenClaw balanced excludes weather until explicitly added, then permits a verified wttr.in curl",
+    "C1 OpenClaw balanced excludes weather until explicitly added, then permits a verified Open-Meteo curl",
     {
       timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
       meta: {
@@ -622,7 +623,7 @@ describe.sequential("common-egress agent live targets", () => {
           "OpenClaw balanced onboarding applies exactly five expected presets without weather",
           "explicit policy-add weather applies the weather common-egress endpoints",
           "balanced scope does not include the broader restcountries public-reference endpoint",
-          "a real OpenClaw agent turn validates one wttr.in response and leaves its body as proof",
+          "a real OpenClaw agent turn validates one Open-Meteo weather response and leaves its body as proof",
           "without a search provider or retrieved content, a fresh OpenClaw turn discloses unavailable search and returns no installation-documentation result",
         ],
       });
@@ -659,7 +660,7 @@ describe.sequential("common-egress agent live targets", () => {
         sandbox,
         OPENCLAW_BALANCED_SANDBOX,
         "c1-weather-before-add",
-        "wttr.in",
+        "api.open-meteo.com",
       );
 
       progress.phase("add weather egress policy");
@@ -685,7 +686,7 @@ describe.sequential("common-egress agent live targets", () => {
         "c1-balanced-scope",
         "restcountries.com",
       );
-      const weatherProofPath = `/tmp/nemoclaw-weather-proof-${Date.now()}-${process.pid}.txt`;
+      const weatherProofPath = `/tmp/nemoclaw-weather-proof-${Date.now()}-${process.pid}.json`;
       const clearWeatherProof = await sandbox.execShell(
         OPENCLAW_BALANCED_SANDBOX,
         trustedSandboxShellScript(`rm -f ${shellQuote(weatherProofPath)}`),
@@ -699,34 +700,37 @@ describe.sequential("common-egress agent live targets", () => {
       progress.phase("run verified weather agent turn");
       // The agent must leave the fetched body behind. The host-side assertion
       // independently validates it, so merely echoing the reply token cannot pass.
+      const validateWeatherResponse = `python3 -c ${shellQuote(WEATHER_RESPONSE_VALIDATION_PYTHON)}`;
       const weatherProofCommand = [
         "set -eu",
         `proof=${shellQuote(weatherProofPath)}`,
-        "if test -s \"$proof\"; then printf 'WEATHER_AGENT_OK\\n'; exit 0; fi",
+        `if test -s "$proof"; then ${validateWeatherResponse} "$proof"; printf 'WEATHER_AGENT_OK\\n'; exit 0; fi`,
         "tmp=$(mktemp)",
         "trap 'rm -f \"$tmp\"' EXIT",
-        "curl -fsS --max-time 30 --output \"$tmp\" 'https://wttr.in/:help'",
+        "curl -fsS --max-time 30 --output \"$tmp\" 'https://api.open-meteo.com/v1/forecast?latitude=37.7749&longitude=-122.4194&current=temperature_2m'",
         'test -s "$tmp"',
-        "grep -Fq 'Usage:' \"$tmp\"",
-        "grep -Fq 'Special URLs:' \"$tmp\"",
+        `${validateWeatherResponse} "$tmp"`,
         'mv "$tmp" "$proof"',
         "trap - EXIT",
         "printf 'WEATHER_AGENT_OK\\n'",
       ].join("; ");
       await runOpenClawAgentAssertion(host, sandbox, artifacts, {
         apiKey,
+        collectToolEvidenceOnFailure: true,
         expected: "WEATHER_AGENT_OK",
+        finalReplyContract: "exact-token",
         label: "c1-agent-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
-        prompt: `Run exactly this shell command to verify the weather host curl path:
+        prompt: `Call the exec tool with exactly this shell command to verify the weather host curl path:
 ${weatherProofCommand}
+Use a structured tool call. Do not print the command or tool-call markup as your answer.
 Do not use web_fetch, web_search, or any other weather provider.
 After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`,
       });
       const weatherProof = await sandbox.execShell(
         OPENCLAW_BALANCED_SANDBOX,
         trustedSandboxShellScript(
-          `test -s ${shellQuote(weatherProofPath)} && grep -Fq 'Usage:' ${shellQuote(weatherProofPath)} && grep -Fq 'Special URLs:' ${shellQuote(weatherProofPath)} && sha256sum ${shellQuote(weatherProofPath)}`,
+          `${validateWeatherResponse} ${shellQuote(weatherProofPath)} && sha256sum ${shellQuote(weatherProofPath)}`,
         ),
         {
           artifactName: "c1-weather-agent-proof",

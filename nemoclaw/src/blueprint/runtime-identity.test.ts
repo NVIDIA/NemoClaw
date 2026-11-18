@@ -34,12 +34,11 @@ import {
 } from "./runtime-identity.js";
 
 const success: RuntimeIdentityCommandResult = { exitCode: 0, stdout: "", stderr: "" };
-const providersV2Enabled: RuntimeIdentityCommandResult = {
+const absentGlobalPolicy: RuntimeIdentityCommandResult = {
   exitCode: 0,
   stdout: JSON.stringify({
-    scope: "global",
-    settings_revision: 1,
-    settings: { providers_v2_enabled: "true" },
+    revisions: [],
+    next_page_token: "",
   }),
   stderr: "",
 };
@@ -126,6 +125,9 @@ const gatewayExportDocument = profileDocument
     "        - name: client_id\n          required: true",
     "        - name: client_id\n          required: true\n          secret: false",
   );
+const gatewayDurationExportDocument = gatewayExportDocument
+  .replace(/refresh_before_seconds: (\d+)/u, 'refresh_before: "$1s"')
+  .replace(/max_lifetime_seconds: (\d+)/u, 'max_lifetime: "$1s"');
 const entraProfileDocument = readFileSync(
   new URL("../../../nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml", import.meta.url),
   "utf8",
@@ -186,7 +188,7 @@ describe("runtime identity contract", () => {
     profilePath = realpathSync(profilePath);
     calls = [];
     responses = new Map();
-    responses.set("settings get --global --json", [providersV2Enabled]);
+    responses.set("policy list --global --page-size 1 --output json", [absentGlobalPolicy]);
     validatedDestinations = [];
     persistedReceipts = [];
     importedProfilePaths = [];
@@ -347,7 +349,7 @@ describe("runtime identity contract", () => {
     await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
 
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
-      "settings get --global --json",
+      "policy list --global --page-size 1 --output json",
       "provider get acme-okta-runtime",
       "provider profile import --file",
       "provider profile export okta-runtime-v1 --output yaml",
@@ -372,23 +374,28 @@ describe("runtime identity contract", () => {
     expect(existsSync(importedProfilePaths[0])).toBe(false);
   });
 
-  it("fails before identity mutation when provider-derived policy is disabled", async () => {
-    responses.set("settings get --global --json", [
+  it("fails before identity mutation when a global policy overrides provider composition", async () => {
+    responses.set("policy list --global --page-size 1 --output json", [
       {
         exitCode: 0,
         stdout: JSON.stringify({
-          scope: "global",
-          settings_revision: 0,
-          settings: { providers_v2_enabled: "<unset>" },
+          revisions: [{ scope: "global", status: "loaded" }],
+          next_page_token: "",
         }),
         stderr: "",
       },
     ]);
 
+    responses.set("policy get --global --output json", [
+      { exitCode: 0, stdout: JSON.stringify({ scope: "global", status: "loaded" }), stderr: "" },
+    ]);
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
-      /requires OpenShell global setting 'providers_v2_enabled=true'/,
+      /requires sandbox-owned policy/,
     );
-    expect(calls.map(({ args }) => commandKey(args))).toEqual(["settings get --global --json"]);
+    expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "policy list --global --page-size 1 --output json",
+      "policy get --global --output json",
+    ]);
   });
 
   it("rejects a matching pre-existing provider before any mutable refresh operation", async () => {
@@ -398,7 +405,7 @@ describe("runtime identity contract", () => {
       /cannot be safely reused.*prior refresh configuration cannot be restored/,
     );
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
-      "settings get --global --json",
+      "policy list --global --page-size 1 --output json",
       "provider get acme-okta-runtime",
     ]);
   });
@@ -415,19 +422,34 @@ describe("runtime identity contract", () => {
     await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
   });
 
-  it("accepts OpenShell's catalog metadata and explicit default fields without a false post-mutation warning", async () => {
-    responses.set("provider get acme-okta-runtime", [missingProvider]);
-    responses.set("provider profile export okta-runtime-v1 --output yaml", [
-      { exitCode: 0, stdout: gatewayExportDocument, stderr: "" },
-      { exitCode: 0, stdout: gatewayExportDocument, stderr: "" },
-    ]);
+  it.each([gatewayExportDocument, gatewayDurationExportDocument])(
+    "accepts equivalent exported metadata and durations without a post-mutation warning",
+    async (exported) => {
+      responses.set("provider get acme-okta-runtime", [missingProvider]);
+      responses.set("provider profile export okta-runtime-v1 --output yaml", [
+        { exitCode: 0, stdout: exported, stderr: "" },
+        { exitCode: 0, stdout: exported, stderr: "" },
+      ]);
 
-    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
-    expect(warnings).toEqual([]);
-    expect(persistedReceipts).toHaveLength(1);
-  });
+      await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
+      expect(warnings).toEqual([]);
+      expect(persistedReceipts).toHaveLength(1);
+    },
+  );
 
   it.each([
+    ...["0s", "-1s", "60.5s", "1e2s", "999999999999999999999s", "60"].map((duration) =>
+      gatewayDurationExportDocument.replace(
+        /refresh_before: "[0-9]+s"/u,
+        `refresh_before: "${duration}"`,
+      ),
+    ),
+    gatewayDurationExportDocument.replace(/refresh_before: "[0-9]+s"/u, 'refresh_before: "61s"'),
+    gatewayDurationExportDocument.replace(/max_lifetime: "[0-9]+s"/u, 'max_lifetime: "61s"'),
+    gatewayDurationExportDocument.replace(
+      "refresh_before:",
+      "refresh_before_seconds: 60\n      refresh_before:",
+    ),
     gatewayExportDocument.replace("source: user", "source: builtin"),
     gatewayExportDocument.replace("scope: workspace", "scope: platform"),
     gatewayExportDocument.replace("query_param: ''", "query_param: credential"),
@@ -523,7 +545,7 @@ describe("runtime identity contract", () => {
       /profile 'okta-runtime-v1' has an incompatible binding/,
     );
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
-      "settings get --global --json",
+      "policy list --global --page-size 1 --output json",
       "provider get acme-okta-runtime",
       "provider profile import --file",
       "provider profile export okta-runtime-v1 --output yaml",
@@ -965,7 +987,7 @@ describe("runtime identity contract", () => {
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/invalid profile/);
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
-      "settings get --global --json",
+      "policy list --global --page-size 1 --output json",
       "provider get acme-okta-runtime",
       "provider profile import --file",
     ]);
@@ -1033,7 +1055,7 @@ describe("runtime identity contract", () => {
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/cannot be safely reused/);
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
-      "settings get --global --json",
+      "policy list --global --page-size 1 --output json",
       "provider get acme-okta-runtime",
     ]);
   });
@@ -1150,14 +1172,17 @@ describe("runtime identity contract", () => {
 
     await expect(attachRuntimeIdentity(createdReceipt, "sandbox", deps)).resolves.toBe(true);
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
-      "settings get --global --json",
+      "policy list --global --page-size 1 --output json",
       "provider get acme-okta-runtime",
       "sandbox provider attach sandbox acme-okta-runtime",
     ]);
   });
 
   it("warns after attachment if the verified profile changed without changing the attach result", async () => {
-    responses.set("settings get --global --json", [providersV2Enabled, providersV2Enabled]);
+    responses.set("policy list --global --page-size 1 --output json", [
+      absentGlobalPolicy,
+      absentGlobalPolicy,
+    ]);
     responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
     responses.set("provider profile export okta-runtime-v1 --output yaml", [
       { exitCode: 0, stdout: profileDocument, stderr: "" },
@@ -1178,7 +1203,10 @@ describe("runtime identity contract", () => {
   });
 
   it("warns after attachment if the profile export fails without changing the attach result", async () => {
-    responses.set("settings get --global --json", [providersV2Enabled, providersV2Enabled]);
+    responses.set("policy list --global --page-size 1 --output json", [
+      absentGlobalPolicy,
+      absentGlobalPolicy,
+    ]);
     responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
     responses.set("provider profile export okta-runtime-v1 --output yaml", [
       { exitCode: 0, stdout: profileDocument, stderr: "" },
@@ -1204,7 +1232,7 @@ describe("runtime identity contract", () => {
 
     await expect(attachRuntimeIdentity(createdReceipt, "sandbox", deps)).resolves.toBe(true);
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
-      "settings get --global --json",
+      "policy list --global --page-size 1 --output json",
       "provider get acme-okta-runtime",
       "provider refresh status acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
       "sandbox provider attach sandbox acme-okta-runtime",
@@ -1222,23 +1250,28 @@ describe("runtime identity contract", () => {
     );
   });
 
-  it("fails before attachment when provider-derived policy was disabled after preparation", async () => {
-    responses.set("settings get --global --json", [
+  it("fails before attachment when a global policy override appeared after preparation", async () => {
+    responses.set("policy list --global --page-size 1 --output json", [
       {
         exitCode: 0,
         stdout: JSON.stringify({
-          scope: "global",
-          settings_revision: 2,
-          settings: { providers_v2_enabled: "false" },
+          revisions: [{ scope: "global", status: "loaded" }],
+          next_page_token: "",
         }),
         stderr: "",
       },
     ]);
 
+    responses.set("policy get --global --output json", [
+      { exitCode: 0, stdout: JSON.stringify({ scope: "global", status: "loaded" }), stderr: "" },
+    ]);
     await expect(attachRuntimeIdentity(createdReceipt, "sandbox", deps)).rejects.toThrow(
-      /requires OpenShell global setting 'providers_v2_enabled=true'/,
+      /requires sandbox-owned policy/,
     );
-    expect(calls.map(({ args }) => commandKey(args))).toEqual(["settings get --global --json"]);
+    expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "policy list --global --page-size 1 --output json",
+      "policy get --global --output json",
+    ]);
   });
 
   it("treats an existing attachment as reused", async () => {

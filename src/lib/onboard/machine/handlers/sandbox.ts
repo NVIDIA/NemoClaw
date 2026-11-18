@@ -104,6 +104,7 @@ import {
 import {
   nativeInferenceCreateIntentFields,
   nativeLocalReservationStatus,
+  retainsNativeLocalProviderAttachment,
   sandboxCreateInferenceSelection,
   withSandboxImageRegistrationFence,
 } from "../../sandbox-registration";
@@ -371,6 +372,7 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
       nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
       nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
@@ -1347,10 +1349,14 @@ class SandboxStateFlow<
   ): SandboxEntry | null {
     const staged = this.options.stagedNativeLocalRecreation;
     if (!staged) return entry;
+    const retainsNativeBinding = retainsNativeLocalProviderAttachment(
+      staged.source,
+      staged.attachment,
+    );
     const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
     if (
       this.options.resume ||
-      !this.options.recreateSandbox(false) ||
+      (!this.options.recreateSandbox(false) && !retainsNativeBinding) ||
       !this.options.session?.sessionId ||
       (agentName !== "langchain-deepagents-code" &&
         agentName !== "openclaw" &&
@@ -1364,7 +1370,7 @@ class SandboxStateFlow<
       !isDeepStrictEqual(entry, staged.source)
     ) {
       throw new Error(
-        `Sandbox '${sandboxName}' legacy route ownership changed before recreation. Retry onboarding.`,
+        `Sandbox '${sandboxName}' recorded route ownership changed before recreation. Retry onboarding.`,
       );
     }
     return { ...staged.source, nativeLocalProviderAttachment: staged.attachment };

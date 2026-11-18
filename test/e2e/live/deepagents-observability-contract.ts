@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isIP } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import * as policyDenialNamespace from "../../../src/lib/actions/sandbox/exec-policy-hint-detection.ts";
+import * as curlDenialNamespace from "../fixtures/curl-policy-denial.ts";
 import type { DecodedOtlpSpan } from "./otlp-trace-decoder.ts";
 import * as decoderNamespace from "./otlp-trace-decoder.ts";
 import * as policyStateNamespace from "./policy-list-state.ts";
@@ -15,6 +17,7 @@ function moduleExports<T>(namespace: T & { default?: T }): T {
 }
 
 const { isPolicyDenialLine } = moduleExports(policyDenialNamespace);
+const { isExpectedMcpCurlPolicyDenial } = moduleExports(curlDenialNamespace);
 const { decodeExportTraceServiceRequest, otlpValueContains } = moduleExports(decoderNamespace);
 const { parsePolicyPresetState } = moduleExports(policyStateNamespace);
 
@@ -145,8 +148,104 @@ export function assertDeepAgentsTraceContract(
   return { requestCount: bodies.length, spanCount: spans.length };
 }
 
-export function hasConfirmedOpenShellPolicyDenial(output: string): boolean {
-  if (output.split(/\r?\n/u).some(isPolicyDenialLine) || CONFIRMED_EXEC_HINT.test(output)) {
+type DnsDenialAudit = { before: string; after: string; hostname: string; port?: number };
+
+function hasFreshPythonTcpDenial(output: string, audit?: DnsDenialAudit): boolean {
+  if (
+    !audit?.port ||
+    !/^FAILED:URLError:<urlopen error \[Errno 13\] Permission denied>$/mu.test(output)
+  ) {
+    return false;
+  }
+  const records = output
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("NEMOCLAW_OTLP_PROBE_DNS="));
+  if (records.length !== 1 || records[0].length > 4096) return false;
+  let probe: { hostname?: unknown; port?: unknown; addresses?: unknown };
+  try {
+    probe = JSON.parse(records[0].slice("NEMOCLAW_OTLP_PROBE_DNS=".length));
+  } catch {
+    return false;
+  }
+  if (
+    !probe ||
+    probe.hostname !== audit.hostname ||
+    probe.port !== audit.port ||
+    !Array.isArray(probe.addresses)
+  )
+    return false;
+  const previous = new Set(audit.before.split(/\r?\n/u));
+  if (
+    audit.after
+      .split(/\r?\n/u)
+      .some(
+        (line) =>
+          !previous.has(line) &&
+          line.endsWith(
+            `NET:OPEN [MED] DENIED /opt/venv/bin/python3(0) -> ${audit.hostname}:${audit.port} [reason:transparent_tcp_policy_denied]`,
+          ),
+      )
+  ) {
+    return true;
+  }
+  // OpenShell 0.1.3 owns 198.18.0.0/15 synthetic DNS mappings. A denied
+  // mapping must match this probe's DNS answer and requested port.
+  return probe.addresses.some(
+    (address) =>
+      typeof address === "string" &&
+      isIP(address) === 4 &&
+      /^198\.(?:18|19)\./u.test(address) &&
+      audit.after
+        .split(/\r?\n/u)
+        .some(
+          (line) =>
+            !previous.has(line) &&
+            line.endsWith(
+              `NET:OPEN [MED] DENIED /opt/venv/bin/python3(0) -> ${address}:${audit.port} [reason:transparent_tcp_mapping_denied]`,
+            ),
+        ),
+  );
+}
+
+function hasFreshPythonDnsDenial(output: string, audit?: DnsDenialAudit): boolean {
+  const previous = new Set(audit?.before.split(/\r?\n/u));
+  return (
+    audit !== undefined &&
+    /^FAILED:URLError:<urlopen error \[Errno -(?:2|5)\] (?:No address associated with hostname|Name or service not known)>$/mu.test(
+      output,
+    ) &&
+    audit.after
+      .split(/\r?\n/u)
+      .some(
+        (line) =>
+          !previous.has(line) &&
+          ["policy_dns_ineligible", "policy_dns_no_valid_address"].some((reason) =>
+            line.endsWith(`NET:REFUSE [MED] DENIED ${audit.hostname} [reason:${reason}]`),
+          ),
+      )
+  );
+}
+
+export function hasConfirmedOpenShellPolicyDenial(
+  output: string,
+  curlExitCode?: number,
+  dnsAudit?: DnsDenialAudit,
+): boolean {
+  if (
+    output.split(/\r?\n/u).some(isPolicyDenialLine) ||
+    CONFIRMED_EXEC_HINT.test(output) ||
+    (curlExitCode === 7 &&
+      (hasFreshPythonDnsDenial(output, dnsAudit) || hasFreshPythonTcpDenial(output, dnsAudit)))
+  ) {
+    return true;
+  }
+  if (
+    curlExitCode === 7 &&
+    isExpectedMcpCurlPolicyDenial(
+      { exitCode: curlExitCode, stdout: output, stderr: output, timedOut: false },
+      "NEMOCLAW_OTLP_CURL_HTTP_CODE=",
+    )
+  ) {
     return true;
   }
   // curl writes the response body to stdout and its error to stderr. Once the
@@ -256,15 +355,26 @@ export function validateCaptureDirectory(
 }
 
 async function main(): Promise<void> {
-  const [command, argument] = process.argv.slice(2);
+  const [command, argument, beforePath, afterPath, probeUrl] = process.argv.slice(2);
   const input = command === "validate-captures" ? "" : fs.readFileSync(0, "utf8");
   if (command === "policy-state") {
     process.stdout.write(`${observabilityPresetState(input)}\n`);
     return;
   }
   if (command === "denial-state") {
+    const dnsAudit =
+      beforePath && afterPath && probeUrl
+        ? {
+            before: fs.readFileSync(beforePath, "utf8"),
+            after: fs.readFileSync(afterPath, "utf8"),
+            hostname: new URL(probeUrl).hostname,
+            port: Number(
+              new URL(probeUrl).port || (new URL(probeUrl).protocol === "https:" ? 443 : 80),
+            ),
+          }
+        : undefined;
     process.stdout.write(
-      `${hasConfirmedOpenShellPolicyDenial(input) ? "policy-denied" : "other-failure"}\n`,
+      `${hasConfirmedOpenShellPolicyDenial(input, Number(argument), dnsAudit) ? "policy-denied" : "other-failure"}\n`,
     );
     return;
   }

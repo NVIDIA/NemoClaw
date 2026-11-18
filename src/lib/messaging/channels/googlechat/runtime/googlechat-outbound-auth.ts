@@ -45,8 +45,7 @@
 //
 // INBOUND webhook JWT verification is untouched: it uses Google's PUBLIC certs
 // + appPrincipal (no SA material) and a different code path, so it is unaffected
-// by this patch (its cert fetch is handled by the separate
-// googlechat-trusted-proxy-fetch patch).
+// by this patch. Certificate fetches use the native OpenClaw fetch guard.
 //
 // ── Contract with the B-side wiring ──────────────────────────────────────────
 // - The provider's injectable credential key MUST be `GOOGLE_CHAT_ACCESS_TOKEN`.

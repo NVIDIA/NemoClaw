@@ -256,6 +256,20 @@ describe("composeSandboxConfigBody", () => {
     [
       "compatible-endpoint",
       "inference",
+      "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      "http://host.openshell.internal:11434/v1",
+      "openai-completions",
+    ],
+    [
+      "ollama-local",
+      "inference",
+      "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      "http://host.openshell.internal:11435/v1",
+      "openai-completions",
+    ],
+    [
+      "compatible-endpoint",
+      "inference",
       "COMPATIBLE_API_KEY",
       "http://10.1.1.225:8123/v1",
       "openai-completions",
@@ -354,7 +368,9 @@ describe("composeSandboxConfigBody", () => {
       { value: "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY", expectedStatus: 1 },
       { value: "openshell:resolve:env:v43_OTHER_API_KEY", expectedStatus: 1 },
     ].flatMap((scenario) =>
-      ["NVIDIA_INFERENCE_API_KEY", "COMPATIBLE_API_KEY"].map((key) => ({ ...scenario, key })),
+      ["NVIDIA_INFERENCE_API_KEY", "COMPATIBLE_API_KEY", "NEMOCLAW_LOCAL_INFERENCE_TOKEN"].map(
+        (key) => ({ ...scenario, key }),
+      ),
     ),
   )(
     "refuses invalid native $key handle $value before config mutation",
@@ -368,7 +384,10 @@ describe("composeSandboxConfigBody", () => {
           {
             dotpath: "models.providers.inference",
             value: {
-              baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+              baseUrl:
+                key === "NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+                  ? "http://host.openshell.internal:11434/v1"
+                  : NVIDIA_HOSTED_NATIVE_ENDPOINT,
               apiKey:
                 key === "NVIDIA_INFERENCE_API_KEY"
                   ? NVIDIA_INFERENCE_PLACEHOLDER
@@ -564,6 +583,39 @@ describe("composeSandboxConfigBody", () => {
       ]),
     ).toThrow();
   });
+
+  it.each([
+    { dotpath: "models.providers.openai", patch: {} },
+    {
+      dotpath: "models.providers.inference",
+      patch: { apiKey: "openshell:resolve:env:COMPATIBLE_API_KEY" },
+    },
+    {
+      dotpath: "models.providers.inference",
+      patch: { baseUrl: "https://fixture.example/v1" },
+    },
+    {
+      dotpath: "models.providers.inference",
+      patch: { headers: { "X-NemoClaw-Upstream-Provider": "openai-api" } },
+    },
+  ])(
+    "refuses mismatched local credential projection %j before config mutation",
+    ({ dotpath, patch }) => {
+      expect(() =>
+        buildOpenClawNativeConfigBatchInvocation("alpha", [
+          {
+            dotpath,
+            value: {
+              baseUrl: "http://host.openshell.internal:11434/v1",
+              apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+              headers: { "X-NemoClaw-Upstream-Provider": "compatible-endpoint" },
+              ...patch,
+            },
+          },
+        ]),
+      ).toThrow();
+    },
+  );
 
   it("rejects a custom native path mismatch or ambiguous batch before config mutation (#13195)", () => {
     const update = {

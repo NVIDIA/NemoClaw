@@ -10,6 +10,7 @@ import type { RebuildResumeConfig } from "./rebuild-resume-config";
 type RebuildAuthoritativePreflightOptions = RebuildRecreateOnboardOpts &
   Pick<
     RebuildResumeConfig,
+    | "registeredInferenceProviderAttachment"
     | "nativeLocalProviderAttachment"
     | "nativeNvidiaProviderAttachment"
     | "nativeHostedProviderAttachment"
@@ -75,6 +76,15 @@ function loadOnboardModule(): RebuildOnboardModule {
  * the onboarding APIs are side-effect-free named imports.
  */
 export const rebuildOnboardDependencies = {
+  refreshRestoredRegisteredOpenclawInferenceRoute(
+    ...args: Parameters<
+      typeof import("../../onboard/openclaw/initial-inference-route").refreshRestoredRegisteredOpenclawInferenceRoute
+    >
+  ): Promise<void> {
+    return (
+      require("../../onboard/openclaw/initial-inference-route") as typeof import("../../onboard/openclaw/initial-inference-route")
+    ).refreshRestoredRegisteredOpenclawInferenceRoute(...args);
+  },
   verifyRebuiltOpenClawCompatibleEndpoint(
     options: RebuildCompatibleEndpointSmokeOptions,
   ): Promise<void> {

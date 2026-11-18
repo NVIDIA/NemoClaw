@@ -17,6 +17,11 @@ export function usesNativeLocalInference(
   if (provider !== "compatible-endpoint" || !endpointUrl) return false;
   try {
     const endpoint = new URL(endpointUrl);
+    if (
+      endpoint.hostname === "host.openshell.internal" &&
+      qualifiedNativeLocalEndpointUrl(endpointUrl)
+    )
+      return true;
     return (
       endpoint.protocol === "http:" &&
       [11434, OLLAMA_PROXY_PORT, VLLM_PORT].includes(Number(endpoint.port)) &&
@@ -38,10 +43,9 @@ export function usesNativeLocalInferenceForAgent(
   agentName: string | null | undefined,
   provider: string | null | undefined,
   endpointUrl?: string | null,
-  localNimSelected = false,
+  _localNimSelected = false,
 ): boolean {
   if (provider === "nvidia-router") return false;
-  if (provider === "vllm-local" && localNimSelected) return false;
   if (
     agentName === "pi" &&
     provider === "compatible-endpoint" &&
@@ -52,7 +56,7 @@ export function usesNativeLocalInferenceForAgent(
   return (
     ((agentName === "langchain-deepagents-code" || agentName === "pi" || agentName === "hermes") &&
       usesNativeLocalInference(provider, endpointUrl)) ||
-    (agentName === "openclaw" && isLocalInferenceProvider(provider))
+    (agentName === "openclaw" && usesNativeLocalInference(provider, endpointUrl))
   );
 }
 
@@ -77,6 +81,7 @@ export function isPersistedPiSharedLocalInferenceRoute(
     typeof recorded.createdAt === "string" &&
     recorded.pendingRouteReservation !== true &&
     recorded.nativeLocalProviderAttachment === undefined &&
+    recorded.provider !== "nvidia-router" &&
     usesNativeLocalInferenceForAgent("pi", recorded.provider, recorded.endpointUrl) &&
     (!selected ||
       (recorded.provider === selected.provider &&

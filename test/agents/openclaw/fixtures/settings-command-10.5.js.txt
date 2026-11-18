@@ -1,0 +1,127 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+// SPDX-License-Identifier: Apache-2.0
+
+// Pinned functions from OpenClaw 2026.10.5 dist/settings-manager-CKysicKB.mjs.
+async function execCommand(command, args, cwd, options) {
+	const cancelController = new AbortController();
+	const startupCanceled = createDeferredCore();
+	let waitingForSpawn = true;
+	let acceptingOutput = true;
+	let killed = false;
+	let terminationStarted = false;
+	let timeoutId;
+	let terminationController;
+	const killProcess = () => {
+		killed = true;
+		if (terminationController) {
+			if (!terminationStarted) {
+				terminationStarted = true;
+				if (!terminationController.terminate()) cancelController.abort();
+			}
+		} else cancelController.abort();
+		if (waitingForSpawn) startupCanceled.resolve({
+			stdout: "",
+			stderr: "",
+			code: 1,
+			killed: true
+		});
+	};
+	try {
+		const proc = spawnCommand([command, ...args], {
+			buffer: false,
+			cancelSignal: cancelController.signal,
+			cwd,
+			detached: process.platform !== "win32",
+			forceKillAfterDelay: FORCE_KILL_GRACE_MS,
+			reject: false,
+			stdio: [
+				"ignore",
+				"pipe",
+				"pipe"
+			]
+		});
+		options?.signal?.addEventListener("abort", killProcess, { once: true });
+		if (options?.timeout && options.timeout > 0) timeoutId = setTimeout(killProcess, options.timeout);
+		const completion = (async () => {
+			if (proc.pid === void 0) await waitForCommandSpawn(proc);
+			waitingForSpawn = false;
+			return new Promise((resolve) => {
+				const releaseOutput = releaseChildProcessOutputAfterExit(proc.nodeChildProcess);
+				let childExited = false;
+				proc.nodeChildProcess.once("exit", () => {
+					childExited = true;
+				});
+				let settled = false;
+				const termination = createCommandTerminationController({
+					child: proc.nodeChildProcess,
+					cancelController,
+					processTree: { mode: "graceful" },
+					killGraceMs: FORCE_KILL_GRACE_MS,
+					isChildExited: () => childExited,
+					isCommandSettled: () => settled
+				});
+				terminationController = termination;
+				const captures = {
+					stdout: {
+						text: "",
+						truncatedChars: 0
+					},
+					stderr: {
+						text: "",
+						truncatedChars: 0
+					}
+				};
+				const decoders = {
+					stdout: createWindowsOutputDecoder({ preserveUtf8Bom: true }),
+					stderr: createWindowsOutputDecoder({ preserveUtf8Bom: true })
+				};
+				const maxOutputChars = clampMaxOutputChars(options?.maxOutputChars);
+				const truncateOutput = options?.maxOutputChars !== void 0;
+				let outputLimitExceeded;
+				const captureOutput = (stream, chunk) => {
+					const before = captures[stream].truncatedChars;
+					captures[stream] = appendCapturedOutput(captures[stream], chunk, maxOutputChars, truncateOutput);
+					if (!truncateOutput && captures[stream].truncatedChars > before && !outputLimitExceeded) {
+						outputLimitExceeded = stream;
+						return true;
+					}
+					return false;
+				};
+				const finish = async (code) => {
+					if (settled) return;
+					settled = true;
+					if (timeoutId) clearTimeout(timeoutId);
+					if (options?.signal) options.signal.removeEventListener("abort", killProcess);
+					await termination.settle();
+					for (const stream of ["stdout", "stderr"]) captureOutput(stream, decoders[stream].flush());
+					if (outputLimitExceeded) captures.stderr = appendCapturedOutput(captures.stderr, `${captures.stderr.text ? "\n" : ""}exec ${outputLimitExceeded} exceeded output limit ${maxOutputChars} chars`, maxOutputChars, true);
+					resolve({
+						stdout: captures.stdout.text,
+						stderr: captures.stderr.text,
+						stdoutTruncatedChars: captures.stdout.truncatedChars || void 0,
+						stderrTruncatedChars: captures.stderr.truncatedChars || void 0,
+						outputLimitExceeded,
+						code: outputLimitExceeded ? 1 : code,
+						killed
+					});
+				};
+				const ignoreOutputStreamError = () => {};
+				for (const stream of ["stdout", "stderr"]) {
+					proc[stream]?.on("error", ignoreOutputStreamError);
+					proc[stream]?.on("data", (data) => {
+						if (!acceptingOutput) return;
+						if (captureOutput(stream, decodeCapturedOutput(decoders[stream], data))) killProcess();
+					});
+				}
+				if (killed) killProcess();
+				proc.then((result) => finish(result.exitCode ?? (result.failed ? 1 : 0))).catch(() => finish(1)).finally(releaseOutput);
+			});
+		})();
+		if (options?.signal?.aborted) killProcess();
+		return await Promise.race([completion, startupCanceled.promise]);
+	} finally {
+		acceptingOutput = false;
+		clearTimeout(timeoutId);
+		options?.signal?.removeEventListener("abort", killProcess);
+	}
+}

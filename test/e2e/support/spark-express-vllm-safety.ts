@@ -30,11 +30,12 @@ export function assertLocalDockerEnvironment(env: NodeJS.ProcessEnv): void {
   }
 }
 
-export function vllmPublicationProbeUrls(
-  bridgeHost: string,
-  interfaces = networkInterfaces(),
-): { allowed: string[]; denied: string[]; ipv6: "configured" | "unconfigured" } {
-  const allowedHosts = new Set(["127.0.0.1", bridgeHost]);
+export function vllmPublicationProbeUrls(interfaces = networkInterfaces()): {
+  allowed: string[];
+  denied: string[];
+  ipv6: "configured" | "unconfigured";
+} {
+  const allowedHosts = new Set(["127.0.0.1"]);
   const addresses = Object.entries(interfaces).flatMap(([name, entries]) =>
     (entries ?? []).map((entry) => ({ ...entry, name })),
   );

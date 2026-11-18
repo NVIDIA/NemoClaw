@@ -250,6 +250,64 @@ describe("source-loader Node options", () => {
     ).rejects.toBe(cleanupError);
   });
 
+  it("preserves output and status for an ordinary async CLI failure", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-exit-status-"));
+    tempDirs.add(directory);
+    const script = path.join(directory, "exit.cjs");
+    fs.writeFileSync(script, 'process.stderr.write("expected failure\\n"); process.exitCode = 3;');
+
+    const result = await runCliScriptAsync(script, "", { env: { NODE_OPTIONS: "" } });
+
+    expect(result).toEqual({ code: 3, out: "expected failure\n" });
+  });
+
+  it("reports signal termination without treating emitted output as success", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-signal-"));
+    tempDirs.add(directory);
+    const script = path.join(directory, "signal.cjs");
+    fs.writeFileSync(
+      script,
+      'process.stdout.write("before signal\\n", () => process.kill(process.pid, "SIGTERM"));',
+    );
+
+    const result = await runCliScriptAsync(script, "", { env: { NODE_OPTIONS: "" } });
+
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("before signal\n");
+    expect(result.out).toContain(
+      'Child termination: {"code":null,"signal":"SIGTERM","killed":false}',
+    );
+  });
+
+  it("reports timeout termination after output and removes the implicit HOME", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-async-timeout-"));
+    tempDirs.add(directory);
+    const script = path.join(directory, "wait.cjs");
+    const marker = path.join(directory, "home.txt");
+    fs.writeFileSync(
+      script,
+      [
+        `require("node:fs").writeFileSync(${JSON.stringify(marker)}, process.env.HOME);`,
+        'process.stderr.write("expected diagnostic\\n");',
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+    );
+
+    const result = await runCliScriptAsync(script, "", {
+      env: { NODE_OPTIONS: "" },
+      timeout: 2_000,
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("expected diagnostic\n");
+    expect(result.out).toContain(
+      'Child termination: {"code":null,"signal":"SIGTERM","killed":true}',
+    );
+    const implicitHome = fs.readFileSync(marker, "utf8");
+    expect(path.isAbsolute(implicitHome)).toBe(true);
+    expect(fs.existsSync(implicitHome)).toBe(false);
+  });
+
   it("quotes preload paths that contain spaces for Node (#6245)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw node options "));
     tempDirs.add(directory);

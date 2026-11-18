@@ -12,6 +12,7 @@ content:
 
 NemoClaw can connect to an existing vLLM server or, when Docker is available on `PATH`, install and start a managed vLLM container on supported NVIDIA GPU hosts.
 It also provides a Deferred N1x preview pending a physical NemoClaw Express E2E run.
+OpenShell `0.1.7` GPU qualification remains pending; the network changes below do not establish Docker Desktop, Windows WSL, or Jetson/Tegra qualification.
 
 <Note>
 NemoClaw forces the Chat Completions API path for vLLM.
@@ -20,32 +21,35 @@ The vLLM `/v1/responses` endpoint does not run the configured tool-call parser, 
 
 <Warning>
 Local vLLM does not require authentication by default.
-Existing-server and single-host managed-vLLM paths use `NEMOCLAW_VLLM_PORT`, which defaults to `8000`, on host loopback for validation and on the OpenShell Docker bridge for sandbox traffic.
+Existing-server and single-host managed-vLLM paths use `NEMOCLAW_VLLM_PORT`, which defaults to `8000`, for host-loopback validation.
+With OpenShell `0.1.7` and its default Docker supervisor network mode, the supervisor reaches a managed server through the same loopback listener.
 After onboarding, `status` and `doctor` probe an authenticated managed single-host vLLM container on its published loopback port.
 For a bearerless server, they use the port in the sandbox's recorded `http://host.openshell.internal:<port>/v1` route.
 When that route is valid, no later port environment override is required.
 For vLLM, `connect` runs these host probes only when it repairs the route.
 A missing or invalid recorded route makes a bearerless probe fall back to `NEMOCLAW_VLLM_PORT`, which defaults to `8000`.
 Use a host firewall with default-deny inbound rules.
-Allow the configured TCP port only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
+For an operator-managed server, restrict the configured TCP port to the required local inference path and preserve loopback access.
 Do not expose the port to your LAN or the internet.
 
-A new managed single-host container publishes the configured host port on exactly two host addresses: `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge.
+A new managed single-host container publishes the configured host port only on `127.0.0.1`, independently of bearer authentication.
 The container continues to listen on its recipe-owned internal port `8000`.
 It never publishes that host port on `0.0.0.0` or `::`.
-OpenShell reaches the server through the private bridge binding.
-<AgentOnly variant="openclaw">
-The provider route remains `https://inference.local` inside the sandbox.
-</AgentOnly>
-<AgentOnly variant="hermes,deepagents">
-New Deep Agents Code and Hermes standalone vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
+The native OpenShell supervisor reaches the server through `host.openshell.internal`, which resolves to loopback for the NemoClaw-managed gateway.
+<AgentOnly variant="openclaw,hermes,deepagents,pi">
+New OpenClaw, Hermes, Deep Agents Code, and Pi standalone vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
 OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
 Refer to [How Inference Routing Works](../about-inference-routing) for qualification and existing-sandbox boundaries.
+For Pi's release-candidate and platform restrictions, refer to [Pi Support and Security](/user-guide/pi/reference/pi-support).
+Pi native local onboarding on OpenShell `0.1.7` remains unqualified.
+</AgentOnly>
+<AgentOnly variant="openclaw">
+Older OpenClaw sandboxes without a native attachment retain their recorded shared route, which requires OpenShell `0.0.x`.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Live qualification of the Hermes native local lifecycle is pending.
 </AgentOnly>
-The managed Muse Glimmer profile uses the same bearer-protected listener and two-address publication boundary.
+The managed Muse Glimmer profile uses the same bearer-protected loopback listener.
 
 The qualified two-DGX Spark and two-DGX Station paths use bearer-protected `/v1` routes and Docker host networking on both runtime containers; network isolation remains required for other endpoints and distributed traffic.
 Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for their isolation requirements.
@@ -251,10 +255,10 @@ In an interactive run, the managed path lists the supported model registry for y
 Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
 
 The single-host path pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, and starts the `nemoclaw-vllm` container with the configured host port (`8000` by default).
-For every single-host profile, Docker publishes that port only on `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge.
+For every single-host profile, Docker publishes that port only on `127.0.0.1`.
 Bearerless profiles do not require NemoClaw's managed bearer key.
 Existing containers keep their published bindings until they are recreated.
-Managed route recovery rejects owned bearerless containers whose bindings do not match the required pair.
+Managed route recovery rejects owned bearerless containers whose bindings are not limited to the required loopback address and port.
 To recreate the container, follow [Handle a Running vLLM Server](#handle-a-running-vllm-server) with the original model and port settings.
 The distributed DGX pages document their separate container names, endpoints, and lifecycle checks.
 The container carries NemoClaw ownership and immutable catalog labels so later onboarding, recovery, and uninstall runs can distinguish it from a bring-your-own server without trusting the container name alone.
@@ -265,7 +269,7 @@ On hosts other than N1x, if another vLLM server already occupies the configured 
 On N1x, NemoClaw stops managed onboarding and requires you to stop that server before trying the Deferred preview again.
 Except for the interrupted managed install described below, an occupied single-host port stops installation before NemoClaw persists a bearer key or records the selected model.
 For an interrupted install, NemoClaw can remove and replace only a running `nemoclaw-vllm` container with the ownership label and matching port mappings through the selected local Docker connection.
-Managed route recovery accepts an owned bearerless container only when container port `8000` maps to the requested host port on exactly `127.0.0.1` and the private IPv4 gateway of `openshell-docker`.
+Managed route recovery accepts an owned bearerless container only when container port `8000` maps to the requested host port on `127.0.0.1` alone.
 Route recovery rejects other bindings, including `0.0.0.0` and `::`.
 If route recovery rejects the container, follow [Handle a Running vLLM Server](#handle-a-running-vllm-server) to recreate it with the original model and port settings.
 It refuses an unlabeled, stopped, distributed, ambiguous, differently mapped, or differently addressed container.
@@ -740,7 +744,7 @@ On N1x, that setting is explicit preview intent and waives only the pending phys
 Add `NEMOCLAW_EXPERIMENTAL=1` on a generic Linux NVIDIA GPU host.
 Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
 
-The commands above invoke `$$nemoclaw onboard` directly, so a DGX Station run with no model or peer selects the `nemotron-3.5-super-vl-120b` catalog default.
+The commands above invoke `$$nemoclaw onboard` directly, so a DGX Station run with no model or peer selects the experimental `nemotron-3.5-super-vl-120b` catalog default.
 Supplying `NEMOCLAW_PROVIDER=install-vllm` to the shell installer enters the Station host-preparation boundary while retaining that profile default.
 For paired non-interactive setup, follow [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations).
 

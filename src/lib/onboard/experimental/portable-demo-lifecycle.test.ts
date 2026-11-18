@@ -487,6 +487,8 @@ describe("portable demo sandbox lifecycle", () => {
         "label=openshell.ai/sandbox-name=alpha",
         "--filter",
         "label=openshell.ai/sandbox-workspace=default",
+        "--filter",
+        "label!=openshell.ai/isolation-role=supervisor",
         "--format",
         "{{.ID}}",
       ],

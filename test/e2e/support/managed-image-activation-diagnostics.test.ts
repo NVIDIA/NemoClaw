@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs, { existsSync, readFileSync, writeFileSync } from "node:fs";
+
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path, { join } from "node:path";
@@ -28,6 +29,7 @@ import {
   externalImageActivationAgents,
   externalImageActivationMatches,
   externalImageActivationOnboardArgs,
+  inspectRuntimeSandboxContainerId,
   managedActivationPostRestartAgentTurnScript,
   managedActivationOpenClawPluginScript,
   managedHermesBoundaryPoisonCommand,
@@ -93,9 +95,15 @@ function prepareManagedAdminState(root: string, requestId: string): NodeJS.Proce
   fs.writeFileSync(devicesPath, JSON.stringify(state));
   fs.writeFileSync(
     helperPath,
-    `import json\nfrom pathlib import Path\ndef read_openclaw_pairing_state(state_dir, timeout=1):\n    records=json.loads((Path(state_dir) / "pairing-state.json").read_text(encoding="utf-8"))\n    return records, {"timeout": timeout}\n`,
+    `import json, os\nfrom pathlib import Path\ndef read_openclaw_pairing_state(state_dir, timeout=1, local_device_only=False):\n    records=json.loads((Path(state_dir) / "pairing-state.json").read_text(encoding="utf-8"))\n    devices=json.loads(Path(os.environ["FAKE_DEVICES_STATE"]).read_text(encoding="utf-8"))\n    records["pending"]={request["requestId"]:request for request in devices["pending"]}\n    return records, {"timeout": timeout}\n`,
+  );
+  fs.writeFileSync(
+    join(root, "bin", "mktemp"),
+    '#!/bin/sh\nexec /usr/bin/mktemp "$TMPDIR/tmp.XXXXXXXXXX"\n',
+    { mode: 0o755 },
   );
   return {
+    TMPDIR: root,
     FAKE_DEVICES_STATE: devicesPath,
     NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
     OPENCLAW_STATE_DIR: stateRoot,
@@ -191,6 +199,27 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 }
 
 describe("managed image activation failure diagnostics", () => {
+  it.each(["docker", "podman"] as const)("selects full sandbox IDs through %s", async (engine) => {
+    const result = { exitCode: 0, stdout: `${"a".repeat(64)}\n`, stderr: "" };
+    const command = vi.fn(async () => result);
+    const env = { NEMOCLAW_GATEWAY_RUNTIME: engine };
+    await expect(
+      inspectRuntimeSandboxContainerId({ command } as never, engine, "candidate", "lookup", env),
+    ).resolves.toBe(result);
+    expect(command).toHaveBeenCalledExactlyOnceWith(
+      engine,
+      [
+        "ps",
+        "-aq",
+        "--no-trunc",
+        "--filter",
+        "label=openshell.ai/sandbox-name=candidate",
+        "--filter",
+        "label=openshell.ai/isolation-role=sandbox",
+      ],
+      { artifactName: "lookup", env, timeoutMs: 30_000 },
+    );
+  });
   it.each<{
     diagnostic: string;
     expectedRequestId?: string;
@@ -283,11 +312,6 @@ describe("managed image activation failure diagnostics", () => {
       const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
       const secret = "selector-private-diagnostic-value";
       const approveLog = fixture.path("approve.log");
-      // BSD mktemp without a template selects the system temp directory instead of TMPDIR.
-      fixture.writeExecutable(
-        "mktemp",
-        '#!/bin/sh\nexec /usr/bin/mktemp "$TMPDIR/tmp.XXXXXXXXXX"\n',
-      );
       fixture.writeExecutable(
         "openclaw",
         `#!/bin/sh
@@ -769,11 +793,13 @@ exit 91
       "openclaw",
       `#!/bin/sh
 if [ "$1:$2" = "devices:list" ]; then
+  printf '%s\n' devices-list >> "$APPROVAL_ATTEMPTED.devices-list"
   if [ -f "$APPROVAL_ATTEMPTED" ]; then exit 89; fi
   cat "$FAKE_DEVICES_STATE"
   exit 0
 fi
 : > "$APPROVAL_ATTEMPTED"
+rm -f "$OPENCLAW_STATE_DIR/pairing-state.json"
 printf '%s\n' 'approval failed for a private device' >&2
 exit 91
 `,
@@ -803,6 +829,7 @@ ${exactRequestAdminApprovalConnectScript(cliPath, "fixture-sandbox", "managed-cr
       expect(result.status).toBe(27);
       expect(result.stderr).toContain("ADMIN_APPROVE_COMMAND_STATUS=91");
       expect(result.stderr).toContain("ADMIN_APPROVAL_REQUEST_STATE=unavailable");
+      expect(readFileSync(`${approvalAttempted}.devices-list`, "utf8").trim()).toBe("devices-list");
       expect(result.stderr).not.toContain("fixture-token");
     } finally {
       fixture.remove();
@@ -963,64 +990,80 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
   });
 
   it.each([
-    { state: "unchanged", beforeRead: (_filename: string) => {} },
     {
-      state: "replaced",
-      beforeRead: (filename: string) => {
-        fs.renameSync(filename, `${filename}.original`);
-        fs.writeFileSync(filename, "replacement must not be published\n");
-      },
+      kind: "regular",
+      create: (destination: string, secret: string) =>
+        fs.writeFileSync(destination, `startup log contains ${secret}\n`),
+      expected: { data: "startup log contains [REDACTED]\n" },
     },
-  ])("redacts a copied failed-startup log when its pathname is $state", async ({ beforeRead }) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-diagnostics-"));
-    const secret = "supplied-startup-diagnostic-secret";
-    const containerId = "a".repeat(64);
-    const artifacts = new ArtifactSink(directory);
-    const originalRead = fs.readFileSync;
-    const readSpy = vi.spyOn(fs, "readFileSync");
-    const command = vi.fn(async (executable: string, args: readonly string[]) => {
-      switch (`${executable}:${String(args[0])}`) {
-        case "docker:ps":
-          return {
-            exitCode: 0,
-            stdout: `${containerId}\tmanaged-container\timage\tExited\n`,
-            stderr: "",
-          };
-        case "docker:cp":
-          fs.writeFileSync(String(args[2]), `startup log contains ${secret}\n`);
-          readSpy.mockImplementationOnce((source) => {
-            beforeRead(String(args[2]));
-            return originalRead(source, "utf8");
-          });
-          break;
+    {
+      kind: "symlink",
+      create: (destination: string, secret: string, directory: string) => {
+        const target = path.join(directory, "outside-copy.txt");
+        fs.writeFileSync(target, `startup log contains ${secret}\n`);
+        fs.symlinkSync(target, destination);
+      },
+      expected: { error: "ENOENT" },
+    },
+    {
+      kind: "directory",
+      create: (destination: string) => fs.mkdirSync(destination),
+      expected: { error: "ENOENT" },
+    },
+    {
+      kind: "oversized",
+      create: (destination: string) =>
+        fs.writeFileSync(destination, "x".repeat(2 * 1024 * 1024 + 1)),
+      expected: { error: "ENOENT" },
+    },
+  ])(
+    "publishes only bounded regular startup logs with redaction: $kind",
+    async ({ create, expected }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-diagnostics-"));
+      const secret = "supplied-startup-diagnostic-secret";
+      const containerId = "a".repeat(64);
+      const artifacts = new ArtifactSink(directory);
+      const command = vi.fn(async (executable: string, args: readonly string[]) => {
+        switch (`${executable}:${String(args[0])}`) {
+          case "docker:ps":
+            return {
+              exitCode: 0,
+              stdout: `${containerId}\tmanaged-container\timage\tExited\n`,
+              stderr: "",
+            };
+          case "docker:cp":
+            create(String(args[2]), secret, directory);
+            break;
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+
+      try {
+        await collectOnboardFailureRuntimeDiagnostics(
+          artifacts,
+          { command } as never,
+          "openclaw",
+          "managed-openclaw",
+          {},
+          [secret],
+        );
+        const published = await fs.promises
+          .readFile(
+            artifacts.pathFor(
+              "managed-activation-onboard-failure-openclaw-container-1-nemoclaw-start.log",
+            ),
+            "utf8",
+          )
+          .then(
+            (data) => ({ data }),
+            (error: NodeJS.ErrnoException) => ({ error: error.code }),
+          );
+        expect(published).toEqual(expected);
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
       }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    });
-
-    try {
-      await collectOnboardFailureRuntimeDiagnostics(
-        artifacts,
-        { command } as never,
-        "openclaw",
-        "managed-openclaw",
-        {},
-        [secret],
-      );
-
-      const published = fs.readFileSync(
-        artifacts.pathFor(
-          "managed-activation-onboard-failure-openclaw-container-1-nemoclaw-start.log",
-        ),
-        "utf8",
-      );
-      expect(published).toContain("[REDACTED]");
-      expect(published).not.toContain(secret);
-      expect(published).not.toContain("replacement must not be published");
-    } finally {
-      readSpy.mockRestore();
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
+    },
+  );
 
   const diagnosticEvents = [
     "tail:-c",
@@ -1139,11 +1182,26 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
             } as never,
             { env: {} } as never,
             "/unused-catalog.json",
-            "http://inference.invalid/v1",
+            "http://10.20.30.40:43123/v1",
             "langchain-deepagents-code",
             {} as never,
+            {
+              agents: {
+                "langchain-deepagents-code": {
+                  onboard: vi.fn(),
+                  publicLifecycle: vi.fn(),
+                  cleanup: vi.fn(),
+                },
+              },
+              hermesSecretBoundary: vi.fn(),
+              externalImages: vi.fn(),
+            } as never,
           ),
         ).rejects.toThrow(error);
+        expect(nemoclaw.mock.calls[0]?.[1]?.env).toMatchObject({
+          NEMOCLAW_ENDPOINT_URL: "http://10.20.30.40:43123/v1",
+          NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: "10.20.30.40",
+        });
         expect(events).toEqual(expectedEvents);
         expect(
           copy.mock.calls.map(() =>

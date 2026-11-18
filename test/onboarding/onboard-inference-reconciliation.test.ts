@@ -9,6 +9,10 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  HERMES_NATIVE_RECEIPT,
+  createHermesNativeHarness,
+} from "../support/native-hermes-setup-harness";
+import {
   clearPersistedOllamaHostIfUnused,
   loadPersistedOllamaHost,
   persistResolvedOllamaHost,
@@ -29,22 +33,6 @@ import {
   withProcessEnv,
 } from "../support/setup-inference-test-harness.js";
 
-const HERMES_OAUTH_PROVIDER_METADATA = [
-  "Name: hermes-provider",
-  "Type: openai",
-  "Credential keys: OPENAI_API_KEY",
-  "Config keys: OPENAI_BASE_URL",
-  "",
-].join("\n");
-
-const HERMES_API_KEY_PROVIDER_METADATA = [
-  "Name: hermes-provider",
-  "Type: openai",
-  "Credential keys: NOUS_API_KEY",
-  "Config keys: OPENAI_BASE_URL",
-  "",
-].join("\n");
-
 const COMPATIBLE_PROVIDER_METADATA = [
   "Name: compatible-endpoint",
   "Type: openai",
@@ -61,13 +49,7 @@ describe("onboard helpers", () => {
         OPENAI_API_KEY: "openai-host-secret",
       },
       async () => {
-        const harness = createDirectSetupInferenceHarness({
-          runOpenshell: (args) =>
-            args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
-              : undefined,
-          overrides: { isNonInteractive: () => true },
-        });
+        const harness = createHermesNativeHarness();
 
         await harness.setupInference(
           "test-box",
@@ -79,13 +61,20 @@ describe("onboard helpers", () => {
         );
 
         const commands = harness.commands;
-        assert.equal(commands.length, 3);
+        assert.equal(commands.length, 1);
         assert.equal(commands[0].command, "provider list -g nemoclaw");
-        assert.equal(commands[1].command, "provider get -g nemoclaw hermes-provider");
-        assert.match(
-          commands[2].command,
-          /inference set -g nemoclaw --no-verify --provider hermes-provider/,
+        expect(harness.providerAdapter.getProvider).toHaveBeenCalledWith({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          providerName: HERMES_NATIVE_RECEIPT.providerName,
+        });
+        expect(harness.providerAdapter.updateProvider).not.toHaveBeenCalled();
+        expect(harness.providerAdapter.createProvider).not.toHaveBeenCalled();
+        expect(harness.writeAuthority).toHaveBeenCalledWith(
+          "nemoclaw",
+          "hermes-provider",
+          HERMES_NATIVE_RECEIPT,
         );
+        assert.ok(!commands.some((entry) => entry.command.startsWith("inference ")));
         assert.ok(!commands.some((entry) => entry.command.startsWith("gateway select")));
         assert.ok(!commands.some((entry) => /provider (create|update)/.test(entry.command)));
         assert.ok(!commands.some((entry) => entry.env?.NOUS_API_KEY || entry.env?.OPENAI_API_KEY));
@@ -96,6 +85,37 @@ describe("onboard helpers", () => {
       },
     );
   });
+  it.each(["wrong identity", "missing credentials"])(
+    "refuses native Hermes resume with %s before sandbox mutation",
+    async (failure) => {
+      await withProcessEnv({ NOUS_API_KEY: undefined, OPENAI_API_KEY: undefined }, async () => {
+        const harness = createHermesNativeHarness({
+          getNativeHostedProviderAuthority: () =>
+            failure === "wrong identity"
+              ? { ...HERMES_NATIVE_RECEIPT, providerId: "different-owner" }
+              : undefined,
+        });
+        await expect(
+          harness.setupInference(
+            "test-box",
+            "moonshotai/kimi-k2.6",
+            "hermes-provider",
+            "https://8.8.8.8/v1",
+            "OPENAI_API_KEY",
+            "oauth",
+          ),
+        ).rejects.toThrow();
+        expect(harness.providerAdapter.createProvider).not.toHaveBeenCalled();
+        expect(harness.providerAdapter.updateProvider).not.toHaveBeenCalled();
+        expect(harness.writeAuthority).not.toHaveBeenCalled();
+        expect(harness.updateSandbox).not.toHaveBeenCalled();
+        expect(
+          harness.commands.every((entry) => entry.command === "provider list -g nemoclaw"),
+        ).toBe(true);
+      });
+    },
+  );
+
   it("routes Bedrock Runtime custom Anthropic endpoints through the hidden OpenAI adapter", async () => {
     await withProcessEnv({ COMPATIBLE_ANTHROPIC_API_KEY: "bedrock-bearer" }, async () => {
       const updateSandbox = vi.fn(() => true);
@@ -202,7 +222,6 @@ describe("onboard helpers", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-resume-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "hermes-resume-sandbox-name-check.js");
-      const inferenceCommandLogPath = path.join(tmpDir, "inference-commands.log");
       const openshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -242,14 +261,7 @@ describe("onboard helpers", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, {
-        inferenceRoute: {
-          gatewayName: "nemoclaw",
-          provider: "hermes-provider",
-          model: "moonshotai/kimi-k2.6",
-          commandLogPath: inferenceCommandLogPath,
-        },
-      });
+      writeOkOpenshell(fakeBin);
       fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
       const script = String.raw`
@@ -316,7 +328,31 @@ const prompts = [];
 const registryUpdates = [];
 const done = new Error("INFERENCE_STEP_DONE");
 let inferenceSessionSnapshot = null;
-const hermesApiKeyProviderMetadata = ${JSON.stringify(HERMES_API_KEY_PROVIDER_METADATA)};
+const nativeReceipt = ${JSON.stringify(HERMES_NATIVE_RECEIPT)};
+const nativeProviderCalls = [];
+const providers = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/providers.ts"))});
+const productionProviderDeps = providers.setupInferenceProviderDeps;
+providers.setupInferenceProviderDeps = (run) => ({
+  ...productionProviderDeps(run),
+  getNativeHostedProviderAuthority: () => nativeReceipt,
+  setNativeHostedProviderAuthority: (gateway, provider, receipt) => {
+    nativeProviderCalls.push({ operation: "persist", gateway, provider, receipt });
+  },
+  providerAdapter: {
+    importProviderProfile: async () => ({ ok: true }),
+    ensureProviderPolicyComposition: async () => ({ ok: true, value: undefined }),
+    getProvider: async (request) => {
+      nativeProviderCalls.push({ operation: "get", ...request });
+      return { ok: true, value: {
+        name: nativeReceipt.providerName, type: nativeReceipt.profileId,
+        credentialKeys: ["OPENAI_API_KEY"], configKeys: [],
+        revision: { id: nativeReceipt.providerId, resourceVersion: 1 },
+      } };
+    },
+    createProvider: async () => { throw new Error("Resume must reuse the owned provider"); },
+    updateProvider: async () => { throw new Error("Resume must not collect a new credential"); },
+  },
+});
 
 delete process.env.NEMOCLAW_NON_INTERACTIVE;
 delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -340,26 +376,9 @@ try {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const providerGet = "provider get -g nemoclaw hermes-provider";
-  if (normalized === providerGet || normalized.endsWith(" " + providerGet)) {
-    return { status: 0, stdout: hermesApiKeyProviderMetadata, stderr: "" };
-  }
   return { status: 0, stdout: "", stderr: "" };
 };
-runner.runCapture = (command) => {
-  const normalized = _n(command);
-  if (normalized.includes("inference get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: hermes-provider",
-      "  Model: moonshotai/kimi-k2.6",
-      "  Version: 1",
-    ].join("\n");
-  }
-  return "";
-};
+runner.runCapture = () => "";
 
 registry.getSandbox = (name) =>
   name === "hermes-resume"
@@ -369,6 +388,8 @@ registry.getSandbox = (name) =>
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",
         hermesToolGateways: [],
+        endpointUrl: nativeReceipt.endpointUrl,
+        nativeHostedProviderAttachment: nativeReceipt,
       }
     : null;
 registry.reserveSandboxInferenceRoute = (name, updates) => {
@@ -381,6 +402,7 @@ registry.removeSandbox = () => true;
 credentials.prompt = async (question) => {
   prompts.push(String(question));
   if (String(question).includes("Sandbox name")) return "hermes-resume";
+  if (String(question).includes("Choose [1]")) return "1";
   return "yes";
 };
 
@@ -477,6 +499,7 @@ const { onboard } = require(${onboardPath});
     if (error === done || error?.message === done.message) {
       console.log(JSON.stringify({
         commands,
+        nativeProviderCalls,
         prompts,
         registryUpdates,
         inferenceSessionSandboxName: inferenceSessionSnapshot?.sandboxName ?? null,
@@ -507,28 +530,36 @@ const { onboard } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const inferenceCommands = fs.readFileSync(inferenceCommandLogPath, "utf8").trim().split("\n");
-      assert.ok(
-        inferenceCommands.includes("inference get -g nemoclaw"),
-        `expected a scoped inference read, received ${JSON.stringify(inferenceCommands)}`,
-      );
-      assert.ok(
-        inferenceCommands.some((command) =>
-          /inference set -g nemoclaw --no-verify --provider hermes-provider/.test(command),
-        ),
-        `expected a scoped asynchronous inference set, received ${JSON.stringify(inferenceCommands)}`,
-      );
       assert.doesNotMatch(
         `${result.stderr}\n${result.stdout}`,
         /Hermes Provider requires a sandbox name/,
       );
       const payload = parseStdoutJson<{
         commands: CommandEntry[];
+        nativeProviderCalls: Array<{
+          operation: string;
+          target?: { kind: string; gatewayName: string };
+          providerName?: string;
+          gateway?: string;
+          receipt?: typeof HERMES_NATIVE_RECEIPT;
+        }>;
         prompts: string[];
         registryUpdates: Array<{ name: string; updates: Record<string, unknown> }>;
         inferenceSessionSandboxName: string | null;
       }>(result.stdout);
 
+      expect(payload.nativeProviderCalls).toContainEqual({
+        operation: "get",
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        providerName: HERMES_NATIVE_RECEIPT.providerName,
+      });
+      expect(payload.nativeProviderCalls).toContainEqual({
+        operation: "persist",
+        gateway: "nemoclaw",
+        provider: "hermes-provider",
+        receipt: HERMES_NATIVE_RECEIPT,
+      });
+      assert.ok(!payload.commands.some((entry) => /inference (get|set)/.test(entry.command)));
       assert.ok(
         payload.prompts.some((question) => question.includes("Sandbox name")),
         "resume should prompt for the missing sandbox name before Hermes inference reconciliation",
@@ -554,7 +585,7 @@ const { onboard } = require(${onboardPath});
             endpointUrl: "https://8.8.8.8/v1",
           },
         ],
-        "a non-staged Hermes route must keep the registry aligned with the immediate gateway update",
+        "native Hermes resume keeps the registry aligned with its owned provider",
       );
     },
   );
@@ -566,13 +597,7 @@ const { onboard } = require(${onboardPath});
         OPENAI_API_KEY: undefined,
       },
       async () => {
-        const harness = createDirectSetupInferenceHarness({
-          runOpenshell: (args) =>
-            args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
-              : undefined,
-          overrides: { isNonInteractive: () => true },
-        });
+        const harness = createHermesNativeHarness();
 
         await harness.setupInference(
           "test-box",
@@ -583,19 +608,22 @@ const { onboard } = require(${onboardPath});
           "api_key",
         );
 
-        const update = harness.commands.find((entry) =>
-          /provider update -g nemoclaw hermes-provider/.test(entry.command),
-        );
-        assert.ok(update);
-        assert.match(update.command, /--credential NOUS_API_KEY/);
-        assert.equal(update.env?.NOUS_API_KEY, "nous-host-secret");
+        expect(harness.providerAdapter.updateProvider).toHaveBeenCalledExactlyOnceWith({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          providerName: HERMES_NATIVE_RECEIPT.providerName,
+          credentials: [{ name: "OPENAI_API_KEY", value: "nous-host-secret" }],
+          config: [],
+        });
+        expect(harness.providerAdapter.createProvider).not.toHaveBeenCalled();
         assert.ok(
           !harness.commands.some((entry) => /nous-host-secret/.test(entry.command)),
           "shell credential value must not appear in argv",
         );
-        assert.match(
-          harness.commands.at(-1)?.command || "",
-          /inference set -g nemoclaw --no-verify --provider hermes-provider/,
+        assert.ok(!harness.commands.some((entry) => entry.command.startsWith("inference ")));
+        expect(harness.writeAuthority).toHaveBeenCalledWith(
+          "nemoclaw",
+          "hermes-provider",
+          HERMES_NATIVE_RECEIPT,
         );
       },
     );

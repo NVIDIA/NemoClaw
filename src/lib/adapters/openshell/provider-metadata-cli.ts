@@ -156,6 +156,7 @@ function parseProviderKeyArray(value: unknown): readonly string[] | null {
 export function parseCliOpenShellProviderCredentialState(
   output: string,
   providerName: string,
+  projectedRuntime: boolean,
 ): CliOpenShellProviderCredentialState | { nextPageToken: string } | null | undefined {
   if (
     !isValidCliOpenShellProviderIdentifier(providerName) ||
@@ -170,8 +171,9 @@ export function parseCliOpenShellProviderCredentialState(
   } catch {
     return null;
   }
+  if (Array.isArray(parsed) === projectedRuntime) return null;
   let nextPageToken: string | undefined;
-  if (!Array.isArray(parsed)) {
+  if (projectedRuntime) {
     if (!parsed || typeof parsed !== "object") return null;
     const page = parsed as Record<string, unknown>;
     if (
