@@ -680,7 +680,7 @@ mod tests {
             .unwrap();
         // Release candidates report a blocked result without failing.
         for (job, pass_name, passing) in [
-            ("publish", "Require a passing release policy", &[0][..]),
+            ("assess", "Require a passing release policy", &[0][..]),
             (
                 "candidate-security",
                 "Report the result without disclosing findings",
@@ -748,7 +748,7 @@ mod tests {
         let workflow: Value =
             serde_saphyr::from_str(include_str!("../../../../.github/workflows/release.yml"))
                 .unwrap();
-        let script = workflow["jobs"]["publish"]["steps"]
+        let script = workflow["jobs"]["assess"]["steps"]
             .as_array()
             .unwrap()
             .iter()
@@ -805,7 +805,7 @@ mod tests {
         let workflow: Value =
             serde_saphyr::from_str(include_str!("../../../../.github/workflows/release.yml"))
                 .unwrap();
-        let script = workflow["jobs"]["publish"]["steps"]
+        let script = workflow["jobs"]["assess"]["steps"]
             .as_array()
             .unwrap()
             .iter()
