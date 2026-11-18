@@ -1215,14 +1215,12 @@
     {
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
       "liveSources": [
-        "test/e2e/fixtures/hermes-committed-routing-replay.ts",
         "test/e2e/fixtures/hermes-switchyard-bounds.ts",
         "test/e2e/fixtures/hermes-switchyard-package.ts",
         "test/e2e/fixtures/hermes-crash-capture.ts"
       ],
       "fast": [
         "test/e2e/support/hermes-switchyard-upstream.test.ts",
-        "test/agents/hermes/managed-startup-runtime.test.ts",
         "test/e2e/support/hermes-crash-capture.test.ts",
         "src/lib/hermes-switchyard-routing.test.ts",
         "test/agents/hermes/hermes-switchyard-package.test.ts",
