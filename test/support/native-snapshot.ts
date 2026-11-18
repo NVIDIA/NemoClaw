@@ -13,7 +13,7 @@ export function writeExecutable(filePath: string, source: string): void {
 export function writeSnapshotRegistry(
   home: string,
   sandboxName: string,
-  agent: "hermes" | null = null,
+  agent: "hermes" | "langchain-deepagents-code" | null = null,
   route: { provider: string; endpointUrl?: string } = { provider: "p" },
 ): void {
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });

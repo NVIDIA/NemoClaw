@@ -86,8 +86,8 @@ export interface SandboxCreateIntent {
   readonly reuseRegisteredCredentials?: true;
   /** Internal durable handoff for one journaled same-name replacement. */
   readonly recreateTransaction?: {
-    /** Process-local proof that this fresh, non-forced run opened the journal. */
-    readonly freshNonForced?: true;
+    /** Process-local proof that this fresh, non-resumed run opened the journal. */
+    readonly freshSelection?: true;
     readonly id: string;
     readonly targetGeneration: string;
     readonly targetIntentFingerprint: string;

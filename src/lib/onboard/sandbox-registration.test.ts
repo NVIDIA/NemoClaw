@@ -12,6 +12,7 @@ import {
   serializedLlamaCppHostLocalInferenceReceipt,
 } from "../../../test/helpers/host-local-inference-receipt";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
+import type { SandboxEntry } from "../state/registry";
 import type { SandboxWorkloadReceipt } from "../state/registry/types";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -177,6 +178,30 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       ),
     ).toThrow(/native NVIDIA provider attachment failed closed validation/u);
   });
+
+  it.each([
+    { provider: "nvidia-prod", carried: true },
+    { provider: "compatible-endpoint", carried: false },
+  ])(
+    "carries a recorded native NVIDIA attachment only into $provider create intent (#13897)",
+    ({ provider, carried }) => {
+      const attachment = {
+        schemaVersion: 1 as const,
+        profileId: "nemoclaw-nvidia-inference-v1" as const,
+        providerName: "nemoclaw-nvidia-prod-v1" as const,
+        providerId: "11111111-2222-4333-8444-555555555555",
+      };
+      const source = {
+        name: "alpha",
+        provider,
+        nativeNvidiaProviderAttachment: attachment,
+      } as SandboxEntry;
+
+      expect(
+        nativeInferenceCreateIntentFields(provider, source).nativeNvidiaProviderAttachment,
+      ).toEqual(carried ? attachment : undefined);
+    },
+  );
 
   it("records the resolved custom OpenShell gateway state directory (#10665)", () => {
     const entry = buildCreatedSandboxRegistryEntry(
@@ -887,6 +912,102 @@ describe("registerCreatedSandbox", () => {
       getSandbox.mockRestore();
     }
   });
+
+  it.each([
+    { provider: "nvidia-prod", retained: true },
+    { provider: "compatible-endpoint", retained: false },
+  ])(
+    "retains a pending native NVIDIA attachment only for $provider replacements (#13897)",
+    ({ provider, retained }) => {
+      const attachment = {
+        schemaVersion: 1 as const,
+        profileId: "nemoclaw-nvidia-inference-v1" as const,
+        providerName: "nemoclaw-nvidia-prod-v1" as const,
+        providerId: "11111111-2222-4333-8444-555555555555",
+      };
+      const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
+      const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
+        name: "demo",
+        pendingRouteReservation: true,
+        provider: "nvidia-prod",
+        model: "nvidia/source",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        nativeNvidiaProviderAttachment: attachment,
+      });
+      try {
+        const entry = prepareCreatedSandboxRegistration(
+          createdRegistryEntryInput({
+            inferenceSelection: {
+              model: "nvidia/replacement",
+              provider,
+              endpointUrl: null,
+              credentialEnv: null,
+              preferredInferenceApi: null,
+              compatibleEndpointReasoning: null,
+              compatibleEndpointReasoningEffort: null,
+              nimContainer: null,
+            },
+          }),
+        );
+
+        expect(entry.nativeNvidiaProviderAttachment).toEqual(retained ? attachment : undefined);
+      } finally {
+        getSandbox.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    { provider: "openai-api", retained: true },
+    { provider: "compatible-endpoint", retained: false },
+  ])(
+    "retains a pending native hosted attachment only for $provider replacements (#13897)",
+    ({ provider, retained }) => {
+      const attachment = {
+        schemaVersion: 1 as const,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: "11111111-2222-4333-8444-555555555555",
+      };
+      const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
+      const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
+        name: "demo",
+        pendingRouteReservation: true,
+        provider: "openai-api",
+        model: "gpt-source",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        nativeHostedProviderAttachment: attachment,
+      } as never);
+      try {
+        const entry = prepareCreatedSandboxRegistration(
+          createdRegistryEntryInput({
+            inferenceSelection: {
+              model: "replacement",
+              provider,
+              endpointUrl: null,
+              credentialEnv: null,
+              preferredInferenceApi: null,
+              compatibleEndpointReasoning: null,
+              compatibleEndpointReasoningEffort: null,
+              nimContainer: null,
+            },
+          }),
+        );
+
+        expect(entry.nativeHostedProviderAttachment).toEqual(retained ? attachment : undefined);
+      } finally {
+        getSandbox.mockRestore();
+      }
+    },
+  );
 
   it("fails before registry mutation for an unknown durable provider identity", () => {
     const registerSandbox = vi.fn();

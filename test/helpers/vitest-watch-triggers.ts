@@ -47,6 +47,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)\.agents\/skills\/nemoclaw-maintainer-security-code-review\/SKILL\.md$/,
+    testsToRun: runTests("test/security/security-review-paths.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)schemas\/network-policy\.schema\.json$/,
     testsToRun: runTests("test/onboarding/validate-config-schemas.test.ts"),
   },
@@ -158,6 +162,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/runtime/sandbox/sandbox-init.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/pr\.ya?ml$/,
+    testsToRun: runTests("test/automation/pull-requests/pr-workflow-contract.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/,
     testsToRun: runTests("test/repository/github-actions-workflow-names.test.ts"),
   },
@@ -220,6 +228,18 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
       "test/platform/images/protected-managed-image-contract.test.ts",
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
+    testsToRun: runTests("test/inference/managed/hermes-policy-cleanup-workflow.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:agents\/hermes\/(?:managed-startup-image-runtime\.bundle|managed-startup-filesystem\.ts|build-managed-startup-runtime\.ts)|src\/lib\/onboard\/managed-startup\/image-runtime\.ts|tools\/mcp-tool-discovery-runtime\/managed-startup-direct-entry\.ts)$/,
+    testsToRun: runTests(
+      "test/agents/hermes/managed-startup-runtime.test.ts",
+      "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
     ),
   },
   {
