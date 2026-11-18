@@ -117,6 +117,17 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it("uses native imports for the helper and maps opaque image and fixture inputs", () => {
+    expect(triggeredBy("scripts/lib/patch-bundled-npm-node-gyp.mts")).toEqual([]);
+    expect(triggeredBy("agents/pi/Dockerfile.base")).toContain(
+      "test/platform/images/bundled-npm-ip-address-dockerfile-contract.test.ts",
+    );
+    expect(triggeredBy("test/fixtures/node-gyp/build.cjs.fixture")).toEqual([
+      "test/install/patch-bundled-npm-node-gyp.test.ts",
+      "test/install/upgrade-bundled-npm.test.ts",
+    ]);
+  });
+
   it("selects the security review procedure test when its skill changes", () => {
     expect(triggeredBy(".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md")).toEqual(
       ["test/security/security-review-paths.test.ts"],
@@ -236,6 +247,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
+      "test/platform/images/bundled-npm-ip-address-dockerfile-contract.test.ts",
       "test/runtime/messaging/messaging-build-applier-integrity.test.ts",
       "test/generation/providerless-agent-config.test.ts",
       "test/networking/dashboard-remote-bind-lifecycle.test.ts",
@@ -244,6 +256,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/mcp/mcp-tool-discovery-image-contract.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile.base")).toEqual([
+      "test/platform/images/bundled-npm-ip-address-dockerfile-contract.test.ts",
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/runtime/sandbox/sandbox-provisioning.test.ts",
@@ -267,6 +280,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/onboarding/effective-policy-contracts.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
+      "test/platform/images/bundled-npm-ip-address-dockerfile-contract.test.ts",
       "test/generation/providerless-agent-config.test.ts",
       "test/agents/hermes/hermes-image-build-probes.test.ts",
       "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
@@ -279,6 +293,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/inference/managed/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
+      "test/platform/images/bundled-npm-ip-address-dockerfile-contract.test.ts",
       "test/agents/deepagents/langchain-deepagents-code-image.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts",

@@ -47,12 +47,15 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
-    pattern: /(?:^|\/)scripts\/lib\/patch-bundled-npm-node-gyp\.mts$/,
+    pattern: /(?:^|\/)(?:agents\/(?:hermes|langchain-deepagents-code|pi)\/)?Dockerfile(?:\.base)?$/,
     testsToRun: runTests("test/platform/images/bundled-npm-ip-address-dockerfile-contract.test.ts"),
   },
   {
     pattern: /(?:^|\/)test\/fixtures\/node-gyp\/build\.cjs\.fixture$/,
-    testsToRun: runTests("test/install/patch-bundled-npm-node-gyp.test.ts"),
+    testsToRun: runTests(
+      "test/install/patch-bundled-npm-node-gyp.test.ts",
+      "test/install/upgrade-bundled-npm.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)scripts\/lib\/install-openclaw-migration-runtimes\.sh$/,

@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
-function reviewCommand() {
+function reviewProcedures() {
   const skill = fs.readFileSync(
     path.join(
       import.meta.dirname,
@@ -20,11 +20,16 @@ function reviewCommand() {
   const procedure = /python3 -I - "\$review_base" <<'PY'\n[\s\S]*?\nPY/.exec(skill);
   assert.ok(selection, "Base selection procedure not found");
   assert.ok(procedure, "Security review procedure not found");
+  return { selection: selection[1], procedure: procedure[0] };
+}
+
+function reviewCommand() {
+  const { selection, procedure } = reviewProcedures();
   return (
     'gh() { test "$*" = "pr view 123 --json baseRefOid -q .baseRefOid" || return 1; printf "%s\\n" "$fixture_base_oid"; }\n' +
-    selection[1].replace("<number>", "123") +
+    selection.replace("<number>", "123") +
     "\n" +
-    procedure[0]
+    procedure
   );
 }
 
@@ -145,6 +150,9 @@ it("renders submodule pointers without executing nested diff helpers", () => {
   const childCandidate = git("-C", child, "rev-parse", "HEAD").trim();
   git("update-index", "--cacheinfo", `160000,${childCandidate},child`);
   git("-c", "core.hooksPath=/dev/null", "commit", "-m", "candidate");
+  fs.writeFileSync(path.join(child, "a.txt"), "later checkout\n");
+  git("-C", child, "add", "a.txt");
+  git("-C", child, "-c", "core.hooksPath=/dev/null", "commit", "-m", "later child checkout");
   git("config", "diff.submodule", "diff");
   git("config", "diff.ignoreSubmodules", "all");
   git("-C", child, "config", "diff.external", "./helper.sh");
@@ -157,4 +165,17 @@ it("renders submodule pointers without executing nested diff helpers", () => {
   expect(fs.existsSync(path.join(child, "nested-helper-marker"))).toBe(false);
   expect(output).toContain(`-Subproject commit ${childBase}`);
   expect(output).toContain(`+Subproject commit ${childCandidate}`);
+  const childCommand = reviewProcedures().procedure.replace(
+    '"$review_base"',
+    '"$old_gitlink" "$new_gitlink"',
+  );
+  const childOutput = execFileSync("bash", ["-c", childCommand], {
+    cwd: child,
+    env: { ...env, old_gitlink: childBase, new_gitlink: childCandidate },
+    encoding: "utf8",
+  });
+  expect(childOutput).toContain("-before\n");
+  expect(childOutput).toContain("+after\n");
+  expect(childOutput).not.toContain("later checkout");
+  expect(fs.existsSync(path.join(child, "nested-helper-marker"))).toBe(false);
 });

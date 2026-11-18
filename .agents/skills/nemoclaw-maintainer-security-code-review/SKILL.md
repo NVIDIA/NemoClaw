@@ -84,24 +84,40 @@ Read NUL-delimited filename output; spaces and newlines can be part of a filenam
 
 Run this procedure from the repository root. It lists paths and reads each diff without shell interpolation or Git pathspec expansion.
 External diff drivers and text conversion are disabled so reading a diff does not invoke repository-configured helpers.
-Submodule changes show commit pointers without running nested diffs. Review each changed submodule revision separately using this procedure.
+Submodule changes show commit pointers without running nested diffs.
+For each changed gitlink, record its old and new commit IDs from the parent diff.
+Verify the intended child repository identity independently before fetching missing objects from it.
+Run the Python procedure below from the child repository root, skipping the parent PR's Step 3.
+Replace only its invocation with `python3 -I - "$old_gitlink" "$new_gitlink" <<'PY'`.
+The two-argument mode compares those commits directly, regardless of the child's current checkout.
+For added or deleted submodules, inspect the recorded revision's complete tree and report the absent endpoint.
+Do not substitute a parent commit or the child's current checkout for an absent endpoint.
+Verify any separate child PR and repository independently before using its metadata.
 Python's isolated mode prevents imports from the checkout and ignores Python environment overrides.
 
 ```bash
 python3 -I - "$review_base" <<'PY'
 import os
+import re
 import subprocess
 import sys
 
-comparison = sys.argv[1] + "...HEAD"
+revisions = sys.argv[1:]
+if len(revisions) not in (1, 2):
+    sys.exit("Expected a PR base commit or two gitlink commits")
+for revision in revisions:
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision):
+        sys.exit("Expected full commit IDs")
+    subprocess.run(["git", "rev-parse", "--verify", "--quiet", "--end-of-options", revision + "^{commit}"], check=True, stdout=subprocess.DEVNULL)
+comparison = [revisions[0] + "...HEAD"] if len(revisions) == 1 else revisions
 git = ["git", "--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--submodule=short", "--ignore-submodules=none"]
-paths = subprocess.check_output(git + ["--name-only", "-z", "--end-of-options", comparison, "--"]).split(b"\0")
+paths = subprocess.check_output(git + ["--name-only", "-z", "--end-of-options"] + comparison + ["--"]).split(b"\0")
 for raw_path in paths:
     if not raw_path:
         continue
     path = os.fsdecode(raw_path)
     print("Reviewing " + repr(path), flush=True)
-    subprocess.run(git + ["--end-of-options", comparison, "--", path], check=True)
+    subprocess.run(git + ["--end-of-options"] + comparison + ["--", path], check=True)
 PY
 ```
 
