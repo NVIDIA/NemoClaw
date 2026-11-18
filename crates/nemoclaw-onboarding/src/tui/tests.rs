@@ -1841,6 +1841,155 @@ async fn keys_typed_while_several_images_are_read_still_answer_the_image_questio
 }
 
 #[test]
+fn an_engine_the_journey_still_asks_about_keeps_the_image_question_open() {
+    // The template names an engine this machine did not answer on, so the
+    // engine question comes after the image question. The engine chosen there
+    // may not hold the image the other engine's read found.
+    let wizard = edited_template_on_one_docker_engine(|values| {
+        values["spec"]["gateway"]["engine"] = serde_json::json!("unix:///other/engine.sock");
+        values["spec"]["sandboxes"]["assistant"]
+            .as_object_mut()
+            .unwrap()
+            .remove("image");
+    });
+    let mut wizard = to_the_image_question(wizard);
+    let query = agent_images_probe(&wizard).unwrap();
+    wizard.record(query, agent_images(&[OPENCLAW_IMAGE]));
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.id(), IMAGE_QUESTION);
+    assert_eq!(
+        question.suggestion(),
+        Some(&serde_json::json!(OPENCLAW_IMAGE))
+    );
+    assert_eq!(wizard.state().values().pointer(IMAGE_QUESTION), None);
+}
+
+/// Ask for the one hermes image while `buffered` waits in the terminal once the
+/// read is done, as keys typed after the last poll do. Returns the answer, the
+/// events still queued and whether the terminal's input was read.
+async fn read_images_with_input_left_in_the_terminal(
+    images: &[&str],
+    buffered: crossterm::event::Event,
+) -> (Result<bool, Error>, Vec<crossterm::event::Event>, bool) {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    let mut queued = std::collections::VecDeque::new();
+    let read_done = std::cell::Cell::new(false);
+    let taken = std::cell::Cell::new(false);
+    let read = async |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        read_done.set(true);
+        Ok(DiscoveryObservations::new().with(
+            DiscoveryQuery::AgentImages(AgentImagesRequest {
+                engine: DOCKER_ENGINE.into(),
+                adapter_id: "nvidia.fabric.hermes".into(),
+            }),
+            agent_images(images),
+        ))
+    };
+    let mut buffered = Some(buffered);
+    let result = ask_target(
+        &mut wizard,
+        read,
+        vec![query],
+        &CancellationToken::new(),
+        &mut queued,
+        || {
+            if read_done.get() {
+                taken.set(true);
+                Ok(buffered.take())
+            } else {
+                Ok(None)
+            }
+        },
+    )
+    .await;
+    (result, queued.into_iter().collect(), taken.get())
+}
+
+fn enter() -> crossterm::event::Event {
+    crossterm::event::Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+}
+
+#[tokio::test]
+async fn a_key_left_in_the_terminal_when_the_one_image_is_chosen_is_dropped() {
+    let (result, queued, taken) =
+        read_images_with_input_left_in_the_terminal(&[HERMES_IMAGE], enter()).await;
+    assert!(result.unwrap());
+    assert!(taken, "the terminal's input was read");
+    assert!(queued.is_empty(), "{queued:?}");
+}
+
+#[tokio::test]
+async fn input_left_in_the_terminal_is_kept_when_the_image_question_stays() {
+    let (result, queued, taken) =
+        read_images_with_input_left_in_the_terminal(&[HERMES_IMAGE, OLDER_HERMES_IMAGE], enter())
+            .await;
+    assert!(result.unwrap());
+    assert!(!taken, "the input stays for the question it was typed for");
+    assert!(queued.is_empty(), "{queued:?}");
+}
+
+#[tokio::test]
+async fn a_resize_during_the_read_survives_the_one_image_being_chosen() {
+    let (result, queued, _) = read_images_with_input_left_in_the_terminal(
+        &[HERMES_IMAGE],
+        crossterm::event::Event::Resize(100, 40),
+    )
+    .await;
+    assert!(result.unwrap());
+    assert_eq!(queued, [crossterm::event::Event::Resize(100, 40)]);
+}
+
+#[tokio::test]
+async fn escape_and_interrupt_left_in_the_terminal_still_cancel_when_the_one_image_is_chosen() {
+    let escape = crossterm::event::Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let (result, _, _) = read_images_with_input_left_in_the_terminal(&[HERMES_IMAGE], escape).await;
+    assert!(!result.unwrap(), "escape abandons the questionnaire");
+    let interrupt =
+        crossterm::event::Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    let (result, _, _) =
+        read_images_with_input_left_in_the_terminal(&[HERMES_IMAGE], interrupt).await;
+    assert!(matches!(result, Err(Error::Cancelled)));
+}
+
+#[tokio::test]
+async fn a_resize_queued_during_the_read_survives_the_one_image_being_chosen() {
+    let mut wizard = at_the_image_question("nvidia.fabric.hermes");
+    let query = agent_images_probe(&wizard).unwrap();
+    let mut queued = std::collections::VecDeque::new();
+    let mut typed = vec![crossterm::event::Event::Resize(100, 40), enter()];
+    let read = async |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        Ok(DiscoveryObservations::new().with(
+            DiscoveryQuery::AgentImages(AgentImagesRequest {
+                engine: DOCKER_ENGINE.into(),
+                adapter_id: "nvidia.fabric.hermes".into(),
+            }),
+            agent_images(&[HERMES_IMAGE]),
+        ))
+    };
+    assert!(
+        ask_target(
+            &mut wizard,
+            read,
+            vec![query],
+            &CancellationToken::new(),
+            &mut queued,
+            || Ok(typed.pop()),
+        )
+        .await
+        .unwrap()
+    );
+    assert!(typed.is_empty(), "both events were typed during the read");
+    assert_ne!(wizard.question().unwrap().unwrap().id(), IMAGE_QUESTION);
+    assert_eq!(
+        queued.into_iter().collect::<Vec<_>>(),
+        [crossterm::event::Event::Resize(100, 40)]
+    );
+}
+
+#[test]
 fn without_discovery_the_image_question_is_asked_with_no_suggestion() {
     let wizard = at_the_image_question("nvidia.fabric.hermes");
     assert!(

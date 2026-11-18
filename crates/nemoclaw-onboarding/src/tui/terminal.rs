@@ -336,7 +336,7 @@ pub(super) async fn ask_target(
     queries: Vec<DiscoveryQuery>,
     cancel: &CancellationToken,
     queued_events: &mut VecDeque<Event>,
-    poll: impl FnMut() -> io::Result<Option<Event>>,
+    mut poll: impl FnMut() -> io::Result<Option<Event>>,
 ) -> Result<bool, Error> {
     let discovery_cancel = cancel.child_token();
     let asked = current_question(wizard);
@@ -345,7 +345,7 @@ pub(super) async fn ask_target(
         cancel,
         &discovery_cancel,
         queued_events,
-        poll,
+        &mut poll,
     )
     .await?
     else {
@@ -355,7 +355,42 @@ pub(super) async fn ask_target(
     // The keys typed during the read answer the question that was on screen.
     // When the read answered it, they would answer the next one unseen.
     if current_question(wizard) != asked {
-        queued_events.clear();
+        return discard_answer_keys(queued_events, poll);
+    }
+    Ok(true)
+}
+
+/// The most terminal events taken off the input at once, so a held key cannot
+/// keep this reading.
+const MOST_DRAINED_EVENTS: usize = 1024;
+
+/// Drop the keys typed for a question the read answered, both those queued
+/// and those still waiting in the terminal. A resize is kept, so the next
+/// screen is drawn at the current size, and so is a request to cancel.
+/// `false` means the user escaped.
+fn discard_answer_keys(
+    queued_events: &mut VecDeque<Event>,
+    mut poll: impl FnMut() -> io::Result<Option<Event>>,
+) -> Result<bool, Error> {
+    queued_events.retain(|event| !matches!(event, Event::Key(_)));
+    for _ in 0..MOST_DRAINED_EVENTS {
+        let event = match poll() {
+            Ok(Some(event)) => event,
+            Ok(None) => break,
+            Err(_) => return Err(Error::State("terminal input could not be read")),
+        };
+        match event {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    return Err(Error::Cancelled);
+                }
+                if key.code == KeyCode::Esc {
+                    return Ok(false);
+                }
+            }
+            Event::Key(_) => {}
+            other => queued_events.push_back(other),
+        }
     }
     Ok(true)
 }
