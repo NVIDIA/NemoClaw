@@ -29,6 +29,8 @@ Agents and interfaces:
   See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
 - Apply prints the command that opens Hermes's terminal UI for a Hermes agent that enables Fabric's `terminal` interface, which Fabric marks experimental.
   See [Hermes's terminal UI](../agents-inference/interfaces.md#hermess-terminal-ui).
+- Apply stops an agent's failed Fabric runtime before it starts another in the sandbox.
+  After provider errors, Fabric marks a runtime failed but leaves its processes running; before, every later apply failed with `state_in_use` for an agent that keeps state until someone ran `fabric-agent-ctl stop`, and without kept state, the next start failed because OpenClaw's Gateway still held its ports, after which Fabric refused every start until the sandbox was replaced.
 
 Sandbox policy:
 
