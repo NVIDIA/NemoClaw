@@ -35,6 +35,8 @@ mod agent_runtimes;
 mod agent_tools;
 #[path = "application_container.rs"]
 mod application_container;
+#[path = "apply_outputs.rs"]
+mod apply_outputs;
 #[path = "compile.rs"]
 mod compile;
 #[path = "config.rs"]
