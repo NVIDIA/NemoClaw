@@ -45,7 +45,7 @@
           "slug": "migration"
         },
         {
-          "title": "Compare Classic and v1",
+          "title": "Classic and NemoClaw Agent Config",
           "source": "docs/get-started/classic-v1-matrix.md",
           "slug": "classic-v1-matrix"
         }

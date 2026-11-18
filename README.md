@@ -3,10 +3,13 @@
 
 # NemoClaw
 
-NemoClaw deploys agents in OpenShell sandboxes from desired-state YAML.
+## NemoClaw Agent Config
+
+NemoClaw Agent Config deploys agents in OpenShell sandboxes from desired-state YAML.
 Use the CLI or Rust SDK to plan, apply, export, and destroy deployments.
 
-This branch documents v1 development using source-built bundles.
+NemoClaw Agent Config is being developed on the [Agent Config branch](https://github.com/NVIDIA/NemoClaw/tree/v1) using source-built bundles.
+Before evaluating a separate deployment, review the [Classic comparison](docs/get-started/classic-v1-matrix.md) and [migration guide](docs/get-started/migration.md).
 
 [![Watch NemoClaw plan, apply, and destroy a deployment with verbose output](docs/assets/terminal-lifecycle-verbose.png)](docs/assets/terminal-lifecycle-verbose.mp4)
 
@@ -16,7 +19,7 @@ Images are cached; no inference requests are sent, and only the plan-review paus
 ## Start Here
 
 - [Understand NemoClaw](docs/about/overview.md).
-- [Get started with v1](docs/get-started/first-deployment.md).
+- [Get started with NemoClaw Agent Config](docs/get-started/first-deployment.md).
 - [Build a native bundle](docs/build-deploy/build.md).
 - [Configure and operate a deployment](docs/build-deploy/usage.md).
 - [Move from an earlier version](docs/get-started/migration.md).

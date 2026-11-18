@@ -5,8 +5,8 @@
 
 The desired-state SDK, schema, and state format do not promise compatibility with the earlier product.
 The current CLI has no general state adoption or migration command.
-Keep the earlier deployment's tooling, configuration, and state while evaluating a separate v1 deployment.
-Use the draft [Classic-to-v1 matrix](classic-v1-matrix.md) to identify available paths, planned parity, and scope decisions still under review.
+Keep the earlier deployment's tooling, configuration, and state while evaluating a separate NemoClaw Agent Config deployment.
+Use the draft [Classic and NemoClaw Agent Config matrix](classic-v1-matrix.md) to identify available paths, planned parity, and scope decisions still under review.
 
 NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
 The evaluation steps below create a separate deployment; they do not provide an in-place upgrade or data conversion.
@@ -40,7 +40,7 @@ Use the [field reference](../reference/configuration.md) from the bundle's sourc
 The [validator](../../crates/nemoclaw-sdk/src/config/validation.rs) rejects unsupported combinations, and [state validation](../../crates/nemoclaw-sdk/src/state/mod.rs) rejects incompatible retained intent.
 These checks are not a conversion mechanism.
 
-## Evaluate v1 Beside the Existing Deployment
+## Evaluate NemoClaw Agent Config Beside the Existing Deployment
 
 Use a separate identity and state directory so the comparison does not mutate an earlier deployment.
 
@@ -48,16 +48,16 @@ Use a separate identity and state directory so the comparison does not mutate an
    Use that version's documentation and tools to inspect it.
 2. Check the task mapping above for workflows you rely on.
    If a workflow you need is in [current limits](../resources/limits.md), keep the earlier deployment available rather than assuming feature parity.
-3. Build a separate matched v1 bundle and images, then prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
+3. Build a separate matched NemoClaw Agent Config bundle and images, then prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
    Check names, exposed ports, model capacity, and credentials so the evaluation does not overwrite or exhaust the original deployment's resources.
-4. Plan and apply only the new v1 configuration/state.
+4. Plan and apply only the new deployment configuration and state.
    Verify the native interface and an actual agent reply, then check configuration export and [unchanged reapply](../build-deploy/usage.md#verify-an-unchanged-reapply).
 5. Validate each required task in the new deployment before switching use to it.
    An agent reply alone does not validate tools, channels, history continuity, or workload quality.
-6. If evaluation fails, continue using the retained earlier deployment and diagnose v1 with its own bundle and state.
-   Preview any v1 teardown separately and retain data needed for investigation before destroying its sandbox.
+6. If evaluation fails, continue using the retained earlier deployment and diagnose NemoClaw Agent Config with its own bundle and state.
+   Preview any NemoClaw Agent Config teardown separately and retain data needed for investigation before destroying its sandbox.
 
-Continuing to use an untouched earlier deployment is not a rollback of data written in v1.
+Continuing to use an untouched earlier deployment is not a rollback of data written in NemoClaw Agent Config.
 NemoClaw has no procedure to transfer those changes back to the earlier runtime.
 Do not retire the old deployment when the required native-data backup, transfer, or return path is unverified.
 
@@ -75,9 +75,9 @@ Retain the earlier deployment until the required continuity has been verified.
 
 The [combined staging site](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) has a version selector:
 
-- **v1 (Development)** describes the desired-state product.
+- The desired-state development guides describe NemoClaw Agent Config.
 - **Latest (main)** preserves the imported main guides and their release history; start at its [OpenClaw home](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/user-guide/openclaw/home).
 
-The main snapshot is pinned by the [documentation build](../../internal-docs/contributing/documentation-build.md#sources-and-outputs); its label does not qualify those procedures for v1.
+The main snapshot is pinned by the [documentation build](../../internal-docs/contributing/documentation-build.md#sources-and-outputs); its label does not qualify those procedures for NemoClaw Agent Config.
 Use the earlier deployment's actual version when selecting commands or assessing historical qualification.
 Publishing the combined site and checking its legacy routes are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).

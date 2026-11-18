@@ -3,7 +3,7 @@
 
 # Maintainer Documentation
 
-Use the [public guide](../docs/README.md) for deployment tasks. The pages here record maintainer procedures and design decisions; they are not published in the v1 reader navigation.
+Use the [public guide](../docs/README.md) for deployment tasks. The pages here record maintainer procedures and design decisions; they are not published in the NemoClaw Agent Config reader navigation.
 
 ## Contribute and Validate
 
@@ -12,7 +12,7 @@ Use the [public guide](../docs/README.md) for deployment tasks. The pages here r
 | Run workspace checks and collect coverage | [Tests](contributing/testing.md) |
 | Exercise OpenTofu and bundles with local fixtures | [Integration tests](contributing/integration-tests.md) |
 | Test explicitly owned live resources | [Live tests](contributing/live-tests.md) |
-| Stage a private v1 release | [Release staging](contributing/releases.md) |
+| Stage a private NemoClaw Agent Config release | [Release staging](contributing/releases.md) |
 | Write and reorganize guides | [Documentation contribution](contributing/documentation.md) |
 | Validate, preview, or publish the site | [Documentation build](contributing/documentation-build.md) |
 | Maintain generated schema and field reference | [Schema maintenance](contributing/configuration-schema.md) |

@@ -1,12 +1,37 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# v1 Capability Definitions Without a Primary Issue
+# NemoClaw Agent Config Support Notes
 
-These entries support the [Classic-to-v1 matrix](../docs/get-started/classic-v1-matrix.md) where no single existing issue defines the capability.
+These entries support the [Classic and NemoClaw Agent Config matrix](../docs/get-started/classic-v1-matrix.md) where no single existing issue defines the capability.
 The matrix links all other definitions directly to their owning GitHub issues; those issues are the source of truth for scope, dependencies, and acceptance.
 When a matching primary issue exists, point the matrix title to it and remove the fallback entry here.
 These review items add no implementation commitment or delivery date.
+
+## Read the Comparison
+
+The [matrix](../docs/get-started/classic-v1-matrix.md) is a publication draft, not a delivery schedule or a complete Classic inventory.
+Capability titles link to the issue that owns scope and acceptance, or to a fallback definition below when no single issue matches.
+Issues remain the source of truth; issue closure for replanning or supersession does not establish delivery.
+
+- **Available:** a bounded path exists; check its host, harness, and workflow limits.
+- **Planned parity:** the work is intended, but the complete journey is not confirmed.
+- **Needs review:** scope or functional support still needs a decision or verification; these items are outside the committed parity milestone.
+- **Not planned in NemoClaw Agent Config:** a core interface or responsibility is excluded; an upstream or platform alternative may remain available.
+
+**Installation is a publication prerequisite.** Its Available placement describes the intended public release; packaging and clean-machine installation are incomplete in the inspected revision, tracked in [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638).
+The inspected baseline is NemoClaw Agent Config at `459a78500600eb810e76bc68cc2080d3bf346a9f`, Fabric `135147a0fe6ce6bc2ebf21fa1068d1bd5af71780`, and Classic `495896a404`.
+This comparison adds no live qualification, assigned owners, estimates, or delivery dates.
+
+Keep Classic available for essential workflows that are planned or need review.
+Use the [migration guide](../docs/get-started/migration.md) to evaluate a separate deployment; configuration export neither copies native data nor adopts existing resources.
+Review [current limits](../docs/resources/limits.md) and applicable acceptance before changing a classification.
+
+MCP tool restrictions differ between the documented Hermes HCL path and YAML API subtree grants; see the [credential and tool contract](../docs/agents-inference/agents.md#key-authenticated-apis).
+Conversation continuation here means explicit Hermes SDK resume with a saved SessionRef and retained native storage; it does not promise automatic continuation after every runtime or sandbox replacement.
+Runtime readiness alone does not establish a successful inference request.
+Generic application container data is disposable, and literal application inputs do not protect secrets.
+Manual OAuth-refresh attachments and refresh material remain outside exported deployment YAML.
 
 ## Deploy and manage agents
 
@@ -71,7 +96,7 @@ Dropping a separate NemoClaw memory subsystem does not exclude the harness's nat
 
 ## Verify credential rotation
 
-**Needs review.** Confirm how to replace and revoke MCP credentials through the supported v1 credential path, including the effect on a running agent.
+**Needs review.** Confirm how to replace and revoke MCP credentials through the supported NemoClaw Agent Config credential path, including the effect on a running agent.
 Classic documents [MCP credential rotation](https://github.com/NVIDIA/NemoClaw/blob/495896a404/docs/manage-sandboxes/manage-mcp-servers.mdx).
 A changed value behind an unchanged reference is not rotated by unchanged apply; verify the documented [credential workflow](../docs/security/security.md).
 
@@ -83,6 +108,6 @@ Decide that broader scope before committing additional parity work.
 
 ## Classic CLI and API compatibility
 
-**Not planned in NemoClaw.** v1 uses desired-state deployments and the Rust SDK/OpenTofu providers, without compatibility with the Classic imperative CLI or TypeScript lifecycle API.
+**Not planned in NemoClaw.** NemoClaw Agent Config uses desired-state deployments and the Rust SDK/OpenTofu providers, without compatibility with the Classic imperative CLI or TypeScript lifecycle API.
 Use the [migration task mapping](../docs/get-started/migration.md#map-the-user-task) and [compatibility guidance](../docs/references/compatibility.md) to choose the replacement workflow.
-The v1 SDK/provider compatibility issue [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645) covers a different contract; it does not promise Classic API compatibility.
+The NemoClaw Agent Config SDK/provider compatibility issue [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645) covers a different contract; it does not promise Classic API compatibility.
