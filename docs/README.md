@@ -3,9 +3,9 @@
 
 # Documentation Index
 
-These guides describe NemoClaw v1 at this documentation checkout (`1f81b8ef02aea72ec920a27ad5473ff2d02ea189` plus documentation changes). Use a bundle, example, and image built from the implementation revision you operate. The [first-deployment tutorial](get-started/first-deployment.md) is an exception: it pins `637bdb6276309ea71d1f1fcb68fff518fe2db926` and OpenShell 0.1.7. Follow that worktree's build instructions and generated schema for the exercise, not this checkout's newer build guide.
+These guides describe NemoClaw v1 at this documentation checkout (including `v1` through `179801858fad118a0be53828c70e9c9c4a71bdf6`). Use a bundle, example, and image built from the implementation revision you operate. The [first-deployment tutorial](get-started/first-deployment.md) is an exception: it pins `637bdb6276309ea71d1f1fcb68fff518fe2db926` and OpenShell 0.1.7. Follow that worktree's build instructions and generated schema for the exercise, not this checkout's newer build guide.
 
-The [field reference](reference/configuration.md) and JSON Schema are generated from this checkout's SDK, not from the tutorial's pinned worktree. [Release Notes](about/release-notes.md) describe changes in this checkout, including OpenShell 0.1.8. [Current Limits](resources/limits.md) lists unimplemented or untested paths. Do not treat contracts from different revisions as interchangeable.
+The [field reference](reference/configuration.md) and JSON Schema are generated from this checkout's SDK, not from the tutorial's pinned worktree. [Release Notes](about/release-notes.md) describe changes in this checkout, including OpenShell 0.1.9. [Current Limits](resources/limits.md) lists unimplemented or untested paths. Do not treat contracts from different revisions as interchangeable.
 
 ## About
 

@@ -33,7 +33,7 @@ Prepare these inputs before running apply:
 - An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-For the [source-pinned first-deployment tutorial](first-deployment.md), use OpenShell **0.1.7** for the gateway and native CLI. The current checkout's `versions.json` pins 0.1.8; do not use it with the older tutorial bundle. The tutorial also uses Rust 1.99.1 from its pinned worktree, not this checkout's Rust 1.100.0.
+For the [source-pinned first-deployment tutorial](first-deployment.md), use OpenShell **0.1.7** for the gateway and native CLI. The current checkout's `versions.json` pins 0.1.9; do not use it with the older tutorial bundle. The tutorial also uses Rust 1.99.1 from its pinned worktree, not this checkout's Rust 1.100.0.
 The tutorial's pinned NemoClaw implementation (`637bdb6276309ea71d1f1fcb68fff518fe2db926`) records this version and OpenShell source revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c` in its `versions.json`.
 Its gateway check rejects a different reported OpenShell version or an incompatible compute driver.
 For another NemoClaw revision, use its own `versions.json` rather than assuming this version applies.
