@@ -456,6 +456,15 @@ pub struct FabricObservation {
     pub compatibility: Option<CompatibilityReport>,
 }
 
+/// The images an engine holds that install one adapter's runtime, newest
+/// first, by the `NAME@sha256:DIGEST` reference a sandbox pins.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentImagesObservation {
+    pub status: nemoclaw_backend::ObservationStatus,
+    pub reason: Option<String>,
+    pub references: Vec<String>,
+}
+
 impl FabricObservation {
     /// A read that could not be made, recorded as unknown rather than absent.
     pub fn unknown(reason: &str) -> Self {

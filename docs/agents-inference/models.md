@@ -48,6 +48,7 @@ Delete retained data separately only when it is no longer needed.
 
 The `kind: nim` implementation under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) remains a candidate.
 Its qualification is limited to native NIM 2.0.12 on AMD64 L40S with the case's Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
+GPU qualification of the updated OpenShell 0.1.9 gateway pin remains pending; the recorded GPU configuration used OpenShell 0.1.8.
 The maintained [agent lifecycle case](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/docker-openclaw-nim.tftest.hcl) covers an OpenClaw reply, unchanged reconciliation and teardown with storage retained.
 Other NIM engines and distributed inference are unsupported.
 

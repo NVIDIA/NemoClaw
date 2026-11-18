@@ -161,8 +161,8 @@ The JSON report retains every finding.
 
 Anyone who may push a final tag may release; no approval step gates publication.
 The workflow freezes the `v1` controller that contains the tagged commit, and the jobs that assess and publish run that controller, not the candidate's source.
-A final release must ship what a release candidate staged: the publish job requires a release candidate of the same version whose draft lists the same platform manifests for every image.
-It then prepares a fresh advisory database, assesses the saved inputs, reports High and Critical findings to code scanning, keeps the reports as a workflow artifact, verifies the registry digests, and publishes the draft only when the assessment passes.
+A final release must ship what a release candidate staged: the assessment job requires a release candidate of the same version whose draft lists the same platform manifests for every image.
+It then prepares a fresh advisory database, assesses the saved inputs, reports High and Critical findings to code scanning, keeps the reports as a workflow artifact, and verifies the registry digests; only when the assessment passes does it [attest the images' provenance](releases.md#verify-provenance) and publish the draft.
 The workflow does not change package visibility.
 Repository writers and package administrators can still publish a draft or change a package by hand, outside the workflow.
 Release candidates run the same assessment report-only: the job attaches `assessment.json`, `assessment.sarif`, and `gate.json` to the private draft and warns, instead of failing, when the policy would block publication.

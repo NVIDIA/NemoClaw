@@ -40,11 +40,7 @@ locals {
   prefix = "nc-${substr(sha256(local.owner), 0, 16)}"
   docker = try(local.spec.gateway.engine, "") != ""
   driver = coalesce(var.compute_driver, local.spec.gateway.runtime.provider == "docker" ? "docker" : "kubernetes")
-  # The SDK's default when a sandbox names no image.
-  sandbox_images = distinct([
-    for sandbox in values(local.spec.sandboxes) :
-    try(sandbox.image.ref, "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e")
-  ])
+  sandbox_images = distinct([for sandbox in values(local.spec.sandboxes) : sandbox.image.ref])
   services = {
     for name in sort(keys(try(local.spec.services, {}))) : name => {
       service      = local.spec.services[name]

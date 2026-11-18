@@ -19,6 +19,9 @@ spec:
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
     alice:
+      image:
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
       harness:
@@ -27,6 +30,9 @@ spec:
         name: alice
         inferenceRef: chat
     bob:
+      image:
+        # Replace with the digest of an agent image you built; see docs/build-deploy/build.md#build-agent-images.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
       harness:

@@ -7,7 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
-use nemoclaw_sdk::discovery::{DiscoveryObservations, DiscoveryRequest, ObservationStatus};
+use nemoclaw_sdk::discovery::{
+    AgentImagesRequest, DiscoveryObservations, DiscoveryRequest, ObservationStatus,
+};
 use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
 use nemoclaw_sdk::json_schema::schema_accepts;
 use serde_json::{Map, Value};
@@ -321,6 +323,23 @@ impl JourneyState {
                 .cloned()
                 .collect(),
         );
+    }
+
+    /// For the question with ID `question`, when it asks for a sandbox's
+    /// image, the read of the images on the gateway's engine that install the
+    /// sandbox's harness, once both are authored.
+    pub fn agent_images_request(&self, question: &str) -> Option<AgentImagesRequest> {
+        let sandbox = question
+            .strip_prefix("/spec/sandboxes/")?
+            .strip_suffix("/image/ref")?;
+        let text = |path: &str| {
+            let value = self.authored.values.pointer(path)?.as_str()?;
+            (!value.is_empty()).then(|| value.to_owned())
+        };
+        Some(AgentImagesRequest {
+            engine: text(GATEWAY_ENGINE_PATH)?,
+            adapter_id: text(&format!("/spec/sandboxes/{sandbox}/harness/kind"))?,
+        })
     }
 
     pub fn values(&self) -> &Value {

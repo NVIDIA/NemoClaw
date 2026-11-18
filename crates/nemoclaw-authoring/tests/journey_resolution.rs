@@ -1668,7 +1668,7 @@ fn invalid_native_settings_block_review_without_native_prompt_guidance() {
 }
 
 #[test]
-fn discovered_models_extend_the_current_route_question_without_restricting_custom_answers() {
+fn discovered_models_narrow_a_vendor_menu_without_restricting_custom_answers() {
     use nemoclaw_authoring::inference_request_for_document;
     use nemoclaw_sdk::{
         discovery::{DiscoveryObservation, DiscoveryQuery, ObservationStatus},
@@ -1699,7 +1699,10 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
             source: "fixture".into(),
             reachable: Some(true),
             authentication: AuthenticationStatus::Accepted,
-            models: vec!["vendor/discovered-model".into()],
+            models: vec![
+                "nvidia/nemotron-3-ultra-550b-a55b".into(),
+                "vendor/discovered-model".into(),
+            ],
             api_verified: false,
         })
     };
@@ -1712,10 +1715,11 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
         .resolve_with_observations(&capabilities, &observations)
         .unwrap();
     let question = discovered.question(model).unwrap();
-    assert!(
-        question
-            .choices()
-            .contains(&json!("vendor/discovered-model"))
+    // The example's NVIDIA endpoint is a vendor with recommendations: only
+    // those the endpoint lists are offered, never the rest of its catalog.
+    assert_eq!(
+        question.choices(),
+        [json!("nvidia/nemotron-3-ultra-550b-a55b")]
     );
     assert!(question.allows_custom_answer());
     assert_eq!(question.kind(), JourneyQuestionKind::InferenceModel);
@@ -1736,33 +1740,40 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
             .allows_custom_answer()
     );
     // A catalog read for another endpoint does not describe this route.
+    let offline = state
+        .resolve(&capabilities)
+        .unwrap()
+        .question(model)
+        .unwrap()
+        .choices()
+        .to_vec();
     let mut other = request.clone();
     other.endpoint = "https://other.example/v1".into();
     let stale = DiscoveryObservations::new().with(
         DiscoveryQuery::Inference(other),
         catalog(ObservationStatus::Available),
     );
-    assert!(
-        !state
+    assert_eq!(
+        state
             .resolve_with_observations(&capabilities, &stale)
             .unwrap()
             .question(model)
             .unwrap()
-            .choices()
-            .contains(&json!("vendor/discovered-model"))
+            .choices(),
+        offline
     );
     let unknown = DiscoveryObservations::new().with(
         DiscoveryQuery::Inference(request),
         catalog(ObservationStatus::Unknown),
     );
-    assert!(
-        !state
+    assert_eq!(
+        state
             .resolve_with_observations(&capabilities, &unknown)
             .unwrap()
             .question(model)
             .unwrap()
-            .choices()
-            .contains(&json!("vendor/discovered-model"))
+            .choices(),
+        offline
     );
     state
         .answer(&capabilities, model, Some(json!("private/custom")))
@@ -4331,6 +4342,10 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
         (
             "/spec/sandboxes/assistant/harness/kind",
             json!("nvidia.fabric.openclaw"),
+        ),
+        (
+            "/spec/sandboxes/assistant/image/ref",
+            json!(format!("nc-fabric@sha256:{}", "0".repeat(64))),
         ),
         ("/spec/sandboxes/assistant/agent/name", json!("primary")),
         (

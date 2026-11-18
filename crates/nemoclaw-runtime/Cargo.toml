@@ -37,11 +37,12 @@ tokio-util.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true
 tempfile.workspace = true
-time.workspace = true
 getrandom.workspace = true
-process-wrap = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Only the Linux runtime runs and supervises services.
+time = { workspace = true, optional = true }
+process-wrap = { workspace = true, optional = true }
 rustix = { workspace = true, features = ["process"], optional = true }
 # The bearer vLLM route filter; reqwest already locks these versions.
 http-body-util = { version = "0.1", optional = true }
@@ -52,6 +53,7 @@ hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 default = ["execution"]
 execution = [
     "dep:process-wrap",
+    "dep:time",
     "dep:rustix",
     "dep:http-body-util",
     "dep:hyper",
