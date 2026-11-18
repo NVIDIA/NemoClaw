@@ -98,7 +98,7 @@ spec:
   sandboxes:
     researcher:
       image:
-        # Build a current Fabric OpenClaw image; the default image lacks these features.
+        # Build a current Fabric OpenClaw image; an older image lacks these features.
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
@@ -115,7 +115,7 @@ spec:
                 maxTokens: 8192
     writer:
       image:
-        # Build a current Fabric OpenClaw image; the default image lacks these features.
+        # Build a current Fabric OpenClaw image; an older image lacks these features.
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
@@ -132,7 +132,7 @@ spec:
                 maxTokens: 8192
     reader:
       image:
-        # Build a current Fabric OpenClaw image; the default image lacks these features.
+        # Build a current Fabric OpenClaw image; an older image lacks these features.
         ref:
           nc-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:

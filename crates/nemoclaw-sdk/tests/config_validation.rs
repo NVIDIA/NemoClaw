@@ -75,19 +75,15 @@ fn directly_constructed_documents_and_services_enforce_normalized_bounds() {
 #[test]
 fn normalization_markers_are_accepted_only_before_defaults() {
     let baseline = document("spark/vllm.yaml");
-    for path in [
-        "/spec/gateway/networkCIDR",
-        "/spec/sandboxes/assistant/image/ref",
-    ] {
-        let mut value = serde_json::to_value(&baseline).unwrap();
-        *value.pointer_mut(path).unwrap() = json!("");
-        assert!(
-            Document::parse(value.to_string().as_bytes()).is_ok(),
-            "authored: {path}"
-        );
-        let direct: Document = serde_json::from_value(value).unwrap();
-        assert!(direct.validate().is_err(), "normalized: {path}");
-    }
+    let path = "/spec/gateway/networkCIDR";
+    let mut value = serde_json::to_value(&baseline).unwrap();
+    *value.pointer_mut(path).unwrap() = json!("");
+    assert!(
+        Document::parse(value.to_string().as_bytes()).is_ok(),
+        "authored: {path}"
+    );
+    let direct: Document = serde_json::from_value(value).unwrap();
+    assert!(direct.validate().is_err(), "normalized: {path}");
     for example in [
         "spark/vllm.yaml",
         "managed-ollama.yaml",

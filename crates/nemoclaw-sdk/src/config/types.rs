@@ -368,8 +368,7 @@ pub struct Sandbox {
     pub integrations: std::collections::BTreeMap<String, super::Integration>,
     #[serde(rename = "image")]
     #[schemars(default)]
-    #[schemars(extend("x-nemoclaw-required" = "For Kubernetes sandboxes"))]
-    /// Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.
+    /// Immutable agent image that contains the selected Fabric adapter and, on Kubernetes, is compatible with the gateway's runtime user and group IDs. Required: no default image is published.
     pub image: Image,
     #[serde(rename = "network")]
     #[schemars(default)]
@@ -431,8 +430,7 @@ pub enum AuthorizationMode {
 pub struct Image {
     #[serde(rename = "ref")]
     #[schemars(default)]
-    #[schemars(extend("x-nemoclaw-required" = "For Kubernetes sandboxes"))]
-    /// Immutable image reference. Kubernetes and OpenShift require an explicit nonempty reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter.
+    /// Immutable image reference, pinned by SHA-256 digest. Required on every runtime; build one as described in the agent image build instructions.
     pub ref_: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "FileRef")]
