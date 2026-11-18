@@ -24,7 +24,7 @@ For agents other than `hermes`, omit both `hermes-tui-*` checks.
 
 | Agent | `tui` entry point | `web-ui` entry point |
 |---|---|---|
-| `hermes` | The terminal UI entry that apply lists | `assistant/dashboard`: its browser chat |
+| `hermes` | The terminal UI entry that apply lists | `assistant/dashboard`: its browser chat. The live `docker-openclaw-hermes-interfaces` scenario already checks that it answers one turn through the forward ([Agent Interfaces](../../../../internal-docs/contributing/live-tests.md#agent-interfaces)), so this check owns the file effect, the reconnect, and the phases after Initial. |
 | `openclaw` | The terminal UI entry that apply lists | `assistant/dashboard`: the Control UI chat |
 
 ## Driving it with the OpenShell CLI, util-linux `script`, and Chromium
