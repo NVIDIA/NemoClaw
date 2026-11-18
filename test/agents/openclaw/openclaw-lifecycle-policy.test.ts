@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import policy from "../../../ci/reviewed-npm-lifecycle-allowlist.json";
 import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { shellCommandSegmentBetween } from "../../helpers/dockerfile-run-shell.ts";
@@ -220,6 +220,78 @@ describe("reviewed npm lifecycle policy", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.each(["install", "materialize"])(
+    "verifies committed migration lock identities during %s",
+    (phase) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "migration-lock-binding-"));
+      onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "calls.jsonl");
+      fs.mkdirSync(bin);
+      const locks = ["2026.9.5", "2026.9.7"].map((version) => {
+        const destination = path.join(root, "migrations", version, "package-lock.json");
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.copyFileSync(
+          path.join(
+            REPO_ROOT,
+            `agents/openclaw/openclaw-migration-${version}-runtime/package-lock.json`,
+          ),
+          destination,
+        );
+        return destination;
+      });
+      fs.writeFileSync(
+        path.join(bin, "node"),
+        `#!${process.execPath}
+const fs = require("node:fs");
+const { createHash } = require("node:crypto");
+const assert = require("node:assert/strict");
+const args = process.argv.slice(2);
+if (args.includes("--lockfile")) {
+  const lock = args[args.indexOf("--lockfile") + 1];
+  const digest = createHash("sha256").update(fs.readFileSync(lock)).digest("hex");
+  assert.equal(args[args.indexOf("--lock-sha256") + 1], digest, "lock-digest-mismatch");
+  fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + "\\n");
+}
+`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(bin, "npm"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(bin, "chown"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(bin, "chmod"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const script = path.join(root, "migrate.sh");
+      fs.writeFileSync(
+        script,
+        fs
+          .readFileSync(
+            path.join(REPO_ROOT, "scripts/lib/install-openclaw-migration-runtimes.sh"),
+            "utf8",
+          )
+          .replaceAll("/usr/local/lib/nemoclaw/openclaw-migrations", path.join(root, "migrations")),
+      );
+      const options = {
+        encoding: "utf8" as const,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+      };
+      const valid = spawnSync("sh", [script, phase], options);
+      expect(valid.status, valid.stderr).toBe(0);
+      const verified = fs
+        .readFileSync(calls, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      expect(verified.map((args) => args[args.indexOf("--lockfile") + 1])).toEqual(locks);
+      expect(verified.map((args) => args[1])).toEqual(
+        Array(2).fill(phase === "install" ? "--verify-lock" : "--verify-installed-lock"),
+      );
+      fs.appendFileSync(locks[0]!, "\n");
+      const rejected = spawnSync("sh", [script, phase], options);
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stderr).toContain("lock-digest-mismatch");
+      expect(fs.readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    },
+  );
 
   // source-shape-contract: security -- Every executable archive install must match the reviewed fail-closed lifecycle allowlist
   it("cross-checks the allowlist against every production archive install boundary", () => {
