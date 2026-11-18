@@ -23,10 +23,8 @@ rcgen = "0.14.10"
 rustls.workspace = true
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 nemoclaw-runtime = { path = "../nemoclaw-runtime" }
-nemoclaw-provider = { path = "../nemoclaw-provider" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
-openshell-provider = { path = "../openshell-provider" }
 nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
 async-trait.workspace = true
 serde_json.workspace = true
@@ -52,6 +50,8 @@ nemoclaw-build = { path = "../nemoclaw-build", default-features = false }
 # The integration runner sets the providers' diagnostics directory.
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk", features = ["test-scenarios"] }
+nemoclaw-provider = { path = "../nemoclaw-provider" }
+openshell-provider = { path = "../openshell-provider" }
 k8s-openapi.workspace = true
 kube.workspace = true
 time.workspace = true
