@@ -75,11 +75,27 @@ Docker deployments pull private images through `spec.registries`; Kubernetes dep
 ## Publish
 
 Push a final tag only from a commit whose release candidate has completed installer, onboarding, QA, and product sign-off; until then, the draft and packages stay private.
-The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the [security assessment](image-assessment.md#hosted-enforcement) passes, and the registry digests are unchanged.
+The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the [security assessment](image-assessment.md#hosted-enforcement) passes, the registry digests are unchanged, and every image's [provenance](#verify-provenance) is attested.
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
 Publishing a draft by hand and package-administrator privileges bypass the workflow.
 An administrator handles package visibility changes; making a package public cannot be undone.
-Before pushing a final tag, complete the provenance work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521)) and the [license review](image-licenses.md) of every image the release publishes.
+Before pushing a final tag, complete the [license review](image-licenses.md) of every image the release publishes.
+
+## Verify Provenance
+
+A final release attests each image index's build provenance with a GitHub artifact attestation before it publishes the draft.
+The attestation is signed through Sigstore's public-good instance, whose log is public, so release candidates get none.
+It is stored beside the image in `ghcr.io` as an OCI referrer, so the index digest stays the one staging pushed; `ghcr.io` has no referrers API, so the image's package shows it under the tag `sha256-<index digest hex>`.
+
+Verify an image by the index digest the release lists:
+
+```sh
+gh attestation verify oci://ghcr.io/nvidia/nemoclaw/v1/<image>@<digest> --owner NVIDIA
+```
+
+Add `--bundle-from-oci` to read the attestation from the registry instead of GitHub's API; the workflow verifies each attestation this way after creating it.
+While the packages are internal, sign in with `docker login ghcr.io` first.
+Platform manifests have no attestation of their own: verify the index that lists them.
 
 ## SBOM Assets
 
@@ -96,6 +112,6 @@ Those Rust entries describe the retained build sources, including build dependen
 Image scanning cannot recover components whose upstream images contain neither package metadata nor recognizable binaries; inspect representative OS, Python, Node, and Rust entries before publishing.
 
 The assets stay private with the draft: release candidates and internal packages publish nothing about their images.
-Only a final release attests the inventories, together with provenance ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521)).
+No release attests the inventories yet ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521)).
 A Syft failure fails the job that runs it, before staging uploads any SBOM asset; rerun it.
 Assets are named by digest, so a rerun can't overwrite another image's inventory.
