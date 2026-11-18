@@ -391,6 +391,8 @@ Refresh runs `fabric-agent-ctl check` for the recorded runtime and records the r
 A runtime Fabric no longer has, one that fails its check, and one whose sandbox isn't ready or doesn't serve its bridge count as stopped; an adapter without health checks, or a probe that can't finish, counts as running.
 A check whose reply is cut off fails refresh as an incomplete observation.
 A stopped runtime plans an update: apply stops it in Fabric and starts another in the same sandbox, with a new `runtime_id`.
+Stopping it matters when Fabric marked it failed, as after provider errors, because its processes can still run and hold the agent's kept state or ports; stopping one Fabric no longer has succeeds.
+If the stop fails, the agent keeps the old `runtime_id`, and the next apply stops it again.
 An update that keeps a running runtime, such as for a newer image catalog, leaves it alone.
 Fabric doesn't report the configuration a runtime applied, so a configuration changed inside the sandbox outside OpenTofu is not reported as drift.
 Removing the resource stops the agent through `fabric-agent-ctl stop`, as removing an attachment does, and the sandbox stays.
@@ -619,7 +621,7 @@ Reads have a five-second total bound and limits on response size, models, and pa
 The observation identifies control-host reachability, catalog authentication, and advertised model identifiers.
 It does not establish sandbox reachability or generation, streaming, tool-calling, or model-loading behavior; `api_verified` remains false.
 Authentication denial is distinguished from a missing or unsupported model-list endpoint.
-Onboarding adds observed identifiers to model suggestions while preserving manual model entry and accepted choices.
+Onboarding offers the observed identifiers as model suggestions for an endpoint with no curated list, and uses them to narrow a vendor's curated list, preserving manual model entry and accepted choices.
 
 Credentials remain a direct SDK concern: `observe_credentials` reports whether each selected reference resolves, separately from remote authentication.
 Gateway and resource discovery reuse their existing strict lifecycle reads below, preserving bindings when refresh fails.

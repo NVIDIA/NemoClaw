@@ -203,8 +203,11 @@ pub(crate) async fn ensure(client: &OpenShell, desired: &Row) -> Mutation {
         if value(desired, "running") == "true" && !prior.is_empty() {
             return Ok(row);
         }
-        // A runtime that stopped is stopped in Fabric too before another
-        // starts in the same sandbox, which keeps its files.
+        // Fabric can mark a runtime failed, as after provider errors, and
+        // leave its processes running, still holding the agent's kept state
+        // and ports. Stop the runtime that refresh found not running before
+        // another starts in the same sandbox, which keeps its files; stopping
+        // one Fabric no longer has succeeds.
         if !prior.is_empty() {
             client
                 .stop_agent(&parent, prior)

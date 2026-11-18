@@ -3,7 +3,7 @@
 //! Reads an image's Fabric catalog label through its container engine.
 
 use crate::{
-    FabricObservation, FabricRequirements,
+    AgentImagesObservation, FabricObservation, FabricRequirements,
     capabilities::{ImageMetadata, assess_image},
     catalog::{FabricCatalog, IMAGE_CATALOG_LABEL},
 };
@@ -64,6 +64,65 @@ pub async fn observe_fabric(
         Err(_) => observed.reason = Some("image observation timed out".into()),
     }
     observed
+}
+
+/// List the images `endpoint` holds whose catalog label installs
+/// `adapter_id`'s runtime, newest first, by digest. An image the engine
+/// records without one, as Docker's classic image store does, can't be
+/// pinned. This never pulls an image or starts a container.
+pub async fn observe_agent_images(
+    engines: &dyn Engines,
+    endpoint: &str,
+    adapter_id: &str,
+) -> AgentImagesObservation {
+    let work = async {
+        engines
+            .engine(endpoint)?
+            .images_labeled(IMAGE_CATALOG_LABEL)
+            .await
+    };
+    let (status, reason, mut images) =
+        match tokio::time::timeout(Duration::from_secs(5), work).await {
+            Ok(Ok(images)) => (ObservationStatus::Available, None, images),
+            Ok(Err(error)) => (
+                ObservationStatus::Unknown,
+                Some(error.to_string()),
+                Vec::new(),
+            ),
+            Err(_) => (
+                ObservationStatus::Unknown,
+                Some("image listing timed out".into()),
+                Vec::new(),
+            ),
+        };
+    images.sort_by_key(|image| std::cmp::Reverse(image.created));
+    let references = images
+        .into_iter()
+        .filter(|image| {
+            image
+                .labels
+                .get(IMAGE_CATALOG_LABEL)
+                .and_then(|label| FabricCatalog::from_json(label).ok())
+                .is_some_and(|catalog| {
+                    catalog.runtime.is_some()
+                        && catalog
+                            .adapters
+                            .iter()
+                            .any(|adapter| adapter.adapter_id() == adapter_id)
+                })
+        })
+        .filter_map(|image| {
+            image
+                .repo_digests
+                .into_iter()
+                .find(|reference| reference.contains("@sha256:"))
+        })
+        .collect();
+    AgentImagesObservation {
+        status,
+        reason,
+        references,
+    }
 }
 
 /// Judge an image read against what its sandbox requires, on the engine

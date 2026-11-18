@@ -235,13 +235,13 @@ Keep the token out of shell history:
    openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
    ```
 
-3. Clear the client terminal's token variable.
+3. Press Ctrl-D to quit when finished. Opening the terminal UI again reconnects to the same session and shows its history.
+
+4. Clear the client terminal's token variable after the terminal UI exits.
 
    ```sh
    unset TOKEN
    ```
-
-4. Press Ctrl-D to quit when finished. Opening it again reconnects to the same session and shows its history.
 
 The token changes each time the runtime starts. Repeat the token-reading step after a restart.
 The agent's own tools can read the token, as [Who Can Use an Interface](#who-can-use-an-interface) describes.
@@ -283,7 +283,7 @@ Anyone who can run commands in the sandbox, including the agent's own tools, can
 
 Each terminal UI starts a new conversation in the agent's Hermes home, with the agent's configuration, skills, and model; it doesn't continue the conversations of `fabric-agent-ctl invoke` or browser chat.
 Press Ctrl-D to quit; quitting leaves the runtime and the backend running.
-Stopping the runtime stops the backend and removes the attachment files, so open the terminal UI again after the runtime restarts; what an open terminal UI does when its runtime stops isn't settled yet ([#14202](https://github.com/NVIDIA/NemoClaw/issues/14202)).
+Stopping the runtime stops the backend and removes the attachment files, so open the terminal UI again after the runtime restarts; what an open terminal UI does when its runtime stops isn't settled yet ([NVIDIA/NeMo-Fabric#656](https://github.com/NVIDIA/NeMo-Fabric/issues/656)).
 
 ### Hermes's Browser Chat
 

@@ -29,6 +29,15 @@ Agents and interfaces:
   See [key-authenticated APIs](../agents-inference/agents.md#key-authenticated-apis).
 - Apply prints the command that opens Hermes's terminal UI for a Hermes agent that enables Fabric's `terminal` interface, which Fabric marks experimental.
   See [Hermes's terminal UI](../agents-inference/interfaces.md#hermess-terminal-ui).
+- Apply stops an agent's failed Fabric runtime before it starts another in the sandbox.
+  After provider errors, Fabric marks a runtime failed but leaves its processes running; before, every later apply failed with `state_in_use` for an agent that keeps state until someone ran `fabric-agent-ctl stop`, and without kept state, the next start failed because OpenClaw's Gateway still held its ports, after which Fabric refused every start until the sandbox was replaced.
+
+Onboarding:
+
+- At the model question for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research, `nemoclaw onboard` offers the recommended models the endpoint lists and **Type another model**, instead of the endpoint's whole catalog, which can include models that cannot drive an agent.
+  The review notes a typed model that the endpoint does not list.
+  See [onboarding model catalogs](../agents-inference/inference.md#onboarding-model-catalogs).
+- At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
 
 Sandbox policy:
 
@@ -51,6 +60,7 @@ Kubernetes and OpenShift:
 
 Examples and builds:
 
+- A staged release attaches the CLI bundles that CI built and checked at its tag, one archive each for Linux ARM64 and AMD64, macOS ARM64, and Windows AMD64, with their SHA-256 checksums in `SHA256SUMS`.
 - Pinned components: OpenShell 0.1.9, OpenTofu 1.13.9, Ollama 0.40.16, Hermes Agent v0.22.7 with the Switchyard Relay plugin 0.3.2, and OpenClaw 2026.9.34.
 - OpenClaw, Hermes and Pi images run Node.js 26.13.1 LTS.
 - [Building from source](../build-deploy/build.md) uses Rust 1.100.0, as do the Rust stages of the agent, supervisor, and Ollama proxy images.
@@ -216,6 +226,9 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
 
 - In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
   Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
+- Every sandbox must set `image.ref` to an agent image pinned by digest, on Docker and Podman as on Kubernetes.
+  The SDK no longer supplies a default agent image, and the parser rejects an omitted `image`, `image: {}`, and an empty `ref`; see [build agent images](../build-deploy/build.md#build-agent-images).
+  In the Rust SDK, `config::DEFAULT_AGENT_IMAGE` is removed.
 - With OpenShell 0.1.8, an explicit policy endpoint that sets `websocket_credential_rewrite: true` needs `protocol: websocket`; on `protocol: rest`, plan fails with `explicit sandbox policy failed OpenShell validation`.
   A `rest` endpoint answers WebSocket upgrade requests with `403`, so WebSocket traffic needs its own `websocket` endpoint.
 - With OpenShell 0.1.8, a sandbox doesn't start when a filesystem policy path goes through a symlink in a writable workspace; name the symlink's target instead.

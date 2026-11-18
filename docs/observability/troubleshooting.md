@@ -60,7 +60,7 @@ Start with the failed phase; apply readiness, endpoint reachability, and a nativ
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](../agents-inference/interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
 | A plan replaces a sandbox because `sandbox exited` | OpenShell reports that the sandbox exited; read why with `openshell logs SANDBOX --source sandbox`. Applying replaces it, deleting its files and history; see [replacing workloads](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime) |
 | `runtime_unavailable` | The runtime stopped while its sandbox runs, for example after its gateway restarted. Plan and apply again: the plan updates the agent because `agent runtime is not running`, and apply starts a new runtime in the same sandbox. If the plan shows no change, read why with `openshell logs SANDBOX --source sandbox` and follow the [whole-deployment replacement procedure](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime), including loss of sandbox files and history |
-| `state_in_use` | Another runtime, or native processes that outlived one, still own the agent's kept state under `/sandbox/artifacts`, for example in another sandbox that mounts the same volume, so Fabric started no runtime. Stop them, or replace the sandbox that runs them, then apply again |
+| `state_in_use` | Another runtime, or native processes that outlived one, still own the agent's kept state under `/sandbox/artifacts`, for example in another sandbox that mounts the same volume, so Fabric started no runtime. Apply already stops the agent's previous runtime in its own sandbox first. Stop the others, or replace the sandbox that runs them, then apply again |
 | `runtime_busy` | The agent was handling a request, so Fabric didn't stop its runtime and nothing changed. Run the apply or destroy again after the request finishes |
 
 OpenShell can add paths of its own, such as read-only `/var/log`, when it loads a sandbox policy.
@@ -170,6 +170,25 @@ A failed first apply can be [destroyed](../build-deploy/usage.md#destroy) when t
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
 
+### Continue After `session_recovery_required`
+
+An agent that [keeps its state](../build-deploy/state.md#agent-files) keeps one native conversation across its invocations.
+When an invocation doesn't finish, for example because the model timed out, the adapter can't tell what that turn did.
+Every later invocation then returns `result.status: failed` with `result.error.code: session_recovery_required`, even after the model answers again.
+The runtime keeps running, and the agent's native interfaces, such as OpenClaw's Control UI, still answer.
+
+First check what the unfinished turn could have changed, such as workspace files or requests to external services.
+Then send the next request with `acknowledge_recovery`, selecting the gateway and workspace as for [invoking an agent](../agents-inference/interfaces.md#invoke-an-agent):
+
+```sh
+openshell sandbox exec -n SANDBOX --no-tty -- fabric-agent-ctl invoke --agent AGENT --runtime-id RUNTIME_ID --request - <<'JSON'
+{"input": "Continue.", "acknowledge_recovery": true}
+JSON
+```
+
+Requests with `--input` work again after that one succeeds.
+NemoClaw can't send the acknowledgment itself ([current limits](../resources/limits.md#agents-and-integrations)).
+
 ## Inspect an OpenShell Sandbox Failure
 
 Use the original deployment's gateway and workspace, following [interface selection](../agents-inference/interfaces.md#select-the-gateway-and-workspace).
@@ -242,4 +261,4 @@ Do not replay an uncertain native invocation merely to reproduce a log entry.
 [Hermes Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) and [web search](../agents-inference/agents.md#web-search) have their own configuration and verification limits.
 Configuration readiness does not prove collector delivery, a valid Brave credential, or available quota.
 
-Troubleshooting a production collector is tracked in [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144), and testing hosted search live in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
+These pages don't cover troubleshooting a production collector; testing hosted search live is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).

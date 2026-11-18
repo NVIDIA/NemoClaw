@@ -5,7 +5,7 @@
 # the sources context from `cargo images fetch`, as versions.json pins them.
 FROM ollama/ollama@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
 COPY --from=supervisor /nemoclaw-runtime /usr/local/bin/nemoclaw-runtime
-COPY --from=supervisor /supervisor-source.tar.gz /opt/nemoclaw/source/
+COPY --from=supervisor /supervisor-source.tar.gz /rust-COPYRIGHT-library.html /opt/nemoclaw/source/
 COPY --from=supervisor /Cargo.lock /opt/nemoclaw/source/supervisor/Cargo.lock
 COPY LICENSE /opt/nemoclaw/source/LICENSE
 COPY image/supervisor/Dockerfile /opt/nemoclaw/source/supervisor.Dockerfile
