@@ -147,6 +147,8 @@ Completion remains a publication prerequisite and a pre-GTC DC deliverable under
 
 ### Onboard with familiar choices
 
+**Tracking:** [#14606](https://github.com/NVIDIA/NemoClaw/issues/14606).
+
 **Status:** Planned parity.
 
 **Scope:** Guide users through the agreed Classic onboarding choices and generate ordinary YAML.
@@ -157,6 +159,8 @@ Define the missing journeys and optional presets, rather than reproducing every 
 
 ### Set up web search
 
+**Tracking:** [#14607](https://github.com/NVIDIA/NemoClaw/issues/14607).
+
 **Status:** Planned parity.
 
 **Scope:** Configure and demonstrate real web search, then decide whether to provide onboarding presets.
@@ -166,6 +170,8 @@ Credential routing exists; native OpenClaw search configuration and selected end
 Generic plugin/MCP, endpoint, and credential configuration plus a YAML demo; separately decide an onboarding preset. [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361), roadmap A.
 
 ### Connect and manage messaging
+
+**Tracking:** [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037).
 
 **Status:** Planned parity.
 
@@ -180,6 +186,8 @@ Inventory the Classic channel lifecycle and company enrollment/policy workflows 
 
 ### Agent assisted migration
 
+**Tracking:** [#14580](https://github.com/NVIDIA/NemoClaw/issues/14580).
+
 **Status:** Planned parity.
 
 **Scope:** Use Classic export to help an agent recreate and verify a separate v1 deployment.
@@ -190,6 +198,8 @@ Agent-assisted recreation from export, with documented gaps and a separately ver
 
 ### Trace and review activity
 
+**Tracking:** [#14609](https://github.com/NVIDIA/NemoClaw/issues/14609).
+
 **Status:** Planned parity.
 
 **Scope:** Route selected agent traces and activity/access signals through the agreed Relay integration.
@@ -199,6 +209,8 @@ Hermes Relay configuration exists; OpenClaw tracing and broader activity/audit s
 Post-GTC Relay integration; define collector, identity, retention, and access requirements. [Fabric #625](https://github.com/NVIDIA/NeMo-Fabric/issues/625), roadmap D.
 
 ### Broader local model support
+
+**Tracking:** [#14608](https://github.com/NVIDIA/NemoClaw/issues/14608).
 
 **Status:** Planned parity.
 
@@ -250,6 +262,8 @@ The meeting expected volumes to cover it; the current generic container contract
 Reconcile scope and storage ownership before claiming completion; prove a documented supported path in a demo. [#12568](https://github.com/NVIDIA/NemoClaw/issues/12568), roadmap B.
 
 ### Run llama.cpp and NIM
+
+**Tracking:** [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556).
 
 **Status:** Planned parity.
 

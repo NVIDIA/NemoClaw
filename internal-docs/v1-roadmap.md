@@ -10,7 +10,33 @@ Use the [Classic-to-v1 matrix](../docs/get-started/classic-v1-matrix.md) to judg
 This proposal follows the **V1 Transition - In/Coming/Out Matrix** meeting on 17 November, the saved workshop decisions, and current code at v1 `459a78500600eb810e76bc68cc2080d3bf346a9f`.
 That revision pins Fabric `135147a0fe6ce6bc2ebf21fa1068d1bd5af71780`.
 It proposes phase order and grouping, not calendar dates, assigned owners, or effort estimates.
-GTC DC is the only fixed milestone used here; the team must confirm capacity and the selected release scenarios before attaching dates.
+GTC DC is the only milestone with a fixed release target used here; the team must confirm capacity and the selected release scenarios before attaching dates.
+
+## Keep Scope and Milestones Aligned
+
+[Milestone 12: GTC DC](https://github.com/NVIDIA/NemoClaw/milestone/12) tracks the release work and historical implementation behind the matrix's Available list.
+[Milestone 14: Classic parity](https://github.com/NVIDIA/NemoClaw/milestone/14) tracks the seven agreed Planned parity outcomes, without a due date.
+The matrix links Available entries to selected milestone-12 issues or implementation PRs and Planned parity entries to their primary milestone-14 trackers.
+These are scope and evidence links, not automatically generated support claims.
+
+When scope changes, update the matrix and catalog together, then reconcile the primary issue's milestone.
+When an issue closes, review its acceptance and documented limits before moving a capability to Available; closure for replanning or supersession does not establish delivery.
+Keep Needs review items outside the committed parity backlog until their scope is agreed.
+
+| Planned outcome | Primary tracker | Proposed work package |
+|---|---|---|
+| Onboard with familiar choices | [#14606](https://github.com/NVIDIA/NemoClaw/issues/14606) | A: onboarding |
+| Set up web search | [#14607](https://github.com/NVIDIA/NemoClaw/issues/14607) | A: search |
+| Connect and manage messaging | [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037) | C: messaging |
+| Agent assisted migration | [#14580](https://github.com/NVIDIA/NemoClaw/issues/14580) | A: migration |
+| Trace and review activity | [#14609](https://github.com/NVIDIA/NemoClaw/issues/14609) | D: Relay/activity |
+| Broader local model support | [#14608](https://github.com/NVIDIA/NemoClaw/issues/14608) | A: broader local combinations |
+| Run llama.cpp and NIM | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) | B2: managed runners |
+
+Migration #14580 and managed runners #14556 move from GTC DC into the parity milestone to match their agreed work category.
+This does not assign a delivery date or prevent an increment from landing earlier.
+Keep initial roadmap/matrix publication #14557 in GTC DC; its later documentation-automation work can be sequenced separately.
+The chart-setting decision #14588 is Kubernetes scope, not Classic parity, and remains in GTC DC for release-scope review.
 
 ## Proposed Sequence and Fabric Capacity
 
