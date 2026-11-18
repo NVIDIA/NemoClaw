@@ -70,8 +70,10 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
                 sandbox: "assistant".into(),
                 interface: "dashboard".into(),
                 port: Some(18789),
+                // OpenClaw and Hermes keep their state, with the token, in
+                // the agent's folder.
                 token_path: Some(
-                    "/sandbox/artifacts/.fabric/openclaw/runtimes/rt-openclaw-1/interfaces/dashboard.token"
+                    "/sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/main/interfaces/dashboard.token"
                         .into()
                 ),
                     sign_in: SignIn::TokenInUrlFragment,
@@ -81,7 +83,6 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
                 sandbox: "reviewer".into(),
                 interface: "api".into(),
                 port: Some(8642),
-                // Hermes keeps its state, with the token, in the agent's folder.
                 token_path: Some(
                     "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/api.token"
                         .into()
@@ -123,8 +124,12 @@ async fn an_agent_that_keeps_its_state_reports_its_token_without_a_runtime_id() 
         .iter()
         .find(|access| access.sandbox == "assistant")
         .unwrap();
-    assert_eq!(openclaw.token_path, None);
-    // The terminal command names no token file, so it needs no runtime ID.
+    assert_eq!(
+        openclaw.token_path.as_deref(),
+        Some(
+            "/sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/main/interfaces/dashboard.token"
+        )
+    );
     assert_eq!(
         openclaw.terminal.as_deref(),
         Some("openclaw tui --url ws://127.0.0.1:18789 --token TOKEN")
@@ -215,8 +220,8 @@ async fn a_deployment_without_interfaces_reports_none() {
     );
 }
 
-/// Runtime-scoped access follows a changed post-apply binding, while an
-/// adapter's kept-state token remains in its agent directory.
+/// A changed post-apply binding leaves an adapter's kept-state token in its
+/// agent directory.
 #[tokio::test]
 async fn apply_reports_current_runtime_access_after_binding_changes() {
     let document = document();
@@ -250,7 +255,7 @@ async fn apply_reports_current_runtime_access_after_binding_changes() {
     assert_eq!(
         access(&after, "assistant").token_path.as_deref(),
         Some(
-            "/sandbox/artifacts/.fabric/openclaw/runtimes/openclaw-new/interfaces/dashboard.token"
+            "/sandbox/artifacts/.fabric/state/nvidia.fabric.openclaw/main/interfaces/dashboard.token"
         )
     );
     assert_eq!(

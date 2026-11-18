@@ -413,6 +413,16 @@ resource fabric_agent (version 0)
       > Output schema label.
     timeout_seconds: number, optional
       > Maximum duration of one invocation in seconds.
+    block response_limits: optional
+      > Response and declared-artifact budgets enforced by the SDK.
+      max_artifact_bytes: number, optional
+        > Maximum aggregate uncompressed bytes in unique declared artifact files.
+      max_artifact_file_bytes: number, optional
+        > Maximum uncompressed bytes in one declared artifact file.
+      max_artifact_files: number, optional
+        > Maximum number of unique declared artifact files.
+      max_response_bytes: number, optional
+        > Maximum compact UTF-8 JSON bytes in the normalized RunResult.
   block skills: optional
     duplicates: string, optional
       > Policy for two `directories` entries that provide skills with the same
