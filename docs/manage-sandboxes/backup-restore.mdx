@@ -29,6 +29,8 @@ Most lifecycle operations do not need a backup or restore step. When `$$nemoclaw
 3. Clear the replacement's fresh native home/workspace and restore the complete archive.
 4. Validate the replacement before retiring the temporary handoff.
 
+For a managed LangChain Deep Agents Code sandbox recreated for a verified provider or model change, the restore keeps the replacement's newly generated `.deepagents/config.toml` instead of the archived copy. The backup keeps the previous file. Reapply any direct edits to it after recreation; refer to [Understand Sandbox State](understand-sandbox-state).
+
 <AgentOnly variant="openclaw">
 
 NemoClaw checks restored OpenClaw state before running the pinned `2026.9.5` and `2026.9.7` migration runtimes.
