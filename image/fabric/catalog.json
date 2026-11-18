@@ -2784,8 +2784,8 @@
       ]
     }
   ],
-  "fabric_revision": "566cf7a28c05f4e6486bcdd91adb91804a0ccd19",
+  "fabric_revision": "56a4207b3c7edacd6e0cceea0af7815d2df274ca",
   "schema_version": 2,
-  "source_sha256": "b8160b1405d22dccfb5c3f299180f168d3f45c7d1c53da84284da53ac0719f4b",
+  "source_sha256": "f66e2623690b9cf60e1c94fdd08504267748946936cf84139661c80798fa089c",
   "targets": []
 }
