@@ -158,6 +158,9 @@ Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with 
 The provider's key under `inferenceProviders` is the local name routes reference; it does not select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
 
+OpenClaw can't use an `anthropic` provider yet: Fabric's OpenClaw adapter selects `openai-completions` for every route with a base URL, so OpenClaw sends the key in an `Authorization` bearer header, and OpenShell 0.1.8 and later refuse it with `403` `credential_placement_mismatch` because an `anthropic` provider places its key in `x-api-key`.
+NemoClaw doesn't check the combination, so plan and apply succeed; for an endpoint that accepts OpenAI chat completions, use `provider: openai` ([current limits](../resources/limits.md#inference)).
+
 ### Point Hermes at an Anthropic Endpoint
 
 Hermes sends an `anthropic` provider's requests to its `endpoint` only when [Hermes's rule](https://github.com/NousResearch/hermes-agent/blob/b200f5bc60e31588ba2cb60e288029c4a54ba5fa/hermes_cli/runtime_provider.py#L395-L403) recognizes the endpoint as Anthropic's:
