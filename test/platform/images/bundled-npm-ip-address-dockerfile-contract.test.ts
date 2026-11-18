@@ -117,14 +117,7 @@ describe("bundled npm ip-address image remediation contract", () => {
   });
 });
 
-describe.each([
-  { name: "Undici", helper: "patch-bundled-npm-undici", previousCommand: patchCommand },
-  {
-    name: "node-gyp",
-    helper: "patch-bundled-npm-node-gyp",
-    previousCommand: "node /scripts/lib/patch-bundled-npm-undici.mts",
-  },
-])("bundled npm $name image remediation contract", ({ helper, previousCommand }) => {
+describe("bundled npm Undici image remediation contract", () => {
   it.each([
     ...baseDockerfiles,
     ...finalDockerfiles,
@@ -135,19 +128,19 @@ describe.each([
     const count = file === "Dockerfile" ? 2 : 1;
     const copies = requireDockerfileCopySources(
       source,
-      `scripts/lib/${helper}.mts`,
-      `/scripts/lib/${helper}.mts`,
+      "scripts/lib/patch-bundled-npm-undici.mts",
+      "/scripts/lib/patch-bundled-npm-undici.mts",
       count,
     );
     const previous = requireReviewedDockerfileRunCommands(
       source,
-      previousCommand,
+      patchCommand,
       npmRootArguments,
       count,
     );
     const patches = requireReviewedDockerfileRunCommands(
       source,
-      `node /scripts/lib/${helper}.mts`,
+      "node /scripts/lib/patch-bundled-npm-undici.mts",
       npmRootArguments,
       count,
     );

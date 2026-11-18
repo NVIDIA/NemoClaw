@@ -510,7 +510,6 @@ function stageOptimizedSandboxBuildContext(
   );
   for (const file of [
     "patch-bundled-npm-undici.mts",
-    "patch-bundled-npm-node-gyp.mts",
     "remediate-openclaw-runtime-dependencies.mts",
     "install-openclaw-optional-plugins.sh",
     "install-openclaw-migration-runtimes.sh",

@@ -300,7 +300,6 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "scripts/lib/entrypoint-env-wrapper.sh",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
   "scripts/lib/patch-bundled-npm-undici.mts",
-  "scripts/lib/patch-bundled-npm-node-gyp.mts",
   "scripts/lib/reviewed-npm-archive.mts",
   "scripts/lib/reviewed-npm-audit.mts",
   "scripts/lib/reviewed-npm-identity.mts",

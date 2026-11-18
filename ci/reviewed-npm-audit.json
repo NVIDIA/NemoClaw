@@ -113,7 +113,7 @@
       "integrity": "sha512-9rCuXMweqVKZIK3KBtGcLzesz9G6+FmQ30lvwomRhmcNWDcOtlBoqdLbPditoJMuTP55jPqXpt1AA0L8tSzFHg==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "93f3e3fea8e4a5262edcb280b8fdac137c6905fcce8eb575656cb5aec07a86b9"
+      "lockSha256": "16b8c902f7760658e54ccc697a6ec7dbe38768e3fcd78876e1b8a1fd018c6a21"
     },
     {
       "id": "mcporter-runtime",
@@ -162,7 +162,7 @@
       "integrity": "sha512-/8N2LnfTFQPvnZizi8qKSFfnLQaPvSG3Cb4xo1YV7b4JhYiUc43ZNRpXJ01bWghLK0Ezk3HVeo/DGHcIRQwRWA==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.7.tgz",
       "directory": "agents/openclaw/openclaw-migration-2026.9.7-runtime",
-      "lockSha256": "e5ebb6a2c5c280b30ba7fe537d89b0e5ecd632349627846b8a31b713386b24ad"
+      "lockSha256": "35020ee3d2638c8b5f784387085836c0d7fb62dfe1309097d53da235247197a5"
     }
   ],
   "sourceRegistryPackageReplacement": {

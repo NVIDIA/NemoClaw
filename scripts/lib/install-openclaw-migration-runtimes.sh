@@ -14,7 +14,7 @@ case "${1:-}" in
           migration_integrity='sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w=='
           ;;
         2026.9.7)
-          migration_lock=e5ebb6a2c5c280b30ba7fe537d89b0e5ecd632349627846b8a31b713386b24ad
+          migration_lock=35020ee3d2638c8b5f784387085836c0d7fb62dfe1309097d53da235247197a5
           migration_integrity='sha512-/8N2LnfTFQPvnZizi8qKSFfnLQaPvSG3Cb4xo1YV7b4JhYiUc43ZNRpXJ01bWghLK0Ezk3HVeo/DGHcIRQwRWA=='
           ;;
       esac
@@ -35,7 +35,7 @@ case "${1:-}" in
       migration_root="/usr/local/lib/nemoclaw/openclaw-migrations/$migration_version"
       case "$migration_version" in
         2026.9.5) migration_lock=b2864b729531e606de939b50d6b64001b1e97e0b17acf1e2f69c0a5792aa9c93 ;;
-        2026.9.7) migration_lock=e5ebb6a2c5c280b30ba7fe537d89b0e5ecd632349627846b8a31b713386b24ad ;;
+        2026.9.7) migration_lock=35020ee3d2638c8b5f784387085836c0d7fb62dfe1309097d53da235247197a5 ;;
       esac
       NPM_CONFIG_OFFLINE=true npm_config_offline=true \
         NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \

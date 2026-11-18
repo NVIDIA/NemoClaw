@@ -283,11 +283,9 @@ export function requireReviewedDockerfileRunCommands(
     "node /scripts/patch-bundled-npm-brace-expansion.mts",
     "node /scripts/lib/patch-bundled-npm-ip-address.mts",
     "node /scripts/lib/patch-bundled-npm-undici.mts",
-    "node /scripts/lib/patch-bundled-npm-node-gyp.mts",
   ].map((repair) => `${repair} --npm-root /usr/local/lib/node_modules/npm`);
   // Accept only the complete, ordered, fail-fast final-image recipe.
   if (finalNpmRepairs.includes(invocation)) {
-    reviewedBodies.add(finalNpmRepairs.join(" && "));
     reviewedBodies.add(`${CORPORATE_CA_NODE_CURL_GUARD} ${finalNpmRepairs.join(" && ")}`);
   }
   const matches: ReviewedDockerfileRunCommand[] = [];

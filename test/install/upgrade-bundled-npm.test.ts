@@ -24,8 +24,6 @@ import {
   verifyReviewedNpmArchive,
 } from "../../scripts/upgrade-bundled-npm.mts";
 
-import { patchBundledNpmNodeGyp } from "../../scripts/lib/patch-bundled-npm-node-gyp.mts";
-
 const temporaryDirectories: string[] = [];
 
 function temporaryDirectory(): string {
@@ -81,28 +79,6 @@ function reviewedNpm(): string {
   const binDirectory = path.join(root, "node_modules", ".bin");
   fs.mkdirSync(binDirectory);
   fs.symlinkSync("../../brace-expansion/index.js", path.join(binDirectory, "brace-expansion"));
-  return root;
-}
-
-function patchedNpm(): string {
-  const root = reviewedNpm();
-  const gyp = path.join(root, "node_modules/node-gyp");
-  writeJson(path.join(gyp, "package.json"), {
-    name: "node-gyp",
-    version: "13.0.0",
-    dependencies: { tinyglobby: "^0.2.12" },
-  });
-  fs.mkdirSync(path.join(gyp, "lib"));
-  fs.copyFileSync(
-    new URL("../fixtures/node-gyp/build.cjs.fixture", import.meta.url),
-    path.join(gyp, "lib/build.js"),
-  );
-  writePackage(root, "tinyglobby", "tinyglobby", "0.2.17");
-  const bin = path.join(root, "node_modules/.bin/brace-expansion");
-  fs.unlinkSync(bin);
-  fs.writeFileSync(path.join(root, "node_modules/brace-expansion/index.js"), "");
-  fs.symlinkSync("../brace-expansion/index.js", bin);
-  patchBundledNpmNodeGyp(root);
   return root;
 }
 
@@ -308,46 +284,6 @@ describe("reviewed bundled npm upgrade", () => {
       }).npmVersion,
     ).toBe(REVIEWED_NPM_VERSION);
     expect(commands).toEqual(["npm", "npx"]);
-  });
-
-  it("accepts a patched node-gyp tree without downloading or installing npm", () => {
-    const commands: Array<{ command: string; args: readonly string[] }> = [];
-    const result = upgradeBundledNpm(patchedNpm(), {
-      commandRunner: (command, args) => commands.push({ command, args }),
-    });
-    expect(result.npmVersion).toBe(REVIEWED_NPM_VERSION);
-    expect(result.packages.picomatch).toEqual([]);
-    expect(commands).toEqual([
-      { command: "npm", args: ["--version"] },
-      { command: "npx", args: ["--version"] },
-    ]);
-  });
-
-  it.each([
-    {
-      drift: "source",
-      mutate: (root: string) =>
-        fs.appendFileSync(path.join(root, "node_modules/node-gyp/lib/build.js"), "\n// drift\n"),
-    },
-    {
-      drift: "metadata",
-      mutate: (root: string) =>
-        writeJson(path.join(root, "node_modules/node-gyp/package.json"), {
-          name: "node-gyp",
-          version: "13.0.0",
-          dependencies: { tinyglobby: "^0.2.12" },
-        }),
-    },
-  ])("rejects patched node-gyp $drift drift before running commands", ({ mutate }) => {
-    const root = patchedNpm();
-    mutate(root);
-    const commands: string[] = [];
-    expect(() =>
-      upgradeBundledNpm(root, {
-        commandRunner: (command) => commands.push(command),
-      }),
-    ).toThrow(/drifted|patched/);
-    expect(commands).toEqual([]);
   });
 
   it("reinstalls explicit reviewed bytes over an already-remediated npm tree", () => {

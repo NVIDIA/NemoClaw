@@ -41,7 +41,6 @@ jobs:
             scripts/audit-reviewed-npm-graph.mts
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
-            scripts/lib/patch-bundled-npm-node-gyp.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
             scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts

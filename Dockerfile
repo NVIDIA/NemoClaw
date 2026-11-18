@@ -15,7 +15,9 @@ FROM scratch AS reviewed-npm-archive
 ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
 FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS npm12
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates=20250419 curl=8.14.1-2+deb13u7 && rm -rf /var/lib/apt/lists/*
-COPY scripts/lib/install-openclaw-migration-runtimes.sh scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts scripts/lib/patch-bundled-npm-undici.mts scripts/lib/patch-bundled-npm-node-gyp.mts scripts/lib/remediate-openclaw-runtime-dependencies.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-openclaw-dependency-overrides.mts /scripts/lib/
+COPY scripts/lib/install-openclaw-migration-runtimes.sh scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
+COPY scripts/lib/patch-bundled-npm-undici.mts scripts/lib/remediate-openclaw-runtime-dependencies.mts /scripts/lib/
+COPY scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-openclaw-dependency-overrides.mts /scripts/lib/
 COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
@@ -23,11 +25,13 @@ RUN node /scripts/upgrade-bundled-npm.mts --npm-root /usr/local/lib/node_modules
 # hadolint ignore=DL3059
 RUN rm /tmp/npm-12.0.2.tgz
 # hadolint ignore=DL3059
-RUN node /scripts/patch-bundled-npm-tar.mts --npm-root /usr/local/lib/node_modules/npm \
-    && node /scripts/patch-bundled-npm-brace-expansion.mts --npm-root /usr/local/lib/node_modules/npm \
-    && node /scripts/lib/patch-bundled-npm-ip-address.mts --npm-root /usr/local/lib/node_modules/npm \
-    && node /scripts/lib/patch-bundled-npm-undici.mts --npm-root /usr/local/lib/node_modules/npm \
-    && node /scripts/lib/patch-bundled-npm-node-gyp.mts --npm-root /usr/local/lib/node_modules/npm
+RUN node /scripts/patch-bundled-npm-tar.mts --npm-root /usr/local/lib/node_modules/npm
+# hadolint ignore=DL3059
+RUN node /scripts/patch-bundled-npm-brace-expansion.mts --npm-root /usr/local/lib/node_modules/npm
+# hadolint ignore=DL3059
+RUN node /scripts/lib/patch-bundled-npm-ip-address.mts --npm-root /usr/local/lib/node_modules/npm
+# hadolint ignore=DL3059
+RUN node /scripts/lib/patch-bundled-npm-undici.mts --npm-root /usr/local/lib/node_modules/npm
 FROM npm12 AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -669,7 +673,8 @@ COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/
 COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
 COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
 COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
-COPY scripts/lib/verify-openclaw-official-plugin.mts scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts scripts/lib/patch-bundled-npm-undici.mts scripts/lib/patch-bundled-npm-node-gyp.mts scripts/lib/remediate-openclaw-runtime-dependencies.mts /scripts/lib/
+COPY scripts/lib/verify-openclaw-official-plugin.mts scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
+COPY scripts/lib/patch-bundled-npm-undici.mts scripts/lib/remediate-openclaw-runtime-dependencies.mts /scripts/lib/
 COPY --chmod=0555 scripts/lib/install-openclaw-optional-plugins.sh /scripts/lib/
 COPY scripts/lib/openclaw-legacy-migrations.mts scripts/lib/openclaw-legacy-session-admission.mts scripts/lib/openclaw-gateway-owner.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
@@ -792,8 +797,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
     node /scripts/patch-bundled-npm-tar.mts --npm-root /usr/local/lib/node_modules/npm \
     && node /scripts/patch-bundled-npm-brace-expansion.mts --npm-root /usr/local/lib/node_modules/npm \
     && node /scripts/lib/patch-bundled-npm-ip-address.mts --npm-root /usr/local/lib/node_modules/npm \
-    && node /scripts/lib/patch-bundled-npm-undici.mts --npm-root /usr/local/lib/node_modules/npm \
-    && node /scripts/lib/patch-bundled-npm-node-gyp.mts --npm-root /usr/local/lib/node_modules/npm
+    && node /scripts/lib/patch-bundled-npm-undici.mts --npm-root /usr/local/lib/node_modules/npm
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
@@ -941,7 +945,7 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     if [ -z "$EXPECTED_INTEGRITY" ]; then \
         echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin" >&2; exit 1; \
     fi; \
-    OPENCLAW_LOCK_SHA256=93f3e3fea8e4a5262edcb280b8fdac137c6905fcce8eb575656cb5aec07a86b9; \
+    OPENCLAW_LOCK_SHA256=16b8c902f7760658e54ccc697a6ec7dbe38768e3fcd78876e1b8a1fd018c6a21; \
     ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
     [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
         || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
@@ -1682,7 +1686,11 @@ RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
 RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
 USER sandbox
 
-# Remove sandbox-owned cache copies in this layer; isolate WeChat's graph and call the applier once per phase.
+# Copy the immutable reviewed cache into sandbox-owned temporary storage because
+# npm needs writable cache tmp space. Remove it before committing the layer.
+# WeChat must resolve only its reviewed graph; the union cache contains newer
+# versions of shared dependencies for official channels.
+# The selected phase keeps exactly one messaging-applier invocation per build.
 # hadolint ignore=DL3059,DL4006
 RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \
     copy_trusted_cache() { \
@@ -2211,7 +2219,6 @@ RUN check_metadata() { \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755' \
     && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root:755' \
     && check_metadata /scripts/lib/patch-bundled-npm-undici.mts 'root:root:755' \
-    && check_metadata /scripts/lib/patch-bundled-npm-node-gyp.mts 'root:root:755' \
     && check_metadata /scripts/lib/remediate-openclaw-runtime-dependencies.mts 'root:root:755' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root:755' \
     && check_metadata /opt/nemoclaw/openclaw.plugin.json 'root:root:644' \
