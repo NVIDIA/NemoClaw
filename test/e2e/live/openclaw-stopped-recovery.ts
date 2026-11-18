@@ -4,13 +4,19 @@
 import assert from "node:assert/strict";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { waitUntilAsync } from "../../../src/lib/core/wait.ts";
+import {
+  REBUILD_OPENCLAW_KILL_TIMEOUT_MS,
+  REBUILD_OPENCLAW_STOP_TIMEOUT_MS,
+} from "../../../tools/e2e/rebuild-openclaw-timeout-contract.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 
-/** A dead source must retain declared data and restore usable native agent state. */
+type StoppedSourceTransition = "kill-error" | "openshell-stop-not-ready";
+
+/** A stopped source must retain declared data and restore usable native agent state. */
 export async function proveStoppedDockerAgentRecovery(
   sandbox: SandboxClient,
   runtime: RuntimeProviderPrerequisite,
@@ -20,14 +26,19 @@ export async function proveStoppedDockerAgentRecovery(
   restorationProof: "provider-backed-mcp" | "native-readiness",
   agentName: "openclaw" | "langchain-deepagents-code" = "openclaw",
   afterSourceStopped?: () => Promise<void>,
+  sourceTransition: StoppedSourceTransition = "kill-error",
 ): Promise<void> {
   const prefix = agentName === "openclaw" ? "openclaw" : "deepagents";
+  const artifactPrefix =
+    sourceTransition === "openshell-stop-not-ready"
+      ? `${prefix}-not-ready-source`
+      : `${prefix}-stopped-source`;
   if (
     runtime.id !== "docker" ||
     process.env.NEMOCLAW_EXPERIMENTAL_PROFILE ||
     process.env.E2E_TARGET_ID === "mcp-bridge-dev"
   ) {
-    await artifacts.writeJson(`${prefix}-stopped-source-recovery.json`, {
+    await artifacts.writeJson(`${artifactPrefix}-recovery.json`, {
       applicable: false,
       reason: "This recovery proof owns native Docker OpenClaw and Deep Agents targets.",
     });
@@ -39,7 +50,7 @@ export async function proveStoppedDockerAgentRecovery(
   let observation = 0;
   const readSource = async (): Promise<{ id: string; phase: string }> => {
     const result = await sandbox.openshell(["sandbox", "list", "-g", gateway, "-o", "json"], {
-      artifactName: `${prefix}-stopped-source-observation-${observation++}`,
+      artifactName: `${artifactPrefix}-observation-${observation++}`,
       env,
       timeoutMs: 10_000,
     });
@@ -53,7 +64,7 @@ export async function proveStoppedDockerAgentRecovery(
   assert(typeof source.id === "string" && /^[A-Za-z0-9._-]{1,512}$/u.test(source.id));
   assert.equal(source.phase, "Ready");
   const container = await runtime.resolveSandboxResourceHandle(sandboxName, {
-    artifactName: `${prefix}-stopped-source-container`,
+    artifactName: `${artifactPrefix}-container`,
   });
   assert.match(container, /^[a-f0-9]{64}$/u);
   const identity = await runtime.command(
@@ -65,7 +76,7 @@ export async function proveStoppedDockerAgentRecovery(
       "[{{json .Id}},{{json .Config.Labels}},{{json .State.Running}}]",
       container,
     ],
-    { artifactName: `${prefix}-stopped-source-identity` },
+    { artifactName: `${artifactPrefix}-identity` },
   );
   assertExitZero(identity, "verify the exact runtime before fault injection");
   const [observedId, labels, running] = JSON.parse(identity.stdout);
@@ -94,36 +105,70 @@ export async function proveStoppedDockerAgentRecovery(
             `${writeMarkers} && chown --reference=/sandbox/.deepagents/.state ${shellQuote(markerPath)} ${shellQuote(unknownRootMarkerPath)} && rm -f /sandbox/.bash_profile && ln -s /sandbox/hostile-env.sh /sandbox/.bash_profile && sync`,
           ],
           {
-            artifactName: `${prefix}-stopped-source-write-marker`,
+            artifactName: `${artifactPrefix}-write-marker`,
             sanitizeEnvironment: true,
             timeoutMs: 10_000,
           },
         )
       : await sandbox.exec(sandboxName, ["sh", "-c", `${writeMarkers} && sync`], {
-          artifactName: `${prefix}-stopped-source-write-marker`,
+          artifactName: `${artifactPrefix}-write-marker`,
           env,
         });
   assertExitZero(prepared, "prepare the stopped-recovery source and marker");
+  const transitionResult =
+    sourceTransition === "openshell-stop-not-ready"
+      ? await sandbox.openshell(["sandbox", "stop", "-g", gateway, sandboxName], {
+          artifactName: `${artifactPrefix}-stop`,
+          env,
+          timeoutMs: REBUILD_OPENCLAW_STOP_TIMEOUT_MS,
+        })
+      : await runtime.command(["kill", container], {
+          artifactName: `${artifactPrefix}-kill`,
+          timeoutMs: REBUILD_OPENCLAW_KILL_TIMEOUT_MS,
+        });
   assertExitZero(
-    await runtime.command(["kill", container], {
-      artifactName: `${prefix}-stopped-source-kill`,
-      timeoutMs: 30_000,
-    }),
-    "kill the identified test container once",
+    transitionResult,
+    sourceTransition === "openshell-stop-not-ready"
+      ? "stop the OpenShell sandbox once"
+      : "kill the identified test container once",
   );
-  const terminal = await waitUntilAsync(
+  const expectedPhase = sourceTransition === "openshell-stop-not-ready" ? "Stopped" : "Error";
+  let stoppedObservation = 0;
+  const expectedStateObserved = await waitUntilAsync(
     async () => {
       const current = await readSource();
-      assert.equal(current.id, source.id, "The source identity changed while awaiting Error");
-      return current.phase === "Error";
+      assert.equal(
+        current.id,
+        source.id,
+        `The source identity changed while awaiting ${expectedPhase}`,
+      );
+      if (current.phase !== expectedPhase) return false;
+      if (sourceTransition !== "openshell-stop-not-ready") return true;
+      const state = await runtime.command(
+        ["inspect", "--type", "container", "--format", "{{.State.Running}}", container],
+        {
+          artifactName: `${artifactPrefix}-container-stopped-observation-${stoppedObservation++}`,
+          timeoutMs: 10_000,
+        },
+      );
+      if (state.exitCode !== 0 || state.stdout.trim() !== "false") return false;
+      return true;
     },
     { deadlineMs: Date.now() + 60_000, initialIntervalMs: 1_000, maxAttempts: 30 },
   );
-  assert(terminal, "OpenShell did not report the killed source as Error");
+  assert(
+    expectedStateObserved,
+    sourceTransition === "openshell-stop-not-ready"
+      ? "OpenShell did not report the same source Stopped/not_ready with its Docker container stopped"
+      : "OpenShell did not report the killed source as Error",
+  );
   await afterSourceStopped?.();
   await rebuildAndProveState();
   const replacement = await runtime.resolveSandboxResourceHandle(sandboxName, {
-    artifactName: `${prefix}-stopped-replacement-container`,
+    artifactName:
+      sourceTransition === "openshell-stop-not-ready"
+        ? `${artifactPrefix}-replacement-container`
+        : `${prefix}-stopped-replacement-container`,
   });
   assert.notEqual(replacement, container);
   const restored = await sandbox.exec(
@@ -134,19 +179,19 @@ export async function proveStoppedDockerAgentRecovery(
       `cat ${shellQuote(markerPath)} && printf '\\n' && cat ${shellQuote(unknownRootMarkerPath)}`,
     ],
     {
-      artifactName: `${prefix}-stopped-source-restored-marker`,
+      artifactName: `${artifactPrefix}-restored-marker`,
       env,
     },
   );
   assertExitZero(restored, "read restored declared and unknown native-root state");
   assert.equal(restored.stdout.trim(), `${marker}\n${unknownRootMarker}`);
-  await artifacts.writeJson(`${prefix}-stopped-source-recovery.json`, {
+  await artifacts.writeJson(`${artifactPrefix}-recovery.json`, {
     applicable: true,
     agentName,
     ...(agentName === "langchain-deepagents-code" ? { sourceProfile: "broken-symlink" } : {}),
     sourceContainerId: container,
     replacementContainerId: replacement,
-    sourcePhase: "Error",
+    sourcePhase: expectedPhase,
     ...(agentName === "openclaw" ? { workspacePreserved: true } : { agentStatePreserved: true }),
     unknownNativeRootStatePreserved: true,
     restorationProof,
