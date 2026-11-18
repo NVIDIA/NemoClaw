@@ -43,7 +43,7 @@
 
 | Capability | Status | Scope |
 |---|---|---|
-| [Retain application data](https://github.com/NVIDIA/NemoClaw/issues/12568) | Needs review | Resolve retention beyond the current disposable-container contract. |
+| [Retain application data](https://github.com/NVIDIA/NemoClaw/pull/14617) | Migration guide item | Migrate tools and applications used inside the agent sandbox, with mounted storage for persistent data; migration task mapping covered by draft [PR #14617](https://github.com/NVIDIA/NemoClaw/pull/14617). |
 | [Share diagnostic bundles](https://github.com/NVIDIA/NemoClaw/issues/14581) | Needs review | Collect debugging artifacts that are safe to share. |
 | [Review distributed inference](../../internal-docs/v1-roadmap.md#review-distributed-inference) | Needs review | Decide scope for experimental multi-machine model serving. |
 | [Verify native memory search](../../internal-docs/v1-roadmap.md#verify-native-memory-search) | Needs review | Verify the required native indexing and search behavior. |

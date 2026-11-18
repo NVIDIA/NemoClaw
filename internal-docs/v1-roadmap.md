@@ -4,19 +4,20 @@
 # NemoClaw Agent Config Support Notes
 
 These entries support the [Classic and NemoClaw Agent Config matrix](../docs/get-started/classic-v1-matrix.md) where no single existing issue defines the capability.
-The matrix links all other definitions directly to their owning GitHub issues; those issues are the source of truth for scope, dependencies, and acceptance.
+The matrix links all other definitions directly to their owning GitHub issues or migration-guide PRs; issues remain the source of truth for implementation scope, dependencies, and acceptance.
 When a matching primary issue exists, point the matrix title to it and remove the fallback entry here.
 These review items add no implementation commitment or delivery date.
 
 ## Read the Comparison
 
 The [matrix](../docs/get-started/classic-v1-matrix.md) is a publication draft, not a delivery schedule or a complete Classic inventory.
-Capability titles link to the issue that owns scope and acceptance, or to a fallback definition below when no single issue matches.
+Capability titles link to the issue that owns scope and acceptance, a migration-guide PR, or a fallback definition below when no single issue matches.
 Issues remain the source of truth; issue closure for replanning or supersession does not establish delivery.
 
 - **Available:** a bounded path exists; check its host, harness, and workflow limits.
 - **Planned parity:** the work is intended, but the complete journey is not confirmed.
 - **Needs review:** scope or functional support still needs a decision or verification; these items are outside the committed parity milestone.
+- **Migration guide item:** document how to carry an existing workflow forward; [PR #14617](https://github.com/NVIDIA/NemoClaw/pull/14617) adds task mapping for tools and applications inside the agent sandbox and their persistent data. This does not change the separate generic application-container retention contract.
 - **Not planned in NemoClaw Agent Config:** a core interface or responsibility is excluded; an upstream or platform alternative may remain available.
 
 **Installation is a publication prerequisite.** Its Available placement describes the intended public release; packaging and clean-machine installation are incomplete in the inspected revision, tracked in [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638).
