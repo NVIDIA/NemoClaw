@@ -23,22 +23,27 @@ import {
 const consumer = createV1ParseConsumer();
 afterAll(consumer.dispose);
 
-const FABRIC_KIND = {
-  openclaw: "nvidia.fabric.openclaw",
-  hermes: "nvidia.fabric.hermes",
-  deepagents: "nvidia.fabric.deepagents",
+// The v1 example at the pinned revision that declares each agent's Fabric adapter.
+const V1_EXAMPLE = {
+  openclaw: "examples/fabric-openclaw.yaml",
+  hermes: "examples/fabric-hermes.yaml",
+  deepagents: "examples/fabric.yaml",
 } as const;
 
 const cases = [
-  { name: "openclaw", source: snapshot, kind: FABRIC_KIND.openclaw },
-  { name: "hermes", source: hermesSnapshot, kind: FABRIC_KIND.hermes },
-  { name: "deepagents", source: dcodeSnapshot, kind: FABRIC_KIND.deepagents },
-  { name: "openclaw tuned", source: tunedSnapshot, kind: FABRIC_KIND.openclaw },
-  { name: "openclaw brave", source: braveSnapshot, kind: FABRIC_KIND.openclaw },
-  { name: "openclaw tavily", source: () => tavilySnapshot("openclaw"), kind: FABRIC_KIND.openclaw },
-  { name: "hermes tavily", source: () => tavilySnapshot("hermes"), kind: FABRIC_KIND.hermes },
-  { name: "openclaw proxy", source: proxySnapshot, kind: FABRIC_KIND.openclaw },
-  { name: "hermes managed auth", source: hermesManagedAuthSnapshot, kind: FABRIC_KIND.hermes },
+  { name: "openclaw", source: snapshot, example: V1_EXAMPLE.openclaw },
+  { name: "hermes", source: hermesSnapshot, example: V1_EXAMPLE.hermes },
+  { name: "deepagents", source: dcodeSnapshot, example: V1_EXAMPLE.deepagents },
+  { name: "openclaw tuned", source: tunedSnapshot, example: V1_EXAMPLE.openclaw },
+  { name: "openclaw brave", source: braveSnapshot, example: V1_EXAMPLE.openclaw },
+  {
+    name: "openclaw tavily",
+    source: () => tavilySnapshot("openclaw"),
+    example: V1_EXAMPLE.openclaw,
+  },
+  { name: "hermes tavily", source: () => tavilySnapshot("hermes"), example: V1_EXAMPLE.hermes },
+  { name: "openclaw proxy", source: proxySnapshot, example: V1_EXAMPLE.openclaw },
+  { name: "hermes managed auth", source: hermesManagedAuthSnapshot, example: V1_EXAMPLE.hermes },
 ];
 
 describe("parsed web-search shape (#14580)", () => {
@@ -58,9 +63,9 @@ describe("parsed web-search shape (#14580)", () => {
 
 describe("config export parses on current v1 (#14580)", () => {
   it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1").each(cases)(
-    "$name export passes Document::parse and names a Fabric adapter",
+    "$name export passes Document::parse and names the Fabric adapter v1's example declares",
     testTimeoutOptions(15 * 60_000),
-    async ({ source, kind }) => {
+    async ({ source, example }) => {
       const exported = await exportSnapshots([source()]);
       expect(exported.outcome.ok).toBe(true);
       const { document } = consumer.parse(exported.writeStdout.mock.calls[0]![0]);
@@ -69,8 +74,11 @@ describe("config export parses on current v1 (#14580)", () => {
         image: { ref: string };
       }>;
       expect(sandboxes).toHaveLength(1);
-      // v1 accepts any nonempty kind, so a parse alone does not prove the adapter ID.
-      expect(sandboxes[0]!.harness.kind).toBe(kind);
+      // v1 accepts any nonempty kind, so a parse alone does not prove the adapter ID. Compare it
+      // with the kind v1's own example for this agent declares at the pinned revision.
+      const declared = consumer.exampleHarnessKinds(example);
+      expect(declared).toHaveLength(1);
+      expect(sandboxes[0]!.harness.kind).toBe(declared[0]);
       // No V0 agent image ships Fabric and v1 publishes none, so every export carries the placeholder.
       expect(sandboxes[0]!.image.ref).toBe(V1_IMAGE_REF_PLACEHOLDER);
     },

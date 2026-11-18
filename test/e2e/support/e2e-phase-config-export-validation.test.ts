@@ -770,10 +770,10 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     const candidate = structuredClone(document());
     const sandbox = candidate.spec.sandboxes.sandbox!;
     const image = { ref: IMAGE_REF };
-    Object.assign(sandbox, { harness: { kind: "nvidia.fabric.deepagents" }, image });
+    Object.assign(sandbox, { harness: { kind: "nvidia.fabric.langchain.deepagents" }, image });
     expect(parseConfigExport(JSON.stringify(candidate)).spec.sandboxes.sandbox).toMatchObject({
       image: { ref: IMAGE_REF },
-      harness: { kind: "nvidia.fabric.deepagents" },
+      harness: { kind: "nvidia.fabric.langchain.deepagents" },
       agent: { name: "primary" },
     });
     const missingImage = structuredClone(candidate);

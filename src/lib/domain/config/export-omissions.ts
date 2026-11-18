@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { VerifiedExportSource } from "./export-evidence";
+import { OLLAMA_SERVICE_NAME, VLLM_SERVICE_NAME } from "./export-document";
 
 /** A JSON value from the V0 source that is safe to repeat in the export report. */
 export type ExportOmissionValue =
@@ -86,6 +87,15 @@ function fabricImageOmissions(source: VerifiedExportSource): ExportOmission[] {
         source.interfaces,
       ),
     );
+  }
+  if ("serving" in source.inference) {
+    const backend = source.inference.serving.backend;
+    const field = `services.${backend === "ollama" ? OLLAMA_SERVICE_NAME : VLLM_SERVICE_NAME}.image`;
+    found.push({
+      field,
+      kind: "placeholder",
+      message: `${field} is a placeholder: v0 has no v1 ${backend === "ollama" ? "Ollama proxy" : "vLLM"} service image. Replace it with a v1 service image digest.`,
+    });
   }
   found.push({
     field: "image.ref",

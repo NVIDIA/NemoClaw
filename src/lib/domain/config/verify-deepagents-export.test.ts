@@ -153,7 +153,7 @@ describe("Deep Agents config export (#11860)", () => {
         credential: { env: "OPENAI_API_KEY" },
       },
     });
-    expect(sandbox.harness).toEqual({ kind: "nvidia.fabric.deepagents" });
+    expect(sandbox.harness).toEqual({ kind: "nvidia.fabric.langchain.deepagents" });
     expect(sandbox).not.toHaveProperty("runtime");
     expect("agent" in sandbox).toBe(true);
     const deepAgentsSandbox = exportedDeepAgentsSandbox(sandbox);

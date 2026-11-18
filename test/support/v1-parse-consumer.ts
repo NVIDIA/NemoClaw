@@ -123,6 +123,17 @@ export function createV1ParseConsumer() {
         fs.rmSync(invocation, { force: true, recursive: true });
       }
     },
+    /**
+     * The harness kinds a v1 example at the pinned revision declares, as the pinned SDK parses them.
+     * An exported kind is checked against these, because parse alone accepts any nonempty kind.
+     */
+    exampleHarnessKinds(example: string): string[] {
+      workspace ??= prepareWorkspace();
+      const raw = fs.readFileSync(path.join(workspace.consumer, example), "utf8");
+      return Object.values<{ harness: { kind: string } }>(
+        this.parse(raw).document.spec.sandboxes,
+      ).map((sandbox) => sandbox.harness.kind);
+    },
     dispose(): void {
       if (workspace) {
         fs.rmSync(workspace.root, { force: true, recursive: true });

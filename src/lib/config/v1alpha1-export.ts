@@ -30,7 +30,8 @@ interface V1Alpha1ServiceInferenceProvider {
 
 export interface V1Alpha1OllamaProxyService {
   readonly kind: "ollamaProxy";
-  readonly image: null;
+  /** A digest-pinned placeholder: v0 has no v1 service image. */
+  readonly image: string;
   readonly endpoint: string;
   readonly upstream: Readonly<{
     endpoint: string;
@@ -48,7 +49,8 @@ export interface V1Alpha1VllmService {
     minDriverMajor: 580;
   }>;
   readonly container: Readonly<{ ipc: "host"; sharedMemoryGiB: 32 }>;
-  readonly image: null;
+  /** A digest-pinned placeholder: v0 has no v1 service image. */
+  readonly image: string;
   readonly model: Readonly<{ repository: string; revision: string }>;
   readonly serving: Readonly<{
     modelName: string;
@@ -88,7 +90,7 @@ interface V1Alpha1ExportSandboxBase {
 
 /** Fabric adapter IDs that current v1 selects through `harness.kind`. */
 export type V1Alpha1FabricHarnessKind =
-  | "nvidia.fabric.deepagents"
+  | "nvidia.fabric.langchain.deepagents"
   | "nvidia.fabric.hermes"
   | "nvidia.fabric.openclaw";
 

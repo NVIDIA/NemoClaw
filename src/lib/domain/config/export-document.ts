@@ -11,8 +11,15 @@ import type {
 } from "../../config/v1alpha1-export";
 import type { VerifiedExportSource } from "./export-evidence";
 
-const OLLAMA_SERVICE_NAME = "ollama-auth";
-const VLLM_SERVICE_NAME = "vllm";
+/**
+ * v1 requires a digest-pinned agent `image.ref` and service `image`. None of v0's agent images
+ * (OpenClaw, Hermes, Deep Agents) ships Fabric or its adapter, v0 has no v1 vLLM or Ollama service
+ * image, and v1 publishes none yet. The export writes this parseable stand-in, and the export report
+ * names each place it appears.
+ */
+export const V1_IMAGE_REF_PLACEHOLDER = `REPLACE-ME@sha256:${"0".repeat(64)}`;
+export const OLLAMA_SERVICE_NAME = "ollama-auth";
+export const VLLM_SERVICE_NAME = "vllm";
 
 function targetBridgeAddress(documentUid: NemoClawConfigDocumentUid): string {
   const subnet = createHash("sha256").update(documentUid).digest()[0]!;
@@ -72,7 +79,7 @@ function ollamaService(
   const { daemon, proxy, model } = source.inference.serving;
   return {
     kind: "ollamaProxy",
-    image: null,
+    image: V1_IMAGE_REF_PLACEHOLDER,
     endpoint: `http://${bridgeAddress}:${proxy.hostPort}/v1`,
     upstream: {
       endpoint: `http://127.0.0.1:${daemon.hostPort}/v1`,
@@ -98,7 +105,7 @@ function vllmService(
       minDriverMajor: 580,
     },
     container: { ipc: "host", sharedMemoryGiB: 32 },
-    image: null,
+    image: V1_IMAGE_REF_PLACEHOLDER,
     model: { repository: model.id, revision: model.revision },
     serving: {
       modelName: model.servedName,
@@ -127,18 +134,12 @@ function exportServices(
   return { [VLLM_SERVICE_NAME]: vllmService(source) };
 }
 
-/**
- * v1 requires `image.ref`, but none of v0's agent images (OpenClaw, Hermes, Deep Agents) ships
- * Fabric or its adapter, and v1 publishes none yet. The export writes this parseable stand-in so a report or skill can find it.
- */
-export const V1_IMAGE_REF_PLACEHOLDER = `REPLACE-ME@sha256:${"0".repeat(64)}`;
-
 const FABRIC_HARNESS_KIND: Readonly<
   Record<VerifiedExportSource["agent"], V1Alpha1FabricHarnessKind>
 > = {
   openclaw: "nvidia.fabric.openclaw",
   hermes: "nvidia.fabric.hermes",
-  "langchain-deepagents-code": "nvidia.fabric.deepagents",
+  "langchain-deepagents-code": "nvidia.fabric.langchain.deepagents",
 };
 
 function exportHarness(source: VerifiedExportSource): V1Alpha1ExportSandbox["harness"] {

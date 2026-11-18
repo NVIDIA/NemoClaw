@@ -150,7 +150,7 @@ const ExportSandboxSchema = Type.Object(
     harness: Type.Object(
       {
         kind: Type.Union([
-          Type.Literal("nvidia.fabric.deepagents"),
+          Type.Literal("nvidia.fabric.langchain.deepagents"),
           Type.Literal("nvidia.fabric.hermes"),
           Type.Literal("nvidia.fabric.openclaw"),
         ]),
@@ -186,7 +186,7 @@ const ServiceInferenceProviderSchema = Type.Object(
 const OllamaProxyServiceSchema = Type.Object(
   {
     kind: Type.Literal("ollamaProxy"),
-    image: Type.Null(),
+    image: Type.Literal(V1_IMAGE_REF_PLACEHOLDER),
     endpoint: NonEmptyStringSchema,
     upstream: Type.Object(
       {
@@ -221,7 +221,7 @@ const VllmServiceSchema = Type.Object(
       { ipc: Type.Literal("host"), sharedMemoryGiB: Type.Literal(32) },
       { additionalProperties: false },
     ),
-    image: Type.Null(),
+    image: Type.Literal(V1_IMAGE_REF_PLACEHOLDER),
     model: Type.Object(
       {
         repository: Type.Literal("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"),
@@ -539,7 +539,7 @@ function canonicalJson(value: unknown): string {
 }
 
 function exportedHarnessKind(agent: string | null | undefined): string | null {
-  if (agent === "langchain-deepagents-code") return "nvidia.fabric.deepagents";
+  if (agent === "langchain-deepagents-code") return "nvidia.fabric.langchain.deepagents";
   return agent ? `nvidia.fabric.${agent}` : null;
 }
 

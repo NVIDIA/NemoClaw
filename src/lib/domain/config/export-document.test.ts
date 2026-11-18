@@ -395,7 +395,7 @@ describe("export config builder", () => {
       expect(result.spec.services).toEqual({
         "ollama-auth": {
           kind: "ollamaProxy",
-          image: null,
+          image: `REPLACE-ME@sha256:${"0".repeat(64)}`,
           endpoint: `http://172.30.154.1:${proxyPort}/v1`,
           upstream: {
             endpoint: `http://127.0.0.1:${daemonPort}/v1`,
@@ -464,7 +464,7 @@ describe("export config builder", () => {
           minDriverMajor: 580,
         },
         container: { ipc: "host", sharedMemoryGiB: 32 },
-        image: null,
+        image: `REPLACE-ME@sha256:${"0".repeat(64)}`,
         model: {
           repository: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
           revision: "0dcd680e5585c791728c83342b311d0a0026dbeb",

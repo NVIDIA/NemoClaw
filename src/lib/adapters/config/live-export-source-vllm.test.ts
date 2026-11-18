@@ -8,7 +8,10 @@ import {
   expectExportRefusal,
 } from "../../../../test/support/config-export-harness";
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { createV1ParseConsumer } from "../../../../test/support/v1-parse-consumer";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+
 import YAML from "yaml";
 import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { runConfigExport } from "../../actions/config/export";
@@ -227,7 +230,11 @@ describe("managed vLLM export pipeline", () => {
     const { result, writeStdout, publish } = await exportLiveSource();
     expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     const document = asExportedConfig(YAML.parse(writeStdout.mock.calls[0]![0]));
-    expect(document.spec.services?.vllm).toMatchObject({ kind: "vllm", image: null });
+    expect(document.spec.services?.vllm).toMatchObject({
+      kind: "vllm",
+      image: `REPLACE-ME@sha256:${"0".repeat(64)}`,
+    });
+    expect(writeStdout.mock.calls[0]![0]).toContain("\n# placeholder services.vllm.image: ");
     expect(document.spec.integrations).toEqual({
       "brave-search": {
         kind: "webSearch",
@@ -301,7 +308,10 @@ describe("managed vLLM export pipeline", () => {
         model: "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
         maxTokens,
       });
-      expect(document.spec.services?.vllm).toMatchObject({ kind: "vllm", image: null });
+      expect(document.spec.services?.vllm).toMatchObject({
+        kind: "vllm",
+        image: `REPLACE-ME@sha256:${"0".repeat(64)}`,
+      });
       expect(raw.getProviderProfile).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
     },
@@ -477,4 +487,21 @@ describe("managed vLLM export pipeline", () => {
     });
     expect(raw.getProvider).not.toHaveBeenCalled();
   });
+});
+
+describe("managed vLLM export on the pinned v1 SDK (#14580)", () => {
+  const consumer = createV1ParseConsumer();
+  afterAll(consumer.dispose);
+
+  it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1")(
+    "parses with Document::parse",
+    testTimeoutOptions(15 * 60_000),
+    async () => {
+      mockManagedVllmSource();
+      const { result, writeStdout } = await exportLiveSource();
+      expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
+      const { document } = consumer.parse(writeStdout.mock.calls[0]![0]);
+      expect(Object.values(document.spec.services)).toHaveLength(1);
+    },
+  );
 });

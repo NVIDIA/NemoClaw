@@ -9,7 +9,10 @@ import {
 } from "../../../../test/support/config-export-harness";
 import os from "node:os";
 import YAML from "yaml";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { createV1ParseConsumer } from "../../../../test/support/v1-parse-consumer";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+
 import { asExportedConfig } from "../../../../test/support/config-export-document";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
@@ -153,7 +156,7 @@ describe("attached Ollama export pipeline", () => {
       expect(document.spec.services).toEqual({
         "ollama-auth": {
           kind: "ollamaProxy",
-          image: null,
+          image: `REPLACE-ME@sha256:${"0".repeat(64)}`,
           endpoint: "http://172.30.48.1:11440/v1",
           upstream: {
             endpoint: "http://127.0.0.1:11439/v1",
@@ -170,7 +173,9 @@ describe("attached Ollama export pipeline", () => {
         overrides: { model },
       });
       expect(writeStdout.mock.calls[0]![0]).not.toContain("credential");
-      expect(writeStdout.mock.calls[0]![0]).toContain("image: null");
+      expect(writeStdout.mock.calls[0]![0]).toContain(
+        "\n# placeholder services.ollama-auth.image: ",
+      );
       expect(probe.readActiveConfig).toHaveBeenCalledWith(11440);
       expect(probe.readDaemonModels).toHaveBeenCalledWith(11439);
       expect(readCredential).not.toHaveBeenCalled();
@@ -304,6 +309,25 @@ describe("attached Ollama export pipeline", () => {
         .mockRejectedValueOnce({ code: 5 })
         .mockResolvedValueOnce(presentProfile);
       expectExportRefusal(await exportLiveSource(), { category: "unstable-source" });
+    },
+  );
+});
+
+describe("managed Ollama export on the pinned v1 SDK (#14580)", () => {
+  const consumer = createV1ParseConsumer();
+  afterAll(consumer.dispose);
+
+  it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1")(
+    "parses with Document::parse",
+    testTimeoutOptions(15 * 60_000),
+    async () => {
+      const { source } = mockOllamaSource("qwen3.5:9b");
+      source.credentialEnv = null;
+      raw.getProviderProfile.mockImplementation(() => Promise.resolve(openAiProviderProfile()));
+      const { result, writeStdout } = await exportLiveSource();
+      expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
+      const { document } = consumer.parse(writeStdout.mock.calls[0]![0]);
+      expect(Object.values(document.spec.services)).toHaveLength(1);
     },
   );
 });
