@@ -123,6 +123,17 @@ describe("stored Teams managed startup profiles (#14540)", () => {
     expect(cloneSandboxWorkloadReceipt(loaded)).toEqual(loaded);
   });
 
+  it("rejects the old receipt when its stored digest does not match the stored profile", () => {
+    const encoded = encodeWithRender(PRE_10_5_VALUE);
+    const convertedDigest = sha256(encodeManagedStartupProfile(currentProfile()));
+    const withDigest = (startupProfileSha256: string) => ({
+      ...receiptFor(encoded),
+      startupProfileSha256,
+    });
+    expect(cloneSandboxWorkloadReceipt(withDigest(convertedDigest))).toBeUndefined();
+    expect(cloneSandboxWorkloadReceipt(withDigest(sha256("another profile")))).toBeUndefined();
+  });
+
   it("lets managed workload authority read the old receipt for rebuild, clone and snapshot", () => {
     const encoded = encodeWithRender(PRE_10_5_VALUE);
     const current = encodeManagedStartupProfile(currentProfile());
