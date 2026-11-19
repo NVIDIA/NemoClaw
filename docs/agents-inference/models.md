@@ -25,11 +25,11 @@ No image is published by this operation.
 
 The [Muse Glimmer case](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) shows the complete desired-state shape.
 Its image references are CI placeholders and must be replaced with candidate-built digests.
-Qualification of the current OpenShell 0.1.9 pin on AMD64/L40S remains pending; the earlier Muse/L40S configuration used OpenShell 0.1.8.
+The pinned Muse configuration has lifecycle qualification on AMD64/L40S and ARM64/GB10 Spark with OpenShell 0.1.9, 32768 context tokens, one slot and a 32 GiB serving budget.
 Classic's experimental Spark recipe does not qualify this case.
 The case requests 32768 context tokens and low reasoning strength rather than copying Spark's 131072-token setting.
-The native ARM64 Muse case passed the agent lifecycle on one GB10 Spark with OpenShell 0.1.9 at that context, one slot, a 32 GiB serving budget and a 32 GiB host reserve.
-Export/reapply, inference-key refusal and restart recovery also passed; this does not qualify other GGUFs, tool use or Classic settings.
+Spark also requires a 32 GiB host reserve.
+The qualified scope includes export/reapply, inference-key refusal and restart recovery; other GGUFs, general tool use and Classic settings need separate qualification.
 
 The first implementation serves one model on one CUDA GPU, with full GPU-layer offload requested, one slot, f16 KV, embedded Jinja and no multimodal projector.
 `serving.batchTokens` and `microBatchTokens` control batching; `reasoningStrength` optionally supplies the native template argument.
@@ -52,17 +52,18 @@ Delete retained data separately only when it is no longer needed.
 ## Native NIM candidate
 
 The `kind: nim` implementation under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) remains a candidate.
-Its qualification covers native NIM 2.0.12 on AMD64 L40S with OpenShell 0.1.8 and ARM64 GB10 Spark with OpenShell 0.1.9, using the case's Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
-The Spark run also passed authenticated inventory/streaming, private-network isolation, export/reapply and restart recovery in 152 seconds with its key preserved.
-Both runs returned the arithmetic answer with unrelated session commentary; neither establishes reliable instruction following or tool execution.
-Additional Spark checks passed three native BF16 arithmetic tool round trips and verified an agent-created file, but an NVFP4 agent returned unrelated text instead of the requested contents of a fresh marker file. A successful invocation is not a successful tool task.
+Its lifecycle qualification covers native NIM 2.0.12 on AMD64 L40S and ARM64 GB10 Spark with OpenShell 0.1.9, using the case's Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
+The qualified scope includes authenticated inventory/inference, private-network isolation, export/reapply, credential-preserving restart recovery and retained-storage teardown.
+OpenClaw task completion remains unqualified: the L40S agent returned unrelated session text to an arithmetic request while direct authenticated inference answered correctly.
+Native tool-call acceptance and successful transport do not establish reliable agent tool use.
 The default 8K NIM agent case remains unqualified: on Spark, OpenClaw's prompt plus the requested output exceeded that window, including when output was reduced from 4096 to 1024 tokens.
-This identifies the Spark request failure, not every earlier agent failure; OpenShell 0.1.9 on L40S still needs a separate run.
+That context failure is separate from the unrelated L40S response.
 The pinned FP8 and NVFP4 TP1/PP1 profiles also passed the five-step Spark agent lifecycle at 32K with the same 40 GiB budget; their native checkpoint formats are experimental, and they do not inherit BF16's separate recovery and tool checks.
 The pinned OpenClaw may also request its default OpenAI utility model, which a single-model local endpoint does not serve.
-OpenClaw documents `utilityModel` for those auxiliary requests, but the pinned Fabric adapter's settings schema rejects it; do not patch the native image or substitute a model alias to hide that mismatch.
-The maintained [agent lifecycle case](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/docker-openclaw-nim.tftest.hcl) covers an OpenClaw reply, unchanged reconciliation and teardown with storage retained.
-Other NIM engines and distributed inference are unsupported.
+OpenClaw documents `utilityModel` for those auxiliary requests, but the pinned Fabric adapter's settings schema rejects it ([NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679)); do not patch the native image or substitute a model alias to hide that mismatch.
+Exposing that setting alone would not establish reliable tool-task completion or fix the separate 8K context failure.
+The maintained [agent lifecycle case](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/docker-openclaw-nim.tftest.hcl) requires the arithmetic answer `FOUR`, unchanged reconciliation and teardown with storage retained; an unrelated nonempty reply fails its answer gate.
+Other NIM engines and distributed inference are unsupported; distributed inference is outside V0 parity scope.
 
 Build the opt-in `nim` Bake target and select its resulting immutable image digest. It adds the supervisor to NIM 2.0.12 without modifying native scripts or nginx. NGC image access and model entitlement remain operator prerequisites. The [NIM integration case](../../crates/nemoclaw-e2e/cases/docker-openclaw-nim.yaml) describes the fields; its placeholder image digests are not deployable.
 

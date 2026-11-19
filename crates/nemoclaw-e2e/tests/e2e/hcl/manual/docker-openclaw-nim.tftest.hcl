@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # OpenClaw on a NIM model the deployment serves on an NVIDIA GPU: apply, a
-# reply from the model, an unchanged plan, and destroy that keeps the
+# correct arithmetic reply, an unchanged plan, and destroy that keeps the
 # gateway's storage and the model's volume. Requires an entitled operator-owned
 # NGC file at the configured Docker-host path. Run explicitly from the manual
 # test directory until the GPU runner has the credential and image prerequisites.
@@ -32,8 +32,9 @@ run "reply" {
     targets = {
       assistant = {
         agent            = "assistant"
-        request          = "What is 2 plus 2? Answer in one short sentence."
+        request          = "What is 2 plus 2? Reply with only the word FOUR."
         response_pointer = "/output/response"
+        answer           = "FOUR"
       }
     }
   }

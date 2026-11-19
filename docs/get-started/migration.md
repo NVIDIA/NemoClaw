@@ -82,4 +82,4 @@ Use the earlier deployment's actual version when selecting commands or assessing
 Publishing the combined site and checking its legacy routes are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
 For Classic llama.cpp users, [the managed GGUF contract](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp) carries repository/revision/file/SHA-256 identity into v1.
-Revalidate each model and host; qualification of the current OpenShell 0.1.9 pin remains pending, and the earlier Muse/L40S configuration used OpenShell 0.1.8.
+Revalidate each model, host and required agent task against the [qualified configuration and its limits](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp).
