@@ -214,6 +214,53 @@ impl JourneyState {
         }
     }
 
+    /// Answer the sandbox image question with the one image the engine holds
+    /// for the harness, unless the document names another. The read depends
+    /// on the harness, the runtime and the engine, so it waits until none of
+    /// their questions is open.
+    pub fn answer_single_agent_images(
+        &mut self,
+        capabilities: &Capabilities,
+        observations: &DiscoveryObservations,
+    ) {
+        let Ok(resolution) = self.resolve(capabilities) else {
+            return;
+        };
+        let open = |id: &str| resolution.questions().iter().any(|open| open.id() == id);
+        if open(RUNTIME_PROVIDER)
+            || open(GATEWAY_ENGINE_PATH)
+            || harness_question(&self.authored.values).is_some_and(|id| open(&id))
+        {
+            return;
+        }
+        for question in resolution.questions() {
+            let Some(observed) = self
+                .agent_images_request(question.id())
+                .and_then(|request| observations.get(&request))
+                .filter(|observed| observed.status == ObservationStatus::Available)
+            else {
+                continue;
+            };
+            let [only] = observed.references.as_slice() else {
+                continue;
+            };
+            if self
+                .authored
+                .values
+                .pointer(question.id())
+                .is_some_and(|named| named.as_str() != Some(only))
+            {
+                continue;
+            }
+            // A reference the schema rejects leaves the question to its user.
+            let _ = self.answer(
+                capabilities,
+                question.id(),
+                Some(Value::String(only.clone())),
+            );
+        }
+    }
+
     /// The chosen runtime of a managed gateway without an authored engine, when
     /// this machine was asked and no engine answered for that runtime.
     fn runtime_without_local_engine(&self) -> Option<&str> {
