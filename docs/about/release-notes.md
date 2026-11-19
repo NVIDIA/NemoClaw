@@ -34,6 +34,10 @@ Releases:
   Before, they said `0.1.0` and `0.1.0-dev.<hash>`.
   A bundle built from any other checkout, including one with uncommitted changes, still reports `0.1.0-dev.<hash>`, where the hash names its source files.
 
+Gateways:
+
+- [Current limits](../resources/limits.md#data-and-cleanup) list a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: it leaves its sandboxes in `Error`, and the next apply replaces them ([#13953](https://github.com/NVIDIA/NemoClaw/issues/13953)).
+
 ### Changes in v0.1.0-rc11
 
 These changes reached `v1` between the `v0.1.0-rc10` and `v0.1.0-rc11` tags; [breaking changes](#breaking-changes-in-v010-rc11) are listed separately.
