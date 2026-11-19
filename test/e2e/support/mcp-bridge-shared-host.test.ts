@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import dns from "node:dns/promises";
 import fs from "node:fs";
 import https from "node:https";
 import path from "node:path";
+import os from "node:os";
+import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "../live/mcp-provider-rewrite-probe.ts";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
 import { createMcpFixtureTls } from "../fixtures/mcp-fixture-tls.ts";
 import {
@@ -162,7 +165,7 @@ it.each(["openclaw-config", "hermes-config", "deepagents-config"] as const)(
 
 it.each([
   ["openclaw-config", "nemoclaw-start node -"],
-  ["hermes-config", "nemoclaw-start /opt/hermes/.venv/bin/python -c"],
+  ["hermes-config", "/opt/hermes/.venv/bin/python3 -c"],
   ["deepagents-config", "nemoclaw-start /opt/venv/bin/python3 -c"],
 ] as const)("uses the admitted %s runtime for credential probes", async (adapter, runtime) => {
   const result = { exitCode: 0, stdout: "", stderr: "" };
@@ -181,9 +184,61 @@ it.each([
       adapter,
     ),
   ).toBe(result);
-  expect(execShell.mock.calls[0][1]).toContain(runtime);
+  expect(execShell.mock.calls[0][1]).toContain(`\n${runtime}`);
   expect(execShell.mock.calls[0][1]).toContain("SHARED_ONE_MCP_SECRET");
 });
+
+it.each([0, 23])(
+  "runs Hermes credential probes without restarting its supervisor (exit %s)",
+  async (exitCode) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-mcp-probe-"));
+    try {
+      fs.writeFileSync(
+        path.join(directory, "nemoclaw-start"),
+        "#!/bin/sh\nprintf '%s\\n' '[SECURITY] Hermes runtime config guard refuses mutation under a foreign PID 1' >&2\nexit 23\n",
+        { mode: 0o700 },
+      );
+      const python = execFileSync("python3", ["-c", "import sys; print(sys.executable)"], {
+        encoding: "utf8",
+      }).trim();
+      const target = "https://shared.example.test/mcp?label=some'quote";
+      const execShell = vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      type Sandbox = Parameters<typeof reliability.runMcpProviderRewriteProbe>[0];
+      await reliability.runMcpProviderRewriteProbe(
+        { execShell } as unknown as Sandbox,
+        "alpha",
+        target,
+        "tools/list",
+        "allow",
+        "hermes-process-probe",
+        "SHARED_ONE_MCP_SECRET",
+        undefined,
+        "hermes-config",
+      );
+      const script = (execShell.mock.calls[0][1] as string)
+        .replace(/\/opt\/hermes\/\.venv\/bin\/python3?(?= )/u, shellQuote(python))
+        .replace(
+          MCP_PROVIDER_REWRITE_PROBE_SOURCE,
+          `process.stdout.write(JSON.stringify(process.argv.slice(2))); process.exit(${exitCode});`,
+        );
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${directory}:${process.env.PATH}` },
+        timeout: 10_000,
+      });
+      expect(result.status).toBe(exitCode);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toEqual([
+        target,
+        "tools/list",
+        "allow",
+        "SHARED_ONE_MCP_SECRET",
+      ]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it.each([
   ["withheld", "SHARED_ONE_MCP_SECRET", "success", 2],

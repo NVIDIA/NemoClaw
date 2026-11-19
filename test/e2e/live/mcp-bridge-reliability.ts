@@ -442,13 +442,15 @@ export async function runMcpProviderRewriteProbe(
   const runtime =
     adapter === "openclaw-config"
       ? "node"
-      : `${adapter === "hermes-config" ? "/opt/hermes/.venv/bin/python" : "/opt/venv/bin/python3"} -c ${shellQuote("import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:], check=False).returncode)")} node`;
+      : `${adapter === "hermes-config" ? "/opt/hermes/.venv/bin/python3" : "/opt/venv/bin/python3"} -c ${shellQuote("import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:], check=False).returncode)")} node`;
+  // Hermes startup owns supervisor state and cannot be re-entered by an exec probe.
+  const launcher = adapter === "hermes-config" ? "" : "nemoclaw-start ";
   return sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
       [
         "set -eu",
-        `nemoclaw-start ${runtime} - ${shellQuote(targetUrl)} ${shellQuote(method)} ${shellQuote(expectation)} ${shellQuote(credentialKey)}${toolName ? ` ${shellQuote(toolName)}` : ""} <<'NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE'`,
+        `${launcher}${runtime} - ${shellQuote(targetUrl)} ${shellQuote(method)} ${shellQuote(expectation)} ${shellQuote(credentialKey)}${toolName ? ` ${shellQuote(toolName)}` : ""} <<'NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE'`,
         MCP_PROVIDER_REWRITE_PROBE_SOURCE,
         "NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE",
       ].join("\n"),
