@@ -275,10 +275,10 @@ impl ServiceDefinition {
         };
         installers::container::ServiceContainer::validate_memory(container, preparation_memory)?;
         let gateway = &document.spec.gateway;
-        let local_docker = gateway.as_managed().is_some_and(|gateway| {
-            gateway.engine.starts_with("unix:///")
-                && crate::config::validate_engine_endpoint(&gateway.engine).is_ok()
-        }) && gateway.runtime().provider == ComputeDriver::Docker;
+        let local_docker = gateway
+            .as_managed()
+            .is_some_and(|gateway| crate::config::engine_socket(&gateway.engine).is_some())
+            && gateway.runtime().provider == ComputeDriver::Docker;
         let (placement, package) = match self {
             Self::Ollama(service) => (service.published_placement()?, "Ollama"),
             Self::Vllm(service) => (service.published_placement()?, "vLLM"),

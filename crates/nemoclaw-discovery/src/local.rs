@@ -10,22 +10,28 @@ use nemoclaw_sdk::{
 /// Where this machine's Docker and Podman engines may listen: Docker where the
 /// Docker client would connect, when that is a Unix socket, otherwise its
 /// default socket; Podman at the user's socket under `XDG_RUNTIME_DIR`, then
-/// the rootful socket. These are candidates to read, not engines known to exist.
+/// the rootful socket. On Windows, the same is true for named pipes: Docker
+/// Desktop's default pipe and the default Podman machine's pipe. These are
+/// candidates to read, not engines known to exist.
 pub fn local_engine_candidates() -> Vec<DiscoveryRequest> {
-    local_engine_candidates_in(|name| std::env::var(name).ok())
+    local_engine_candidates_in(|name| std::env::var(name).ok(), cfg!(windows))
 }
 
 /// The endpoint the Docker client selects: `DOCKER_HOST`, then the context
 /// `DOCKER_CONTEXT` names, then the configuration's current context. The
 /// default context has no stored endpoint.
-fn docker_endpoint(environment: &impl Fn(&str) -> Option<String>) -> Option<String> {
+fn docker_endpoint(environment: &impl Fn(&str) -> Option<String>, windows: bool) -> Option<String> {
     use sha2::{Digest, Sha256};
     if let Some(host) = environment("DOCKER_HOST").filter(|host| !host.is_empty()) {
         return Some(host);
     }
     let config = environment("DOCKER_CONFIG")
         .map(std::path::PathBuf::from)
-        .or_else(|| environment("HOME").map(|home| std::path::Path::new(&home).join(".docker")))?;
+        .or_else(|| {
+            // The Docker client's home directory is the user's profile on Windows.
+            environment(if windows { "USERPROFILE" } else { "HOME" })
+                .map(|home| std::path::Path::new(&home).join(".docker"))
+        })?;
     let read = |path: std::path::PathBuf| {
         std::fs::read(path)
             .ok()
@@ -54,26 +60,41 @@ fn docker_endpoint(environment: &impl Fn(&str) -> Option<String>) -> Option<Stri
         .map(String::from)
 }
 
-/// Only a Unix socket is this machine's engine, and a managed gateway accepts
-/// nothing else; an SSH engine is another host's.
-fn local_socket(endpoint: &str) -> bool {
-    endpoint.starts_with("unix:///") && validate_engine_endpoint(endpoint).is_ok()
+/// This machine's engines listen on Unix sockets, or on Windows on named
+/// pipes; an SSH engine is another host's.
+fn local_engine(endpoint: &str, windows: bool) -> bool {
+    endpoint.starts_with(if windows { "npipe://" } else { "unix:///" })
+        && validate_engine_endpoint(endpoint).is_ok()
 }
 
 fn local_engine_candidates_in(
     environment: impl Fn(&str) -> Option<String>,
+    windows: bool,
 ) -> Vec<DiscoveryRequest> {
     let engine = |engine: String, compute_driver| DiscoveryRequest {
         engine,
         compute_driver,
     };
-    let docker = docker_endpoint(&environment)
-        .filter(|endpoint| local_socket(endpoint))
-        .unwrap_or_else(|| GATEWAY_ENGINE.into());
+    let docker = docker_endpoint(&environment, windows)
+        .filter(|endpoint| local_engine(endpoint, windows))
+        .unwrap_or_else(|| {
+            if windows {
+                "npipe:////./pipe/docker_engine".into()
+            } else {
+                GATEWAY_ENGINE.into()
+            }
+        });
     let mut engines = vec![engine(docker, ComputeDriver::Docker)];
+    if windows {
+        engines.push(engine(
+            "npipe:////./pipe/podman-machine-default".into(),
+            ComputeDriver::Podman,
+        ));
+        return engines;
+    }
     if let Some(runtime) = environment("XDG_RUNTIME_DIR") {
         let user = format!("unix://{runtime}/podman/podman.sock");
-        if runtime.starts_with('/') && local_socket(&user) {
+        if runtime.starts_with('/') && local_engine(&user, false) {
             engines.push(engine(user, ComputeDriver::Podman));
         }
     }
@@ -89,15 +110,62 @@ mod tests {
     use super::*;
 
     fn engines(variables: &[(&str, &str)]) -> Vec<(String, ComputeDriver)> {
-        local_engine_candidates_in(|name| {
-            variables
-                .iter()
-                .find(|(variable, _)| *variable == name)
-                .map(|(_, value)| (*value).into())
-        })
+        engines_on(false, variables)
+    }
+
+    fn engines_on(windows: bool, variables: &[(&str, &str)]) -> Vec<(String, ComputeDriver)> {
+        local_engine_candidates_in(
+            |name| {
+                variables
+                    .iter()
+                    .find(|(variable, _)| *variable == name)
+                    .map(|(_, value)| (*value).into())
+            },
+            windows,
+        )
         .into_iter()
         .map(|request| (request.engine, request.compute_driver))
         .collect()
+    }
+
+    #[test]
+    fn windows_lists_docker_desktop_and_the_default_podman_machine_pipes() {
+        assert_eq!(
+            engines_on(true, &[]),
+            [
+                (
+                    "npipe:////./pipe/docker_engine".into(),
+                    ComputeDriver::Docker
+                ),
+                (
+                    "npipe:////./pipe/podman-machine-default".into(),
+                    ComputeDriver::Podman
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn windows_uses_the_pipe_the_docker_client_selects() {
+        // Docker Desktop's desktop-linux context, under the user's profile.
+        let desktop = "npipe:////./pipe/dockerDesktopLinuxEngine";
+        let profile = tempfile::tempdir().unwrap();
+        let config = docker_config(Some("desktop-linux"), &[("desktop-linux", desktop)]);
+        std::fs::rename(config.path(), profile.path().join(".docker")).unwrap();
+        let profile = profile.path().to_str().unwrap();
+        assert_eq!(engines_on(true, &[("USERPROFILE", profile)])[0].0, desktop);
+        let podman = "npipe:////./pipe/podman-machine-default";
+        assert_eq!(
+            engines_on(true, &[("USERPROFILE", profile), ("DOCKER_HOST", podman)])[0].0,
+            podman
+        );
+        // A Unix socket or a remote engine is not this Windows machine's.
+        for other in ["unix:///var/run/docker.sock", "ssh://operator@gpu-box"] {
+            assert_eq!(
+                engines_on(true, &[("DOCKER_HOST", other)])[0].0,
+                "npipe:////./pipe/docker_engine"
+            );
+        }
     }
 
     #[test]

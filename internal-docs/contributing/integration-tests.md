@@ -120,7 +120,7 @@ The `capabilities` tests check gateway preconditions, saved-plan rechecks, and c
 The `failures/standalone` tests apply `hcl/standalone/main.tf` through lost create and delete replies, foreign objects, a missing workspace, failed observations, and deferred bootstrap endpoints.
 The `failures/api` tests check that invalid API bindings and foreign or substituted credentials stop planning, and that a failed readback recovers; the `sandbox` test checks that settings changed outside OpenTofu replace the sandbox.
 The fake gateway refuses to delete a referenced profile or an attached provider, as the pinned API does.
-On Unix, the `gateway_storage` test checks Docker gateway storage against a fake engine.
+The `gateway_storage` test checks Docker gateway storage against a fake engine.
 The `gateway_readiness` test checks managed-gateway exit diagnostics, bootstrap state kept after failure, corrected retry, unchanged-apply rechecks, and teardown without the readiness data source.
 The `kubernetes_lifecycle` tests apply, refresh, and tear down the managed Kubernetes resources against the in-memory API in `crates/test-support/kube_api.rs`; they write and delete the objects Helm would, and the live Kind suite runs the chart itself.
 `every_type_has_a_contract_test` requires a module or test for every OpenShell type, and `every_compiled_type_has_a_fixture` a generated fixture for every type the SDK compiles.
