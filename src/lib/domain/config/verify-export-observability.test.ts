@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
-import { validateConfigExportWithPinnedV1 } from "../../../../test/support/v1-config-consumer";
-import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import { entry, managedWorkload, profileInput, snapshot } from "./export-source-test-fixture";
 
 function openClawTelemetrySnapshot() {
@@ -24,31 +23,26 @@ function openClawTelemetrySnapshot() {
   });
 }
 
-describe("OpenClaw observability export (#12144)", () => {
-  it.runIf(process.env.NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY === "1")(
-    "preserves OTLP settings through the pinned v1 parser and native OpenClaw adapter (#12144)",
-    testTimeoutOptions(12 * 60_000),
-    async () => {
-      const exported = await exportSnapshots([openClawTelemetrySnapshot()]);
-      expect(exported.outcome.ok).toBe(true);
-      const evidence = validateConfigExportWithPinnedV1(exported.writeStdout.mock.calls[0]![0]);
-      expect(evidence.revision).toBe("42a26d90f1f6207cc35b5053556db67c86ce759f");
-      expect(evidence.openclawNativeSettings?.alpha).toMatchObject({
-        diagnostics: {
-          enabled: true,
-          otel: {
-            enabled: true,
-            endpoint: "http://host.openshell.internal:4318",
-            serviceName: "research-assistant",
-            sampleRate: 0.5,
-            protocol: "http/protobuf",
-            traces: true,
-            metrics: false,
-            logs: false,
-          },
-        },
-        diagnosticsPlugin: { enabled: true },
-      });
-    },
-  );
+describe("OpenClaw observability export (#12144, #14580)", () => {
+  it("leaves OTLP settings out of the export and warns, because v1 has no equivalent", async () => {
+    const exported = await exportSnapshots([openClawTelemetrySnapshot()]);
+    expect(exported.outcome.ok).toBe(true);
+    const raw = exported.writeStdout.mock.calls[0]![0];
+    // The report header names the omitted settings; the YAML document must not carry them.
+    const body = raw
+      .split("\n")
+      .filter((line) => !line.startsWith("#"))
+      .join("\n");
+    expect(body).not.toContain("otlp");
+    expect(body).not.toContain("research-assistant");
+    expect(YAML.parse(raw).spec.sandboxes.alpha.harness).toEqual({
+      kind: "nvidia.fabric.openclaw",
+      runtime: { timeout_seconds: 600 },
+    });
+    expect(
+      (exported.outcome as unknown as { omissions: { field: string }[] }).omissions.map(
+        ({ field }) => field,
+      ),
+    ).toContain("observability");
+  });
 });

@@ -50,7 +50,6 @@ import {
   exportNativeInferenceReceipt,
 } from "./export-evidence";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
-import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
 import type {
   CanonicalExportPolicy,
   ExportFinding,
@@ -654,30 +653,18 @@ function exportedObservability(
   return Check(NemoClawOpenClawObservabilitySchema, value) ? value : undefined;
 }
 
+/** Pass the observed v0 tuning and execution values through; the exporter decides what v1 keeps. */
 function projectAgentSettings(profile: ManagedStartupProfile) {
   if (profile.agentConfig.agent !== "openclaw") {
     return {};
   }
-  const defaults = V1ALPHA1_RUNTIME_DEFAULTS.openclaw;
-  const overrides = Object.fromEntries(
-    Object.entries(profile.tuning).filter(
-      ([key, value]) => value !== defaults.tuning[key as keyof typeof defaults.tuning],
-    ),
-  );
-  const execution: { timeoutSeconds?: number; heartbeatEvery?: string } = {};
-  if (profile.agentConfig.agentTimeoutSeconds !== defaults.execution.timeoutSeconds) {
-    execution.timeoutSeconds = profile.agentConfig.agentTimeoutSeconds;
-  }
-  if (
-    profile.agentConfig.heartbeatEvery !== defaults.execution.heartbeatEvery &&
-    profile.agentConfig.heartbeatEvery !== null
-  ) {
+  const execution: { timeoutSeconds: number; heartbeatEvery?: string } = {
+    timeoutSeconds: profile.agentConfig.agentTimeoutSeconds,
+  };
+  if (profile.agentConfig.heartbeatEvery !== null) {
     execution.heartbeatEvery = profile.agentConfig.heartbeatEvery;
   }
-  return {
-    ...(Object.keys(overrides).length === 0 ? {} : { overrides }),
-    ...(Object.keys(execution).length === 0 ? {} : { execution }),
-  };
+  return { overrides: { ...profile.tuning }, execution };
 }
 
 function classifyReasoningAgreement(
@@ -1527,35 +1514,6 @@ function validatePolicyIdentity(snapshot: QualifiedExportSnapshot): ExportFindin
   return findings;
 }
 
-function validateTargetPolicy(snapshot: QualifiedExportSnapshot): ExportFinding[] {
-  if (snapshot.policy.kind !== "verified") return [];
-  const policy = snapshot.policy.canonical;
-  const process = policy.process as Record<string, unknown> | undefined;
-  const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
-  const findings: ExportFinding[] = [];
-  if (
-    !process ||
-    !["sandbox", "1000"].includes(String(process.run_as_user)) ||
-    !["sandbox", "1000"].includes(String(process.run_as_group))
-  )
-    findings.push(
-      finding(
-        "spec.sandboxes[].network.policy.explicit.process",
-        "unsupported",
-        "The source process principal cannot be projected to the v1 Fabric 1000:1000 principal.",
-      ),
-    );
-  if (!filesystem)
-    findings.push(
-      finding(
-        "spec.sandboxes[].network.policy.explicit.filesystem_policy",
-        "unsupported",
-        "An explicit filesystem policy is required to grant the v1 Fabric runtime roots.",
-      ),
-    );
-  return findings;
-}
-
 function validateAgreement(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
@@ -1572,7 +1530,6 @@ function validateAgreement(
     ...validateCredentialReference(snapshot),
     ...validateHermesAuthentication(snapshot),
     ...validatePolicyIdentity(snapshot),
-    ...validateTargetPolicy(snapshot),
   ];
 }
 
@@ -1654,12 +1611,7 @@ function projectVerifiedTools(
   entry: ObservedExportRegistry,
   authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
 ) {
-  if (
-    entry.agent !== "openclaw" ||
-    authority === null ||
-    authority.profile.tools.disclosure === V1ALPHA1_RUNTIME_DEFAULTS.openclaw.tools.disclosure
-  )
-    return {};
+  if (entry.agent !== "openclaw" || authority === null) return {};
   return { tools: { disclosure: authority.profile.tools.disclosure } };
 }
 

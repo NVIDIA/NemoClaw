@@ -11,7 +11,10 @@ export function asExportedConfig(value: unknown): V1Alpha1Export {
 export function exportedDeepAgentsSandbox(
   sandbox: V1Alpha1ExportSandbox,
 ): Extract<V1Alpha1ExportSandbox, { readonly image: Readonly<{ ref: string }> }> {
-  if (sandbox.image === undefined || sandbox.harness.kind !== "deepagents") {
+  if (
+    sandbox.image === undefined ||
+    sandbox.harness.kind !== "nvidia.fabric.langchain.deepagents"
+  ) {
     throw new Error("The export requires a Deep Agents sandbox");
   }
   return sandbox as Extract<V1Alpha1ExportSandbox, { readonly image: Readonly<{ ref: string }> }>;
