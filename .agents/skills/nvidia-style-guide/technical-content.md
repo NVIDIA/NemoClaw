@@ -15,6 +15,28 @@ Individual teams might have style guides specific to an authoring environment or
 
 The Technical Blog guide also recommends [Common Errors in Technical Writing](http://www.ece.ucdavis.edu/~jowens/commonerrors.html) and [Get It Write](https://getitwriteonline.com/blog/).
 
+## API reference comments
+
+*(Content Engineering guide: Doxygen API Documentation Guidelines)* Apply the following edits to API reference comments in source files.
+The source states them for Doxygen comments in C and C++ header files.
+
+Level 1 edits:
+
+- Copyright information must be present.
+- Trademarks and copyright for products and platforms must be included.
+- Basic grammar (for example, articles and avoiding passive voice), spelling, and punctuation (a period ending every sentence).
+- Capitalize acronyms.
+- Formatting:
+  - Leave a blank line between the brief description, the parameters, and the return value (`\brief`, `\param`, and `\return` in Doxygen).
+  - Put return values in a list format.
+
+Level 2 edits:
+
+- Correct references: reference the first mention within a function or struct; do not reference subsequent instances.
+- Format parameter references consistently; Doxygen uses the `@a` tag.
+- Apply a consistent return value pattern across all functions within a single header file, and across all headers under the same grouping.
+- Use terminology consistently.
+
 ## Code elements or examples
 
 Code elements can be referenced within a sentence or longer code examples given separately. Introduce code examples with full sentences. Avoid using the term *snippet*. Inline references to methods may remove empty parentheses.
@@ -124,6 +146,8 @@ Technical content often offers consecutive steps that must be followed to comple
 - **Navigation:** Use subheadings to separate procedures.
 - **Addressing the reader:** Use primarily imperative sentences ("Do this. Next, do that."), with declarative sentences as needed for explanation ("You can choose option A.").
 
+For the structure of procedural CLI documentation, including prerequisites, steps, example output, and related information, refer to [Procedural CLI Documentation](cli-procedures.md).
+
 ## Readability
 
 Aim for sentences of fewer than 30 words wherever possible.
@@ -210,5 +234,7 @@ Use bold text when referencing the user interface (UI):
 - Field labels
 
 When referring to multiple UI elements in a process, use angle brackets (>) to indicate consecutive steps.
+
+For the term and verb to use with each kind of UI element, refer to [UI Elements and Interactions](ui-elements.md).
 
 For more information about guidelines for UI strings, refer to the [Describing UI Interactions](https://learn.microsoft.com/en-us/style-guide/procedures-instructions/describing-interactions-with-ui) and [Formatting Text in Instructions](https://learn.microsoft.com/en-us/style-guide/procedures-instructions/formatting-text-in-instructions) topics in the Microsoft Style Guide.
