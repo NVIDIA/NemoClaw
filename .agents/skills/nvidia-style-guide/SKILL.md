@@ -1,6 +1,6 @@
 ---
 name: nvidia-style-guide
-description: NVIDIA's house style for voice and tone, capitalization, punctuation, numbers, dates, units, links, lists, tables, trademarks, and technical content. Use when writing or reviewing prose that WRITING.md covers.
+description: NVIDIA's house style for voice and tone, capitalization, punctuation, numbers, dates, units, links, lists, tables, trademarks, and technical writing, including the NVIDIA Technical Blog's writing guidance. Use when writing or reviewing prose that WRITING.md covers.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -8,9 +8,11 @@ description: NVIDIA's house style for voice and tone, capitalization, punctuatio
 
 # NVIDIA Style Guidelines
 
-Adapted from the [NVIDIA Style Guidelines](https://nvidia.sharepoint.com/sites/NVIDIAStyleGuide/SitePages/NVIDIA-Style-Guidelines.aspx) SharePoint page, last modified 2026-09-16 and retrieved 2026-11-19.
-Changes from the source: converted to Markdown, with hyperlinks taken from the rendered page; text in the page's three images (the Voice and Tone comparison, the PACE table, and the annotated headings diagram) transcribed and marked as such; monospace applied to code-like examples in the Formatting table and punctuation examples, following the page's own rules.
-The wording is otherwise the source's.
+Adapted from the NVIDIA Style Guidelines SharePoint page, last modified 2026-09-16 and retrieved 2026-11-19, and the NVIDIA Technical Blog Writing and Style Guide, retrieved 2026-11-19; both are NVIDIA-internal.
+Changes from the style guidelines page: converted to Markdown, with hyperlinks taken from the rendered page; text in the page's three images (the Voice and Tone comparison, the PACE table, and the annotated headings diagram) transcribed and marked as such; monospace applied to code-like examples in the Formatting table and punctuation examples, following the page's own rules.
+Links to NVIDIA-internal resources on SharePoint, Google Docs, and Confluence are removed, and those resources are named in plain text.
+Writing guidance from the Technical Blog guide is added to the matching sections and marked *(Technical Blog guide)*, with its examples labeled Correct and Incorrect; its publishing procedures (turnaround times, word counts, WordPress formatting, author accounts, featured images, categories, tags, and social media assets) are omitted.
+The wording is otherwise the sources'.
 [WRITING.md](../../../WRITING.md) adds the rules specific to this repository.
 
 ## At-a-Glance
@@ -55,15 +57,18 @@ The words we choose and the tone we adopt give our audience an immediate impress
   - [Technical Content](#technical-content)
     - [Code elements or examples](#code-elements-or-examples)
     - [Equations and formulas](#equations-and-formulas)
+    - [Figures and images](#figures-and-images)
     - [File name extensions](#file-name-extensions)
     - [Footnotes](#footnotes)
     - [GitHub repositories](#github-repositories)
+    - [Headings](#headings)
     - [Leading sentences](#leading-sentences)
     - [Marketing claims](#marketing-claims)
     - [Model names](#model-names)
     - [Procedures](#procedures)
     - [Readability](#readability)
     - [Synonyms](#synonyms)
+    - [Tone and voice](#tone-and-voice)
     - [UI text](#ui-text)
   - [Trademarks](#trademarks)
   - [Units of Measurement](#units-of-measurement)
@@ -102,10 +107,10 @@ Formal industry standards should be followed as appropriate, for example, the [I
 
 Teams might have guidelines and best practices for their own authoring environments, publication processes, roles, or platforms.
 
-- **Corporate Blog:** [Style Guide: NVIDIA Blog](https://docs.google.com/document/d/1ZRaFGCd94bMl35OhowSC7CYhtWDQZyDGiOQoyK6d6V8/edit?usp=sharing)
-- **Technical Blog:** [NVIDIA Technical Blog Writing and Style Guide](https://docs.google.com/document/d/19D30i6V4QtMySrqItVc0BB_HhRf6LW_aLBPDuKGlrEY/edit) (available to external authors)
-- **Software Documentation:** [Technical Documentation Writing Guide](https://confluence.nvidia.com/display/SWDOCS/Technical+Documentation+Writing+Guide)
-- **Hardware Documentation:** [NVIDIA Style Guide for Technical Publication](https://nvidia.sharepoint.com/sites/nvinfo/brand/Documents/NVIDIA-Style-Guide-Technical-Publication.pdf)
+- **Corporate Blog:** Style Guide: NVIDIA Blog
+- **Technical Blog:** NVIDIA Technical Blog Writing and Style Guide (available to external authors); its writing guidance is included under [Technical Content](#technical-content)
+- **Software Documentation:** Technical Documentation Writing Guide
+- **Hardware Documentation:** NVIDIA Style Guide for Technical Publication
 
 NVIDIA has access to the following tools for content quality checking, each of which uses the NVIDIA terminology list:
 
@@ -177,7 +182,7 @@ A mishmash of styles can make our brand look disorganized and sloppy.
 
 - Do not abbreviate on first use in text (as a rule). Follow the abbreviation within parentheses, as in “high-resolution anti-aliasing (HRAA).”
 - In subsequent usage, use the abbreviation or acronym unless the document is long and the reader must be reminded.
-- Common abbreviations and acronyms (such as PC) that are widely used don’t need to be spelled out. For a list of acronyms, refer to Appendix A in the [*NVIDIA Style Guide for Technical Publications*](https://nvidia.sharepoint.com/sites/nvinfo/brand/Documents/NVIDIA-Style-Guide-Technical-Publication.pdf).
+- Common abbreviations and acronyms (such as PC) that are widely used don’t need to be spelled out. For a list of acronyms, refer to Appendix A in the *NVIDIA Style Guide for Technical Publications*.
 - **Plural form:** Add an s, but no apostrophe (such as GPUs).
 - **Within headings:** When you use a common acronym in a title, don’t spell it out. Spell it in the body copy in the first or second sentence, and use the acronym in parentheses.
 
@@ -202,9 +207,9 @@ Avoid using the passive voice unless the subject is unknown or when the action�
 
 These guidelines apply to all areas of NVIDIA except GeForce, which can vary. Contact the senior GeForce copywriter over Slack with any questions.
 
-For guidance on media or professional titles, refer to [Titles](https://docs.google.com/document/d/1FwioYaRjvuHd8reo2q2XQnNuzcoYWuAHi63qWzXBH2U/edit#heading=h.bjvqnrr7qzb0).
+For guidance on media or professional titles, refer to [Titles](#titles).
 
-In general, follow standard guidelines for capitalization at the beginning of sentences, names and proper nouns, time zones, full quotes, and time periods. Avoid capitalizing compound words and seasons. For more information, refer to [Capitalization](https://confluence.nvidia.com/display/SWDOCS/Capitalization).
+In general, follow standard guidelines for capitalization at the beginning of sentences, names and proper nouns, time zones, full quotes, and time periods. Avoid capitalizing compound words and seasons. For more information, refer to Capitalization in the Technical Documentation Writing Guide.
 
 *(Transcribed from an image on the page: an annotated screenshot of an NVIDIA “Solutions for the Data Center” web page with numbered callouts identifying each type of heading.)*
 
@@ -254,7 +259,7 @@ When writing in mixed or title case, do not capitalize prepositions of three let
 
 The names of products, events, research, and whitepapers must always be in title case.
 
-For more information about correct product names and symbols, refer to [Trademarks and Usage](https://docs.google.com/spreadsheets/d/1JiplcwjItzFAusB0-Oh8eO1e_Yfb8kXWShmyDBkYXN8/edit).
+For more information about correct product names and symbols, refer to Trademarks and Usage.
 
 #### Tables
 
@@ -359,7 +364,7 @@ The phrases *in silico*, *in vitro*, and *in vivo* are exceptions because they a
 
 ### Legal
 
-For a complete and up-to-date list of all our trademarks, refer to Legal's NVINFO page or the [Trademark list](https://nvidia.sharepoint.com/sites/nvinfo/trademarks).
+For a complete and up-to-date list of all our trademarks, refer to Legal's NVINFO page or the Trademark list.
 
 If your platform is required to use trademarks, attribute an NVIDIA trademark in the first use. Use the ™ (trademark), ® (registered trademark), or ℠ (service mark) symbol the first time you refer to one of NVIDIA’s trademarked products or services in an external document. Be sure to superscript these marks in all cases.
 
@@ -394,6 +399,11 @@ Here are the best link practices:
   - ✅ **Correct:** [large language models (LLMs)](https://www.nvidia.com/en-us/glossary/large-language-models/)
   - ❌ **Incorrect:** [large language models](https://www.nvidia.com/en-us/glossary/large-language-models/) (LLMs)
 - Avoid generic links, such as “here” and “read more.”
+  - *(Technical Blog guide)* Embed the URL with anchor text that uses keywords. Ideally, the anchor text would be the title of the target URL, but it could also be related keywords used inline. Avoid using raw URLs and generic anchor text like “here,” “click here,” or “documentation.”
+  - ✅ **Correct:** For more information, see the recent Unified Memory post.
+  - ✅ **Correct:** It’s helpful to install the driver before creating your first project.
+  - ❌ **Incorrect:** For more information, see the recent Unified Memory post here.
+  - ❌ **Incorrect:** To install the driver, click here.
 - It’s okay to link on one full short sentence, but avoid linking on long sentences or more than one sentence.
 - Try to limit the number of inline links within one paragraph to prevent search engine optimization (SEO) ineffectiveness and poor readability.
 - Use a forward slash and a repository name for GitHub links.
@@ -554,7 +564,7 @@ NVIDIA is preceded with “an” versus “a” as it features the “en” soun
 - ✅ **Correct:** Count on NVIDIA® GeForce®-powered laptops for great gaming.
 - ❌ **Incorrect:** NVIDIA® provides industry-leading GPUs.
 
-For more information, refer to [NVIDIA Trademark and Copyright Guidelines](https://nvidia.sharepoint.com/sites/nvinfo/legal/Documents/TrademarkCopyrightGuidelines.pdf).
+For more information, refer to NVIDIA Trademark and Copyright Guidelines.
 
 ### Plain English
 
@@ -578,9 +588,9 @@ Avoid:
 
 Use correct branding for all NVIDIA product names, including capitalization, spacing, hyphenation, and so on. As a general rule, precede the product name with “NVIDIA” on first mention and include a link, if available.
 
-For more information about all correct product names and symbols, refer to [Trademarks and Usage](https://docs.google.com/spreadsheets/d/1JiplcwjItzFAusB0-Oh8eO1e_Yfb8kXWShmyDBkYXN8/edit).
+For more information about all correct product names and symbols, refer to Trademarks and Usage.
 
-For more information about general trademark usage, refer to [NVIDIA Trademark and Copyright Guidelines](https://nvidia.sharepoint.com/sites/nvinfo/legal/Documents/TrademarkCopyrightGuidelines.pdf).
+For more information about general trademark usage, refer to NVIDIA Trademark and Copyright Guidelines.
 
 ### Punctuation
 
@@ -855,14 +865,36 @@ When writing titles in sentences, use title case for the title when it precedes 
 - "NVIDIA Vice President Jane Doe said..."
 - "And according to Jane Doe, vice president of marketing at NVIDIA..."
 
+#### Headlines
+
+*(Technical Blog guide)*
+
+- Keep your post title under 100 characters (under 75 is preferred).
+- Important keywords should be as close to the front as possible. In other words, “front load” what you want to rank for.
+  - Product names can generally be at the end, but consider leaving them out of the title if you’re not announcing a release.
+- Tell readers the value of the post in the title. Focus on how you can solve a problem, improve a task, or demonstrate a benefit.
+- Make the language active.
+
+Tips for writing a good headline:
+
+1. **Clearly summarize the post.** Focus on a message that shows the value of reading further.
+2. **Use specific and straightforward language.** A headline must accurately represent post content. Avoid being vague or misleading, which degrades reader trust in a source.
+3. **Aim for conciseness.** Get to the point with as few words as possible, ideally aim for 5-10 words. For SEO, try to use 60 characters or less and start headlines with keywords.
+4. **Use an active voice.** Keep the verb and subject close together. Present tense and active verbs help deliver a direct message. Avoid passive voice by removing phrases using auxiliary verbs such as *have, be, may, do, shall, will, can,* or *must*.
+5. **Seek out unique words or phrases.** Strive for unique and specific language. Avoid overused or vague terms such as accelerating, enhancing, or improving. If you’re unsure about a term, ask yourself is there a more specific way to say this?
+6. **Align with the TechBlog tone.** Avoid puns, clichés, and pithy headlines.
+7. **Pique the interest of readers.** Aim to spark intrigue and encourage people to read a post to gain knowledge or discover something new.
+
 ### Technical Content
 
 Technical content is usually more complex than marketing content. This section details some of the ways that technical content differs from the main NVIDIA Writing Guide or describes elements that non-technical content does not usually contain.
 
 Individual teams might have style guides specific to an authoring environment or role.
 
-- **Technical Blog:** [NVIDIA Technical Blog Writing and Style Guide](https://docs.google.com/document/d/19D30i6V4QtMySrqItVc0BB_HhRf6LW_aLBPDuKGlrEY/edit) (available externally)
-- **Software Documentation:** [Technical Documentation Writing Guide](https://confluence.nvidia.com/display/SWDOCS/Technical+Documentation+Writing+Guide)
+- **Technical Blog:** NVIDIA Technical Blog Writing and Style Guide (available externally); its writing guidance is included in this section and marked *(Technical Blog guide)*
+- **Software Documentation:** Technical Documentation Writing Guide
+
+The Technical Blog guide also recommends [Common Errors in Technical Writing](http://www.ece.ucdavis.edu/~jowens/commonerrors.html) and [Get It Write](https://getitwriteonline.com/blog/).
 
 #### Code elements or examples
 
@@ -870,9 +902,29 @@ Code elements can be referenced within a sentence or longer code examples given 
 
 Use a monospace font and syntax highlighting.
 
+*(Technical Blog guide)* Avoid any fancy formatting of your code, such as background color or borders, and get the spacing right.
+
 #### Equations and formulas
 
 Use LaTeX or MathML for math equations, whether it’s inline or on a separate line.
+
+#### Figures and images
+
+*(Technical Blog guide)*
+
+Posts with compelling and informative images maintain reader interest. Early in your writing process, think about what images and diagrams you can include.
+
+Each image should have a caption, and you should usually call out images from the body of the post to give them context. When you refer to images in the body of the post, refer to them by figure number ("Figure 1 shows...") and not by location ("The following figure shows...").
+
+Images are numbered sequentially, using “*Figure X.*” Videos and tables are labeled and numbered separately (*Video 1.*, *Table 1.*). For example, a caption and its alt text:
+
+> *Figure 1. Tensor data layout with extents and blocks. Green is the two-dimensional tensor, and blue shows the blocks that the block size induces.*
+>
+> ALT text: Image shows a 3x3 square that shows block size compared to extent. Block size accounts for a 1x1 block whereas extent is a large square layered on top of several blocks but does not exceed the full parameter of the 3x3 square.
+
+- If you want multiple images aligned side-by-side, combine them into a single high-resolution image.
+- JPEG format is usually best for photos, but PNG is best for images with large areas of constant colors, or images with transparency.
+- Don't start the post with an image immediately following the title. Try to put at least a few lines of text first.
 
 #### File name extensions
 
@@ -889,6 +941,15 @@ Use a forward slash and a repository name for GitHub links.
 
 - ✅ **Correct:** the [NVIDIA/NeMo](https://github.com/NVIDIA/NeMo) GitHub repo
 - ❌ **Incorrect:** the [GitHub repo](https://github.com/NVIDIA/NeMo)
+
+#### Headings
+
+*(Technical Blog guide)*
+
+- Reserve H1 for the title, for SEO reasons.
+- Use only H2, H3, and H4 subheading levels.
+- Avoid starting the post with a title and subheading, or stacking two subheadings.
+- Avoid custom fonts or formatting (bold or italic) in headings.
 
 #### Leading sentences
 
@@ -911,6 +972,13 @@ double myFunc() { return sqrt(2.0); }
 ```
 
 which uses the `sqrt()` function.
+
+*(Technical Blog guide)* The same applies to images:
+
+- ✅ **Correct:** Figure 3 shows basic ray tracing concepts.
+- ❌ **Incorrect:** The following figure shows basic ray tracing concepts:
+
+Imagine a screen reader reading your post out loud to a person with visual disability. Ending your sentence with a colon and an image is confusing.
 
 #### Marketing claims
 
@@ -941,6 +1009,19 @@ Technical content often offers consecutive steps that must be followed to comple
 
 Aim for sentences of fewer than 30 words wherever possible.
 
+*(Technical Blog guide)* Make sentences direct to avoid unnecessary words.
+
+- ✅ **Correct:** CUDA 6 introduces Unified Memory, which dramatically simplifies memory management for GPU computing.
+- ❌ **Incorrect:** With CUDA 6, we have introduced the Unified Memory programming model, which provides a simplified method of dealing with memory allocations between CPU and GPU.
+
+Whenever possible, use verbs rather than nouns to help move the action along. Noun phrases are more difficult to process, and they usually add unnecessary words. For example:
+
+- Give a presentation → Present
+- Take measurements → Measure
+- Achieve resolution → Resolve
+- Perform an analysis → Analyze
+- Conduct inspections → Inspect
+
 Use academic or formal conjunctive adverbs sparingly:
 
 - Additionally
@@ -955,6 +1036,51 @@ Use academic or formal conjunctive adverbs sparingly:
 #### Synonyms
 
 For clarity, use the same term throughout a piece of technical writing. Include synonyms only to connect industry-standard terms with NVIDIA-specific or more relevant terms.
+
+#### Tone and voice
+
+*(Technical Blog guide)*
+
+The NVIDIA Technical Blog targets developers and IT professionals at various skill levels, including scientists (computer and otherwise), software engineers, students, researchers, and academics. Posts should be friendly and accessible while still being deeply technical.
+
+- Use first person for your recommendations or experiences ("I did this" rather than "This is/was done")—readers relate to this more easily.
+  - Avoid using first person plural to include the reader, as they may see it as condescending.
+  - If there are multiple authors, then by all means, use “we” to describe what you did.
+- Include relevant personal anecdotes and experience where appropriate.
+- Avoid jargon that only specialists are likely to understand.
+- Explain new terms as you introduce them.
+- Don't be afraid to get really technical. Include code excerpts (with appropriate GitHub links), equations, pseudocode, and especially informative diagrams.
+- Write for a global audience.
+
+Readers relate well to real-world examples, so don’t be afraid to include them.
+
+The best way to avoid confusing content is to be direct, active, and concise. For conciseness, see [Readability](#readability).
+
+##### Address readers directly
+
+Use the imperative form of verbs or use second person (you) to address readers.
+
+- ✅ **Correct:** When you port…
+- ✅ **Correct:** Next, download the container.
+- ❌ **Incorrect:** When we port a container…
+- ❌ **Incorrect:** Next, developers can download the container.
+
+##### Use active voice
+
+Use active voice because passive voice reduces clarity and directness in writing.
+
+- ✅ **Correct:** Reduce use of 'to be' to avoid passive voice.
+- ✅ **Correct:** We used OpenACC to accelerate…
+- ❌ **Incorrect:** Passive voice can be avoided by reducing the use of 'to be'.
+- ❌ **Incorrect:** …*was accelerated* using OpenACC.
+
+However, passive voice can be useful at times. Don't go out of your way to avoid it if doing so doesn't simplify or clarify your writing. [This UNC guide covers it well](https://writingcenter.unc.edu/handouts/passive-voice/).
+
+##### Avoid the corporate “we”
+
+Frequent use of the editorial or corporate “we” creates a barrier between you and the reader. This feels like an us vs. them dynamic instead of including the reader in a conversation.
+
+Use ‘we’ to refer to multiple authors or on behalf of a specific team making a product or feature announcement.
 
 #### UI text
 
@@ -974,7 +1100,7 @@ Use of product trademarks for both NVIDIA and third-party products varies. In ge
 
 Do not use TMs for content that is primarily focused on learning (Technical Blog post, GTC session, and so on).
 
-For up-to-date guidelines, refer to [NVIDIA Trademark and Copyright Guidelines](https://nvidia.sharepoint.com/sites/nvinfo/legal/Documents/TrademarkCopyrightGuidelines.pdf).
+For up-to-date guidelines, refer to NVIDIA Trademark and Copyright Guidelines.
 
 ### Units of Measurement
 
