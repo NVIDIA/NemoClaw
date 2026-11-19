@@ -38,27 +38,6 @@ pub(super) async fn matches(
     {
         return false;
     }
-    if let Some(key) = key {
-        // Native llama.cpp deliberately leaves inventory public. Check the
-        // inference boundary with invalid requests that cannot generate tokens.
-        let wrong_key = format!("{key}-invalid");
-        for credential in [None, Some(wrong_key.as_str())] {
-            let mut request = client
-                .post(format!("{endpoint}/v1/chat/completions"))
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body("{}");
-            if let Some(credential) = credential {
-                request = request.bearer_auth(credential);
-            }
-            if !request
-                .send()
-                .await
-                .is_ok_and(|response| response.status() == reqwest::StatusCode::UNAUTHORIZED)
-            {
-                return false;
-            }
-        }
-    }
     let Some(mut response) = get(client, format!("{endpoint}/v1/models"), key).await else {
         return false;
     };
@@ -88,38 +67,34 @@ pub(super) async fn matches(
 mod tests {
     use super::*;
     #[tokio::test]
-    async fn public_inventory_does_not_establish_inference_authentication() {
-        for (reject_missing, reject_wrong) in
-            [(false, false), (true, false), (false, true), (true, true)]
-        {
-            let server = crate::http_fixture::Fixture::start_tcp(move |r| {
-                Some(match r.path.as_str() {
-                    "/health" => (200, b"{}".to_vec()),
-                    "/v1/models" => (200, br#"{"data":[{"id":"muse-glimmer"}]}"#.to_vec()),
-                    "/v1/chat/completions" => {
-                        let rejected = if r.header("authorization").is_none() {
-                            reject_missing
-                        } else {
-                            reject_wrong
-                        };
-                        (if rejected { 401 } else { 400 }, Vec::new())
-                    }
-                    _ => (404, Vec::new()),
-                })
+    async fn readiness_uses_health_and_inventory_without_inference_requests() {
+        let posts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = posts.clone();
+        let server = crate::http_fixture::Fixture::start_tcp(move |r| {
+            Some(match r.path.as_str() {
+                "/health" => (200, b"{}".to_vec()),
+                "/v1/models" => (200, br#"{"data":[{"id":"muse-glimmer"}]}"#.to_vec()),
+                _ => {
+                    observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (401, Vec::new())
+                }
             })
-            .await;
-            assert_eq!(
-                matches(
-                    &client().unwrap(),
-                    &server.endpoint,
-                    "muse-glimmer",
-                    Some("test-credential")
-                )
-                .await,
-                reject_missing && reject_wrong,
-                "public inventory must not hide inference authentication failures"
-            );
-        }
+        })
+        .await;
+        assert!(
+            matches(
+                &client().unwrap(),
+                &server.endpoint,
+                "muse-glimmer",
+                Some("test-credential")
+            )
+            .await
+        );
+        assert_eq!(
+            posts.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "startup readiness must not make inference requests"
+        );
     }
     #[tokio::test]
     async fn readiness_requires_health_and_the_expected_model() {

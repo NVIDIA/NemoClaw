@@ -86,7 +86,7 @@ fn launch_at(
     let errors = writer
         .try_clone()
         .map_err(|_| Error::State("cannot clone NIM output pipe"))?;
-    let output = Output::start(
+    let output = super::output::start(
         reader,
         std::iter::once(ngc.clone()).chain(credential.iter().cloned()),
     );

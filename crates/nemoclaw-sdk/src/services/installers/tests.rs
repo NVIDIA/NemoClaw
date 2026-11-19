@@ -20,8 +20,8 @@ fn inference_removal_retains_cache_and_requires_authenticated_storage() {
         ),
         (
             include_str!("../../../../nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml"),
-            "muse",
-            "docker_volume.inference_storage_inference_muse",
+            "qwen",
+            "docker_volume.inference_storage_inference_qwen",
         ),
         (
             include_str!("../../../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml"),

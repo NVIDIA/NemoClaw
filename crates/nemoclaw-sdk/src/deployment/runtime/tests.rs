@@ -34,7 +34,7 @@ fn docker_model_updates_preserve_running_containers_unless_recreation_is_explici
         ),
         (
             include_str!("../../../../nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml"),
-            "muse",
+            "qwen",
             "inference_service",
         ),
         (

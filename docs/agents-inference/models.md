@@ -15,21 +15,22 @@ For Ollama registry models, use [managed Ollama](inference.md#run-managed-ollama
 Use `kind: llamaCpp` for a public GGUF model.
 Set `model.repository`, its exact 40-character `revision`, a safe relative `.gguf` `file`, lowercase `sha256`, and `sizeBytes`.
 Set `serving.modelName` to the alias the agent route uses.
-The runtime downloads only that file, checks its size and hash before publication, and hashes retained bytes again before serving.
-A failed acquisition cannot become an accepted cache entry; changed cached bytes are retained for inspection.
+The runtime downloads only that file and checks its size and hash before publication.
+Warm starts check the verified snapshot's size and modification time without rereading the weights; a retained cache without a verification record is hashed once.
+A failed acquisition cannot become an accepted cache entry; a changed size or modification time causes refusal and retains the cache for inspection.
 
 Build the `llama-cpp` Bake target and use its resulting immutable digest as the service `image`.
 It adds the v1 supervisor to llama.cpp's digest-pinned CUDA 13.5 server image from release b12375; see [build a runtime image](../build-deploy/build.md#build-a-runtime-image).
 No image is published by this operation.
 
-The [Muse Glimmer case](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) shows the complete desired-state shape.
+The [Qwen3-4B case](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) shows the complete desired-state shape with a pinned 2.50 GB Q4_K_M GGUF, 32768 context tokens and a 12 GiB GPU budget.
 Its image references are CI placeholders and must be replaced with candidate-built digests.
-The pinned Muse configuration has lifecycle qualification on AMD64/L40S and ARM64/GB10 Spark with OpenShell 0.1.9, 32768 context tokens, one slot and a 32 GiB serving budget.
-That qualification used an earlier image built on Classic NemoClaw's llama-server image, llama.cpp revision `8e7f22b67ef4667b4ddd50230771287f328cfb3f`, and doesn't cover the b12375 image.
+On ARM64 GB10 Spark with OpenShell 0.1.9 and the b12375 image, Qwen answered a routed arithmetic request correctly and passed missing/wrong-key inference refusal, authenticated inference, unchanged plan/reapply and teardown.
+That run used a 32 GiB host reserve; the case's AMD64 dedicated-GPU settings need separate qualification.
+The earlier Muse configuration has lifecycle qualification on AMD64/L40S and ARM64/GB10 Spark with OpenShell 0.1.9, 32768 context tokens, one slot and a 32 GiB serving budget.
+That historical qualification used an image built on Classic NemoClaw's llama-server image, llama.cpp revision `8e7f22b67ef4667b4ddd50230771287f328cfb3f`, and doesn't cover the b12375 image or Qwen case.
 Classic's experimental Spark recipe does not qualify this case.
-The case requests 32768 context tokens and low reasoning strength rather than copying Spark's 131072-token setting.
-Spark also requires a 32 GiB host reserve.
-The qualified scope includes export/reapply, inference-key refusal and restart recovery; other GGUFs, general tool use and Classic settings need separate qualification.
+The historical Muse scope includes export/reapply, inference-key refusal and restart recovery; other GGUFs, general tool use and Classic settings need separate qualification.
 
 The first implementation serves one model on one CUDA GPU, with full GPU-layer offload requested, one slot, f16 KV, embedded Jinja and no multimodal projector.
 `serving.batchTokens` and `microBatchTokens` control batching; `reasoningStrength` optionally supplies the native template argument.
@@ -41,7 +42,8 @@ With `authentication: bearer`, the runtime generates and retains a key in separa
 Plans and exported configuration carry the managed credential reference.
 The child receives no key in argv.
 The pinned native server deliberately leaves `/models`, `/v1/models` and health public, even with a key configured; bearer authentication protects inference requests, not inventory confidentiality.
-Readiness requires health and the declared model, and bearer mode also requires missing-key and wrong-key inference requests to return 401.
+Readiness requires health and the declared model, using the configured credential.
+Qualification separately checks that missing-key and wrong-key inference requests return 401.
 Those refusal probes use an empty request and generate no tokens; a successful authenticated completion and agent reply remain live qualification gates.
 
 The service uses the existing managed Docker placement and `Preserve`/`Recreate` update policy.

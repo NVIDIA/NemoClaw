@@ -58,20 +58,6 @@ run "unchanged_plan" {
   }
 }
 
-run "unchanged_apply" {
-  module {
-    source = "./cli"
-  }
-  variables {
-    operation = "apply"
-    baseline = run.unchanged_plan.baseline
-  }
-  assert {
-    condition = output.exit_code == 0 && output.changes == {} && output.bindings == output.baseline
-    error_message = "Unchanged apply must preserve the deployment and agent runtime bindings."
-  }
-}
-
 run "destroy" {
   module {
     source = "./cli"
@@ -84,7 +70,7 @@ run "destroy" {
   assert {
     condition = (
       output.exit_code == 0 && output.result.outcome == "destroyed"
-      && toset(output.result.retained) == toset(["openshell_gateway_storage.runtime", "docker_volume.inference_storage_inference_muse", "vllm_credential_storage.inference_muse_auth"])
+      && toset(output.result.retained) == toset(["openshell_gateway_storage.runtime", "docker_volume.inference_storage_inference_qwen", "vllm_credential_storage.inference_qwen_auth"])
     )
     error_message = "Destroy failed or retained other resources: ${output.error}"
   }

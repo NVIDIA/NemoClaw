@@ -265,9 +265,9 @@ fn llama_cpp_accepts_a_pinned_gguf_and_rejects_a_mutable_revision() {
     let text = include_bytes!("../../nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml");
     let document = Document::parse(text.as_slice()).expect("managed llama.cpp configuration");
     let desired = normalized(&document);
-    assert_eq!(desired["spec"]["services"]["muse"]["kind"], "llamaCpp");
+    assert_eq!(desired["spec"]["services"]["qwen"]["kind"], "llamaCpp");
     let mut bad = desired;
-    bad["spec"]["services"]["muse"]["model"]["revision"] = json!("main");
+    bad["spec"]["services"]["qwen"]["model"]["revision"] = json!("main");
     assert!(Document::parse(serde_json::to_vec(&bad).unwrap().as_slice()).is_err());
 }
 

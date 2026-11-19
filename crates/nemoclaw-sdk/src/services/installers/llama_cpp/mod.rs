@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Managed GGUF service using the existing inference container/storage lifecycle.
-use super::container::base;
+use super::inference::{self, address};
 mod config;
 pub use super::container::ServiceContainer;
 use crate::Error;
@@ -13,7 +13,7 @@ pub const RUNTIME_DATA_SOURCE: &str = "llama_cpp_runtime";
 use crate::{
     compile::Generations,
     config::{ConfigError, Document},
-    managed::{Process, Spec},
+    managed::Spec,
     services::contract::{InstallPlan, Installer, RemovePlan},
 };
 
@@ -48,10 +48,6 @@ pub(crate) fn service_address(name: &str) -> String {
     address(SERVICE_KIND, name)
 }
 
-fn address(kind: &str, name: &str) -> String {
-    format!("{}.inference_{name}", crate::compile::resource_type(kind))
-}
-
 fn specification(
     document: &Document,
     name: &str,
@@ -67,39 +63,19 @@ fn specification(
             "bearer-v1".into(),
         );
     }
-    let placed = crate::services::placement::ResolvedPlacement::resolve(
-        service.published_placement()?,
-        &document.spec.gateway,
-        i64::from(service.serving.port),
-    )?;
-    let architecture = service.architecture()?.to_owned();
-    let process = base::managed_process(
-        nemoclaw_runtime::RuntimeSpec::LlamaCpp(Box::new(runtime_service)),
-        service.container.as_ref(),
-        Process {
-            engine: placed.engine.clone(),
-            image: service.image.clone(),
-            network_cidr: placed.network_cidr.clone(),
-            create_network: placed.explicit,
-            architecture,
-            image_labels,
-
-            bind_address: placed.bind_address,
-            port: service.serving.port,
-            ..Process::default()
-        },
-    )?;
-    base::specification(
+    inference::specification(
         document,
+        name,
         generations,
-        SERVICE_KIND,
-        format!("{}-inference-{name}", document.workspace()),
-        if placed.explicit {
-            Default::default()
-        } else {
-            document.spec.gateway.managed()?.runtime_settings()
+        inference::Runtime {
+            contract: nemoclaw_runtime::RuntimeSpec::LlamaCpp(Box::new(runtime_service)),
+            container: service.container.as_ref(),
+            image: &service.image,
+            placement: service.published_placement()?,
+            architecture: service.architecture()?.into(),
+            labels: image_labels,
+            port: service.serving.port,
         },
-        process,
     )
 }
 
@@ -111,33 +87,13 @@ impl Installer for Service {
         generations: &Generations,
     ) -> Result<InstallPlan, Error> {
         let spec = specification(document, name, self, generations)?;
-        let mut preparation = InstallPlan::default();
-        if self.authentication.is_some() {
-            let credentials = address(STORAGE_KIND, &format!("{name}_auth"));
-            preparation.targets.push(base::storage_target(
-                &spec,
-                STORAGE_KIND,
-                credentials.clone(),
-                format!("{}-auth", spec.name),
-            )?);
-            preparation
-                .dependencies
-                .insert(address(SERVICE_KIND, name), vec![credentials]);
-        }
-        if document.spec.gateway.as_managed().is_some() && self.placement.is_none() {
-            preparation
-                .dependencies
-                .entry(address(SERVICE_KIND, name))
-                .or_default()
-                .push("openshell_podman_gateway.runtime".into());
-        }
-        base::install(
+        inference::install(
             spec,
-            &format!("inference_{name}"),
-            STORAGE_KIND,
+            name,
+            self.authentication.is_some(),
+            document.spec.gateway.as_managed().is_some() && self.placement.is_none(),
             self.image_pull_policy,
             Default::default(),
-            preparation,
         )
     }
 
@@ -147,17 +103,7 @@ impl Installer for Service {
         name: &str,
         _generations: &Generations,
     ) -> Result<RemovePlan, Error> {
-        let mut plan = RemovePlan {
-            retained: vec![crate::docker_compute::address(&address(STORAGE_KIND, name))],
-            required_storage: Vec::new(),
-        };
-        if self.authentication.is_some() {
-            let storage = address(STORAGE_KIND, &format!("{name}_auth"));
-            plan.retained.insert(0, storage.clone());
-            plan.required_storage
-                .push((address(SERVICE_KIND, name), storage));
-        }
-        Ok(plan)
+        Ok(inference::remove(name, self.authentication.is_some()))
     }
 }
 
@@ -172,19 +118,13 @@ impl Service {
             return Ok(None);
         }
         let spec = specification(document, name, self, generations)?;
-        Ok(Some(crate::services::authentication::source_json(
-            &crate::services::authentication::Source::ManagedService {
-                storage: base::storage(&spec, format!("{}-auth", spec.name)),
-                container: spec.name.clone(),
-                endpoint: {
-                    let process = spec
-                        .process
-                        .as_ref()
-                        .ok_or(Error::State("missing service process"))?;
-                    format!("http://{}:{}/v1", process.bind_address, process.port)
-                },
-            },
-        )?))
+        inference::credential_source(&spec, {
+            let process = spec
+                .process
+                .as_ref()
+                .ok_or(Error::State("missing service process"))?;
+            format!("http://{}:{}/v1", process.bind_address, process.port)
+        })
     }
 }
 

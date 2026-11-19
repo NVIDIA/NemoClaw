@@ -68,43 +68,10 @@ impl LlamaCppService {
     /// Admission budget, not a hard allocator limit. llama.cpp's context/KV settings govern actual allocations.
     pub fn check_memory(&self, c: &Capacity, starting: bool) -> Result<(), Error> {
         self.validate()?;
-        c.require_one_gpu()?;
-        self.hardware.check_compatibility(c)?;
-        let reserve = self.memory.host_reserve_gib * GIB;
-        match self.memory_architecture() {
-            MemoryArchitecture::Dedicated => {
-                let gpu = c.selected_gpus()?[0]
-                    .memory
-                    .as_ref()
-                    .ok_or(Error::State("dedicated GPU memory is unobservable"))?;
-                at_least("GPU total memory (bytes)", self.gpu_bytes(), gpu.total)?;
-                at_least("host total memory (bytes)", reserve, c.total)?;
-                if starting {
-                    at_least("GPU free memory (bytes)", self.gpu_bytes(), gpu.free)?;
-                    at_least(
-                        "host available memory (bytes)",
-                        reserve + 20 * GIB,
-                        c.available,
-                    )?;
-                }
-            }
-            MemoryArchitecture::Unified => {
-                at_least(
-                    "host total memory (bytes)",
-                    self.gpu_bytes() + reserve,
-                    c.total,
-                )?;
-                if starting {
-                    at_least(
-                        "host available memory (bytes)",
-                        self.gpu_bytes() + 20 * GIB,
-                        c.available,
-                    )?;
-                }
-            }
-        }
-        Ok(())
+        self.memory
+            .check(&self.hardware, self.memory_architecture(), c, starting)
     }
+
     pub fn check_capacity(
         &self,
         c: &Capacity,

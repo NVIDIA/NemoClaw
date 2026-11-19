@@ -51,17 +51,17 @@ data vllm_llama_cpp_runtime (version 0)
   block memory: optional
     > Declared admission budget and resident host memory protection.
     consecutive_samples: number, optional
-      > Consecutive low host memory samples that latch protection and stop serving.
+      > Consecutive low-memory observations required to stop native inference.
     free_gate_gib: number, optional
-      > Available-memory gate in GiB; must be at least minAvailableGiB.
+      > Available-memory gate for the free-memory threshold, in GiB.
     gpu_memory_gib: number, optional
-      > GPU admission budget in GiB, including weights, KV and runtime overhead; not a hard allocator limit.
+      > GPU budget in GiB; native allocation semantics depend on the backend.
     host_reserve_gib: number, optional
-      > Host reserve in GiB; dedicated startup also requires 20 GiB of available headroom.
+      > Host memory reserved outside the native model allocation, in GiB.
     min_available_gib: number, optional
-      > Available host memory threshold in GiB for resident pressure protection.
+      > Stop threshold for available host memory, in GiB.
     min_free_gib: number, optional
-      > Free host memory threshold in GiB, applied when available memory is below freeGateGiB.
+      > Stop threshold for free host memory, in GiB.
   block model: single
     > One immutable public GGUF artifact; no model-source credential is resolved.
     file: string, required
@@ -71,7 +71,7 @@ data vllm_llama_cpp_runtime (version 0)
     revision: string, required
       > Exact lowercase 40-character repository commit; branches and tags are rejected.
     sha256: string, required
-      > Lowercase SHA-256 of the complete GGUF, checked on download and cached startup.
+      > Lowercase SHA-256 of the complete GGUF, checked on acquisition; warm starts observe verified size and modification time.
     size_bytes: number, required
       > Exact nonzero GGUF byte length, used to bound acquisition and disk requirements.
   block serving: optional
@@ -124,7 +124,7 @@ data vllm_nim_runtime (version 0)
     free_gate_gib: number, optional
       > Available-memory gate for the free-memory threshold, in GiB.
     gpu_memory_gib: number, optional
-      > Native vLLM allocation budget, converted to utilization of the observed GPU.
+      > GPU budget in GiB; native allocation semantics depend on the backend.
     host_reserve_gib: number, optional
       > Host memory reserved outside the native model allocation, in GiB.
     min_available_gib: number, optional

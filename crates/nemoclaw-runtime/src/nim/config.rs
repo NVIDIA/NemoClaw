@@ -80,43 +80,5 @@ impl Default for NimServing {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-/// Native vLLM GPU allocation budget and continuous host memory thresholds.
-pub struct NimMemory {
-    #[serde(rename = "gpuMemoryGiB")]
-    #[schemars(range(min = 4, max = 512))]
-    /// Native vLLM allocation budget, converted to utilization of the observed GPU.
-    pub gpu_memory_gib: u64,
-    #[serde(rename = "hostReserveGiB")]
-    #[schemars(range(min = 28, max = 64))]
-    /// Host memory reserved outside the native model allocation, in GiB.
-    pub host_reserve_gib: u64,
-    #[serde(rename = "minAvailableGiB")]
-    #[schemars(range(min = 6, max = 16))]
-    /// Stop threshold for available host memory, in GiB.
-    pub min_available_gib: u64,
-    #[serde(rename = "minFreeGiB")]
-    #[schemars(range(min = 2, max = 8))]
-    /// Stop threshold for free host memory, in GiB.
-    pub min_free_gib: u64,
-    #[serde(rename = "freeGateGiB")]
-    #[schemars(range(min = 6, max = 24))]
-    /// Available-memory gate for the free-memory threshold, in GiB.
-    pub free_gate_gib: u64,
-    #[schemars(range(min = 1, max = 5))]
-    /// Consecutive low-memory observations required to stop native inference.
-    pub consecutive_samples: u64,
-}
-impl Default for NimMemory {
-    fn default() -> Self {
-        Self {
-            gpu_memory_gib: 40,
-            host_reserve_gib: 32,
-            min_available_gib: 8,
-            min_free_gib: 3,
-            free_gate_gib: 12,
-            consecutive_samples: 5,
-        }
-    }
-}
+/// Native NIM memory settings; the default GPU budget is 40 GiB.
+pub type NimMemory = crate::hardware::SingleGpuMemory<40>;

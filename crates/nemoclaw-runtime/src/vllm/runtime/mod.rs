@@ -9,14 +9,13 @@ mod process;
 mod recipe;
 mod routes;
 
-use crate::execution::supervisor::{self, Monitors};
+use crate::execution::supervisor;
 use crate::{
     CancellationToken, Error,
     vllm::{Service, arguments},
 };
 use process_wrap::tokio::{KillOnDrop, ProcessGroup};
 use std::{
-    fs,
     net::{Ipv4Addr, SocketAddr},
     path::Path,
     time::Duration,
@@ -29,18 +28,11 @@ pub(crate) async fn run(
     cancel: &CancellationToken,
     trip: &CancellationToken,
 ) -> Result<(), Error> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .open(Path::new(ROOT).join("runtime.lock"))
-        .map_err(|_| Error::State("cannot open persistent runtime lock"))?;
-    lock.try_lock().map_err(|_| {
-        Error::Conflict("persistent storage already has a writer or locking failed")
-    })?;
+    let _writer = crate::execution::lock(
+        &Path::new(ROOT).join("runtime.lock"),
+        "cannot open persistent runtime lock",
+        "persistent storage already has a writer or locking failed",
+    )?;
     crate::execution::begin()?;
     // A platform may supply the key; otherwise the runtime generates one in its
     // credential storage, which keeps its own writer lock even if the model
@@ -52,18 +44,11 @@ pub(crate) async fn run(
         ));
     }
     let _credentials_lock = if spec.authentication.is_some() && supplied.is_none() {
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .mode(0o600)
-            .open("/credentials/runtime.lock")
-            .map_err(|_| Error::State("cannot open credential writer lock"))?;
-        file.try_lock().map_err(|_| {
-            Error::Conflict("credential storage already has a writer or locking failed")
-        })?;
-        Some(file)
+        Some(crate::execution::lock(
+            Path::new("/credentials/runtime.lock"),
+            "cannot open credential writer lock",
+            "credential storage already has a writer or locking failed",
+        )?)
     } else {
         None
     };
@@ -124,41 +109,26 @@ async fn run_owned(
         supervisor::terminate(child.as_mut()).await;
         return Err(error);
     }
-    let (samples_tx, samples) = tokio::sync::mpsc::channel(1);
-    let sampler = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-        loop {
-            interval.tick().await;
-            if samples_tx.send(hardware::memory()).await.is_err() {
-                break;
-            }
-        }
-    });
-    let (ready_tx, ready) = tokio::sync::mpsc::channel(1);
-    let health = tokio::spawn(async move { process::wait_ready(readiness, ready_tx).await });
     let policy = supervisor::Policy {
         startup_timeout: Duration::from_secs(spec.serving.startup_timeout_seconds as u64),
         protection: crate::hardware::ProtectionPolicy::for_service(spec)?,
     };
-    let monitors = Monitors {
-        samples,
-        ready,
-        trip: trip.clone(),
-        report: &report,
-    };
-    let result = match filter {
-        Some((listener, vllm)) => {
-            let filter = tokio::spawn(routes::serve(
-                listener,
-                vllm,
-                routes::HEADER_TIMEOUT,
-                routes::connections(),
-            ));
-            routes::supervise(policy, child.as_mut(), monitors, cancel, filter).await
-        }
-        None => supervisor::supervise(policy, child.as_mut(), monitors, cancel).await,
-    };
-    sampler.abort();
-    health.abort();
-    output.explain(result).await
+    let filter = filter.map(|(listener, vllm)| {
+        tokio::spawn(routes::serve(
+            listener,
+            vllm,
+            routes::HEADER_TIMEOUT,
+            routes::connections(),
+        ))
+    });
+    crate::execution::serve(
+        child.as_mut(),
+        policy,
+        output,
+        move |ready| process::wait_ready(readiness, ready),
+        filter,
+        cancel,
+        trip,
+    )
+    .await
 }

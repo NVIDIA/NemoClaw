@@ -887,7 +887,7 @@
           "type": "string"
         },
         "sha256": {
-          "description": "Lowercase SHA-256 of the complete GGUF, checked on download and cached startup.",
+          "description": "Lowercase SHA-256 of the complete GGUF, checked on acquisition; warm starts observe verified size and modification time.",
           "pattern": "^[a-f0-9]{64}$",
           "type": "string"
         },
@@ -1625,55 +1625,6 @@
       },
       "type": "object"
     },
-    "LlamaCppMemory": {
-      "additionalProperties": false,
-      "description": "Admission budget and host pressure protection. GPU budget does not limit llama.cpp's allocator.",
-      "properties": {
-        "consecutiveSamples": {
-          "description": "Consecutive low host memory samples that latch protection and stop serving.",
-          "format": "uint64",
-          "maximum": 5,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "freeGateGiB": {
-          "description": "Available-memory gate in GiB; must be at least minAvailableGiB.",
-          "format": "uint64",
-          "maximum": 24,
-          "minimum": 6,
-          "type": "integer"
-        },
-        "gpuMemoryGiB": {
-          "description": "GPU admission budget in GiB, including weights, KV and runtime overhead; not a hard allocator limit.",
-          "format": "uint64",
-          "maximum": 512,
-          "minimum": 4,
-          "type": "integer"
-        },
-        "hostReserveGiB": {
-          "description": "Host reserve in GiB; dedicated startup also requires 20 GiB of available headroom.",
-          "format": "uint64",
-          "maximum": 64,
-          "minimum": 28,
-          "type": "integer"
-        },
-        "minAvailableGiB": {
-          "description": "Available host memory threshold in GiB for resident pressure protection.",
-          "format": "uint64",
-          "maximum": 16,
-          "minimum": 6,
-          "type": "integer"
-        },
-        "minFreeGiB": {
-          "description": "Free host memory threshold in GiB, applied when available memory is below freeGateGiB.",
-          "format": "uint64",
-          "maximum": 8,
-          "minimum": 2,
-          "type": "integer"
-        }
-      },
-      "type": "object"
-    },
     "LlamaCppServing": {
       "additionalProperties": false,
       "description": "Explicit context and batching; full CUDA offload, one slot and f16 KV are fixed.",
@@ -2231,55 +2182,6 @@
           "type": "string"
         }
       ]
-    },
-    "NimMemory": {
-      "additionalProperties": false,
-      "description": "Native vLLM GPU allocation budget and continuous host memory thresholds.",
-      "properties": {
-        "consecutiveSamples": {
-          "description": "Consecutive low-memory observations required to stop native inference.",
-          "format": "uint64",
-          "maximum": 5,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "freeGateGiB": {
-          "description": "Available-memory gate for the free-memory threshold, in GiB.",
-          "format": "uint64",
-          "maximum": 24,
-          "minimum": 6,
-          "type": "integer"
-        },
-        "gpuMemoryGiB": {
-          "description": "Native vLLM allocation budget, converted to utilization of the observed GPU.",
-          "format": "uint64",
-          "maximum": 512,
-          "minimum": 4,
-          "type": "integer"
-        },
-        "hostReserveGiB": {
-          "description": "Host memory reserved outside the native model allocation, in GiB.",
-          "format": "uint64",
-          "maximum": 64,
-          "minimum": 28,
-          "type": "integer"
-        },
-        "minAvailableGiB": {
-          "description": "Stop threshold for available host memory, in GiB.",
-          "format": "uint64",
-          "maximum": 16,
-          "minimum": 6,
-          "type": "integer"
-        },
-        "minFreeGiB": {
-          "description": "Stop threshold for free host memory, in GiB.",
-          "format": "uint64",
-          "maximum": 8,
-          "minimum": 2,
-          "type": "integer"
-        }
-      },
-      "type": "object"
     },
     "NimModel": {
       "additionalProperties": false,
@@ -4041,7 +3943,7 @@
               "type": "string"
             },
             "memory": {
-              "$ref": "#/$defs/LlamaCppMemory",
+              "$ref": "#/$defs/SingleGpuMemory32",
               "description": "Declared admission budget and resident host memory protection."
             },
             "model": {
@@ -4149,7 +4051,7 @@
               "type": "string"
             },
             "memory": {
-              "$ref": "#/$defs/NimMemory",
+              "$ref": "#/$defs/SingleGpuMemory40",
               "description": "GPU budget and host memory protection."
             },
             "model": {
@@ -4747,6 +4649,104 @@
       "required": [
         "modelName"
       ],
+      "type": "object"
+    },
+    "SingleGpuMemory32": {
+      "additionalProperties": false,
+      "description": "Single-GPU admission budget and continuous host memory thresholds.",
+      "properties": {
+        "consecutiveSamples": {
+          "description": "Consecutive low-memory observations required to stop native inference.",
+          "format": "uint64",
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "freeGateGiB": {
+          "description": "Available-memory gate for the free-memory threshold, in GiB.",
+          "format": "uint64",
+          "maximum": 24,
+          "minimum": 6,
+          "type": "integer"
+        },
+        "gpuMemoryGiB": {
+          "description": "GPU budget in GiB; native allocation semantics depend on the backend.",
+          "format": "uint64",
+          "maximum": 512,
+          "minimum": 4,
+          "type": "integer"
+        },
+        "hostReserveGiB": {
+          "description": "Host memory reserved outside the native model allocation, in GiB.",
+          "format": "uint64",
+          "maximum": 64,
+          "minimum": 28,
+          "type": "integer"
+        },
+        "minAvailableGiB": {
+          "description": "Stop threshold for available host memory, in GiB.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 6,
+          "type": "integer"
+        },
+        "minFreeGiB": {
+          "description": "Stop threshold for free host memory, in GiB.",
+          "format": "uint64",
+          "maximum": 8,
+          "minimum": 2,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SingleGpuMemory40": {
+      "additionalProperties": false,
+      "description": "Single-GPU admission budget and continuous host memory thresholds.",
+      "properties": {
+        "consecutiveSamples": {
+          "description": "Consecutive low-memory observations required to stop native inference.",
+          "format": "uint64",
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "freeGateGiB": {
+          "description": "Available-memory gate for the free-memory threshold, in GiB.",
+          "format": "uint64",
+          "maximum": 24,
+          "minimum": 6,
+          "type": "integer"
+        },
+        "gpuMemoryGiB": {
+          "description": "GPU budget in GiB; native allocation semantics depend on the backend.",
+          "format": "uint64",
+          "maximum": 512,
+          "minimum": 4,
+          "type": "integer"
+        },
+        "hostReserveGiB": {
+          "description": "Host memory reserved outside the native model allocation, in GiB.",
+          "format": "uint64",
+          "maximum": 64,
+          "minimum": 28,
+          "type": "integer"
+        },
+        "minAvailableGiB": {
+          "description": "Stop threshold for available host memory, in GiB.",
+          "format": "uint64",
+          "maximum": 16,
+          "minimum": 6,
+          "type": "integer"
+        },
+        "minFreeGiB": {
+          "description": "Stop threshold for free host memory, in GiB.",
+          "format": "uint64",
+          "maximum": 8,
+          "minimum": 2,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "Spec": {

@@ -12,8 +12,8 @@ override_resource {
   values = { id = "fixture-gateway-container" }
 }
 override_resource {
-  target = docker_container.inference_service_inference_muse
-  values = { id = "fixture-muse-container" }
+  target = docker_container.inference_service_inference_qwen
+  values = { id = "fixture-qwen-container" }
 }
 run "fixtures" {
   command = plan
@@ -33,22 +33,36 @@ run "verify" {
   }
   assert {
     condition = (
-      docker_container.inference_service_inference_muse.env == toset(["NEMOCLAW_RUNTIME_SPEC=${data.vllm_llama_cpp_runtime.inference_service_inference_muse.spec}"])
-      && toset([for mount in docker_container.inference_service_inference_muse.mounts : "${mount.source}:${mount.target}"]) == toset([
-        "${docker_volume.inference_storage_inference_muse.name}:/data",
-        "${vllm_credential_storage.inference_muse_auth.name}:/credentials"
+      docker_container.inference_service_inference_qwen.env == toset(["NEMOCLAW_RUNTIME_SPEC=${data.vllm_llama_cpp_runtime.inference_service_inference_qwen.spec}"])
+      && toset([for mount in docker_container.inference_service_inference_qwen.mounts : "${mount.source}:${mount.target}"]) == toset([
+        "${docker_volume.inference_storage_inference_qwen.name}:/data",
+        "${vllm_credential_storage.inference_qwen_auth.name}:/credentials"
       ])
-      && data.vllm_readiness.inference_service_inference_muse.ready
+      && data.vllm_readiness.inference_service_inference_qwen.ready
     )
     error_message = "llama.cpp must run its typed contract with retained model and credential storage."
   }
   assert {
     condition = (
       one(values(module.observed.registrations)).config["OPENAI_BASE_URL"] == "http://172.30.121.1:18898/v1"
-      && one(values(module.observed.agents)).start.configuration.models.primary.model == "muse-glimmer"
-      && contains(values(one(values(module.observed.registrations)).credentials), "file:${module.fixtures.services.muse.name}:/credentials/inference-key")
+      && one(values(module.observed.agents)).start.configuration.models.primary.model == "qwen3-4b"
+      && contains(values(one(values(module.observed.registrations)).credentials), "file:${module.fixtures.services.qwen.name}:/credentials/inference-key")
     )
     error_message = "The agent route must use the managed alias and its runtime credential reference."
+  }
+}
+run "unchanged_apply" {
+  module {
+    source = "./cases/docker-openclaw-llama-cpp"
+  }
+  variables { baseline = run.verify.gateway }
+  assert {
+    condition = (
+      module.observed.openshell.effects == var.baseline.effects
+      && module.observed.openshell.fabric_starts == var.baseline.fabric_starts
+      && module.observed.openshell.sandboxes == var.baseline.sandboxes
+    )
+    error_message = "Unchanged llama.cpp apply must preserve gateway effects, agent starts, and sandbox bindings."
   }
 }
 run "teardown" {

@@ -26,6 +26,8 @@ async fn prepare_from(
     }
     let directory = crate::snapshot::directory(root, &format!("gguf/{}", model.manifest().key()))?;
     let path = directory.join("model.gguf");
+    let mut cached = model.manifest();
+    cached.files[0].name = "model.gguf".into();
     match std::fs::symlink_metadata(&path) {
         Ok(metadata) => {
             if !metadata.is_file() || metadata.len() != model.size_bytes {
@@ -33,6 +35,11 @@ async fn prepare_from(
                     "cached GGUF changed; retained for inspection",
                 ));
             }
+            if crate::snapshot::ModelManifest::read(&directory)?.is_some() {
+                crate::snapshot::observe(&directory, &cached)?;
+                return Ok(path);
+            }
+            // Upgrade retained caches once; new acquisitions are verified while streaming.
             let owned = path.clone();
             let hash = tokio::select! {
                 () = cancel.cancelled() => return Err(Error::Cancelled),
@@ -43,46 +50,19 @@ async fn prepare_from(
                     "cached GGUF checksum differs; retained for inspection",
                 ));
             }
+            crate::snapshot::record(&directory, &cached)?;
             return Ok(path);
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return Err(Error::State("GGUF cache is unobservable")),
     }
     let work = async {
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .no_gzip()
-            .no_brotli()
-            .no_zstd()
-            .no_deflate()
-            .connect_timeout(std::time::Duration::from_secs(60))
-            .read_timeout(std::time::Duration::from_secs(60))
-            .retry(reqwest::retry::never())
-            .redirect(reqwest::redirect::Policy::custom(|a| {
-                if a.previous().len() >= 10 || a.url().scheme() != "https" {
-                    a.error("GGUF redirect rejected")
-                } else {
-                    a.follow()
-                }
-            }))
-            .build()
-            .map_err(|_| Error::State("cannot initialize GGUF transport"))?;
-        let mut url =
-            reqwest::Url::parse(origin).map_err(|_| Error::State("invalid GGUF origin"))?;
-        url.path_segments_mut()
-            .map_err(|_| Error::State("invalid GGUF origin"))?
-            .extend(model.repository.split('/'))
-            .extend(["resolve", &model.revision])
-            .extend(model.file.split('/'));
-        let mut response = client
-            .get(url)
-            .send()
-            .await
-            .map_err(|_| Error::State("GGUF acquisition failed"))?;
-        if response.status() != reqwest::StatusCode::OK
-            || response
-                .content_length()
-                .is_some_and(|n| n != model.size_bytes)
+        let mut response = crate::snapshot::Client::at(origin)?
+            .download(&model.repository, &model.revision, &model.file)
+            .await?;
+        if response
+            .content_length()
+            .is_some_and(|n| n != model.size_bytes)
         {
             return Err(Error::State("GGUF response rejected or length differs"));
         }
@@ -130,6 +110,7 @@ async fn prepare_from(
         std::fs::File::open(&directory)
             .and_then(|d| d.sync_all())
             .map_err(|_| Error::State("cannot sync GGUF directory"))?;
+        crate::snapshot::record(&directory, &cached)?;
         Ok(path)
     };
     tokio::select! {
@@ -196,6 +177,23 @@ mod tests {
             1,
             "tampered cache is retained for inspection"
         );
+    }
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn warm_start_observes_verified_metadata_without_reading_weights() {
+        use std::os::unix::fs::PermissionsExt;
+        let server =
+            crate::http_fixture::Fixture::start_tcp(|_| Some((200, b"GGUF".to_vec()))).await;
+        let root = tempfile::tempdir().unwrap();
+        let model = model(b"GGUF");
+        let cancel = CancellationToken::new();
+        let path = prepare_from(root.path(), &model, &server.endpoint, &cancel)
+            .await
+            .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let observed = prepare_from(root.path(), &model, &server.endpoint, &cancel).await;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(observed.unwrap(), path);
     }
     #[tokio::test]
     async fn wrong_hash_or_length_never_commits_and_retry_can_succeed() {

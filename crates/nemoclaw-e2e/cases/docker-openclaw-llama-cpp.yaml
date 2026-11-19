@@ -15,34 +15,33 @@ spec:
     engine: unix:///var/run/docker.sock
     networkCIDR: 172.30.121.0/24
   services:
-    muse:
+    qwen:
       kind: llamaCpp
       hardware:
         architecture: amd64
         minComputeCapability: 89
         minDriverMajor: 580
-        minGpuMemoryBytes: 34359738368
+        minGpuMemoryBytes: 12884901888
       image: nc-prototype-llama-cpp@sha256:0000000000000000000000000000000000000000000000000000000000000000
       authentication: bearer
       model:
-        repository: meta-models/Muse-Glimmer-30B-GGUF
-        revision: 43c7eadd41352a299ea8e0a36b3157978dd63596
-        file: Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf
-        sha256: 4cc57c0f51040a226e5a72cc47b7613f7772950e460a665f7083de89f183f60e
-        sizeBytes: 16756683904
+        repository: Qwen/Qwen3-4B-GGUF
+        revision: bc640142c66e1fdd12af0bd68f40445458f3869b
+        file: Qwen3-4B-Q4_K_M.gguf
+        sha256: 7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5
+        sizeBytes: 2497280256
       serving:
-        modelName: muse-glimmer
+        modelName: qwen3-4b
         port: 18898
         contextTokens: 32768
-        reasoningStrength: low
-        startupTimeoutSeconds: 1800
+        startupTimeoutSeconds: 600
       memory:
-        gpuMemoryGiB: 32
-        hostReserveGiB: 32
+        gpuMemoryGiB: 12
+        hostReserveGiB: 28
   inferenceProviders:
-    muse:
+    qwen:
       provider: openai
-      serviceRef: muse
+      serviceRef: qwen
   sandboxes:
     assistant:
       image:
@@ -56,7 +55,7 @@ spec:
         inference:
           routes:
             - name: primary
-              providerRef: muse
+              providerRef: qwen
               overrides:
-                model: muse-glimmer
-                maxTokens: 16384
+                model: qwen3-4b
+                maxTokens: 2048

@@ -29,7 +29,7 @@ pub struct GgufModel {
     pub revision: String,
     /// Relative .gguf path at that commit; traversal, backslashes and reserved metadata paths are rejected.
     pub file: String,
-    /// Lowercase SHA-256 of the complete GGUF, checked on download and cached startup.
+    /// Lowercase SHA-256 of the complete GGUF, checked on acquisition; warm starts observe verified size and modification time.
     pub sha256: String,
     /// Exact nonzero GGUF byte length, used to bound acquisition and disk requirements.
     pub size_bytes: u64,
@@ -80,37 +80,5 @@ impl Default for LlamaCppServing {
         }
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-/// Admission budget and host pressure protection. GPU budget does not limit llama.cpp's allocator.
-pub struct LlamaCppMemory {
-    #[serde(rename = "gpuMemoryGiB")]
-    /// GPU admission budget in GiB, including weights, KV and runtime overhead; not a hard allocator limit.
-    pub gpu_memory_gib: u64,
-    #[serde(rename = "hostReserveGiB")]
-    /// Host reserve in GiB; dedicated startup also requires 20 GiB of available headroom.
-    pub host_reserve_gib: u64,
-    #[serde(rename = "minAvailableGiB")]
-    /// Available host memory threshold in GiB for resident pressure protection.
-    pub min_available_gib: u64,
-    #[serde(rename = "minFreeGiB")]
-    /// Free host memory threshold in GiB, applied when available memory is below freeGateGiB.
-    pub min_free_gib: u64,
-    #[serde(rename = "freeGateGiB")]
-    /// Available-memory gate in GiB; must be at least minAvailableGiB.
-    pub free_gate_gib: u64,
-    /// Consecutive low host memory samples that latch protection and stop serving.
-    pub consecutive_samples: u64,
-}
-impl Default for LlamaCppMemory {
-    fn default() -> Self {
-        Self {
-            gpu_memory_gib: 32,
-            host_reserve_gib: 32,
-            min_available_gib: 8,
-            min_free_gib: 3,
-            free_gate_gib: 12,
-            consecutive_samples: 5,
-        }
-    }
-}
+/// llama.cpp admission settings; the default GPU budget is 32 GiB.
+pub type LlamaCppMemory = crate::hardware::SingleGpuMemory<32>;

@@ -464,7 +464,7 @@ Paths:
 | `file` | string | Yes | — | Relative .gguf path at that commit; traversal, backslashes and reserved metadata paths are rejected. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._/-]*\.gguf$`; minimum characters 6; maximum characters 512. |
 | `repository` | string | Yes | — | Public Hugging Face owner/repository containing the GGUF. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$`; maximum characters 200. |
 | `revision` | string | Yes | — | Exact lowercase 40-character repository commit; branches and tags are rejected. Constraints: pattern `^[a-f0-9]{40}$`. |
-| `sha256` | string | Yes | — | Lowercase SHA-256 of the complete GGUF, checked on download and cached startup. Constraints: pattern `^[a-f0-9]{64}$`. |
+| `sha256` | string | Yes | — | Lowercase SHA-256 of the complete GGUF, checked on acquisition; warm starts observe verified size and modification time. Constraints: pattern `^[a-f0-9]{64}$`. |
 | `sizeBytes` | integer | Yes | — | Exact nonzero GGUF byte length, used to bound acquisition and disk requirements. Constraints: minimum 1; maximum 1099511627776. |
 
 ## Grant
@@ -732,25 +732,6 @@ Paths:
 | `route` | [ExposureRoute](#exposureroute) | No | — | The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's host is a DNS name, since clients send no SNI host name for an IP address, and its port is the one the router serves. Requires `runtime.provider: openshift`. |
 | `service` | [ExposureService](#exposureservice) | No | — | The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged. |
 
-## LlamaCppMemory
-
-Admission budget and host pressure protection. GPU budget does not limit llama.cpp's allocator.
-
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
-
-Paths:
-
-- `spec.services.{key}.memory`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `consecutiveSamples` | integer | No | — | Consecutive low host memory samples that latch protection and stop serving. Constraints: minimum 1; maximum 5. |
-| `freeGateGiB` | integer | No | — | Available-memory gate in GiB; must be at least minAvailableGiB. Constraints: minimum 6; maximum 24. |
-| `gpuMemoryGiB` | integer | No | — | GPU admission budget in GiB, including weights, KV and runtime overhead; not a hard allocator limit. Constraints: minimum 4; maximum 512. |
-| `hostReserveGiB` | integer | No | — | Host reserve in GiB; dedicated startup also requires 20 GiB of available headroom. Constraints: minimum 28; maximum 64. |
-| `minAvailableGiB` | integer | No | — | Available host memory threshold in GiB for resident pressure protection. Constraints: minimum 6; maximum 16. |
-| `minFreeGiB` | integer | No | — | Free host memory threshold in GiB, applied when available memory is below freeGateGiB. Constraints: minimum 2; maximum 8. |
-
 ## LlamaCppServing
 
 Explicit context and batching; full CUDA offload, one slot and f16 KV are fixed.
@@ -905,25 +886,6 @@ Paths:
 Accepted input: string.
 
 Constraints: `"vllm"`.
-
-## NimMemory
-
-Native vLLM GPU allocation budget and continuous host memory thresholds.
-
-Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
-
-Paths:
-
-- `spec.services.{key}.memory`
-
-| Field | Input type | Required | Default | Description and constraints |
-|---|---|---|---|---|
-| `consecutiveSamples` | integer | No | — | Consecutive low-memory observations required to stop native inference. Constraints: minimum 1; maximum 5. |
-| `freeGateGiB` | integer | No | — | Available-memory gate for the free-memory threshold, in GiB. Constraints: minimum 6; maximum 24. |
-| `gpuMemoryGiB` | integer | No | — | Native vLLM allocation budget, converted to utilization of the observed GPU. Constraints: minimum 4; maximum 512. |
-| `hostReserveGiB` | integer | No | — | Host memory reserved outside the native model allocation, in GiB. Constraints: minimum 28; maximum 64. |
-| `minAvailableGiB` | integer | No | — | Stop threshold for available host memory, in GiB. Constraints: minimum 6; maximum 16. |
-| `minFreeGiB` | integer | No | — | Stop threshold for free host memory, in GiB. Constraints: minimum 2; maximum 8. |
 
 ## NimModel
 
@@ -1586,7 +1548,7 @@ Managed llama.cpp runtime and immutable GGUF.
 | `image` | string | Yes | — | Immutable image containing llama-server and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"llamaCpp"`. |
-| `memory` | [LlamaCppMemory](#llamacppmemory) | No | — | Declared admission budget and resident host memory protection. |
+| `memory` | [SingleGpuMemory32](#singlegpumemory32) | No | — | Declared admission budget and resident host memory protection. |
 | `model` | [GgufModel](#ggufmodel) | Yes | — | One immutable public GGUF artifact; no model-source credential is resolved. |
 | `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
 | `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
@@ -1608,7 +1570,7 @@ Native vLLM-backed NIM behind a private Docker network and route filter.
 | `image` | string | Yes | — | Digest-pinned native NIM image containing the NemoClaw supervisor and nginx. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) or null | No | — | IfNotPresent acquires a missing image; Never requires a locally installed image. Constraints: `"IfNotPresent"` or `"Never"`; . |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"nim"`. |
-| `memory` | [NimMemory](#nimmemory) | No | — | GPU budget and host memory protection. |
+| `memory` | [SingleGpuMemory40](#singlegpumemory40) | No | — | GPU budget and host memory protection. |
 | `model` | [NimModel](#nimmodel) | Yes | — | Exact native model and embedded profile. |
 | `ngcCredential` | [NgcCredential](#ngccredential) | Yes | — | Operator-owned NGC credential file on the selected Docker host, mounted read-only for native startup. |
 | `placement` | [ServicePlacement](#serviceplacement) or null | No | — | Explicit SSH Docker placement; pair with publication. Omission inherits a managed local Docker gateway. |
@@ -1781,6 +1743,44 @@ Paths:
 | `reasoningParser` | string | No | `""` | Native vLLM reasoning parser supplied by the runtime image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
 | `tensorParallelSize` | integer | No | — | vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts. Constraints: minimum 1; maximum 16. Omission selects vLLM's default of 1. |
 | `toolParser` | string | No | `""` | Native vLLM tool parser supplied by the runtime image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
+
+## SingleGpuMemory32
+
+Single-GPU admission budget and continuous host memory thresholds.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.memory`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `consecutiveSamples` | integer | No | — | Consecutive low-memory observations required to stop native inference. Constraints: minimum 1; maximum 5. |
+| `freeGateGiB` | integer | No | — | Available-memory gate for the free-memory threshold, in GiB. Constraints: minimum 6; maximum 24. |
+| `gpuMemoryGiB` | integer | No | — | GPU budget in GiB; native allocation semantics depend on the backend. Constraints: minimum 4; maximum 512. |
+| `hostReserveGiB` | integer | No | — | Host memory reserved outside the native model allocation, in GiB. Constraints: minimum 28; maximum 64. |
+| `minAvailableGiB` | integer | No | — | Stop threshold for available host memory, in GiB. Constraints: minimum 6; maximum 16. |
+| `minFreeGiB` | integer | No | — | Stop threshold for free host memory, in GiB. Constraints: minimum 2; maximum 8. |
+
+## SingleGpuMemory40
+
+Single-GPU admission budget and continuous host memory thresholds.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.memory`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `consecutiveSamples` | integer | No | — | Consecutive low-memory observations required to stop native inference. Constraints: minimum 1; maximum 5. |
+| `freeGateGiB` | integer | No | — | Available-memory gate for the free-memory threshold, in GiB. Constraints: minimum 6; maximum 24. |
+| `gpuMemoryGiB` | integer | No | — | GPU budget in GiB; native allocation semantics depend on the backend. Constraints: minimum 4; maximum 512. |
+| `hostReserveGiB` | integer | No | — | Host memory reserved outside the native model allocation, in GiB. Constraints: minimum 28; maximum 64. |
+| `minAvailableGiB` | integer | No | — | Stop threshold for available host memory, in GiB. Constraints: minimum 6; maximum 16. |
+| `minFreeGiB` | integer | No | — | Stop threshold for free host memory, in GiB. Constraints: minimum 2; maximum 8. |
 
 ## Spec
 

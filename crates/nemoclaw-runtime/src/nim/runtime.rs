@@ -3,11 +3,7 @@
 use super::NimService;
 use crate::{
     CancellationToken, Error,
-    execution::{
-        self, authentication,
-        supervisor::{self, Monitors},
-    },
-    hardware::GIB,
+    execution::{self, authentication, supervisor},
 };
 use process_wrap::tokio::{KillOnDrop, ProcessGroup};
 use std::{fs, path::Path, time::Duration};
@@ -16,20 +12,6 @@ use std::{fs, path::Path, time::Duration};
 /// reads it but never creates, retains, rotates or deletes it.
 pub const NGC_CREDENTIAL_FILE: &str = "/run/nemoclaw/ngc-api-key";
 
-fn lock(path: &Path) -> Result<fs::File, Error> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|_| Error::State("cannot open NIM storage lock"))?;
-    file.try_lock()
-        .map_err(|_| Error::Conflict("NIM storage already has a writer or locking failed"))?;
-    Ok(file)
-}
 async fn observe(root: &Path) -> Result<crate::hardware::Capacity, Error> {
     let mut capacity = crate::hardware::linux::memory()?;
     let disk = rustix::fs::statvfs(root)
@@ -53,7 +35,11 @@ pub(crate) async fn run(
     trip: &CancellationToken,
 ) -> Result<(), Error> {
     let root = Path::new("/data");
-    let _writer = lock(&root.join("runtime.lock"))?;
+    let _writer = execution::lock(
+        &root.join("runtime.lock"),
+        "cannot open NIM storage lock",
+        "NIM storage already has a writer or locking failed",
+    )?;
     execution::begin()?;
     let result = run_owned(spec, root, cancel, trip).await;
     if let Err(error) = &result {
@@ -75,7 +61,11 @@ async fn run_owned(
         ));
     }
     let _credentials = if spec.authentication.is_some() && supplied.is_none() {
-        Some(lock(Path::new("/credentials/runtime.lock"))?)
+        Some(execution::lock(
+            Path::new("/credentials/runtime.lock"),
+            "cannot open NIM storage lock",
+            "NIM storage already has a writer or locking failed",
+        )?)
     } else {
         None
     };
@@ -124,26 +114,11 @@ async fn run_owned(
         supervisor::terminate(child.as_mut()).await;
         return Err(error);
     }
-    let (samples_tx, samples) = tokio::sync::mpsc::channel(1);
-    let sampler = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-        loop {
-            interval.tick().await;
-            if samples_tx
-                .send(crate::hardware::linux::memory())
-                .await
-                .is_err()
-            {
-                break;
-            }
-        }
-    });
     let (endpoint, model) = (
         format!("http://127.0.0.1:{}", spec.serving.port),
         spec.model.name.clone(),
     );
-    let (ready_tx, ready) = tokio::sync::mpsc::channel(1);
-    let health = tokio::spawn(async move {
+    let readiness = move |ready_tx: tokio::sync::mpsc::Sender<bool>| async move {
         let client = super::readiness::client()?;
         loop {
             if super::readiness::matches(&client, &endpoint, &model, key.as_deref()).await {
@@ -152,29 +127,19 @@ async fn run_owned(
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
-    });
+    };
     let policy = supervisor::Policy {
         startup_timeout: Duration::from_secs(spec.serving.startup_timeout_seconds),
-        protection: crate::hardware::ProtectionPolicy::new(
-            spec.memory.min_available_gib * GIB,
-            spec.memory.min_free_gib * GIB,
-            spec.memory.free_gate_gib * GIB,
-            spec.memory.consecutive_samples,
-        )?,
+        protection: spec.memory.protection()?,
     };
-    let result = supervisor::supervise(
-        policy,
+    execution::serve(
         child.as_mut(),
-        Monitors {
-            samples,
-            ready,
-            trip: trip.clone(),
-            report: &execution::report,
-        },
+        policy,
+        output,
+        readiness,
+        None,
         cancel,
+        trip,
     )
-    .await;
-    sampler.abort();
-    health.abort();
-    output.explain(result).await
+    .await
 }

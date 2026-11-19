@@ -44,18 +44,4 @@ pub fn constrain(defs: &mut serde_json::Map<String, Value>) {
         "reasoningStrength",
         json!({"enum":["low","medium","high"]}),
     );
-    for (field, min, max) in [
-        ("gpuMemoryGiB", 4, 512),
-        ("hostReserveGiB", 28, 64),
-        ("minAvailableGiB", 6, 16),
-        ("minFreeGiB", 2, 8),
-        ("freeGateGiB", 6, 24),
-        ("consecutiveSamples", 1, 5),
-    ] {
-        property(
-            &mut defs["LlamaCppMemory"],
-            field,
-            json!({"minimum":min,"maximum":max}),
-        );
-    }
 }
