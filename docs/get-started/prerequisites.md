@@ -4,7 +4,8 @@
 # Check Prerequisites
 
 Identify the client host, sandbox engine, and inference host before building a deployment.
-They can have different requirements; a working client binary does not qualify the runtime or GPU host.
+They can have different requirements.
+A working client binary doesn't qualify the runtime or GPU host.
 
 ## Identify Each Host
 
@@ -12,14 +13,15 @@ Record where each component runs before checking tool and network requirements.
 
 | Role | Must be available there |
 |---|---|
-| Client running NemoClaw | Matching native bundle, writable deployment state directory, referenced credentials/TLS files, and access to the gateway and selected engine |
+| Client running NemoClaw | Matching native bundle, writable deployment state directory, referenced credential and TLS files, and access to the gateway and selected engine |
 | Image build host | The selected image recipe's toolchain and architecture; see [runtime requirements](#runtime-and-inference-requirements) |
-| Sandbox engine host | OpenShell's configured compute daemon and the selected immutable agent image |
+| Sandbox engine host | NVIDIA OpenShell's configured compute daemon and the selected immutable agent image |
 | Inference host | A reachable compatible endpoint, or the tools, image, model storage, and capacity required by the selected managed service |
 
 One machine can fill several roles.
-An image built on one daemon is not automatically available on another, and loopback addresses refer to the host or network namespace making the connection.
-For remote model placement, use the [SSH service guide](../agents-inference/remote-service.md); SSH access does not provide an inference tunnel.
+An image built on one daemon isn't automatically available on another, and loopback addresses refer to the host or network namespace making the connection.
+For remote model placement, use the [SSH service guide](../agents-inference/remote-service.md).
+SSH access doesn't provide an inference tunnel.
 
 ## Before the First Deployment
 
@@ -37,23 +39,27 @@ For the [first-deployment tutorial](first-deployment.md), use OpenShell **0.1.7*
 The tutorial's pinned NemoClaw implementation (`637bdb6276309ea71d1f1fcb68fff518fe2db926`) records this version and OpenShell source revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c` in its `versions.json`.
 Its gateway check rejects a different reported OpenShell version or an incompatible compute driver.
 For another NemoClaw revision, use its own `versions.json` rather than assuming this version applies.
-Select a compatible [inference API](../agents-inference/inference.md) and verify an actual agent reply; endpoint reachability alone is insufficient.
+Select a compatible [inference API](../agents-inference/inference.md) and verify an actual agent reply.
+Endpoint reachability alone is insufficient.
 
 Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.7`.
-The guides assume an operator provides the external gateway and its credentials; register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
-For an existing profile or plaintext loopback gateway, use [gateway/workspace selection](../agents-inference/interfaces.md#select-the-gateway-and-workspace).
+The guides assume an operator provides the external gateway and its credentials.
+Register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
+For an existing profile or plaintext loopback gateway, use [gateway and workspace selection](../agents-inference/interfaces.md#select-the-gateway-and-workspace).
 See the [first-deployment guide](first-deployment.md) for its rehearsal status.
 
 ## Client and Build Tools
 
-Follow the [source-build guide](../build-deploy/build.md) for tool versions and a verified CLI/OpenTofu/provider/schema bundle.
+Follow the [source-build guide](../build-deploy/build.md) for tool versions and a verified bundle of the CLI, OpenTofu, providers, and schemas.
 Keep the bundle unchanged while an operation uses it.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
-`CI / Bundle` builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64; that does not qualify GPU deployment on every platform.
+`CI / Bundle` builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64.
+These builds and tests don't qualify GPU deployment on every platform.
 
 On Linux, the oldest supported release is Ubuntu 22.04, whose glibc is 2.35.
-`CI / Bundle` builds the Linux bundles there and fails if any bundle executable needs a newer glibc; it runs the contract, integration, and live tests on Ubuntu 24.04.
+`CI / Bundle` builds the Linux bundles there and fails if any bundle executable needs a newer glibc.
+It runs the contract, integration, and live tests on Ubuntu 24.04.
 A bundle runs only where the glibc is at least as new as on the host that built it, so build it on the oldest Linux release that will run it.
 
 To use a release's CLI instead of building it, [install the CLI](install.md) from the release's archive for your platform.
@@ -64,18 +70,18 @@ Choose the gateway and model placement that matches the available engine and end
 
 | Configuration | Requirements and owning guide |
 |---|---|
-| External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API/model, and an immutable sandbox image; see [usage](../build-deploy/usage.md) and [inference](../agents-inference/inference.md) |
-| Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; see [image prerequisites](../build-deploy/build.md#build-agent-images) |
-| Managed vLLM | Matching runtime image, pinned model revision, and storage/capacity for the selected hardware contract; see [managed models](../agents-inference/models.md) and [AMD64 Nemotron configuration](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host) |
-| Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware/placement/capacity contract as vLLM; see [managed Ollama](../agents-inference/inference.md#run-managed-ollama) |
+| External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API and model, and an immutable sandbox image; see [usage](../build-deploy/usage.md) and [inference](../agents-inference/inference.md) |
+| NVIDIA NeMo Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; see [image prerequisites](../build-deploy/build.md#build-agent-images) |
+| Managed vLLM | Matching runtime image, pinned model revision, and storage and capacity for the selected hardware contract; see [managed models](../agents-inference/models.md) and [AMD64 Nemotron configuration](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host) |
+| Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware, placement, and capacity contract as vLLM; see [managed Ollama](../agents-inference/inference.md#run-managed-ollama) |
 | Managed rootless Podman gateway | Podman 5 or later, local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](../build-deploy/usage.md#use-a-managed-podman-gateway) |
 | External Ollama with managed proxy | Managed local Docker gateway, loopback-only daemon on that same Linux host, installed model digest, and a reachable private proxy endpoint; see [proxy setup](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy) |
 | SSH-managed model service | Trusted noninteractive SSH access and the documented model-host tools; see [remote service](../agents-inference/remote-service.md) |
 
 Build images from a revision that implements the selected configuration features.
-The example deployment UUIDs, endpoints, and local image digests must be replaced with values for your resources.
+Replace the example deployment UUIDs, endpoints, and local image digests with values for your resources.
 
 ## Platforms Not Yet Tested
 
-DGX Station, Linux AMD64 deployment, Windows/WSL and macOS GPU hosts, separate SSH model hosts and distributed inference have not been tested end to end.
+NVIDIA DGX Station, Linux AMD64 deployment, Windows/WSL and macOS GPU hosts, separate SSH model hosts, and distributed inference haven't been tested end to end.
 See [current limits](../resources/limits.md#platforms-models-and-placement) for each and its issue.

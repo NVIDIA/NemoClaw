@@ -3,17 +3,20 @@
 
 # Use Inline Model Recipes
 
-An [ordinary vLLM service](../../examples/spark/vllm.yaml) needs a pinned image and model snapshot.
-Use [the ordinary vLLM image build](../build-deploy/build.md#build-a-runtime-image).
+A [vLLM service without a recipe](../../examples/spark/vllm.yaml) needs a pinned image and model snapshot.
+Use [the vLLM runtime image build](../build-deploy/build.md#build-a-runtime-image).
 When the model needs preparation or serving features supplied by its runtime image, declare `recipe` instead of `hardware` under `spec.services.<name>`.
-The recipe supplies the hardware compatibility requirements; declaring both fields is rejected.
+The recipe supplies the hardware compatibility requirements.
+A service can't declare both fields.
 
-The CLI does not load recipe code.
-Recipe authors package their executables, patches, licenses and source notices in that image; the YAML declares their contract.
+The CLI doesn't load recipe code.
+Recipe authors package their executables, patches, licenses, and source notices in that image.
+The YAML declares their contract.
 
 NemoClaw ships no model-specific recipe images: preparation tools and runtime patches belong to the recipe's authors and to vLLM ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
 Use an image that packages the recipe and declares the contract below.
-Model storage must use the [current manifest format](models.md#retained-model-files); `reuse` does not migrate an older model manifest.
+Model storage must use the [current manifest format](models.md#retained-model-files).
+`reuse` doesn't migrate an older model manifest.
 All vLLM services use `kind: vllm`.
 
 ## Declaration
@@ -21,23 +24,28 @@ All vLLM services use `kind: vllm`.
 The contract is inline, with `apiVersion: nemoclaw.nvidia.com/recipe/v1`.
 It contains:
 
-- `compatibility`: target architecture, GPU name, minimum driver and host memory, and required image labels.
+- `compatibility`: Target architecture, GPU name, minimum driver and host memory, and required image labels.
   Images must declare `org.nemoclaw.recipe.protocol: v1`.
   Other labels describe required features.
-- `preparation` and `verification`: absolute executable paths inside the image and SHA-256 hashes.
+- `preparation` and `verification`: Absolute executable paths inside the image and SHA-256 hashes.
   These are executable files, not shell command strings.
-- `resources`: maximum prepared bytes, preparation memory in GiB, serving GPU budget in bytes, and startup headroom in GiB.
+- `resources`: Maximum prepared bytes, preparation memory in GiB, serving GPU budget in bytes, and startup headroom in GiB.
   The serving GPU budget includes the model, caches, and other GPU allocations.
-- `serving`: model name, parser names, cache dtypes, lazy loading, chunked prefill, optional typed compilation settings, the parallel layout, and `VLLM_` environment values.
-  `preparedEnvironment` maps environment names to paths relative to the verified preparation directory; `.` selects that directory.
-- `licenses` and `sourceNotices`: paths to retained files inside the pinned image.
+- `serving`: Model name, parser names, cache dtypes, lazy loading, chunked prefill, optional typed compilation settings, the parallel layout, and `VLLM_` environment values.
+  `preparedEnvironment` maps environment names to paths relative to the verified preparation directory.
+  `.` selects that directory.
+- `licenses` and `sourceNotices`: Paths to retained files inside the pinned image.
 
 Recipe memory requirements are checked against measurements from the execution host.
-`compatibility.gpu` must belong to the GPU family of a [hardware profile](models.md#choose-a-hardware-profile); other names are rejected.
+`compatibility.gpu` must belong to the GPU family of a [hardware profile](models.md#choose-a-hardware-profile).
+Other names are rejected.
 A recipe's `serving.tensorParallelSize` and `serving.pipelineParallelSize` name the layout its budget was measured on, as vLLM names it.
-An omitted size gets vLLM's default of 1, whatever GPUs the service selects; vLLM checks the layout when it starts, as for an [ordinary service](models.md#set-the-parallel-layout).
-With a recipe, the service's `serving.speculativeTokens`, from 0 to 3, sets vLLM's MTP speculative decoding through `--speculative-config`; zero leaves it off, and services without a recipe must leave it zero.
-That profile's memory architecture decides how the serving GPU budget, `resources.gpuMemoryBytes`, is checked; on dedicated memory, the budget applies to each selected GPU:
+An omitted size gets vLLM's default of 1, whatever GPUs the service selects.
+vLLM checks the layout when it starts, as for a [service without a recipe](models.md#set-the-parallel-layout).
+With a recipe, the service's `serving.speculativeTokens`, from 0 to 3, sets vLLM's MTP speculative decoding through `--speculative-config`.
+Zero leaves it off, and services without a recipe must leave it zero.
+That profile's memory architecture decides how the serving GPU budget, `resources.gpuMemoryBytes`, is checked.
+On dedicated memory, the budget applies to each selected GPU:
 
 | Memory architecture | GPU budget must fit | `--gpu-memory-utilization` | Host available memory at startup |
 |---|---|---|---|
@@ -47,17 +55,18 @@ That profile's memory architecture decides how the serving GPU budget, `resource
 The runtime rechecks preparation and startup headroom.
 The shared resident watchdog continues enforcing the service's memory protection policy after the CLI exits.
 
-Declaring a new hardware combination does not constitute live qualification.
+Declaring a new hardware combination doesn't constitute live qualification.
 
 An optional `snapshot` carries the exact model file manifest, including sizes and hashes.
-Otherwise the shared downloader resolves the pinned repository and revision.
+Otherwise, the shared downloader resolves the pinned repository and revision.
 An optional `reuse` names an existing snapshot directory relative to `/data` and a previous preparation key.
 
 The runtime verifies imported files again before recording the new preparation as complete.
 
 ## Execution Protocol
 
-Package the preparation and runtime executables in the pinned image before selecting the recipe. Both executables receive one JSON request on stdin:
+Package the preparation and runtime executables in the pinned image before selecting the recipe.
+Both executables receive one JSON request on stdin:
 
 ```json
 {
@@ -68,7 +77,8 @@ Package the preparation and runtime executables in the pinned image before selec
 }
 ```
 
-`previousDirectory` is a candidate from `reuse`, if declared; it may not exist.
+`previousDirectory` is a candidate from `reuse`, if declared.
+It might not exist.
 Preparation owns how to resume its unpublished output.
 It must leave previous published data intact.
 
@@ -91,7 +101,7 @@ Names are relative to the staging directory.
 Duplicate names, traversal, symlinked output paths, incomplete hashes, and output beyond the declared byte budget fail verification.
 The runtime independently hashes the listed files and writes `manifest.json` with the preparation key, file names, sizes, hashes, and modification times.
 It then atomically renames the staging directory into place.
-`manifest.json` is reserved for the runtime and cannot be a recipe output path.
+`manifest.json` is reserved for the runtime and can't be a recipe output path.
 
 It limits protocol output to 1 MiB and each tool invocation to eight hours.
 Tool logs belong on stderr.
@@ -99,9 +109,10 @@ Cancellation terminates the owned process group and retains staged data.
 
 The preparation key includes the pinned model identity and inline recipe contract.
 Unchanged apply checks the existing output manifest and file metadata without invoking the tools.
-Changed or incomplete published data fails observation; it is not treated as absent or silently rebuilt.
+Changed or incomplete published data fails observation.
+It isn't treated as absent or silently rebuilt.
 
-## Plan, Apply and Retention
+## Plan, Apply, and Retention
 
 Plan validates declarations and observes hardware, state, and retained files.
 It never runs preparation or verification executables.
@@ -110,14 +121,15 @@ Apply checks the pinned image capabilities and packaged files, downloads or reus
 Model-specific recovery, such as reusing earlier prepared files, belongs to the recipe's own tools, not the shared preparation lifecycle.
 
 Changing to a recipe-capable image can replace the inference container.
-Existing ownership, generation and storage checks still apply; this does not authorize adopting another deployment's volume.
+Existing ownership, generation, and storage checks still apply.
+This doesn't authorize adopting another deployment's volume.
 Destroy retains model and prepared storage as before.
 
 Recipe execution adds no exception to the distinction between failed observation and confirmed resource absence.
 
 Old model-specific backend configurations and native-agent state are unsupported.
-The current container limits and live hardware qualification still target DGX Spark.
-Removing model-specific code does not qualify another GPU.
+The current container limits and live hardware qualification still target NVIDIA DGX Spark.
+Removing model-specific code doesn't qualify another GPU.
 
 Recipe declarations are trusted deployment input, and the pinned runtime image must be reviewed with its tools and dependencies.
 The executable hash is an additional identity check, not a sandbox for recipe code.
