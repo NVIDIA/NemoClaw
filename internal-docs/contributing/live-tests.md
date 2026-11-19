@@ -163,7 +163,7 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 
 These runs report failures in a separate workflow; they are not added as merge requirements. Running jobs are not automatically cancelled. Hardware jobs recheck PR eligibility after queueing and before deployment. GitLab/Colorunner continues to own leases and replacement; CI does not provision hosts.
 
-The workflow refreshes one PR recommendation comment for the analyzed commit, including when no hardware case is selected. It lists only case IDs and fixed selection reasons. Execution links, outcomes, timing, artifacts, runner identities and raw diagnostics stay out of that comment; Actions evidence retains its existing visibility. Comment-write permission belongs to a separate job that neither checks out candidate code nor runs its executables.
+The workflow refreshes one PR selection comment for the analyzed commit, including when no hardware case is selected. It explains automatic, non-gating execution and groups case IDs under fixed selection reasons. Execution links, outcomes, timing, artifacts, runner identities and raw diagnostics stay out of that comment; Actions evidence retains its existing visibility. Comment-write permission belongs to a separate job that neither checks out candidate code nor runs its executables.
 
 Operators can dispatch **Live / HCL** on `v1`, or on a current, non-draft v1 PR's bot-admitted `pull-request/<number>` branch. The optional `jobs` input selects individual comma-separated case IDs on the target; unknown or misplaced IDs fail before hardware jobs queue. An empty input selects every case on that target:
 

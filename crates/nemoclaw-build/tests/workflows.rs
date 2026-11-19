@@ -593,6 +593,29 @@ fi
         );
     }
 
+    #[test]
+    fn groups_automatically_selected_cases_under_one_public_reason() {
+        let fixture = Fixture::new();
+        let mut selection = fixture.selection();
+        for id in ["gpu-one", "station-two"] {
+            selection["cases"][id]["reason"] =
+                serde_json::json!("every case runs: PRIVATE-SENTINEL");
+        }
+        let writes = fixture
+            .publish(selection, fixture.pr(), serde_json::json!([[]]), None)
+            .unwrap();
+        let body = writes[0]["body"].as_str().unwrap();
+        assert!(body.contains("## Selected hardware E2Es"));
+        assert!(body.contains("run automatically"));
+        assert_eq!(
+            body.matches("Shared code or test infrastructure changed.")
+                .count(),
+            1
+        );
+        assert!(body.contains("gpu-one") && body.contains("station-two"));
+        assert!(!body.contains("PRIVATE-SENTINEL"));
+    }
+
     fn own_comment() -> Value {
         serde_json::json!({"id":99,"user":{"login":"github-actions[bot]","type":"Bot"},"body":format!("{MARKER}\nold recommendations")})
     }

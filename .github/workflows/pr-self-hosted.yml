@@ -107,11 +107,11 @@ jobs:
           jq -er --arg sha "$GITHUB_SHA" '
             def public_reason:
               if startswith("could not analyze changes") then "Conservative selection: impact analysis could not narrow the cases."
-              elif startswith("every case runs:") then "Shared validation inputs changed."
+              elif startswith("every case runs:") then "Shared code or test infrastructure changed."
               elif . == "every case selected with --all" then "All cases were requested."
-              elif . == "requested with --add" then "Requested as an additional case."
-              elif endswith(", an input of a runtime image this case runs") then "A runtime image input changed."
-              elif endswith(" changed") then "The case definition or scenario changed."
+              elif . == "requested with --add" then "An operator requested this additional case."
+              elif endswith(", an input of a runtime image this case runs") then "This test’s model runtime image changed."
+              elif endswith(" changed") then "This test’s deployment or scenario changed."
               else "Selected by changed-file rules." end;
             if .commit == $sha and (.cases | type) == "object" and
               (.runners.gpu | type) == "array" and (.runners["dgx-station"] | type) == "array"
@@ -119,9 +119,11 @@ jobs:
             . as $plan | (.runners.gpu + .runners["dgx-station"] | unique | sort) as $ids |
             if all($ids[]; if type == "string" then test("^[a-z0-9-]+$") else false end) and
               all($ids[]; $plan.cases[.].run == true and ($plan.cases[.].reason | type) == "string")
-            then ["<!-- nemoclaw-v1-e2e-recommendations -->", "## Recommended hardware E2Es", "", "Commit: `\($sha)`", "",
+            then ["<!-- nemoclaw-v1-e2e-recommendations -->", "## Selected hardware E2Es", "", "Commit: `\($sha)`", "",
               (if $ids == [] then "No hardware E2Es selected by changed-file rules."
-               else $ids[] as $id | "- `\($id)`: \($plan.cases[$id].reason | public_reason)" end)] | join("\n")
+               else "Selected cases run automatically; results do not gate merging.",
+                 ($ids | map({id: ., reason: ($plan.cases[.].reason | public_reason)}) | group_by(.reason)[] |
+                   "", .[0].reason, (.[] | "- `\(.id)`")) end)] | join("\n")
             else error("Invalid recommendation cases") end
           ' <<< "$RECOMMENDATIONS" > "$RUNNER_TEMP/recommendations.md"
           jq -n --rawfile body "$RUNNER_TEMP/recommendations.md" '{body: $body}' > "$RUNNER_TEMP/recommendations.json"
