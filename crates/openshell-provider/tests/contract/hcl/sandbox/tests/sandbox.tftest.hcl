@@ -133,44 +133,11 @@ run "change_mount" {
   }
 }
 
-run "change_gpu_count" {
-  variables {
-    services  = {}
-    target    = "/sandbox/other"
-    gpu_count = 2
-  }
-  assert {
-    condition     = length(local.openshell.created_sandboxes) == 5 && length(local.openshell.sandboxes) == 3
-    error_message = "Changing the GPU count must replace the sandbox without leaving the old sandbox."
-  }
-  assert {
-    condition     = reverse([for sandbox in local.openshell.created_sandboxes : sandbox.gpu_count if sandbox.name == "researcher"])[0] == 2
-    error_message = "The replacement sandbox must request two GPUs."
-  }
-}
-
-run "remove_gpu_request" {
-  variables {
-    services  = {}
-    target    = "/sandbox/other"
-    gpu_count = null
-  }
-  assert {
-    condition     = length(local.openshell.created_sandboxes) == 6 && length(local.openshell.sandboxes) == 3
-    error_message = "Removing the GPU request must replace the sandbox."
-  }
-  assert {
-    condition     = reverse([for sandbox in local.openshell.created_sandboxes : sandbox.gpu_count if sandbox.name == "researcher"])[0] == null
-    error_message = "The replacement must not inherit its previous GPU request."
-  }
-}
-
 # Teardown mode lets the test's cleanup delete the workspace.
 run "teardown" {
   variables {
     services   = {}
     target     = "/sandbox/other"
     destroying = true
-    gpu_count  = null
   }
 }

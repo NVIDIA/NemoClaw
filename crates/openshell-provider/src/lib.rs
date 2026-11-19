@@ -281,7 +281,7 @@ fn sandbox_row(
     let spec = sandbox.spec.ok_or(ObservationError::Incomplete)?;
     let template = spec.template.ok_or(ObservationError::Incomplete)?;
     let driver_config = driver_config::observed(template.driver_config.as_ref());
-    let gpu_count = gpu::observed(spec.resource_requirements.as_ref())?;
+    let gpu_count = gpu::observed(spec.resource_requirements.as_ref());
     let image = template.image;
     let environment: Row = spec.environment.into_iter().collect();
     let inference = environment.get(PROVIDERS_ENV).cloned().unwrap_or_default();
@@ -719,9 +719,9 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 5] {
             POLICY_PROVENANCE,
             EXITED,
         ])
-        // Omission restores NemoClaw-authored policy and requests no GPU.
-        .reset_when_omitted(&[POLICY_AUTHORITY, "gpu_count"])
-        .validate_inputs(gpu::validate_inputs)
+        // Omission means NemoClaw authors the policy, not the previous value.
+        .reset_when_omitted(&[POLICY_AUTHORITY])
+        .validate_inputs(network::validate_grant_names)
         // The URLs the gateway reports for the exposures; changed exposures
         // report theirs when applied.
         .computed(services::URLS, nemoclaw_tofu::carry_prior)

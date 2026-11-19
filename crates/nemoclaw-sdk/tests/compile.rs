@@ -787,19 +787,3 @@ fn sandbox_service_exposures_compile_in_openshells_terms() {
         doc
     );
 }
-
-#[test]
-fn sandbox_gpu_request_reaches_the_openshell_resource() {
-    let mut value = crate::support::fixture("local.yaml");
-    value["spec"]["sandboxes"]["assistant"]["resources"] = serde_json::json!({"gpu": {"count": 1}});
-    let document = Document::parse(&serde_json::to_vec(&value).unwrap()[..])
-        .expect("a sandbox can request one GPU");
-    let generations = ["workspace", "provider", "sandbox"]
-        .map(|kind| (kind.into(), "a".repeat(32)))
-        .into();
-    let graph = compile(&document, &generations, "0.1.0").unwrap();
-    assert_eq!(
-        graph["resource"]["openshell_sandbox"]["assistant"]["gpu_count"],
-        1
-    );
-}

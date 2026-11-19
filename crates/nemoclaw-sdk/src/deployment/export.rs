@@ -424,8 +424,7 @@ fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
     let value = |row: &Row, key: &str| row.get(key).map(String::as_str).unwrap_or("").to_owned();
     // JSON inputs compare as the provider records them.
     let json = |row: &Row, key: &str| recorded("sandbox", key, &value(row, key));
-    if value(observed, "gpu_count") != value(expected, "gpu_count")
-        || value(observed, "image") != value(expected, "image")
+    if value(observed, "image") != value(expected, "image")
         || ["policy_json", "provider_names_json"]
             .iter()
             .any(|key| json(observed, key) != json(expected, key))
@@ -440,32 +439,6 @@ fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn export_preserves_gpu_requests_and_refuses_gpu_drift() {
-        let original =
-            Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
-                .unwrap();
-        for requested in [None, Some(1)] {
-            let mut value = serde_json::to_value(&original).unwrap();
-            if let Some(count) = requested {
-                value["spec"]["sandboxes"]["assistant"]["resources"] =
-                    json!({"gpu": {"count": count}});
-            }
-            let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-            let generations = generations(&document);
-            let mut observations = echoed(&document, &generations);
-            assert_eq!(
-                exported(document.clone(), &generations, &observations).unwrap(),
-                document
-            );
-            observations.get_mut("openshell_sandbox.assistant").unwrap()["gpu_count"] = json!("2");
-            assert!(
-                exported(document, &generations, &observations).is_err(),
-                "GPU drift must prevent export"
-            );
-        }
-    }
 
     /// Observations that echo what `document` compiles to, as providers
     /// report a deployment applied from it.

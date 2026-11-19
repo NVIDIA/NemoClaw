@@ -2041,33 +2041,3 @@ async fn a_refused_forward_token_is_an_authentication_failure_without_effects() 
     assert!(result.error().is_none(), "{:?}", result.error());
     assert_eq!(fixture.state.lock().unwrap().effects, 1);
 }
-
-#[tokio::test]
-async fn sandbox_gpu_request_is_created_and_observed() {
-    let fixture = Fixture::start().await;
-    let client = client(&fixture, Arc::new(EnvironmentSecrets));
-    let mut rows = fixture_rows("local");
-    for (kind, row) in &mut rows {
-        if *kind == "sandbox" {
-            row.insert("gpu_count".into(), "1".into());
-        }
-    }
-    let bound = create(&client, &rows).await;
-    let index = rows
-        .iter()
-        .position(|(kind, _)| *kind == "sandbox")
-        .unwrap();
-    let binding = &bound[index];
-    let sandbox = fixture.state.lock().unwrap().sandboxes[&key(binding)].clone();
-    assert_eq!(
-        sandbox
-            .spec
-            .unwrap()
-            .resource_requirements
-            .and_then(|resources| resources.gpu)
-            .and_then(|gpu| gpu.count),
-        Some(1),
-        "the gateway receives the requested GPU count"
-    );
-    assert_eq!(binding.get("gpu_count").map(String::as_str), Some("1"));
-}

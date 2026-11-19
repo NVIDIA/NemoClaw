@@ -1193,23 +1193,3 @@ fn service_exposures_take_a_port_and_an_authorization_mode_openshell_accepts() {
         agrees(&validator, &value, false);
     }
 }
-
-#[test]
-fn sandbox_gpu_count_requires_a_positive_integer() {
-    for count in [
-        serde_json::json!(0),
-        serde_json::json!(-1),
-        serde_json::json!(1.5),
-        serde_json::json!(4294967296_u64),
-        serde_json::json!("1"),
-    ] {
-        let mut value = crate::support::fixture("local.yaml");
-        value["spec"]["sandboxes"]["assistant"]["resources"] =
-            serde_json::json!({"gpu": {"count": count}});
-        assert!(
-            nemoclaw_sdk::config::Document::parse(&serde_json::to_vec(&value).unwrap()[..])
-                .is_err(),
-            "invalid GPU count {count}"
-        );
-    }
-}

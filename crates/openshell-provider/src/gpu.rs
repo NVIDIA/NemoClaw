@@ -1,53 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Map the explicit GPU count to OpenShell's portable resource request.
-use crate::{ObservationError, Row, proto};
+//! A sandbox's GPU request: OpenShell's portable `resource_requirements.gpu`.
+use crate::{ObservationError, proto};
 
-fn count(value: &str) -> Result<u32, ObservationError> {
-    value
-        .parse::<u32>()
-        .ok()
-        .filter(|count| *count > 0)
-        .ok_or(ObservationError::Query)
-}
-
+/// The GPUs a sandbox requests, or none when the input is empty. OpenShell
+/// validates the count.
 pub(super) fn request(
-    value: &str,
+    count: &str,
 ) -> Result<Option<proto::ResourceRequirements>, ObservationError> {
-    if value.is_empty() {
+    if count.is_empty() {
         return Ok(None);
     }
+    let count = count.parse().map_err(|_| ObservationError::Query)?;
     Ok(Some(proto::ResourceRequirements {
-        gpu: Some(proto::GpuResourceRequirements {
-            count: Some(count(value)?),
-        }),
+        gpu: Some(proto::GpuResourceRequirements { count: Some(count) }),
     }))
 }
 
-pub(super) fn observed(
-    resources: Option<&proto::ResourceRequirements>,
-) -> Result<String, ObservationError> {
-    match resources.and_then(|resources| resources.gpu) {
-        None => Ok(String::new()),
-        Some(gpu) => {
-            let count = gpu.count.unwrap_or(1);
-            if count == 0 {
-                return Err(ObservationError::Incomplete);
-            }
-            Ok(count.to_string())
-        }
-    }
-}
-
-pub(super) fn validate_inputs(
-    known: &Row,
-    unknown: &[&str],
-) -> Result<(), std::borrow::Cow<'static, str>> {
-    crate::network::validate_grant_names(known, unknown)?;
-    if !unknown.contains(&"gpu_count")
-        && let Some(value) = known.get("gpu_count").filter(|value| !value.is_empty())
-    {
-        count(value).map_err(|_| "gpu_count must be a positive 32-bit integer")?;
-    }
-    Ok(())
+/// The input an observed request corresponds to. OpenShell reads an omitted
+/// count as one GPU.
+pub(super) fn observed(resources: Option<&proto::ResourceRequirements>) -> String {
+    resources
+        .and_then(|resources| resources.gpu)
+        .map_or_else(String::new, |gpu| gpu.count.unwrap_or(1).to_string())
 }

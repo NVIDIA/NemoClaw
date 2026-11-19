@@ -383,9 +383,9 @@ pub struct Sandbox {
     /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.
     pub driver_config: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(default, with = "SandboxResources")]
-    /// Resources requested from OpenShell for this sandbox. Changing the request replaces the sandbox; omission requests no GPU.
-    pub resources: Option<SandboxResources>,
+    #[schemars(with = "u32", range(min = 1))]
+    /// GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none.
+    pub gpus: Option<u32>,
     #[serde(
         rename = "serviceExposures",
         default,
@@ -397,23 +397,6 @@ pub struct Sandbox {
     #[serde(rename = "agent")]
     /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
     pub agent: Agent,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-/// GPU resources requested from OpenShell. Host drivers and device availability remain gateway prerequisites.
-pub struct SandboxResources {
-    /// Explicit GPU request for the sandbox's processes, separate from inference services.
-    pub gpu: SandboxGpu,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-/// An explicit number of GPUs for OpenShell to assign to the sandbox.
-pub struct SandboxGpu {
-    #[schemars(range(min = 1))]
-    /// Positive GPU count. OpenShell validates driver support and availability; driverConfig may select specific devices.
-    pub count: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -12,10 +12,6 @@ terraform {
 variable "endpoint" { type = string }
 variable "destroying" { default = false }
 variable "target" { default = "/sandbox/skills" }
-variable "gpu_count" {
-  type    = number
-  default = 1
-}
 variable "services" {
   type = map(object({
     target_port        = number
@@ -70,7 +66,7 @@ resource "openshell_sandbox" "agent" {
   generation  = "sandbox-generation"
   image       = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   launch_json = local.launch_json
-  gpu_count   = var.gpu_count
+  gpu_count   = 1
   providers   = [openshell_web_search.brave.ref]
   driver_config = jsonencode({
     docker = {

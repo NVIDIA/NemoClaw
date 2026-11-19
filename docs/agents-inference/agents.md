@@ -191,28 +191,32 @@ NemoClaw does not wrap its refresh contract, and manual sandbox attachments affe
 
 ## GPU Access for Agent Tools
 
-Request GPUs for programs the agent runs inside its sandbox:
+`gpus` asks OpenShell for that many GPUs for the programs the agent runs in its sandbox:
 
 ```yaml
 spec:
   sandboxes:
     assistant:
-      resources:
-        gpu:
-          count: 1
+      gpus: 1
 ```
 
 Merge this fragment into a complete deployment configuration.
-The count must be a positive integer. Omit `resources` to request no GPU.
-NemoClaw passes the request to OpenShell; the selected compute driver must support it, and its host must have the required GPU drivers and device configuration.
-OpenShell selects the devices. To select specific devices, use the selected driver's documented `driverConfig` settings alongside the GPU request.
+OpenShell picks the devices and refuses the sandbox when its compute driver cannot provide them: Docker needs CDI enabled, and Kubernetes needs nodes with allocatable `nvidia.com/gpu`.
+To pick specific GPUs on Docker or Podman, also list their CDI names in `driverConfig`, one for each requested GPU; `nvidia-ctk cdi list` prints the names:
 
-This request gives sandbox programs GPU access; it does not install CUDA libraries, reserve GPU memory, or configure an inference service.
-Provide compatible analytics libraries in the agent image or on a read-only [mounted volume](../build-deploy/state.md#keep-agent-files-on-mounted-volumes).
-A mount supplies files; the GPU request supplies device access. Fabric and the agent's terminal tool launch programs in that sandbox without a separate GPU setting.
+```yaml
+spec:
+  sandboxes:
+    assistant:
+      gpus: 1
+      driverConfig:
+        docker:
+          cdi_devices: ["nvidia.com/gpu=1"]
+```
 
-Changing or removing the request replaces the sandbox and its agent. Keep conversations, generated skills, and other files that must survive on mounted volumes.
-Export preserves the request and refuses to export when the observed GPU count differs from the saved configuration.
+Kubernetes takes only the count.
+The request gives the sandbox's programs device access, not CUDA libraries; provide those in the agent image or on a read-only [mounted volume](../build-deploy/state.md#keep-agent-files-on-mounted-volumes).
+Changing `gpus` replaces the sandbox and its agent, so keep files that must survive on mounted volumes.
 
 ## Skills on a Mounted Volume
 

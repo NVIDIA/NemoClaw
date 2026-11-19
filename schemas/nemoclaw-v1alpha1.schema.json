@@ -2954,6 +2954,12 @@
           "description": "OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.",
           "type": "object"
         },
+        "gpus": {
+          "description": "GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
         "harness": {
           "$ref": "#/$defs/Harness",
           "description": "Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation."
@@ -3012,10 +3018,6 @@
           "$ref": "#/$defs/Network",
           "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
         },
-        "resources": {
-          "$ref": "#/$defs/SandboxResources",
-          "description": "Resources requested from OpenShell for this sandbox. Changing the request replaces the sandbox; omission requests no GPU."
-        },
         "serviceExposures": {
           "additionalProperties": {
             "$ref": "#/$defs/ServiceExposure"
@@ -3028,36 +3030,6 @@
       "required": [
         "agent",
         "image"
-      ],
-      "type": "object"
-    },
-    "SandboxGpu": {
-      "additionalProperties": false,
-      "description": "An explicit number of GPUs for OpenShell to assign to the sandbox.",
-      "properties": {
-        "count": {
-          "description": "Positive GPU count. OpenShell validates driver support and availability; driverConfig may select specific devices.",
-          "format": "uint32",
-          "minimum": 1,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "count"
-      ],
-      "type": "object"
-    },
-    "SandboxResources": {
-      "additionalProperties": false,
-      "description": "GPU resources requested from OpenShell. Host drivers and device availability remain gateway prerequisites.",
-      "properties": {
-        "gpu": {
-          "$ref": "#/$defs/SandboxGpu",
-          "description": "Explicit GPU request for the sandbox's processes, separate from inference services."
-        }
-      },
-      "required": [
-        "gpu"
       ],
       "type": "object"
     },
