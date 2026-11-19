@@ -41,6 +41,12 @@ Installation:
 - Each operation installs the providers of the bundle that runs it, replacing `.terraform/providers` and `.terraform.lock.hcl` in the state directory.
   Before, with a bundle whose providers had the same versions but other bytes, such as a signed build of the same commit, a deployment kept running the previous bundle's providers while that bundle existed; once it was gone, plan, apply, and destroy failed because the providers didn't match the checksums in the dependency lock file ([#14628](https://github.com/NVIDIA/NemoClaw/issues/14628)).
 
+Images:
+
+- Releases stage a llama.cpp runtime image, `llama-cpp`, beside the vLLM and Ollama images; no service runs it yet.
+  It adds the supervisor to llama.cpp's CUDA 13.5 server image from release b12375, whose ARM64 and AMD64 builds carry kernels for GB300 (`sm_103`) and GB10 (`sm_121a`).
+  CUDA 13.5 needs NVIDIA driver 580 or newer; see [build a runtime image](../build-deploy/build.md#build-a-runtime-image).
+
 Windows clients:
 
 - The CLI on Windows reaches a local Docker Desktop or Podman engine through its named pipe, such as `npipe:////./pipe/docker_engine`, and hides typed credentials at its prompts.

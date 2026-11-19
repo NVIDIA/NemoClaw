@@ -117,6 +117,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         "crates/sdk/src/lib.rs",
         "crates/nemoclaw-onboarding/src/lib.rs",
         "examples/onboarding/openclaw.yaml",
+        "image/llama-cpp/Dockerfile",
         "image/ollama/Dockerfile",
         "image/supervisor/Dockerfile",
         "image/vllm/Dockerfile",
@@ -130,7 +131,7 @@ fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
         std::fs::write(file, name).unwrap();
     }
     let first = nemoclaw_build::source_inputs(root.path()).unwrap();
-    assert_eq!(first.len(), 15);
+    assert_eq!(first.len(), 16);
     for name in [
         "target/output",
         ".local/secret",
