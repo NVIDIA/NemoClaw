@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertManagedGatewayStateDirectoryParentTrusted } from "../../../src/lib/onboard/gateway/state-dir.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 
@@ -36,12 +36,17 @@ vi.mock("../fixtures/managed-image-receipt.ts", () => ({
   selectedE2eManagedImageReference: () => "example.invalid/openclaw@sha256:" + "a".repeat(64),
 }));
 
-// The live registration is mocked above. Collect its fixture module once so
-// cold source transformation is setup work; each case still resets module state.
-import "../live/openclaw-inference-switch.test.ts";
+// Mock live suite registration before warming the module outside test deadlines.
+beforeAll(async () => {
+  vi.spyOn(describe, "each").mockReturnValue(vi.fn());
+  await import("../live/openclaw-inference-switch.test.ts");
+});
 
 const disposables: Array<() => unknown> = [];
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+beforeEach(() => {
+  vi.spyOn(describe, "each").mockReturnValue(vi.fn());
+});
 async function disposeResources(): Promise<void> {
   for (const dispose of disposables.splice(0).reverse()) await dispose();
 }
