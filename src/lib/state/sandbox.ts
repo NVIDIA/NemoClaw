@@ -47,7 +47,7 @@ import {
   hermesManagedRouteReference,
   hermesRegisteredRoute,
   type HermesRegisteredRoute,
-} from "../hermes-managed-route.js";
+} from "../hermes-archive-route.js";
 import { shellQuote } from "../runner.js";
 import {
   createTempSshConfig,

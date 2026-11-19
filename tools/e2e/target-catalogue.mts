@@ -998,6 +998,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: [
       "src/lib/state/sandbox.ts",
       "src/lib/hermes-managed-route.ts",
+      "src/lib/hermes-archive-route.ts",
       "src/lib/inference/native-provider/custom.ts",
       "src/lib/actions/inference-set.ts",
       "src/lib/inference/native-nvidia/index.ts",

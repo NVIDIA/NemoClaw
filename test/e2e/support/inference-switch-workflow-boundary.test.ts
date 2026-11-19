@@ -17,6 +17,7 @@ describe("inference-switch catalogue boundary", () => {
   it.each([
     "src/lib/state/sandbox.ts",
     "src/lib/hermes-managed-route.ts",
+    "src/lib/hermes-archive-route.ts",
     "src/lib/inference/native-provider/custom.ts",
   ])("selects the hosted Hermes rebuild owner when %s changes (#14300)", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
