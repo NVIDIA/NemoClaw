@@ -1929,7 +1929,7 @@ fn without_a_local_image_for_the_harness_the_image_question_says_how_to_build_on
         .note()
         .expect("the question says why it suggests no image");
     assert!(
-        note.contains("https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images"),
+        note.contains("https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#building-agent-images"),
         "{note}"
     );
 }

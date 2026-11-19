@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Configure Sandbox Policy
+# Configuring Sandbox Policy
 
 Use `sandboxes.<name>.network.policy.explicit` to declare filesystem, process, and egress policy.
 Start from [the explicit-policy example](../../examples/explicit-policy.yaml) and follow [deployment usage](../build-deploy/usage.md) to plan, apply, and export it.
@@ -10,7 +10,7 @@ Before applying, select a fresh deployment UUID, an available gateway and infere
 Check that policy paths and process identities exist in that image.
 Apply creates the sandbox and grants the access declared by the policy.
 
-## Choose a Policy
+## Choosing a Policy
 
 Omitting `network`, or declaring `tier: isolated`, selects the image's advertised filesystem and process defaults.
 NemoClaw adds the declared inference and search endpoint grants without granting general egress.
@@ -51,7 +51,7 @@ A binary grant for curl does not grant the same access to Python or Node.js.
 The input supports TCP destinations and REST, WebSocket, JSON-RPC, and MCP inspection settings.
 Unknown fields and unsupported combinations are rejected.
 Inline credentials, credential-provider bindings, GraphQL, and SQL policy settings are outside this configuration contract.
-To attach supervisor middleware, refer to [Attach Network Middleware](#attach-network-middleware).
+To attach supervisor middleware, refer to [Attaching Network Middleware](#attaching-network-middleware).
 The pinned OpenShell parser and validator check protocol-specific rules, destination restrictions, paths, and process identities.
 Refer to the [generated field reference](../reference/configuration.md#explicitpolicy) for the complete input surface.
 
@@ -59,7 +59,7 @@ Refer to the [generated field reference](../reference/configuration.md#explicitp
 Use `hard_requirement` to require enforcement.
 Kernel enforcement still requires qualification on the deployment host.
 
-## Reuse Policies and Grants
+## Reusing Policies and Grants
 
 To give several sandboxes the same policy or grant, define it once under `spec.policies` or `spec.grants` and select it by name:
 
@@ -115,7 +115,7 @@ A relocated image declares its own paths.
 A missing grant makes compatibility `unsupported` and fails plan.
 `observation_json.compatibility` names the path.
 Images without runtime metadata, such as direct Bake builds, fail planning.
-Follow [image rebuilding and selection](../build-deploy/build.md#build-agent-images).
+Follow [image rebuilding and selection](../build-deploy/build.md#building-agent-images).
 Document parsing validates policy syntax without assuming an image layout.
 These checks do not establish every path a harness reads.
 Verify additional harness paths against the selected image before applying.
@@ -135,7 +135,7 @@ The image catalog records adapter requirements and runtime files, not a complete
 These checks do not verify arbitrary policy paths, process identities in the image, Unix permissions, writable state directories, or kernel enforcement.
 Those still require runtime verification.
 
-## Choose TLS Inspection and Enforcement
+## Choosing TLS Inspection and Enforcement
 
 For an explicit endpoint with a supported application protocol, choose TLS handling and request enforcement separately:
 
@@ -159,9 +159,9 @@ The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352
 The [SDK policy validator](../../crates/nemoclaw-openshell/src/policy.rs) accepts only supported field combinations.
 A field's presence in the schema does not bypass protocol validation.
 Live enforcement and application trust on your host remain qualification requirements.
-Follow [policy change constraints](#verify-and-change-the-configuration) before changing a deployed policy.
+Follow [policy change constraints](#verifying-and-changing-the-configuration) before changing a deployed policy.
 
-## Attach Network Middleware
+## Attaching Network Middleware
 
 OpenShell supervisor middleware inspects a sandbox's admitted HTTP requests, responses, and WebSocket messages, and can allow, change, or block them.
 Using a middleware service takes two steps, with different owners:
@@ -230,14 +230,14 @@ NemoClaw checks the fields' shape and keeps each binding as written through plan
 The pinned OpenShell validator checks the rest, and OpenShell intercepts and enforces the traffic.
 NemoClaw adds no enforcement of its own.
 Changing a binding is a policy change.
-Refer to [Verify and Change the Configuration](#verify-and-change-the-configuration).
-Changing a managed gateway's registration restarts the gateway, as other [gateway configuration](../build-deploy/usage.md#configure-a-managed-gateway) changes do.
+Refer to [Verifying and Changing the Configuration](#verifying-and-changing-the-configuration).
+Changing a managed gateway's registration restarts the gateway, as other [gateway configuration](../build-deploy/usage.md#configuring-a-managed-gateway) changes do.
 
 OpenShell describes supervisor middleware as a research preview whose policy and service contracts can change.
 Its [middleware guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/extensibility/supervisor-middleware/configure.mdx) for the pinned release describes registration fields, failure behavior, and the decisions it logs.
 
 
-## Use an Upstream Proxy
+## Using an Upstream Proxy
 
 OpenShell owns the workload's proxy environment and routes traffic through its policy proxy.
 To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-supervisor-network/src/upstream_proxy.rs).
@@ -245,7 +245,7 @@ At this revision, chaining applies to TLS CONNECT traffic.
 Plain HTTP still connects directly.
 An external gateway's operator sets the proxy.
 
-For a managed gateway, put the settings in the selected driver's table in [`spec.gateway.config`](../build-deploy/usage.md#configure-a-managed-gateway):
+For a managed gateway, put the settings in the selected driver's table in [`spec.gateway.config`](../build-deploy/usage.md#configuring-a-managed-gateway):
 
 ```yaml
 spec:
@@ -265,7 +265,7 @@ NemoClaw passes them through unchecked.
 OpenShell validates them when the gateway starts.
 
 A Kubernetes or OpenShift gateway reads proxy credentials from a Secret in the deployment's namespace, whose key holds `user:pass`.
-Create the Secret there, before the first apply or after NemoClaw creates the namespace, as for [registry Secrets](../build-deploy/kubernetes.md#reference-registry-credentials), and name it:
+Create the Secret there, before the first apply or after NemoClaw creates the namespace, as for [registry Secrets](../build-deploy/kubernetes.md#referencing-registry-credentials), and name it:
 
 ```yaml
 spec:
@@ -282,11 +282,11 @@ Docker and Podman gateways read credentials and a proxy CA only from files on th
 Refer to [current limits](../resources/limits.md#security).
 
 Adding or changing these settings on an applied deployment restarts the gateway, and the next plan replaces its Fabric sandboxes.
-Refer to [Configure a Managed Gateway](../build-deploy/usage.md#configure-a-managed-gateway).
+Refer to [Configuring a Managed Gateway](../build-deploy/usage.md#configuring-a-managed-gateway).
 An offline render of the pinned chart places the Kubernetes settings in the gateway's configuration file.
 No managed gateway has run behind a proxy.
 
-## Verify and Change the Configuration
+## Verifying and Changing the Configuration
 
 Review the policy selected for the sandbox before applying changes.
 Configuration admission and an agent reply are separate checks.
@@ -311,14 +311,14 @@ This removes the upstream cause of suspected GPU false drift.
 Live GPU export and reapply remain unverified.
 Missing policy observations or drift do not produce a partial configuration.
 
-A policy change replaces the sandbox, deleting its files and conversations (except on [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes)).
+A policy change replaces the sandbox, deleting its files and conversations (except on [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes)).
 Back them up first.
 External OpenShell policy edits conflict with the declared policy and stop export.
 Change the policy in the YAML instead.
 Retained workspace and model storage follow the existing lifecycle rules.
 If an operation fails, preserve the state directory, resolve the reported observation or configuration problem, and retry with the retained configuration.
 
-### Recover From Runtime Policy Rejection
+### Recovering From Runtime Policy Rejection
 
 If OpenShell reports configuration admission as rejected, apply stops its startup wait and reports `sandbox/<name>: OpenShell configuration rejected`, followed by a safe reason.
 This check applies while the sandbox is starting and before the agent starts.

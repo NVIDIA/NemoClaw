@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Report a Security Vulnerability
+# Reporting a Security Vulnerability
 
 Report a potential NemoClaw vulnerability privately through [NVIDIA's vulnerability-reporting page](https://www.nvidia.com/en-us/security/report-vulnerability/).
 It links the disclosure program and lists NVIDIA PSIRT at `psirt@nvidia.com`.

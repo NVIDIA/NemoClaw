@@ -21,10 +21,10 @@ Refer to [agent tool restrictions](../agents-inference/agents.md#agent-tool-rest
 Fabric's Hermes adapter defaults `HERMES_YOLO_MODE` and `HERMES_ACCEPT_HOOKS` to `1`, so Hermes runs commands and hooks without asking for approval.
 Rely on the sandbox policy for isolation.
 
-Refer to the [threat model](threat-model.md) for what a deployment protects and from whom, and the [hardening checklist](#harden-a-deployment) for reducing the remaining risks.
+Refer to the [threat model](threat-model.md) for what a deployment protects and from whom, and the [hardening checklist](#hardening-a-deployment) for reducing the remaining risks.
 Host-specific security qualification is part of [qualification](https://github.com/NVIDIA/NemoClaw/issues/12641).
 
-### Identify the Trust Boundaries
+### Identifying the Trust Boundaries
 
 Account for host operators, gateway operators, sandbox processes, and endpoint operators separately.
 Each actor or component has the following access:
@@ -39,7 +39,7 @@ Each actor or component has the following access:
 | Recipe tools and runtime images | Execute within their declared runtime. Select reviewed immutable artifacts and retain their source notices. |
 
 Before granting access, identify the destination, executing binary, files, and credentials the task needs.
-Use [explicit network policy](sandbox-network.md#choose-a-policy) for an allowed destination.
+Use [explicit network policy](sandbox-network.md#choosing-a-policy) for an allowed destination.
 Selecting an HTTP proxy alone does not grant egress.
 An explicit policy replaces the entire preset, so retain the intended filesystem and process settings too.
 
@@ -51,11 +51,11 @@ Use the owning guide for the selected credential type:
 | Credential or Connection | Storage, Access, and Retirement | Owning Procedure |
 |---|---|---|
 | Gateway bearer credential and TLS files | Caller supplies environment values and local files. The SDK and provider need access. Gateway operator owns revocation, while the caller removes local values and files when no longer needed. | [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials) |
-| Literal application-container environment key | Caller places the value in private YAML. It enters plans, state, exports, and Docker configuration. The application and engine administrators can read it. Caller owns artifact cleanup and upstream revocation. | [Application environment](../build-deploy/container-services.md#protect-application-credentials) |
-| External inference key, including Hermes provider authentication | Caller resolves the reference. OpenShell retains the installed value for routing. Destroy removes the provider registration, not the upstream account or key. | [Inference authentication](../agents-inference/inference.md#authenticate-hermes-through-the-provider) |
-| Key for a model server you run in a Kubernetes or OpenShift cluster | Caller supplies the value where `nemoclaw` runs, and a Kubernetes Secret supplies it to the server. Principals who can read Secrets or create Pods in the server's namespace, or exec into the server's Pod, and node administrators can read it. OpenShell retains the installed value for routing. Destroy removes the provider registration, not the Secret or the server's key. | [In-cluster model server](../build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) |
-| Generated managed vLLM key | Private file in a separate retained credential volume, available to runtime root and engine administrators. Recreation reuses it. Retiring the container does not erase the key. | [Managed service authentication](../agents-inference/inference.md#authenticate-a-managed-vllm-service) |
-| Generated external-Ollama proxy key | Private credential volume, available to proxy root and engine administrators. Retained across destroy and recreation and never forwarded to Ollama. | [Ollama proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy) |
+| Literal application-container environment key | Caller places the value in private YAML. It enters plans, state, exports, and Docker configuration. The application and engine administrators can read it. Caller owns artifact cleanup and upstream revocation. | [Application environment](../build-deploy/container-services.md#protecting-application-credentials) |
+| External inference key, including Hermes provider authentication | Caller resolves the reference. OpenShell retains the installed value for routing. Destroy removes the provider registration, not the upstream account or key. | [Inference authentication](../agents-inference/inference.md#authenticating-hermes-through-the-provider) |
+| Key for a model server you run in a Kubernetes or OpenShift cluster | Caller supplies the value where `nemoclaw` runs, and a Kubernetes Secret supplies it to the server. Principals who can read Secrets or create Pods in the server's namespace, or exec into the server's Pod, and node administrators can read it. OpenShell retains the installed value for routing. Destroy removes the provider registration, not the Secret or the server's key. | [In-cluster model server](../build-deploy/kubernetes.md#using-a-model-server-in-the-cluster) |
+| Generated managed vLLM key | Private file in a separate retained credential volume, available to runtime root and engine administrators. Recreation reuses it. Retiring the container does not erase the key. | [Managed service authentication](../agents-inference/inference.md#authenticating-a-managed-vllm-service) |
+| Generated external-Ollama proxy key | Private credential volume, available to proxy root and engine administrators. Retained across destroy and recreation and never forwarded to Ollama. | [Ollama proxy](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy) |
 | Brave or Tavily search key | Caller supplies the value. OpenShell holds it and replaces the agent's placeholder. Destroy removes managed registrations but does not revoke the upstream key. | [Web search](../agents-inference/agents.md#web-search) |
 
 Removing a caller's environment variable does not revoke an upstream key or erase a credential retained by a gateway.
@@ -63,7 +63,7 @@ Unchanged apply does not automatically detect changed values behind the same ref
 Managed private HTTP endpoints with bearer authentication do not provide TLS.
 
 To rotate any of these credentials, follow the [rotation runbook](credential-rotation.md).
-For a corporate CA, refer to [Trust a Corporate Certificate Authority](#trust-a-corporate-certificate-authority).
+For a corporate CA, refer to [Trusting a Corporate Certificate Authority](#trusting-a-corporate-certificate-authority).
 
 Keep credential values out of committed or shared YAML, shell arguments, shared URLs, and published diagnostics.
 Generic application containers have no protected credential delivery: their environment values are literal and appear in configuration and state.
@@ -77,7 +77,7 @@ Use environment references for provider secrets and protected files for gateway 
 Configuration export preserves references.
 It cannot recover a lost credential value.
 Retiring a deployment requires separate decisions about upstream revocation, retained gateway, model, and proxy storage, and caller-owned files.
-[Remove Retained Resources](../build-deploy/usage.md#remove-retained-resources) removes retained storage from Docker engines.
+[Removing Retained Resources](../build-deploy/usage.md#removing-retained-resources) removes retained storage from Docker engines.
 
 ### Diagnostic Disclosure
 
@@ -99,7 +99,7 @@ The environment scan includes values subsequently excluded from the child enviro
 If withholding is unexpected, check those references and remove unrelated credential-like environment variables from the invocation.
 The [subprocess tests](../../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI fixture](../../crates/nemoclaw-e2e/tests/integration/rust/deployment.rs) exercise these boundaries.
 
-### Separate the TLS Connections
+### Separating the TLS Connections
 
 Each connection has its own trust and authentication settings.
 Trusting one layer does not configure the others.
@@ -113,13 +113,13 @@ The current configuration boundaries are:
 | Managed vLLM or Ollama proxy private endpoint | Optional or generated bearer authentication does not add TLS to the private HTTP transport. |
 | Client to native dashboard | Authenticated OpenShell forwarding carries the connection to the sandbox-local listener. Keep the local bind on loopback. |
 
-### Trust a Corporate Certificate Authority
+### Trusting a Corporate Certificate Authority
 
 Each layer that makes outbound TLS connections has its own trust store:
 
 | Layer | How It Trusts a Corporate CA |
 |---|---|
-| The machine running NemoClaw: catalog reads during onboarding, and OpenTofu's providers | The system trust store, or `SSL_CERT_FILE`. Refer to [custom CA trust](../agents-inference/inference.md#trust-a-custom-certificate-authority). |
+| The machine running NemoClaw: catalog reads during onboarding, and OpenTofu's providers | The system trust store, or `SSL_CERT_FILE`. Refer to [custom CA trust](../agents-inference/inference.md#trusting-a-custom-certificate-authority). |
 | The engine pulling images | The Docker or Podman daemon's own registry trust, configured on the engine host. |
 | The OIDC issuer of a managed Kubernetes gateway | `caConfigMap` in the [OIDC profile](../build-deploy/kubernetes.md). |
 | OpenShell's gateway and sandbox egress | OpenShell's images' trust store. For sandbox egress, OpenShell also trusts the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas). No managed gateway can receive it ([current limits](../resources/limits.md#security)). A CA in the bundle authenticates every policy-permitted destination whose certificate chains to it, so include only CAs that sandboxes should trust. |
@@ -142,11 +142,11 @@ Deleting the sandbox deletes those files.
 
 Traces can contain prompts, model output, tool calls and their arguments, and file contents, so treat them like agent data:
 
-- **Local traces:** Hermes Relay writes them into the sandbox. Destroying or replacing the sandbox deletes them, unless they are on a [mounted volume](../build-deploy/state.md#keep-agent-files-on-mounted-volumes), where the volume's owner controls their retention.
+- **Local traces:** Hermes Relay writes them into the sandbox. Destroying or replacing the sandbox deletes them, unless they are on a [mounted volume](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes), where the volume's owner controls their retention.
 - **Collectors:** retention and access are the collector operator's policy. NemoClaw does not configure them.
 - **Before sharing a trace:** review it for credentials, personal data, and confidential files. Keep the full-payload setting disabled unless you need it.
 
-## Harden a Deployment
+## Hardening a Deployment
 
 Apply the controls at the boundary that enforces them and verify the resulting permissions before admitting untrusted work.
 Harden a deployment with these controls:
@@ -160,7 +160,7 @@ Harden a deployment with these controls:
 - **Pin images by digest,** and use a fresh `metadata.uid` for each deployment.
 - **Rotate keys** on a schedule with the [rotation runbook](credential-rotation.md), and revoke old keys after their sandboxes are replaced.
 
-## Report a Vulnerability
+## Reporting a Vulnerability
 
 Use the private channels in [SECURITY.md](../../SECURITY.md), including NVIDIA's disclosure program and encrypted PSIRT email.
 Do not include vulnerability details or credentials in a public issue.

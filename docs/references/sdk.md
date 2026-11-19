@@ -1,14 +1,14 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Use the Rust SDK
+# Using the Rust SDK
 
 `nemoclaw-sdk` owns the same operations used by the CLI.
 Callers supply a verified runtime bundle, a persistent state directory, and a cancellation token.
 The SDK runs bundled OpenTofu and its provider as child processes.
 It is not an embedded OpenTofu engine.
 
-## Build a Local Application
+## Building a Local Application
 
 Use a path dependency on this checkout.
 The crate is marked `publish = false` and these instructions do not assume a registry release.
@@ -27,7 +27,7 @@ An application outside this workspace resolves its own dependencies and lockfile
 Keep its SDK checkout, built bundle, and input schema matched.
 The `v1alpha1` API string alone does not establish compatibility.
 
-## Preview a Deployment
+## Previewing a Deployment
 
 The following program reads `deployment.yaml`, uses the state directory `.local/deployment`, and selects a Linux ARM64 bundle.
 Replace the bundle path with the matching target or a preserved complete bundle.
@@ -82,7 +82,7 @@ Keep them short.
 A timed step reports when it returns, including cooperative cancellation.
 Dropping its future does not emit a completed event.
 
-## Choose the Lifecycle Operation
+## Choosing the Lifecycle Operation
 
 Select the SDK call for the effect you need.
 Keep the same state directory and bundle across operations.
@@ -102,7 +102,7 @@ Schedule callers so they do not operate concurrently on that state.
 Apply computes its own checked plan.
 Passing a previous preview is not part of the API.
 
-## Discover Before Authoring or Planning
+## Discovering Before Authoring or Planning
 
 `discovery::plan_queries(&document)` returns the target reads a plan makes for a document, each a `DiscoveryQuery` that names everything that determines its answer.
 The [`nemoclaw-discovery`](../../crates/nemoclaw-discovery/src/lib.rs) crate answers queries directly with `observe`, without OpenTofu, a bundle, or deployment state.
@@ -134,7 +134,7 @@ Reuse those observations and retained bindings for ownership, drift, and storage
 A separate unowned-resource scan cannot authorize adoption.
 The [provider reference](provider.md#discovery-ownership) defines data-source inputs, sources, limitations, and unknown results for each category.
 
-## Configure a Discovered Fabric Harness
+## Configuring a Discovered Fabric Harness
 
 `HarnessKind` is an opaque canonical Fabric adapter identifier, with no named Rust variants or aliases.
 Set `harness.kind` to the descriptor's exact `adapter_id`, such as `nvidia.fabric.openclaw`.
@@ -145,7 +145,7 @@ Supply an explicit immutable sandbox image containing the generic launcher and s
 Every sandbox requires `image.ref`.
 The SDK has no default image and no per-adapter image lookup.
 Optional `harness.settings` carries a JSON object, including nested values, to Fabric's `harness.settings` unchanged.
-The agent's and the harness's [Fabric sections](../agents-inference/agents.md#configure-the-agent-and-the-harness) reach Fabric unchanged, but cannot replace deployment-owned identities, models, workspace paths or artifact paths.
+The agent's and the harness's [Fabric sections](../agents-inference/agents.md#configuring-the-agent-and-the-harness) reach Fabric unchanged, but cannot replace deployment-owned identities, models, workspace paths or artifact paths.
 Model `overrides.settings` likewise passes native settings through without interpretation.
 These fields contain configuration and credential references, not inline secrets.
 Fabric owns their schemas, validation and native mapping.
@@ -156,7 +156,7 @@ NemoClaw does not resolve descriptor filenames or translate identifiers.
 Image labels support passive planning, and installed Fabric discovery governs execution.
 The bundled snapshot supplies offline candidates only.
 
-## Read Plan Discovery and Resource Inventory
+## Reading Plan Discovery and Resource Inventory
 
 `plan(&document, &cancel)` returns `OperationResult.discovery` when observations or inventory are available.
 The report reuses the checked OpenTofu plan and retained bindings.
@@ -196,7 +196,7 @@ The SDK copies those advisories into `OperationResult.unverified`, retaining ful
 A complete resource plan does not establish healthy services or working inference.
 Apply still enforces its service readiness gates, including on unchanged deployments.
 
-## Resolve Credentials in an Application
+## Resolving Credentials in an Application
 
 `with_secrets` supplies an application-owned `Secrets` implementation.
 The default resolves nonempty environment variables.
@@ -229,7 +229,7 @@ The application owns how that map is obtained, who can read it, and its lifetime
 The resolver does not revoke credentials installed in OpenShell or erase generated keys in retained runtime storage.
 Refer to [credential ownership](../security/security.md#credentials-and-authentication).
 
-## Handle Failure and Cancellation
+## Handling Failure and Cancellation
 
 Errors retain observation uncertainty and redact resolved values.
 Cancellation leaves state available for explicit reconciliation.

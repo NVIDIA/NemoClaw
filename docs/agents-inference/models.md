@@ -1,17 +1,17 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Select a Managed Model
+# Selecting a Managed Model
 
 Declare a named service under `spec.services` with `kind: vllm` for a public Hugging Face model that the pinned vLLM image can load natively.
 Set its `model.repository` and an exact 40-character commit in `model.revision`.
 Select it from an inference provider with `serviceRef: <name>`.
 The fields below belong to that named service.
 There is no repository allowlist.
-For Ollama registry models, use [managed Ollama](inference.md#run-managed-ollama).
+For Ollama registry models, use [managed Ollama](inference.md#running-managed-ollama).
 It shares the `service` hardware, placement, memory, and lifecycle contract described here.
 
-## Serve a Pinned GGUF With llama.cpp
+## Serving a Pinned GGUF With llama.cpp
 
 Use `kind: llamaCpp` for a public GGUF model.
 Set `model.repository`, its exact 40-character `revision`, a safe relative `.gguf` `file`, lowercase `sha256`, and `sizeBytes`.
@@ -24,7 +24,7 @@ A changed size or modification time causes refusal and retains the cache for ins
 
 Build the `llama-cpp` Bake target and use its resulting immutable digest as the service `image`.
 It adds the v1 supervisor to llama.cpp's digest-pinned CUDA 13.5 server image from release b12375.
-See [build a runtime image](../build-deploy/build.md#build-a-runtime-image).
+See [build a runtime image](../build-deploy/build.md#building-a-runtime-image).
 This operation publishes no image.
 
 The [Qwen3-4B case](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) shows the complete desired-state shape with a pinned 2.50 GB Q4_K_M GGUF, 32,768 context tokens, and a 12 GiB GPU budget.
@@ -128,13 +128,13 @@ Startup conservatively requires `model.cacheBytes` plus 16 GiB free disk even wh
 Same-host cache reuse is within the qualified configuration.
 Restoring the retained cache on a new host and other model and platform combinations remain unqualified.
 
-## Choose a Model and Capacity
+## Choosing a Model and Capacity
 
 Check the model's identity and serving requirements against the selected host before applying.
 
 | Decision | Check before apply |
 |---|---|
-| Request API and agent | The [harness and API combination](inference.md#choose-the-request-api) accepts the model's serving protocol |
+| Request API and agent | The [harness and API combination](inference.md#choosing-the-request-api) accepts the model's serving protocol |
 | Weights and format | Public repository, immutable revision, and files accepted by the resolver described below |
 | Runtime compatibility | The pinned vLLM image can load the model without unsupported repository code or format conversion |
 | Hardware and placement | The selected engine host satisfies the declared hardware contract; use [SSH placement](remote-service.md) when needed |
@@ -144,9 +144,9 @@ Check the model's identity and serving requirements against the selected host be
 Start from a maintained example, then verify it against your current images and host.
 A result for one revision doesn't establish support across a release.
 For an external endpoint, its operator owns installation and capacity.
-Use [external inference configuration](inference.md#prepare-an-external-endpoint) instead of the managed-model fields below.
+Use [external inference configuration](inference.md#preparing-an-external-endpoint) instead of the managed-model fields below.
 
-## Pin and Serve the Model
+## Pinning and Serving the Model
 
 Mutable branches and tags are rejected so a later apply can't silently change weights.
 The OpenShell route's model must match `serving.modelName` when declared, or the repository name when it's omitted.
@@ -157,7 +157,7 @@ For the exact single-GB300 configuration tested on DGX Station, use the [Station
 The runtime image digest in each example refers to a locally built artifact, not a published registry image.
 Build the runtime locally and use the digest reported by your build.
 
-Follow [the runtime image build procedure](../build-deploy/build.md#build-a-runtime-image) and use the immutable OCI manifest digest from the build output.
+Follow [the runtime image build procedure](../build-deploy/build.md#building-a-runtime-image) and use the immutable OCI manifest digest from the build output.
 This image contains the shared supervisor and unpatched vLLM, with retained source and license notices.
 It contains no model weights or model-specific preparation tools.
 
@@ -185,21 +185,21 @@ hardware:
 ```
 
 This profile requires one NVIDIA GB10 with observed compute capability at least 12.1, at least 118 GiB host RAM, and driver major 580 or newer.
-For other hardware, select a [named profile](#choose-a-hardware-profile) or declare [dedicated GPU requirements](#configure-nemotron-on-an-amd64-gpu-host).
+For other hardware, select a [named profile](#choosing-a-hardware-profile) or declare [dedicated GPU requirements](#configuring-nemotron-on-an-amd64-gpu-host).
 An inline recipe supplies its own compatibility requirements and excludes `hardware`.
 
 Backend startup still establishes actual model compatibility.
 
 Optional `serving.toolParser` and `serving.reasoningParser` select native vLLM parsers.
 NemoClaw checks only the name's form, lowercase letters, digits, and underscores.
-vLLM rejects an unknown parser when it starts, and the runtime stops with vLLM's error in its [stop detail](#diagnose-and-recover-a-stopped-runtime).
+vLLM rejects an unknown parser when it starts, and the runtime stops with vLLM's error in its [stop detail](#diagnosing-and-recovering-a-stopped-runtime).
 `serving.mambaBackend: flashinfer` selects the native FlashInfer Mamba backend.
 `serving.enforceEager: false` leaves compilation and CUDA graphs at vLLM's native defaults.
 Omission retains eager execution.
 Inline recipes supply their own model name and execution settings and reject these overrides.
 There are no shell hooks, extra command arguments, or implicit model-specific settings.
 
-### Set the Parallel Layout
+### Setting the Parallel Layout
 
 `serving.tensorParallelSize` and `serving.pipelineParallelSize` set vLLM's `--tensor-parallel-size` and `--pipeline-parallel-size`.
 Each is a positive integer.
@@ -212,7 +212,7 @@ serving:
   pipelineParallelSize: 1
 ```
 
-- Without a recipe, when both are omitted, tensor parallelism defaults to the number of [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy) entries, or 1 without them.
+- Without a recipe, when both are omitted, tensor parallelism defaults to the number of [`container.gpuDevices`](inference.md#setting-container-limits-and-update-policy) entries, or 1 without them.
 - When only `pipelineParallelSize` is set, tensor parallelism stays at vLLM's default of 1, so `pipelineParallelSize: 2` with two GPUs uses both GPUs as pipeline stages.
 - Pipeline parallelism defaults to 1.
 - vLLM uses tensor × pipeline parallel size GPUs.
@@ -225,7 +225,7 @@ serving:
 - The host reserve applies once for the service, and the container's memory limit covers all of vLLM's worker processes.
 - NemoClaw passes the layout as written.
   When vLLM starts, it rejects a layout that needs more GPUs than the container sees, or that the model doesn't support, such as a tensor size that doesn't divide the model's attention heads.
-  The runtime then stops, and the [container log](#diagnose-and-recover-a-stopped-runtime) keeps vLLM's error.
+  The runtime then stops, and the [container log](#diagnosing-and-recovering-a-stopped-runtime) keeps vLLM's error.
 - [vLLM's parallelism guide](https://github.com/vllm-project/vllm/blob/v0.34.0/docs/serving/parallelism_scaling.md) recommends pipeline parallelism when the GPU count doesn't divide the model evenly, and when the GPUs have no NVLink.
 - An inline recipe sets its own layout, whose omitted sizes get vLLM's default of 1, and rejects these settings.
   See [recipes](recipes.md#declaration).
@@ -266,23 +266,23 @@ Model changes replace the inference process while preserving its storage volume 
 Failed provider observation stops planning.
 Failed startup retains model data and provider state.
 Explicit recovery can recreate the container using that retained data.
-A watchdog stop requires [explicit recovery](#diagnose-and-recover-a-stopped-runtime).
+A watchdog stop requires [explicit recovery](#diagnosing-and-recovering-a-stopped-runtime).
 
 For models requiring preparation or patches, keep `kind: vllm` and declare an [inline recipe](recipes.md).
 Package the recipe's tools in the pinned runtime image.
 There are no built-in model-specific backends.
 
-## Choose a Hardware Profile
+## Choosing a Hardware Profile
 
 The hosted runtime checks named profiles against its GPU family, CPU architecture, driver, and memory.
 Configuration parsing validates the profile declaration without collecting host measurements.
 They don't choose a model, runtime image, or GPU count.
 Every profile currently requires Linux, driver major 580 or newer, which the runtime image's CUDA 13.0 needs, and exactly one GPU visible to `nvidia-smi` in the model container.
 Multi-GPU and multi-host serving aren't implemented.
-Without [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy), the model container sees every GPU, so the runtime stops on a host with two or more, such as a DGX Station with an additional RTX or display GPU.
+Without [`container.gpuDevices`](inference.md#setting-container-limits-and-update-policy), the model container sees every GPU, so the runtime stops on a host with two or more, such as a DGX Station with an additional RTX or display GPU.
 `CUDA_VISIBLE_DEVICES` doesn't select one, because `nvidia-smi` ignores it.
 `container.gpuDevices` asks Docker for the one GPU it lists, as `docker run --gpus device=` does, so the model container sees only that GPU.
-With one GPU, the [parallel layout](#set-the-parallel-layout) defaults to tensor and pipeline parallel size 1.
+With one GPU, the [parallel layout](#setting-the-parallel-layout) defaults to tensor and pipeline parallel size 1.
 GB200 and GB300 profiles describe one observed GPU in a Grace Blackwell system.
 They don't enable a full compute tray or NVL72 rack.
 
@@ -364,12 +364,12 @@ The [profile catalog](../../crates/nemoclaw-runtime/src/vllm/hardware_profile.rs
 [Profile tests](../../crates/nemoclaw-sdk/tests/hardware_profiles.rs) cover schema and parser agreement, GPU-family mismatches, architecture selection, and memory checks using fixtures.
 Inference hasn't been tested for every candidate, model, agent, GPU count, and host ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-## Diagnose and Recover a Stopped Runtime
+## Diagnosing and Recovering a Stopped Runtime
 
 The managed vLLM supervisor continues checking host memory after the CLI exits.
 It stops its inference process on sustained pressure, failed memory observations, startup timeout, or an operator stop, and doesn't automatically restart inference.
 The container also stays stopped after a host reboot.
-See [host reboot recovery](../build-deploy/usage.md#recover-after-a-host-reboot).
+See [host reboot recovery](../build-deploy/usage.md#recovering-after-a-host-reboot).
 A native process exit also ends supervision of that process.
 When vLLM exits, the stop detail and the apply error include the end of vLLM's output, up to 4 KiB, with the inference key replaced by `[redacted]`.
 When one command's OpenTofu diagnostics together exceed 16 KiB, as several failed services' excerpts can, the apply error lists the whole diagnostics that fit, the next one's summary, and how many it left out.
@@ -391,7 +391,7 @@ model_container=REPLACE_WITH_WORKSPACE-inference-SERVICE_NAME
 docker --host "$model_engine" inspect "$model_container" --format '{{.Id}} {{json .Config.Labels}}'
 ```
 
-Replace the socket when your selected daemon uses another path, and use the [UID-derived workspace](interfaces.md#select-the-gateway-and-workspace) and the service name in the container name.
+Replace the socket when your selected daemon uses another path, and use the [UID-derived workspace](interfaces.md#selecting-the-gateway-and-workspace) and the service name in the container name.
 Confirm the `nemoclaw.nvidia.com/uid` label matches your YAML before collecting its output.
 This name and label check helps select diagnostics.
 It doesn't authorize manual mutation or adoption of persistent data.
@@ -418,28 +418,28 @@ Failed observation doesn't prove resource absence.
 | Inference process exited | Diagnose the native error in the detail's final vLLM output or the runtime log, using the selected model and image and the recipe configuration |
 | Operator stop or protection trip | Establish why the stop was requested before explicitly resuming inference |
 
-After correcting the conditions, follow [interrupted-operation recovery](../build-deploy/usage.md#recover-an-interrupted-operation) from the client with the original YAML, bundle, and state directory.
+After correcting the conditions, follow [interrupted-operation recovery](../build-deploy/usage.md#recovering-an-interrupted-operation) from the client with the original YAML, bundle, and state directory.
 An unfinished OpenShell mutation must first reconcile that exact intent.
 A failed runtime apply can accept corrected model or serving settings subject to normal validation, replacement, and durable-storage checks.
 For a completed deployment, preview any proposed configuration change and follow the normal runtime replacement rules.
 Successful recovery must pass configuration and service readiness checks.
-Verify a native agent reply separately using [inference verification](inference.md#verify-the-result).
+Verify a native agent reply separately using [inference verification](inference.md#verifying-the-result).
 No recovery step requires deleting manifests, keys, volumes, or ownership bindings.
 
 The [runtime reporter](../../crates/nemoclaw-runtime/src/vllm/runtime/mod.rs), [supervisor](../../crates/nemoclaw-runtime/src/execution/supervisor.rs), and [provider status reader](../../crates/nemoclaw-provider/src/services/status.rs) define these diagnostics and failure boundaries.
 
-## Configure Nemotron on an AMD64 GPU Host
+## Configuring Nemotron on an AMD64 GPU Host
 
 [The Nemotron example](../../examples/nemotron-amd64.yaml) declares the pinned NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 model, served name, native parsers, 65,536-token context, one sequence, and 4,096-token batch.
 Its source pins and adaptation are recorded in the [vLLM runtime notice](../../image/vllm/NOTICE.md).
 It uses `kind: vllm` serving with no preparation recipe.
 
 The example requires an existing OpenShell gateway and a Linux AMD64 Docker host reached through SSH.
-The model container must see exactly one NVIDIA GPU, so the host must have one or the service must select one with [`container.gpuDevices`](inference.md#set-container-limits-and-update-policy).
+The model container must see exactly one NVIDIA GPU, so the host must have one or the service must select one with [`container.gpuDevices`](inference.md#setting-container-limits-and-update-policy).
 That GPU needs compute capability at least 9.0, at least 96,000,000,000 bytes of dedicated memory, and driver major 580 or newer.
-Follow the [SSH placement prerequisites](remote-service.md), build the [AMD64 runtime image](../build-deploy/build.md#build-a-runtime-image) on a matching host, and load it into the selected Docker daemon.
+Follow the [SSH placement prerequisites](remote-service.md), build the [AMD64 runtime image](../build-deploy/build.md#building-a-runtime-image) on a matching host, and load it into the selected Docker daemon.
 Replace the zero image digest, SSH alias, gateway endpoint, private publication address, and deployment UID before applying.
-Build a compatible OpenClaw sandbox image using the [agent image procedure](../build-deploy/build.md#build-agent-images), replace `sandboxes.<name>.image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.
+Build a compatible OpenClaw sandbox image using the [agent image procedure](../build-deploy/build.md#building-agent-images), replace `sandboxes.<name>.image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.
 
 `hardware` declares the dedicated-GPU requirements.
 `memory.gpuMemoryUtilization: 0.75` allocates a fraction of the observed GPU memory and leaves KV-cache sizing to vLLM.
@@ -453,7 +453,7 @@ The example selects `container.ipc: host`, sharing the execution host's IPC name
 Its declared 32 GiB shared-memory setting is retained in the container launch contract.
 Host IPC uses the host's existing shared-memory mount.
 Omitting `container` preserves private IPC with an 8 GiB shared-memory allocation.
-The service uses [generated bearer authentication](inference.md#authenticate-a-managed-vllm-service).
+The service uses [generated bearer authentication](inference.md#authenticating-a-managed-vllm-service).
 
 Schema, argument, capacity, SSH observation, and build-platform tests cover these contracts.
 They don't establish AMD64 image or GPU inference qualification.

@@ -12,7 +12,7 @@ Repository Markdown and the [generated field reference](../reference/configurati
 Use the ones from the bundle's revision for validation.
 Use [CLI reference](../references/cli.md) for accepted commands and [migration](../get-started/migration.md) for earlier-product boundaries.
 
-### Choose the v1 Sources
+### Choosing the v1 Sources
 
 Match the guide, bundle, and schema to the same implementation revision before using any hosted or checkout-local reference.
 Choose a source by its use:
@@ -32,7 +32,7 @@ Generic Markdown headers might point at the unversioned index or advertise an MC
 Those headers do not establish v1 search isolation or MCP availability.
 Docs search, MCP and v1-scoped results are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
-### Give an Agent the Documentation Task
+### Giving an Agent the Documentation Task
 
 Use this prompt with an assistant that can read your checkout, replacing the final line with your task:
 
@@ -53,7 +53,7 @@ My task: [describe the task and environment]
 This prompt routes documentation.
 It does not supply missing installers, native-data migration, or gateway provisioning.
 
-### Use the Documentation Skill From a Checkout
+### Using the Documentation Skill From a Checkout
 
 The repository includes a [NemoClaw user-guide skill](../../.agents/skills/nemoclaw-user-guide/SKILL.md) for version selection and task routing.
 For an assistant with access to this checkout, ask it to read `.agents/skills/nemoclaw-user-guide/SKILL.md` before answering your NemoClaw task.
@@ -65,13 +65,13 @@ The skill only routes documentation.
 Reading it does not install software or change deployment resources.
 Automatic discovery, packaged installation across assistant clients and a rehearsed installation prompt are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
-## Contribute
+## Contributing
 
 Follow [repository instructions](../../AGENTS.md), [the writing guide](../../WRITING.md), and [documentation contribution guidance](../../internal-docs/contributing/documentation.md).
 
 Use [NemoClaw issues](https://github.com/NVIDIA/NemoClaw/issues) for reproducible implementation or documentation problems and [discussions](https://github.com/NVIDIA/NemoClaw/discussions) for product questions or proposed capabilities.
 Identify the v1 revision, bundle, relevant configuration, expected behavior, and the failure observed.
-Follow [diagnostic collection](../observability/troubleshooting.md#capture-the-failing-operation) before sharing output.
+Follow [diagnostic collection](../observability/troubleshooting.md#capturing-the-failing-operation) before sharing output.
 Exclude credential values and private deployment data.
 
 [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) hosts community solutions and examples.
@@ -90,7 +90,7 @@ Read the notices for components and derived code:
 - [Ollama runtime sources](../../image/ollama/NOTICE.md).
 - [llama.cpp runtime sources](../../image/llama-cpp/NOTICE.md).
 
-## Report a Security Issue
+## Reporting a Security Issue
 
 Use the private reporting channels in [SECURITY.md](../../SECURITY.md).
 The [security guide](../security/security.md) describes current controls and their qualification limits.

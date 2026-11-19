@@ -1,10 +1,10 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Use Inline Model Recipes
+# Using Inline Model Recipes
 
 A [vLLM service without a recipe](../../examples/spark/vllm.yaml) needs a pinned image and model snapshot.
-Use [the vLLM runtime image build](../build-deploy/build.md#build-a-runtime-image).
+Use [the vLLM runtime image build](../build-deploy/build.md#building-a-runtime-image).
 When the model needs preparation or serving features supplied by its runtime image, declare `recipe` instead of `hardware` under `spec.services.<name>`.
 The recipe supplies the hardware compatibility requirements.
 A service can't declare both fields.
@@ -37,11 +37,11 @@ It contains:
 - `licenses` and `sourceNotices`: Paths to retained files inside the pinned image.
 
 Recipe memory requirements are checked against measurements from the execution host.
-`compatibility.gpu` must belong to the GPU family of a [hardware profile](models.md#choose-a-hardware-profile).
+`compatibility.gpu` must belong to the GPU family of a [hardware profile](models.md#choosing-a-hardware-profile).
 Other names are rejected.
 A recipe's `serving.tensorParallelSize` and `serving.pipelineParallelSize` name the layout its budget was measured on, as vLLM names it.
 An omitted size gets vLLM's default of 1, whatever GPUs the service selects.
-vLLM checks the layout when it starts, as for a [service without a recipe](models.md#set-the-parallel-layout).
+vLLM checks the layout when it starts, as for a [service without a recipe](models.md#setting-the-parallel-layout).
 With a recipe, the service's `serving.speculativeTokens`, from 0 to 3, sets vLLM's MTP speculative decoding through `--speculative-config`.
 Zero leaves it off, and services without a recipe must leave it zero.
 That profile's memory architecture decides how the serving GPU budget, `resources.gpuMemoryBytes`, is checked.

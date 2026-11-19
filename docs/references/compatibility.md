@@ -6,7 +6,7 @@
 NemoClaw v1 is in alpha, and its configuration is `v1alpha1`.
 This page says what a release guarantees across releases, and what it does not.
 
-## Use One Release Together
+## Using One Release Together
 
 A release is its CLI, the SDK crate, its bundle (providers, OpenTofu, and pinned images and charts), and its configuration schema.
 Use them together.
@@ -22,7 +22,7 @@ Within a release, configuration from `export` re-applies to the same deployment.
 ## Deployment State
 
 General state migration between releases is unavailable while v1 is in alpha.
-This bundle supports one explicit exception: [intent format 29 upgrades to 30](../build-deploy/state.md#upgrade-intent-format-29-to-30), preserving the serialized document, ownership generations and pending recovery state.
+This bundle supports one explicit exception: [intent format 29 upgrades to 30](../build-deploy/state.md#upgrading-intent-format-29-to-30), preserving the serialized document, ownership generations and pending recovery state.
 Loading validates the record without rewriting it.
 The next successful intent save writes format 30, which the older CLI cannot read.
 Back up the whole state directory and keep the earlier bundle before upgrading.
@@ -52,7 +52,7 @@ Provider type names, inputs, and outputs can change between releases.
 Each release's [provider guide](provider.md) and schema snapshots describe that release's types.
 
 The examples under [`examples/hcl`](../../examples/hcl) are supported with the release they ship in: [`travel`](../../examples/hcl/travel/main.tf), which an integration scenario applies unchanged, and [`travel-team`](../../examples/hcl/travel-team/README.md).
-Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and destroy keeps what [deployment state](../build-deploy/state.md#understand-the-retained-resources) lists as retained.
+Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and destroy keeps what [deployment state](../build-deploy/state.md#understanding-the-retained-resources) lists as retained.
 
 ## Import, Adoption, and State Backends
 

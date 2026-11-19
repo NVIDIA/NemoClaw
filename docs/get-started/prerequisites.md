@@ -1,13 +1,13 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Check Prerequisites
+# Checking Prerequisites
 
 Identify the client host, sandbox engine, and inference host before building a deployment.
 They can have different requirements.
 A working client binary doesn't qualify the runtime or GPU host.
 
-## Identify Each Host
+## Identifying Each Host
 
 Record where each component runs before checking tool and network requirements.
 
@@ -45,7 +45,7 @@ Endpoint reachability alone is insufficient.
 Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.7`.
 The guides assume an operator provides the external gateway and its credentials.
 Register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
-For an existing profile or plaintext loopback gateway, use [gateway and workspace selection](../agents-inference/interfaces.md#select-the-gateway-and-workspace).
+For an existing profile or plaintext loopback gateway, use [gateway and workspace selection](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace).
 See the [first-deployment guide](first-deployment.md) for its rehearsal status.
 
 ## Client and Build Tools
@@ -71,11 +71,11 @@ Choose the gateway and model placement that matches the available engine and end
 | Configuration | Requirements and owning guide |
 |---|---|
 | External gateway and inference | Existing reachable services, gateway authentication, a compatible inference API and model, and an immutable sandbox image; see [usage](../build-deploy/usage.md) and [inference](../agents-inference/inference.md) |
-| NVIDIA NeMo Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; see [image prerequisites](../build-deploy/build.md#build-agent-images) |
-| Managed vLLM | Matching runtime image, pinned model revision, and storage and capacity for the selected hardware contract; see [managed models](../agents-inference/models.md) and [AMD64 Nemotron configuration](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host) |
-| Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware, placement, and capacity contract as vLLM; see [managed Ollama](../agents-inference/inference.md#run-managed-ollama) |
-| Managed rootless Podman gateway | Podman 5 or later, local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](../build-deploy/usage.md#use-a-managed-podman-gateway) |
-| External Ollama with managed proxy | Managed local Docker gateway, loopback-only daemon on that same Linux host, installed model digest, and a reachable private proxy endpoint; see [proxy setup](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy) |
+| NVIDIA NeMo Fabric agent image | A native Linux ARM64 or AMD64 Docker builder with Buildx, which builds every agent target; see [image prerequisites](../build-deploy/build.md#building-agent-images) |
+| Managed vLLM | Matching runtime image, pinned model revision, and storage and capacity for the selected hardware contract; see [managed models](../agents-inference/models.md) and [AMD64 Nemotron configuration](../agents-inference/models.md#configuring-nemotron-on-an-amd64-gpu-host) |
+| Managed Ollama | Matching runtime image, pinned model digest, one NVIDIA GPU, and the same hardware, placement, and capacity contract as vLLM; see [managed Ollama](../agents-inference/inference.md#running-managed-ollama) |
+| Managed rootless Podman gateway | Podman 5 or later, local Linux API socket, reported `pasta` networking, a private IPv4 default-route interface, and images in the selected Podman store; see [Podman setup](../build-deploy/usage.md#using-a-managed-podman-gateway) |
+| External Ollama with managed proxy | Managed local Docker gateway, loopback-only daemon on that same Linux host, installed model digest, and a reachable private proxy endpoint; see [proxy setup](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy) |
 | SSH-managed model service | Trusted noninteractive SSH access and the documented model-host tools; see [remote service](../agents-inference/remote-service.md) |
 
 Build images from a revision that implements the selected configuration features.

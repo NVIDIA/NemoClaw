@@ -15,11 +15,11 @@ These examples cover their exact combinations and do not qualify other DGX Stati
 ## Check the Host
 
 The host must provide Ubuntu 24.04, ARM64, one NVIDIA GB300 with compute capability 10.3, driver major 580 or newer, and Docker with the containerd image store enabled.
-The `dgx-station` profile requires observable dedicated GPU-memory counters and exactly one GPU visible in the model container; on a Station with another GPU, set the service's [`container.gpuDevices`](../../docs/agents-inference/inference.md#set-container-limits-and-update-policy) to the GB300.
+The `dgx-station` profile requires observable dedicated GPU-memory counters and exactly one GPU visible in the model container; on a Station with another GPU, set the service's [`container.gpuDevices`](../../docs/agents-inference/inference.md#setting-container-limits-and-update-policy) to the GB300.
 Confirm that the selected example's gateway and inference ports are unused and that its gateway CIDR does not overlap a host route or Docker network.
 Stop or resize only workloads you own before reserving GPU capacity.
 
-The [hardware profile reference](../../docs/agents-inference/models.md#choose-a-hardware-profile) defines the admission checks.
+The [hardware profile reference](../../docs/agents-inference/models.md#choosing-a-hardware-profile) defines the admission checks.
 
 ## Build the ARM64 Artifacts
 
@@ -54,7 +54,7 @@ Edit the copy before running NemoClaw:
 
 Keep the Qwen3-4B repository revision pinned.
 Do not embed credentials, hostnames, or host addresses in the deployment file.
-The service generates and retains its private key under the [managed bearer-authentication contract](../../docs/agents-inference/inference.md#authenticate-a-managed-vllm-service).
+The service generates and retains its private key under the [managed bearer-authentication contract](../../docs/agents-inference/inference.md#authenticating-a-managed-vllm-service).
 
 ## Run and Verify the Lifecycle
 
@@ -68,7 +68,7 @@ dist/linux_arm64/bin/nemoclaw apply --state-dir .local/station-demo/state .local
 Planning performs the hardware, image, network, and capacity checks without creating runtime resources.
 Applying downloads the pinned model snapshot, starts managed vLLM and the declared agent runtimes, and may take several minutes.
 Apply verifies readiness but does not request an agent response.
-Use the [headless OpenClaw request](../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) and [agent request](../../docs/agents-inference/agents.md#run-one-agent-request) procedures for the agents in your selected example.
+Use the [headless OpenClaw request](../../docs/agents-inference/agents.md#running-one-headless-openclaw-request) and [agent request](../../docs/agents-inference/agents.md#running-one-agent-request) procedures for the agents in your selected example.
 
 Check convergence and the export round trip:
 
@@ -80,7 +80,7 @@ dist/linux_arm64/bin/nemoclaw apply --state-dir .local/station-demo/state .local
 ```
 
 The unchanged plan reports no resource changes, and both unchanged applies report an empty change list.
-If apply fails, retain the state directory and follow the [runtime diagnostic procedure](../../docs/agents-inference/models.md#diagnose-and-recover-a-stopped-runtime) before retrying the original configuration.
+If apply fails, retain the state directory and follow the [runtime diagnostic procedure](../../docs/agents-inference/models.md#diagnosing-and-recovering-a-stopped-runtime) before retrying the original configuration.
 
 Destroy the test-owned workloads when validation is complete:
 
