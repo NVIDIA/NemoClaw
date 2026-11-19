@@ -5,7 +5,7 @@
 
 Use `nemoclaw` from a [verified native bundle](../build-deploy/build.md).
 Run commands from the directory containing your deployment YAML, and select the same state directory for every operation.
-The [CLI parser](../../crates/nemoclaw-cli/src/args.rs) defines the commands and options below.
+The [CLI parser](../../crates/nemoclaw-cli/src/args.rs) defines the following commands and options.
 The [process tests](../../crates/nemoclaw-cli/tests/commands.rs) cover execution behavior.
 
 ## Commands
@@ -24,20 +24,20 @@ Each command takes the following input and has the following result:
 | `nemoclaw destroy` | Retained state, without YAML | Text result. Removes owned workloads under the retention rules. |
 
 Apply can download models and check readiness.
-It doesn't request model or agent responses.
-Destroy doesn't prompt for confirmation and deletes sandbox files and conversation history.
+It does not request model or agent responses.
+Destroy does not prompt for confirmation and deletes sandbox files and conversation history.
 Read [deployment lifecycle](../build-deploy/usage.md) and preview deletion before destroying a deployment.
 
 `nemoclaw onboard [FILE] --output FILE` starts a new deployment document with a fresh UID.
 It uses the template's answers as suggestions, or built-in defaults when no template is supplied.
 The output defaults to `deployment.yaml`.
 Onboarding never overwrites an existing file.
-It requires a terminal and doesn't create deployment state or apply resources.
+It requires a terminal and does not create deployment state or apply resources.
 It reads the target's engines, the selected image, and the model catalog without a bundle or OpenTofu.
 A read that fails leaves the target unverified, and you can still save.
 The saved file holds only the template's values and your answers.
 `plan` fills the omitted fields with the defaults of the release in use.
-Known engine incompatibility or conflicting image platform, manifest digest, or Fabric adapter requirements blocks onboarding review and saving.
+Known engine incompatibility or conflicting image platform, manifest digest, or NVIDIA NeMo Fabric adapter requirements blocks onboarding review and saving.
 The [onboarding guide](../../crates/nemoclaw-onboarding/README.md) describes how to run it, what it reads from the target, and what to do with the saved file.
 
 Plan and apply derive credential requirements from the parsed document.
@@ -46,7 +46,7 @@ Terminal prompts hide entered values.
 When configuration is read from stdin, all credential references must already be satisfied by nonempty environment variables because stdin is occupied by the document stream.
 The CLI retains collected values only in memory for the current operation and supplies them through the SDK secrets boundary.
 Use `--non-interactive` with plan or apply to fail with the unresolved reference names instead of prompting.
-Credential values aren't written to desired state, output, diagnostics, or deployment state by this fulfillment step.
+Credential values are not written to desired state, output, diagnostics, or deployment state by this fulfillment step.
 
 ## Options
 
@@ -62,14 +62,14 @@ Each option applies to the commands in its scope:
 | `--output FILE`, `-o FILE` | `export`, `onboard` | Write YAML to a file. Onboarding requires a new file. |
 | `--output FORMAT`, `-o FORMAT` | `plan`, `apply`, `destroy` | Select `text` (default) or `json`, including destroy previews. |
 | `--non-interactive` | `plan`, `apply` | Resolve credential references from nonempty environment variables and fail instead of prompting when any remain unresolved. |
-| `--destroy` | `plan` | Preview destroy. Can't be combined with a YAML input. |
+| `--destroy` | `plan` | Preview destroy. Cannot be combined with a YAML input. |
 | `--help`, `-h` | CLI and subcommands | Display help. |
 | `--version`, `-V` | CLI | Display the CLI version. |
 
 Global options can appear before or after the subcommand.
 Plan and apply require an explicit input.
 Use `-` to read stdin.
-Export and destroy don't accept a YAML path.
+Export and destroy do not accept a YAML path.
 
 ## Output and Failure
 
@@ -98,7 +98,7 @@ Unresolved engine, hardware, image, or gateway prerequisites and missing credent
 A known engine or image or adapter incompatibility rejects planning.
 Service readiness scheduled for apply appears under `unverified`, without making the resource plan incomplete.
 `complete: true` means resource planning has no deferred work.
-It doesn't establish service readiness or working inference.
+It does not establish service readiness or working inference.
 Failures refreshing managed-resource identity or required gateway observations still return a nonzero exit code.
 Text output partitions established resources into unchanged plans and planned changes, and reports new resources separately.
 Refresh differences have a separate count: they can include computed metadata even when no resource action is planned.
@@ -107,14 +107,14 @@ Text output also summarizes advertised models and credential-reference availabil
 JSON output preserves the full discovery report, including query provenance and separate runtime and deployment resource scopes.
 
 Apply summarizes actual changes.
-A successful operation doesn't establish working model or agent responses.
+A successful operation does not establish working model or agent responses.
 Plan and apply text list each sandbox's agent with the runtime ID that state records, and print the command that invokes it.
 A plan lists the runtimes the last apply left.
 For each enabled agent interface, apply text also prints the commands that forward it and read its token, and how to sign in.
 It never prints a token.
 Destroy distinguishes removed resources from retained storage.
 The retained list describes tracked resources, not every surviving host file or external service.
-See [agent runtimes during apply](../build-deploy/usage.md#agent-runtimes-during-apply) and [retention](../build-deploy/state.md#deletion-and-retention).
+Refer to [agent runtimes during apply](../build-deploy/usage.md#agent-runtimes-during-apply) and [retention](../build-deploy/state.md#deletion-and-retention).
 
 Progress goes to stderr independently of the result format.
 The default inline Ratatui display uses the normal terminal screen, preserving completed milestones in scrollback.
@@ -138,7 +138,7 @@ Redirected stderr uses plain progress by default, so scripts requiring a quiet s
 
 Resource operations come from OpenTofu's machine-readable events.
 Download progress shows bytes and a percentage only when a valid total is known.
-It isn't overall deployment completion.
+It is not overall deployment completion.
 Elapsed time is a heartbeat, not evidence that the runtime advanced to another startup stage.
 Model-loading details unavailable from the existing event stream remain generic readiness or infrastructure waits.
 Default progress omits known implementation steps.
@@ -152,35 +152,35 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 |---|---|
 | `outcome` | `planned`, `succeeded`, or `destroyed`. |
 | `complete` | Whether a planned result has no deferred work. Inspect this alongside the exit code. |
-| `warnings` | Operator-action messages collected during the operation, also reported on failures. They don't change `complete`. Omitted when empty. |
-| `changes` | Resource addresses and planned or applied action lists. An empty list doesn't mean apply skipped readiness checks. |
-| `connection` | Gateway endpoint and UID-derived workspace selectors from plan or apply. They don't establish access or configure OpenShell CLI credentials. |
-| `serviceUrls` | Apply-only URLs the gateway reports for sandbox service exposures, by sandbox and service name, with `""` for the unnamed endpoint. The URLs carry no credential, so the service must authenticate its own clients. Omitted when empty. When apply can't read them, `warnings` says so. |
-| `agents` | Each sandbox's agent, by sandbox name: `agent`, its name, and `runtimeId`, the runtime ID that `fabric-agent-ctl invoke --runtime-id` takes. A plan reports the runtimes the last apply left, and apply reports the runtimes after its changes. `runtimeId` is omitted while state records no runtime. Never contains a credential. Omitted when empty. When apply can't read state, `warnings` says so. See [invoke an agent](../agents-inference/interfaces.md#invoke-an-agent). |
+| `warnings` | Operator-action messages collected during the operation, also reported on failures. They do not change `complete`. Omitted when empty. |
+| `changes` | Resource addresses and planned or applied action lists. An empty list does not mean apply skipped readiness checks. |
+| `connection` | Gateway endpoint and UID-derived workspace selectors from plan or apply. They do not establish access or configure NVIDIA OpenShell CLI credentials. |
+| `serviceUrls` | Apply-only URLs the gateway reports for sandbox service exposures, by sandbox and service name, with `""` for the unnamed endpoint. The URLs carry no credential, so the service must authenticate its own clients. Omitted when empty. When apply cannot read them, `warnings` says so. |
+| `agents` | Each sandbox's agent, by sandbox name: `agent`, its name, and `runtimeId`, the runtime ID that `fabric-agent-ctl invoke --runtime-id` takes. A plan reports the runtimes the last apply left, and apply reports the runtimes after its changes. `runtimeId` is omitted while state records no runtime. Never contains a credential. Omitted when empty. When apply cannot read state, `warnings` says so. Refer to [invoke an agent](../agents-inference/interfaces.md#invoke-an-agent). |
 | `deferred` | Unresolved planning prerequisites. Omitted when empty. |
 | `resourceSources` | Authored provider `name` and definition `path`, keyed by opaque scoped resource address. Intent metadata, not proof of an established resource. Omitted when empty. |
-| `unverified` | Apply-time service-readiness checks. Doesn't change `complete`. Omitted when empty. |
-| `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory. See the [SDK report contract](sdk.md#read-plan-discovery-and-resource-inventory). Omitted when empty. |
+| `unverified` | Apply-time service-readiness checks. Does not change `complete`. Omitted when empty. |
+| `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory. Refer to the [SDK report contract](sdk.md#read-plan-discovery-and-resource-inventory). Omitted when empty. |
 | `retained` | Retained resource addresses reported by the operation, not an inventory of every surviving file or external service. Omitted when empty. |
-| `interfaces` | After apply, each enabled agent interface: `sandbox`, `interface`, its loopback `port` for an HTTP interface, the `tokenPath` in the sandbox for an interface with a token, `signIn` (`token_in_url_fragment`, `bearer_token`, `none`, or `adapter_documented`), and, for an interface with a terminal UI, the `terminal` command to run in the sandbox with `TOKEN` in place of the token. Never contains a token. Omitted when empty. See [agent interfaces](../agents-inference/interfaces.md#reach-an-agent-interface). |
+| `interfaces` | After apply, each enabled agent interface: `sandbox`, `interface`, its loopback `port` for an HTTP interface, the `tokenPath` in the sandbox for an interface with a token, `signIn` (`token_in_url_fragment`, `bearer_token`, `none`, or `adapter_documented`), and, for an interface with a terminal UI, the `terminal` command to run in the sandbox with `TOKEN` in place of the token. Never contains a token. Omitted when empty. Refer to [agent interfaces](../agents-inference/interfaces.md#reach-an-agent-interface). |
 
 Handled operation errors use the selected format: text on stderr, or one JSON result on stdout with `outcome: failed` or `outcome: interrupted`.
 The failure object includes `operation`, `stateDirectory`, optional `input`, and `error.message`.
 When available, `remainingState` describes the known effects and `help` supplies a next step.
 Apply and destroy failures before a mutating subprocess launches report “No runtime resources changed.”
-Local planning state may still have been written.
-Once a mutating subprocess launches, later failures report retained resources when known or keep the uncertainty warning, even with progress disabled.
-The warning doesn't assert that changes completed.
+Local planning state might still have been written.
+After a mutating subprocess launches, later failures report retained resources when known or keep the uncertainty warning, even with progress disabled.
+The warning does not assert that changes completed.
 Provider-generated replacement refusals name the retained resource and changed provider fields without printing their values.
 External Ollama model failures identify the service's upstream field and its validated local endpoint.
 Diagnostics identify the operation, cause, and confirmed retention where available.
-They don't imply rollback or cleanup when resource state is unknown.
+They do not imply rollback or cleanup when resource state is unknown.
 Short protected values cause child error details and resource and download progress to be withheld.
-See [diagnostic disclosure](../security/security.md#diagnostic-disclosure).
+Refer to [diagnostic disclosure](../security/security.md#diagnostic-disclosure).
 On Unix, SIGINT and SIGTERM cancel ongoing work, including credential prompts.
 During an apply or destroy, the first signal stops OpenTofu from starting further resource operations.
 The command waits until those in progress finish and the state records them, which takes as long as the slowest of them, such as a Helm install that waits for its gateway.
-A second signal stops OpenTofu at once.
+A second signal stops OpenTofu immediately.
 A resource that it was creating can then be missing from the state.
 Interruption preserves the recorded recovery boundary.
 Follow [recovery](../build-deploy/usage.md#updates-and-recovery) before retrying.
@@ -194,11 +194,11 @@ The CLI exits with one of these codes:
 | 130 | Operation interrupted. |
 
 Help, version output, and argument-parser diagnostics remain text.
-An output-stream failure or forced process termination may prevent a complete JSON result.
-Don't treat missing or partial output as an empty plan.
+An output-stream failure or forced process termination can prevent a complete JSON result.
+Do not treat missing or partial output as an empty plan.
 Use [inference verification](../agents-inference/inference.md#verify-the-result) to interpret successful apply results.
 
-An export observation failure doesn't replace an existing file selected by `--output`.
+An export observation failure does not replace an existing file selected by `--output`.
 Shell redirection can truncate a file before the CLI runs.
 Check success before using redirected output.
-See [recovery](../build-deploy/usage.md#updates-and-recovery) for interrupted operations and preserved state.
+Refer to [recovery](../build-deploy/usage.md#updates-and-recovery) for interrupted operations and preserved state.

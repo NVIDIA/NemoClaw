@@ -4,16 +4,16 @@
 # Rotate Credentials
 
 This page describes how to rotate each credential a deployment uses.
-NemoClaw doesn't detect a new value behind an unchanged credential reference, and it doesn't revoke upstream keys.
+NemoClaw does not detect a new value behind an unchanged credential reference, and it does not revoke upstream keys.
 Revoking an old key is the key owner's job.
 
 ## Running Agents Keep the Key They Started With
 
-OpenShell gives each process the credential revision current when the process started.
+NVIDIA OpenShell gives each process the credential revision current when the process started.
 After a key is updated, a running agent keeps using the old key, and only processes started afterwards receive the new one.
 An agent restarts only when its sandbox is replaced, for example when its configuration changes.
 Keep the old upstream key valid until every sandbox that uses it has been replaced, then revoke it.
-See OpenShell's [runtime limitations](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/providers/profiles.mdx#runtime-limitations).
+Refer to OpenShell's [runtime limitations](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/providers/profiles.mdx#runtime-limitations).
 
 ## Inference, Web Search, and API Keys You Supply
 
@@ -22,11 +22,11 @@ Changing only the value behind the same variable makes no plan change, so rotate
 
 1. Create the new key with the upstream service, keeping the old one valid.
 2. Put the new key in a new environment variable, and point the credential reference at it.
-3. Plan. The provider registration shows an in-place update. For inference, web search, and API registrations, this doesn't replace sandboxes.
+3. Plan. The provider registration shows an in-place update. For inference, web search, and API registrations, this does not replace sandboxes.
 4. Apply.
 5. Wait until each sandbox using the key has been replaced, then revoke the old key upstream.
 
-In hand-written HCL, `tofu apply -replace=openshell_sandbox.NAME` replaces a sandbox, and its agent, so it picks up the new key at once.
+In hand-written HCL, `tofu apply -replace=openshell_sandbox.NAME` replaces a sandbox, and its agent, so it picks up the new key immediately.
 
 ## Generated Keys and Managed Gateway Keys
 
@@ -36,7 +36,7 @@ NemoClaw generates these keys and keeps them in retained storage:
 - The key for a managed Ollama proxy
 - A managed Docker or Podman gateway's signing keys and TLS material
 
-They can't be rotated in place: apply refuses a state directory whose gateway storage or credentials were removed.
+They cannot be rotated in place: apply refuses a state directory whose gateway storage or credentials were removed.
 To rotate them, destroy the deployment, [remove its retained resources](../build-deploy/usage.md#remove-retained-resources), and create a new deployment with a fresh `metadata.uid` and state directory.
 
 ## A Key You Supply to a Model Server on Another Platform
@@ -51,14 +51,14 @@ Requests fail between these two steps, until both sides use the same key.
 ## Gateway Connections
 
 Rotate the credential with the component that issues it.
-Changing a reference in YAML alone doesn't revoke an old value.
+Changing a reference in YAML alone does not revoke an old value.
 Rotate each gateway connection credential as follows:
 
 | Credential | How to Rotate |
 |---|---|
 | External gateway bearer token or mTLS files | The gateway operator issues new ones. Update the referenced environment values or files. NemoClaw reads them on every run. |
 | OIDC token for a managed Kubernetes gateway | Refresh it with the issuer's tooling into the variable `token.env` names. NemoClaw reads it on every run, and an expired token fails as an authentication error. |
-| Development credentials for a managed Kubernetes gateway | Their certificates are valid for 365 days and aren't rotated in place. Create a new deployment before they expire, or use the [OIDC profile](../build-deploy/kubernetes.md). |
+| Development credentials for a managed Kubernetes gateway | Their certificates are valid for 365 days and are not rotated in place. Create a new deployment before they expire, or use the [OIDC profile](../build-deploy/kubernetes.md). |
 
 ## Platform Credentials
 

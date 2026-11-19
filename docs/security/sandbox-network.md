@@ -36,26 +36,26 @@ network:
 
 Each grant takes `endpoints` in the same shape as an explicit policy rule, including MCP method and tool rules.
 Its optional `binaries` default to the harness's executables, like the managed inference and search grants.
-Grant names can't reuse a managed grant's name, and an explicit policy can't take `grants` or `grantRefs`, since it already lists every rule.
+Grant names cannot reuse a managed grant's name, and an explicit policy cannot take `grants` or `grantRefs`, since it already lists every rule.
 
 An explicit policy replaces the entire preset.
 Omit `tier` when declaring `policy.explicit` or `policyRef`.
 A network that sets more than one of `tier`, `policy`, and `policyRef` is rejected.
-Omitted fields inside an explicit policy follow OpenShell defaults, so copy the filesystem and process settings you intend to retain.
+Omitted fields inside an explicit policy follow NVIDIA OpenShell defaults, so copy the filesystem and process settings you intend to retain.
 An empty `network_policies` map grants no general egress.
 
 The example grants `/usr/bin/curl` access to `GET /docs/**` on `docs.example.com:443`, with TLS inspection and enforcement enabled.
 Replace that example destination and executable with the API and binary your workload uses.
-A binary grant for curl doesn't grant the same access to Python or Node.js.
+A binary grant for curl does not grant the same access to Python or Node.js.
 
 The input supports TCP destinations and REST, WebSocket, JSON-RPC, and MCP inspection settings.
 Unknown fields and unsupported combinations are rejected.
 Inline credentials, credential-provider bindings, GraphQL, and SQL policy settings are outside this configuration contract.
-To attach supervisor middleware, see [Attach Network Middleware](#attach-network-middleware).
+To attach supervisor middleware, refer to [Attach Network Middleware](#attach-network-middleware).
 The pinned OpenShell parser and validator check protocol-specific rules, destination restrictions, paths, and process identities.
-See the [generated field reference](../reference/configuration.md#explicitpolicy) for the complete input surface.
+Refer to the [generated field reference](../reference/configuration.md#explicitpolicy) for the complete input surface.
 
-`landlock.compatibility: best_effort` permits startup when the host can't enforce Landlock restrictions.
+`landlock.compatibility: best_effort` permits startup when the host cannot enforce Landlock restrictions.
 Use `hard_requirement` to require enforcement.
 Kernel enforcement still requires qualification on the deployment host.
 
@@ -101,7 +101,7 @@ This fragment omits the deployment's other required fields.
 A network can combine it with inline `grants` when no name appears in both.
 A reference to an undefined name fails and lists the defined names.
 A definition that no sandbox selects is validated but applies to none.
-See [the authoring rule](../build-deploy/configuration-references.md#the-authoring-rule).
+Refer to [the authoring rule](../build-deploy/configuration-references.md#the-authoring-rule).
 The [full-featured OpenClaw example](../../examples/full-featured-openclaw.yaml) gives three sandboxes one policy.
 
 ## Runtime Filesystem Access
@@ -109,7 +109,7 @@ The [full-featured OpenClaw example](../../examples/full-featured-openclaw.yaml)
 When an explicit policy declares `filesystem_policy`, NemoClaw checks that it permits reads of the selected harness's runtime directories.
 The same checks apply to inline harnesses and `harnessRef`, separately for every sandbox.
 
-Selected-image assessment checks the Fabric descriptor's required files, the adapter's image-owned `runtime_files`, and the runtime manifest's `required_paths`.
+Selected-image assessment checks the NVIDIA NeMo Fabric descriptor's required files, the adapter's image-owned `runtime_files`, and the runtime manifest's `required_paths`.
 The packaged image declares `/opt/fabric` and `/opt/nemoclaw`.
 A relocated image declares its own paths.
 A missing grant makes compatibility `unsupported` and fails plan.
@@ -117,22 +117,22 @@ A missing grant makes compatibility `unsupported` and fails plan.
 Images without runtime metadata, such as direct Bake builds, fail planning.
 Follow [image rebuilding and selection](../build-deploy/build.md#build-agent-images).
 Document parsing validates policy syntax without assuming an image layout.
-These checks don't establish every path a harness reads.
+These checks do not establish every path a harness reads.
 Verify additional harness paths against the selected image before applying.
 
 A read-only or read-write grant for the directory or a parent directory satisfies the check.
 For example, `/opt` covers the runtime directories beneath it.
-`/opt/fabric-source` doesn't cover `/opt/fabric`.
+`/opt/fabric-source` does not cover `/opt/fabric`.
 Use absolute sandbox paths without `..`.
-Validation doesn't resolve image symlinks or inspect the client's filesystem.
-`include_workdir` doesn't grant access to these runtime directories.
+Validation does not resolve image symlinks or inspect the client's filesystem.
+`include_workdir` does not grant access to these runtime directories.
 An omitted `filesystem_policy` retains OpenShell defaults and is outside this explicit-grant check.
 
 Each error names the required path.
 Edit the authored policy and rerun plan.
-NemoClaw doesn't add filesystem grants automatically.
+NemoClaw does not add filesystem grants automatically.
 The image catalog records adapter requirements and runtime files, not a complete filesystem or executable inventory.
-These checks don't verify arbitrary policy paths, process identities in the image, Unix permissions, writable state directories, or kernel enforcement.
+These checks do not verify arbitrary policy paths, process identities in the image, Unix permissions, writable state directories, or kernel enforcement.
 Those still require runtime verification.
 
 ## Choose TLS Inspection and Enforcement
@@ -150,14 +150,14 @@ For an explicit endpoint with a supported application protocol, choose TLS handl
 Remove either field to keep automatic TLS handling.
 
 Destination and executable grants still determine which connections are allowed.
-An allowed raw tunnel can't enforce encrypted HTTP methods or paths or replace a placeholder credential inside the request.
-Don't choose `tls: skip` for an endpoint that relies on those controls, including the declared Brave integration's credential injection.
+An allowed raw tunnel cannot enforce encrypted HTTP methods or paths or replace a placeholder credential inside the request.
+Do not choose `tls: skip` for an endpoint that relies on those controls, including the declared Brave integration's credential injection.
 Use explicit `enforcement: enforce` when the policy must reject disallowed inspected requests.
 The checked-in example uses that enforcement setting with automatic TLS handling.
 
 The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
 The [SDK policy validator](../../crates/nemoclaw-openshell/src/policy.rs) accepts only supported field combinations.
-A field's presence in the schema doesn't bypass protocol validation.
+A field's presence in the schema does not bypass protocol validation.
 Live enforcement and application trust on your host remain qualification requirements.
 Follow [policy change constraints](#verify-and-change-the-configuration) before changing a deployed policy.
 
@@ -166,8 +166,8 @@ Follow [policy change constraints](#verify-and-change-the-configuration) before 
 OpenShell supervisor middleware inspects a sandbox's admitted HTTP requests, responses, and WebSocket messages, and can allow, change, or block them.
 Using a middleware service takes two steps, with different owners:
 
-1. **Run and register the service.** Running the service is the operator's or platform's job. NemoClaw doesn't start, package, or monitor it.
-   Start it before the gateway, where both the gateway and the sandbox supervisors can reach it, and keep it available: the gateway doesn't start while a registered service is unavailable.
+1. **Run and register the service.** Running the service is the operator's or platform's job. NemoClaw does not start, package, or monitor it.
+   Start it before the gateway, where both the gateway and the sandbox supervisors can reach it, and keep it available: the gateway does not start while a registered service is unavailable.
    For a managed gateway, register it in `spec.gateway.config`. An external gateway's operator registers it in that gateway's configuration.
    Built-in middleware, such as `openshell/regex`, needs no registration.
 2. **Bind it in the sandbox policy.** Add an entry to `network_middlewares` in `policy.explicit`, naming the middleware and the destination hosts it runs for.
@@ -222,15 +222,15 @@ In each binding:
 - `endpoints.include` selects admitted destination hosts, in endpoint-host syntax without a port. `endpoints.exclude` removes hosts from that selection.
   A selector that names a port, such as `api.example.com:443`, fails OpenShell's validation at plan.
 - `order` sets which binding runs first when several select the same host, lowest first. Orders must be unique within the policy.
-- `on_error` sets what happens when the middleware can't complete its check, for example when its service is down: `fail_closed`, the default, blocks the traffic, and `fail_open` lets it continue.
+- `on_error` sets what happens when the middleware cannot complete its check, for example when its service is down: `fail_closed`, the default, blocks the traffic, and `fail_open` lets it continue.
   A middleware's denial blocks traffic either way, even on an `enforcement: audit` endpoint.
-- A fail-closed binding can't select an endpoint with `tls: skip`, whose traffic OpenShell can't inspect.
+- A fail-closed binding cannot select an endpoint with `tls: skip`, whose traffic OpenShell cannot inspect.
 
 NemoClaw checks the fields' shape and keeps each binding as written through planning, apply, refresh, and export.
 The pinned OpenShell validator checks the rest, and OpenShell intercepts and enforces the traffic.
 NemoClaw adds no enforcement of its own.
 Changing a binding is a policy change.
-See [Verify and Change the Configuration](#verify-and-change-the-configuration).
+Refer to [Verify and Change the Configuration](#verify-and-change-the-configuration).
 Changing a managed gateway's registration restarts the gateway, as other [gateway configuration](../build-deploy/usage.md#configure-a-managed-gateway) changes do.
 
 OpenShell describes supervisor middleware as a research preview whose policy and service contracts can change.
@@ -279,10 +279,10 @@ spec:
 
 With an `http://` proxy, credentials also require `proxy_auth_allow_insecure: true`, because Basic authentication then crosses the network unencrypted.
 Docker and Podman gateways read credentials and a proxy CA only from files on the gateway (`proxy_auth_file` and `proxy_ca_bundle`), and no managed gateway can receive a proxy CA.
-See [current limits](../resources/limits.md#security).
+Refer to [current limits](../resources/limits.md#security).
 
 Adding or changing these settings on an applied deployment restarts the gateway, and the next plan replaces its Fabric sandboxes.
-See [Configure a Managed Gateway](../build-deploy/usage.md#configure-a-managed-gateway).
+Refer to [Configure a Managed Gateway](../build-deploy/usage.md#configure-a-managed-gateway).
 An offline render of the pinned chart places the Kubernetes settings in the gateway's configuration file.
 No managed gateway has run behind a proxy.
 
@@ -309,7 +309,7 @@ Afterwards the loaded policy must keep that hash: any change, including new addi
 OpenShell v0.1.7 applies GPU filesystem additions inside the workload without writing them back to the gateway policy.
 This removes the upstream cause of suspected GPU false drift.
 Live GPU export and reapply remain unverified.
-Missing policy observations or drift don't produce a partial configuration.
+Missing policy observations or drift do not produce a partial configuration.
 
 A policy change replaces the sandbox, deleting its files and conversations (except on [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes)).
 Back them up first.
@@ -318,14 +318,14 @@ Change the policy in the YAML instead.
 Retained workspace and model storage follow the existing lifecycle rules.
 If an operation fails, preserve the state directory, resolve the reported observation or configuration problem, and retry with the retained configuration.
 
-### Recover from Runtime Policy Rejection
+### Recover From Runtime Policy Rejection
 
 If OpenShell reports configuration admission as rejected, apply stops its startup wait and reports `sandbox/<name>: OpenShell configuration rejected`, followed by a safe reason.
 This check applies while the sandbox is starting and before the agent starts.
 Known gateway diagnostics identify policy, attached-provider, or middleware repair.
 Unrecognized text becomes a fixed configuration-repair message.
-The error doesn't include raw supervisor parser output.
-A sandbox that hasn't reported rejection still follows the startup wait.
+The error does not include raw supervisor parser output.
+A sandbox that has not reported rejection still follows the startup wait.
 
 Preserve the state directory: failed apply retains created resource bindings.
 If the problem is an attached-provider or credential configuration that can be repaired without replacing the sandbox, correct it and reapply using the retained state.
@@ -333,7 +333,7 @@ Apply can deliver that repair.
 Completion still requires OpenShell to accept the configuration.
 If the authored sandbox policy must change, change it and apply.
 That replaces the sandbox, deleting its files and conversations (except on mounted volumes).
-Destroy remains available after the failed first apply and doesn't require successful admission or readiness.
+Destroy remains available after the failed first apply and does not require successful admission or readiness.
 
 Local fixture tests exercise creation, rejection, drift detection, and export and reapply behavior.
-They don't establish proxy reachability or kernel enforcement on a live host.
+They do not establish proxy reachability or kernel enforcement on a live host.

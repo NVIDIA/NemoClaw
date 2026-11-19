@@ -28,8 +28,8 @@ The staging preview moves after successful pushes.
 Inspect its revision-pinned source links when matching it to a bundle.
 The site's unversioned `llms.txt` describes the default main version.
 Use the `/nemoclaw/v1/` index for v1 tasks and keep that prefix when following published task-guide links.
-Generic Markdown headers may point at the unversioned index or advertise an MCP server.
-Those headers don't establish v1 search isolation or MCP availability.
+Generic Markdown headers might point at the unversioned index or advertise an MCP server.
+Those headers do not establish v1 search isolation or MCP availability.
 Docs search, MCP and v1-scoped results are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
 ### Give an Agent the Documentation Task
@@ -51,9 +51,9 @@ My task: [describe the task and environment]
 ```
 
 This prompt routes documentation.
-It doesn't supply missing installers, native-data migration, or gateway provisioning.
+It does not supply missing installers, native-data migration, or gateway provisioning.
 
-### Use the Documentation Skill from a Checkout
+### Use the Documentation Skill From a Checkout
 
 The repository includes a [NemoClaw user-guide skill](../../.agents/skills/nemoclaw-user-guide/SKILL.md) for version selection and task routing.
 For an assistant with access to this checkout, ask it to read `.agents/skills/nemoclaw-user-guide/SKILL.md` before answering your NemoClaw task.
@@ -62,7 +62,7 @@ It checks the intended product version and available commands and options before
 Review the cited version and task guide in its answer before operational work.
 
 The skill only routes documentation.
-Reading it doesn't install software or change deployment resources.
+Reading it does not install software or change deployment resources.
 Automatic discovery, packaged installation across assistant clients and a rehearsed installation prompt are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
 ## Contribute
@@ -76,7 +76,7 @@ Exclude credential values and private deployment data.
 
 [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) hosts community solutions and examples.
 Check their target version before using them with v1.
-Their existence doesn't establish v1 support or qualification.
+Their existence does not establish v1 support or qualification.
 v1 has no support policy yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 
 ## Licenses and Source Notices
@@ -86,7 +86,7 @@ Read the notices for components and derived code:
 
 - [Agent runtime sources](../../image/NOTICE.md).
 - [Runtime memory and serving policy attribution](../../crates/nemoclaw-runtime/NOTICE.md).
-- [vLLM runtime and Nemotron configuration sources](../../image/vllm/NOTICE.md).
+- [vLLM runtime and NVIDIA Nemotron configuration sources](../../image/vllm/NOTICE.md).
 - [Ollama runtime sources](../../image/ollama/NOTICE.md).
 - [llama.cpp runtime sources](../../image/llama-cpp/NOTICE.md).
 

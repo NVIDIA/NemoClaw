@@ -5,7 +5,7 @@
 
 Choose a harness before selecting an image, inference API, and management mode.
 The table lists maintained examples, not a closed set of supported identifiers or live qualification of every model and host.
-Available adapters and native settings constraints come from canonical Fabric descriptors packaged in the selected image.
+Available adapters and native settings constraints come from canonical NVIDIA NeMo Fabric descriptors packaged in the selected image.
 Onboarding offers OpenClaw and Hermes.
 A template that names another harness from the bundled catalog keeps it as the suggested answer.
 Without target metadata, compatibility remains unknown.
@@ -27,13 +27,13 @@ The packaged harnesses support these configurations:
 | `nvidia.fabric.opencode` | One | External or managed, subject to API compatibility | [OpenCode](../../examples/fabric-opencode.yaml) |
 
 Managed inference means an accepted Ollama or vLLM service configuration, with that mode's prerequisites.
-It doesn't promise arbitrary model compatibility.
+It does not promise arbitrary model compatibility.
 The selected adapter’s settings schema supplies native constraints.
-The current Fabric descriptor contract doesn't establish API-subtype compatibility for every adapter.
+The current Fabric descriptor contract does not establish API-subtype compatibility for every adapter.
 Missing claims remain unknown.
 OpenCode refuses a plain-HTTP model endpoint outside loopback unless `harness.settings.insecure_http_model_hosts` lists its host, and Claude Code, Codex, and Pi do the same when NeMo Relay is enabled.
 For an adapter whose settings declare `insecure_http_model_hosts`, NemoClaw adds the host of each such endpoint the deployment sends, and keeps any hosts you list.
-OpenShell's policy DNS answers every name in a sandbox from `198.18.0.0/15`, which OpenClaw's `web_fetch`, `image`, and `pdf` tools refuse by default. For an adapter whose settings declare `tools.web.fetch.ssrfPolicy.allowRfc2544BenchmarkRange`, NemoClaw sets it to `true` unless `harness.settings` sets it.
+NVIDIA OpenShell's policy DNS answers every name in a sandbox from `198.18.0.0/15`, which OpenClaw's `web_fetch`, `image`, and `pdf` tools refuse by default. For an adapter whose settings declare `tools.web.fetch.ssrfPolicy.allowRfc2544BenchmarkRange`, NemoClaw sets it to `true` unless `harness.settings` sets it.
 OpenShell's network policy still decides each connection.
 Apply verifies configuration and readiness without generating a model response.
 The external Ollama proxy uses OpenAI Completions.
@@ -45,7 +45,7 @@ NemoClaw still owns its deployment's provider registration, endpoint profile, an
 Build an image for the selected harness using [the agent image procedure](../build-deploy/build.md#build-agent-images).
 Replace example identities, endpoints, and local or placeholder image digests with your own values.
 Keep the image, schema, and bundle matched to the desired configuration.
-[Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) doesn't change Hermes's adapter identifier.
+[Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) does not change Hermes's adapter identifier.
 
 The [configuration validator](../../crates/nemoclaw-sdk/src/config/validation.rs) checks deployment structure and transport contracts.
 [Fabric compatibility assessment](../../crates/nemoclaw-fabric/src/capabilities.rs) checks the advertised native constraints for both onboarding and OpenTofu planning.
