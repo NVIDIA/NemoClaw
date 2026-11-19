@@ -36,6 +36,11 @@ If installation state remains, CI cleanup validates any available sandbox regist
 
 ## DGX Spark extra-arguments dispatch
 
+This controller needs an independently reviewed prerequisite on trusted `main` before it can qualify a candidate.
+Adding it to the candidate alone does not make GitHub dispatch available.
+The controller requires an explicit `checkout_sha` and the canonical `checkout_repository`.
+The selected candidate must contain the extra-arguments scenario.
+
 Deploy a separate Spark receiver before selecting `spark-vllm-extra-arguments` by itself in the workflow's `jobs` or `targets` input.
 The trusted main workflow must contain the Spark controller and client before it can dispatch this target.
 Configure `DGX_SPARK_DISPATCH_URL` with that receiver's HTTPS origin.
@@ -62,3 +67,25 @@ Allow the existing 65-minute scenario deadline, cleanup, and evidence transfer w
 A controller deadline, cancellation, or ambiguous submission requests cancellation of the same job and retains its recovery receipt.
 A failed or missing cleanup result cannot become successful qualification.
 Local support tests and a standalone hardware run do not prove deployment or successful execution of this trusted dispatch path.
+
+### Receiver acceptance and qualification evidence
+
+Before configuring the receiver URL, retain its reviewed implementation or deployed source revision and acceptance results.
+The deployment owner must demonstrate these controls at the receiver boundary:
+
+- Accept an authorized trusted-main workflow request for the selected candidate and managed-image revisions.
+- Reject unauthenticated, expired, wrong-audience and wrong-workflow requests before scheduling hardware work.
+- Reject unauthorized or mismatched candidate and image revisions independently of client validation.
+- Keep controller credentials unavailable during candidate preparation, build and execution.
+- Reconcile repeated submissions to the same job; cancel that job after timeout or ambiguous submission.
+- Preserve private recovery receipts and report cleanup failure after success, failure, cancellation or interrupted execution.
+
+Client compatibility vectors and mock transport tests do not establish receiver acceptance.
+After deployment and candidate publication, retain a passing workflow receipt and archive for the published candidate.
+They must identify the candidate, managed-image revision, physical GB10 host, and detected memory from 60 GB to below 64 GB.
+The archive must show automatic installation with extra arguments, the inspected Docker recipe and publication restrictions, sandbox chat, unrelated-egress denial, and successful cleanup.
+Station, llama.cpp, generic GPU and standalone Spark results cannot replace this dispatch evidence.
+
+Retain the complete hosted risk plan for the published candidate and the results for every required selector it records.
+The Spark result supplements the existing inference-routing, network-policy, cloud-onboard, full-e2e and security-posture obligations.
+It does not replace them or any additional trusted requirement.

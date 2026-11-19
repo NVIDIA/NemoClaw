@@ -187,6 +187,14 @@ it.each(["jobs", "targets"] as const)(
 );
 
 describe("Spark workflow authorization and evidence", () => {
+  it("rejects Spark dispatch without an explicit same-repository candidate", () => {
+    const workflow = readWorkflow();
+    const job = (workflow.jobs as Record<string, { if: string }>)["spark-vllm-extra-arguments"];
+    const station = (workflow.jobs as Record<string, { if: string }>)["dgx-station-express"];
+    job.if = station.if.replaceAll("dgx-station-express", "spark-vllm-extra-arguments");
+    expect(validateDgxSparkDispatchBoundary(workflow)).not.toEqual([]);
+  });
+
   it("accepts the explicit Spark controller and its candidate-bound artifact handoff", () => {
     expect(validateDgxSparkDispatchBoundary(readWorkflow())).toEqual([]);
     expect(validateE2eWorkflow(readWorkflow())).toEqual([]);

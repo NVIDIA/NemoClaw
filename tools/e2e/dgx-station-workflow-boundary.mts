@@ -7,6 +7,16 @@ import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 const TARGET = "dgx-station-express";
 const TRUSTED_SELECTOR =
   "${{ always() && needs['base-image-publication'].result == 'success' && needs['base-image-publication'].outputs.managed_image_revision != '' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || inputs.checkout_sha != inputs.base_sha) && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'dgx-station-express') && ((inputs.jobs == 'dgx-station-express' && inputs.targets == '') || (inputs.targets == 'dgx-station-express' && inputs.jobs == '')) }}";
+// The prerequisite controller can land before the candidate-only Spark scenario.
+const SPARK_TRUSTED_SELECTOR = TRUSTED_SELECTOR.replaceAll(TARGET, "spark-vllm-extra-arguments")
+  .replace(
+    "(inputs.checkout_sha == '' || inputs.checkout_sha != inputs.base_sha)",
+    "inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha",
+  )
+  .replace(
+    "(inputs.checkout_repository == '' || inputs.checkout_repository == github.repository)",
+    "inputs.checkout_repository == github.repository",
+  );
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): RecordValue {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as RecordValue) : {};
@@ -33,7 +43,7 @@ function validateDgxDispatchBoundary(workflow: unknown, target: string): string[
   };
   requireEqual(
     job.if,
-    TRUSTED_SELECTOR.replaceAll(TARGET, target),
+    spark ? SPARK_TRUSTED_SELECTOR : TRUSTED_SELECTOR,
     `${platform} dispatch requires an explicit same-repository selection through the trusted main workflow after image publication`,
   );
   requireEqual(

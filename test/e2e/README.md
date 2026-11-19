@@ -2500,7 +2500,9 @@ The extra-arguments case invokes the candidate CLI with `NEMOCLAW_PROVIDER=insta
 It compares the real container command with the bounded recipe and appended sequence override.
 Fast installer tests own the selected-profile output, 32,768-token context and argument-order assertions.
 Each case keeps the existing 65-minute test deadline and identity-bound cleanup.
-Select `spark-vllm-extra-arguments` by itself through the trusted E2E workflow's `jobs` or `targets` input.
+The Spark controller must land independently on trusted `main`, and its receiver must pass deployment acceptance before hosted qualification.
+Then select `spark-vllm-extra-arguments` by itself through the trusted workflow's `jobs` or `targets` input.
+Pass the candidate commit as `checkout_sha` and `NVIDIA/NemoClaw` as `checkout_repository`.
 Its controller sends the candidate commit and managed-image revision to a dedicated Spark backend and uploads its receipt and archive.
 See [Spark dispatch prerequisites](docs/dgx-station-dispatch.md#dgx-spark-extra-arguments-dispatch) before dispatching.
 The fixed-profile `spark-express-vllm` case remains standalone.
