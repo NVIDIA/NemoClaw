@@ -46,6 +46,8 @@ locals {
       service      = local.spec.services[name]
       container_id = "fixture-${name}-container"
       container = lookup({
+        llamaCpp    = "${local.prefix}-inference-${name}"
+        nim         = "${local.prefix}-inference-${name}"
         vllm        = "${local.prefix}-inference-${name}"
         ollamaProxy = "${local.prefix}-ollama-proxy-${name}"
       }, local.spec.services[name].kind, "${local.prefix}-ollama-${name}")
@@ -95,11 +97,15 @@ output "declare" {
     sandbox_create_delay_ms = var.sandbox_create_delay_ms
     sandbox_delete_delay_ms = var.sandbox_delete_delay_ms
     # The models an Ollama proxy's existing daemon lists.
-    models = [
+    models = concat([
       for service in values(try(local.spec.services, {})) :
       { name = service.upstream.model.name, digest = service.upstream.model.digest }
       if service.kind == "ollamaProxy"
-    ]
+      ], [
+      for service in values(try(local.spec.services, {})) :
+      { name = service.model.name, credential = try(service.authentication, "") == "bearer" ? local.key : null }
+      if service.kind == "nim"
+    ])
     # Only a managed Docker gateway's engine holds images and containers.
     }, [for docker in [local.docker] : {
       images = concat(
@@ -110,7 +116,7 @@ output "declare" {
           # A service built for another architecture, such as amd64 vLLM, says so.
           architecture = try(service.service.hardware.architecture, null)
           labels = merge(
-            { "org.nemoclaw.backend" = service.service.kind },
+            { "org.nemoclaw.backend" = service.service.kind == "llamaCpp" ? "llama-cpp" : service.service.kind },
             service.authenticated ? {
               "org.nemoclaw.inference.authentication" = "bearer-v1"
               "org.nemoclaw.inference.routes"         = "openai-v2"
@@ -144,6 +150,15 @@ output "declare" {
             service.authenticated ? { "/credentials/inference-key" = local.key } : {}
           ))
         }],
+        [for name, service in local.services : {
+          id      = "fixture-${name}-proxy-container"
+          name    = "${service.container}-proxy"
+          image   = local.image_id
+          labels  = { "nemoclaw.nvidia.com/uid" = local.owner }
+          running = true
+          # Redirect this published listener's transport to the local model fixture.
+          upstream_port = try(service.service.serving.port, 18888)
+        } if service.service.kind == "nim"],
       )
   } if docker]...))
 }

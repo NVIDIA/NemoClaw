@@ -115,6 +115,12 @@ target "llama-cpp" {
   tags = ["nc-prototype-llama-cpp:rust-v1"]
 }
 
+target "nim" {
+  inherits = ["_runtime"]
+  dockerfile = "image/nim/Dockerfile"
+  tags = ["nc-prototype-nim:rust-v1"]
+}
+
 group "runtimes" {
   targets = ["vllm", "ollama", "llama-cpp"]
 }

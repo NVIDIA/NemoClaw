@@ -13,18 +13,6 @@ fn an_author_can_choose_the_feature_gated_nemocua_agent() {
 }
 
 #[test]
-#[ignore = "V1 has no managed llama.cpp service or GGUF model contract"]
-fn an_author_can_attach_or_install_llama_cpp() {
-    panic!("missing V1 llama.cpp lifecycle contract");
-}
-
-#[test]
-#[ignore = "V1 has no managed NVIDIA NIM service identity"]
-fn an_author_can_choose_local_nvidia_nim_on_a_qualified_gpu() {
-    panic!("missing V1 NIM lifecycle contract");
-}
-
-#[test]
 #[ignore = "V1 has no managed model-router or model-pool lifecycle"]
 fn an_author_can_choose_the_experimental_model_router() {
     panic!("missing V1 model-router contract");

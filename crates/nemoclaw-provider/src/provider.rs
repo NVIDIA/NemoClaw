@@ -300,6 +300,25 @@ impl Provider for ServiceProvider {
             Box::new(CapacityDataSource(backend.clone(), runtime)) as Box<dyn DynamicDataSource>
         };
         if self.name == "vllm" {
+            let llama = match RuntimeDataSource::llama_cpp() {
+                Ok(source) => source,
+                Err(error) => {
+                    diags.root_error(
+                        "llama.cpp runtime has no OpenTofu schema",
+                        error.to_string(),
+                    );
+                    return None;
+                }
+            };
+            sources.insert("llama_cpp_runtime".into(), Box::new(llama));
+            let nim = match RuntimeDataSource::nim() {
+                Ok(source) => source,
+                Err(error) => {
+                    diags.root_error("NIM runtime has no OpenTofu schema", error.to_string());
+                    return None;
+                }
+            };
+            sources.insert("nim_runtime".into(), Box::new(nim));
             sources.insert("readiness".into(), readiness(Vllm));
             sources.insert("capacity".into(), capacity(Vllm));
         } else {

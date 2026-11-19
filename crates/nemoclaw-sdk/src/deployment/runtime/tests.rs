@@ -28,6 +28,16 @@ fn runtime_observations(
 fn docker_model_updates_preserve_running_containers_unless_recreation_is_explicit() {
     for (source, name, kind) in [
         (
+            include_str!("../../../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml"),
+            "local-nim",
+            "inference_service",
+        ),
+        (
+            include_str!("../../../../nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml"),
+            "qwen",
+            "inference_service",
+        ),
+        (
             include_str!("../../../../../examples/station/vllm.yaml"),
             "qwen",
             "inference_service",
