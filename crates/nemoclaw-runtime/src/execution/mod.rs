@@ -11,6 +11,8 @@ pub(super) mod supervisor;
 use crate::{CancellationToken, Error};
 use std::path::Path;
 
+/// Open the lock file at `path` and take its exclusive writer lock, which the
+/// returned file holds until it is dropped.
 pub(crate) fn lock(
     path: &Path,
     open_error: &'static str,

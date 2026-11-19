@@ -67,6 +67,9 @@ pub(crate) async fn terminate(child: &mut dyn ChildWrapper) {
     let _ = child.start_kill();
 }
 
+/// Supervise the backend while the filter serves its published port. The filter
+/// stops only by failing, which leaves the backend unreachable, so the backend
+/// stops too; when supervision ends first, the filter stops before this returns.
 pub(crate) async fn with_filter(
     policy: Policy,
     child: &mut dyn ChildWrapper,
@@ -81,6 +84,7 @@ pub(crate) async fn with_filter(
     match supervised {
         Some(result) => {
             filter.abort();
+            // Cancellation completes once the listener and connections close.
             let _ = filter.await;
             result
         }

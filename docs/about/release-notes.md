@@ -33,6 +33,11 @@ Releases:
 - A release's CLI reports the release's version: for `v0.1.0-rc12`, `nemoclaw --version` prints `nemoclaw 0.1.0-rc12`, and the bundle's `manifest.json` says `0.1.0-rc12`.
   Before, they said `0.1.0` and `0.1.0-dev.<hash>`.
   A bundle built from any other checkout, including one with uncommitted changes, still reports `0.1.0-dev.<hash>`, where the hash names its source files.
+- A final release attests the build provenance of each CLI archive and of `SHA256SUMS`; verify them with `gh attestation verify FILE --owner NVIDIA`, as [Install the CLI](../get-started/install.md#install-on-linux-or-macos) shows.
+  Release candidates have no attestations.
+- A final release's macOS and Windows executables must be signed; only a release-scoped exception, which the release notes state with its reason, lets one publish unsigned.
+  Release candidates may stay unsigned.
+- Each release attaches `release-evidence.json`, which records the signing decision, the signed executables, and the output of the release's checksum, signature, and attestation checks.
 
 Installation:
 
@@ -54,6 +59,13 @@ Windows clients:
 - A managed local gateway also runs from a Windows client: set `spec.gateway.engine` to Docker Desktop's or a Podman machine's named pipe, and the gateway container binds `/var/run/docker.sock` in the engine's Linux VM, where Docker Desktop serves its engine and a Podman machine links its rootful or rootless API socket.
   On Windows, `nemoclaw onboard` offers the pipe the Docker client selects, otherwise `npipe:////./pipe/docker_engine`, and the default Podman machine's `npipe:////./pipe/podman-machine-default` ([#14632](https://github.com/NVIDIA/NemoClaw/issues/14632)).
   No Windows host has run a deployment; see [current limits](../resources/limits.md#platforms-models-and-placement).
+- An Ollama proxy's `engine` also takes a local named pipe, such as `npipe:////./pipe/docker_engine`, so a proxy for an external gateway runs from a Windows client.
+
+macOS clients:
+
+- A managed local gateway on Docker Desktop, Colima, Rancher Desktop, or a Podman machine binds `/var/run/docker.sock` in the engine's Linux VM, where each engine serves containers its socket, instead of the client's socket path, such as `~/.docker/run/docker.sock`, which the VM may not serve ([#14640](https://github.com/NVIDIA/NemoClaw/issues/14640)).
+  NemoClaw recognizes each engine by its default socket; an engine at another socket, such as a Lima instance's, binds the socket's own path as before.
+  See [current limits](../resources/limits.md#platforms-models-and-placement).
 
 Gateways:
 
@@ -241,7 +253,10 @@ See [migration](../get-started/migration.md) for where each earlier task lives n
 
 ### Breaking Changes Since v0.1.0-rc11
 
-No change since the `v0.1.0-rc11` tag affects existing deployments or documents yet.
+These changes since the `v0.1.0-rc11` tag affect existing deployments or documents:
+
+- The intent record is now version 26, so this release refuses any deployment that `v0.1.0-rc11` or an earlier build of this branch created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 
 ### Breaking Changes in v0.1.0-rc11
 
@@ -354,7 +369,7 @@ Sandboxes and model services run on Linux engines or clusters; the agent and run
 | `spec.gateway.runtime.provider` | Accepted | Live tests in CI |
 |---|---|---|
 | `docker` | Managed or external gateway; managed vLLM, Ollama, and container services | Docker suite, the cases on NVIDIA hosted inference, and the GPU cases |
-| `podman` | Managed rootless gateway on a local Linux engine or, from a Windows client, a Podman machine, or external gateway; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |
+| `podman` | Managed rootless gateway on a local Linux engine or, from a Windows or macOS client, a Podman machine, or external gateway; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |
 | `kubernetes` | Managed or external gateway, with external inference endpoints | kind suite |
 | `openshift` | Managed or external gateway, with external inference endpoints | None; [run by hand](../../internal-docs/contributing/live-tests.md#openshift-gateway) on OpenShift Local |
 

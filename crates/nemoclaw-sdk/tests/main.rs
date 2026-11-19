@@ -135,11 +135,11 @@ mod kubernetes_receipt;
 mod kubernetes_storage;
 #[path = "managed_auth.rs"]
 mod managed_auth;
+#[path = "managed_engine_socket.rs"]
+mod managed_engine_socket;
 mod managed_gateway_config;
 #[path = "managed_hermes.rs"]
 mod managed_hermes;
-#[path = "managed_pipe_engine.rs"]
-mod managed_pipe_engine;
 #[path = "managed_podman.rs"]
 mod managed_podman;
 #[path = "model_selection.rs"]

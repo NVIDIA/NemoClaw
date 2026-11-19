@@ -66,9 +66,12 @@ impl ManagedOllama {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 /// Managed authenticated proxy for an external, loopback-only Ollama daemon and installed model.
 pub struct OllamaProxy {
-    /// Local Docker Unix socket. Omission uses the managed gateway engine.
+    /// Local Docker engine: a Unix socket, or on Windows a named pipe such as `npipe:////./pipe/docker_engine`. Omission uses the managed gateway engine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "String", regex(pattern = r"^unix:///[^?#\x00]*$"))]
+    #[schemars(
+        with = "String",
+        regex(pattern = r"^(unix:///[^?#\x00]*|npipe:////\./pipe/[A-Za-z0-9._-]+)$")
+    )]
     pub engine: Option<String>,
     /// Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.
     pub image: String,

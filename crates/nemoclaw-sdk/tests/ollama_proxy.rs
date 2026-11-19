@@ -23,16 +23,27 @@ fn input() -> Value {
 
 #[test]
 fn explicit_proxy_engine_works_with_an_external_gateway() {
+    // A Unix socket, or a Windows client's named pipe to Docker Desktop.
+    for engine in [
+        "unix:///tmp/proxy-engine.sock",
+        "npipe:////./pipe/docker_engine",
+    ] {
+        explicit_proxy_engine_with_an_external_gateway(engine);
+    }
+}
+
+fn explicit_proxy_engine_with_an_external_gateway(engine: &str) {
     let mut value = input();
     value["spec"]["gateway"] =
         json!({"management":"external", "endpoint":"http://127.0.0.1:17671"});
     value["spec"]["gateway"]["runtime"]["provider"] = json!("podman");
-    value["spec"]["services"]["ollama-auth"]["engine"] = json!("unix:///tmp/proxy-engine.sock");
+    value["spec"]["services"]["ollama-auth"]["engine"] = json!(engine);
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     assert!(
         jsonschema::validator_for(&input_schema())
             .unwrap()
-            .is_valid(&value)
+            .is_valid(&value),
+        "{engine}"
     );
     assert!(matches!(document.spec.gateway, Gateway::External(_)));
     assert_eq!(
@@ -60,7 +71,7 @@ fn explicit_proxy_engine_works_with_an_external_gateway() {
         .collect();
     assert_eq!(proxy_targets.len(), 2);
     for target in proxy_targets {
-        assert_eq!(target.values["engine"], "unix:///tmp/proxy-engine.sock");
+        assert_eq!(target.values["engine"], engine);
     }
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     let credential: Value =
@@ -71,10 +82,7 @@ fn explicit_proxy_engine_works_with_an_external_gateway() {
                 .unwrap(),
         )
         .unwrap();
-    assert_eq!(
-        credential["storage"]["Engine"],
-        "unix:///tmp/proxy-engine.sock"
-    );
+    assert_eq!(credential["storage"]["Engine"], engine);
 }
 
 #[test]
@@ -130,7 +138,7 @@ fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
 }
 
 #[test]
-fn explicit_proxy_engine_must_be_a_valid_local_socket() {
+fn explicit_proxy_engine_must_be_a_local_engine() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for engine in [
         "",
@@ -139,6 +147,8 @@ fn explicit_proxy_engine_must_be_a_valid_local_socket() {
         "unix://relative",
         "unix:///tmp/socket?query",
         "unix:///tmp/socket#fragment",
+        "npipe:////remote/pipe/docker_engine",
+        "npipe:////./pipe/",
     ] {
         let mut value = input();
         value["spec"]["services"]["ollama-auth"]["engine"] = json!(engine);
@@ -146,7 +156,7 @@ fn explicit_proxy_engine_must_be_a_valid_local_socket() {
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("proxy engine must be a local Unix socket"),
+            error.contains("proxy engine must be a local Unix socket or named pipe"),
             "{engine}: {error}"
         );
         assert!(!validator.is_valid(&value));

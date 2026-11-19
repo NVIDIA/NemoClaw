@@ -7,8 +7,10 @@ use std::{
     time::Duration,
 };
 pub(crate) const OUTPUT_LIMIT: usize = crate::EXITED_OUTPUT_LIMIT;
-/// Capture backend output and retain its end for the error that
-/// reports the backend's exit, because the backend logs and raises its startup errors there.
+/// A backend's standard output and error, forwarded unchanged to the runtime's
+/// standard error for the container log. The end is kept for the error that
+/// reports the backend's exit, because backends log and raise their startup
+/// errors there.
 pub(crate) struct Output {
     kept: Arc<Mutex<Kept>>,
     closed: tokio::sync::oneshot::Receiver<()>,
@@ -48,8 +50,8 @@ impl Output {
         let kept = Arc::new(Mutex::new(Kept::default()));
         let (closed_tx, closed) = tokio::sync::oneshot::channel();
         let shared = kept.clone();
-        // A thread, not a runtime task: a process outside the backend's group may hold
-        // the pipe open, and the runtime must still be able to exit.
+        // A thread, not a runtime task: a process outside the backend's group
+        // may hold the pipe open, and the runtime must still be able to exit.
         std::thread::spawn(move || {
             use std::io::{ErrorKind, Read, Write};
             let mut reader = reader;
@@ -78,9 +80,9 @@ impl Output {
             credentials,
         }
     }
-    /// Add the end of the backend's output to the error for its exit. Call it after
-    /// supervision stopped the backend's process group, whose workers hold the pipe
-    /// open until then.
+    /// Add the end of the backend's output to the error for its exit. Call it
+    /// after supervision stopped the backend's process group, whose workers
+    /// hold the pipe open until then.
     pub(crate) async fn explain(self, result: Result<(), Error>) -> Result<(), Error> {
         let Err(Error::Exited(None)) = result else {
             return result;
