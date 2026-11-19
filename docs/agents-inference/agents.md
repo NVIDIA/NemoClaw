@@ -1,14 +1,14 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Configure and Access Native Agents
+# Configuring and Accessing Native Agents
 
 NemoClaw owns deployment resources, credential routing, isolation policy, and the lifecycle of the agent runtime.
 NVIDIA NeMo Fabric owns adapter identifiers, descriptors, native configuration schemas, and native process behavior.
 Use the descriptor installed in the selected image to establish what that adapter accepts.
 An SDK parser accepting a field doesn't establish native support.
 
-## Configure the Agent and the Harness
+## Configuring the Agent and the Harness
 
 Set `harness.kind` to the exact Fabric adapter identifier and select an image containing that adapter.
 For example, the [OpenClaw configuration](../../examples/inference-tuning.yaml) uses `nvidia.fabric.openclaw`.
@@ -44,30 +44,30 @@ Fabric validates the configuration through its installed API when the agent is c
 Issue [#14148](https://github.com/NVIDIA/NemoClaw/issues/14148) tracks checking it at plan time.
 Neither check establishes successful model inference.
 
-## Choose Native Access
+## Choosing Native Access
 
-Select the deployment's [NVIDIA OpenShell gateway and workspace](interfaces.md#select-the-gateway-and-workspace) before forwarding ports or running sandbox commands.
+Select the deployment's [NVIDIA OpenShell gateway and workspace](interfaces.md#selecting-the-gateway-and-workspace) before forwarding ports or running sandbox commands.
 Fabric's adapter contract defines supported input, output, native interfaces, and authentication.
 The [Fabric documentation](https://github.com/NVIDIA/NeMo-Fabric/tree/main/docs) owns native integration guidance.
 Use the source revision pinned in the selected image when following it.
 A successful generic invocation doesn't imply that every result has an `output.response` field.
 
-### Deploy Several Agents
+### Deploying Several Agents
 
 Each sandbox owns one agent runtime and its selected model and provider attachments.
 Use several sandbox definitions to isolate agents, credentials, and lifecycles.
 The [multiple-agent example](../../examples/multiple-models.yaml) demonstrates shared inference definitions with independent sandbox selections.
 An agent's model choices don't restrict other processes within its sandbox beyond the sandbox's provider and network policy.
 
-### Run One Agent Request
+### Running One Agent Request
 
 Every harness takes a request through the same Fabric command.
-The [headless OpenClaw request](#run-one-headless-openclaw-request) shows a complete example.
+The [headless OpenClaw request](#running-one-headless-openclaw-request) shows a complete example.
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
 Plan and apply print this command for each agent with both filled in, and JSON results report them under `agents`.
-See [invoke an agent](interfaces.md#invoke-an-agent).
+See [invoke an agent](interfaces.md#invoking-an-agent).
 Use `--input -` to read the value from stdin instead.
 See the [bridge commands](../../internal-docs/design/fabric-management.md#bridge-commands).
 Fabric receives the value unchanged.
@@ -77,14 +77,14 @@ Don't assume a universal result shape.
 Check `result.status` as well as the outer `status`: the outer one only reports that `fabric-agent-ctl` completed the call, while a failed run reports `result.status: failed` with Fabric's error in `result.error`.
 `result.artifacts` names the files Fabric kept for that request, such as the adapter's output.
 
-### Run One Headless OpenClaw Request
+### Running One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
 The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory.
-From the v1 worktree root on the client host, read the runtime ID from a plan, as the [tutorial](../get-started/first-deployment.md#send-a-verification-request) does, and send a request:
+From the v1 worktree root on the client host, read the runtime ID from a plan, as the [tutorial](../get-started/first-deployment.md#sending-a-verification-request) does, and send a request:
 
 ```sh
 RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml | jq -er '.agents.assistant.runtimeId') || exit 1
@@ -100,13 +100,13 @@ Inspect the apply result rather than invoking with an empty ID.
 On success, check `result.status: succeeded` and inspect `result.output` for the adapter's reply.
 Don't assume every adapter uses the same output fields or that one reply establishes general model compatibility.
 If later invocations fail with `runtime_unavailable`, plan and apply again: apply starts a new runtime in the same sandbox.
-If the plan shows no change, replace the sandbox using the [CLI replacement procedure](../build-deploy/usage.md#replace-workloads-after-an-unusable-runtime).
+If the plan shows no change, replace the sandbox using the [CLI replacement procedure](../build-deploy/usage.md#replacing-workloads-after-an-unusable-runtime).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).
 
 ## Native Interfaces
 
 OpenClaw's Control UI and Hermes's API server and dashboard are native interfaces that the agent's Fabric runtime serves inside its sandbox.
-Enable them under `harness.settings.interfaces` with an exact `port`, then reach them as [Reach an Agent Interface](interfaces.md#reach-an-agent-interface) describes.
+Enable them under `harness.settings.interfaces` with an exact `port`, then reach them as [Reaching an Agent Interface](interfaces.md#reaching-an-agent-interface) describes.
 Fabric's adapter starts each interface, generates its token, and stops it with the runtime.
 NemoClaw checks each interface against its schema in the image's adapter descriptor while planning, and after apply prints the commands that forward each interface and read its token.
 The agent's own tools can read those tokens and reach the interfaces, so the agent can sign in to its own interfaces.
@@ -137,7 +137,7 @@ Set the invocation timeout in the harness's `runtime.timeout_seconds`, which Nem
 Omission uses Fabric's default.
 NemoClaw doesn't choose a native timeout from the adapter name.
 The adapter's own startup, connection, and shutdown timeouts belong in `harness.settings` under the schema supplied by Fabric.
-See the [full OpenClaw example](../../examples/full-featured-openclaw.yaml) and [timeout budgets](inference.md#understand-timeout-budgets).
+See the [full OpenClaw example](../../examples/full-featured-openclaw.yaml) and [timeout budgets](inference.md#understanding-timeout-budgets).
 
 ## OpenClaw Tracing
 
@@ -154,7 +154,7 @@ NemoClaw passes both sections to Fabric without interpreting them, and Relay own
 Set `manifest` to `/opt/nemo-relay/plugins/switchyard/relay-plugin.toml` and provide either `config.switchyard_config` or `config.switchyard_config_path`.
 Don't infer native API availability from a tracing setting.
 
-## Define and Attach Integrations
+## Defining and Attaching Integrations
 
 Define an integration in `spec.integrations` or a sandbox's `integrations` map and attach it through the agent's `integrationRefs`.
 An agent can also declare its own inline `integrations` map.
@@ -247,7 +247,7 @@ spec:
 
 Kubernetes takes only the count.
 The request gives the sandbox's programs device access, not CUDA libraries.
-Provide those in the agent image or on a read-only [mounted volume](../build-deploy/state.md#keep-agent-files-on-mounted-volumes).
+Provide those in the agent image or on a read-only [mounted volume](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes).
 Changing `gpus` replaces the sandbox and its agent, so keep files that must survive on mounted volumes.
 
 ## Skills on a Mounted Volume
@@ -274,7 +274,7 @@ Leave it out to keep the harness's default.
 
 To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
 The gateway must allow driver configuration.
-For a managed gateway, set `allow_driver_config: true` in the driver's table of `spec.gateway.config` when you create the deployment, as [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes) describes.
+For a managed gateway, set `allow_driver_config: true` in the driver's table of `spec.gateway.config` when you create the deployment, as [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes) describes.
 For an external gateway, its administrator enables OpenShell's `allow_driver_config`.
 
 Mix the two entry kinds to share a folder of skills between agents and give one agent a skill of its own, with its own mount settings.
@@ -456,12 +456,12 @@ Set it in `extensions` only to override that.
 The SDK preserves each named route plus the `default` role.
 
 Any model or settings update replaces the agent and its sandbox, deleting its writable layer and in-memory conversation.
-Use [mounted agent-data volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes) for files that must survive.
+Use [mounted agent-data volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes) for files that must survive.
 Retained files don't by themselves resume a native conversation.
 
 ## Runtime Lifecycle
 
-Build the selected agent image with its installed Fabric metadata using the [image procedure](../build-deploy/build.md#build-agent-images).
+Build the selected agent image with its installed Fabric metadata using the [image procedure](../build-deploy/build.md#building-agent-images).
 Use an immutable image reference available to the sandbox compute daemon.
 Deployment identity and ownership checks protect provider registrations and retained storage.
 

@@ -1,13 +1,13 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Use an OpenShell OAuth-Refresh Provider
+# Using an OpenShell OAuth-Refresh Provider
 
 Register an OAuth-refresh provider directly with NVIDIA OpenShell when a sandbox needs an API on behalf of a signed-in user.
 OpenShell holds the refresh material and rotates the access token.
 NemoClaw doesn't perform OAuth sign-in or refresh.
 Gateway user authentication through an OIDC issuer is separate.
-See [Authenticate Through an Existing OIDC Issuer](../build-deploy/kubernetes.md#authenticate-through-an-existing-oidc-issuer).
+See [Authenticating Through an Existing OIDC Issuer](../build-deploy/kubernetes.md#authenticating-through-an-existing-oidc-issuer).
 NemoClaw's [`api` integration](agents.md#key-authenticated-apis) declares a key-authenticated API, not an OAuth-refresh profile.
 
 This guide uses Microsoft Graph with Entra as the example supported by OpenShell's [provider-refresh tutorial](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/tutorials/microsoft-graph-provider-refresh.mdx).
@@ -16,9 +16,9 @@ The Graph profile isn't an Okta configuration.
 This procedure isn't yet qualified against a live Entra or Okta tenant with v1.
 Native agent login and tool use need separate [platform and integration qualification](https://github.com/NVIDIA/NemoClaw/issues/12641).
 
-## Prepare the Gateway and Credentials
+## Preparing the Gateway and Credentials
 
-Use the pinned OpenShell CLI and [select the deployment's authenticated gateway and workspace](interfaces.md#select-the-gateway-and-workspace).
+Use the pinned OpenShell CLI and [select the deployment's authenticated gateway and workspace](interfaces.md#selecting-the-gateway-and-workspace).
 Run the following commands from a private working directory on the client host.
 You need permission to import a workspace profile, create a provider, and change the selected sandbox's provider attachments.
 Keep the original deployment YAML and state directory.
@@ -41,7 +41,7 @@ Disable shell tracing while handling credentials.
 OpenShell stores the provider and its refresh material at the gateway.
 The CLI and gateway operator control access to that state.
 
-## Register and Check Refresh
+## Registering and Checking Refresh
 
 Create `microsoft-graph-mail.yaml` from the profile in the pinned [upstream tutorial](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/tutorials/microsoft-graph-provider-refresh.mdx#create-a-microsoft-graph-provider-profile).
 Review its Graph endpoint, delegated scopes, refresh strategy, and allowed executables before importing it.
@@ -74,7 +74,7 @@ If registration succeeded but refresh configuration failed, retain the provider 
 An expired or revoked refresh grant can require signing in again.
 Follow the issuer and OpenShell instructions rather than changing NemoClaw state.
 
-## Attach to an Existing Sandbox
+## Attaching to an Existing Sandbox
 
 Attaching this provider to a NemoClaw-managed sandbox is an out-of-band change.
 NemoClaw checks its authored attachment list: export and apply can refuse the changed sandbox as drift.
@@ -112,7 +112,7 @@ Don't upload the response to a public issue.
 If the API refuses access, check refresh status, delegated permissions, attachment readiness, and the profile's executable and network policy.
 Don't disable policy or TLS verification to make the request succeed.
 
-## Return to NemoClaw Operations
+## Returning to NemoClaw Operations
 
 Detach the manually added provider and wait for that change before running the deployment's normal operations:
 
@@ -124,7 +124,7 @@ openshell sandbox provider list "$SANDBOX"
 Confirm that the remaining attachments match the deployment's original set.
 Keep any other operator changes separate.
 Detaching this provider doesn't repair unrelated drift.
-Then use the original YAML, bundle, state directory, and credential environment for [unchanged reapply or export](../build-deploy/usage.md#verify-an-unchanged-reapply).
+Then use the original YAML, bundle, state directory, and credential environment for [unchanged reapply or export](../build-deploy/usage.md#verifying-an-unchanged-reapply).
 
 | Operation | What it keeps |
 |---|---|

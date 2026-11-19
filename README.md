@@ -20,8 +20,8 @@ Each capability links to the guide that configures it:
 | Choose model connections | Connect to hosted endpoints, or run managed vLLM, Ollama, or llama.cpp services. Refer to [inference configuration](docs/agents-inference/inference.md) for supported paths. |
 | Supply skills and tools | Load [skill folders](docs/agents-inference/agents.md#skills-on-a-mounted-volume), configure supported native settings, and connect [MCP servers](docs/agents-inference/agents.md#additional-agent-integrations). |
 | Control access | Declare [network policy](docs/security/sandbox-network.md) and route [API credentials](docs/agents-inference/agents.md#key-authenticated-apis) through OpenShell. |
-| Keep agent files | Use [mounted storage](docs/build-deploy/state.md#keep-agent-files-on-mounted-volumes) for files that must survive sandbox replacement. Retaining files alone does not resume a conversation. |
-| Manage several agents | Define [separate sandboxes](docs/build-deploy/usage.md#configure-sandboxes-and-inference) with shared or separate model connections. |
+| Keep agent files | Use [mounted storage](docs/build-deploy/state.md#keeping-agent-files-on-mounted-volumes) for files that must survive sandbox replacement. Retaining files alone does not resume a conversation. |
+| Manage several agents | Define [separate sandboxes](docs/build-deploy/usage.md#configuring-sandboxes-and-inference) with shared or separate model connections. |
 | Automate deployments | [Preview, apply, export, and remove deployments](docs/build-deploy/usage.md) through the CLI or [Rust SDK](docs/references/sdk.md). |
 
 Support depends on the selected agent, image, model, and platform.
@@ -33,7 +33,7 @@ The guide also identifies [questions that still need scope analysis](docs/get-st
 Track remaining parity work in [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
 The [Roadmap: GTC DC 2026](https://github.com/NVIDIA/NemoClaw/milestone/12) milestone tracks broader release preparation separately.
 
-### Watch a Deployment
+### Watching a Deployment
 
 [![Watch NemoClaw plan, apply, and destroy a deployment with verbose output](docs/assets/terminal-lifecycle-verbose.png)](docs/assets/terminal-lifecycle-verbose.mp4)
 
@@ -49,7 +49,7 @@ Images are cached; no inference requests are sent, and only the plan-review paus
 - [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).
 
-## Contribute
+## Contributing
 
 Read the [accepted scope](internal-docs/design/scope.md) and follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
 Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](internal-docs/contributing/documentation.md) for documentation changes.

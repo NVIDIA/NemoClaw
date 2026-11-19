@@ -34,7 +34,7 @@ To help simplify content for a global audience, avoid using Latin phrases that h
 - **etc.:** Use “and so on.”
 - **i.e.:** Use “that is.”
 - **versus (vs.):** Use “compared to.”
-- **via:** Use “by” or “through.”
+- **via:** Use “by” or “through”; technical documentation also uses “using.”
 - **vice versa:** Use “conversely.”
 
 ### Exceptions

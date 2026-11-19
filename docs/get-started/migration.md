@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Assess Migration From an Earlier Version
+# Assessing Migration From an Earlier Version
 
 The desired-state SDK, schema, and state format do not promise compatibility with the earlier product.
 The current CLI has no general state adoption or migration command; [#14580](https://github.com/NVIDIA/NemoClaw/issues/14580) tracks a documented path from the earlier product's configuration export to a v1 deployment.
@@ -14,7 +14,7 @@ NemoClaw has no upgrade, native-data transfer or rollback procedure: native data
 The evaluation steps below create a separate deployment.
 They don't provide an in-place upgrade or data conversion.
 
-## Map the User Task
+## Mapping the User Task
 
 Choose the current owner of the task rather than translating earlier CLI commands literally.
 
@@ -26,13 +26,13 @@ Choose the current owner of the task rather than translating earlier CLI command
 | Imperative inference or sandbox changes | [Desired-state lifecycle](../build-deploy/usage.md), with explicit update/replacement limits |
 | Export configuration (`config export`) | `nemoclaw export`; see [CLI reference](../references/cli.md) and [state](../build-deploy/state.md) |
 | Configure agents, dashboards, tools, or heartbeats | [Agent runtimes](../agents-inference/agents.md) and [interfaces](../agents-inference/interfaces.md) |
-| Run custom tools and applications used by the agent inside its sandbox | Package tools and dependencies in a [derived agent image](../build-deploy/derived-images.md); use [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes) for scripts and persistent data. Configure and verify background-service startup and restart separately. |
+| Run custom tools and applications used by the agent inside its sandbox | Package tools and dependencies in a [derived agent image](../build-deploy/derived-images.md); use [mounted volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes) for scripts and persistent data. Configure and verify background-service startup and restart separately. |
 | Integrate the TypeScript lifecycle package | [Rust SDK](../references/sdk.md); no compatible TypeScript package is provided |
-| Install policy presets, approve network requests interactively, or explain policy to an agent | Declare the [isolated preset or an explicit policy](../security/sandbox-network.md#choose-a-policy); managed approval and explanation aren't planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)); OpenShell's policy advisor owns both |
+| Install policy presets, approve network requests interactively, or explain policy to an agent | Declare the [isolated preset or an explicit policy](../security/sandbox-network.md#choosing-a-policy); managed approval and explanation aren't planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)); OpenShell's policy advisor owns both |
 | Use Okta/Entra runtime identity and OAuth refresh | [Register an OpenShell OAuth-refresh provider](../agents-inference/oauth-refresh.md); its manual attachments and refresh material are outside exported deployment YAML |
-| Snapshot, restore, upload/download, or transfer history | The platform owns backup and transfer of [mounted agent-data volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes); native conversation continuity has harness-specific limits |
+| Snapshot, restore, upload/download, or transfer history | The platform owns backup and transfer of [mounted agent-data volumes](../build-deploy/state.md#keeping-agent-files-on-mounted-volumes); native conversation continuity has harness-specific limits |
 | Manage messaging, MCP servers, or arbitrary plugins | Messaging: [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037); NemoClaw doesn't manage MCP servers; see [additional agent integrations](../agents-inference/agents.md#additional-agent-integrations) |
-| Provision a model router, managed NIM/llama.cpp, or distributed inference | Managed [llama.cpp](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp) and [native NIM candidate with qualification limits](../agents-inference/models.md#native-nim-candidate): [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); NemoClaw has no Model Router |
+| Provision a model router, managed NIM/llama.cpp, or distributed inference | Managed [llama.cpp](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) and [native NIM candidate with qualification limits](../agents-inference/models.md#native-nim-candidate): [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); NemoClaw has no Model Router |
 | Install a telemetry collector or reuse Deep Agents trace-export setup | NemoClaw doesn't provision collectors or export Deep Agents traces; [Hermes Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) writes trace artifacts in the sandbox |
 
 ## Needs Scope Analysis
@@ -47,7 +47,7 @@ Track agreed work in [Roadmap: Bring agreed Classic features to v1](https://gith
 | Use native memory search | Classic documents [embedding-backed memory search](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/configure-agents/configure-memory-search.mdx). | Confirm which native harness indexing and search behavior must carry over, then verify that path. Excluding a separate NemoClaw memory subsystem does not exclude native memory features. |
 | Rotate MCP credentials | The [credential rotation guide](../security/credential-rotation.md) describes replacement and revocation, including credentials held by running processes. | Verify the MCP credential path with a running agent, including replacement, restart, and revocation. Documented steps alone do not establish live qualification. |
 
-## Keep Deployment Identities Separate
+## Keeping Deployment Identities Separate
 
 Use a fresh deployment UUID, separate state directory, and resource names/endpoints that don't collide with the earlier deployment.
 Copying YAML doesn't migrate native settings or conversations, and reusing names doesn't transfer ownership.
@@ -56,7 +56,7 @@ Use the [field reference](../reference/configuration.md) from the bundle's sourc
 The [validator](../../crates/nemoclaw-sdk/src/config/validation.rs) rejects unsupported combinations, and [state validation](../../crates/nemoclaw-sdk/src/state/mod.rs) rejects incompatible retained intent.
 These checks aren't a conversion mechanism.
 
-## Evaluate v1 Beside the Existing Deployment
+## Evaluating v1 Beside the Existing Deployment
 
 Use a separate identity and state directory so the comparison doesn't mutate an earlier deployment.
 
@@ -67,7 +67,7 @@ Use a separate identity and state directory so the comparison doesn't mutate an 
 3. Build a separate matched v1 bundle and images, then prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
    Check names, exposed ports, model capacity, and credentials so the evaluation doesn't overwrite or exhaust the original deployment's resources.
 4. Plan and apply only the new v1 configuration/state.
-   Verify the native interface and an actual agent reply, then check configuration export and [unchanged reapply](../build-deploy/usage.md#verify-an-unchanged-reapply).
+   Verify the native interface and an actual agent reply, then check configuration export and [unchanged reapply](../build-deploy/usage.md#verifying-an-unchanged-reapply).
 5. Validate each required task in the new deployment before switching use to it.
    An agent reply alone doesn't validate tools, channels, history continuity, or workload quality.
 6. If evaluation fails, continue using the retained earlier deployment and diagnose v1 with its own bundle and state.
@@ -77,7 +77,7 @@ Continuing to use an untouched earlier deployment isn't a rollback of data writt
 NemoClaw has no procedure to transfer those changes back to the earlier runtime.
 Don't retire the old deployment when the required native-data backup, transfer, or return path is unverified.
 
-## Preserve Data Before Retirement
+## Preserving Data Before Retirement
 
 Export is a configuration operation.
 It doesn't back up agent files or history.
@@ -87,10 +87,10 @@ File retention doesn't establish native conversation continuity.
 Read [state and retention](../build-deploy/state.md) before retiring either deployment.
 
 The platform owns backup, restore, and transfer of mounted native data.
-See the [per-harness retention limits](../build-deploy/state.md#choose-what-to-retain-for-each-harness).
+See the [per-harness retention limits](../build-deploy/state.md#choosing-what-to-retain-for-each-harness).
 Retain the earlier deployment until the required continuity has been verified.
 
-## Find Earlier Documentation
+## Finding Earlier Documentation
 
 The [combined staging site](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) has a version selector:
 
@@ -103,5 +103,5 @@ Its label doesn't qualify those procedures for v1.
 Use the earlier deployment's actual version when selecting commands or assessing historical qualification.
 Publishing the combined site and checking its legacy routes are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
-For Classic llama.cpp users, [the managed GGUF contract](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp) carries repository/revision/file/SHA-256 identity into v1.
-Revalidate each model, host, and required agent task against the [qualified configuration and its limits](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp).
+For Classic llama.cpp users, [the managed GGUF contract](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp) carries repository/revision/file/SHA-256 identity into v1.
+Revalidate each model, host, and required agent task against the [qualified configuration and its limits](../agents-inference/models.md#serving-a-pinned-gguf-with-llamacpp).

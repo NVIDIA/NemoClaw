@@ -1,13 +1,13 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Build a Derived Agent Image
+# Building a Derived Agent Image
 
 You can extend a NemoClaw agent image with your own skills, tools, and files, then reference the result from a deployment by its digest.
 NemoClaw doesn't build or host derived images.
 Your own build system owns them.
 
-## Start From a Base Image by Digest
+## Starting From a Base Image by Digest
 
 Derive from a NemoClaw agent image of the release you deploy with, pinned by digest:
 
@@ -22,7 +22,7 @@ Until it does, [build them](build.md) and push them to your registry.
 A local image ID such as `name@sha256:<id>` can't be used in `FROM`.
 Use a registry digest or a local tag.
 
-## Keep What NemoClaw Relies On
+## Keeping What NemoClaw Relies On
 
 NemoClaw reads a small set of the base image's properties.
 A derived image must keep them:
@@ -37,7 +37,7 @@ A derived image must keep them:
 Add files anywhere else.
 Prefer paths outside `/sandbox`, which NVIDIA OpenShell manages as the sandbox's working area.
 
-## Use Your Additions
+## Using Your Additions
 
 Connect files added to the image through the agent's configuration.
 Adding them to the image alone doesn't make the agent use them.

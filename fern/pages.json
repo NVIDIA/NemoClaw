@@ -27,65 +27,65 @@
       ]
     },
     {
-      "title": "Get Started",
+      "title": "Getting Started",
       "pages": [
         {
-          "title": "Check Prerequisites",
+          "title": "Checking Prerequisites",
           "source": "docs/get-started/prerequisites.md",
           "slug": "prerequisites"
         },
         {
-          "title": "Install the CLI",
+          "title": "Installing the CLI",
           "source": "docs/get-started/install.md",
           "slug": "install"
         },
         {
-          "title": "Deploy Your First OpenClaw Agent",
+          "title": "Deploying Your First OpenClaw Agent",
           "source": "docs/get-started/first-deployment.md",
           "slug": "get-started"
         },
         {
-          "title": "Assess Migration from an Earlier Version",
+          "title": "Assessing Migration From an Earlier Version",
           "source": "docs/get-started/migration.md",
           "slug": "migration"
         }
       ]
     },
     {
-      "title": "Build and Deploy",
+      "title": "Building and Deploying",
       "pages": [
         {
-          "title": "Build Local Artifacts",
+          "title": "Building Local Artifacts",
           "source": "docs/build-deploy/build.md",
           "slug": "build"
         },
         {
-          "title": "Build a Derived Agent Image",
+          "title": "Building a Derived Agent Image",
           "source": "docs/build-deploy/derived-images.md",
           "slug": "derived-images"
         },
         {
-          "title": "Use Desired State",
+          "title": "Using Desired State",
           "source": "docs/build-deploy/usage.md",
           "slug": "usage"
         },
         {
-          "title": "Deploy to Kubernetes or OpenShift",
+          "title": "Deploying to Kubernetes or OpenShift",
           "source": "docs/build-deploy/kubernetes.md",
           "slug": "kubernetes"
         },
         {
-          "title": "Define Once or Configure Inline",
+          "title": "Defining Once or Configuring Inline",
           "source": "docs/build-deploy/configuration-references.md",
           "slug": "configuration-references"
         },
         {
-          "title": "Locate and Preserve Deployment State",
+          "title": "Locating and Preserving Deployment State",
           "source": "docs/build-deploy/state.md",
           "slug": "state"
         },
         {
-          "title": "Configure a Container Service",
+          "title": "Configuring a Container Service",
           "source": "docs/build-deploy/container-services.md",
           "slug": "container-contract"
         }
@@ -95,37 +95,37 @@
       "title": "Agents and Inference",
       "pages": [
         {
-          "title": "Configure and Access Native Agents",
+          "title": "Configuring and Accessing Native Agents",
           "source": "docs/agents-inference/agents.md",
           "slug": "agents"
         },
         {
-          "title": "Access Agent Interfaces",
+          "title": "Accessing Agent Interfaces",
           "source": "docs/agents-inference/interfaces.md",
           "slug": "interfaces"
         },
         {
-          "title": "Configure Inference APIs, Limits, and Authentication",
+          "title": "Configuring Inference APIs, Limits, and Authentication",
           "source": "docs/agents-inference/inference.md",
           "slug": "inference"
         },
         {
-          "title": "Select a Managed Model",
+          "title": "Selecting a Managed Model",
           "source": "docs/agents-inference/models.md",
           "slug": "models"
         },
         {
-          "title": "Use Inline Model Recipes",
+          "title": "Using Inline Model Recipes",
           "source": "docs/agents-inference/recipes.md",
           "slug": "recipes"
         },
         {
-          "title": "Configure an SSH Model Service",
+          "title": "Configuring an SSH Model Service",
           "source": "docs/agents-inference/remote-service.md",
           "slug": "remote-service"
         },
         {
-          "title": "Use an OpenShell OAuth-Refresh Provider",
+          "title": "Using an OpenShell OAuth-Refresh Provider",
           "source": "docs/agents-inference/oauth-refresh.md",
           "slug": "oauth-refresh"
         }
@@ -135,7 +135,7 @@
       "title": "Observability",
       "pages": [
         {
-          "title": "Diagnose a Failed Deployment Operation",
+          "title": "Diagnosing a Failed Deployment Operation",
           "source": "docs/observability/troubleshooting.md",
           "slug": "troubleshooting"
         }
@@ -160,7 +160,7 @@
           "slug": "reference/fabric-harnesses"
         },
         {
-          "title": "Use the Rust SDK",
+          "title": "Using the Rust SDK",
           "source": "docs/references/sdk.md",
           "slug": "sdk"
         },
@@ -215,12 +215,12 @@
           "slug": "threat-model"
         },
         {
-          "title": "Configure Sandbox Policy",
+          "title": "Configuring Sandbox Policy",
           "source": "docs/security/sandbox-network.md",
           "slug": "sandbox-network"
         },
         {
-          "title": "Rotate Credentials",
+          "title": "Rotating Credentials",
           "source": "docs/security/credential-rotation.md",
           "slug": "credential-rotation"
         }

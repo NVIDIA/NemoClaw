@@ -4,7 +4,7 @@
 # Threat Model
 
 This page describes what a NemoClaw deployment protects, from whom, and which component each protection relies on.
-It complements the [trust boundaries](security.md#identify-the-trust-boundaries) and [credential ownership](security.md#credentials-and-authentication) on the security page.
+It complements the [trust boundaries](security.md#identifying-the-trust-boundaries) and [credential ownership](security.md#credentials-and-authentication) on the security page.
 It hasn't been qualified on specific hosts ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## What a Deployment Protects
@@ -45,4 +45,4 @@ These boundaries do not protect against every privileged actor or failure of an 
 - **Upstream services see what agents send them.** An inference or tool provider receives every routed request, including prompts and data.
 - **Destroy doesn't revoke upstream keys.** Revoking them is the key owner's job; see [credential rotation](credential-rotation.md).
 
-To reduce these risks, follow the [hardening checklist](security.md#harden-a-deployment).
+To reduce these risks, follow the [hardening checklist](security.md#hardening-a-deployment).

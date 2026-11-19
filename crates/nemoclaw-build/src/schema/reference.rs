@@ -224,7 +224,7 @@ fn guide(name: &str) -> &'static str {
             "[Sandbox policy](../security/sandbox-network.md)"
         }
         "PolicyAuthority" | "ApfPolicyAuthority" | "InterceptorTls" => {
-            "[Let APF author sandbox policy](../build-deploy/usage.md#let-apf-author-sandbox-policy)"
+            "[Letting APF author sandbox policy](../build-deploy/usage.md#letting-apf-author-sandbox-policy)"
         }
         name if name.starts_with("Policy") => "[Sandbox policy](../security/sandbox-network.md)",
         "InlineRecipe" | "Compatibility" | "Tool" | "Resources" | "Settings" | "Compilation"
@@ -237,16 +237,16 @@ fn guide(name: &str) -> &'static str {
             "[Managed models](../agents-inference/models.md)"
         }
         "ServiceContainer" | "ServiceUpdatePolicy" => {
-            "[Container limits and update policy](../agents-inference/inference.md#set-container-limits-and-update-policy)"
+            "[Container limits and update policy](../agents-inference/inference.md#setting-container-limits-and-update-policy)"
         }
         "OllamaModel" | "OllamaServing" | "OllamaMemory" => {
-            "[Managed Ollama](../agents-inference/inference.md#run-managed-ollama)"
+            "[Managed Ollama](../agents-inference/inference.md#running-managed-ollama)"
         }
         "ExternalOllama" | "ExternalOllamaModel" => {
-            "[External Ollama through a managed proxy](../agents-inference/inference.md#use-external-ollama-through-a-managed-proxy)"
+            "[External Ollama through a managed proxy](../agents-inference/inference.md#using-external-ollama-through-a-managed-proxy)"
         }
         "ServiceAuthentication" => {
-            "[Managed vLLM authentication](../agents-inference/inference.md#authenticate-a-managed-vllm-service)"
+            "[Managed vLLM authentication](../agents-inference/inference.md#authenticating-a-managed-vllm-service)"
         }
         "InferenceProvider"
         | "InlineInferenceProvider"
@@ -262,7 +262,7 @@ fn guide(name: &str) -> &'static str {
             "[Agent runtimes](../agents-inference/agents.md)"
         }
         "ServiceExposure" | "AuthorizationMode" => {
-            "[Agent interfaces](../agents-inference/interfaces.md#expose-a-service-through-the-gateway)"
+            "[Agent interfaces](../agents-inference/interfaces.md#exposing-a-service-through-the-gateway)"
         }
         "ImagePullPolicy" => {
             "[Container image downloads](../build-deploy/usage.md#control-container-image-downloads)"

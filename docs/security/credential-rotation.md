@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Rotate Credentials
+# Rotating Credentials
 
 This page describes how to rotate each credential a deployment uses.
 NemoClaw doesn't detect a new value behind an unchanged credential reference, and it doesn't revoke upstream keys; revoking an old key is the key owner's job.
@@ -36,7 +36,7 @@ NemoClaw generates these keys and keeps them in retained storage:
 - a managed Docker or Podman gateway's signing keys and TLS material.
 
 They can't be rotated in place: apply refuses a state directory whose gateway storage or credentials were removed.
-To rotate them, destroy the deployment, [remove its retained resources](../build-deploy/usage.md#remove-retained-resources), and create a new deployment with a fresh `metadata.uid` and state directory.
+To rotate them, destroy the deployment, [remove its retained resources](../build-deploy/usage.md#removing-retained-resources), and create a new deployment with a fresh `metadata.uid` and state directory.
 
 ## A Key You Supply to a Model Server on Another Platform
 
