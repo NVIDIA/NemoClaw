@@ -84,12 +84,15 @@ describe("E2E recommendation normalizer", () => {
         "bedrock-runtime-compatible-anthropic",
         "channels-stop-start",
         "openclaw-skill-cli",
+        "rebuild-openclaw",
         "sandbox-survival",
         "security-posture",
       ]),
     );
     expect(inventory.allowedJobIds).toContain("openclaw-skill-cli");
     expect(inventory.manualOnlyJobIds).not.toContain("openclaw-skill-cli");
+    expect(inventory.allowedJobIds).toContain("rebuild-openclaw");
+    expect(inventory.manualOnlyJobIds).not.toContain("rebuild-openclaw");
 
     const channels = normalizeE2eTargetAdvisorResult(
       { required: [], optional: [], confidence: "high" },
@@ -112,7 +115,7 @@ describe("E2E recommendation normalizer", () => {
       {
         required: [
           {
-            id: "rebuild-openclaw",
+            id: "state-backup-restore",
             workflow: E2E_WORKFLOW,
             selectorType: "job",
             reason: "unrelated credentialed selector",
@@ -123,7 +126,7 @@ describe("E2E recommendation normalizer", () => {
       },
       metadata({ changedFiles: [] }),
     );
-    expect(rejected.required.map(({ id }) => id)).not.toContain("rebuild-openclaw");
+    expect(rejected.required.map(({ id }) => id)).not.toContain("state-backup-restore");
   });
 
   it("loads the trusted inventory without repository development dependencies", () => {
@@ -141,6 +144,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/hermes-acp-owning-paths.mts",
         "tools/e2e/hosted-provider-smoke.mts",
         "tools/e2e/onboard-timeout-contract.mts",
+        "tools/e2e/rebuild-openclaw-timeout-contract.mts",
         "tools/e2e/openshell-gateway-upgrade-fixture.mts",
         "tools/e2e/sandbox-survival-timeout-contract.mts",
         "tools/e2e/selector-aliases.mts",
@@ -363,7 +367,10 @@ describe("E2E recommendation normalizer", () => {
       metadata({ changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"] }),
     );
 
-    expect(normalized.required.map((item) => item.id)).toEqual(["rebuild-hermes"]);
+    expect(normalized.required.map((item) => item.id)).toEqual([
+      "rebuild-hermes",
+      "rebuild-openclaw",
+    ]);
     expect(normalized.optional).toEqual([]);
     expect(normalized.noTargetE2eReason).toBeNull();
     expect(normalized.confidence).toBe("medium");
@@ -395,7 +402,7 @@ describe("E2E recommendation normalizer", () => {
         required: [],
         optional: [
           {
-            id: "rebuild-openclaw",
+            id: "state-backup-restore",
             workflow: E2E_WORKFLOW,
             selectorType: "job",
             reason: "model called the regression optional",
@@ -406,8 +413,8 @@ describe("E2E recommendation normalizer", () => {
       metadata({ changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"] }),
     );
 
-    expect(normalized.required.map((item) => item.id)).not.toContain("rebuild-openclaw");
-    expect(normalized.optional.map((item) => item.id)).not.toContain("rebuild-openclaw");
+    expect(normalized.required.map((item) => item.id)).not.toContain("state-backup-restore");
+    expect(normalized.optional.map((item) => item.id)).not.toContain("state-backup-restore");
   });
 
   it("preserves indirectly selected Hermes jobs in the deterministic risk floor", () => {

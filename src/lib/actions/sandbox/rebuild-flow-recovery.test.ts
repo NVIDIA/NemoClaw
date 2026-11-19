@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -17,7 +18,6 @@ import {
   snapshotBackup,
   pairingSettlement,
 } from "../../../../test/helpers/rebuild-flow-harness";
-import os from "node:os";
 import * as sandboxState from "../../state/sandbox";
 import { textContainsHighConfidenceCredential } from "../../security/credential-filter";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
@@ -124,6 +124,7 @@ describe("rebuildSandbox flow: recovery", () => {
 
   function stoppedRecoveryHarness(
     agentName: "openclaw" | "langchain-deepagents-code" = "openclaw",
+    readiness: "terminal" | "not_ready" = "terminal",
   ) {
     const nativeDirectory = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-rebuild-stopped-source-"),
@@ -157,7 +158,13 @@ describe("rebuildSandbox flow: recovery", () => {
           }
         : {}),
       sandboxInventory: {
-        sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
+        sandboxes: [
+          {
+            name: "alpha",
+            phase: readiness === "terminal" ? "Error" : "Stopped",
+            readiness,
+          },
+        ],
       },
     });
     const configureSession: typeof configureDcodeSession =
@@ -187,6 +194,47 @@ describe("rebuildSandbox flow: recovery", () => {
       expect(harness.onboardSpy).toHaveBeenCalled();
       expect(openClawLifecycle.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
       expect(mcpBridgeSource.inspectAgentMcpSources).not.toHaveBeenCalled();
+      expect(captured.dispose).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuilds a fresh not-ready source and restores that backup without inspecting or starting it", async () => {
+    const { captured, harness } = stoppedRecoveryHarness("openclaw", "not_ready");
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: captured.nativeDirectory,
+            assertCurrent: captured.assertCurrent,
+          },
+          validateBeforePublish: expect.any(Function),
+        }),
+      );
+      const { manifest } = harness.backupSandboxStateSpy.mock.results[0]!.value as {
+        manifest: { backupPath: string };
+      };
+      expect(harness.restoreSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
+        "alpha",
+        manifest.backupPath,
+        expect.objectContaining({ targetAgentType: "openclaw" }),
+      );
+      expect(harness.restoreSandboxStateSpy.mock.invocationCallOrder[0]).toBeGreaterThan(
+        harness.backupSandboxStateSpy.mock.invocationCallOrder[0]!,
+      );
+      expect(harness.onboardSpy).toHaveBeenCalled();
+      expect(mcpBridgeSource.inspectAgentMcpSources).not.toHaveBeenCalled();
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(([args]) => (args as string[]).includes("start")),
+      ).toBe(false);
       expect(captured.dispose).toHaveBeenCalledOnce();
     } finally {
       fs.rmSync(captured.cleanupDirectory, { recursive: true, force: true });
