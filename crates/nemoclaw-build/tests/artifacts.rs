@@ -1,7 +1,61 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_build::{extract_tofu, source_version};
+use nemoclaw_build::{bundle_version, extract_tofu, source_version};
 use std::io::{Cursor, Write};
+use std::path::Path;
+fn git(repository: &Path, args: &[&str]) {
+    // A commit hook's GIT_DIR would point these commands at its repository.
+    let status = std::process::Command::new("git")
+        .current_dir(repository)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .args([
+            "-c",
+            "user.name=NemoClaw",
+            "-c",
+            "user.email=nemoclaw@example.com",
+        ])
+        .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+#[test]
+fn bundle_reports_the_tag_of_a_clean_tagged_checkout_and_its_sources_otherwise() {
+    let repository = tempfile::tempdir().unwrap();
+    let repository = repository.path();
+    let dev = "0.1.0-dev.0123456789abcdef";
+    git(repository, &["init", "--quiet"]);
+    std::fs::write(repository.join("Cargo.toml"), "first").unwrap();
+    git(repository, &["add", "Cargo.toml"]);
+    git(repository, &["commit", "--quiet", "--message", "first"]);
+    assert_eq!(bundle_version(repository, dev), dev, "untagged commit");
+    git(repository, &["tag", "v0.1.0-rc12"]);
+    assert_eq!(
+        bundle_version(repository, dev),
+        "0.1.0-rc12",
+        "release candidate tag"
+    );
+    std::fs::write(repository.join("Cargo.toml"), "changed").unwrap();
+    assert_eq!(bundle_version(repository, dev), dev, "uncommitted change");
+    git(
+        repository,
+        &["commit", "--quiet", "--all", "--message", "second"],
+    );
+    git(repository, &["tag", "v0.1.0"]);
+    assert_eq!(bundle_version(repository, dev), "0.1.0", "release tag");
+    git(repository, &["tag", "--delete", "v0.1.0"]);
+    git(repository, &["tag", "nightly"]);
+    assert_eq!(bundle_version(repository, dev), dev, "other tag");
+    assert_eq!(
+        bundle_version(&repository.join("missing"), dev),
+        dev,
+        "no repository"
+    );
+}
 #[test]
 fn provider_version_changes_with_content_and_paths_but_not_input_order() {
     let a = vec![

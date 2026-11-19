@@ -28,6 +28,12 @@ Agents:
 - OpenClaw's `web_fetch` reaches hosts that the sandbox's network policy allows ([#14537](https://github.com/NVIDIA/NemoClaw/issues/14537)).
 - OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does; see [agent files](../build-deploy/state.md#agent-files).
 
+Releases:
+
+- A release's CLI reports the release's version: for `v0.1.0-rc12`, `nemoclaw --version` prints `nemoclaw 0.1.0-rc12`, and the bundle's `manifest.json` says `0.1.0-rc12`.
+  Before, they said `0.1.0` and `0.1.0-dev.<hash>`.
+  A bundle built from any other checkout, including one with uncommitted changes, still reports `0.1.0-dev.<hash>`, where the hash names its source files.
+
 Installation:
 
 - [Install the CLI](../get-started/install.md) covers installing, upgrading, and uninstalling a release's CLI from its `nemoclaw-TAG-PLATFORM.tar.gz` archive, checked against `SHA256SUMS`.
