@@ -27,6 +27,10 @@ tempfile.workspace = true
 [target.'cfg(unix)'.dependencies]
 nix.workspace = true
 
+# Hides console echo during credential prompts; crossterm already uses it.
+[target.'cfg(windows)'.dependencies]
+crossterm_winapi = "0.9.1"
+
 [[bin]]
 name = "nemoclaw"
 path = "src/main.rs"

@@ -449,9 +449,8 @@ The worker compiles nothing and writes JUnit timings under `target/nextest/integ
 
 ### Windows
 
-Windows has no Unix sockets for fake container engines, so tests reach them over SSH through the fake relay `nemoclaw-fixture-ssh`, which forwards `ssh://127.0.0.1:PORT` to the fixture's loopback port.
-[`Fixture::engine`](../../crates/test-support/http.rs) serves the engine on a Unix socket where one exists and otherwise installs the relay as `ssh` beside the test executable.
-The `contract` and `integration` steps also put the relay first on `PATH` as `ssh`, so the providers and CLI that OpenTofu and the SDK start reach it too.
+[`Fixture::engine`](../../crates/test-support/http.rs) serves a fake engine where the platform's local engines listen: a Unix socket, or on Windows a named pipe, `npipe:////./pipe/NAME`, which the providers and CLI that OpenTofu and the SDK start reach too.
+Tests that need an SSH engine reach a fixture's loopback port through the fake relay `nemoclaw-fixture-ssh`, which forwards `ssh://127.0.0.1:PORT`; on Windows, the `contract` and `integration` steps put it first on `PATH` as `ssh`.
 Use `Fixture::engine` for a fake engine so that the test runs on every platform; compile a test that needs a Unix-only fixture only on Unix with `#[cfg(unix)]`.
 
 ### Live Suites

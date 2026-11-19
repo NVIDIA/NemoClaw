@@ -7,7 +7,7 @@ Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
 For a first deployment, follow [get started](../get-started/first-deployment.md).
 When copying an [example](../../examples), assign a fresh UUID and replace endpoints and image pins with values for your resources.
 Keep the matching bundle and the same state directory throughout the deployment.
-Deployment planning currently requires a Unix client; see [engine connection limits](../../internal-docs/design/execution-targets.md#connections-and-identity).
+On a Windows client, use an external gateway, with `spec.gateway.engine` set to a local engine's named pipe, such as `npipe:////./pipe/docker_engine`, or to an `ssh://` engine; a managed local gateway needs a Linux or macOS client. See [engine connection limits](../../internal-docs/design/execution-targets.md#connections-and-identity).
 
 From the directory containing your YAML, preview the changes.
 Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.

@@ -7,10 +7,23 @@ pub fn validate_engine_endpoint(endpoint: &str) -> Result<(), ConfigError> {
     if endpoint.starts_with("ssh://") {
         return validate_ssh(endpoint);
     }
+    let invalid = || {
+        ConfigError::new(
+            "an engine endpoint must be an explicit Unix socket, a named pipe on this machine, or SSH",
+        )
+    };
+    // Docker Desktop and Podman name their Windows pipes like docker_engine
+    // and podman-machine-default; a pipe on another machine is not local.
+    if let Some(name) = endpoint.strip_prefix("npipe:////./pipe/") {
+        return (!name.is_empty()
+            && name
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
+        .then_some(())
+        .ok_or_else(invalid);
+    }
     if !endpoint.starts_with("unix:///") || endpoint.contains(['\0', '?', '#']) {
-        return Err(ConfigError::new(
-            "managed runtimes require an explicit Unix socket or SSH engine endpoint",
-        ));
+        return Err(invalid());
     }
     Ok(())
 }
