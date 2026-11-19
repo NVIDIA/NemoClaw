@@ -75,7 +75,19 @@ describe("registered provider live export evidence", () => {
   it("exports the verified operator route without claiming provider ownership", async () => {
     const f = registeredSource();
     const exported = await exportLiveSource();
-    expect(exported.result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    assert(exported.result.ok);
+    expect(exported.result.completion).toEqual({ kind: "stdout" });
+    expect(exported.result.omissions.map(({ field, kind }) => ({ field, kind }))).toEqual([
+      { field: "tools.disclosure", kind: "omitted" },
+      { field: "inference.contextWindow", kind: "omitted" },
+      { field: "inference.reasoning", kind: "omitted" },
+      { field: "inference.reasoningEffort", kind: "omitted" },
+      { field: "interfaces", kind: "omitted" },
+      { field: "image.ref", kind: "placeholder" },
+      { field: "network.policy.explicit.filesystem_policy", kind: "omitted" },
+      { field: "network.policy.explicit.process", kind: "omitted" },
+      { field: "network_policies[].binaries", kind: "review" },
+    ]);
     expect(exported.writeStdout).toHaveBeenCalledWith(
       expect.stringContaining(f.binding.endpointUrl),
     );
