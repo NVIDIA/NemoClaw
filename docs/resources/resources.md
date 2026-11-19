@@ -8,24 +8,28 @@ Keep the documentation, configuration schema, and runtime bundle matched to the 
 
 ## Documentation for Coding Agents
 
-Repository Markdown and the [generated field reference](../reference/configuration.md) are available in this checkout. The reference and its JSON Schema belong to this checkout's source revision; use the ones from the bundle's revision for validation.
+Repository Markdown and the [generated field reference](../reference/configuration.md) are available in this checkout. The reference and its JSON Schema belong to this checkout's source revision.
+Use the ones from the bundle's revision for validation.
 Use [CLI reference](../references/cli.md) for accepted commands and [migration](../get-started/migration.md) for earlier-product boundaries.
 
 ### Choose the v1 Sources
 
 Match the guide, bundle, and schema to the same implementation revision before using any hosted or checkout-local reference.
+Choose a source by its use:
 
 | Source | Use |
 |---|---|
-| This checkout's `docs/README.md` and task guides | V1 guidance grounded in the inspected implementation revision; use the [generated field reference](../reference/configuration.md) from a matching v1 worktree |
-| [v1 staging overview](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) | Browser preview; choose **v1 (Development)** in the version selector |
-| [v1 Markdown index](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/llms.txt) | Discover pages in this version |
-| [v1 overview as Markdown](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview.md) | Fetch page text; append `.md` to another v1 page URL for that page |
+| This checkout's `docs/README.md` and task guides | V1 guidance grounded in the inspected implementation revision. Use the [generated field reference](../reference/configuration.md) from a matching v1 worktree. |
+| [v1 staging overview](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) | Browser preview. Choose **v1 (Development)** in the version selector. |
+| [v1 Markdown index](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/llms.txt) | Discover pages in this version. |
+| [v1 overview as Markdown](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview.md) | Fetch page text. Append `.md` to another v1 page URL for that page. |
 
-The staging preview moves after successful pushes; inspect its revision-pinned source links when matching it to a bundle.
+The staging preview moves after successful pushes.
+Inspect its revision-pinned source links when matching it to a bundle.
 The site's unversioned `llms.txt` describes the default main version.
 Use the `/nemoclaw/v1/` index for v1 tasks and keep that prefix when following published task-guide links.
-Generic Markdown headers may point at the unversioned index or advertise an MCP server; those headers do not establish v1 search isolation or MCP availability.
+Generic Markdown headers may point at the unversioned index or advertise an MCP server.
+Those headers don't establish v1 search isolation or MCP availability.
 Docs search, MCP and v1-scoped results are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
 ### Give an Agent the Documentation Task
@@ -46,7 +50,8 @@ Preserve the original bundle and state for recovery; export does not back up age
 My task: [describe the task and environment]
 ```
 
-This prompt routes documentation; it does not supply missing installers, native-data migration, or gateway provisioning.
+This prompt routes documentation.
+It doesn't supply missing installers, native-data migration, or gateway provisioning.
 
 ### Use the Documentation Skill from a Checkout
 
@@ -56,19 +61,22 @@ Keep the skill in the checkout so its relative links resolve to the same revisio
 It checks the intended product version and available commands and options before choosing commands, and refuses to substitute main guidance when a v1 source is unavailable.
 Review the cited version and task guide in its answer before operational work.
 
-The skill only routes documentation; reading it does not install software or change deployment resources.
+The skill only routes documentation.
+Reading it doesn't install software or change deployment resources.
 Automatic discovery, packaged installation across assistant clients and a rehearsed installation prompt are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
 
 ## Contribute
 
 Follow [repository instructions](../../AGENTS.md), [the writing guide](../../WRITING.md), and [documentation contribution guidance](../../internal-docs/contributing/documentation.md).
 
-Use [NemoClaw issues](https://github.com/NVIDIA/NemoClaw/issues) for reproducible implementation/documentation problems and [discussions](https://github.com/NVIDIA/NemoClaw/discussions) for product questions or proposed capabilities.
-Identify the v1 revision, bundle, relevant configuration, expected behavior, and the failure observed; follow [diagnostic collection](../observability/troubleshooting.md#capture-the-failing-operation) before sharing output.
+Use [NemoClaw issues](https://github.com/NVIDIA/NemoClaw/issues) for reproducible implementation or documentation problems and [discussions](https://github.com/NVIDIA/NemoClaw/discussions) for product questions or proposed capabilities.
+Identify the v1 revision, bundle, relevant configuration, expected behavior, and the failure observed.
+Follow [diagnostic collection](../observability/troubleshooting.md#capture-the-failing-operation) before sharing output.
 Exclude credential values and private deployment data.
 
 [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) hosts community solutions and examples.
-Check their target version before using them with v1; their existence does not establish v1 support or qualification.
+Check their target version before using them with v1.
+Their existence doesn't establish v1 support or qualification.
 v1 has no support policy yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 
 ## Licenses and Source Notices
