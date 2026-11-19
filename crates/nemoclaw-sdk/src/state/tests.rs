@@ -89,7 +89,7 @@ fn corrupt_intent_is_not_an_empty_deployment() {
     );
 }
 #[test]
-fn intent_from_another_release_is_refused_unchanged_whatever_it_holds() {
+fn unsupported_intent_is_refused_unchanged_whatever_it_holds() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     let document = crate::config::Document::parse(
@@ -99,7 +99,7 @@ fn intent_from_another_release_is_refused_unchanged_whatever_it_holds() {
     let mut record = serde_json::to_value(Record::new(document).unwrap()).unwrap();
     // Another release's record may hold anything this release can't read.
     record["document"] = serde_json::json!(42);
-    for version in [RECORD_VERSION - 1, RECORD_VERSION + 1] {
+    for version in [28, RECORD_VERSION + 1] {
         record["version"] = version.into();
         let bytes = serde_json::to_vec(&record).unwrap();
         let path = dir.path().join("intent.json");
@@ -115,6 +115,74 @@ fn intent_from_another_release_is_refused_unchanged_whatever_it_holds() {
             "version {version}"
         );
         assert_eq!(std::fs::read(path).unwrap(), bytes, "version {version}");
+    }
+}
+
+#[test]
+fn format_29_intent_reopens_without_rewriting_and_saves_as_current_format() {
+    for yaml in [
+        include_str!("../../tests/fixtures/config/local.yaml"),
+        include_str!("../../../nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml"),
+        include_str!("../../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let document = crate::config::Document::parse(yaml.as_bytes()).unwrap();
+        let mut expected = Record::new(document).unwrap();
+        let target = crate::compile::targets(&expected.document, &expected.generations)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        expected.begin_apply(
+            &expected.document.clone(),
+            BTreeMap::from([(target.address, target.values)]),
+        );
+        let mut prior = serde_json::to_value(&expected).unwrap();
+        prior["version"] = 29.into();
+        let bytes = serde_json::to_vec(&prior).unwrap();
+        let path = dir.path().join("intent.json");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let loaded = store.load().unwrap().unwrap();
+        assert_eq!(loaded, expected);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        store.save(&loaded).unwrap();
+        drop(store);
+        assert_eq!(
+            Store::open(dir.path()).unwrap().load().unwrap().unwrap(),
+            expected
+        );
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved["version"], RECORD_VERSION);
+    }
+}
+
+#[test]
+fn invalid_format_29_intent_is_refused_without_rewriting() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let document = crate::config::Document::parse(
+        include_str!("../../tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    let mut prior = serde_json::to_value(Record::new(document).unwrap()).unwrap();
+    prior["version"] = 29.into();
+    for (field, invalid) in [
+        ("digest", serde_json::json!("changed")),
+        ("generations", serde_json::json!({})),
+        ("document", serde_json::json!(42)),
+        ("pending", serde_json::json!(true)),
+        ("unexpected", serde_json::json!(true)),
+    ] {
+        let mut corrupt = prior.clone();
+        corrupt[field] = invalid;
+        let bytes = serde_json::to_vec(&corrupt).unwrap();
+        let path = dir.path().join("intent.json");
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(store.load().is_err(), "{field}");
+        assert_eq!(std::fs::read(path).unwrap(), bytes, "{field}");
     }
 }
 

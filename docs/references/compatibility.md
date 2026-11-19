@@ -20,9 +20,13 @@ Within a release, configuration from `export` re-applies to the same deployment.
 
 ## Deployment State
 
-State isn't migrated between releases while v1 is in alpha.
-A release refuses state written by a release with another intent record format, without changing it: "deployment state was written by a different NemoClaw release (intent record version N; this release reads M); keep using the CLI bundle that created the deployment, or destroy it with that bundle and create a new deployment; state retained".
-Keep the release that created a deployment until you have destroyed it, then create a new deployment with the new release, using a fresh `metadata.uid` and state directory.
+General state migration between releases is unavailable while v1 is in alpha.
+This bundle supports one explicit exception: [intent format 29 upgrades to 30](../build-deploy/state.md#upgrade-intent-format-29-to-30), preserving the serialized document, ownership generations and pending recovery state.
+Loading validates the record without rewriting it; the next successful intent save writes format 30, which the older CLI cannot read.
+Back up the whole state directory and keep the earlier bundle before upgrading.
+
+Unsupported intent formats are refused without changing the record: "deployment state was written by a different NemoClaw release (intent record version N; this release reads M); keep using the CLI bundle that created the deployment, or destroy it with that bundle and create a new deployment; state retained".
+For those formats, use the creating release to destroy the deployment, then create a new deployment with the new release, using a fresh `metadata.uid` and state directory.
 
 The providers refuse state recorded under an older version of a resource's schema; they don't upgrade it.
 

@@ -12,6 +12,7 @@ use tf_provider::{
     schema::{Attribute, AttributeConstraint, AttributeType, Block, Schema},
     value::{Value, ValueEmpty},
 };
+mod publication;
 
 /// Data source for one runtime's service readiness.
 pub(crate) struct ReadinessDataSource(pub Arc<ConfiguredBackend>, pub services::ServiceRuntime);
@@ -26,6 +27,9 @@ pub(crate) struct ReadinessState {
     endpoint: Value<String>,
     /// The base URL gateways and sandboxes use; defaults to `endpoint`.
     sandbox_endpoint: Value<String>,
+    /// The separately published NIM route-filter container and its checked base URL.
+    publication_container_id: Value<String>,
+    publication_endpoint: Value<String>,
     wait_timeout_seconds: Value<u64>,
     read_trigger: Value<bool>,
     ready: Value<bool>,
@@ -81,6 +85,14 @@ fn served(contract: &str, proxy: bool) -> Result<(String, bool), Error> {
             service.authentication.is_some(),
         ),
         nemoclaw_runtime::RuntimeSpec::Ollama(service) => (service.model.name.clone(), false),
+        nemoclaw_runtime::RuntimeSpec::Nim(service) => (
+            service.served_model().to_owned(),
+            service.authentication.is_some(),
+        ),
+        nemoclaw_runtime::RuntimeSpec::LlamaCpp(service) => (
+            service.served_model().to_owned(),
+            service.authentication.is_some(),
+        ),
     })
 }
 
@@ -233,6 +245,7 @@ fn validate(config: &ReadinessState, runtime: services::ServiceRuntime) -> Resul
         base_url(url, "sandbox_endpoint")?;
     }
     readiness(config, runtime)?;
+    publication::validate(config)?;
     if matches!(&config.container_id, Value::Null)
         || matches!(&config.container_id, Value::Value(id) if id.is_empty())
     {
@@ -264,6 +277,8 @@ impl DataSource for ReadinessDataSource {
                     ("container_id", String, Optional),
                     ("endpoint", String, Optional),
                     ("sandbox_endpoint", String, Optional),
+                    ("publication_container_id", String, Optional),
+                    ("publication_endpoint", String, Optional),
                     ("wait_timeout_seconds", Number, Optional),
                     ("read_trigger", Bool, Optional),
                     ("ready", Bool, Computed),
@@ -373,6 +388,7 @@ impl DataSource for ReadinessDataSource {
                 &CancellationToken::new(),
             )
             .await?;
+            publication::wait(&config, self.0.connections()).await?;
             // Given the address sandboxes use, export the server's ref; an
             // authenticated server's names where its generated key lives.
             let (Value::Value(sandbox), Value::Value(engine), Value::Value(contract)) =
@@ -411,6 +427,37 @@ impl DataSource for ReadinessDataSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn native_nim_readiness_requires_its_separate_publication() {
+        let source = ReadinessDataSource(
+            Arc::new(ConfiguredBackend::default()),
+            services::ServiceRuntime::Vllm,
+        );
+        let document = nemoclaw_sdk::config::Document::parse(
+            include_bytes!("../../nemoclaw-e2e/cases/docker-openclaw-nim.yaml").as_slice(),
+        )
+        .unwrap();
+        let nemoclaw_sdk::config::ServiceDefinition::Nim(service) =
+            &document.spec.services["local-nim"]
+        else {
+            unreachable!()
+        };
+        let runtime = nemoclaw_runtime::RuntimeSpec::Nim(Box::new(service.runtime.clone()));
+        let state = ReadinessState {
+            engine: Value::Value("unix:///var/run/docker.sock".into()),
+            name: Value::Value("nim-model".into()),
+            contract: Value::Value(serde_json::to_string(&runtime).unwrap()),
+            container_id: Value::Unknown,
+            ..Default::default()
+        };
+        let mut diags = Diagnostics::default();
+        assert!(
+            source.validate(&mut diags, state).await.is_none(),
+            "native readiness alone cannot qualify the published NIM route"
+        );
+        assert!(format!("{diags:?}").contains("publication"), "{diags:?}");
+    }
 
     /// Each runtime's readiness reads only that runtime's contracts, and says
     /// which runtime a mismatched contract belongs to without echoing it.
