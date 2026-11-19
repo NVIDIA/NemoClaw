@@ -33,6 +33,17 @@ Choose the current owner of the task rather than translating earlier CLI command
 | Provision a model router, managed NIM/llama.cpp, or distributed inference | Managed NIM and llama.cpp: [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); NemoClaw has no Model Router |
 | Install a telemetry collector or reuse Deep Agents trace-export setup | NemoClaw doesn't provision collectors or export Deep Agents traces; [Hermes Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) writes trace artifacts in the sandbox |
 
+## Needs Scope Analysis
+
+These questions remain unresolved; they establish neither a parity commitment nor a permanent exclusion.
+Use the parity milestone above for agreed work.
+
+| Workflow | Existing context | Decision or verification needed |
+|---|---|---|
+| Run one model across multiple machines | Classic implements managed distributed vLLM on [two DGX Sparks](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/inference/set-up-vllm-on-two-dgx-sparks.mdx), marked Experimental with physical two-machine E2E qualification pending. Its [two-DGX-Station Ray/vLLM path](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/inference/set-up-vllm-on-two-dgx-stations.mdx) is a Deferred evaluation. | Decide whether Agent Configs should provision and manage the multi-machine server lifecycle or connect to an operator-managed endpoint. The earlier parity discussion assumed Classic had no implementation; that premise needs correction. [#14608](https://github.com/NVIDIA/NemoClaw/issues/14608) leaves multi-machine serving outside agreed parity; [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) covers multiple GPUs on one host. |
+| Use native memory search | Classic documents [embedding-backed memory search](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/configure-agents/configure-memory-search.mdx). | Confirm which native harness indexing and search behavior must carry over, then verify that path. Excluding a separate NemoClaw memory subsystem does not exclude native memory features. |
+| Rotate MCP credentials | The [credential rotation guide](../security/credential-rotation.md) describes replacement and revocation, including credentials held by running processes. | Verify the MCP credential path with a running agent, including replacement, restart, and revocation. Documented steps alone do not establish live qualification. |
+
 ## Keep Deployment Identities Separate
 
 Use a fresh deployment UUID, separate state directory, and resource names/endpoints that do not collide with the earlier deployment.

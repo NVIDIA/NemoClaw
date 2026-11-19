@@ -25,6 +25,7 @@ This development branch currently requires [building from source](docs/build-dep
 Support depends on the selected agent, image, model, and platform; check [current limits](docs/resources/limits.md) before choosing a configuration.
 
 **Coming from Classic?** Use the [migration guide](docs/get-started/migration.md) to assess your workflows and evaluate a separate deployment while keeping your existing setup available.
+The guide also identifies [questions that still need scope analysis](docs/get-started/migration.md#needs-scope-analysis).
 Track remaining parity work in [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
 Broader release preparation is tracked separately in [Roadmap: GTC DC 2026](https://github.com/NVIDIA/NemoClaw/milestone/12).
 
