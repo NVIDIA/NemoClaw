@@ -7,7 +7,7 @@ Choose a harness before selecting an image, inference API, and management mode.
 The table lists maintained examples, not a closed set of supported identifiers or live qualification of every model and host.
 Available adapters and native settings constraints come from canonical Fabric descriptors packaged in the selected image.
 Onboarding offers OpenClaw and Hermes; a template that names another harness from the bundled catalog keeps it as the suggested answer. Without target metadata, compatibility remains unknown.
-Use [inference API selection](../agents-inference/inference.md#choose-the-request-api) for the protocol restrictions and [agent access](../agents-inference/agents.md#choose-native-access) for interaction and session behavior.
+Use [inference API selection](../agents-inference/inference.md#choosing-the-request-api) for the protocol restrictions and [agent access](../agents-inference/agents.md#choosing-native-access) for interaction and session behavior.
 
 | `harness.kind` | Agents per sandbox | Gateway and inference management | Maintained example |
 |---|---|---|---|
@@ -35,11 +35,11 @@ The external Ollama proxy uses OpenAI Completions; Fabric metadata determines ad
 The inference provider stays `management: external`, while NemoClaw manages only the proxy and its credential storage.
 External services remain operated by their owners; NemoClaw still owns its deployment's provider registration, endpoint profile, and sandbox.
 
-Build an image for the selected harness using [the agent image procedure](../build-deploy/build.md#build-agent-images).
+Build an image for the selected harness using [the agent image procedure](../build-deploy/build.md#building-agent-images).
 Replace example identities, endpoints, and local/placeholder image digests with your own values.
 Keep the image, schema, and bundle matched to the desired configuration.
 [Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) does not change Hermes's adapter identifier.
 
 The [configuration validator](../../crates/nemoclaw-sdk/src/config/validation.rs) checks deployment structure and transport contracts.
 [Fabric compatibility assessment](../../crates/nemoclaw-fabric/src/capabilities.rs) checks the advertised native constraints for both onboarding and OpenTofu planning.
-The [first-request procedure](../agents-inference/agents.md#run-one-agent-request) is the same for every harness; a tested harness, model and platform matrix is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
+The [first-request procedure](../agents-inference/agents.md#running-one-agent-request) is the same for every harness; a tested harness, model and platform matrix is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).

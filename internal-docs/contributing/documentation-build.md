@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Build and Publish Documentation
+# Building and Publishing Documentation
 
 Edit repository Markdown; Cargo generates the Fern pages and navigation from those sources.
 Fern's version selector offers **Latest (main)** and **v1 (Development)** in one site.
@@ -30,7 +30,7 @@ The publisher extracts main's documentation and generators at an immutable Git r
 It installs only the [locked docs dependency](../../tools/docs/main/package.json), `yaml`, in that extracted directory and runs the original generators with Node's TypeScript support.
 Main's npm application dependencies are not installed.
 The imported installation prompt and agent variants appear only in Latest.
-V1 runtime guidance remains in [agents.md](../../docs/agents-inference/agents.md), and [resources](../../docs/resources/resources.md#give-an-agent-the-documentation-task) provides a version-aware documentation prompt.
+V1 runtime guidance remains in [agents.md](../../docs/agents-inference/agents.md), and [resources](../../docs/resources/resources.md#giving-an-agent-the-documentation-task) provides a version-aware documentation prompt.
 The installation prompt has not been rehearsed ([#12644](https://github.com/NVIDIA/NemoClaw/issues/12644)).
 
 To refresh Latest, update `fern/main-source.json` to a reviewed main commit, reconcile that revision's theme, components, and redirects in `fern/docs.yml`, and rerun the complete build.
@@ -38,7 +38,7 @@ Before a public release, select the main revision intended for publication; a ma
 The first build fetches the pinned commit if it is absent locally.
 To recover a damaged import, stop the preview server, remove only the generated `fern/_main/` directory, and rerun the build.
 
-## Validate Locally
+## Validating Locally
 
 Complete the Rust and `protoc` prerequisites in [build.md](../../docs/build-deploy/build.md).
 Install Node.js 26.13.1 for the documentation tooling.
@@ -77,7 +77,7 @@ cargo test --locked -p nemoclaw-build --test integration -- docs:: fern::
 
 Also run the [repository checks](testing.md).
 
-## Preview Changes
+## Previewing Changes
 
 For a local browser preview, install `pnpm` on `PATH`, as required by [Fern's development server](https://buildwithfern.com/learn/docs/preview-publish/preview-changes), then run:
 
@@ -126,7 +126,7 @@ Publication jobs run the build tool that validation compiled from the same commi
 Rerun a failed publication job after correcting credentials or service availability.
 Unmerged closed-PR previews require explicit deletion with the helper.
 
-### Configure Publication
+### Configuring Publication
 
 1. Make `FERN_TOKEN` available to same-repository PR jobs for previews.
 2. Create the `docs-v1-staging` environment and provide a token for the existing staging Fern instance.

@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Deploy Your First OpenClaw Agent
+# Deploying Your First OpenClaw Agent
 
 In this tutorial, you configure one OpenClaw sandbox with an existing NVIDIA OpenShell gateway and inference endpoint.
 You then plan the deployment, apply it, and send one request to the agent.
@@ -10,7 +10,7 @@ Keep the bundle and generated schema from the source revision used to build the 
 A successful apply starts a runtime.
 Only an invocation checks whether the agent replies.
 
-## Prepare the Tools and Services
+## Preparing the Tools and Services
 
 Complete the [first-deployment prerequisites](prerequisites.md#before-the-first-deployment).
 You need a gateway you can operate, an endpoint that serves a known model, the matching OpenShell CLI, Docker Buildx, and `jq` for reading the runtime ID.
@@ -32,7 +32,7 @@ Run the remaining commands from this v1 worktree root on the client host unless 
 Don't mix bundles, examples, and generated schemas from different revisions.
 Their field validation can differ.
 
-[Build a native bundle](../build-deploy/build.md#build-a-native-bundle) from this v1 worktree and add its CLI to `PATH`:
+[Build a native bundle](../build-deploy/build.md#building-a-native-bundle) from this v1 worktree and add its CLI to `PATH`:
 
 ```sh
 export PATH="$PWD/dist/linux_arm64/bin:$PATH"
@@ -44,7 +44,7 @@ Keep this bundle unchanged for this deployment.
 If you rebuild it, keep a separate copy of the original bundle for recovery.
 There are no v1 release downloads or installer in this source-build workflow.
 
-[Build the OpenClaw image](../build-deploy/build.md#build-agent-images) from the same v1 revision on the native Linux ARM64 build host:
+[Build the OpenClaw image](../build-deploy/build.md#building-agent-images) from the same v1 revision on the native Linux ARM64 build host:
 
 ```sh
 cargo images build --platform linux/arm64 openclaw
@@ -55,7 +55,7 @@ Record the printed `NAME@sha256:DIGEST` reference.
 Make that image available to the gateway's sandbox compute daemon and to the engine you name in the YAML for image inspection.
 An image build doesn't start an agent or prove that a model will reply.
 
-## Configure One Deployment
+## Configuring One Deployment
 
 Copy `examples/openclaw.yaml` from the v1 worktree into a new deployment directory and create a fresh UUID:
 
@@ -104,7 +104,7 @@ Remove the caller-owned environment value when you no longer need it.
 This doesn't revoke the upstream key.
 Use HTTPS for a credentialed inference endpoint and follow [credential ownership](../build-deploy/usage.md#configuration-and-credentials) for gateway authentication.
 
-## Plan and Apply
+## Planning and Applying
 
 Plan with the copied YAML and a dedicated state directory:
 
@@ -127,11 +127,11 @@ nemoclaw apply -o json --progress off --state-dir .local/first-deployment/state 
 Apply can create a workspace, provider registration, and sandbox, and start the agent runtime.
 It checks configuration and readiness but doesn't send an inference request.
 If apply fails, keep the YAML, original bundle, and full state directory.
-Use [recovery guidance](../build-deploy/usage.md#recover-an-interrupted-operation) before retrying or removing anything.
+Use [recovery guidance](../build-deploy/usage.md#recovering-an-interrupted-operation) before retrying or removing anything.
 
-## Send a Verification Request
+## Sending a Verification Request
 
-[Select the gateway and workspace](../agents-inference/interfaces.md#select-the-gateway-and-workspace) in the client terminal using the selectors reported by plan or apply.
+[Select the gateway and workspace](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace) in the client terminal using the selectors reported by plan or apply.
 The OpenShell CLI needs its own gateway authentication.
 The YAML credential references don't configure its profile.
 For a plaintext loopback gateway matching the example's endpoint, use:
@@ -143,7 +143,7 @@ export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
 ```
 
 Replace the endpoint and workspace with the values reported for your deployment.
-For an authenticated gateway, follow the [profile selection procedure](../agents-inference/interfaces.md#select-the-gateway-and-workspace) instead.
+For an authenticated gateway, follow the [profile selection procedure](../agents-inference/interfaces.md#selecting-the-gateway-and-workspace) instead.
 
 The apply result reports the agent's runtime ID as `agents.assistant.runtimeId`.
 Read it again from a plan, which changes no runtime resources and needs the same credential environment as apply, then invoke the agent named `main`:
@@ -164,7 +164,7 @@ Inspect `result.output` for the adapter's reply rather than assuming every adapt
 A reply verifies this particular endpoint, model, and agent request, not general model quality or tool reliability.
 The v1 source and opt-in tests don't establish that this procedure has succeeded on your hosts.
 
-## Preview and Remove the Deployment
+## Previewing and Removing the Deployment
 
 When finished, preserve any needed sandbox files or conversations before deletion.
 Preview removal using the same state directory:
@@ -183,8 +183,8 @@ nemoclaw destroy --state-dir .local/first-deployment/state
 
 The external gateway and inference service remain with their operators.
 Local state and some resources can remain after destroy.
-If teardown fails, retain the state directory and [resume with the same state](../build-deploy/usage.md#destroy).
-Refer to [retention and explicit cleanup](../build-deploy/usage.md#remove-retained-resources) before removing the state directory or revoking upstream credentials.
+If teardown fails, retain the state directory and [resume with the same state](../build-deploy/usage.md#destroying).
+Refer to [retention and explicit cleanup](../build-deploy/usage.md#removing-retained-resources) before removing the state directory or revoking upstream credentials.
 
 ## Next Steps
 

@@ -65,7 +65,7 @@ The SDK also checkpoints an established release binding before removal because t
 Recovery validates the original bundle, intent, generations, state lineage and serial, and resource identities, then uses OpenTofu's state operations to restore only a missing Helm binding.
 It preserves the latest state of other resources; a fresh checked plan must authorize subsequent deletion.
 Confirmed authentication cleanup prevents restoration after successful release removal.
-The [Helm removal recovery procedure](../../docs/build-deploy/usage.md#recover-an-interrupted-helm-removal) describes the required retained evidence and retry command.
+The [Helm removal recovery procedure](../../docs/build-deploy/usage.md#recovering-an-interrupted-helm-removal) describes the required retained evidence and retry command.
 Issuer private material stays outside Helm values and OpenTofu state.
 The provider receives the explicit kubeconfig and context, or, when the deployment names neither, uses the service account of the pod that runs NemoClaw; ambient Helm and Kubernetes provider settings are excluded.
 OpenTofu and its providers inherit only platform variables, so a kubeconfig exec plugin gets the caller variables listed in `gateway.kubernetes.environment` and nothing else; without a kubeconfig, they get `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT` instead.
@@ -174,7 +174,7 @@ Native model or agent probes with no Fabric contract remain unavailable.
 Authoring question resolution and the OpenTofu execution graph have different jobs.
 The former chooses questions and reopens dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
 
-The native [bundle](../../docs/build-deploy/build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
+The native [bundle](../../docs/build-deploy/build.md#building-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 
 ## Why Each Deployment Is One OpenTofu Root
 
@@ -240,7 +240,7 @@ Failures involving only observations, established updates or deletions, or dispo
 They cannot clear earlier unresolved OpenShell creations; those must be reconciled before teardown.
 An apply without non-disposable OpenShell creations does not start a pending-creation guard; export can verify its established bindings through OpenTofu even after that apply fails.
 Teardown recovery validates current bindings and fresh plans; the failed apply's saved plan file and hash do not authorize the next operation.
-The [recovery guide](../../docs/build-deploy/usage.md#recover-an-interrupted-operation) describes the caller's next steps.
+The [recovery guide](../../docs/build-deploy/usage.md#recovering-an-interrupted-operation) describes the caller's next steps.
 
 ## Storage and Resource Lifetimes
 

@@ -71,7 +71,7 @@ Never print the auth volume's key, relabel retained volumes, or attach them to a
 | Cache exists but recovery inputs are missing | Report retained data separately from a recoverable deployment; there is no lost-state adoption workflow for credentials or gateway storage |
 | No matching server or reusable cache is established | Ask which inference source to provision before downloading a model |
 
-For managed vLLM, follow [stopped-runtime diagnosis](../../../../docs/agents-inference/models.md#diagnose-and-recover-a-stopped-runtime).
+For managed vLLM, follow [stopped-runtime diagnosis](../../../../docs/agents-inference/models.md#diagnosing-and-recovering-a-stopped-runtime).
 A retained `ready` status is historical; recheck current health and authenticated model identity after recovery.
 Do not blindly restart after memory protection or enable an automatic restart loop that defeats it.
 

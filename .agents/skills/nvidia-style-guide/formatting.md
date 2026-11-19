@@ -48,9 +48,9 @@ Here are the best link practices:
   - ❌ **Incorrect:** [large language models](https://www.nvidia.com/en-us/glossary/large-language-models/) (LLMs)
 - Avoid generic links, such as “here” and “read more.”
   - *(Technical Blog guide)* Embed the URL with anchor text that uses keywords. Ideally, the anchor text would be the title of the target URL, but it could also be related keywords used inline. Avoid using raw URLs and generic anchor text like “here,” “click here,” or “documentation.”
-  - ✅ **Correct:** For more information, see the recent Unified Memory post.
+  - ✅ **Correct:** For more information, refer to the recent Unified Memory post.
   - ✅ **Correct:** It’s helpful to install the driver before creating your first project.
-  - ❌ **Incorrect:** For more information, see the recent Unified Memory post here.
+  - ❌ **Incorrect:** For more information, refer to the recent Unified Memory post here.
   - ❌ **Incorrect:** To install the driver, click here.
 - It’s okay to link on one full short sentence, but avoid linking on long sentences or more than one sentence.
 - Try to limit the number of inline links within one paragraph to prevent search engine optimization (SEO) ineffectiveness and poor readability.
@@ -71,12 +71,13 @@ When you include lists in your content, consider these best practices:
   - Sublists must have more than one item.
 - Capitalize the first letter of every list item.
 - If the list items are complete sentences, include end punctuation.
+  - Prefer all sentences or all fragments in a list, as [Periods and Bulleted Lists](technical-documentation.md#periods-and-bulleted-lists) advises; if a list mixes them, follow [Period](punctuation.md#period-).
 - Use parallel sentence construction in list items. For example, start all lists items with verbs or end all list items with punctuation.
 - Avoid including links that move users away from a list of tasks.
   - If you must include a link, don't hyperlink the entire list item unless it's supertask information or a prerequisite.
 - Use lists in tables sparingly.
 
-See also [Tables](#tables).
+Related: [Tables](#tables).
 
 ### Bulleted lists
 
@@ -91,6 +92,7 @@ Bulleted lists must have the following qualities:
 - One sentence or idea for each list item
 - End punctuation if the list items are complete sentences
 - If list items begin with a term followed by a colon, capitalize the first word after the colon
+  - In technical documentation, start list items with a bold term and a colon only in glossaries or definitions; refer to [Technical Documentation Conventions](SKILL.md#technical-documentation-conventions).
 
 Example of a bulleted list (refer to the previous list)
 
@@ -153,4 +155,3 @@ Here are a few guidelines for working with tables in your content:
 - Avoid leaving table cells empty. If you need to keep a cell blank, use a nonbreaking space to make a cell appear blank.
 - Avoid including links in tables, unless the purpose of the table is to help users find information.
 - Use code samples sparingly in tables.
-- Every table must have a title or caption.

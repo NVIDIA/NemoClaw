@@ -167,6 +167,7 @@ The longer the sentence, the more likely it is that your reader will lose the gi
 Long sentences tend to have more complex structures and dependent clauses, which can make the main point difficult to discern.
 They will also look intimidating to non-native speakers.
 If you have long sentences, try splitting them up so that each is no more than 35 words.
+The corporate [Readability](technical-content.md#readability) guidance aims for fewer than 30.
 
 When writing, brevity can help with comprehension and localization.
 The following are some tips to help tame long sentences:
@@ -358,6 +359,7 @@ The differences between declarative and imperative sentences are shown in the fo
 - Stop!
 
 Note: When writing technical documentation, declarative language is used most frequently; however, elements of imperative language can be acceptable when appropriate.
+Procedure steps use the imperative; refer to [Procedures](technical-content.md#procedures).
 
 ### Welcoming to All Audiences
 
@@ -456,6 +458,7 @@ The names of seasons, however, are not proper nouns, so there’s no need to cap
 The capitalization rules for titles of books, movies, and other works vary a little between style guides.
 In general, you should capitalize the first word, all nouns, all verbs (even short ones, like *is*), all adjectives, and all proper nouns.
 That means you should lowercase articles, conjunctions, and prepositions—however, some style guides say to capitalize conjunctions and prepositions that are longer than five letters.
+In NVIDIA titles, capitalize prepositions of four letters or more, such as *From* and *With*; refer to [Prepositions](capitalization.md#prepositions).
 
 - *Sense and Sensibility* is better than *Pride and Prejudice*.
 - The first movie of the series is *Harry Potter and the Sorcerer’s Stone*.
@@ -539,10 +542,10 @@ Put commas and periods **within** quotation marks, except when a parenthetical r
 
 *Examples:*
 
-- He said, “I may forget your name, but I never forget a face.”
 - History is stained with blood spilled in the name of “civilization.”
 - Mullen, criticizing the apparent inaction, writes, “Donahue’s policy was to do nothing” (24).
-- In Java, a string is a sequence of characters. For example, “hello” is a string containing a sequence of characters ‘h’, ‘e’, ‘l’, ‘l’, and ‘o’.
+
+For more examples, refer to [Quotation marks](punctuation.md#quotation-marks-).
 
 #### Colons and Semicolons
 
@@ -575,25 +578,7 @@ To type the dashes:
 
 #### Hyphens
 
-Hyphenate two or more words that precede and modify a noun as a unit if confusion might result without the hyphen.
-
-*Examples:*
-
-- built-in drive
-- high-level-language compiler
-- read-only memory
-- lower-left corner
-- floating-point decimal
-- line-by-line
-- up-to-date information
-
-Also, hyphenate if one of the words is a past or present participle (a verb form ending in -ed or -ing and used as an adjective or noun).
-
-*Examples:*
-
-- left-aligned text
-- free-flowing form
-- well-defined schema
+For hyphens, refer to [Hyphen](punctuation.md#hyphen--), which includes this guide's examples.
 
 ### Periods and Bulleted Lists
 
@@ -678,6 +663,7 @@ Using a comma instead of a semicolon in the sentences above would result in a co
 
 You can use semicolons to divide the items of a list if they are long or contain internal punctuation.
 In these cases, the semicolon helps readers keep track of the divisions between the items.
+In NVIDIA content, break such a series into a list instead; refer to [Semicolons](punctuation.md#semicolons-).
 
 - I need the weather statistics for the following cities: London, England; London, Ontario; Paris, France; Paris, Ontario; Perth, Scotland; Perth, Ontario.
 - My plan included taking him to a nice—though not necessarily expensive—dinner; going to the park to look at the stars, which, by the way, are amazing this time of year; and serenading him with my accordion.

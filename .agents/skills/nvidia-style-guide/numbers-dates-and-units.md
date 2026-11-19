@@ -8,7 +8,7 @@ Related: [Punctuation and Symbols](punctuation.md), [Formatting, Links, Lists, a
 
 ## Dates and Time
 
-See also [Numbers](#numbers).
+Related: [Numbers](#numbers).
 
 ### Dates
 
@@ -26,7 +26,7 @@ If a month must be abbreviated, use the following:
 
 The other months (March, April, May, June, July) are still spelled out, even with a specific date. If space is constrained, such as in a table, you can remove the terminal period on month abbreviations if the meaning remains clear.
 
-Use the following format for month, day, year, time: Month DD, YYYY TT a.m/p.m. unless regional content requires a different format. To avoid confusion, always spell out the name of the month. The positions of the month and day vary by country. For example, 6/12/2025 might be June 12, 2025, or December 6, 2025.
+Use the following format for month, day, year, time: Month DD, YYYY TT a.m./p.m. unless regional content requires a different format. To avoid confusion, always spell out the name of the month. The positions of the month and day vary by country. For example, 6/12/2025 might be June 12, 2025, or December 6, 2025.
 
 Capitalize the days of the week. Don't use abbreviations unless space is extremely limited.
 
@@ -95,7 +95,7 @@ Always spell out ordinals.
 
 ### Common numerical terms
 
-See also [Dates and Time](#dates-and-time).
+Related: [Dates and Time](#dates-and-time).
 
 - **2D, 3D:** Abbreviations for two-dimensional and three-dimensional, respectively.
 - **4G, 5G, 6G:** Fourth-generation wireless network, fifth-generation, and so on.

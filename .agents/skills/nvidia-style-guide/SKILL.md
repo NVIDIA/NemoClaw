@@ -14,6 +14,7 @@ Links to NVIDIA-internal resources on SharePoint, Google Docs, and Confluence ar
 The Technical Documentation Writing Guide's Style Guide Cheat Sheet is included as [Technical Documentation Conventions](#technical-documentation-conventions), and the rest of that guide is in [technical-documentation.md](technical-documentation.md).
 The style guidelines page's sections are split into the files listed in [Topic Files](#topic-files), which replaces the page's table of contents; its cross-references are links between those files.
 Writing guidance from the Content Engineering folder is in [cli-procedures.md](cli-procedures.md), [ui-elements.md](ui-elements.md), and [writing-with-ai.md](writing-with-ai.md), with smaller additions marked *(Content Engineering guide)*; the folder's tooling, publishing, support-request, product-specific, and reStructuredText pages are omitted.
+Rules that the sources repeat are kept in one place and linked from the others; where sources conflict, a note says which rule applies, and examples that broke the Technical Documentation Conventions are adjusted to follow them.
 Writing guidance from the Technical Blog guide is added to the matching sections and marked *(Technical Blog guide)*, with its examples labeled Correct and Incorrect; its publishing procedures (turnaround times, word counts, WordPress formatting, author accounts, featured images, categories, tags, and social media assets) are omitted.
 The wording is otherwise the sources'.
 [WRITING.md](../../../WRITING.md) and the guides it links add the rules specific to this repository and take precedence over this skill where they differ.
@@ -48,7 +49,7 @@ In technical documentation, apply the [Technical Documentation Conventions](#tec
 | [numbers-dates-and-units.md](numbers-dates-and-units.md) | Numerals, ordinals, currency, dates, times, and units of measurement | [Dates and Time](numbers-dates-and-units.md#dates-and-time), [Numbers](numbers-dates-and-units.md#numbers), [Units of Measurement](numbers-dates-and-units.md#units-of-measurement) |
 | [formatting.md](formatting.md) | Text formatting, link text, bulleted, definition, and numbered lists, and tables | [Formatting](formatting.md#formatting), [Links](formatting.md#links), [Lists](formatting.md#lists), [Tables](formatting.md#tables) |
 | [seo-and-social-media.md](seo-and-social-media.md) | Keywords, search optimization, and social media copy | [SEO](seo-and-social-media.md#seo), [Social Media](seo-and-social-media.md#social-media) |
-| [technical-content.md](technical-content.md) | Code, equations, figures, headings, procedures, readability, tone, and UI text in technical content, including Technical Blog guidance | [API reference comments](technical-content.md#api-reference-comments), [Code elements or examples](technical-content.md#code-elements-or-examples), [Equations and formulas](technical-content.md#equations-and-formulas), [Figures and images](technical-content.md#figures-and-images), [File name extensions](technical-content.md#file-name-extensions), [Footnotes](technical-content.md#footnotes), [GitHub repositories](technical-content.md#github-repositories), [Headings](technical-content.md#headings), [Leading sentences](technical-content.md#leading-sentences), [Marketing claims](technical-content.md#marketing-claims), [Model names](technical-content.md#model-names), [Procedures](technical-content.md#procedures), [Readability](technical-content.md#readability), [Synonyms](technical-content.md#synonyms), [Tone and voice](technical-content.md#tone-and-voice), [UI text](technical-content.md#ui-text) |
+| [technical-content.md](technical-content.md) | Code, equations, figures, headings, procedures, readability, tone, and UI text in technical content, including Technical Blog guidance | [API reference comments](technical-content.md#api-reference-comments), [Code elements or examples](technical-content.md#code-elements-or-examples), [Equations and formulas](technical-content.md#equations-and-formulas), [Figures and images](technical-content.md#figures-and-images), [File name extensions](technical-content.md#file-name-extensions), [Footnotes](technical-content.md#footnotes), [Headings](technical-content.md#headings), [Leading sentences](technical-content.md#leading-sentences), [Marketing claims](technical-content.md#marketing-claims), [Model names](technical-content.md#model-names), [Procedures](technical-content.md#procedures), [Readability](technical-content.md#readability), [Synonyms](technical-content.md#synonyms), [Tone and voice](technical-content.md#tone-and-voice), [UI text](technical-content.md#ui-text) |
 | [cli-procedures.md](cli-procedures.md) | Structure of procedural CLI documentation: topic headings, prerequisites, steps, example output, and related information | [Topic Heading](cli-procedures.md#topic-heading), [Procedure Prerequisites](cli-procedures.md#procedure-prerequisites), [Procedure Steps](cli-procedures.md#procedure-steps), [Related Information](cli-procedures.md#related-information), [Syntax Reference Documents](cli-procedures.md#syntax-reference-documents), [Source Material](cli-procedures.md#source-material) |
 | [ui-elements.md](ui-elements.md) | Terms and verbs for UI elements such as buttons, checkboxes, dialogs, menus, panes, tabs, and toggles | [Basic UI Components](ui-elements.md#basic-ui-components), [References](ui-elements.md#references) |
 | [writing-with-ai.md](writing-with-ai.md) | Tasks that suit AI assistants, tasks that do not, best practices for prompting, and the agent-assisted authoring loop | [Using AI for Technical Writing](writing-with-ai.md#using-ai-for-technical-writing), [What’s Not a Good Use of AI for Writing Technical Content](writing-with-ai.md#whats-not-a-good-use-of-ai-for-writing-technical-content), [Best Practices for Writing with AI](writing-with-ai.md#best-practices-for-writing-with-ai), [Agent-Assisted Authoring Loop](writing-with-ai.md#agent-assisted-authoring-loop) |
@@ -72,7 +73,8 @@ The following table provides guidance on words and styles to avoid.
 | [Contractions](word-choice.md#contractions) | don’t | do not | Use full forms in technical docs. |
 | [Dashes](punctuation.md#em-dash-) | em dashes | commas or parentheses | Em dashes can read as AI-generated or stylistically inconsistent. |
 | [Headings](capitalization.md#headings-and-subheadings) | inconsistent casing | Title Case | Use title case consistently. |
-| [Hyphenation](technical-documentation.md#hyphens) | excessive hyphenation | command line, command-line output | Hyphenate only when grammar requires it. |
+| [Task headings](technical-content.md#headings) | Configure the CLI | Configuring the CLI | Start the title and each heading of a task with a gerund; name concepts and references with noun phrases. Refer to [Topic Heading](cli-procedures.md#topic-heading). |
+| [Hyphenation](punctuation.md#hyphen--) | excessive hyphenation | command line, command-line output | Hyphenate only when grammar requires it. |
 | [Latin abbreviations](word-choice.md#latinisms) | e.g., i.e., via, etc. | for example, that is, using | Prefer plain English. |
 | [Lists with commas](punctuation.md#commas) | A, B and C | A, B, and C | Use the Oxford comma. |
 | [Long descriptions](formatting.md#tables) | long bullets | tables | Use a table when definitions or descriptions are lengthy. |
@@ -84,68 +86,21 @@ The following table provides guidance on words and styles to avoid.
 | [Step headings](technical-content.md#procedures) | Step 1 - Running Your Server | task title | Do not use titles to denote steps. |
 | [Title punctuation](capitalization.md#headings-and-subheadings) | quotes, ampersands, colons, exclamation marks | plain titles | Do not punctuate titles this way. |
 
-### Brand and naming
+### Other conventions
 
-Use NVIDIA, not Nvidia, when referring to the company or products.
-
-### Grammar and usage
-
-- Avoid Latin terms such as e.g., etc., i.e., and via.
-  - Use “for example,” not “e.g.”
-  - Use “and so on,” not “etc.”
-  - Use “that is,” not “i.e.”
-  - Use “using,” “through,” or “by,” not “via.”
-- Avoid excessive hyphenation.
-- Use **after** instead of **once** when sequence is the intent.
 - Use **which** and **that** correctly. Refer to [Relative Pronouns](technical-documentation.md#relative-pronouns).
+- Place punctuation correctly with quotations. Refer to [Quotation marks](punctuation.md#quotation-marks-).
+- Avoid marketing speak and jargon.
+- If a list starts turning into mini paragraphs, convert it into a table or split it into a short intro plus bullets.
 
-### Lists and tables
-
-- Do not use bold text and colons in bulleted lists unless you are creating a glossary or defining terms.
-- If descriptions or definitions are lengthy, use a table instead of dense bullets.
-- If a series contains more than three items, or the items are long, consider a bulleted list for readability.
-
-If a list starts turning into mini paragraphs, convert it into a table or split it into a short intro plus bullets.
-
-### Numbers and punctuation
-
-- Spell out numbers under 10 unless you are referring to a specific value or parameter.
-- Place punctuation correctly with quotations.
-- Use the Oxford comma in a list of three or more items.
-- Add a comma after an introductory phrase.
-- If a sentence is long or complex, rewrite it as two sentences.
-
-Examples:
+### Examples
 
 - ✅ **Correct:** This uses four nodes.
 - ❌ **Incorrect:** This uses 4 nodes.
-- ✅ **Correct:** Google includes Mail, Calendar, People, and Tasks.
-- ✅ **Correct:** With WhatsApp, you can call any phone.
-
-### Titles and headings
-
-- Use title case consistently throughout the document.
-- Do not use quotes, inverted commas, ampersands, colons, or exclamation marks in titles.
-- Do not use titles to denote steps.
-
-Examples:
-
 - ✅ **Correct:** Getting Started With Cluster Setup
 - ❌ **Incorrect:** Tutorial: Generic Get Started Guide
 - ❌ **Incorrect:** Step 1 - Running Your Server
-
-### Word choice and tone
-
-- Do not use contractions.
-- Do not use ampersands.
-- Avoid marketing speak and jargon.
-- Avoid “please” and “see.”
-- Use “refer to” instead of “see.”
-- Use “can” instead of “may” whenever possible.
-
-Examples:
-
-- ❌ **Incorrect:** See the following section.
 - ✅ **Correct:** Refer to the following section.
-- ❌ **Incorrect:** The installation may take up to 20 minutes.
+- ❌ **Incorrect:** See the following section.
 - ✅ **Correct:** The installation can take up to 20 minutes.
+- ❌ **Incorrect:** The installation may take up to 20 minutes.

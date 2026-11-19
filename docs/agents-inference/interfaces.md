@@ -1,13 +1,13 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Access Agent Interfaces
+# Accessing Agent Interfaces
 
 The NVIDIA OpenShell gateway manages sandbox access.
 Agents run inside their sandboxes.
 You reach them through OpenShell commands, not published host ports.
 
-## Select the Gateway and Workspace
+## Selecting the Gateway and Workspace
 
 Use an OpenShell CLI matching the deployment implementation revision on the client host.
 For the [source-pinned tutorial](../get-started/first-deployment.md), use the OpenShell version its [prerequisites](../get-started/prerequisites.md#before-the-first-deployment) name.
@@ -15,7 +15,7 @@ These selectors choose an existing OpenShell gateway and deployment.
 They don't create services or provision credentials.
 Run them in every terminal used for forwarding or sandbox commands, from any directory.
 
-For a managed Kubernetes or OpenShift gateway, first create its profile as [Reach the Gateway From the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli) shows, then select it as below.
+For a managed Kubernetes or OpenShift gateway, first create its profile as [Reaching the Gateway From the OpenShell CLI](../build-deploy/kubernetes.md#reaching-the-gateway-from-the-openshell-cli) shows, then select it as below.
 
 For an existing authenticated gateway profile supplied by its operator:
 
@@ -63,9 +63,9 @@ The forward or sandbox command below verifies access to the selected workspace.
 Setting an environment variable alone doesn't.
 On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.
 
-## Invoke an Agent
+## Invoking an Agent
 
-After [selecting the gateway and workspace](#select-the-gateway-and-workspace), send requests through `openshell sandbox exec`.
+After [selecting the gateway and workspace](#selecting-the-gateway-and-workspace), send requests through `openshell sandbox exec`.
 Plan and apply print a command for each agent with a recorded runtime ID, as in this illustrative output:
 
 ```text
@@ -84,10 +84,10 @@ If an apply result also lists interfaces, the CLI prints the gateway and workspa
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
 A plan omits that section when no agent has a recorded runtime, such as before the first apply.
 Otherwise, an agent without a recorded runtime is listed with `no runtime recorded` and has no `runtimeId`.
-[Run one request](agents.md#run-one-agent-request) shows the command and its input.
+[Run one request](agents.md#running-one-agent-request) shows the command and its input.
 The selected NVIDIA NeMo Fabric adapter owns how the harness handles the request.
 
-## Forward a Native Service
+## Forwarding a Native Service
 
 If an adapter serves a native listener inside the sandbox, forward it from a private terminal on the client host:
 
@@ -100,16 +100,16 @@ Keep forwarding bound to loopback, follow the adapter's authentication requireme
 Stopping a client forward doesn't stop the sandbox or its Fabric runtime.
 
 Apply prints this command for each interface that an agent's configuration enables.
-See [Reach an Agent Interface](#reach-an-agent-interface).
+See [Reaching an Agent Interface](#reaching-an-agent-interface).
 
-## Reach an Agent Interface
+## Reaching an Agent Interface
 
 The agent's Fabric runtime serves OpenClaw's Control UI and Hermes's API server and dashboard inside its sandbox, on loopback ports that you choose.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime.
 NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
 The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/openclaw/openclaw-dashboard.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/0dfdb25425f131d323d18a1372e9dde7826c9995/docs/integrations/harness/hermes/hermes.mdx#select-execution-paths) document each interface's behavior.
 
-### Enable an Interface
+### Enabling an Interface
 
 Declare each interface under the agent's `harness.settings.interfaces` with an exact `port`:
 
@@ -150,7 +150,7 @@ Fabric checks the rest when it starts the agent: settings outside the interfaces
 The agent fails to start if an enabled interface can't start.
 Changing an agent's settings, including its interfaces, replaces its sandbox, deleting its files and conversations.
 
-### Forward, Read the Token, and Sign In
+### Forwarding, Reading the Token, and Signing In
 
 After apply, NemoClaw lists each enabled interface with the commands to reach it, and never prints a token.
 The following illustrative excerpt shows interface selection commands in isolation.
@@ -170,7 +170,7 @@ Agent interfaces:
 ```
 
 JSON results carry the same facts under `interfaces`.
-The gateway selection follows [Select the Gateway and Workspace](#select-the-gateway-and-workspace).
+The gateway selection follows [Selecting the Gateway and Workspace](#selecting-the-gateway-and-workspace).
 For a gateway that needs an OpenShell profile, the output asks for your profile's name.
 
 1. Run the forward in its own terminal and keep it running.
@@ -202,7 +202,7 @@ The interface's location and authentication determine which actors can reach it:
 - **Hermes's dashboard.** Anyone who can reach its forward can use it, including its browser chat, which runs the agent without approvals.
   Its gateway actions, such as restarting the gateway, start Hermes processes that replace the one Fabric started and can keep running after the runtime stops.
 - **Forwards and exposed URLs.** Prefer `openshell forward service`: the gateway authorizes each forwarded connection for your identity and workspace.
-  A [service exposure](#expose-a-service-through-the-gateway) skips that authorization, so the interface's own sign-in is all that protects it, and Hermes's dashboard has none.
+  A [service exposure](#exposing-a-service-through-the-gateway) skips that authorization, so the interface's own sign-in is all that protects it, and Hermes's dashboard has none.
 
 Configuration changed through an interface isn't kept: the adapter regenerates the harness's configuration at each start.
 Conversations in an interface aren't promised to share history with requests sent through `fabric-agent-ctl invoke`.
@@ -281,7 +281,7 @@ Other agent images' default policies grant neither.
 With those devices writable, every process in the Hermes sandbox, including the agent's own tools, can open pseudo-terminals.
 The image's catalog label lists the defaults under `runtime.policy.filesystem_policy`.
 
-An [explicit policy](../security/sandbox-network.md#choose-a-policy) replaces the image's defaults.
+An [explicit policy](../security/sandbox-network.md#choosing-a-policy) replaces the image's defaults.
 For browser chat, its `filesystem_policy.read_write` must list `/dev/pts`.
 `/dev/ptmx` alone isn't enough, and without `/dev/pts` the chat fails with `out of pty devices`.
 The API server and the rest of the dashboard work either way.
@@ -292,7 +292,7 @@ Only the agent's runtime check decides whether NemoClaw finds the agent running.
 OpenClaw's Gateway is the runtime itself and serves the Control UI, so a Control UI failure is a runtime failure.
 A Hermes interface process that exits leaves the agent running: plan reports no change, neither Fabric nor NemoClaw restarts the process or reports its failure, and the interface returns when the runtime next starts.
 
-## Expose a Service Through the Gateway
+## Exposing a Service Through the Gateway
 
 To make a sandbox's loopback listener reachable at a URL that OpenShell's gateway serves, declare it under the sandbox's `serviceExposures`, keyed by service name:
 
@@ -322,10 +322,10 @@ The unnamed endpoint is listed as `sandbox: URL`.
 JSON results key them by sandbox and service name under `serviceUrls`, with `""` for the unnamed endpoint.
 An unchanged apply lists them again.
 
-## Diagnose Failures
+## Diagnosing Failures
 
 Check gateway authorization, the UID-derived workspace, sandbox name, and native service state independently.
-Inspect the [native logs](../observability/troubleshooting.md#read-native-service-logs) through the retained sandbox binding.
+Inspect the [native logs](../observability/troubleshooting.md#reading-native-service-logs) through the retained sandbox binding.
 A working forward doesn't establish that the native service has valid authentication or a working model connection.
 
 NemoClaw compares the retained public Fabric configuration with the runtime host's configuration and preserves resource identities on failure.

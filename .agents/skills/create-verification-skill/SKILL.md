@@ -45,7 +45,7 @@ Ground each section in what the interview found, with no placeholders:
   Exercise the user's path, not internal setters or test-only endpoints.
   Capture the action and the resulting state, and check side effects such as files written, resources created, and retained storage.
   Never write credential or token values into evidence.
-- **Cleanup:** `nemoclaw destroy --state-dir PATH`, then removal of only the resources labeled with the run's UID; for retained storage, follow [Remove Retained Resources](../../../docs/build-deploy/usage.md#remove-retained-resources).
+- **Cleanup:** `nemoclaw destroy --state-dir PATH`, then removal of only the resources labeled with the run's UID; for retained storage, follow [Removing Retained Resources](../../../docs/build-deploy/usage.md#removing-retained-resources).
   Never stop processes or containers by name.
   Cleanup keeps the evidence.
 - **Helpers:** prefer commands in the skill body.

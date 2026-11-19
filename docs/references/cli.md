@@ -131,13 +131,13 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
 | `connection` | Plan/apply gateway endpoint and UID-derived workspace selectors; does not establish access or configure OpenShell CLI credentials |
 | `serviceUrls` | Apply-only URLs the gateway reports for sandbox service exposures, by sandbox and service name, with `""` for the unnamed endpoint; the URLs carry no credential, so the service must authenticate its own clients; omitted when empty, and when apply can't read them, `warnings` says so |
-| `agents` | Each sandbox's agent, by sandbox name: `agent`, its name, and `runtimeId`, the runtime ID that `fabric-agent-ctl invoke --runtime-id` takes; a plan reports the runtimes the last apply left, and apply the runtimes after its changes; `runtimeId` is omitted while state records no runtime; never a credential; omitted when empty, and when apply can't read state, `warnings` says so; see [invoke an agent](../agents-inference/interfaces.md#invoke-an-agent) |
+| `agents` | Each sandbox's agent, by sandbox name: `agent`, its name, and `runtimeId`, the runtime ID that `fabric-agent-ctl invoke --runtime-id` takes; a plan reports the runtimes the last apply left, and apply the runtimes after its changes; `runtimeId` is omitted while state records no runtime; never a credential; omitted when empty, and when apply can't read state, `warnings` says so; see [invoke an agent](../agents-inference/interfaces.md#invoking-an-agent) |
 | `deferred` | Unresolved planning prerequisites; omitted when empty |
 | `resourceSources` | Authored provider `name` and definition `path`, keyed by opaque scoped resource address; intent metadata, not proof of an established resource; omitted when empty |
 | `unverified` | Apply-time service-readiness checks; does not change `complete`; omitted when empty |
-| `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory; see the [SDK report contract](sdk.md#read-plan-discovery-and-resource-inventory); omitted when empty |
+| `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory; see the [SDK report contract](sdk.md#reading-plan-discovery-and-resource-inventory); omitted when empty |
 | `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |
-| `interfaces` | After apply, each enabled agent interface: `sandbox`, `interface`, its loopback `port` for an HTTP interface, the `tokenPath` in the sandbox for an interface with a token, `signIn` (`token_in_url_fragment`, `bearer_token`, `none` or `adapter_documented`), and, for an interface with a terminal UI, the `terminal` command to run in the sandbox with `TOKEN` in place of the token; never a token; omitted when empty; see [agent interfaces](../agents-inference/interfaces.md#reach-an-agent-interface) |
+| `interfaces` | After apply, each enabled agent interface: `sandbox`, `interface`, its loopback `port` for an HTTP interface, the `tokenPath` in the sandbox for an interface with a token, `signIn` (`token_in_url_fragment`, `bearer_token`, `none` or `adapter_documented`), and, for an interface with a terminal UI, the `terminal` command to run in the sandbox with `TOKEN` in place of the token; never a token; omitted when empty; see [agent interfaces](../agents-inference/interfaces.md#reaching-an-agent-interface) |
 
 Handled operation errors use the selected format: text on stderr, or one JSON result on stdout with `outcome: failed` or `outcome: interrupted`.
 The failure object includes `operation`, `stateDirectory`, optional `input`, and `error.message`.
@@ -164,7 +164,7 @@ Interruption preserves the recorded recovery boundary; follow [recovery](../buil
 Help, version output, and argument-parser diagnostics remain text.
 An output-stream failure or forced process termination may prevent a complete JSON result.
 Do not treat missing or partial output as an empty plan.
-Use [inference verification](../agents-inference/inference.md#verify-the-result) to interpret successful apply results.
+Use [inference verification](../agents-inference/inference.md#verifying-the-result) to interpret successful apply results.
 
 An export observation failure does not replace an existing file selected by `--output`.
 Shell redirection can truncate a file before the CLI runs; check success before using redirected output.
