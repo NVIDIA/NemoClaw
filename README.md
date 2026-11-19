@@ -26,6 +26,7 @@ Each capability links to the guide that configures it:
 
 Support depends on the selected agent, image, model, and platform.
 Check [current limits](docs/resources/limits.md) before choosing a configuration.
+[Outside v1 Scope](docs/resources/out-of-scope.md) explains what v1 leaves to other components by design.
 
 **Coming from Classic?** Use the [migration guide](docs/get-started/migration.md) to assess your workflows and evaluate a separate deployment while keeping your existing setup available.
 The guide also identifies [questions that still need scope analysis](docs/get-started/migration.md#needs-scope-analysis).

@@ -82,13 +82,14 @@ Look up the interface contract of your source revision before adapting a command
 
 ## Resources
 
-Use these sources to find help, development status, and currently documented limits.
+Use these sources to find help, development status, currently documented limits, and scope.
 
 | Reader goal | Guide |
 |---|---|
 | Find version-matched documentation and reporting channels | [Project resources](resources/resources.md) |
 | Check release status | [Release Notes](about/release-notes.md) |
 | Find unimplemented or unqualified paths | [Current limits](resources/limits.md) |
+| Find what v1 leaves to other components by design | [Outside v1 Scope](resources/out-of-scope.md) |
 
 ## Security
 

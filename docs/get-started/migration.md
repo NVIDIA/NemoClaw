@@ -38,7 +38,7 @@ Choose the current owner of the task rather than translating earlier CLI command
 ## Needs Scope Analysis
 
 These questions remain unresolved.
-They establish neither a parity commitment nor a permanent exclusion.
+They establish neither a parity commitment nor a permanent exclusion like those in [Outside v1 Scope](../resources/out-of-scope.md).
 Track agreed work in [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
 
 | Workflow | Existing Context | Decision or Verification Needed |
@@ -63,7 +63,7 @@ Use a separate identity and state directory so the comparison doesn't mutate an 
 1. Record the earlier deployment's version, tooling, configuration, state, endpoints, and native data you need to retain.
    Use that version's documentation and tools to inspect it.
 2. Check the task mapping above for workflows you rely on.
-   If a workflow you need is in [current limits](../resources/limits.md), keep the earlier deployment available rather than assuming feature parity.
+   If a workflow you need is in [current limits](../resources/limits.md) or [Outside v1 Scope](../resources/out-of-scope.md), keep the earlier deployment available rather than assuming feature parity.
 3. Build a separate matched v1 bundle and images, then prepare a fresh UUID and dedicated state directory using [the first-deployment guide](first-deployment.md).
    Check names, exposed ports, model capacity, and credentials so the evaluation doesn't overwrite or exhaust the original deployment's resources.
 4. Plan and apply only the new v1 configuration/state.
