@@ -306,23 +306,23 @@ These changes before the `v0.1.0-rc9` tag affect existing deployments:
 
 ## Support Matrix
 
-These tables list what this revision accepts and what CI runs it on; a configuration without an automated run is accepted but untested.
+These tables describe `v1` as of these notes: what it accepts, and what CI runs it on; a configuration without an automated run is accepted but untested.
+They aren't a support statement: v1 has [no support policy yet](../resources/limits.md#installation-and-releases).
 [Current limits](../resources/limits.md) lists what v1 doesn't do or hasn't tested, and [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) tracks a tested matrix of harness, model, provider, and platform combinations.
 
 ### Client Platforms
 
-Each release attaches the CLI for these platforms; see [install the CLI](../get-started/install.md).
+Each release attaches the CLI for these platforms; [install the CLI](../get-started/install.md) lists each archive's requirements, and [current limits](../resources/limits.md#installation-and-releases) what the executables lack.
 [CI / Bundle](../../.github/workflows/rust.yml) runs the unit, contract, and integration tests on each one.
 
-| Platform | Archive | Requirement | Live tests in CI |
+| Platform | Archive | Deploys | Live tests in CI |
 |---|---|---|---|
-| Linux ARM64 | `linux_arm64` | glibc 2.35 or newer, as on Ubuntu 22.04 | Docker and kind suites |
-| Linux AMD64 | `linux_amd64` | glibc 2.35 or newer, as on Ubuntu 22.04 | Docker and kind suites, the cases on NVIDIA hosted inference, and the GPU cases |
-| macOS ARM64 | `darwin_arm64` | | None |
-| Windows AMD64 | `windows_amd64` | | None |
+| Linux ARM64 | `linux_arm64` | Yes | Docker and kind suites |
+| Linux AMD64 | `linux_amd64` | Yes | Docker and kind suites, the cases on NVIDIA hosted inference, and the GPU cases |
+| macOS ARM64 | `darwin_arm64` | Yes | None |
+| Windows AMD64 | `windows_amd64` | No: [deployment planning requires a Unix client](../build-deploy/usage.md) | None |
 
 The builder also accepts `darwin_amd64`, but no release attaches it and CI doesn't build it.
-The release executables are neither signed nor notarized.
 
 ### Gateway Runtimes
 
@@ -331,7 +331,7 @@ Sandboxes and model services run on Linux engines or clusters; the agent and run
 | `spec.gateway.runtime.provider` | Accepted | Live tests in CI |
 |---|---|---|
 | `docker` | Managed or external gateway; managed vLLM, Ollama, and container services | Docker suite, the cases on NVIDIA hosted inference, and the GPU cases |
-| `podman` | Managed rootless gateway on a local Linux engine; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |
+| `podman` | Managed rootless gateway on a local Linux engine, or external gateway; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |
 | `kubernetes` | Managed or external gateway, with external inference endpoints | kind suite |
 | `openshift` | Managed or external gateway, with external inference endpoints | None; [run by hand](../../internal-docs/contributing/live-tests.md#openshift-gateway) on OpenShift Local |
 
@@ -339,14 +339,14 @@ Sandboxes and model services run on Linux engines or clusters; the agent and run
 
 | Service | Live tests in CI |
 |---|---|
-| External endpoint, such as NVIDIA hosted inference | OpenClaw and Hermes on NVIDIA hosted inference, on Linux AMD64 |
-| Managed vLLM | OpenClaw on the GPU runner |
+| External endpoint, such as NVIDIA hosted inference | OpenClaw and Hermes on NVIDIA hosted inference, on Linux AMD64; stub endpoints in the Docker and kind suites |
+| Managed vLLM | OpenClaw on the GPU runner, and Nemotron on DGX Station by manual dispatch |
 | Managed Ollama | Hermes on the GPU runner |
 | External Ollama through a managed proxy | None; contract and integration tests run it against fixtures |
 
 ### Harnesses
 
-The image workflow builds and checks an image for each harness in the [Fabric harness table](../references/fabric-harnesses.md): OpenClaw, Hermes, Deep Agents, Claude Code, Codex, mini-SWE-agent, OO Agents, BenchAgent, Remote agent, Pi, and OpenCode.
+The image workflow builds and checks an image for each harness in the [Fabric harness table](../references/fabric-harnesses.md): OpenClaw, Hermes, Deep Agents, Claude, Codex, Mini SWE Agent, Nooa, Nooa Bench, Remote Agent, Pi, and OpenCode.
 The live tests deploy OpenClaw and Hermes; no live test deploys the others.
 Onboarding offers OpenClaw and Hermes.
 
@@ -360,7 +360,9 @@ Accepting a profile doesn't qualify that GPU.
 | NVIDIA RTX PRO 6000 Blackwell, Linux AMD64 | The GPU cases, on CI's GPU runner, on `v1` pushes and manual runs |
 | DGX Station (GB300), Linux ARM64 | One case, by manual dispatch of Live / HCL |
 | DGX Spark (GB10), Linux ARM64 | None |
-| Other GPUs, several GPUs serving one model, Windows/WSL, and macOS | None |
+| Other GPUs, Windows/WSL, and macOS | None |
+
+Serving one model on several GPUs isn't supported ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)).
 
 ## Qualification and Known Issues
 
