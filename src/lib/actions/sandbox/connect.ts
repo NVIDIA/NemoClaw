@@ -3247,9 +3247,14 @@ async function prepareConnectSandboxWithinLifecycleFence(
     console.log("");
     // Same resolver `launch` uses, so the hint cannot drift from the command
     // that `nemoclaw launch <name>` actually runs (#6006).
-    void agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
+    let agentCommand = "openclaw tui";
+    try {
+      agentCommand = agentRuntime.getInteractiveAgentCommand(agent, sb?.agent) || "openclaw tui";
+    } catch {
+      agentCommand = "openclaw tui";
+    }
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
-    console.log(`  ${D}Inside the sandbox, run the configured command to start chatting.${R}`);
+    console.log(`  ${D}Inside the sandbox, run ${agentCommand} to start chatting.${R}`);
     console.log(
       `  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`,
     );
