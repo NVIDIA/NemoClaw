@@ -28,6 +28,7 @@ else
   node /scripts/lib/reviewed-npm-audit.mts \
     --directory /usr/local/lib/nemoclaw/mcporter-runtime \
     --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high \
+    --reviewed-lock-config /scripts/reviewed-npm-audit.json \
     "${audit_output_args[@]}"
   exit
 fi
