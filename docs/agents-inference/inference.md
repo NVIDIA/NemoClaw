@@ -396,7 +396,7 @@ When memory protection stops the server, the runtime exits. Choose a restart pol
 
 Run the proxy on the same Linux Docker host as the existing Ollama daemon and installed model.
 With a managed Docker gateway, the proxy inherits `gateway.engine`.
-With an external gateway, declare the proxy service's `engine` as an explicit local Docker Unix socket and make its published endpoint reachable from OpenShell.
+With an external gateway, declare the proxy service's `engine` as an explicit local Docker engine, a Unix socket or on Windows a named pipe, and make its published endpoint reachable from OpenShell.
 Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
 The proxy exposes `openai-completions`; its service contract does not restrict the harness identifier.
