@@ -113,6 +113,19 @@ If the response cannot fit, the runtime discards it and emits a bounded `output_
 If it cannot write the envelope, the command exits nonzero and reports the write failure on stderr.
 Callers must reject empty, malformed, additional, or unsupported-version stdout.
 
+## Recover an Occupied Thread
+
+If `dcode` reports that a thread is still open in another Deep Code session, close that session and try again.
+If a browser refresh made the other session inaccessible, restart the sandbox to release the thread:
+
+```bash
+nemo-deepagents <sandbox-name> stop
+nemo-deepagents <sandbox-name> start
+```
+
+Stopping the sandbox ends its active sessions.
+The restart preserves workspace files, credentials, and the registry entry.
+
 ## Call a Read-Only MCP Tool
 
 Use `dcode tools call-read-only` when automation must invoke one managed MCP tool without model participation.
