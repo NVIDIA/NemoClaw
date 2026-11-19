@@ -34,8 +34,6 @@ impl Installation {
     }
 }
 
-// A managed gateway needs a local engine, which only Unix clients reach.
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn podman_gateway_rechecks_network_and_image_prerequisites_before_saved_plan_apply() {

@@ -94,7 +94,8 @@ Paths labeled SDK are relative to `crates/nemoclaw-sdk/src`; provider and runtim
 | Provider `openshell/transport.rs`; SDK `state/` and `bundle/` | Gateway credentials, deployment locks, state, and bundle subprocesses remain client-side. OpenShell RPC observes gateway-owned resources. |
 
 Unix-socket engine transports require a Unix client, and named-pipe transports a Windows client; the SSH transport and SSH host measurements work from every client.
-A managed local gateway binds its engine's Unix socket into the gateway container, so it needs a Unix client; a Windows client deploys with an external gateway and reads its images through a named pipe or SSH ([#14632](https://github.com/NVIDIA/NemoClaw/issues/14632)).
+A managed local gateway binds its engine's socket into the gateway container as `/var/run/docker.sock`: a Unix socket's own path, and for a named pipe `/var/run/docker.sock` in the Linux VM behind it, where Docker Desktop serves its engine and a Podman machine links the API socket of its rootful or rootless mode ([#14632](https://github.com/NVIDIA/NemoClaw/issues/14632)).
+On macOS, the gateway binds the client's Unix socket path, which an engine in a VM may not serve there ([#14640](https://github.com/NVIDIA/NemoClaw/issues/14640)).
 As on macOS, local host measurements refuse a Windows client's engine, which runs in a VM the client can't measure.
 Unavailable or mismatched identity stops the operation.
 Managed Podman gateway bindings combine the retained network UUID with container identity, volume creation time, and signing keys; they never derive identity from a socket path or hostname.

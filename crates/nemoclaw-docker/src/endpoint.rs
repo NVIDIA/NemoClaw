@@ -28,6 +28,19 @@ pub fn validate_engine_endpoint(endpoint: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// The path at which a container on a local engine reaches that engine: a
+/// Unix socket's own path, or for a named pipe `/var/run/docker.sock` in the
+/// Linux VM behind the pipe. Docker Desktop serves its engine there, and a
+/// Podman machine links it to the API socket of its rootful or rootless mode,
+/// which its pipe forwards to. `None` for an engine on another host.
+pub fn engine_socket(endpoint: &str) -> Option<&str> {
+    validate_engine_endpoint(endpoint).ok()?;
+    if endpoint.starts_with("npipe://") {
+        return Some("/var/run/docker.sock");
+    }
+    endpoint.strip_prefix("unix://")
+}
+
 fn validate_ssh(endpoint: &str) -> Result<(), ConfigError> {
     let invalid = || {
         ConfigError::new(

@@ -111,16 +111,24 @@ impl Engine {
             .map_err(|error| remote(&error))
     }
 
-    /// Read Podman's native API, which reports what its Docker-compatible API omits.
-    #[cfg(unix)]
+    /// Read Podman's native API, which reports what its Docker-compatible API
+    /// omits, through the engine's Unix socket or, on Windows, its named pipe.
     pub async fn podman_json(&self, path: &str) -> Result<serde_json::Value, Error> {
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .unix_socket(
-                self.endpoint()
-                    .strip_prefix("unix://")
-                    .ok_or(ObservationError::Incomplete)?,
-            )
+        let builder = reqwest::Client::builder().no_proxy();
+        #[cfg(unix)]
+        let builder = builder.unix_socket(
+            self.endpoint()
+                .strip_prefix("unix://")
+                .ok_or(ObservationError::Incomplete)?,
+        );
+        #[cfg(windows)]
+        let builder = builder.windows_named_pipe(format!(
+            r"\\.\pipe\{}",
+            self.endpoint()
+                .strip_prefix("npipe:////./pipe/")
+                .ok_or(ObservationError::Incomplete)?
+        ));
+        let client = builder
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|_| ObservationError::Incomplete)?;
