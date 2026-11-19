@@ -121,7 +121,7 @@ describe("MCP shared-host address pins", () => {
         bridges: {
           one: entry("one", {
             policyConflict: "Agent URL differs from live policy endpoint at /renamed.",
-            policyEndpointConflict: true,
+            policyEndpointConflict: "mcp.example.test:443",
           }),
         },
       });
@@ -132,15 +132,43 @@ describe("MCP shared-host address pins", () => {
     },
   );
 
-  it.each([{ url: "https://other.example.test/one" }, { allowedIps: undefined }])(
+  it.each([
+    { url: "https://other.example.test/one", policyEndpointConflict: "mcp.example.test:443" },
+    { allowedIps: undefined, policyEndpointConflict: "mcp.example.test:443" },
+    { url: "https://other.example.test/one", policyEndpointConflict: null },
+  ])(
     "refuses unresolved live authority before filtering sibling $url / $allowedIps",
     (overrides) => {
-      const refused = align({ one: entry("one", { ...overrides, policyEndpointConflict: true }) }, [
-        "1.1.1.1",
-      ]);
+      const refused = align({ one: entry("one", overrides) }, ["1.1.1.1"]);
       expect(refused.ok).toBe(false);
     },
   );
+
+  it.each([
+    ["add", "https://other.example.test/one", "other.example.test:443"],
+    ["update", "https://other.example.test/one", "other.example.test:443"],
+    ["refresh", "https://other.example.test/one", "other.example.test:443"],
+    ["add", "https://mcp.example.test:8443/one", "mcp.example.test:8443"],
+    ["update", "https://mcp.example.test:8443/one", "mcp.example.test:8443"],
+    ["refresh", "https://mcp.example.test:8443/one", "mcp.example.test:8443"],
+  ] as const)("permits %s despite an unrelated endpoint conflict at %s", (operation, url, live) => {
+    const bridges = {
+      one: entry("one", { url, policyEndpointConflict: live, allowedIps: ["9.9.9.9"] }),
+    };
+    const before = structuredClone(bridges);
+    const target = { addresses: ["1.1.1.1"] };
+    expect(
+      alignMcpTargetWithSharedHostPins({
+        operation,
+        sandboxName: "alpha",
+        server: "two",
+        url: "https://mcp.example.test/two",
+        target,
+        bridges,
+      }),
+    ).toEqual({ ok: true, target, reusedFrom: [] });
+    expect(bridges).toEqual(before);
+  });
 
   it.each(["add", "update", "refresh"] as const)(
     "rejects %s when a sibling with invalid denied tools records conflicting pins",
@@ -293,11 +321,12 @@ const livePolicy = ${JSON.stringify(options.livePolicy ?? null)};
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
 let appliedTarget;
 let mutated = false;
+const policyMutations = [];
 replace(policies, "getPresetContentGatewayState", () => "absent");
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
 replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", () => { mutated = true; return "v1"; });
-replace(policy, "applyGeneratedPolicy", (_sandbox, _entry, target) => { mutated = true; appliedTarget = target; });
+replace(policy, "applyGeneratedPolicy", (_sandbox, updatedEntry, target) => { mutated = true; policyMutations.push(updatedEntry.server); appliedTarget = target; });
 replace(state, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
 replace(provider, "assertNoProviderCredentialCollisions", () => {});
@@ -343,6 +372,7 @@ const finish = (error) => process.stdout.write(JSON.stringify({
   message: error ? String(error.message || error) : null,
   appliedAddresses: appliedTarget ? appliedTarget.addresses : null,
   mutated,
+  policyMutations,
 }), () => process.exit(0));
 require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   server: "two",
@@ -369,6 +399,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
         message: string | null;
         appliedAddresses: string[] | null;
         mutated: boolean;
+        policyMutations: string[];
       }>(result.stdout);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -410,6 +441,67 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     expect(outcome.message).toBeNull();
     expect(outcome.appliedAddresses).toEqual(["8.8.8.8"]);
   });
+
+  it.each([
+    ["another host", "https://other.example.test/mcp/one", "other.example.test", 443],
+    ["another port", "https://mcp.example.test:8443/mcp/one", "mcp.example.test", 8443],
+  ] as const)(
+    "adds without changing a conflicting registration on %s",
+    { timeout: 40_000 },
+    (_label, url, host, port) => {
+      const outcome = runAdd({
+        siblings: { one: { ...sibling("one", ["8.8.8.8"]), url } },
+        dnsAnswer: "1.1.1.1",
+        livePolicy: {
+          network_policies: {
+            mcp_bridge_one: {
+              endpoints: [
+                { host, port, path: "/renamed", protocol: "mcp", allowed_ips: ["8.8.8.8"] },
+              ],
+            },
+          },
+        },
+      });
+      expect(outcome).toMatchObject({
+        message: null,
+        appliedAddresses: ["1.1.1.1"],
+      });
+      expect(new Set(outcome.policyMutations)).toEqual(new Set(["two"]));
+    },
+  );
+
+  it(
+    "refuses a live sibling authority even when its registered host differs",
+    { timeout: 40_000 },
+    () => {
+      const outcome = runAdd({
+        siblings: {
+          one: { ...sibling("one", ["8.8.8.8"]), url: "https://other.example.test/mcp/one" },
+        },
+        dnsAnswer: "1.1.1.1",
+        livePolicy: {
+          network_policies: {
+            mcp_bridge_one: {
+              endpoints: [
+                {
+                  host: "mcp.example.test",
+                  port: 443,
+                  path: "/mcp/one",
+                  protocol: "mcp",
+                  allowed_ips: ["8.8.8.8"],
+                },
+              ],
+            },
+          },
+        },
+      });
+      expect(outcome).toMatchObject({
+        mutated: false,
+        policyMutations: [],
+        message: expect.stringMatching(/live policy endpoint/),
+      });
+    },
+  );
 
   it.each([
     ["path", { host: "mcp.example.test", port: 443, path: "/renamed" }],

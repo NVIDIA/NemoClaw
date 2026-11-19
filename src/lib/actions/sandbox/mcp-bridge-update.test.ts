@@ -128,7 +128,7 @@ describe("source-backed MCP denied-tool policy updates", () => {
         ...(policyConflict
           ? { policyConflict: "Live policy contains invalid denied-tool selectors." }
           : {}),
-        ...(endpointConflict ? { policyEndpointConflict: true } : {}),
+        ...(endpointConflict ? { policyEndpointConflict: "mcp.example.test:443" } : {}),
         ...(trustedPrivate
           ? { trustedPrivateHost: "mcp.example.test", allowedIps: ["10.20.30.40"] }
           : {}),
@@ -176,34 +176,50 @@ describe("source-backed MCP denied-tool policy updates", () => {
     ["matching shared pins", "https://mcp.example.test/peer", "8.8.8.8"],
     ["another hostname", "https://other.example.test/peer", "1.1.1.1"],
     ["another port", "https://mcp.example.test:8443/peer", "1.1.1.1"],
-  ])("preserves public-pin refresh with %s", async (_label, url, address) => {
-    const sibling = {
-      ...entry,
-      server: "peer",
-      providerName: "alpha-mcp-peer",
-      providerId: "22222222-3333-4444-8555-666666666666",
-      policyName: "mcp-bridge-peer",
-      url,
-      env: ["PEER_TOKEN"],
-    };
-    const bridges = { github: entry, peer: sibling };
-    mocks.inspectSourceBridgeState.mockReturnValueOnce({
-      bridges,
-      sources: { native: bridges, legacy: {} },
-    });
-    const lookup = vi.spyOn(dns, "lookup").mockResolvedValue([{ address, family: 4 }] as never);
-    try {
-      await refreshMcpBridgePublicPins("alpha", "github");
-      expect(mocks.refreshMcpPublicPolicyPins).toHaveBeenCalledWith(
-        "alpha",
-        entry,
-        { addresses: [address] },
-        { gatewayName: "nemoclaw-9090", workspace: "default" },
-      );
-    } finally {
-      lookup.mockRestore();
-    }
-  });
+    [
+      "an unrelated host conflict",
+      "https://other.example.test/peer",
+      "1.1.1.1",
+      "other.example.test:443",
+    ],
+    [
+      "an unrelated port conflict",
+      "https://mcp.example.test:8443/peer",
+      "1.1.1.1",
+      "mcp.example.test:8443",
+    ],
+  ])(
+    "preserves public-pin refresh with %s",
+    async (_label, url, address, policyEndpointConflict?: string) => {
+      const sibling = {
+        ...entry,
+        server: "peer",
+        providerName: "alpha-mcp-peer",
+        providerId: "22222222-3333-4444-8555-666666666666",
+        policyName: "mcp-bridge-peer",
+        url,
+        policyEndpointConflict,
+        env: ["PEER_TOKEN"],
+      };
+      const bridges = { github: entry, peer: sibling };
+      mocks.inspectSourceBridgeState.mockReturnValueOnce({
+        bridges,
+        sources: { native: bridges, legacy: {} },
+      });
+      const lookup = vi.spyOn(dns, "lookup").mockResolvedValue([{ address, family: 4 }] as never);
+      try {
+        await refreshMcpBridgePublicPins("alpha", "github");
+        expect(mocks.refreshMcpPublicPolicyPins).toHaveBeenCalledWith(
+          "alpha",
+          entry,
+          { addresses: [address] },
+          { gatewayName: "nemoclaw-9090", workspace: "default" },
+        );
+      } finally {
+        lookup.mockRestore();
+      }
+    },
+  );
 
   it("refuses public-pin refresh when the native registration changes during DNS resolution (#10464)", async () => {
     const lookup = vi
@@ -344,7 +360,7 @@ describe("source-backed MCP denied-tool policy updates", () => {
         providerId: "22222222-3333-4444-8555-666666666666",
         policyName: "mcp-bridge-peer",
         allowedIps: pins,
-        ...(endpointConflict ? { policyEndpointConflict: true } : {}),
+        ...(endpointConflict ? { policyEndpointConflict: "mcp.example.test:443" } : {}),
         ...(policyConflict
           ? { policyConflict: "Live policy contains invalid denied-tool selectors." }
           : {}),
@@ -380,6 +396,43 @@ describe("source-backed MCP denied-tool policy updates", () => {
       expect(mocks.assertMcpProviderRecoverable).not.toHaveBeenCalled();
       expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
       expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["replace", ["delete_*"], "https://other.example.test/peer", "other.example.test:443"],
+    ["clear", [], "https://other.example.test/peer", "other.example.test:443"],
+    ["replace", ["delete_*"], "https://mcp.example.test:8443/peer", "mcp.example.test:8443"],
+    ["clear", [], "https://mcp.example.test:8443/peer", "mcp.example.test:8443"],
+  ])(
+    "permits denied-tool %s despite an unrelated endpoint conflict",
+    async (_mode, denyTools, url, policyEndpointConflict) => {
+      const peer = {
+        ...entry,
+        server: "peer",
+        url,
+        policyEndpointConflict,
+        allowedIps: ["9.9.9.9"],
+      };
+      const before = structuredClone(peer);
+      const bridges = { github: entry, peer };
+      mocks.inspectSourceBridgeState.mockReturnValueOnce({
+        bridges,
+        sources: { native: bridges, legacy: {} },
+      });
+      await updateMcpBridgeDenyTools("alpha", "github", denyTools);
+      expect(mocks.removeGeneratedPolicy).toHaveBeenCalledExactlyOnceWith("alpha", entry, {
+        runtimeSelection: { gatewayName: "nemoclaw-9090", workspace: "default" },
+      });
+      expect(mocks.applyGeneratedPolicy).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({ server: "github" }),
+        { addresses: ["8.8.8.8"] },
+        { runtimeSelection: { gatewayName: "nemoclaw-9090", workspace: "default" } },
+      );
+      expect(mocks.applyGeneratedPolicy).toHaveBeenCalledTimes(1);
+      expect(mocks.applyGeneratedPolicy.mock.calls[0][1].denyTools ?? []).toEqual(denyTools);
+      expect(peer).toEqual(before);
     },
   );
 

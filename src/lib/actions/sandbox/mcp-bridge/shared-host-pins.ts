@@ -65,13 +65,20 @@ export function alignMcpTargetWithSharedHostPins(options: {
   const groups = new Map<string, PinGroup>();
   for (const entry of Object.values(bridges)) {
     if (entry.server === server) continue;
-    if (entry.policyEndpointConflict) {
+    if (
+      endpointAuthority(entry.url) !== authority &&
+      entry.policyEndpointConflict !== authority &&
+      entry.policyEndpointConflict !== null
+    ) {
+      continue;
+    }
+    if (entry.policyEndpointConflict !== undefined) {
       return {
         ok: false,
         message: `MCP server '${server}' was not ${action}: the live policy endpoint for managed server '${entry.server}' differs from its registered URL. Resolve that conflict before reconciling address pins on ${authority}. ${recovery}`,
       };
     }
-    if (!entry.allowedIps?.length || endpointAuthority(entry.url) !== authority) continue;
+    if (!entry.allowedIps?.length) continue;
     const pins = sortedPins(entry.allowedIps);
     const key = pins.join(",");
     const group = groups.get(key) ?? { pins, servers: [], trustedPrivate: false };

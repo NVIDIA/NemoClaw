@@ -51,8 +51,8 @@ export interface McpSourceEntry {
   source?: "native" | "legacy" | "legacy-registry" | "policy";
   /** Live policy cannot be reconciled with the agent registration. */
   policyConflict?: string;
-  /** Live policy endpoint differs from the agent-native URL. */
-  policyEndpointConflict?: boolean;
+  /** Differing live policy authority, or null when it cannot be determined. */
+  policyEndpointConflict?: string | null;
 }
 
 export interface McpBridgeAddOptions extends ParsedMcpAddArgs {}

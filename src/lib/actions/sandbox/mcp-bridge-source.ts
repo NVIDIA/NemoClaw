@@ -648,7 +648,18 @@ async function enrichFromPolicy(
     ...(provider.exists === true && provider.id ? { providerId: provider.id } : {}),
     ...(denyTools.length > 0 && entry.source !== "legacy-registry" ? { denyTools } : {}),
     ...(policyConflict ? { policyConflict } : {}),
-    ...(endpointConflict ? { policyEndpointConflict: true } : {}),
+    ...(endpointConflict
+      ? {
+          policyEndpointConflict:
+            host &&
+            typeof endpoint.port === "number" &&
+            Number.isInteger(endpoint.port) &&
+            endpoint.port > 0 &&
+            endpoint.port <= 65535
+              ? `${host}:${endpoint.port}`
+              : null,
+        }
+      : {}),
   };
 }
 

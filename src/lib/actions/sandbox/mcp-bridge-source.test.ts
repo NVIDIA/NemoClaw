@@ -442,9 +442,10 @@ network_policies:
 
   it.each([
     ["matching endpoint", "api.githubcopilot.com", 443, "/mcp/", undefined],
-    ["different host", "other.example.com", 443, "/mcp/", true],
-    ["different path", "api.githubcopilot.com", 443, "/renamed", true],
-    ["different port", "api.githubcopilot.com", 8443, "/mcp/", true],
+    ["different host", "other.example.com", 443, "/mcp/", "other.example.com:443"],
+    ["different path", "api.githubcopilot.com", 443, "/renamed", "api.githubcopilot.com:443"],
+    ["different port", "api.githubcopilot.com", 8443, "/mcp/", "api.githubcopilot.com:8443"],
+    ["unknown port", "api.githubcopilot.com", null, "/mcp/", null],
   ])(
     "retains endpoint identity with invalid denied tools and a %s",
     async (_label, host, port, endpointPath, conflict) => {
