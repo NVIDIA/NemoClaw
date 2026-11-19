@@ -241,6 +241,41 @@ describe("destroySandbox final gateway decision", testTimeoutOptions(30_000), ()
     expect(warnOutput(harness)).toContain("openshell gateway remove nemoclaw-19080");
   });
 
+  it("emits the residual-provider hint before the nonzero exit when a peer blocks the cleanup (#14426)", async () => {
+    const harness = createDestroyHarness({
+      executeSandboxDestroyResult: {
+        ...SUCCESSFUL_DESTROY_RESULT,
+        detachOutcome: {
+          detached: [],
+          failures: [{ name: "provider-a", output: "detach failed" }],
+        },
+      },
+    });
+    harness.setCrossRootGatewayCleanupOwners([
+      {
+        name: "cleanup-peer",
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
+      } as SandboxEntry,
+    ]);
+
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+    ).rejects.toThrow("process.exit(1)");
+
+    // The refusal must not swallow the provider names and the detach-then-delete
+    // commands: those are the only remediation the operator gets.
+    expect(harness.emitProviderDetachResidualHintSpy).toHaveBeenCalledWith(
+      "alpha",
+      [{ name: "provider-a", output: "detach failed" }],
+      expect.any(Function),
+    );
+    expect(harness.emitProviderDetachResidualHintSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+      exitSpy.mock.invocationCallOrder[0]!,
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("stays silent about gateway cleanup when a peer remains and cleanup was not requested (#14426)", async () => {
     const harness = createDestroyHarness({
       executeSandboxDestroyResult: SUCCESSFUL_DESTROY_RESULT,

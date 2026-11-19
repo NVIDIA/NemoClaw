@@ -1531,6 +1531,7 @@ async function destroySandboxUnlocked(
       requestSandboxDestroyExit(1);
     }
   }
+  let gatewayCleanupRefused = false;
   const cleanupDecision =
     deleteSucceededOrAlreadyGone &&
     registryEntryAbsent &&
@@ -1589,7 +1590,11 @@ async function destroySandboxUnlocked(
       cleanupGatewayName,
       listCleanupGatewaySandboxes().sandboxes.map((entry) => entry.name),
     );
-    requestSandboxDestroyExit(1);
+    // Defer the exit past the residual-provider hint and the success line:
+    // throwing here would skip both, so a caller whose provider detach also
+    // failed would lose the provider names and the detach-then-delete commands
+    // (#14426 review).
+    gatewayCleanupRefused = true;
   }
   if (alreadyGone) {
     console.log(`  Sandbox '${sandboxName}' was already absent from the live gateway.`);
@@ -1598,4 +1603,5 @@ async function destroySandboxUnlocked(
     console.warn(`  ${YW}⚠${R}${m}`),
   );
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
+  if (gatewayCleanupRefused) requestSandboxDestroyExit(1);
 }
