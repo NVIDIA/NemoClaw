@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { redact } from "../security/redact";
+import { redact, redactFullWithUrls } from "../security/redact";
 import type { CreateOpenShellSandboxRequest } from "../adapters/openshell/sandbox-lifecycle";
 import { cliName } from "./branding";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
@@ -42,7 +42,7 @@ const CREATE_OUTPUT_TAIL_LINES = 12;
  */
 export function formatCreateOutputTail(output: string | null | undefined): string | null {
   if (!output) return null;
-  const lines = redact(output)
+  const lines = redactFullWithUrls(output)
     .split(/\r?\n/u)
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0);
