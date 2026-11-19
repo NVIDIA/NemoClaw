@@ -61,7 +61,9 @@ export function formatConfigExportFailure(failure: ConfigExportFailure): string 
     const categories = [...new Set(failure.findings.map(({ category }) => category))];
     return [
       `Config export failed (${categories.join(", ")}).`,
-      ...failure.findings.map(({ diagnostic }) => diagnostic),
+      ...failure.findings.map(
+        ({ field, category, diagnostic }) => `${field} (${category}): ${diagnostic}`,
+      ),
     ].join("\n");
   }
   const diagnostic =

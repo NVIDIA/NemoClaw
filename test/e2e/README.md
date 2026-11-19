@@ -521,7 +521,7 @@ selecting a shipped-agent catalog does not qualify Pi.
 ### Hermes Custom-Route Rebuild
 
 The native NVIDIA branch of `live/hermes-inference-switch.test.ts` retains its native-local startup and model-switch probes.
-After the NVIDIA switch and both Discord-state rebuild checks, it exposes the same authenticated fixture through a verified Cloudflare HTTPS tunnel.
+After the NVIDIA switch, both Discord-state rebuild checks and the proxy-resolution check, it exposes the same authenticated fixture through a verified Cloudflare HTTPS tunnel.
 It destroys the preceding owned sandbox and onboards Hermes with that custom endpoint, so OpenShell supplies the hosted credential when the entrypoint starts.
 That endpoint uses the hosted `${COMPATIBLE_API_KEY}` reference.
 OpenShell resolves it at the HTTPS interception boundary; a plaintext fixture would receive the unresolved placeholder.
@@ -1377,7 +1377,7 @@ The GPU memory-offload assertion also rejects a missing matching process because
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies attached-Ollama and fixed managed-vLLM configuration export on
-native Linux Docker. Each scenario runs the candidate CLI, checks its named service and `image: null`,
+native Linux Docker. Each scenario runs the candidate CLI, checks its named service and placeholder `image`,
 rejects credential disclosure, and retains the generated YAML. The existing CUDA, authentication,
 and inference lifecycle scenarios remain separate. The catalogue allows 150 minutes for this target.
 The fixture retries read-only daemon readiness checks on connection refusal or curl

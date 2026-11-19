@@ -10,8 +10,12 @@ import {
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
+import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
 import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { PUBLIC_NVIDIA_SWITCH_MODEL } from "../live/public-nvidia-switch-provider.ts";
+
+// Parse the shared workflow inventory during collection so each test measures selection.
+readFreeStandingJobsInventory();
 
 describe("inference-switch catalogue boundary", () => {
   it.each([

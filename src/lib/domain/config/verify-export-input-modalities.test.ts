@@ -175,7 +175,7 @@ describe("config export input modalities (#13731)", () => {
 
   it("exports the same native NVIDIA model with text-only input", async () => {
     const result = await exportSnapshots([await defaultNvidiaSnapshot("text")]);
-    expect(result.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(result.writeStdout).toHaveBeenCalledOnce();
     expect(result.writeStdout.mock.calls[0]![0]).toContain(defaultModel);
     expect(result.publish).not.toHaveBeenCalled();

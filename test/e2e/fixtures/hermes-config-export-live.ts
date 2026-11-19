@@ -12,9 +12,10 @@ import YAML from "yaml";
 import { HERMES_INTERFACE_DEFAULTS } from "../../../src/lib/config/model.ts";
 import { hasExportExcludedMessaging } from "../../../src/lib/domain/config/verify-export-source.ts";
 import {
-  V1ALPHA1_RUNTIME_DEFAULTS,
-  V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
-} from "../../../src/lib/domain/config/v1alpha1-runtime-defaults.ts";
+  exportedExplicitPolicy,
+  V1_IMAGE_REF_PLACEHOLDER,
+} from "../../../src/lib/domain/config/export-document.ts";
+import { V1ALPHA1_CHECKED_REVISION } from "../../../src/lib/domain/config/v1alpha1-checked-revision.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import {
   namedOpenShellGateway,
@@ -27,10 +28,10 @@ import { trustedSandboxShellScript, type SandboxClient } from "./clients/sandbox
 import type { CleanupRegistry } from "./cleanup.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "./paths.ts";
 import {
-  expectedPinnedV1HermesNativeSettings,
-  type PinnedV1ConsumerEvidence,
-  validateConfigExportWithPinnedV1,
-} from "../../support/v1-config-consumer.ts";
+  createV1ParseConsumer,
+  summarizeV1Parse,
+  type V1ParseSummary,
+} from "../../support/v1-parse-consumer.ts";
 import {
   inspectConfigExportArtifactSafety,
   parseConfigExport,
@@ -46,7 +47,7 @@ interface HermesConfigExportLiveInput {
   readonly host: HostCliClient;
   readonly redactionValues: readonly string[];
   readonly sandboxName: string;
-  readonly validateWithPinnedV1?: (raw: string) => PinnedV1ConsumerEvidence;
+  readonly validateWithPinnedV1?: (raw: string) => V1ParseSummary;
 }
 
 export interface HermesConfigExportLiveResult {
@@ -59,13 +60,13 @@ interface HermesConfigExportPublishedEvidence {
   readonly agent: string | undefined;
   readonly aliasesEquivalent: boolean;
   readonly checked: true;
-  readonly consumer: HermesPinnedV1ConsumerEvidence;
+  readonly consumer: HermesV1ParseSummary;
   readonly credentialReferenceMatches: boolean;
   readonly credentialValuesOmitted: boolean;
   readonly identityDriftPreventedPublication: boolean;
   readonly identityDriftReported: boolean;
-  readonly managedImageIsOmitted: boolean;
-  readonly interfacesMatch: boolean;
+  readonly managedImageIsPlaceholder: boolean;
+  readonly interfacesOmitted: boolean;
   readonly dashboardRuntimeMatches: boolean;
   readonly inferenceEndpointMatches: boolean;
   readonly launchersSucceeded: boolean;
@@ -73,9 +74,9 @@ interface HermesConfigExportPublishedEvidence {
   readonly sandboxNameMatches: boolean;
 }
 
-interface HermesPinnedV1ConsumerEvidence {
-  readonly expected: PinnedV1ConsumerEvidence;
-  readonly actual: Partial<Record<"nemoclaw" | "nemohermes", PinnedV1ConsumerEvidence>>;
+interface HermesV1ParseSummary {
+  readonly expected: V1ParseSummary;
+  readonly actual: Partial<Record<"nemoclaw" | "nemohermes", V1ParseSummary>>;
   readonly passed: boolean;
 }
 
@@ -93,17 +94,19 @@ export type HermesConfigExportLiveEvidence =
   | HermesConfigExportPublishedEvidence
   | HermesConfigExportExpectedRefusalEvidence;
 
+// Each refusal line names the finding's field and category before its diagnostic.
 const CREDENTIAL_HTTP_REFUSAL =
-  "V1alpha1 requires HTTPS when an inference provider declares a credential.";
+  "spec.inferenceProviders[].credential (unsupported): V1alpha1 requires HTTPS when an inference provider declares a credential.";
 const PODMAN_REFUSAL =
-  "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
-const MESSAGING_REFUSAL = "V1 export does not support messaging.";
+  "spec.sandboxes[].runtime.provider (unsupported): V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
+const MESSAGING_REFUSAL =
+  "spec.sandboxes[].integrations.messaging (unsupported): V1 export does not support messaging.";
 const POLICY_REFUSAL =
-  "Verified effective policy is malformed, unknown, or cannot be represented losslessly.";
+  "spec.sandboxes[].network.policy (policy-not-representable): Verified effective policy is malformed, unknown, or cannot be represented losslessly.";
 // The exporter reports these v1 compatibility limits alongside excluded messaging.
 const MESSAGING_ADDITIONAL_REFUSALS = [
-  "The sandbox provider attachments do not match its supported configuration.",
-  "The managed startup profile is not the canonical profile supported by v1 export.",
+  "source.sandbox.providers (unsupported): The sandbox provider attachments do not match its supported configuration.",
+  "source.workload.startupProfile (unsupported): The managed startup profile is not the canonical profile supported by v1 export.",
   POLICY_REFUSAL,
 ];
 
@@ -128,15 +131,15 @@ export function passesHermesConfigExportLiveEvidence(
     );
   }
   return (
-    evidence.agent === "hermes" &&
+    evidence.agent === "nvidia.fabric.hermes" &&
     evidence.aliasesEquivalent &&
     evidence.consumer.passed &&
     evidence.credentialReferenceMatches &&
     evidence.credentialValuesOmitted &&
     evidence.identityDriftPreventedPublication &&
     evidence.identityDriftReported &&
-    evidence.managedImageIsOmitted &&
-    evidence.interfacesMatch &&
+    evidence.managedImageIsPlaceholder &&
+    evidence.interfacesOmitted &&
     evidence.dashboardRuntimeMatches &&
     evidence.inferenceEndpointMatches &&
     evidence.launchersSucceeded &&
@@ -145,58 +148,40 @@ export function passesHermesConfigExportLiveEvidence(
   );
 }
 
-function expectedHermesConsumerEvidence(
-  input: HermesConfigExportLiveInput,
-): PinnedV1ConsumerEvidence {
-  const nativeSettings = expectedPinnedV1HermesNativeSettings({
-    hermesApiPort: Number(input.env.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort),
-    hermesDashboardEnabled: input.dashboardEnabled === true,
-    hermesDashboardPort: Number(
-      input.env.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort,
-    ),
-    hermesDashboardInternalPort: Number(
-      input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
-        HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
-    ),
-    hermesDashboardTui: hermesTuiEnabled(input.env),
-  });
+function expectedHermesConsumerEvidence(input: HermesConfigExportLiveInput): V1ParseSummary {
   return {
-    revision: V1ALPHA1_RUNTIME_DEFAULTS_REVISION,
-    compiledSandboxes: 1,
-    hermesNativeSettings: { [input.sandboxName]: nativeSettings },
-    openclawNativeSettingsVerified: 0,
-    hermesNativeSettingsVerified: 1,
+    revision: V1ALPHA1_CHECKED_REVISION,
+    sandboxes: {
+      [input.sandboxName]: {
+        harnessKind: "nvidia.fabric.hermes",
+        imageRef: V1_IMAGE_REF_PLACEHOLDER,
+        integrationRefs: [],
+      },
+    },
+    integrations: {},
   };
 }
 
-function comparableHermesConsumerEvidence(
-  evidence: PinnedV1ConsumerEvidence,
-  sandboxName: string,
-): PinnedV1ConsumerEvidence {
-  const nativeSettings = evidence.hermesNativeSettings?.[sandboxName];
-  return {
-    revision: evidence.revision,
-    compiledSandboxes: evidence.compiledSandboxes,
-    hermesNativeSettings: nativeSettings ? { [sandboxName]: nativeSettings } : {},
-    openclawNativeSettingsVerified: evidence.openclawNativeSettingsVerified,
-    hermesNativeSettingsVerified: evidence.hermesNativeSettingsVerified,
-  };
+function parseWithPinnedV1(raw: string): V1ParseSummary {
+  const consumer = createV1ParseConsumer();
+  try {
+    return summarizeV1Parse(consumer.parse(raw));
+  } finally {
+    consumer.dispose();
+  }
 }
 
 function validateHermesConsumers(
   input: HermesConfigExportLiveInput,
   nemoclawRaw: string,
   nemohermesRaw: string,
-): HermesPinnedV1ConsumerEvidence {
+): HermesV1ParseSummary {
   const expected = expectedHermesConsumerEvidence(input);
-  const actual: HermesPinnedV1ConsumerEvidence["actual"] = {};
-  const validate = input.validateWithPinnedV1 ?? validateConfigExportWithPinnedV1;
+  const actual: HermesV1ParseSummary["actual"] = {};
+  const validate = input.validateWithPinnedV1 ?? parseWithPinnedV1;
   try {
-    actual.nemoclaw = comparableHermesConsumerEvidence(validate(nemoclawRaw), input.sandboxName);
-    actual.nemohermes = comparableHermesConsumerEvidence(
-      validate(nemohermesRaw),
-      input.sandboxName,
-    );
+    actual.nemoclaw = validate(nemoclawRaw);
+    actual.nemohermes = validate(nemohermesRaw);
   } catch {
     return { expected, actual, passed: false };
   }
@@ -213,35 +198,6 @@ function hermesTuiEnabled(env: NodeJS.ProcessEnv): boolean {
   return ["1", "true", "yes", "on"].includes(
     (env.NEMOCLAW_HERMES_DASHBOARD_TUI ?? "0").toLowerCase(),
   );
-}
-
-function expectedHermesInterfaces(input: HermesConfigExportLiveInput) {
-  const targetDefaults = V1ALPHA1_RUNTIME_DEFAULTS.hermes.interfaces;
-  const port = Number(input.env.NEMOCLAW_DASHBOARD_PORT ?? HERMES_INTERFACE_DEFAULTS.dashboardPort);
-  const internalPort = Number(
-    input.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ??
-      HERMES_INTERFACE_DEFAULTS.dashboardInternalPort,
-  );
-  const apiPort = Number(input.env.NEMOCLAW_HERMES_API_PORT ?? HERMES_INTERFACE_DEFAULTS.apiPort);
-  const api = apiPort === targetDefaults.api.port ? undefined : { port: apiPort };
-  if (!input.dashboardEnabled) {
-    return {
-      ...(targetDefaults.dashboard.enabled ? { dashboard: { enabled: false as const } } : {}),
-      ...(api ? { api } : {}),
-    };
-  }
-  const tuiEnabled = hermesTuiEnabled(input.env);
-  return {
-    dashboard: {
-      enabled: true,
-      ...(port === targetDefaults.dashboard.port ? {} : { port }),
-      ...(internalPort === targetDefaults.dashboard.internalPort ? {} : { internalPort }),
-      ...(tuiEnabled === targetDefaults.dashboard.tuiEnabled
-        ? {}
-        : { tui: { enabled: tuiEnabled } }),
-    },
-    ...(api ? { api } : {}),
-  };
 }
 
 async function dashboardRuntimeMatches(input: HermesConfigExportLiveInput): Promise<boolean> {
@@ -413,8 +369,8 @@ export async function verifyHermesConfigExportLive(
       credentialValuesOmitted: !containsCredential,
       identityDriftPreventedPublication: false,
       identityDriftReported: false,
-      managedImageIsOmitted: false,
-      interfacesMatch: false,
+      managedImageIsPlaceholder: false,
+      interfacesOmitted: false,
       dashboardRuntimeMatches: false,
       inferenceEndpointMatches: false,
       launchersSucceeded,
@@ -433,14 +389,19 @@ export async function verifyHermesConfigExportLive(
   ].every(({ internalTransportsAbsent, knownSecretsAbsent }) => {
     return internalTransportsAbsent && knownSecretsAbsent;
   });
-  const sandbox = nemoclawDocument.spec.sandboxes[0]!;
-  const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
+  const [exportedSandboxName, sandbox] = Object.entries(nemoclawDocument.spec.sandboxes)[0]!;
+  const hostedProvider = Object.values(nemoclawDocument.spec.inferenceProviders)[0] as
+    | { credential?: { env?: string }; endpoint?: string }
+    | undefined;
   const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(entry.gatewayName ?? ""),
     sandboxName: input.sandboxName,
-    scope: "effective",
+    scope: "base",
   });
-  const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
+  // Compare in the export's own projection (TLS spellings, omitted sections), not a second copy.
+  const expectedPolicy = policy.ok
+    ? exportedExplicitPolicy(YAML.parse(policy.value.document))
+    : null;
   const consumer = validateHermesConsumers(input, nemoclawRaw, nemohermesRaw);
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
@@ -503,8 +464,8 @@ export async function verifyHermesConfigExportLive(
     identityDriftReported:
       nemoclawDriftDiagnostics.includes("drifted") &&
       nemohermesDriftDiagnostics.includes("drifted"),
-    managedImageIsOmitted: !("image" in sandbox),
-    interfacesMatch: isDeepStrictEqual(sandbox.harness.interfaces, expectedHermesInterfaces(input)),
+    managedImageIsPlaceholder: sandbox.image.ref === V1_IMAGE_REF_PLACEHOLDER,
+    interfacesOmitted: !("settings" in sandbox.harness),
     dashboardRuntimeMatches: await dashboardRuntimeMatches(input),
     inferenceEndpointMatches: hostedProvider?.endpoint === entry.endpointUrl,
     launchersSucceeded,
@@ -514,7 +475,7 @@ export async function verifyHermesConfigExportLive(
         (sandbox.network.policy.explicit as { network_policies?: unknown }).network_policies,
         (expectedPolicy as { network_policies?: unknown }).network_policies,
       ),
-    sandboxNameMatches: sandbox.name === input.sandboxName,
+    sandboxNameMatches: exportedSandboxName === input.sandboxName,
   };
   const passed = passesHermesConfigExportLiveEvidence(evidence);
   await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);

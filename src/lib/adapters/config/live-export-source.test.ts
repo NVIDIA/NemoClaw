@@ -294,12 +294,12 @@ describe("live export snapshot reader", () => {
     async (agent) => {
       const search = mockSearchLiveSource("tavily", agent);
       const { result, writeStdout, publish } = await exportLiveSource();
-      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
       const yaml = writeStdout.mock.calls[0]![0];
       const document = asExportedConfig(YAML.parse(yaml));
-      const sandbox = document.spec.sandboxes[0]!;
-      expect(sandbox.harness.kind).toBe(agent);
-      expect(sandbox.integrations).toEqual({
+      const sandbox = document.spec.sandboxes.alpha!;
+      expect(sandbox.harness.kind).toBe(`nvidia.fabric.${agent}`);
+      expect(document.spec.integrations).toEqual({
         "tavily-search": {
           kind: "webSearch",
           provider: "tavily",
@@ -410,15 +410,15 @@ describe("live export snapshot reader", () => {
   it("exports Brave through SDK metadata without reading its credential value (#10904)", async () => {
     const search = mockBraveLiveSource();
     const { result, writeStdout, publish } = await exportLiveSource();
-    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     const yaml = writeStdout.mock.calls[0]![0];
     const document = asExportedConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]!.integrations?.["brave-search"]).toEqual({
+    expect(document.spec.integrations?.["brave-search"]).toEqual({
       kind: "webSearch",
       provider: "brave",
       credential: { env: "BRAVE_API_KEY" },
     });
-    expect(document.spec.inferenceProviders).toHaveLength(1);
+    expect(Object.keys(document.spec.inferenceProviders)).toHaveLength(1);
     expect(search.readCredential).not.toHaveBeenCalled();
     expect(yaml).not.toContain(readFailureCanary);
     expect(raw.getProvider.mock.calls.map(([request]) => request.name)).toEqual([
@@ -798,19 +798,18 @@ describe("live export snapshot reader", () => {
           publish,
         },
       );
-      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
       const yaml = writeStdout.mock.calls[0]![0];
       const document = asExportedConfig(YAML.parse(yaml));
-      expect(document.spec.inferenceProviders).toEqual([
-        {
-          name: "hosted-nvidia-prod",
+      expect(document.spec.inferenceProviders).toEqual({
+        "hosted-nvidia-prod": {
           provider: "openai",
           api: "openai-completions",
           endpoint,
           credential: { env: "NVIDIA_INFERENCE_API_KEY" },
         },
-      ]);
-      expect(document.spec.sandboxes[0].harness.kind).toBe("openclaw");
+      });
+      expect(document.spec.sandboxes.alpha.harness.kind).toBe("nvidia.fabric.openclaw");
       expect(yaml).not.toContain(readFailureCanary);
       expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
       expect(raw.getProviderProfile).toHaveBeenCalledWith(
@@ -852,10 +851,10 @@ describe("live export snapshot reader", () => {
     async (definition: HostedProviderDefinition) => {
       const { readCredential } = mockNativeHostedSource(definition);
       const { result, writeStdout } = await exportLiveSource();
-      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
       const yaml = writeStdout.mock.calls[0]![0];
       const document = asExportedConfig(YAML.parse(yaml));
-      expect(document.spec.inferenceProviders[0]).toMatchObject({
+      expect(Object.values(document.spec.inferenceProviders)[0]).toMatchObject({
         endpoint: definition.custom?.endpointUrl ?? definition.endpoint,
         api: definition.api,
         credential: { env: definition.custom?.credentialEnv ?? definition.credentialEnv },
@@ -961,7 +960,7 @@ describe("live export snapshot reader", () => {
 
     const { result, writeStdout } = await exportLiveSource();
 
-    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(writeStdout.mock.calls[0]?.[0]).not.toContain(readFailureCanary);
     expect(captureSanitizedResolvedOpenshell).toHaveBeenCalled();
   });
@@ -975,7 +974,7 @@ describe("live export snapshot reader", () => {
 
     const { result, writeStdout } = await exportLiveSource();
 
-    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(writeStdout.mock.calls[0]?.[0]).not.toContain(readFailureCanary);
     expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
   });
@@ -1157,23 +1156,17 @@ describe("live export snapshot reader", () => {
         },
       );
 
-      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+      expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
       const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
       const document = asExportedConfig(YAML.parse(yaml));
-      expect(document.spec.sandboxes[0]?.harness).toMatchObject({
-        kind: "openclaw",
-        observability: {
-          otlp: {
-            enabled: true,
-            endpoint: "http://host.openshell.internal:4318",
-            serviceName,
-            sampleRate,
-          },
-        },
+      // v1 has no confirmed OTLP equivalent, so the settings are left out and reported.
+      expect(document.spec.sandboxes.alpha?.harness).toEqual({
+        kind: "nvidia.fabric.openclaw",
+        runtime: { timeout_seconds: 600 },
       });
-      expect(document.spec.sandboxes[0]?.network.policy.explicit).toMatchObject({
-        process: { run_as_user: "1000", run_as_group: "1000" },
-      });
+      // The report header names the omitted OTLP settings; the document must not carry them.
+      expect(JSON.stringify(document)).not.toContain("otlp");
+      expect(document.spec.sandboxes.alpha?.network.policy.explicit).not.toHaveProperty("process");
       expect(yaml).not.toContain(readFailureCanary);
       expect(yaml).not.toContain("NEMOCLAW_OPENCLAW_OTEL");
       expect(publish).not.toHaveBeenCalled();
@@ -1437,18 +1430,17 @@ describe("dashboard export observation", () => {
         publish: vi.fn(),
       },
     );
-    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(result).toMatchObject({ ok: true, completion: { kind: "stdout" } });
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
     const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
     expect(yaml).not.toContain(readFailureCanary);
     const document = asExportedConfig(YAML.parse(yaml));
-    expect(document.spec.sandboxes[0]?.harness).toMatchObject({
-      kind: "openclaw",
-      interfaces: { dashboard: { port: 19000, bind: "0.0.0.0" } },
+    // Interfaces and tool disclosure have no exact v1 equivalent, so they are reported, not exported.
+    expect(document.spec.sandboxes.alpha?.harness).toEqual({
+      kind: "nvidia.fabric.openclaw",
+      runtime: { timeout_seconds: 600 },
     });
-    expect(document.spec.sandboxes[0]!.agent).toMatchObject({
-      tools: { disclosure: "direct" },
-    });
+    expect(document.spec.sandboxes.alpha!.agent).not.toHaveProperty("tools");
   });
 
   it("refuses dashboard registry changes without publishing (#10904)", async () => {

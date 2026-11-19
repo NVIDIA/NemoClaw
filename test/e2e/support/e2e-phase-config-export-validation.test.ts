@@ -9,7 +9,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  EXPECTED_NATIVE_SETTINGS,
   PINNED_CONSUMER_EVIDENCE,
   IMAGE_REF,
   POLICY,
@@ -371,10 +370,10 @@ if (process.argv.includes("--output")) {
       }
     },
   );
-  it("publishes exact bytes only when pinned native settings match (#11485)", async () => {
+  it("publishes exact bytes only when the pinned v1 parse matches (#11485)", async () => {
     const exported = document({ gatewayEndpoint: "http://127.0.0.1:8080/export-evidence" });
-    Object.assign(exported.spec.sandboxes[0]!.network.policy, {
-      explicit: { ...POLICY, landlock: { compatibility: "hard_requirement" } },
+    Object.assign(exported.spec.sandboxes.sandbox!.network.policy, {
+      explicit: POLICY,
     });
     const raw = `${JSON.stringify(exported)}\n`;
     const publishedExport = {
@@ -389,7 +388,17 @@ if (process.argv.includes("--output")) {
     const test = fixture({
       artifacts: new ArtifactSink(artifactRoot),
       dependencies: independentDependencies,
-      host: successfulHost(raw, { ...POLICY, landlock: { compatibility: "strict" } }),
+      // The export leaves out the V0 image's Landlock, process and filesystem sections (#14580).
+      host: successfulHost(raw, {
+        ...POLICY,
+        landlock: { compatibility: "strict" },
+        process: { run_as_user: "sandbox", run_as_group: "sandbox" },
+        filesystem_policy: {
+          include_workdir: false,
+          read_only: ["/usr"],
+          read_write: ["/sandbox"],
+        },
+      }),
     });
     const evidence = await test.phase.from(target("required"), instance());
     const persistedEvidence = JSON.parse(
@@ -441,14 +450,9 @@ if (process.argv.includes("--output")) {
     const mismatched = dependencies();
     mismatched.validateWithPinnedV1 = () => ({
       ...PINNED_CONSUMER_EVIDENCE,
-      compiledSandboxes: 2,
-      openclawNativeSettings: {
-        sandbox: {
-          ...EXPECTED_NATIVE_SETTINGS,
-          model: { ...EXPECTED_NATIVE_SETTINGS.model, contextWindow: 32_768 },
-        },
+      sandboxes: {
+        sandbox: { ...PINNED_CONSUMER_EVIDENCE.sandboxes.sandbox!, harnessKind: "openclaw" },
       },
-      openclawNativeSettingsVerified: 0,
     });
     const rejected = fixture({ dependencies: mismatched });
     await captureFailure(rejected.phase.from(target("required"), instance()));
@@ -457,16 +461,39 @@ if (process.argv.includes("--output")) {
       consumer: { passed: false },
     });
     expect(rejected.writes.at(-1)?.verifications).toContainEqual(
-      expect.objectContaining({ id: "consumerNativeSettings", passed: false }),
+      expect.objectContaining({ id: "consumerParsedDocument", passed: false }),
     );
     expect(rejected.writes.at(-1)).not.toHaveProperty("export");
   });
-  it("observes effective policy through the fixture-owned OpenShell boundary (#11485)", async () => {
+  it("matches an export whose endpoint TLS spellings the exporter rewrote (#14580)", async () => {
+    const withEndpoints = (endpoints: object[]) => ({
+      ...POLICY,
+      network_policies: { inference: { ...POLICY.network_policies.inference, endpoints } },
+    });
+    const host = { host: "a.example", port: 443 };
+    const exported = document();
+    Object.assign(exported.spec.sandboxes.sandbox!.network.policy, {
+      explicit: withEndpoints([{ ...host, tls: "skip" }, host]),
+    });
+    const source = withEndpoints([
+      { ...host, tls: "passthrough" },
+      { ...host, tls: "terminate" },
+    ]);
+    const realParse = { ...dependencies(), parseConfig: parseConfigExport };
+    const raw = `${JSON.stringify(exported)}\n`;
+    const test = fixture({ dependencies: realParse, host: successfulHost(raw, source) });
+    const evidence = await test.phase.from(target("required"), instance());
+    expect(evidence.verifications).toContainEqual(
+      expect.objectContaining({ id: "policySha256", passed: true }),
+    );
+  });
+  it("observes the base policy through the fixture-owned OpenShell boundary (#11485, #14580)", async () => {
     const test = fixture();
     const evidence = await test.phase.from(target("required"), instance());
+    // The export leaves out OpenShell's provider-composed entries, which --base also excludes.
     expect(test.host.command).toHaveBeenCalledWith(
       "openshell",
-      ["policy", "get", "-g", "nemoclaw", "--full", "sandbox"],
+      ["policy", "get", "-g", "nemoclaw", "--base", "sandbox"],
       expect.objectContaining({
         captureLimitBytes: 1024 * 1024,
         persistArtifacts: false,
@@ -608,7 +635,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     expect(test.host.nemoclaw).not.toHaveBeenCalled();
   });
   it("fails when export omits an enabled scenario feature (#11485)", async () => {
-    const test = fixture({ dependencies: dependencies({ features: { observability: true } }) });
+    const test = fixture({ dependencies: dependencies({ features: { webSearch: true } }) });
 
     await captureFailure(test.phase.from(target("required"), instance()));
     expect(test.writes.at(-1)).toMatchObject({ classification: "failure", passed: false });
@@ -625,12 +652,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     "validates the raw %s %s export and native search binding (#12138)",
     async (agent, provider, credentialReference) => {
       const raw = JSON.stringify(document({ agent, searchProvider: provider }));
-      const search = {
-        provider,
-        credentialReference,
-        agentRefs: ["primary"],
-        nativeProvider: provider,
-      };
+      const search = { provider, credentialReference };
       const inputs = dependencies({
         agent,
         searchProvider: provider,
@@ -649,8 +671,8 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
         observed: { enabledFeatures: ["webSearch"] },
         consumer: {
           passed: true,
-          expected: { webSearch: { sandbox: search } },
-          actual: { webSearch: { sandbox: search } },
+          expected: { integrations: { [`${provider}-search`]: search } },
+          actual: { integrations: { [`${provider}-search`]: search } },
         },
         export: { bytes: raw },
       });
@@ -659,8 +681,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
   it.each([
     ["provider", { provider: "brave" }, true],
     ["credential", { credentialReference: "OTHER_API_KEY" }, true],
-    ["grant", { agentRefs: ["secondary"] }, true],
-    ["native provider", { nativeProvider: "brave" }, true],
+    ["grant", { integrationRefs: ["brave-search"] }, true],
     ["unexpected search on a disabled source", {}, false],
   ] as const)(
     "withholds export evidence for mismatched search settings: %s (#12138)",
@@ -672,8 +693,6 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
         searchConsumerEvidence("openclaw", {
           provider: "tavily",
           credentialReference: "TAVILY_API_KEY",
-          agentRefs: ["primary"],
-          nativeProvider: "tavily",
           ...change,
         });
       const test = fixture({
@@ -694,7 +713,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     "rejects Tavily export without its selected grant %j (#12138)",
     async (integrationRefs) => {
       const candidate = document({ searchProvider: "tavily" });
-      Object.assign(candidate.spec.sandboxes[0]!.agent, { integrationRefs });
+      Object.assign(candidate.spec.sandboxes.sandbox!.agent, { integrationRefs });
       const inputs = dependencies({ searchProvider: "tavily", features: { webSearch: true } });
       inputs.parseConfig = parseConfigExport;
       const test = fixture({
@@ -730,7 +749,7 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
     "rejects a %s integration whose name and provider disagree (#12138)",
     (provider) => {
       const candidate = document({ searchProvider: provider });
-      Object.assign(candidate.spec.sandboxes[0]!.integrations![`${provider}-search`]!, {
+      Object.assign(candidate.spec.integrations![`${provider}-search`]!, {
         provider: provider === "brave" ? "tavily" : "brave",
       });
       expect(() => parseConfigExport(JSON.stringify(candidate))).toThrow(
@@ -782,16 +801,16 @@ process.stdout.write("x".repeat(1024 * 1024 + 2048 - Buffer.byteLength(suffix, "
   });
   it("validates the current v1alpha1 Deep Agents document (#11860)", () => {
     const candidate = structuredClone(document());
-    const sandbox = candidate.spec.sandboxes[0]!;
+    const sandbox = candidate.spec.sandboxes.sandbox!;
     const image = { ref: IMAGE_REF };
-    Object.assign(sandbox, { harness: { kind: "deepagents" }, image });
-    expect(parseConfigExport(JSON.stringify(candidate)).spec.sandboxes[0]).toMatchObject({
+    Object.assign(sandbox, { harness: { kind: "nvidia.fabric.langchain.deepagents" }, image });
+    expect(parseConfigExport(JSON.stringify(candidate)).spec.sandboxes.sandbox).toMatchObject({
       image: { ref: IMAGE_REF },
-      harness: { kind: "deepagents" },
+      harness: { kind: "nvidia.fabric.langchain.deepagents" },
       agent: { name: "primary" },
     });
     const missingImage = structuredClone(candidate);
-    Reflect.deleteProperty(missingImage.spec.sandboxes[0]!, "image");
+    Reflect.deleteProperty(missingImage.spec.sandboxes.sandbox!, "image");
     expect(() => parseConfigExport(JSON.stringify(missingImage))).toThrow(
       "complete v1alpha1 export contract",
     );

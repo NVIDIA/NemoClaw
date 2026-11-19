@@ -82,9 +82,9 @@ test(
         "run Hermes CLI adapter forms against switched provider",
         "reapply Hermes inference after CLI and verify integrity",
         "verify NVIDIA inference after Discord state rebuild",
+        "prove split provider/model credential resolution",
         "onboard and exercise the custom Hermes hosted route",
         "rebuild the custom Hermes route without a host credential",
-        "prove split provider/model credential resolution",
       ],
     },
   },
@@ -537,36 +537,6 @@ test(
       redactionValues,
     });
 
-    const customTunnel =
-      mockBaseline &&
-      publicApiKey &&
-      (await startPublicMcpHttpsTunnel({
-        cleanup,
-        cloudflaredBin: await resolveVerifiedCloudflaredBinary(cleanup, host),
-        label: "Hermes custom hosted rebuild",
-        progress,
-        server: {
-          port: Number(new URL(mockBaseline.baseUrl).port),
-          close: () => mockBaseline.close(),
-        },
-        originProtocol: "http",
-        readinessPath: "/v1/models",
-        readinessStatus: 401,
-      }));
-    mockBaseline &&
-      customTunnel &&
-      (await rebuildHermesCustomBaseline({
-        endpointUrl: `${customTunnel.origin}/v1`,
-        host,
-        sandbox,
-        endpoint: mockBaseline,
-        apiKey,
-        model: localModel,
-        redactionValues,
-        progress,
-        artifacts,
-      }));
-
     progress.phase("prove split provider/model credential resolution");
     const { model: proxyResolutionModel, requestOffset } = await prepareProxyResolutionRoute({
       apiKey,
@@ -618,5 +588,35 @@ test(
     expect(proxyResolutionCli.stdout).toMatch(/\bPONG\b/iu);
 
     expectAuthenticatedProxyResolutionRequests(mockBaseline, requestOffset, proxyResolutionModel);
+
+    const customTunnel =
+      mockBaseline &&
+      publicApiKey &&
+      (await startPublicMcpHttpsTunnel({
+        cleanup,
+        cloudflaredBin: await resolveVerifiedCloudflaredBinary(cleanup, host),
+        label: "Hermes custom hosted rebuild",
+        progress,
+        server: {
+          port: Number(new URL(mockBaseline.baseUrl).port),
+          close: () => mockBaseline.close(),
+        },
+        originProtocol: "http",
+        readinessPath: "/v1/models",
+        readinessStatus: 401,
+      }));
+    mockBaseline &&
+      customTunnel &&
+      (await rebuildHermesCustomBaseline({
+        endpointUrl: `${customTunnel.origin}/v1`,
+        host,
+        sandbox,
+        endpoint: mockBaseline,
+        apiKey,
+        model: localModel,
+        redactionValues,
+        progress,
+        artifacts,
+      }));
   },
 );
