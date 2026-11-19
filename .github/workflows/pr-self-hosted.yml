@@ -59,7 +59,7 @@ jobs:
             echo "gpu=$(jq '.runners.gpu | length > 0' <<< "$selection")"
             echo "station=$(jq '.runners["dgx-station"] | length > 0' <<< "$selection")"
           } >> "$GITHUB_OUTPUT"
-          jq -r '"Commit: `" + .commit + "`", (.cases | to_entries[] | "- \(.key): \(if .value.run then "run" else "skip" end) — \(.value.reason)")' \
+          jq -r '"Commit: `" + .commit + "`", (.cases | to_entries[] | "- \(.key): \(if .value.run then "run" else "skip" end): \(.value.reason)")' \
             <<< "$selection" >> "$GITHUB_STEP_SUMMARY"
 
   gpu:
