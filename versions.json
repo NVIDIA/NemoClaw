@@ -153,8 +153,8 @@
   "imageSources": {
     "fabric": {
       "fabric.tar.gz": {
-        "url": "https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780",
-        "sha256": "ef8d058019151e4d51f456020432005d46b632cf4b8bda1f431559298bf92e84"
+        "url": "https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/56a4207b3c7edacd6e0cceea0af7815d2df274ca",
+        "sha256": "f66e2623690b9cf60e1c94fdd08504267748946936cf84139661c80798fa089c"
       },
       "hermes.tar.gz": {
         "url": "https://codeload.github.com/NousResearch/hermes-agent/tar.gz/b200f5bc60e31588ba2cb60e288029c4a54ba5fa",
@@ -167,6 +167,14 @@
       "switchyard-arm64.tar.gz": {
         "url": "https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-0.3.2/switchyard-plugin-0.3.2-linux-arm64.tar.gz",
         "sha256": "a8eb7876ce677eb7f779fa5509c706dc39e9d34e0b647a9e5ec19c8d075066ca"
+      },
+      "openclaw-LICENSE": {
+        "url": "https://raw.githubusercontent.com/openclaw/openclaw/f123d430a7dea78c9d78e05606c4cad621c0e2c8/LICENSE",
+        "sha256": "73571b25326281d369087f469842c02444fe39faaecebda4d82ed21ff3a1c29d"
+      },
+      "bun-LICENSE.md": {
+        "url": "https://raw.githubusercontent.com/oven-sh/bun/38afee6c84fcf48c0edb2466aa4b27d287a59c30/LICENSE.md",
+        "sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd"
       }
     },
     "ollama": {

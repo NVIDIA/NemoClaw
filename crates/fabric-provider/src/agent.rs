@@ -78,6 +78,18 @@ impl Backend for AgentBackend {
             (None, error) => Mutation::failed(error.unwrap_or(ObservationError::Incomplete)),
         }
     }
+    async fn update(&self, kind: &str, desired: &Row, prior: &Row) -> Mutation {
+        // A runtime that refresh found not running plans an unknown ID, but it
+        // can still hold the agent's kept state or ports; ensure stops it, by
+        // the ID it had, before it starts another.
+        let mut desired = desired.clone();
+        if desired.get("runtime_id").is_none_or(String::is_empty)
+            && let Some(runtime_id) = prior.get("runtime_id")
+        {
+            desired.insert("runtime_id".into(), runtime_id.clone());
+        }
+        self.ensure(kind, &desired).await
+    }
     async fn remove(&self, _: &str, prior: &Row, destroying: bool) -> Result<(), ObservationError> {
         configuration::remove(&self.0, &configuration_row(prior)?, destroying).await
     }
@@ -115,7 +127,7 @@ fn sandbox_kept(
 }
 
 /// The runtime's ID carries forward while it runs; a runtime that stopped is
-/// replaced by one with a new ID.
+/// replaced by one with a new ID, after apply stops it by its prior ID.
 fn runtime_id(
     name: &str,
     prior: &nemoclaw_tofu::State,

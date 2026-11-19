@@ -42,6 +42,12 @@ impl Backend for FabricBackend {
             Err(error) => Mutation::failed(error),
         }
     }
+    async fn update(&self, kind: &str, desired: &Row, prior: &Row) -> Mutation {
+        match self.0.client_for(desired).await {
+            Ok(client) => AgentBackend(client).update(kind, desired, prior).await,
+            Err(error) => Mutation::failed(error),
+        }
+    }
     async fn remove(
         &self,
         kind: &str,

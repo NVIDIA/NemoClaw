@@ -47,6 +47,8 @@ mod multi_agent;
 mod openshell_contract_fixtures;
 #[path = "rust/remote_service.rs"]
 mod remote_service;
+#[path = "rust/signed_bundle.rs"]
+mod signed_bundle;
 #[path = "tls.rs"]
 mod tls;
 #[path = "../../../test-support/http.rs"]

@@ -9,6 +9,7 @@ The selected model is downloaded into retained storage when the deployment is ap
 
 `supervisor-source.tar.gz` retains the supervisor's source and locked dependency sources, including their original license files.
 The runtime policy credit remains in `crates/nemoclaw-runtime/NOTICE.md` inside the archive.
+`rust-COPYRIGHT-library.html` retains the notices of the Rust standard library the supervisor links.
 `/opt/nemoclaw/source/Dockerfile` and `supervisor.Dockerfile` retain this image's and the supervisor's build instructions.
 The upstream image retains its vLLM and installed dependency notices.
 Model license and notice files present at the selected repository root are downloaded with the model snapshot.

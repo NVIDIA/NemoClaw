@@ -60,6 +60,11 @@ pub struct State {
     pub fabric_stopped: HashSet<String>,
     /// Running Fabric runtimes by ID, each naming its sandbox ID.
     pub fabric_runtimes: HashMap<String, String>,
+    /// Runtime IDs Fabric marked failed, as after provider errors, while their
+    /// processes still run: a check or invoke finds them unavailable, a stop
+    /// ends them, and until then their processes hold the agent's kept state
+    /// and native ports, so a start in their sandbox is refused.
+    pub fabric_failed: HashSet<String>,
     /// Successful starts by sandbox ID, which number later runtime IDs.
     pub fabric_starts: HashMap<String, usize>,
     /// Sandboxes where a start failed with unknown effects; Fabric refuses
@@ -158,6 +163,11 @@ pub struct Fixture {
     task: tokio::task::JoinHandle<()>,
 }
 impl Fixture {
+    /// Stop serving, as a gateway process that exited: new connections are
+    /// refused.
+    pub fn stop(&self) {
+        self.task.abort();
+    }
     pub async fn start() -> Self {
         Self::start_with_tls(None).await
     }
@@ -267,7 +277,7 @@ pub async fn test_against_gateways(
 impl State {
     /// Apply a fixture declaration's gateway part: the compute driver, a
     /// sandbox creation delay, and a one-time `change` that an outage between
-    /// runs would make: stop one sandbox's Fabric runtime, or forget every
+    /// runs would make: stop or fail one sandbox's Fabric runtime, or forget every
     /// registration, profile, or sandbox.
     pub fn declare(&mut self, declared: &serde_json::Value) {
         self.driver = declared["compute_driver"].as_str().map(str::to_owned);
@@ -290,6 +300,17 @@ impl State {
             let id = sandbox_id(self, name);
             self.fabric_runtimes
                 .retain(|_, sandbox| Some(&*sandbox) != id.as_ref());
+        }
+        // Fabric marks the runtime failed but leaves its processes running.
+        if let Some(name) = change["fail_agent_runtime"].as_str() {
+            let id = sandbox_id(self, name);
+            let failed: Vec<String> = self
+                .fabric_runtimes
+                .iter()
+                .filter(|(_, sandbox)| Some(*sandbox) == id.as_ref())
+                .map(|(runtime, _)| runtime.clone())
+                .collect();
+            self.fabric_failed.extend(failed);
         }
         // Someone changes the agent's model inside its sandbox, outside OpenTofu.
         if let Some(name) = change["change_agent_model"].as_str()
@@ -1334,6 +1355,13 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
             let running = requested_runtime
                 .as_ref()
                 .is_some_and(|id| state.fabric_runtimes.get(id) == Some(&sandbox_id));
+            let failed = requested_runtime
+                .as_ref()
+                .is_some_and(|id| state.fabric_failed.contains(id));
+            let held = state
+                .fabric_runtimes
+                .iter()
+                .any(|(id, sandbox)| sandbox == &sandbox_id && state.fabric_failed.contains(id));
             let mut error = None;
             let mut changed = None;
             let mut result = serde_json::Value::Null;
@@ -1346,6 +1374,19 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                         error = Some(failure("host_unavailable", "transport", "none"));
                     } else if state.fabric_uncertain.contains(&sandbox_id) {
                         error = Some(failure("start_uncertain", "start", "none"));
+                    } else if held {
+                        // A failed runtime's processes still hold the agent's
+                        // kept state, which Fabric refuses with no effects, or
+                        // without it, OpenClaw's Gateway ports, which fail the
+                        // start with unknown effects.
+                        let config = serde_json::from_slice::<serde_json::Value>(&request.stdin)
+                            .unwrap_or_default();
+                        if config["runtime"]["keep_state"] == true {
+                            error = Some(failure("state_in_use", "start", "none"));
+                        } else {
+                            state.fabric_uncertain.insert(sandbox_id.clone());
+                            error = Some(failure("start_failed", "start", "unknown"));
+                        }
                     } else if state.state_in_use_starts > 0 {
                         state.state_in_use_starts -= 1;
                         error = Some(failure("state_in_use", "start", "none"));
@@ -1407,7 +1448,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     }
                 }
                 "invoke" => {
-                    if running {
+                    if running && !failed {
                         let input = serde_json::from_slice::<serde_json::Value>(&request.stdin)
                             .unwrap_or(serde_json::Value::Null);
                         result =
@@ -1425,6 +1466,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                         error = Some(failure("runtime_busy", "stop", "none"));
                     } else if let Some(runtime_id) = requested_runtime.filter(|_| running) {
                         state.fabric_runtimes.remove(&runtime_id);
+                        state.fabric_failed.remove(&runtime_id);
                         state.fabric_stopped.insert(sandbox_id.clone());
                         if !state.fabric_runtimes.values().any(|id| id == &sandbox_id) {
                             state.fabric_configurations.remove(&sandbox_id);
@@ -1441,7 +1483,7 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                     changed = Some(false);
                     let reason = match &requested_runtime {
                         None => None,
-                        Some(_) if !running => Some("runtime_unavailable".to_owned()),
+                        Some(_) if !running || failed => Some("runtime_unavailable".to_owned()),
                         Some(_) => state.fabric_check_reason.clone(),
                     };
                     let outcome = match reason.as_deref() {

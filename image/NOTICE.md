@@ -20,6 +20,11 @@ The Hermes image copies Hermes's built dashboard and TUI bundle unmodified from 
 The Hermes image also installs the official [Switchyard Relay plugin 0.3.2](https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/tag/switchyard-plugin-0.3.2) bundle for its target architecture.
 The unmodified bundle retains its licenses, notices, attributions, schema, and manifest under `/opt/nemo-relay/plugins/switchyard/`.
 
+Images that run Node.js retain its license, which carries the notices of the libraries its executable bundles, at `/usr/local/share/doc/node/LICENSE`.
+OpenClaw's published image omits OpenClaw's MIT license, so the OpenClaw image retains the license from the pinned release's commit at `/opt/nemoclaw/source/openclaw-LICENSE`.
+Bun's image omits Bun's license, so the OpenCode image retains it at `/opt/nemoclaw/source/bun-LICENSE.md`; Bun statically links JavaScriptCore and TinyCC, which are under LGPL-2.1.
+The Claude image installs claude-agent-sdk, whose wheels bundle the Claude Code CLI; Claude Code is Anthropic's proprietary software under [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance), not the SDK's MIT license.
+
 OpenClaw installs the pinned search plugin archives through its native installer; the image packages them in OpenClaw’s bundled-plugin directory.
 Examples select plugin IDs without filesystem paths.
 Hermes plugin placement remains in the Dockerfile because the pinned Fabric supplies its Tavily assets and placement instructions without an installation command.

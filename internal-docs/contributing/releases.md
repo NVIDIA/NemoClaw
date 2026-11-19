@@ -45,24 +45,36 @@ Only users with push access see a draft release, and the `v1` packages stay inte
 
 ## CLI Bundles
 
-Staging attaches each platform's bundle as the latest passing push or manual run of [CI / Bundle](../../.github/workflows/rust.yml) at the tagged commit built and checked it, gzipped without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
+Pushing the tag also starts [CI / Bundle](../../.github/workflows/rust.yml) at the tag, and staging waits for it.
+Staging attaches each platform's bundle as the latest push or manual run of CI / Bundle at the tag built and checked it, without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
 `SHA256SUMS` lists their SHA-256 checksums.
-Pull request runs build a merge commit, so they don't count.
-The executables are neither signed nor notarized.
+A bundle built from a clean checkout of a version tag reports the tag without its `v` as its version, in `nemoclaw --version` and its `manifest.json`, so the bundles of a run at the same commit without the tag don't count.
+Any other bundle reports `0.1.0-dev.<hash>`, where the hash names its source files.
+The executables are neither signed nor notarized yet ([#14621](https://github.com/NVIDIA/NemoClaw/issues/14621)).
 
-CI keeps the bundles of a `v1` push or manual run for 7 days.
-Before tagging a commit, check that CI / Bundle passed at it in a `push` or `workflow_dispatch` run within that window:
-
-```sh
-gh run list --workflow rust.yml --commit <full commit hash> --status success
-```
-
-Without such a run, staging fails before it pushes release images or drafts the release, and names the missing platforms.
-Run CI / Bundle at the tag, and rerun the staging workflow once it passes:
+If CI / Bundle fails at the tag, staging fails before it pushes release images or drafts the release; rerun the failed jobs, then the staging workflow.
+CI keeps a run's bundles for 7 days; after that, staging names the missing platforms.
+Run CI / Bundle at the tag again, and rerun the staging workflow once it passes:
 
 ```sh
 gh workflow run rust.yml --ref v0.1.0-rc1
 ```
+
+### Signing
+
+Staging signs a platform's executables only when a repository administrator lists the platform in the `RELEASE_SIGNING` repository variable, such as `windows_amd64`.
+A job's `if:` can't read an environment's variables, so the repository variable turns signing on; the signing jobs run in the `release-signing` environment and read its variables.
+
+| Platform | Signing job |
+|---|---|
+| `windows_amd64` | Signs every `.exe` through Azure Artifact Signing, appending NVIDIA's signature to the Helm provider's HashiCorp signature, and checks each with `signtool verify /pa /all /tw`. Needs the environment's `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_ARTIFACT_SIGNING_ENDPOINT`, `AZURE_ARTIFACT_SIGNING_ACCOUNT`, and `AZURE_ARTIFACT_SIGNING_PROFILE` variables. |
+| `darwin_arm64` | Checks that every executable is notarized and signed by the Apple team in the environment's `APPLE_TEAM_ID` variable, or by HashiCorp's team `D38WU7D763` for the Helm provider. It doesn't sign yet, so listing `darwin_arm64` stops staging until the signing step lands. |
+
+Staging puts the signed executables in their bundles with the bundles' file modes, records their new hashes in `manifest.json` with `nemoclaw-build reseal`, and then writes `SHA256SUMS`.
+When a listed platform's signing job fails, staging stops before it drafts the release.
+
+Don't list a platform before [#14628](https://github.com/NVIDIA/NemoClaw/issues/14628) is fixed: signing changes the bytes of providers whose versions stay the same, such as the Docker provider, and a deployment created with an unsigned bundle then fails on its dependency lock file.
+
 
 ## Test a Staged Release
 
@@ -75,11 +87,27 @@ Docker deployments pull private images through `spec.registries`; Kubernetes dep
 ## Publish
 
 Push a final tag only from a commit whose release candidate has completed installer, onboarding, QA, and product sign-off; until then, the draft and packages stay private.
-The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the [security assessment](image-assessment.md#hosted-enforcement) passes, and the registry digests are unchanged.
+The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the [security assessment](image-assessment.md#hosted-enforcement) passes, the registry digests are unchanged, and every image's [provenance](#verify-provenance) is attested.
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
 Publishing a draft by hand and package-administrator privileges bypass the workflow.
 An administrator handles package visibility changes; making a package public cannot be undone.
-Before pushing a final tag, complete the provenance and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+Before pushing a final tag, complete the [license review](image-licenses.md) of every image the release publishes.
+
+## Verify Provenance
+
+A final release attests each image index's build provenance with a GitHub artifact attestation before it publishes the draft.
+The attestation is signed through Sigstore's public-good instance, whose log is public, so release candidates get none.
+It is stored beside the image in `ghcr.io` as an OCI referrer, so the index digest stays the one staging pushed; `ghcr.io` has no referrers API, so the image's package shows it under the tag `sha256-<index digest hex>`.
+
+Verify an image by the index digest the release lists:
+
+```sh
+gh attestation verify oci://ghcr.io/nvidia/nemoclaw/v1/<image>@<digest> --owner NVIDIA
+```
+
+Add `--bundle-from-oci` to read the attestation from the registry instead of GitHub's API; the workflow verifies each attestation this way after creating it.
+While the packages are internal, sign in with `docker login ghcr.io` first.
+Platform manifests have no attestation of their own: verify the index that lists them.
 
 ## SBOM Assets
 
@@ -96,6 +124,6 @@ Those Rust entries describe the retained build sources, including build dependen
 Image scanning cannot recover components whose upstream images contain neither package metadata nor recognizable binaries; inspect representative OS, Python, Node, and Rust entries before publishing.
 
 The assets stay private with the draft: release candidates and internal packages publish nothing about their images.
-Only a final release attests the inventories, together with provenance ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521)).
+No release attests the inventories yet ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521)).
 A Syft failure fails the job that runs it, before staging uploads any SBOM asset; rerun it.
 Assets are named by digest, so a rerun can't overwrite another image's inventory.
