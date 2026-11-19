@@ -109,6 +109,7 @@ export default class ConfigExportCommand extends NemoClawCommand {
       console.error(
         "The source's corporate CA configuration is not included in the exported YAML. Review destination trust requirements before deployment.",
       );
+    for (const omission of outcome.omissions) console.error(`Warning: ${omission.message}`);
     const { completion } = outcome;
     return completion.kind === "file" ? completion.result : undefined;
   }
