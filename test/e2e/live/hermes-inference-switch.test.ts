@@ -6,6 +6,8 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
+import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_BASE_URL } from "../fixtures/hosted-inference.ts";
 import {
@@ -535,9 +537,26 @@ test(
       redactionValues,
     });
 
-    mockBaseline &&
+    const customTunnel =
+      mockBaseline &&
       publicApiKey &&
+      (await startPublicMcpHttpsTunnel({
+        cleanup,
+        cloudflaredBin: await resolveVerifiedCloudflaredBinary(cleanup, host),
+        label: "Hermes custom hosted rebuild",
+        progress,
+        server: {
+          port: Number(new URL(mockBaseline.baseUrl).port),
+          close: () => mockBaseline.close(),
+        },
+        originProtocol: "http",
+        readinessPath: "/v1/models",
+        readinessStatus: 401,
+      }));
+    mockBaseline &&
+      customTunnel &&
       (await rebuildHermesCustomBaseline({
+        endpointUrl: `${customTunnel.origin}/v1`,
         host,
         sandbox,
         endpoint: mockBaseline,

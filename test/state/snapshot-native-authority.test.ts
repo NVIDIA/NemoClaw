@@ -8,7 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import type { BackupResult } from "../../src/lib/state/sandbox.ts";
 import {
   applyHermesManagedRoute,
   refreshHermesNativeLocalCredential,
@@ -349,12 +350,99 @@ describe("complete native-home machine authority", () => {
     });
   });
 
+  describe("Hermes managed config byte scanning", () => {
+    const provider = "compatible-endpoint";
+    const baseUrl = CUSTOM_ENDPOINTS[provider];
+    const template = "${COMPATIBLE_API_KEY}";
+    const fingerprint = ["AKIA", "1234567890ABCDEF"].join("");
+    const config: Record<string, unknown> = { settings: { max_turns: 12 } };
+    applyHermesManagedRoute(config, {
+      model: "m",
+      upstreamProvider: provider,
+      baseUrl,
+      inferenceApi: "openai-completions",
+    });
+    const yaml = stringifyYaml(config);
+
+    function acrossScanBoundary(source: string, value: string): string {
+      const padding = 64 * 1024 - source.indexOf(value) - 5;
+      const padded = `#${"x".repeat(padding - 2)}\n${source}`;
+      expect(padded.indexOf(value)).toBe(64 * 1024 - 5);
+      return padded;
+    }
+
+    function withBackup(source: string, verify: (backup: BackupResult) => void): void {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-byte-scan-"));
+      try {
+        const nativeRoot = path.join(fixture, "native-home");
+        fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
+        const configPath = path.join(nativeRoot, ".hermes/config.yaml");
+        fs.writeFileSync(configPath, source);
+        writeSandboxRegistry("hermes-byte-scan", "hermes", { provider, endpointUrl: baseUrl });
+        const backup = sandboxState.backupSandboxState("hermes-byte-scan", {
+          nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+        });
+        verify(backup);
+        expect(fs.readFileSync(configPath, "utf8")).toBe(source);
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    }
+
+    it.each([
+      { name: "plain YAML", source: () => yaml },
+      { name: "quoted YAML", source: () => yaml.replaceAll(template, `"${template}"`) },
+      { name: "single-quoted YAML", source: () => yaml.replaceAll(template, `'${template}'`) },
+      { name: "64 KiB scan boundary", source: () => acrossScanBoundary(yaml, template) },
+    ])("preserves a generated reference at $name (#14300)", ({ source: createSource }) => {
+      const source = createSource();
+      withBackup(source, (backup) => {
+        expect(backup.success, backup.error).toBe(true);
+        const archived: string[] = [];
+        sandboxState.inspectNativeSandboxState(backup.manifest!.backupPath, (root: string) => {
+          archived.push(fs.readFileSync(path.join(root, ".hermes/config.yaml"), "utf8"));
+        });
+        expect(archived).toEqual([source]);
+        const restored = parseYaml(archived[0]!);
+        expect(restored.model.api_key).toBe(template);
+        expect(restored.providers[provider].api_key).toBe(template);
+        expect(restored.custom_providers[0].api_key).toBe(template);
+      });
+    });
+
+    it.each([
+      {
+        name: "reference-shaped fingerprint in a YAML comment",
+        source: () => `${yaml}# api_key: "\${${fingerprint}}"\n`,
+      },
+      {
+        name: "fingerprint after a generated reference in a comment",
+        source: () => `${yaml}# api_key: "${template}${fingerprint}"\n`,
+      },
+      {
+        name: "credential fingerprint in a folded scalar header",
+        source: () => yaml.replace(template, `>- # api_key: "\${${fingerprint}}"\n    ${template}`),
+      },
+      {
+        name: "raw credential across 64 KiB",
+        source: () => acrossScanBoundary(`${yaml}# api_key: "${fingerprint}"\n`, fingerprint),
+      },
+    ])("rejects a $name (#14300)", ({ source }) => {
+      withBackup(source(), (backup) => {
+        expect(backup.success).toBe(false);
+        expect(backup.error).toContain("credential-bearing or uninspectable content");
+        expect(backup.error).not.toContain(fingerprint);
+      });
+    });
+  });
+
   it.each([
     ...CUSTOM_PROVIDERS.map((provider) => ({
       provider,
       baseUrl: CUSTOM_ENDPOINTS[provider],
     })),
     { provider: "hermes-provider", baseUrl: "https://portal.example.test/v1" },
+    { provider: "hermes-provider", baseUrl: "https://inference-api.nousresearch.com/v1" },
   ])(
     "strips a $provider reference when the registered endpoint differs (#14300)",
     ({ provider, baseUrl }) => {

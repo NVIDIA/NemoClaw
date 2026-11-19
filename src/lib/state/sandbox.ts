@@ -28,7 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "child_process";
-import { parse as parseYaml } from "yaml";
+import { isScalar, parse as parseYaml, parseDocument } from "yaml";
 
 import {
   captureSandboxSshConfigCommand,
@@ -1366,33 +1366,20 @@ function nativeStructuredAuthorityKind(
 }
 
 const HERMES_MANAGED_CONFIG = ".hermes/config.yaml";
-// An environment reference as the value of an api_key field, in YAML or JSON form.
-const HERMES_MANAGED_REFERENCE_PATTERN =
-  /((?:^|[\s{,])["']?api_key["']?[ \t]*:[ \t]*["']?)\$\{[A-Z][A-Z0-9_]*\}/gmu;
-
-/** Preserve the non-secret template only for the route that generated it. */
-function stripNativeStructuredCredentials(
-  config: unknown,
-  normalized: string,
+/** Identify the three generated slots only when the complete route is valid. */
+function managedHermesArchiveReference(
+  config: Record<string, unknown>,
   registered?: HermesRegisteredRoute,
-): unknown {
-  const sanitized = stripCredentials(config);
-  if (
-    normalized !== HERMES_MANAGED_CONFIG ||
-    !isObjectRecord(config) ||
-    !isObjectRecord(sanitized)
-  ) {
-    return sanitized;
-  }
+): { provider: string; template: string; matchIndex: number } | null {
   const upstream = config._nemoclaw_upstream;
   const model = config.model;
   const providers = config.providers;
   const custom = config.custom_providers;
-  if (!isObjectRecord(upstream)) return sanitized;
+  if (!isObjectRecord(upstream)) return null;
   const provider = upstream.provider;
-  if (typeof provider !== "string" || !isObjectRecord(model)) return sanitized;
+  if (typeof provider !== "string" || !isObjectRecord(model)) return null;
   const reference = hermesManagedRouteReference(provider, model.base_url, registered);
-  if (!reference) return sanitized;
+  if (!reference) return null;
   const { endpoint, template } = reference;
   const managed = isObjectRecord(providers) ? providers[provider] : null;
   const matches = Array.isArray(custom)
@@ -1417,15 +1404,34 @@ function stripNativeStructuredCredentials(
     matches[0].base_url !== endpoint ||
     matches[0].api_key !== template
   ) {
+    return null;
+  }
+  return { provider, template, matchIndex: custom.indexOf(matches[0]) };
+}
+
+/** Preserve the non-secret template only for the route that generated it. */
+function stripNativeStructuredCredentials(
+  config: unknown,
+  normalized: string,
+  registered?: HermesRegisteredRoute,
+): unknown {
+  const sanitized = stripCredentials(config);
+  if (
+    normalized !== HERMES_MANAGED_CONFIG ||
+    !isObjectRecord(config) ||
+    !isObjectRecord(sanitized)
+  ) {
     return sanitized;
   }
+  const reference = managedHermesArchiveReference(config, registered);
+  if (!reference) return sanitized;
+  const { provider, template, matchIndex } = reference;
   // The generic scrub still removes every unrelated credential. Restore only
   // the three NemoClaw-owned references that Hermes expands from fresh env.
   const sanitizedModel = sanitized.model;
   const sanitizedProviders = sanitized.providers;
   const sanitizedCustom = sanitized.custom_providers;
   const sanitizedManaged = isObjectRecord(sanitizedProviders) ? sanitizedProviders[provider] : null;
-  const matchIndex = custom.indexOf(matches[0]);
   if (
     isObjectRecord(sanitizedModel) &&
     isObjectRecord(sanitizedManaged) &&
@@ -1437,6 +1443,40 @@ function stripNativeStructuredCredentials(
     sanitizedCustom[matchIndex].api_key = template;
   }
   return sanitized;
+}
+
+/** Mask validated scalar ranges while scanning every other original byte. */
+function hermesArchiveCredentialScanInput(raw: string): string {
+  try {
+    const document = parseDocument(raw);
+    if (document.errors.length > 0) return raw;
+    const config: unknown = document.toJS();
+    if (!isObjectRecord(config)) return raw;
+    const reference = managedHermesArchiveReference(config);
+    if (!reference) return raw;
+    const { provider, template, matchIndex } = reference;
+    const values = [
+      document.getIn(["model", "api_key"], true),
+      document.getIn(["providers", provider, "api_key"], true),
+      document.getIn(["custom_providers", matchIndex, "api_key"], true),
+    ];
+    const ranges: [number, number][] = [];
+    for (const value of values) {
+      if (!isScalar(value) || value.value !== template || !value.range) return raw;
+      // Block scalar ranges can include header comments. Exempt only complete
+      // generated literal spellings so those comments remain visible.
+      const scalar = raw.slice(value.range[0], value.range[1]);
+      if (![template, JSON.stringify(template), `'${template}'`].includes(scalar)) return raw;
+      ranges.push([value.range[0], value.range[1]]);
+    }
+    for (const [start, end] of ranges.sort((left, right) => right[0] - left[0])) {
+      raw = `${raw.slice(0, start)}"unused"${raw.slice(end)}`;
+    }
+    return raw;
+  } catch {
+    // Malformed or uninspectable YAML receives the ordinary raw scan.
+    return raw;
+  }
 }
 
 function sanitizedStructuredAuthority(
@@ -1758,6 +1798,17 @@ function scanNativeTarFilePayload(
   dcodeSidecar: boolean,
   deadlineMs: number | undefined,
 ): boolean | null | "deadline" {
+  if (hermesManagedConfig) {
+    // Sanitation enforces this same member limit. A complete read keeps scalar
+    // ranges and split credential values intact before either is inspected.
+    if (size > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) return true;
+    if (backupDeadlineExpired(deadlineMs)) return "deadline";
+    const payload = readArchiveRange(descriptor, position, size);
+    if (!payload) return null;
+    const input = hermesArchiveCredentialScanInput(payload.toString("utf8"));
+    if (backupDeadlineExpired(deadlineMs)) return "deadline";
+    return textContainsCredential(input, { ...credentialOptions, privateKeyHeader });
+  }
   const chunk = Buffer.allocUnsafe(NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES);
   let remaining = size;
   let offset = position;
@@ -1792,12 +1843,7 @@ function scanNativeTarFilePayload(
         )
       : openclawConfig
         ? raw.replace(/("apiKey"\s*:\s*")\$\{NVIDIA_INFERENCE_API_KEY\}(")/gu, "$1unused$2")
-        : hermesManagedConfig
-          ? // The structured pass keeps an environment reference only in the three
-            // managed api_key slots and only for the registered route, so mask
-            // that shape there; raw scanning still catches every other secret.
-            raw.replace(HERMES_MANAGED_REFERENCE_PATTERN, "$1unused")
-          : raw;
+        : raw;
     if (
       textContainsCredential(credentialScanInput, {
         ...credentialOptions,

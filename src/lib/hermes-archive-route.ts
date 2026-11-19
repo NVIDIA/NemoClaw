@@ -74,9 +74,7 @@ export function hermesManagedRouteReference(
     return { endpoint: NVIDIA_HOSTED_NATIVE_ENDPOINT, template: NVIDIA_INFERENCE_PLACEHOLDER };
   }
   const fixed = HOSTED_NATIVE_PROVIDERS.find((entry) => entry.logicalProvider === provider);
-  const returnedEndpoint =
-    provider === "hermes-provider" && typeof baseUrl === "string" && baseUrl !== fixed?.endpoint;
-  if (fixed && !returnedEndpoint) {
+  if (fixed && provider !== "hermes-provider") {
     return { endpoint: fixed.endpoint, template: `\${${fixed.credentialEnv}}` };
   }
   if (typeof baseUrl !== "string") return null;

@@ -50,7 +50,7 @@ const authenticatedRequest = {
 
 function harness(
   options: {
-    dns?: ShellProbeResult;
+    endpointUrl?: string;
     configure?: ShellProbeResult;
     rebuild?: ShellProbeResult;
     requests?: FakeOpenAiCompatibleRequest[];
@@ -64,8 +64,8 @@ function harness(
     operations.push(rebuild ? "rebuild" : "configure");
     return (rebuild ? options.rebuild : options.configure) ?? result();
   });
-  const exec = vi.fn<SandboxClient["exec"]>(
-    async () => options.dns ?? result(0, "172.19.0.1 STREAM host.openshell.internal\n"),
+  const exec = vi.fn<SandboxClient["exec"]>(async () =>
+    result(0, "172.19.0.1 STREAM host.openshell.internal\n"),
   );
   const execShell = vi
     .fn<SandboxClient["execShell"]>()
@@ -82,7 +82,6 @@ function harness(
   const writeJson = vi.fn().mockResolvedValue("receipt.json");
   return {
     command,
-    exec,
     execShell,
     operations,
     writeJson,
@@ -90,6 +89,7 @@ function harness(
       rebuildHermesCustomBaseline({
         host: { command },
         sandbox: { exec, execShell } as unknown as SandboxClient,
+        endpointUrl: options.endpointUrl ?? "https://custom-fixture.example/v1",
         endpoint: {
           baseUrl: "http://host.openshell.internal:11434/v1",
           requests: () => requests,
@@ -109,11 +109,6 @@ describe("Hermes custom hosted rebuild evidence", () => {
     const h = harness();
     await h.run();
     expect(h.operations).toEqual(["configure", "baseline", "rebuild", "post"]);
-    expect(h.exec).toHaveBeenCalledExactlyOnceWith(
-      SANDBOX_NAME,
-      ["getent", "ahostsv4", "host.openshell.internal"],
-      expect.any(Object),
-    );
     const [binary, args, setup] = h.command.mock.calls[0]!;
     expect(binary).toBe("node");
     expect(args).toEqual([
@@ -127,7 +122,7 @@ describe("Hermes custom hosted rebuild evidence", () => {
       "--model",
       "custom-model",
       "--endpoint-url",
-      "http://172.19.0.1:11434/v1",
+      "https://custom-fixture.example/v1",
       "--credential-env",
       "COMPATIBLE_API_KEY",
       "--inference-api",
@@ -136,7 +131,6 @@ describe("Hermes custom hosted rebuild evidence", () => {
     ]);
     expect(setup!.env).toMatchObject({
       COMPATIBLE_API_KEY: "fixture-key",
-      NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: "172.19.0.1",
     });
     const recorded = {
       provider: "nvidia-prod",
@@ -191,18 +185,12 @@ describe("Hermes custom hosted rebuild evidence", () => {
       "retry/hermes-custom-after-rebuild.json",
     ]);
     const addedBudget =
-      h.exec.mock.calls[0]![2]!.timeoutMs! +
       h.command.mock.calls.reduce((sum, call) => sum + call[2]!.timeoutMs!, 0) +
       h.execShell.mock.calls.reduce((sum, call) => sum + call[2]!.timeoutMs!, 0);
-    expect(addedBudget).toBe(810_000);
+    expect(addedBudget).toBe(780_000);
   });
 
-  it.each([
-    { dns: result(1) },
-    { dns: result(0, "not-an-ip") },
-    { configure: result(1) },
-    { rebuild: result(1) },
-  ])(
+  it.each([{ configure: result(1) }, { rebuild: result(1) }])(
     "rejects unsuccessful setup or replacement before a post-rebuild turn: %j",
     async (options) => {
       const h = harness(options);
