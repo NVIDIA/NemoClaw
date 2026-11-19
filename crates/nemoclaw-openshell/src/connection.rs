@@ -343,6 +343,47 @@ mod tests {
         }
     }
 
+    /// A sandbox create that OpenShell rejects with `InvalidArgument` left
+    /// nothing behind; every other failure, rejection code, and operation can
+    /// follow a persisted sandbox or concerns another resource.
+    #[test]
+    fn only_an_invalid_argument_rejection_of_a_sandbox_create_created_nothing() {
+        let created_nothing = |operation, code| {
+            remote_rejection(operation, &tonic::Status::new(code, "rejected")).created_nothing()
+        };
+        assert!(created_nothing(
+            RejectableOperation::CreateSandbox,
+            tonic::Code::InvalidArgument
+        ));
+        for code in [
+            tonic::Code::FailedPrecondition,
+            tonic::Code::AlreadyExists,
+            tonic::Code::OutOfRange,
+            tonic::Code::ResourceExhausted,
+            tonic::Code::Unknown,
+            tonic::Code::Internal,
+            tonic::Code::Unavailable,
+            tonic::Code::DeadlineExceeded,
+            tonic::Code::Cancelled,
+        ] {
+            assert!(
+                !created_nothing(RejectableOperation::CreateSandbox, code),
+                "{code:?} can follow a persisted sandbox"
+            );
+        }
+        for operation in [
+            RejectableOperation::CreateWorkspace,
+            RejectableOperation::ExposeService,
+            RejectableOperation::DeleteProvider,
+            RejectableOperation::DeleteProviderProfile,
+        ] {
+            assert!(
+                !created_nothing(operation, tonic::Code::InvalidArgument),
+                "{operation:?} is not a sandbox create"
+            );
+        }
+    }
+
     #[test]
     fn authentication_keeps_the_bearer_sensitive_and_requests_bounded() {
         let mut interceptor = authentication(Some("secret-sentinel")).unwrap();

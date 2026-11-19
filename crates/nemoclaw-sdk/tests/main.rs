@@ -172,6 +172,8 @@ mod reference_combinations;
 mod reference_diagnostics;
 #[path = "refresh.rs"]
 mod refresh;
+#[path = "rejected_create.rs"]
+mod rejected_create;
 #[path = "replacement_cleanup.rs"]
 mod replacement_cleanup;
 #[path = "resource_management.rs"]

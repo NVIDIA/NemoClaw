@@ -3,7 +3,9 @@
 
 use crate::{Backend, Definition, Mutation, Protection, Row, State, plan_update};
 use async_trait::async_trait;
-use nemoclaw_backend::{Binding, Bound, Observation, ObservationError, refresh};
+use nemoclaw_backend::{
+    Binding, Bound, CREATED_NOTHING_SUMMARY, Observation, ObservationError, refresh,
+};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -321,8 +323,15 @@ impl ResourceAdapter {
     ) -> Option<State> {
         let (state, error) = mutation.into_parts();
         if let Some(error) = error {
+            // The SDK reads this summary to clear the creation's pending
+            // record; a create that left a binding behind keeps it.
+            let summary = if state.is_none() && error.created_nothing() {
+                CREATED_NOTHING_SUMMARY
+            } else {
+                "Apply incomplete"
+            };
             diags.root_error(
-                "Apply incomplete",
+                summary,
                 self.message(observation_message(error, sandbox_name(desired)), desired),
             );
         }

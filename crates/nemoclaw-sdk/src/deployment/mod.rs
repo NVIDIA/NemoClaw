@@ -430,8 +430,23 @@ impl Deployment {
         let mutations_settled = applied.is_ok();
         if !mutations_settled {
             let (started, unreported) = &*started.lock().expect("started creations");
+            // OpenShell rejected these creates before it created anything, so
+            // no resource exists whose ID was lost, even for a creation that
+            // an earlier apply left unresolved.
+            let uncreated: &[String] = match &applied {
+                Err(Error::Execution {
+                    uncreated: Some(addresses),
+                    ..
+                }) => addresses,
+                _ => &[],
+            };
             if !unreported {
                 record.forget_unstarted_creations(&earlier, started);
+            }
+            if !uncreated.is_empty() {
+                record.forget_uncreated(uncreated);
+            }
+            if !unreported || !uncreated.is_empty() {
                 store.save(&record)?;
             }
         }

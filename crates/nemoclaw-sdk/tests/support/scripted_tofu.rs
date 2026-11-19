@@ -30,7 +30,10 @@ use std::{
 /// `block`, which sleeps 30 s unless the SDK interrupts it, or `stubborn`, which
 /// ignores interrupts, records its process ID in `root.apply-pid`, and sleeps
 /// 30 s; both exec `sleep` so that an interrupt reaches the sleeping process,
-/// because a shell that waits for a child can lose it),
+/// because a shell that waits for a child can lose it; or `reject`, which
+/// reports the create of the resource named in `root.reject` as failed with the
+/// summary in `root.reject-summary`, by default the provider's marker for a
+/// create that made nothing),
 /// `planning` (`ok` or `fail`, for `plan`), `state` (the `show -json` state),
 /// `outputs` (lines a successful apply prints after its events, such as
 /// OpenTofu's final `outputs` message), and the name of a saved plan (the
@@ -65,6 +68,19 @@ case "$1" in
     case "$mode" in
       block|stubborn) exec sleep 30 ;;
       fail) printf 'provider failed\n' >&2; exit 1 ;;
+      reject)
+        # OpenTofu's events for a create that the backend rejected without
+        # creating anything: the provider's marked error, which OpenTofu
+        # attributes to the resource's address named in `root.reject`.
+        address=$(cat "$control/$stage.reject")
+        summary='Create rejected; nothing created'
+        [ -f "$control/$stage.reject-summary" ] && summary=$(cat "$control/$stage.reject-summary")
+        printf '%s\n' \
+          '{"type":"apply_complete","hook":{"resource":{"addr":"openshell_kubernetes_storage.runtime","resource_type":"openshell_kubernetes_storage"},"action":"create"}}' \
+          "{\"type\":\"apply_start\",\"hook\":{\"resource\":{\"addr\":\"$address\",\"resource_type\":\"openshell_sandbox\"},\"action\":\"create\"}}" \
+          "{\"type\":\"apply_errored\",\"hook\":{\"resource\":{\"addr\":\"$address\",\"resource_type\":\"openshell_sandbox\"},\"action\":\"create\"}}" \
+          "{\"type\":\"diagnostic\",\"diagnostic\":{\"severity\":\"error\",\"summary\":\"$summary\",\"detail\":\"OpenShell rejected the request\",\"address\":\"$address\"}}"
+        exit 1 ;;
       *)
         if [ -f "$control/$stage.outputs" ]; then cat "$control/$stage.outputs"; fi
         printf '{"version":4,"resources":[]}\n' > terraform.tfstate ;;

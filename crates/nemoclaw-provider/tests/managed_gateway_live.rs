@@ -5,6 +5,8 @@
 
 #[path = "managed_gateway_live/profile_revision.rs"]
 mod profile_revision;
+#[path = "managed_gateway_live/rejected_create.rs"]
+mod rejected_create;
 
 use bollard::{Docker, query_parameters::CreateContainerOptions};
 use nemoclaw_provider::docker::Engine;

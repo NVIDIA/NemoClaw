@@ -856,3 +856,35 @@ fn a_failed_apply_forgets_only_new_creations_it_never_started() {
     record.forget_unstarted_creations(&BTreeSet::new(), &BTreeSet::new());
     assert!(!record.pending(), "nothing started, so nothing is at risk");
 }
+
+#[test]
+fn a_creation_the_backend_rejected_before_creating_anything_stops_being_pending() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    let targets = crate::compile::targets(&document, &record.generations).unwrap();
+    let (rejected, lost) = (&targets[0], &targets[1]);
+    // The rejected creation was pending from an earlier apply, as in state
+    // that an older release saved; the other one lost its reply.
+    record.begin_apply(
+        &document,
+        [
+            (rejected.address.clone(), rejected.values.clone()),
+            (lost.address.clone(), lost.values.clone()),
+        ]
+        .into(),
+    );
+    record.forget_uncreated(std::slice::from_ref(&rejected.address));
+    assert_eq!(
+        record.pending_creation_addresses(),
+        [lost.address.clone()].into(),
+        "the other creation still may have created a resource"
+    );
+    assert!(record.pending());
+    record.forget_uncreated(&["openshell_sandbox.unknown".into()]);
+    assert!(record.pending(), "an unrelated address resolves nothing");
+    record.forget_uncreated(std::slice::from_ref(&lost.address));
+    assert!(!record.pending());
+    assert!(record.pending_creation_addresses().is_empty());
+}

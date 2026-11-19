@@ -206,6 +206,16 @@ impl Record {
             self.finish_apply();
         }
     }
+    /// After a failed apply, forget the creations that the backend rejected
+    /// before it created anything, even ones an earlier apply left unresolved:
+    /// no resource exists whose ID was lost, so there is nothing to recover.
+    pub fn forget_uncreated(&mut self, addresses: &[String]) {
+        self.pending_creations
+            .retain(|address, _| !addresses.contains(address));
+        if self.pending_creations.is_empty() {
+            self.finish_apply();
+        }
+    }
     // Keep the authored intent and recovery flags at the same checkpoint.
     fn prepare_apply(&mut self, document: &Document) {
         self.document = document.clone();

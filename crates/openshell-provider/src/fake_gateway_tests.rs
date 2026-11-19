@@ -489,6 +489,39 @@ async fn a_rejected_exposure_keeps_the_endpoints_the_update_would_remove() {
     assert_eq!(held, ["writer"], "the rejected update removed writer");
 }
 
+/// Only an invalid-argument rejection of the sandbox create is reported as a
+/// create that left nothing behind; any other failure may have created one.
+#[tokio::test]
+async fn only_an_invalid_argument_rejection_reports_a_create_that_made_nothing() {
+    for (code, created_nothing) in [
+        (tonic::Code::InvalidArgument, true),
+        (tonic::Code::FailedPrecondition, false),
+        (tonic::Code::Unavailable, false),
+    ] {
+        let fixture = Fixture::start().await;
+        let client = client(&fixture, Arc::new(EnvironmentSecrets));
+        let rows = fixture_rows("local");
+        let (_, sandbox) = rows.iter().find(|(kind, _)| *kind == "sandbox").unwrap();
+        for (kind, row) in rows.iter().filter(|(kind, _)| *kind != "sandbox") {
+            let result = client.ensure(kind, row).await;
+            assert!(result.error().is_none(), "{kind}: {:?}", result.error());
+        }
+        fixture.state.lock().unwrap().reject_rpc =
+            Some(("CreateSandbox", code, "invalid sandbox".into()));
+        let result = client.ensure("sandbox", sandbox).await;
+        let error = result.error().expect("the create was rejected");
+        assert_eq!(
+            error.created_nothing(),
+            created_nothing,
+            "{code:?}: {error:?}"
+        );
+        assert!(
+            fixture.state.lock().unwrap().sandboxes.is_empty(),
+            "{code:?}: the fake kept a sandbox it rejected"
+        );
+    }
+}
+
 /// A sandbox in a terminal phase is observed, with the reason it exited, so
 /// the plan can replace it; a running sandbox reports no exit.
 #[tokio::test]

@@ -55,6 +55,10 @@ pub enum Error {
         /// Data-source postconditions were the only reported apply failures.
         /// Absent for incomplete output or an ambiguous resource operation.
         postcondition_failures: Option<Vec<String>>,
+        /// The addresses of the creates that OpenShell rejected before it
+        /// created anything, when those rejections were the only reported
+        /// apply failures. Absent for incomplete output or any other failure.
+        uncreated: Option<Vec<String>>,
     },
     #[error("operation interrupted; retain state and reapply the same configuration")]
     Cancelled,
@@ -98,6 +102,7 @@ impl From<nemoclaw_runtime::Error> for Error {
                 operation: "memory protection".into(),
                 diagnostic,
                 postcondition_failures: None,
+                uncreated: None,
             },
             nemoclaw_runtime::Error::Cancelled => Self::Cancelled,
             nemoclaw_runtime::Error::ServiceStarting => Self::ServiceStarting,
