@@ -74,9 +74,8 @@ impl Fixture {
             task,
         }
     }
-    /// Serve a Docker-style engine API at an endpoint NemoClaw reaches on this
-    /// platform: a Unix socket, or elsewhere `ssh://127.0.0.1:PORT`, which
-    /// the `nemoclaw-fixture-ssh` relay forwards to a loopback port.
+    /// Serve a Docker-style engine API where this platform's local engines
+    /// listen: a Unix socket, or on Windows a named pipe.
     pub async fn engine(
         handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
     ) -> Self {
@@ -84,12 +83,41 @@ impl Fixture {
         {
             Self::start(handler).await
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            relay_as_ssh();
-            let mut fixture = Self::start_tcp(handler).await;
-            fixture.endpoint = fixture.endpoint.replacen("http://", "ssh://", 1);
-            fixture
+            Self::start_pipe(handler)
+        }
+    }
+    /// Serve on a new named pipe; `endpoint` is `npipe:////./pipe/NAME`.
+    #[cfg(windows)]
+    fn start_pipe(
+        mut handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
+    ) -> Self {
+        use tokio::net::windows::named_pipe::ServerOptions;
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let name = format!(
+            "nemoclaw-fixture-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let path = format!(r"\\.\pipe\{name}");
+        let mut listening = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&path)
+            .unwrap();
+        let task = tokio::spawn(async move {
+            loop {
+                listening.connect().await.unwrap();
+                // A client finds the pipe only while an instance listens.
+                let connected =
+                    std::mem::replace(&mut listening, ServerOptions::new().create(&path).unwrap());
+                serve(connected, &mut handler).await;
+            }
+        });
+        Self {
+            endpoint: format!("npipe:////./pipe/{name}"),
+            _directory: None,
+            task,
         }
     }
     /// Serve on an ephemeral loopback port; `endpoint` is `http://127.0.0.1:PORT`.
@@ -138,28 +166,6 @@ pub fn fixture_executable(name: &str) -> std::path::PathBuf {
         path.display()
     );
     path
-}
-/// Install the relay as `ssh` beside this test executable, once. Windows
-/// resolves a bare program name in the launching executable's directory
-/// before `PATH`, so the engine client reaches the relay without changing the
-/// environment.
-#[cfg(not(unix))]
-fn relay_as_ssh() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let executable = std::env::current_exe().unwrap();
-        let directory = executable.parent().unwrap();
-        let relay = fixture_executable("nemoclaw-fixture-ssh");
-        // Other test executables install it too; replace it atomically.
-        let staged = directory.join(format!("ssh-{}.tmp", std::process::id()));
-        std::fs::copy(&relay, &staged).unwrap();
-        let installed = directory.join(format!("ssh{}", std::env::consts::EXE_SUFFIX));
-        if std::fs::rename(&staged, &installed).is_err() {
-            // A running relay keeps the file open; the installed copy serves.
-            let _ = std::fs::remove_file(&staged);
-            assert!(installed.is_file());
-        }
-    });
 }
 async fn serve(
     stream: impl AsyncRead + AsyncWrite + Unpin,

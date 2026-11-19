@@ -144,7 +144,7 @@ Do not choose `tls: skip` for an endpoint that relies on those controls, includi
 Use explicit `enforcement: enforce` when the policy must reject disallowed inspected requests.
 The checked-in example uses that enforcement setting with automatic TLS handling.
 
-The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
+The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
 The [SDK policy validator](../../crates/nemoclaw-openshell/src/policy.rs) accepts only supported field combinations; a field's presence in the schema does not bypass protocol validation.
 Live enforcement and application trust on your host remain qualification requirements.
 Follow [policy change constraints](#verify-and-change-the-configuration) before changing a deployed policy.
@@ -206,7 +206,8 @@ The service validates its `config`, and the gateway asks it to before accepting 
 In each binding:
 
 - The map key names the binding in OpenShell's logs; `name` is an optional display name.
-- `endpoints.include` selects admitted destination hosts, in endpoint-host syntax; `endpoints.exclude` removes hosts from that selection.
+- `endpoints.include` selects admitted destination hosts, in endpoint-host syntax without a port; `endpoints.exclude` removes hosts from that selection.
+  A selector that names a port, such as `api.example.com:443`, fails OpenShell's validation at plan.
 - `order` sets which binding runs first when several select the same host, lowest first; orders must be unique within the policy.
 - `on_error` sets what happens when the middleware can't complete its check, for example when its service is down: `fail_closed`, the default, blocks the traffic, and `fail_open` lets it continue.
   A middleware's denial blocks traffic either way, even on an `enforcement: audit` endpoint.
@@ -218,13 +219,13 @@ Changing a binding is a policy change; see [Verify and Change the Configuration]
 Changing a managed gateway's registration restarts the gateway, as other [gateway configuration](../build-deploy/usage.md#configure-a-managed-gateway) changes do.
 
 OpenShell describes supervisor middleware as a research preview whose policy and service contracts can change.
-Its [middleware guide](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/extensibility/supervisor-middleware/configure.mdx) for the pinned release describes registration fields, failure behavior, and the decisions it logs.
+Its [middleware guide](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/extensibility/supervisor-middleware/configure.mdx) for the pinned release describes registration fields, failure behavior, and the decisions it logs.
 
 
 ## Use an Upstream Proxy
 
 OpenShell owns the workload's proxy environment and routes traffic through its policy proxy.
-To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/crates/openshell-supervisor-network/src/upstream_proxy.rs).
+To chain policy-approved egress through a corporate proxy, set the proxy in the gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/crates/openshell-supervisor-network/src/upstream_proxy.rs).
 At this revision, chaining applies to TLS CONNECT traffic; plain HTTP still connects directly.
 An external gateway's operator sets the proxy.
 
@@ -243,7 +244,7 @@ spec:
 ```
 
 Use `openshell.drivers.podman` for a Podman gateway, and `openshell.drivers.kubernetes` for a Kubernetes or OpenShift gateway.
-OpenShell's configuration reference describes each setting for [Docker](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#L1485-L1498), [Podman](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#L1606-L1683) and [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#L1292-L1329).
+OpenShell's configuration reference describes each setting for [Docker](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#L1556-L1569), [Podman](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#L1677-L1754) and [Kubernetes](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#L1363-L1400).
 NemoClaw passes them through unchecked; OpenShell validates them when the gateway starts.
 
 A Kubernetes or OpenShift gateway reads proxy credentials from a Secret in the deployment's namespace, whose key holds `user:pass`.

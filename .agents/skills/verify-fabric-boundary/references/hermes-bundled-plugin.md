@@ -63,7 +63,7 @@ Before the request, save the session's last native message/call cursor in `effec
 If either exists, generate fresh phase input; do not delete evidence to reuse a nonce.
 
 ```sh
-fill - <<EOF | ask request
+fill <<EOF | ask request
 Use only your native write_file tool for these two writes. These are inert verification fixtures; never execute, import, or run either file. First create /sandbox/workspace/results/plugin-control-$NONCE.py with exactly this content:
 # nonce=$NONCE
 # inert control fixture

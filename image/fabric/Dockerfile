@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# Move bun-LICENSE.md in versions.json to the release's commit with Bun.
 ARG BUN_IMAGE=oven/bun:1.4.4-slim@sha256:1846adf22496bd711036aae8be147e57bdebbaea2e5264e3e0b5af1db187d9a4
 ARG NODE_IMAGE=node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc
 ARG PYTHON_IMAGE=python:3.14.10-slim-trixie@sha256:af8a5aa14780025dbfbcfbc81bd8a91ebd87711dd5b0f48ed71090949dd7cb1d
@@ -10,7 +11,8 @@ ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab
 # installs, are pinned under imageSources.fabric in versions.json; Bake passes
 # them as the sources context, which `cargo images fetch` fills.
 # OpenClaw release 2026.9.34, the only version the pinned Fabric's OpenClaw
-# adapter supports; move it with the Fabric revision, not on its own.
+# adapter supports; move it with the Fabric revision, not on its own, and move
+# openclaw-LICENSE in versions.json to the release's commit with it.
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:70e88573161a9248cfe992c069f638085ac066278e03f11a46bcbd115f38e3fc
 # Hermes Agent's release image for the pinned Hermes source; only its built
 # dashboard and TUI bundle are copied. Move it with that source, not on its own.
@@ -24,8 +26,10 @@ FROM ${HERMES_IMAGE} AS hermes-upstream
 FROM ${BUN_IMAGE} AS bun
 FROM ${NODE_IMAGE} AS node
 # Only harnesses that run JavaScript copy this tree; the shared base has no Node.js.
-RUN mkdir -p /node/usr/local/bin /node/usr/local/lib \
+# Node.js's license carries the notices of the libraries its executable bundles.
+RUN mkdir -p /node/usr/local/bin /node/usr/local/lib /node/usr/local/share/doc/node \
     && cp -a /usr/local/bin/node /node/usr/local/bin/ \
+    && cp /usr/local/LICENSE /node/usr/local/share/doc/node/LICENSE \
     && cp -a /usr/local/lib/node_modules /node/usr/local/lib/ \
     && ln -s ../lib/node_modules/npm/bin/npm-cli.js /node/usr/local/bin/npm \
     && ln -s ../lib/node_modules/npm/bin/npx-cli.js /node/usr/local/bin/npx
@@ -109,6 +113,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep && 
 FROM interactive AS openclaw
 # Upstream owns /app as its own user; the sandbox only reads it.
 COPY --from=openclaw-upstream --chown=0:0 /app /app
+# OpenClaw's published image omits its license.
+COPY --from=sources --chmod=0644 /openclaw-LICENSE /opt/nemoclaw/source/openclaw-LICENSE
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
 # catalog.py publishes this declaration: the files the adapter reads, which
 # explicit filesystem grants must allow, and the executables it runs.
@@ -237,6 +243,8 @@ RUN mkdir -p /opt/opencode/adapters/typescript \
 # Fabric's OpenCode adapter runs on Bun, so this image carries Bun instead of Node.js.
 FROM runtime-base AS opencode
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+# Bun's image omits its license, which names the libraries Bun links statically.
+COPY --from=sources --chmod=0644 /bun-LICENSE.md /opt/nemoclaw/source/bun-LICENSE.md
 COPY --from=opencode-build /opt/opencode /opt/fabric-source
 # Fabric discovery skips symlinked directories, so link only the descriptor.
 RUN mkdir -p /opt/fabric/share/nemo-fabric/adapters/opencode \

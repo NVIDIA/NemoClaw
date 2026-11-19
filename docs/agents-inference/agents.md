@@ -70,7 +70,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/56a4207b3c7edacd6e0cceea0af7815d2df274ca/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID from a plan, as the [tutorial](../get-started/first-deployment.md#send-a-verification-request) does, and send a request:
@@ -189,6 +189,35 @@ The YAML `kind: api` integration creates a full-access REST rule for the endpoin
 For OAuth-refresh credentials, use an [operator-managed OpenShell provider](oauth-refresh.md).
 NemoClaw does not wrap its refresh contract, and manual sandbox attachments affect drift checks.
 
+## GPU Access for Agent Tools
+
+`gpus` asks OpenShell for that many GPUs for the programs the agent runs in its sandbox:
+
+```yaml
+spec:
+  sandboxes:
+    assistant:
+      gpus: 1
+```
+
+Merge this fragment into a complete deployment configuration.
+OpenShell picks the devices and refuses the sandbox when its compute driver cannot provide them: Docker needs CDI enabled, and Kubernetes needs nodes with allocatable `nvidia.com/gpu`.
+To pick specific GPUs on Docker or Podman, also list their CDI names in `driverConfig`, one for each requested GPU; `nvidia-ctk cdi list` prints the names:
+
+```yaml
+spec:
+  sandboxes:
+    assistant:
+      gpus: 1
+      driverConfig:
+        docker:
+          cdi_devices: ["nvidia.com/gpu=1"]
+```
+
+Kubernetes takes only the count.
+The request gives the sandbox's programs device access, not CUDA libraries; provide those in the agent image or on a read-only [mounted volume](../build-deploy/state.md#keep-agent-files-on-mounted-volumes).
+Changing `gpus` replaces the sandbox and its agent, so keep files that must survive on mounted volumes.
+
 ## Skills on a Mounted Volume
 
 Fabric passes the skills in `fabric_agent`'s `skills` block to the harness.
@@ -203,7 +232,7 @@ The agent also doesn't start when an entry's path doesn't exist or isn't a folde
 
 Use `directories` or `paths`, not both.
 Each adapter defines what a `paths` entry means: OpenClaw requires each one to hold `SKILL.md`, and Hermes passes it to its `skills.external_dirs` unchecked.
-For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/adapters) say which fields they support and what a path must hold.
+For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/56a4207b3c7edacd6e0cceea0af7815d2df274ca/adapters) say which fields they support and what a path must hold.
 The `bundled` field selects which of the harness's own skills load; leave it out to keep the harness's default.
 
 To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
@@ -311,7 +340,7 @@ Each harness finds the skills in a `folder` entry by its own rules:
 
 `duplicates` doesn't change which copy loads when a skill shares a name with the harness's own skill.
 Fabric doesn't expand `~` or `${VAR}` in a path; use absolute sandbox paths.
-The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
+The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/56a4207b3c7edacd6e0cceea0af7815d2df274ca/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
 
 ## Web Search
 

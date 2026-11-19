@@ -72,8 +72,8 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         let endpoint = url::Url::parse(&spec.settings.endpoint)
             .map_err(|_| Error::State("invalid managed Kubernetes endpoint"))?;
         // The Service publishes the endpoint's port on every node. The
-        // plaintext metrics port stays unpublished: at 0, the chart serves no
-        // metrics.
+        // plaintext metrics port stays unpublished: with metrics disabled, the
+        // chart serves no metrics.
         if let Some(service) = &expose.service {
             let port = endpoint
                 .port_or_known_default()
@@ -81,11 +81,8 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             values["service"] = json!({
                 "type": service.service_type.as_str(),
                 "nodePort": port,
-                // NVIDIA/OpenShell#5478 replaces this with metrics.enabled:
-                // false; the chart contract's exposed scenario catches the pin
-                // bump.
-                "metricsPort": 0,
             });
+            values["metrics"] = json!({"enabled": false});
         }
         // The Route passes TLS through the cluster's router by SNI to the
         // chart's ClusterIP Service, at whatever port the router serves.

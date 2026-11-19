@@ -69,12 +69,12 @@ run "verify" {
   assert {
     condition = (
       length(module.observed.registrations) == 2
-      && openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.server.endpoint == "${module.observed.http.endpoint}/v1"
-      && module.observed.registrations[openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration].credentials == {
-        (openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.sandbox_env) = "env:NVIDIA_INFERENCE_API_KEY"
+      && openshell_inference.inference_nvidia-7b10beb441f87130e1c5dc67.server.endpoint == "${module.observed.http.endpoint}/v1"
+      && module.observed.registrations[openshell_inference.inference_nvidia-7b10beb441f87130e1c5dc67.registration].credentials == {
+        (openshell_inference.inference_nvidia-7b10beb441f87130e1c5dc67.sandbox_env) = "env:NVIDIA_INFERENCE_API_KEY"
       }
-      && openshell_inference.inference_local-ceb21a97a2146548236ff520.server.endpoint == "http://172.20.0.1:${data.ollama_runtime.ollama_service_ollama-server.launch.port}/v1"
-      && module.observed.registrations[openshell_inference.inference_local-ceb21a97a2146548236ff520.registration].credentials == {}
+      && openshell_inference.inference_local-a21c64a088f98c60f915f82e.server.endpoint == "http://172.20.0.1:${data.ollama_runtime.ollama_service_ollama-server.launch.port}/v1"
+      && module.observed.registrations[openshell_inference.inference_local-a21c64a088f98c60f915f82e.registration].credentials == {}
     )
     error_message = "The hosted and Ollama bindings are not registered as configured."
   }
@@ -82,9 +82,9 @@ run "verify" {
   # Each sandbox names only its own provider and may reach only its endpoint.
   assert {
     condition = (
-      module.observed.agents.assistant.providers == [openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration]
+      module.observed.agents.assistant.providers == [openshell_inference.inference_nvidia-7b10beb441f87130e1c5dc67.registration]
       && module.observed.agents.assistant.policy_endpoints == ["${trimprefix(module.observed.http.endpoint, "http://")}/v1/**"]
-      && module.observed.agents.researcher.providers == [openshell_inference.inference_local-ceb21a97a2146548236ff520.registration]
+      && module.observed.agents.researcher.providers == [openshell_inference.inference_local-a21c64a088f98c60f915f82e.registration]
       && module.observed.agents.researcher.policy_endpoints == ["172.20.0.1:${data.ollama_runtime.ollama_service_ollama-server.launch.port}/v1/**"]
     )
     error_message = "A sandbox's inference binding or network access crosses to the other agent's provider."
@@ -97,9 +97,9 @@ run "verify" {
       length([for agent in values(module.observed.agents) : agent if agent.start != null]) == 2
       && module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)
       && module.observed.agents.researcher.start.configuration == jsondecode(terraform_data.agent_researcher.input)
-      && module.observed.agents.assistant.start.configuration.models.primary.base_url == openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.server.endpoint
+      && module.observed.agents.assistant.start.configuration.models.primary.base_url == openshell_inference.inference_nvidia-7b10beb441f87130e1c5dc67.server.endpoint
       && module.observed.agents.researcher.start.configuration.harness.adapter_id == "nvidia.fabric.hermes"
-      && module.observed.agents.researcher.start.configuration.models.primary.base_url == openshell_inference.inference_local-ceb21a97a2146548236ff520.server.endpoint
+      && module.observed.agents.researcher.start.configuration.models.primary.base_url == openshell_inference.inference_local-a21c64a088f98c60f915f82e.server.endpoint
     )
     error_message = "A Fabric agent did not start in its own sandbox with its own configuration."
   }

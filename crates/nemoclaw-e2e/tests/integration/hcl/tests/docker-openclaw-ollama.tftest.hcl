@@ -83,15 +83,15 @@ run "verify" {
   # that address and model.
   assert {
     condition = (
-      openshell_inference.inference_local-5834fdcc94534d6506776906.server.endpoint == "http://172.20.0.1:${data.ollama_runtime.ollama_service_ollama-server.launch.port}/v1"
-      && keys(module.observed.registrations) == [openshell_inference.inference_local-5834fdcc94534d6506776906.registration]
-      && values(module.observed.registrations)[0].config["OPENAI_BASE_URL"] == openshell_inference.inference_local-5834fdcc94534d6506776906.server.endpoint
+      openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e.server.endpoint == "http://172.20.0.1:${data.ollama_runtime.ollama_service_ollama-server.launch.port}/v1"
+      && keys(module.observed.registrations) == [openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e.registration]
+      && values(module.observed.registrations)[0].config["OPENAI_BASE_URL"] == openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e.server.endpoint
       && values(module.observed.registrations)[0].credentials == {}
-      && module.observed.agents.assistant.providers == [openshell_inference.inference_local-5834fdcc94534d6506776906.registration]
+      && module.observed.agents.assistant.providers == [openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e.registration]
       && module.observed.agents.assistant.policy_endpoints == ["172.20.0.1:${data.ollama_runtime.ollama_service_ollama-server.launch.port}/v1/**"]
       && module.observed.agents.assistant.start.command == ["/opt/fabric/bin/fabric-agent-ctl", "start", "--agent", "main", "--config", "-"]
       && module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)
-      && module.observed.agents.assistant.start.configuration.models.primary.base_url == openshell_inference.inference_local-5834fdcc94534d6506776906.server.endpoint
+      && module.observed.agents.assistant.start.configuration.models.primary.base_url == openshell_inference.inference_local-d6ca74ad95e4f1d5f302f50e.server.endpoint
       && module.observed.agents.assistant.start.configuration.models.primary.model == "qwen3:0.6b"
     )
     error_message = "The Ollama binding, the sandbox's access to it, or the agent's configuration differs from the service."

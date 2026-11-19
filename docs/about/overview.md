@@ -3,7 +3,7 @@
 
 # Overview
 
-NemoClaw manages agent deployments from desired-state YAML. You can preview and reconcile a deployment with its CLI, or integrate the same operations into a Rust application. It combines OpenShell sandbox isolation and inference routing with Fabric-managed agent runtimes. Keeping deployment state lets you check changes and recover interrupted operations; it does not back up agent files or conversations.
+NemoClaw Agent Configs manages agent deployments from YAML. You can preview and apply deployment changes with its CLI, or integrate the same operations into a Rust application. It combines OpenShell sandbox isolation and inference routing with Fabric-managed agent runtimes. Keeping deployment state lets you check changes and recover interrupted operations; it does not back up agent files or conversations.
 
 ## What You Can Do
 
@@ -17,5 +17,7 @@ The inspected v1 implementation supports these workflows; use a bundle and agent
 The CLI does not invoke agents, manage channels, or take snapshots. An apply checks configuration and runtime readiness, not a model response. Refer to [native agent access](../agents-inference/agents.md#choose-native-access) and [current limits](../resources/limits.md) before choosing a workflow. v1 has no published release or support policy established by these sources; refer to [Release Notes](release-notes.md).
 
 ## Where to Start
+
+Coming from Classic? Use the [migration guide](../get-started/migration.md) to assess your workflows before evaluating a separate deployment.
 
 For a first deployment, [check prerequisites](../get-started/prerequisites.md) and follow the [guided OpenClaw deployment](../get-started/first-deployment.md). For a different environment, [Architecture Overview](architecture-overview.md) explains the deployment flow and ownership, and [Ecosystem](ecosystem.md) distinguishes the adjacent products. Before changing an existing deployment, [review data retention](../build-deploy/state.md#deletion-and-retention) and [recovery](../build-deploy/usage.md#updates-and-recovery).

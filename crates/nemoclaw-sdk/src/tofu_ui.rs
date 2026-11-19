@@ -7,8 +7,15 @@ use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
+/// The longest message the adapter reads. Every event it forwards is far
+/// shorter; a successful apply's final `outputs` message carries every root
+/// output's value and can be longer, so a longer message is skipped unread.
+const LINE_LIMIT: usize = 1024 * 1024;
+
 pub(crate) struct Ui {
     line: Vec<u8>,
+    /// The last byte so far of a message too long to read, while it is skipped.
+    skipped: Option<u8>,
     version: bool,
     invalid: bool,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
@@ -18,6 +25,7 @@ impl Ui {
     pub(crate) fn new(progress: Arc<dyn Fn(Progress) + Send + Sync>) -> Self {
         Self {
             line: Vec::new(),
+            skipped: None,
             version: false,
             invalid: false,
             progress,
@@ -30,10 +38,20 @@ impl Ui {
                 return;
             }
             if byte == b'\n' {
-                self.message();
+                match self.skipped.take() {
+                    Some(last) => self.invalid = last != b'}',
+                    None => self.message(),
+                }
                 self.line.clear();
-            } else if self.line.len() < 1024 * 1024 {
+            } else if let Some(last) = &mut self.skipped {
+                *last = byte;
+            } else if self.line.len() < LINE_LIMIT {
                 self.line.push(byte);
+            } else if self.version && self.line.first() == Some(&b'{') {
+                // A long message must still be one JSON object after the
+                // version message; only its framing is checked.
+                self.skipped = Some(byte);
+                self.line.clear();
             } else {
                 self.invalid = true;
             }
@@ -133,7 +151,9 @@ impl Ui {
         });
     }
     pub(crate) fn finish(mut self) -> std::io::Result<()> {
-        if !self.line.is_empty() && !self.invalid {
+        if let Some(last) = self.skipped.take() {
+            self.invalid |= last != b'}';
+        } else if !self.line.is_empty() && !self.invalid {
             self.message();
         }
         if self.invalid || !self.version {
@@ -324,18 +344,78 @@ mod tests {
             assert!(!format!("{:?}", received.lock().unwrap()).contains("secret-sentinel"));
         }
     }
+
+    /// A message of `len` bytes framed as one JSON object.
+    fn long_object(len: usize) -> Vec<u8> {
+        let mut message = b"{\"type\":\"outputs\",\"outputs\":\"".to_vec();
+        message.resize(len - 2, b'x');
+        message.extend_from_slice(b"\"}");
+        message
+    }
+
     #[test]
-    fn rejects_unsupported_missing_malformed_and_oversized_streams() {
-        for input in [
-            b"".as_slice(),
-            b"{\"type\":\"version\",\"ui\":\"2.0\"}\n",
-            b"not json\n",
-            b"{\"type\":\"apply_start\"}\n",
-            &vec![b'x'; 1024 * 1024 + 1],
+    fn long_objects_after_the_version_are_skipped_and_later_events_still_reported() {
+        let mut stream = b"{\"type\":\"version\",\"ui\":\"1.2\"}\n".to_vec();
+        stream.extend(long_object(LINE_LIMIT + 1));
+        stream.extend_from_slice(b"\n{\"type\":\"apply_complete\",\"hook\":{\"resource\":{\"resource_type\":\"openshell_sandbox\",\"addr\":\"openshell_sandbox.assistant\"},\"action\":\"create\"}}\n");
+        // A successful apply ends with its outputs message.
+        stream.extend(long_object(2 * LINE_LIMIT));
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let events = received.clone();
+        let mut ui = Ui::new(Arc::new(move |event| events.lock().unwrap().push(event)));
+        for chunk in stream.chunks(64 * 1024) {
+            ui.feed(chunk);
+        }
+        ui.finish().unwrap();
+        assert!(
+            matches!(
+                received.lock().unwrap().as_slice(),
+                [Progress::Resource {
+                    status: "complete",
+                    ..
+                }]
+            ),
+            "the event after a long message is reported"
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_missing_and_malformed_streams_and_unframed_long_lines() {
+        let version = b"{\"type\":\"version\",\"ui\":\"1.2\"}\n".as_slice();
+        let after_version = |message: &[u8]| [version, message].concat();
+        // Each long line below breaks one rule, so each case tests one check.
+        let mut unterminated = long_object(LINE_LIMIT + 2);
+        unterminated.pop();
+        let mut unopened = long_object(LINE_LIMIT + 1);
+        unopened[0] = b'x';
+        for (input, case) in [
+            (b"".to_vec(), "empty"),
+            (
+                b"{\"type\":\"version\",\"ui\":\"2.0\"}\n".to_vec(),
+                "unsupported version",
+            ),
+            (b"not json\n".to_vec(), "not JSON"),
+            (b"{\"type\":\"apply_start\"}\n".to_vec(), "no version"),
+            (
+                [&long_object(LINE_LIMIT + 1), b"\n".as_slice(), version].concat(),
+                "long object before the version",
+            ),
+            (
+                after_version(&[&unopened, b"\n".as_slice()].concat()),
+                "long line that doesn't open an object",
+            ),
+            (
+                after_version(&[&unterminated, b"\n".as_slice()].concat()),
+                "long line that doesn't close an object",
+            ),
+            (
+                after_version(&unterminated),
+                "long object cut off at the end of the stream",
+            ),
         ] {
             let mut ui = Ui::new(Arc::new(|_| panic!("invalid stream emitted progress")));
-            ui.feed(input);
-            assert!(ui.finish().is_err());
+            ui.feed(&input);
+            assert!(ui.finish().is_err(), "accepted: {case}");
         }
     }
 }

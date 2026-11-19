@@ -1,6 +1,6 @@
 {
   "opentofu": "1.13.9",
-  "openshell": "0.1.8",
+  "openshell": "0.1.9",
   "ollama": "0.40.16",
   "platforms": {
     "linux_arm64": {
@@ -33,8 +33,8 @@
         "sha256": "77515e5576f4ea3d8d9e404237882de62518950ccd7b312371f5c03580f22fb0"
       },
       "openshell": {
-        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.8/openshell-aarch64-unknown-linux-musl.tar.gz",
-        "sha256": "9a2e8f522ccfb3fbd1ed1985a51191a60e083f3404903a56bd4813710a2c7080"
+        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.9/openshell-aarch64-unknown-linux-musl.tar.gz",
+        "sha256": "cb923d08703b966f7e0e6b1483ed4ba6ed77bc10812c5502bcc1fb6ee0f6ad59"
       }
     },
     "linux_amd64": {
@@ -67,8 +67,8 @@
         "sha256": "24a942352667cf49bed467c51a951f17a6c13e0cdf1c505b01b41f75a1a60d0f"
       },
       "openshell": {
-        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.8/openshell-x86_64-unknown-linux-musl.tar.gz",
-        "sha256": "87f5c41d396dcd36b4c30a7b5e6f41643a656cb31a82b0edbb00319c9a719c2d"
+        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.9/openshell-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "3856ac7b6b2e33d6c8ab72a1036444156516e7303da85a9b13f661a2aa63bd2d"
       }
     },
     "darwin_arm64": {
@@ -141,21 +141,20 @@
   "rust": "1.100.0",
   "protobuf": "36.2",
   "nextest": "0.9.152",
-  "openshellRevision": "f3d976590d3eb1379690a2abaf0f0e26c21d487d",
+  "openshellRevision": "ce58cf8e9b953281352d98a637e41616295b1318",
   "images": {
-    "agent": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
-    "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:d66352a54c680b652e5ddd7d19b9c1189568d18016f360b9b8c64014f13d89c4",
-    "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:deadeacfdba6d12ca27e538d0002696369d4de5a4fcad075ab503495503af9d1",
-    "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:f0fe7dbf18d833acb5da99c405231124718f23b524aa8e3c0108e6f37530033b",
-    "gatewayChart": "oci://ghcr.io/nvidia/openshell/helm-chart@sha256:39a56c77b78edd2a5c4ac7e17720b5720e1649e5e9f63743342a53940c01be81",
+    "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:1fd9e1e807990e66c9486a28d3ce9d649fd7528df48d0e830d2de2148b52dfe5",
+    "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:f1ec231b5dbe5b6a40c33acb2ac847995aabb959a56134ef6d7d7aa4f43199d3",
+    "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:e57d07cd6cc1fc314b80368d6b51ec6fbf825fb62cd8f081312941180846866f",
+    "gatewayChart": "oci://ghcr.io/nvidia/openshell/helm-chart@sha256:fbec11e7c70b896ff10d1e898c1749ab1f7ca306ebb98bd3101daad813e11c26",
     "developmentIssuer": "docker.io/nginxinc/nginx-unprivileged@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03",
     "kindNode": "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
   },
   "imageSources": {
     "fabric": {
       "fabric.tar.gz": {
-        "url": "https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780",
-        "sha256": "ef8d058019151e4d51f456020432005d46b632cf4b8bda1f431559298bf92e84"
+        "url": "https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/56a4207b3c7edacd6e0cceea0af7815d2df274ca",
+        "sha256": "f66e2623690b9cf60e1c94fdd08504267748946936cf84139661c80798fa089c"
       },
       "hermes.tar.gz": {
         "url": "https://codeload.github.com/NousResearch/hermes-agent/tar.gz/b200f5bc60e31588ba2cb60e288029c4a54ba5fa",
@@ -168,12 +167,42 @@
       "switchyard-arm64.tar.gz": {
         "url": "https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-0.3.2/switchyard-plugin-0.3.2-linux-arm64.tar.gz",
         "sha256": "a8eb7876ce677eb7f779fa5509c706dc39e9d34e0b647a9e5ec19c8d075066ca"
+      },
+      "openclaw-LICENSE": {
+        "url": "https://raw.githubusercontent.com/openclaw/openclaw/f123d430a7dea78c9d78e05606c4cad621c0e2c8/LICENSE",
+        "sha256": "73571b25326281d369087f469842c02444fe39faaecebda4d82ed21ff3a1c29d"
+      },
+      "bun-LICENSE.md": {
+        "url": "https://raw.githubusercontent.com/oven-sh/bun/38afee6c84fcf48c0edb2466aa4b27d287a59c30/LICENSE.md",
+        "sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd"
       }
     },
     "ollama": {
       "ollama-LICENSE": {
         "url": "https://raw.githubusercontent.com/ollama/ollama/d63b702609c4300a2ca07be2bdb0adb9834725e5/LICENSE",
         "sha256": "5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226"
+      }
+    },
+    "llama-cpp": {
+      "llama.cpp-LICENSE": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/LICENSE",
+        "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+      },
+      "nlohmann-json-LICENSE": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/licenses/LICENSE-jsonhpp",
+        "sha256": "c0d068392ea65358b798b8c165103560f06e9e3b38c4ab4e2d8810a7b931af86"
+      },
+      "cpp-httplib-LICENSE": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/vendor/cpp-httplib/LICENSE",
+        "sha256": "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b"
+      },
+      "rotate-bits-LICENSE.md": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/vendor/hash/rotate-bits/LICENSE.md",
+        "sha256": "ca0b44aec101afb6b46f4c39b23369fa06a64fb9c0add37c2689d702156fee55"
+      },
+      "xxhash-LICENSE": {
+        "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/9d25e0014c4b4b316873c01f4938c0e3c687287d/vendor/hash/xxhash/LICENSE",
+        "sha256": "6ffedbc0f7878612d2b23589f1ff2ab15633e1df7963a5d9fc750ec5500c7e7a"
       }
     }
   },

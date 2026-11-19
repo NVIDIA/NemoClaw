@@ -75,6 +75,16 @@ fn observed(agent: &Row, running: bool) -> Row {
     row
 }
 
+/// `prior` as planning updates it once refresh found its runtime not running:
+/// the next runtime's ID and whether it runs are unknown.
+fn replanned(prior: &Row) -> Row {
+    let mut planned = prior.clone();
+    for field in ["runtime_id", "running"] {
+        planned.insert(field.into(), String::new());
+    }
+    planned
+}
+
 fn operations(fixture: &Fixture, operation: &str) -> usize {
     fixture
         .state
@@ -280,10 +290,9 @@ async fn an_agent_whose_runtime_stopped_starts_again_in_its_sandbox() {
     // The runtime stops; refresh records it, and the next apply plans the
     // agent's running state anew.
     fixture.state.lock().unwrap().fabric_runtimes.clear();
-    let mut planned = fabric.read("agent", &agent, false).await.unwrap().unwrap();
-    assert_eq!(planned["running"], "false");
-    planned.remove("running");
-    let started = fabric.ensure("agent", &planned).await;
+    let prior = fabric.read("agent", &agent, false).await.unwrap().unwrap();
+    assert_eq!(prior["running"], "false");
+    let started = fabric.update("agent", &replanned(&prior), &prior).await;
     assert!(started.error().is_none(), "{:?}", started.error());
     let restarted = started.into_parts().0.unwrap();
     // Fabric stops the recorded runtime, then starts one in the same sandbox.
@@ -547,6 +556,41 @@ async fn a_restarted_runtime_starts_with_the_same_agent_document_as_the_first() 
     assert_eq!(first["metadata"]["name"], "main");
     assert_eq!(first["runtime"], expected["runtime"]);
     assert_eq!(first["skills"], expected["skills"]);
+}
+
+#[tokio::test]
+async fn a_failed_runtime_that_holds_kept_state_stops_before_another_starts() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture);
+    let sandbox = create_sandbox(&client, "fabric-hermes").await;
+    let fabric = AgentBackend(client.clone());
+    let started = fabric
+        .ensure("agent", &desired_with(&sandbox, &kept_state_config()))
+        .await;
+    assert!(started.error().is_none(), "{:?}", started.error());
+    let agent = started.into_parts().0.unwrap();
+    let failed = agent["runtime_id"].clone();
+
+    // Fabric marks the runtime failed but leaves its processes running, and
+    // they keep the lock on the agent's kept state.
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .fabric_failed
+        .insert(failed.clone());
+    let prior = fabric.read("agent", &agent, false).await.unwrap().unwrap();
+    assert_eq!(prior["running"], "false");
+    let replaced = fabric.update("agent", &replanned(&prior), &prior).await;
+    assert!(replaced.error().is_none(), "{:?}", replaced.error());
+    let replaced = replaced.into_parts().0.unwrap();
+    assert_eq!(replaced["running"], "true");
+    assert_ne!(replaced["runtime_id"], failed);
+    let state = fixture.state.lock().unwrap();
+    assert!(
+        !state.fabric_runtimes.contains_key(&failed),
+        "the failed runtime must be stopped"
+    );
 }
 
 #[tokio::test]

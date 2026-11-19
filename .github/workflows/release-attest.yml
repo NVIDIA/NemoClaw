@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Attest each image index's build provenance with a GitHub artifact attestation,
+# and store it beside the image as an OCI referrer, so the index digest stays
+# the one staging pushed. Attest the CLI archives and their SHA256SUMS by the
+# digests staging recorded after packing them. Release / Stage calls this for a
+# final release.
+name: Release / Attest
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: 'JSON array of {name, repository, digest}, one entry per image index.'
+        required: true
+        type: string
+      checksums:
+        description: 'The CLI archives and SHA256SUMS, one "<sha256>  <file>" line each, as sha256sum writes them.'
+        required: true
+        type: string
+permissions: {}
+jobs:
+  archives:
+    name: CLI archives
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Write the subjects
+        env:
+          CHECKSUMS: ${{ inputs.checksums }}
+        run: printf '%s\n' "$CHECKSUMS" > "$RUNNER_TEMP/subjects"
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/subjects
+  attest:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.images) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      # The attest action and gh read the registry credentials Docker stores.
+      - name: Sign in to the registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      # push-to-registry takes a single subject, hence one job per index.
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ matrix.repository }}
+          subject-digest: ${{ matrix.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Verify the attestation stored in the registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REFERENCE: ${{ matrix.repository }}@${{ matrix.digest }}
+        run: gh attestation verify "oci://$REFERENCE" --owner "$GITHUB_REPOSITORY_OWNER" --bundle-from-oci
+      - name: Sign out of the registry
+        if: always()
+        run: docker logout ghcr.io

@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Shared structural contract for authored input and normalized SDK values.
-use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, constraints as c};
+use crate::config::{API_VERSION, constraints as c};
 use serde_json::{Value, json};
 
 pub(crate) use nemoclaw_runtime::schema::{at, forbid, property};
+
+const IMAGE_REF_ERROR: &str = "image.ref must name an agent image pinned by a SHA-256 digest; no default image is published, so build one as described at https://github.com/NVIDIA/NemoClaw/blob/v1/docs/build-deploy/build.md#build-agent-images";
 fn optional_string(
     schema: &mut Value,
     field: &str,
@@ -237,20 +239,28 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         json!({"minProperties":1,"propertyNames": {"pattern": c::SLUG}}),
     );
     defs["Sandbox"]["allOf"] = json!([]);
-    optional_string(
+    // No published agent image exists to default to, so every runtime needs an
+    // explicit one; an omitted image would only fail in the engine's pull after
+    // the gateway exists.
+    property(
         &mut defs["Image"],
         "ref",
-        DEFAULT_AGENT_IMAGE,
-        &json!({"pattern": c::IMAGE}),
-        normalized,
+        json!({"pattern": c::IMAGE, "x-nemoclaw-error": IMAGE_REF_ERROR}),
     );
-    defs["Image"]["properties"]["ref"]
+    defs["Image"]["required"] = json!(["ref"]);
+    property(
+        &mut defs["Sandbox"],
+        "image",
+        json!({"x-nemoclaw-error": IMAGE_REF_ERROR}),
+    );
+    defs["Sandbox"]
         .as_object_mut()
         .unwrap()
-        .remove("default");
-    defs["Image"]["properties"]["ref"]["x-nemoclaw-default-rule"] = json!(
-        "Kubernetes and OpenShift require an explicit immutable image reference. For other drivers, omitted or empty selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter."
-    );
+        .entry("required")
+        .or_insert(json!([]))
+        .as_array_mut()
+        .unwrap()
+        .push(json!("image"));
     property(
         &mut defs["Runtime"],
         "provider",
@@ -360,7 +370,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                     "engine",
                     // Docker's socket is the default for a Docker runtime only;
                     // the Podman rule below requires an explicit socket.
-                    json!({"anyOf": [{"const":""},{"pattern":"^unix:///"}], "default": c::GATEWAY_ENGINE}),
+                    json!({"anyOf": [{"const":""},{"pattern":"^(unix:///|npipe:////\\./pipe/)"}], "default": c::GATEWAY_ENGINE}),
                 ),
                 (
                     "networkCIDR",
@@ -485,11 +495,11 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "then": at("spec/gateway/endpoint", json!({"not": {"pattern": r"^https://[0-9]+(?:\.[0-9]+){3}:[0-9]+$"}}), true),
         "x-nemoclaw-error": "kubernetes.expose.route needs an endpoint with a DNS name, because the Route's host is the endpoint's and clients send no SNI host name for an IP address; kubernetes.expose.service accepts an IP address"
     }));
-    // Cluster sandboxes need an explicit image, since no local engine supplies
-    // a default; image metadata stands in for engine inspection only there.
+    // Cluster sandboxes also need image metadata, since no local engine can be
+    // inspected; it stands in for engine inspection only there.
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
-        "then": at("spec/sandboxes/*/image", json!({"required": ["ref", "metadata"], "properties": {"ref": {"pattern": c::IMAGE}}}), true),
+        "then": at("spec/sandboxes/*/image", json!({"required": ["metadata"]}), true),
         "else": at("spec/sandboxes/*/image", forbid(&["metadata"]), false)
     }));
     root["allOf"].as_array_mut().unwrap().push(json!({

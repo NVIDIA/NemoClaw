@@ -3,7 +3,7 @@
 
 # Maintainer Documentation
 
-Use the [public guide](../docs/README.md) for deployment tasks. The pages here record maintainer procedures and design decisions; they are not published in the NemoClaw Agent Config reader navigation.
+Use the [public guide](../docs/README.md) for deployment tasks. The pages here record maintainer procedures and design decisions; they are not published in the v1 reader navigation.
 
 ## Contribute and Validate
 
@@ -12,16 +12,15 @@ Use the [public guide](../docs/README.md) for deployment tasks. The pages here r
 | Run workspace checks and collect coverage | [Tests](contributing/testing.md) |
 | Exercise OpenTofu and bundles with local fixtures | [Integration tests](contributing/integration-tests.md) |
 | Test explicitly owned live resources | [Live tests](contributing/live-tests.md) |
-| Stage a private NemoClaw Agent Config release | [Release staging](contributing/releases.md) |
+| Stage a private v1 release | [Release staging](contributing/releases.md) |
 | Write and reorganize guides | [Documentation contribution](contributing/documentation.md) |
 | Validate, preview, or publish the site | [Documentation build](contributing/documentation-build.md) |
 | Maintain generated schema and field reference | [Schema maintenance](contributing/configuration-schema.md) |
 | Maintain agent image pins, catalogs, and test fixtures | [Agent image maintenance](contributing/agent-image-maintenance.md) |
 | Assess image changes | [Image assessment](contributing/image-assessment.md) |
+| Review image licenses before a release | [Image licenses](contributing/image-licenses.md) |
 
 ## Design Decisions
-
-The [matrix fallback definitions](v1-roadmap.md) cover capabilities without a matching primary issue; existing GitHub issues own the remaining scope and acceptance.
 
 | Topic | Record |
 |---|---|

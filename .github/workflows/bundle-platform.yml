@@ -359,6 +359,8 @@ jobs:
       - name: Identify bundle artifact
         id: identity
         run: echo "artifact=bundle-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      # Release / Stage attaches the bundles of a tag's push or manual run to
+      # the tag's release, so they stay for a week.
       - name: Upload bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -366,7 +368,7 @@ jobs:
           path: .build/ci/bundle.tar
           include-hidden-files: true
           compression-level: 1
-          retention-days: 1
+          retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
           if-no-files-found: error
 
   tests:

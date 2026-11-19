@@ -280,8 +280,11 @@ async fn probe() {
 /// with the pinned OpenShell CLI, then send one request, with the token as a
 /// Bearer credential when there is one. A service without a token file can
 /// name the page global that holds its session token, which a browser reads
-/// from the page. The published report holds the status; the token stays in
-/// memory and the body in the private work directory for `hcl/interface`.
+/// from the page. With a prompt, the request is a browser chat instead: see
+/// `browser_chat`. The published report holds the status, how a chat's
+/// connection ended early, and where the token appears that it must not: in
+/// the deployment's state or apply's output. The token stays in memory and the
+/// body in the private work directory for `hcl/interface`.
 #[tokio::test]
 #[ignore = "run by tests/e2e/hcl/interface for one target"]
 async fn interface() {
@@ -300,6 +303,22 @@ async fn interface() {
             Some(String::from_utf8(output.stdout).unwrap().trim().to_owned())
         }
     };
+    // NemoClaw reports where an interface's token is and never reads it, so
+    // the token must be in neither the deployment's state nor apply's output.
+    let state = PathBuf::from(input("STATE"));
+    assert!(
+        state.join("terraform.tfstate").is_file(),
+        "the deployment has no state"
+    );
+    let mut exposed = Vec::new();
+    if let Some(token) = &token {
+        if holds(&state, token.as_bytes()) {
+            exposed.push("the deployment's state");
+        }
+        if input("REPORTED").contains(token.as_str()) {
+            exposed.push("apply's output");
+        }
+    }
     let local = TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -337,34 +356,155 @@ async fn interface() {
             page_global(&page, name)
         }
     };
-    let url = format!("{base}{}", input("PATH"));
-    let body = input("BODY");
-    let (status, text) = through_forward(
-        || {
-            let request = if body.is_empty() {
-                client.get(&url)
-            } else {
-                client
-                    .post(&url)
-                    .header("Content-Type", "application/json")
-                    .body(body.clone())
-            };
-            match &token {
-                Some(token) => request.bearer_auth(token),
-                None => request,
-            }
-        },
-        deadline,
-    )
-    .await;
+    let (status, text, closed) = match input("PROMPT").as_str() {
+        "" => {
+            let url = format!("{base}{}", input("PATH"));
+            let body = input("BODY");
+            let (status, text) = through_forward(
+                || {
+                    let request = if body.is_empty() {
+                        client.get(&url)
+                    } else {
+                        client
+                            .post(&url)
+                            .header("Content-Type", "application/json")
+                            .body(body.clone())
+                    };
+                    match &token {
+                        Some(token) => request.bearer_auth(token),
+                        None => request,
+                    }
+                },
+                deadline,
+            )
+            .await;
+            (status, text, None)
+        }
+        prompt => {
+            let path = input("PATH");
+            let token = token.as_deref().unwrap_or_default();
+            browser_chat(local, &path, token, prompt, &input("CONTAINS"), deadline).await
+        }
+    };
     let _ = forward.kill();
     let _ = forward.wait();
     fs::write(input("RESPONSE"), text).unwrap();
     fs::write(
         input("REPORT"),
-        json!({"sandbox": sandbox, "port": input("PORT"), "status": status}).to_string(),
+        json!({"sandbox": sandbox, "port": input("PORT"), "status": status,
+            "closed": closed, "exposed": exposed})
+        .to_string(),
     )
     .unwrap();
+}
+
+/// Chat in the terminal UI that a page serves over a WebSocket at `path`, as
+/// a browser does in Hermes's dashboard at `/api/pty`: connect with the
+/// page's session token and the page's origin, wait for the screen to draw and
+/// settle, type the prompt, then Enter on its own, which a terminal UI would
+/// otherwise read as part of a paste, and read the screen until it shows
+/// `reply`. Returns the upgrade's status, what the screen showed after the
+/// prompt, and how the connection ended if it ended first.
+async fn browser_chat(
+    local: u16,
+    path: &str,
+    token: &str,
+    prompt: &str,
+    reply: &str,
+    deadline: std::time::Instant,
+) -> (u16, String, Option<String>) {
+    use futures_util::{SinkExt as _, StreamExt as _};
+    use std::time::Instant;
+    use tokio_tungstenite::tungstenite::{Error, Message, client::IntoClientRequest as _};
+    let mut url = url::Url::parse(&format!("ws://127.0.0.1:{local}{path}")).unwrap();
+    url.query_pairs_mut().append_pair("token", token);
+    let origin = format!("http://127.0.0.1:{local}");
+    let (mut chat, status) = loop {
+        let mut request = url.as_str().into_client_request().unwrap();
+        request
+            .headers_mut()
+            .insert("Origin", origin.parse().unwrap());
+        match tokio_tungstenite::connect_async(request).await {
+            Ok((chat, response)) => break (chat, response.status().as_u16()),
+            // Hermes closes a socket with 4401 for a bad credential and 4403
+            // for a host or origin it doesn't trust, before accepting it,
+            // which uvicorn sends as 403 to the upgrade.
+            Err(Error::Http(response)) => {
+                let status = response.status().as_u16();
+                let why = if status == 403 {
+                    "the dashboard refused the session token (4401) or the origin (4403); its log says which"
+                } else {
+                    "the dashboard refused the WebSocket"
+                };
+                return (status, String::new(), Some(format!("HTTP {status}: {why}")));
+            }
+            Err(_) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(error) => panic!("the WebSocket through the forward failed: {error}"),
+        }
+    };
+    let mut screen = Vec::new();
+    let mut typed = None;
+    let started = Instant::now();
+    let (mut drawn, mut quiet_since) = (None::<Instant>, Instant::now());
+    let closed = loop {
+        if started.elapsed() > Duration::from_secs(90) {
+            break None;
+        }
+        let output = match tokio::time::timeout(Duration::from_millis(500), chat.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => text.as_bytes().to_vec(),
+            Ok(Some(Ok(Message::Binary(bytes)))) => bytes.to_vec(),
+            Ok(Some(Ok(Message::Close(frame)))) => {
+                break Some(match frame {
+                    Some(frame) => {
+                        format!("closed with {}: {}", u16::from(frame.code), frame.reason)
+                    }
+                    None => "closed without a code".to_owned(),
+                });
+            }
+            Ok(Some(Err(error))) => break Some(format!("failed: {error}")),
+            Ok(None) => break Some("closed without a code".to_owned()),
+            Ok(Some(Ok(_))) | Err(_) => Vec::new(),
+        };
+        if !output.is_empty() {
+            screen.extend_from_slice(&output);
+            quiet_since = Instant::now();
+            drawn.get_or_insert(quiet_since);
+        }
+        match typed {
+            Some(at) if visible(&screen[at..]).contains(reply) => break None,
+            // Type once the terminal UI has drawn and gone quiet; its title
+            // can keep changing, so type 8 seconds after it drew regardless.
+            None if drawn.is_some_and(|drawn| {
+                quiet_since.elapsed() > Duration::from_secs(2)
+                    || drawn.elapsed() > Duration::from_secs(8)
+            }) =>
+            {
+                chat.send(Message::text(prompt)).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                chat.send(Message::text("\r")).await.unwrap();
+                typed = Some(screen.len());
+            }
+            _ => {}
+        }
+    };
+    let _ = chat.close(None).await;
+    (status, visible(&screen[typed.unwrap_or(0)..]), closed)
+}
+
+/// Whether a file under `directory`, without following links, holds `text`.
+fn holds(directory: &std::path::Path, text: &[u8]) -> bool {
+    fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => holds(&entry.path(), text),
+            Ok(kind) if kind.is_file() => fs::read(entry.path())
+                .is_ok_and(|bytes| bytes.windows(text.len()).any(|window| window == text)),
+            _ => false,
+        })
 }
 
 /// The status and body of a request through a forward, retried until
@@ -598,20 +738,26 @@ fn terminal() {
 
 /// What a terminal shows of `output`, roughly: its text without control
 /// sequences.
-#[cfg(unix)]
 fn visible(output: &[u8]) -> String {
     let text = String::from_utf8_lossy(output);
     let mut shown = String::with_capacity(text.len());
     let mut characters = text.chars().peekable();
     while let Some(character) = characters.next() {
         match (character, characters.peek()) {
-            // CSI: parameters and intermediates, then one final byte.
+            // CSI: parameters and intermediates, then one final byte. Cursor
+            // forward, `C`, skips cells that show as spaces.
             ('\x1b', Some('[')) => {
                 characters.next();
+                let mut parameters = String::new();
                 for character in characters.by_ref() {
                     if ('@'..='~').contains(&character) {
+                        if character == 'C' {
+                            let cells = parameters.parse().unwrap_or(1).max(1);
+                            shown.extend(std::iter::repeat_n(' ', cells));
+                        }
                         break;
                     }
+                    parameters.push(character);
                 }
             }
             // OSC, DCS and the like: up to BEL or ST.
@@ -1075,6 +1221,14 @@ fn timing_tables_list_each_run_in_order_with_their_total() {
 fn visible_text_drops_control_sequences() {
     let output = b"\x1b]0;openclaw tui\x07\x1b(B\x1b[?25l\x1b[1;32mconnected\x1b[0m | idle\r\n\x1b[2Knemoclaw-stub-reply";
     assert_eq!(visible(output), "connected | idle\nnemoclaw-stub-reply");
+}
+
+/// Hermes's terminal UI moves the cursor forward between words instead of
+/// writing spaces.
+#[test]
+fn visible_text_shows_cursor_moves_forward_as_spaces() {
+    let output = b"\x1b[2Cnemoclaw-stub-reply\x1b[1Cbrowser\x1b[Cnotes";
+    assert_eq!(visible(output), "  nemoclaw-stub-reply browser notes");
 }
 
 /// Hermes's dashboard serves its page with the session token in a script.

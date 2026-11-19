@@ -84,25 +84,43 @@ impl EchoGuard {
         Ok(())
     }
 }
-#[cfg(unix)]
 impl Drop for EchoGuard {
     fn drop(&mut self) {
         let _ = self.restore();
     }
 }
 
-#[cfg(not(unix))]
-struct EchoGuard;
-#[cfg(not(unix))]
+/// The console mode flag that echoes typed input. Line input stays on, so
+/// credentials are still read a line at a time.
+#[cfg(windows)]
+const ENABLE_ECHO_INPUT: u32 = 0x0004;
+
+#[cfg(windows)]
+struct EchoGuard {
+    console: crossterm_winapi::ConsoleMode,
+    original: Option<u32>,
+}
+#[cfg(windows)]
 impl EchoGuard {
     fn stdin() -> std::io::Result<Self> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "hidden credential input is unsupported on this platform",
-        ))
+        use crossterm_winapi::{ConsoleMode, Handle, HandleType};
+        Self::new(ConsoleMode::from(Handle::new(HandleType::InputHandle)?))
+    }
+
+    fn new(console: crossterm_winapi::ConsoleMode) -> std::io::Result<Self> {
+        let original = console.mode()?;
+        console.set_mode(original & !ENABLE_ECHO_INPUT)?;
+        Ok(Self {
+            console,
+            original: Some(original),
+        })
     }
 
     fn restore(&mut self) -> std::io::Result<()> {
+        if let Some(original) = self.original {
+            self.console.set_mode(original)?;
+            self.original = None;
+        }
         Ok(())
     }
 }
@@ -382,5 +400,59 @@ mod tests {
             Some(Error::Cancelled)
         ));
         assert_eq!(termios::tcgetattr(&observer).unwrap(), original);
+    }
+
+    /// The check runs in a child process with a console of its own, so it
+    /// needs no console from the test runner.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn console_echo_is_hidden_and_restored_when_credential_input_is_cancelled() {
+        use crossterm_winapi::{ConsoleMode, Handle};
+        const CHILD: &str = "NEMOCLAW_TEST_CONSOLE_CHILD";
+        const NAME: &str = "credentials::tests::console_echo_is_hidden_and_restored_when_credential_input_is_cancelled";
+        if std::env::var_os(CHILD).is_none() {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--nocapture"])
+                .env(CHILD, "1")
+                .creation_flags(CREATE_NEW_CONSOLE)
+                .output()
+                .unwrap();
+            let report = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.status.success() && report.contains("1 passed"),
+                "{report}"
+            );
+            return;
+        }
+
+        let observer = ConsoleMode::from(Handle::current_in_handle().unwrap());
+        let original = observer.mode().unwrap();
+        assert_ne!(
+            original & ENABLE_ECHO_INPUT,
+            0,
+            "a new console echoes input"
+        );
+        let echo = EchoGuard::new(ConsoleMode::from(Handle::current_in_handle().unwrap())).unwrap();
+        assert_eq!(observer.mode().unwrap(), original & !ENABLE_ECHO_INPUT);
+
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let mut prompts = Vec::new();
+        let mut input = tokio::io::BufReader::new(&b""[..]).lines();
+        let error = read_credential("API_KEY", &mut input, &mut prompts, &cancel, Some(echo))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error.downcast_ref::<Error>(),
+            Some(Error::Cancelled)
+        ));
+        assert_eq!(observer.mode().unwrap(), original);
     }
 }

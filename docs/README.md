@@ -3,8 +3,8 @@
 
 # Documentation Index
 
-These guides describe NemoClaw Agent Config. They reflect the implementation inspected at `origin/v1` revision `637bdb6276309ea71d1f1fcb68fff518fe2db926`; use a matched checkout and bundle when following them. The [field reference](reference/configuration.md) and its JSON Schema are generated from this checkout's SDK. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
-[Current limits](resources/limits.md) lists what NemoClaw Agent Config does not do yet or has not tested, with the issue tracking each.
+These guides describe NemoClaw Agent Configs, developed on the `v1` branch. They reflect the implementation inspected at `origin/v1` revision `637bdb6276309ea71d1f1fcb68fff518fe2db926`; use a matched checkout and bundle when following them. The [field reference](reference/configuration.md) and its JSON Schema are generated from this checkout's SDK. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
+[Current limits](resources/limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
 
 ## About
 
@@ -15,7 +15,7 @@ Start with the product overview, then use the architecture and ecosystem guides 
 | Understand the product and choose an interface | [NemoClaw overview](about/overview.md) |
 | Follow the components and deployment flow | [Architecture overview](about/architecture-overview.md) |
 | Distinguish upstream responsibilities | [Ecosystem](about/ecosystem.md) |
-| Check NemoClaw Agent Config development status and changes | [Release Notes](about/release-notes.md) |
+| Check v1 development status and changes | [Release Notes](about/release-notes.md) |
 
 ## Get Started
 
@@ -24,9 +24,9 @@ Check the prerequisites before following the first deployment; migration is a se
 | Reader goal | Guide |
 |---|---|
 | Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
+| Install, upgrade, or uninstall a release's CLI | [Install the CLI](get-started/install.md) |
 | Deploy OpenClaw with existing gateway and inference services | [First deployment](get-started/first-deployment.md) |
 | Assess a move from an earlier version | [Migration](get-started/migration.md) |
-| Compare Classic workflows with current and planned NemoClaw Agent Config support | [Classic and NemoClaw Agent Config matrix](get-started/classic-v1-matrix.md) |
 
 ## Build and Deploy
 
@@ -96,4 +96,4 @@ Review trust boundaries before configuring sandbox access or rotating credential
 | Configure isolation and egress | [Sandbox policy](security/sandbox-network.md) |
 | Revoke or rotate credentials | [Credential rotation](security/credential-rotation.md) |
 
-Maintainers can find contribution procedures, design records, and artifact provenance in the [repository-only maintainer index](../internal-docs/README.md). These pages are not part of the published NemoClaw Agent Config guide.
+Maintainers can find contribution procedures, design records, and artifact provenance in the [repository-only maintainer index](../internal-docs/README.md). These pages are not part of the published v1 guide.

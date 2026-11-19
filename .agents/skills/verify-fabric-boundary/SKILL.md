@@ -1,6 +1,6 @@
 ---
 name: verify-fabric-boundary
-description: Verify, as a user of a Fabric-managed agent on a DGX Spark, the NemoClaw–NeMo Fabric boundary — inference, native tools and interfaces, skills, plugins, mounted extensions, and their retention across runtime restart, stop/start, recreation, a configuration change, restore, and teardown. Choose the agent from the skill's agent table. Use after changing adapters, harness images, Fabric, OpenShell, mounts, or lifecycle code, before claiming that an agent's native capabilities work through NemoClaw.
+description: Verify, as a user of a Fabric-managed agent on a DGX Spark, the NemoClaw–NeMo Fabric boundary gaps that no automated test covers yet — native shell restriction, OpenClaw's Control UI chat, the Hermes terminal at runtime stop, plugins, and mounted extensions — across runtime restart, stop/start, recreation, a configuration change, and restore. Choose the agent from the skill's agent table. Use after changing adapters, harness images, Fabric, OpenShell, mounts, or lifecycle code, before claiming that an agent's native capabilities work through NemoClaw.
 disable-model-invocation: true
 ---
 
@@ -9,25 +9,22 @@ disable-model-invocation: true
 
 # Verify the Fabric Boundary
 
-This skill drives one Fabric-managed agent the way its user does: through its native tools, interfaces, skills, and plugins, across every lifecycle transition NemoClaw offers.
+This skill drives one Fabric-managed agent the way its user does: through its native tools, interfaces, and plugins, across every lifecycle transition NemoClaw offers.
+It keeps only the checks that upstream issues track, as the [feature map](features/README.md#features) lists; automated tests cover the rest.
 It checks desired-state assertions: each check records whether the agent does what a user of that agent expects through NemoClaw, not what the selected revision happens to support.
 It reuses [verify-yaml-deployment](../verify-yaml-deployment/SKILL.md) for the run's identity, build, inference, base YAML, plan and apply, doctor, credential scan, and cleanup, and owns only the Fabric-boundary additions.
 It owns one deployment per run and never touches another.
 
 The [live tests](../../../internal-docs/contributing/live-tests.md) stay the gate; when a check must hold on every change, add a test at the layer the `write-tests` skill picks.
 Use existing automated tests for configuration mapping and provider planning rules; do not repeat those assertions as skill checks.
-The feature files retain native discovery, registration, fresh use, and physical lifecycle evidence that those tests cannot prove.
 Keep the configuration and identity needed to drive a run as prerequisites, not separate proof of native behavior.
-
-The SDK tests [`public_fabric_configuration_passes_through_without_overriding_deployment_bindings`](../../../crates/nemoclaw-sdk/tests/fabric_compatibility.rs) and [`sandboxes_pass_driver_configuration_through`](../../../crates/nemoclaw-sdk/tests/compile.rs) cover skills passthrough with and without mounts and preservation of caller-owned writable mount payloads, respectively.
-Fabric owns adapter-native path mapping; its [OpenClaw test](https://github.com/NVIDIA/NeMo-Fabric/blob/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/tests/adapters/test_openclaw.py#L553) asserts `skills.load.extraDirs`.
 
 ## Scope
 
 - **Gateway:** a managed Docker gateway on the DGX Spark running the skill, as in [verify-yaml-deployment's scope](../verify-yaml-deployment/SKILL.md#scope).
 - **Agent:** one sandbox named `assistant` with one Fabric agent from the [agent table](#choose-the-agent-and-target).
 - **Target:** [dgx-spark](../verify-yaml-deployment/targets/dgx-spark.md) only. Another host type needs its own target file and proof first.
-- **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 135 checks for `hermes`, 133 for `openclaw`.
+- **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 52 checks for `hermes`, 56 for `openclaw`.
 
 [Completed Runs](#completed-runs) lists the agent–target pairs run to completion, with the revision, date, and counts by outcome; a completed run doesn't prove the pair.
 A pair that isn't listed has no completed run: say so with the result.
@@ -84,18 +81,17 @@ Run [Write the YAML](../verify-yaml-deployment/SKILL.md#write-the-yaml), all fiv
 Add what the checks need to the base YAML, then save it:
 
 1. **Volumes.** Mount `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`, with `read_only: false` on both mounts; OpenShell defaults them to read-only. Follow [caller-owned volumes](../../../docs/build-deploy/state.md) for admission and filesystem access.
-2. **Skills.** Keep the supplied skill under `/sandbox/workspace/skills/capability-probe`. Check the selected adapter's path validation before setting `harness.config.skills.paths`: at the Fabric pin in `image/fabric/Dockerfile`, OpenClaw and Hermes accept a folder that contains `SKILL.md` or a folder of such folders, as [Skills on a Mounted Volume](../../../docs/agents-inference/agents.md#skills-on-a-mounted-volume) describes. Use `[/sandbox/workspace/skills/capability-probe]`, the supplied skill's own folder, so the path names only that skill. Record this per-item configuration separately from native discovery; do not claim directory scanning or automatic discovery of generated skills from it.
-3. **Capabilities.** Choose the run-scoped extension names first: run step 2 of [mounted-extensions](features/mounted-extensions.md), and note the generated plugin's ID, `fb-plugin-$UID8`, as step 4 of [plugins](features/plugins.md) derives it.
+2. **Capabilities.** Choose the run-scoped extension names first: run step 2 of [mounted-extensions](features/mounted-extensions.md), and note the generated plugin's ID, `fb-plugin-$UID8`, as step 4 of [plugins](features/plugins.md) derives it.
    Resolve the bundled plugin's safe trigger, observable effect, and startup registration capture through [plugin bindings](features/plugins.md#driving-it-with-fabric-agent-ctl-and-the-openshell-cli) before apply; Hermes has a [pinned binding recipe](references/hermes-bundled-plugin.md).
-   Then enable each capability the feature files check: the native TUI and, where in scope, the Web UI; a harmless bundled plugin; the mounted native tool and plugin locations under `/sandbox/workspace/extensions`, with any per-item enablement; and a tool allow-list from which Config change can remove only the shell-launch tool.
-4. **Merge rules.** Keep everything the base YAML sets, including its harness kind, execution, approval settings, and inference route.
+   Then enable each capability the feature files check: Hermes's terminal UI or OpenClaw's Control UI; a harmless bundled plugin; the mounted native tool and plugin locations under `/sandbox/workspace/extensions`, with any per-item enablement; and a tool allow-list from which Config change can remove only the shell-launch tool.
+3. **Merge rules.** Keep everything the base YAML sets, including its harness kind, execution, approval settings, and inference route.
    Set the route's output-token limit to 4096 for these multistep checks when the adapter accepts one, and record the limit used in `$EVIDENCE/identity.txt`.
    Use only fields that the selected revision documents or the image's adapter declares, and record each field and its source in `bindings.md`.
    A capability with no supported field is Failed for the checks that need it, linked to one missing-implementation finding; never add an undeclared field to see whether plan accepts it.
-5. **Adapter.** Save the image's adapter descriptor in `$EVIDENCE/descriptor.json` before the first plan.
+4. **Adapter.** Save the image's adapter descriptor in `$EVIDENCE/descriptor.json` before the first plan.
    If the image has no matching adapter, or no image matches the selected revision, the adapter or its image is absent.
    Create no resources: skip [Provision and Seed the Volumes](#provision-and-seed-the-volumes) and [Plan and Apply](#plan-and-apply), and write one absence finding, F1, that names what is missing with the revision and image digest.
-   Mark every selected check in `checks.md` Failed and linked to F1, except `teardown`, which is Not tested and linked to F1, then run [Report](#report).
+   Mark every selected check in `checks.md` Failed and linked to F1, then run [Report](#report).
    If access or credentials prevent the check, mark the rows Not tested with that cause instead.
    An image that has the adapter but fails to start is a failure with its own finding.
    Never substitute another adapter, a standalone harness process, or another image for a pass.
@@ -104,15 +100,12 @@ The workspace volume has this layout; the feature files seed or read each path:
 
 | Path | Contents |
 |---|---|
-| `/sandbox/workspace/skills/` | Mounted skills, starting with the supplied `capability-probe` skill |
-| `/sandbox/workspace/scripts/` | The supplied script; the agent writes the generated script here |
 | `/sandbox/workspace/extensions/tools/` | Mounted native tools, supplied and generated |
 | `/sandbox/workspace/extensions/plugins/` | Mounted plugins, supplied and generated |
 | `/sandbox/workspace/fixtures/` | Each phase's fresh input files |
 | `/sandbox/workspace/results/` | Files the agent writes for a check |
-| `/sandbox/workspace/retained/` | The workspace retention marker |
 
-The artifacts volume holds `/sandbox/artifacts/retained/` with the artifacts retention marker, beside the adapter's native state.
+The artifacts volume holds the adapter's native state.
 
 Save the baseline that Config change and Restore compare against:
 
@@ -133,15 +126,13 @@ Start it with these lines, which the [request helpers](features/README.md#drivin
 ```text
 - shell-launch tool: `NAME`
 - file-write tool: `NAME`
-- skill-authoring tool: `NAME`
-- skill directory: `PATH`
 - plugin format: `SUMMARY`
 - install command: `COMMAND`
 - enable command: `COMMAND`
 - native call record: `PATH OR COMMAND`
 ```
 
-When no supported mechanism exists, write `none`, record the finding, and mark the checks that need it Failed without sending their prompts; for the skill-authoring tool, write `your native file tools` instead.
+When no supported mechanism exists, write `none`, record the finding, and mark the checks that need it Failed without sending their prompts.
 Resolve the install and enable commands when [plugins](features/plugins.md) reviews them, before `agent-plugin-install`.
 Stop researching a binding once the evidence shows the route or the missing layer; a missing layer is a finding, not a reason to try speculative settings.
 
@@ -165,13 +156,13 @@ seed() {  # seed VOLUME PATH < CONTENT
 
 Don't give these volumes the `nemoclaw.nvidia.com/uid` label: NemoClaw didn't create them, and a managed label that differs from state blocks teardown.
 Seed each fixture that a feature file's `Seed` step names, with `seed VOLUME PATH` and the fenced content as standard input, and record its SHA-256 in `$EVIDENCE/seeded.sha256`.
-Seed only supplied fixtures and the two retention markers, once; the agent writes every generated fixture.
+Seed only supplied fixtures, once; the agent writes every generated fixture.
 Never reseed after a transition.
 
 ### Plan and Apply
 
 Run the apply line from [Plan and Apply](../verify-yaml-deployment/SKILL.md#plan-and-apply).
-The deployment is ready when the doctor passes and `inference` passes in the Initial phase.
+The deployment is ready when the doctor passes and the agent answers the fresh request at the end of [lifecycle step 2](features/lifecycle-and-retention.md#driving-it-with-the-nemoclaw-cli-the-openshell-cli-and-fabric-agent-ctl).
 
 ## Doctor
 
@@ -180,10 +171,10 @@ Run [verify-yaml-deployment's doctor](../verify-yaml-deployment/SKILL.md#doctor)
 ```sh
 docker volume ls --filter "label=verify-fabric-boundary.uid=$UID_" --format '{{.Name}}'
 docker inspect "$SANDBOX_CONTAINER" --format '{{range .Mounts}}{{.Name}} {{.Destination}} {{.RW}}{{"\n"}}{{end}}' | grep -E '/sandbox/(workspace|artifacts)'
-openshell sandbox exec -n assistant --no-tty -- ls -ln /sandbox/workspace /sandbox/artifacts/retained
+openshell sandbox exec -n assistant --no-tty -- sh -c 'test -w /sandbox/workspace && test -w /sandbox/artifacts && echo writable'
 ```
 
-Pass when both volumes list, the sandbox mounts each at its target with `true`, and both directories list with owner `10001`.
+Pass when both volumes list, the sandbox mounts each at its target with `true`, and the sandbox prints `writable`.
 Run it before the first check, after every transition, and after any surprise.
 The doctor is not a check; a failing doctor after a transition is evidence for the transition's check.
 
@@ -191,16 +182,15 @@ The doctor is not a check; a failing doctor after a transition is evidence for t
 
 Follow the [feature map](features/README.md) in phase order:
 
-1. **Initial:** run each feature's Initial checks in the [map's order](features/README.md#features), starting with the `-first-start` checks before any request that changes content, then `inference`.
+1. **Initial:** run each feature's Initial checks in the [map's order](features/README.md#features), starting with the `-first-start` checks before any request that changes content.
 2. **Transitions:** let [lifecycle-and-retention](features/lifecycle-and-retention.md) drive each transition in turn: Runtime restart, Stop/start, Recreate, Config change, Restore.
 3. **After each transition:** run the doctor, then re-run every check that lists the matching After-phase, such as `After stop/start`, with fresh phase input.
-4. **Teardown:** lifecycle-and-retention runs the `teardown` check through [Cleanup](#cleanup).
+4. **Teardown:** run [Cleanup](#cleanup).
 
 Run checks only at their listed phases; don't add repetitions.
 Run one request at a time: two model requests at once can make a reply arrive after the check that waits for it.
 Continue independent checks after a failure; reassess blocked checks after each transition.
 Never repair the baseline between phases: no reseeding, reinstalling, re-enabling, or editing state or generated native configuration.
-Native evolution of writable skill contents follows [Evolving Skill Contents](features/skills.md#evolving-skill-contents): retain diagnostic snapshots and verify behavior without requiring initial byte identity. This does not permit runner repairs or relax other fixture hashes.
 
 ## Evidence
 
@@ -213,7 +203,7 @@ This skill adds:
 | `findings.md` | One section per shared finding |
 | `bindings.md` | The native bindings and the evidence for each |
 | `baseline.yaml`, `baseline.sha256` | The YAML that Config change and Restore compare against |
-| `seeded.sha256` | Hashes of the supplied fixtures and retention markers |
+| `seeded.sha256` | Hashes of the supplied fixtures |
 | `PHASE/CASE/` | Each check's request, native reply and calls, and independent effect checks |
 
 `PHASE` is the phase's directory name from the [lifecycle phases](features/README.md#lifecycle-phases) table.
@@ -223,14 +213,14 @@ Before the first check, write every selected check to `checks.md` with an empty 
 { echo '| case | phase | outcome | finding | evidence |'; echo '|---|---|---|---|---|'
   sed -n 's/^- `\([a-z-]*\)`: .* Phases: \(.*\)\.$/\1|\2/p' "$SKILL_DIR"/features/*.md |
   while IFS='|' read -r id phases; do
-    case "$id" in hermes-tui-*) [ "$AGENT" = hermes ] || continue ;; esac
+    case "$id" in hermes-tui-*) [ "$AGENT" = hermes ] || continue ;; web-ui) [ "$AGENT" = openclaw ] || continue ;; esac
     printf '%s\n' "$phases" | tr ',' '\n' | sed 's/^ *//' |
       while read -r phase; do echo "| $id | $phase | | | |"; done
   done; } > "$EVIDENCE/checks.md"
 grep -c '^| [a-z-]* | [A-Z]' "$EVIDENCE/checks.md"
 ```
 
-The count must be 135 for `hermes`, 133 for `openclaw`.
+The count must be 52 for `hermes`, 56 for `openclaw`.
 Fill in each row's outcome, finding ID, and evidence path as the check finishes; leave no row empty at the end.
 Write each finding in `findings.md` as:
 
@@ -250,8 +240,7 @@ Never write a token, key, or full environment into evidence.
 
 Preserve any existing external inference service, including containers labeled `org.nemoclaw.lifecycle=persistent` or `org.nemoclaw.test-cleanup=preserve`, and its network, images and volumes; none belong to this run's teardown.
 
-The `teardown` check in [lifecycle-and-retention](features/lifecycle-and-retention.md) runs the destroy steps of [verify-yaml-deployment's cleanup](../verify-yaml-deployment/SKILL.md#cleanup) and records its outcome first.
-Then finish that cleanup, including removal of retained resources by this run's UID, and remove this run's caller volumes:
+Run [verify-yaml-deployment's cleanup](../verify-yaml-deployment/SKILL.md#cleanup), including removal of retained resources by this run's UID, and remove this run's caller volumes:
 
 ```sh
 docker volume ls --filter "label=verify-fabric-boundary.uid=$UID_" --format '{{.Name}}'
@@ -266,7 +255,7 @@ ls "$EVIDENCE"
 ```
 
 The count must be 0, and the evidence must still list.
-A failed destroy stays Failed in `checks.md` even when [Without State](../verify-yaml-deployment/SKILL.md#without-state) or a later attempt removes the resources.
+Report a failed destroy even when [Without State](../verify-yaml-deployment/SKILL.md#without-state) or a later attempt removes the resources.
 Run cleanup after a failed or interrupted run too.
 
 ## Report
@@ -286,7 +275,7 @@ Mark an interrupted run as interrupted, keep its evidence, and don't add it.
 
 ## Completed Runs
 
-Counts below describe each run's archived suite. The two Hermes TUI lifecycle checks added afterward have no live result here; historical completion does not qualify them.
+Counts below describe each run's archived suite, which had more checks than the current one; historical completion does not qualify the current checks.
 
 | Agent | Target | Inference source | Revision | Date | Passed | Failed | Not tested | Notes |
 |---|---|---|---|---|---|---|---|---|

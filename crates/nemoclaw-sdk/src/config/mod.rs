@@ -7,7 +7,7 @@ pub(crate) mod constraints;
 pub use nemoclaw_openshell::credential_metadata;
 mod engine_endpoint;
 pub use constraints::{GATEWAY_ENGINE, GPU_DEVICE};
-pub use engine_endpoint::validate_engine_endpoint;
+pub use engine_endpoint::{engine_socket, validate_engine_endpoint};
 mod integrations;
 pub use integrations::*;
 pub use nemoclaw_openshell::search::search_policy;
@@ -41,7 +41,6 @@ pub use validation::{is_fabric_harness, valid_name, validate_endpoint, validate_
 
 pub const API_VERSION: &str = "nemoclaw.nvidia.com/v1alpha1";
 pub const MAX_DOCUMENT_BYTES: u64 = 1 << 20;
-pub use crate::artifact_pins::DEFAULT_AGENT_IMAGE;
 pub use crate::artifact_pins::DEFAULT_GATEWAY_IMAGE;
 
 /// Configuration diagnostics omit credentials and arbitrary source values.
@@ -212,12 +211,6 @@ impl Document {
         }
         for service in self.spec.services.values_mut() {
             crate::services::defaults(service);
-        }
-        // Cluster sandboxes have no engine-supplied default image.
-        if !self.spec.gateway.runtime().provider.is_kubernetes() {
-            for sandbox in self.spec.sandboxes.values_mut() {
-                default_string(&mut sandbox.image.ref_, DEFAULT_AGENT_IMAGE);
-            }
         }
     }
 }

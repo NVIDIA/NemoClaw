@@ -63,7 +63,9 @@ pub fn discovery_queries(
             }
             DiscoveryQuery::Engine(request) => !request.engine.is_empty(),
             DiscoveryQuery::Fabric(request) => !request.engine.is_empty(),
-            DiscoveryQuery::Gateway(_) | DiscoveryQuery::Credential(_) => true,
+            DiscoveryQuery::Gateway(_)
+            | DiscoveryQuery::Credential(_)
+            | DiscoveryQuery::AgentImages(_) => true,
         })
         .collect();
     queries.extend(credential_queries(document));

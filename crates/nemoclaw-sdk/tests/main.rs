@@ -35,6 +35,8 @@ mod agent_runtimes;
 mod agent_tools;
 #[path = "application_container.rs"]
 mod application_container;
+#[path = "apply_outputs.rs"]
+mod apply_outputs;
 #[path = "compile.rs"]
 mod compile;
 #[path = "config.rs"]
@@ -133,6 +135,8 @@ mod kubernetes_receipt;
 mod kubernetes_storage;
 #[path = "managed_auth.rs"]
 mod managed_auth;
+#[path = "managed_engine_socket.rs"]
+mod managed_engine_socket;
 mod managed_gateway_config;
 #[path = "managed_hermes.rs"]
 mod managed_hermes;

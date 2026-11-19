@@ -95,7 +95,7 @@ Choose an external endpoint when its operator owns availability, or a managed se
 
 Service ownership does not depend on the harness; the service must support the [request API](#choose-the-request-api) selected by that harness.
 The [harness matrix](../references/fabric-harnesses.md) distinguishes accepted configurations from live qualification.
-Examples use the SDK default image or an explicit image digest, plus deployment identities and environment-specific endpoints.
+Examples use placeholder image digests, plus deployment identities and environment-specific endpoints.
 Build/select your own matching images and replace those values before use.
 An accepted example is a configuration contract, not evidence that the combination completes live inference.
 
@@ -151,12 +151,27 @@ NemoClaw uses it to read the endpoint's model catalog.
 The harness name does not change these defaults.
 
 Agents use the protocol their harness's adapter selects for the provider transport.
-An agent uses another protocol only when its adapter's Fabric descriptor declares a model `api`, as [Pi model selection](agents.md#pi-model-selection) shows; otherwise an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent.
+An agent uses another protocol only when its adapter's Fabric descriptor declares a model `api`, as Pi's and OpenClaw's do (see [Pi model selection](agents.md#pi-model-selection)); otherwise an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent.
 Fabric validates the rest of its configuration when the agent is configured.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
 The provider's key under `inferenceProviders` is the local name routes reference; it does not select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
+
+### Point Hermes at an Anthropic Endpoint
+
+Hermes sends an `anthropic` provider's requests to its `endpoint` only when [Hermes's rule](https://github.com/NousResearch/hermes-agent/blob/b200f5bc60e31588ba2cb60e288029c4a54ba5fa/hermes_cli/runtime_provider.py#L395-L403) recognizes the endpoint as Anthropic's:
+
+- Its path ends in `/anthropic` or `/anthropic/v1`, such as `https://gateway.example/anthropic/v1`, where Anthropic-compatible gateways serve the protocol.
+- Its host is `api.anthropic.com` or ends in `.anthropic.com`, `.claude.com`, or `.azure.com`.
+
+For any other endpoint, such as `https://gateway.example/v1`, Hermes's processes that read its configuration file, such as its API server, send the requests to `https://api.anthropic.com` instead.
+OpenShell refuses those connections, because the provider grants only its own endpoint, and the agent doesn't answer.
+NemoClaw doesn't check the endpoint, so plan and apply succeed.
+
+Use an endpoint whose path ends in `/anthropic` or `/anthropic/v1`, or an `openai` provider when the endpoint also serves OpenAI's API.
+The `docker-openclaw-hermes-interfaces` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) gets OpenClaw and Hermes replies through an `anthropic` provider at an `/anthropic/v1` endpoint.
+Fabric's Hermes adapter would need to configure Hermes to use the endpoint whatever its path ([current limits](../resources/limits.md#inference)).
 
 ### Prepare an External Endpoint
 
@@ -174,7 +189,7 @@ For a local external Ollama daemon, use the [managed proxy](#use-external-ollama
 Use the route's `overrides.model` for the upstream model ID.
 Native agents send the configured model ID to the native endpoint using an OpenShell placeholder credential; they do not need the real upstream key in their YAML or sandbox environment.
 Confirm a native agent reply after apply using [verification levels](#verify-the-result).
-Guides for named hosted providers are tracked in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038).
+NemoClaw has no guides for named hosted providers.
 
 ### Trust a Custom Certificate Authority
 
@@ -183,8 +198,8 @@ An endpoint whose certificate comes from an internal certificate authority, such
 - **The machine running NemoClaw** reads the endpoint's model catalog during onboarding, using its system trust store.
   Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw`.
 - **OpenShell's sandbox supervisor** makes the TLS connection to the endpoint, so the supervisor must trust the CA; a CA added to an agent image isn't used.
-  The supervisor trusts its built-in and image CAs, and the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas).
-  On an external gateway, the operator sets the bundle in OpenShell's configuration, or on Kubernetes through the chart's [`supervisor.network.additionalCaConfigMapName`](https://github.com/NVIDIA/OpenShell/blob/f3d976590d3eb1379690a2abaf0f0e26c21d487d/deploy/helm/openshell/README.md#additional-destination-cas).
+  The supervisor trusts its built-in and image CAs, and the CAs in its gateway's [additional CA bundle](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/docs/how-it-works/gateways/configuration.mdx#additional-destination-cas).
+  On an external gateway, the operator sets the bundle in OpenShell's configuration, or on Kubernetes through the chart's [`supervisor.network.additionalCaConfigMapName`](https://github.com/NVIDIA/OpenShell/blob/ce58cf8e9b953281352d98a637e41616295b1318/deploy/helm/openshell/README.md#additional-destination-cas).
   OpenShell reads the bundle only when the gateway starts, so the operator then restarts the gateway and stops and starts every affected sandbox.
   No managed gateway can receive the bundle yet, and NemoClaw pins the supervisor image there; see [current limits](../resources/limits.md#security).
 
@@ -381,7 +396,7 @@ When memory protection stops the server, the runtime exits. Choose a restart pol
 
 Run the proxy on the same Linux Docker host as the existing Ollama daemon and installed model.
 With a managed Docker gateway, the proxy inherits `gateway.engine`.
-With an external gateway, declare the proxy service's `engine` as an explicit local Docker Unix socket and make its published endpoint reachable from OpenShell.
+With an external gateway, declare the proxy service's `engine` as an explicit local Docker engine, a Unix socket or on Windows a named pipe, and make its published endpoint reachable from OpenShell.
 Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
 The proxy exposes `openai-completions`; its service contract does not restrict the harness identifier.
@@ -601,7 +616,11 @@ The menu keeps an authored model selected, including a custom identifier.
 You can choose **Type another model**; generic OpenAI-compatible and Anthropic-compatible endpoints have no vendor catalog.
 Changing a vendor or endpoint recomputes the recommendations and membership check for the selected route.
 
-Endpoint discovery can add advertised identifiers without changing the curated list.
+The endpoint's own list of models is read to check the selected model.
+It does not widen the menu: a vendor with a curated list offers only the curated models the endpoint lists, plus **Type another model**.
+A curated model the endpoint leaves out is not offered; if the endpoint lists none of them, the menu offers the models it does list instead. A model you type that the endpoint does not list is noted on the review screen.
+Keys you press while the list is being read are discarded when it arrives, so they cannot select from the narrowed menu.
+Generic OpenAI-compatible and Anthropic-compatible endpoints have no curated list, so they offer the models their endpoint lists.
 A missing catalog credential leaves offline recommendations available and reports the missing credential; it does not allow bulk acceptance without the existing target and endpoint evidence.
 Catalog membership does not verify account access, current availability, API compatibility, tool support, or successful inference.
 Use an explicit request to qualify inference.
@@ -611,6 +630,7 @@ Use an explicit request to qualify inference.
 The documented service paths are external API endpoints, managed Ollama, [external Ollama through a managed proxy](#use-external-ollama-through-a-managed-proxy), and [managed vLLM](models.md).
 Use [inline recipes](recipes.md) for declared model preparation and [SSH placement](remote-service.md) for the implemented remote-engine contract.
 
-Managed llama.cpp, Model Router and Gemini are tracked in [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035), hosted-provider guides in [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038), and distributed inference, separate inference hosts and other model formats in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
-A managed NVIDIA NIM service is not planned: use NIM as an external OpenAI-compatible endpoint ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)).
+Managed llama.cpp and NVIDIA NIM services are tracked in [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); until then, use either as an external OpenAI-compatible endpoint.
+NemoClaw has no Model Router and no provider for Gemini's native API; onboarding's Google Gemini preset uses Gemini's OpenAI-compatible endpoint.
+Distributed inference, separate inference hosts and other model formats are tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
 None of these limits prevents using a separately verified external endpoint with an accepted API.

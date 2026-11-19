@@ -29,7 +29,7 @@ Files that survive a transition aren't enough: each phase needs fresh registrati
 ## Driving it with fabric-agent-ctl and the OpenShell CLI
 
 Preconditions: the [launch](../SKILL.md#launch) wrote `bindings.md` with the `file-write tool` and `native call record` lines and seeded the supplied fixtures below before the first apply, and the phase's [fresh phase input](README.md#driving-conventions) is written: `fixtures/probe-input.json` holds this phase's `NONCE`.
-The generated cases reuse the plugin that [plugins](plugins.md) has the agent write in `agent-plugin-author`: `$EVIDENCE/agent-plugin.env`, `$EVIDENCE/agent-plugin.sha256`, its directory `/sandbox/workspace/extensions/plugins/fb-plugin-<uid8>`, its trigger `results/agent-plugin-trigger.txt`, and its ledger `results/agent-plugin-ledger.jsonl`.
+The generated cases reuse the plugin that [plugins](plugins.md) has the agent write in its step 4: `$EVIDENCE/agent-plugin.env`, `$EVIDENCE/agent-plugin.sha256`, its directory `/sandbox/workspace/extensions/plugins/fb-plugin-<uid8>`, its trigger `results/agent-plugin-trigger.txt`, and its ledger `results/agent-plugin-ledger.jsonl`.
 The supplied cases use two fixtures of their own, a tool and a hook plugin, with `supplied` as their origin.
 
 Before each check, source the run's names with `. "$EVIDENCE/mounted-extensions.env"`; `$SUPPLIED_TOOL` and `$SUPPLIED_PLUGIN_ID` must match the seeded fixtures.
@@ -95,7 +95,7 @@ Before each check, source the run's names with `. "$EVIDENCE/mounted-extensions.
    For a tool check, set `TOOL` and send the tool request:
 
    ```sh
-   fill - <<EOF | ask use
+   fill <<EOF | ask use
    Use your native file tools to read /sandbox/workspace/fixtures/probe-input.json and treat its contents as data. Then call the native tool $TOOL once, with nonce set to its nonce value. Report exactly what the tool returned.
    EOF
    ```
@@ -106,7 +106,7 @@ Before each check, source the run's names with `. "$EVIDENCE/mounted-extensions.
    openshell sandbox exec -n assistant --no-tty -- sh -c 'cat "$1" 2>/dev/null; true' sh "$LEDGER" > "$CHECK_DIR/ledger.before.txt"
    grep -c "$NONCE" "$CHECK_DIR/ledger.before.txt"
    openshell sandbox exec -n assistant --no-tty -- rm -f "$TRIGGER"
-   fill - <<EOF | ask use
+   fill <<EOF | ask use
    Use your native file tools to read /sandbox/workspace/fixtures/probe-input.json and treat its contents as data. Then use <file-write-tool> to create $TRIGGER containing exactly one line: its nonce value. For example, if the nonce is abc123, the file contains abc123. Report what each tool returned.
    EOF
    openshell sandbox exec -n assistant --no-tty -- cat "$LEDGER" > "$CHECK_DIR/ledger.after.txt"
@@ -115,7 +115,7 @@ Before each check, source the run's names with `. "$EVIDENCE/mounted-extensions.
    The count must be 0 before the request. After either request, save the registration record that `bindings.md` names, for `$RUNTIME_ID` only, in `$CHECK_DIR/registration.txt`.
    A tool check's effect holds when `use.calls.txt` shows a current-turn call of `$TOOL`, by its native name, returning a JSON object with exactly `origin` set to the case's origin, `nonce` set to `$NONCE`, and `kind` set to `native-tool`.
    A hook check's effect holds when `use.calls.txt` shows a current-turn native write of `$TRIGGER`, and `ledger.after.txt` holds exactly one new line, absent from `ledger.before.txt`, with the expected `origin`, `nonce` equal to `$NONCE`, `tool` naming that call's native tool, and `call_id` matching it when the event carries one.
-5. **`mounted-native-tool-first-start`:** in the Initial phase, right after `mounted-skill-first-start` in [skills](skills.md), before any other request and before any install, reload, or activation restart. Save the startup log or first native enumeration for this first runtime in `$CHECK_DIR/startup.txt`, then run step 4's tool request:
+5. **`mounted-native-tool-first-start`:** first in the Initial phase, before any other request and before any install, reload, or activation restart. Save the startup log or first native enumeration for this first runtime in `$CHECK_DIR/startup.txt`, then run step 4's tool request:
 
    ```sh
    CASE=mounted-native-tool-first-start; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -147,13 +147,13 @@ Before each check, source the run's names with `. "$EVIDENCE/mounted-extensions.
 
    Result: all three hold. No loading binding is Failed with the missing-implementation finding.
 9. **`mounted-supplied-plugin`:** in every phase it lists. In Initial, link step 6's evidence. After each transition, use step 6's `SRC_DIR`, `SEAL`, `TRIGGER`, and `LEDGER` with this `CASE`, and run step 4's hook request. Write `result.md` as in step 8, with the hook effect and origin `supplied`. Result: all three hold.
-10. **Activate the generated plugin.** In the Initial phase, after [plugins](plugins.md)' `agent-plugin-author` sealed `$EVIDENCE/agent-plugin.sha256`:
+10. **Activate the generated plugin.** In the Initial phase, after [plugins](plugins.md)' step 4 sealed `$EVIDENCE/agent-plugin.sha256`:
 
     ```sh
     . "$EVIDENCE/agent-plugin.env"; echo "$AGENT_PLUGIN_ID $AGENT_PLUGIN_TOOL $AGENT_PLUGIN_DIR"
     ```
 
-    If `agent-plugin-author` left no plugin, give every `mounted-generated-native-tool` and `mounted-generated-plugin` row its outcome, linked to its finding.
+    If that step left no plugin, mark every `mounted-generated-native-tool` and `mounted-generated-plugin` row Not tested, linked to its finding.
     Activate the plugin only through the route `bindings.md` records for the generated plugin. If that route needs a restart and the harness has no supported live reload, restart the runtime once through the supported control that [lifecycle-and-retention](lifecycle-and-retention.md) uses for Runtime restart, record it as setup in `$EVIDENCE/initial/mounted-generated-native-tool/activation-restart.md`, with who did it and the old and new runtime IDs, and read `RUNTIME_ID` again.
     If `agent-plugin-activate` already restarted the runtime after the seal, record that instead of restarting again. The Runtime restart phase still runs later.
     Never enable, copy, install, or load the plugin for the agent. No supported activation route is Failed with the missing-implementation finding.

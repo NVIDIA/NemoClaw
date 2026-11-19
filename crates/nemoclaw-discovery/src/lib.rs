@@ -21,7 +21,7 @@ pub use facts::{
 };
 pub use local::local_engine_candidates;
 pub use nemoclaw_docker::ssh_command;
-pub use nemoclaw_fabric::{judge_image, observe_fabric};
+pub use nemoclaw_fabric::{judge_image, observe_agent_images, observe_fabric};
 pub use nemoclaw_sdk::inference_discovery::observe_endpoint;
 
 use futures_util::future::join_all;
@@ -111,6 +111,9 @@ pub async fn observe(
                 ),
                 DiscoveryQuery::Credential(request) => DiscoveryObservation::Credential(
                     observe_credential(secrets, &request.reference),
+                ),
+                DiscoveryQuery::AgentImages(request) => DiscoveryObservation::AgentImages(
+                    observe_agent_images(engines, &request.engine, &request.adapter_id).await,
                 ),
             };
             ((*query).clone(), observation)

@@ -678,11 +678,17 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
             ),
             SignIn::BearerToken => "    Sign in:  send the header Authorization: Bearer TOKEN, replacing TOKEN with the token\n".into(),
             SignIn::None => "    Sign in:  none; anyone who can reach the forward can use it\n".into(),
+            SignIn::TerminalCommand => "    Sign in:  the Terminal command reads the runtime's credential itself\n".into(),
             SignIn::AdapterDocumented => "    Sign in:  see the adapter's documentation\n".into(),
         });
         if let Some(command) = &access.terminal {
+            let token = if access.sign_in == SignIn::TerminalCommand {
+                ""
+            } else {
+                ", replacing TOKEN with the token"
+            };
             output.push_str(&format!(
-                "    Terminal: openshell sandbox exec -n {sandbox} --tty -- {}, replacing TOKEN with the token\n",
+                "    Terminal: openshell sandbox exec -n {sandbox} --tty -- {}{token}\n",
                 terminal_text(command)
             ));
         }
@@ -962,7 +968,9 @@ mod tests {
             {"sandbox": "reviewer", "interface": "api", "port": 8642,
              "tokenPath": "/sandbox/artifacts/.fabric/hermes/runtimes/rt-2/interfaces/api.token",
              "signIn": "bearer_token"},
-            {"sandbox": "reviewer", "interface": "dashboard", "port": 9119, "signIn": "none"}
+            {"sandbox": "reviewer", "interface": "dashboard", "port": 9119, "signIn": "none"},
+            {"sandbox": "reviewer", "interface": "terminal", "signIn": "terminal_command",
+             "terminal": "/opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/tui.json"}
         ])
     }
 
@@ -989,6 +997,8 @@ mod tests {
             "Sign in: send the header Authorization: Bearer TOKEN, replacing TOKEN with the token",
             "Forward: openshell forward service reviewer --target-port 9119 --local 127.0.0.1:9119",
             "Sign in: none; anyone who can reach the forward can use it",
+            // Hermes's attach helper reads its token itself.
+            "Terminal: openshell sandbox exec -n reviewer --tty -- /opt/fabric/bin/python -m nemo_fabric_adapters.hermes.terminal --connection /sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/tui.json",
         ] {
             assert!(
                 lines
@@ -998,9 +1008,10 @@ mod tests {
             );
         }
         // Only the two interfaces with a token get a command that reads one,
-        // and only OpenClaw's dashboard a terminal command.
+        // and only OpenClaw's dashboard and Hermes's terminal a terminal
+        // command.
         assert_eq!(text.matches("--no-tty -- cat").count(), 2, "{text}");
-        assert_eq!(text.matches("Terminal:").count(), 1, "{text}");
+        assert_eq!(text.matches("Terminal:").count(), 2, "{text}");
         assert!(
             text.contains("reach these ports; see docs/agents-inference/interfaces.md."),
             "{text}"

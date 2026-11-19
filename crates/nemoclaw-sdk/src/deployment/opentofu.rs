@@ -7,7 +7,7 @@ use super::{Deployment, plan::Plan};
 use crate::{
     CancellationToken, Error, Secrets,
     bundle::Bundle,
-    config::Document,
+    config::{ComputeDriver, Document},
     state::{Store, atomic_write, save_json},
 };
 use serde_json::Value;
@@ -26,6 +26,22 @@ impl Deployment {
         cancel: &CancellationToken,
     ) -> Result<(), Error> {
         self.prepare(bundle, store, graph)?;
+        // Init installs exactly this bundle's providers. OpenTofu keeps a
+        // provider version that it installed or locked before, even when this
+        // bundle's copy has other bytes, such as after signing. Bundle::open
+        // checked every provider against the manifest, and the bundle is the
+        // only installation source, so the lock file adds no check.
+        for removed in [
+            fs::remove_dir_all(store.directory.join(".terraform/providers")),
+            fs::remove_file(store.directory.join(".terraform.lock.hcl")),
+        ] {
+            match removed {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(Error::State("cannot remove the installed providers"));
+                }
+                _ => {}
+            }
+        }
         self.timed(
             "tofu.init",
             crate::process::run(
@@ -133,7 +149,15 @@ impl Deployment {
         let mut replaced = false;
         loop {
             let args: Vec<&str> = arguments.iter().map(String::as_str).collect();
-            self.tofu(bundle, store, document, &args, cancel).await?;
+            if let Err(error) = self.tofu(bundle, store, document, &args, cancel).await {
+                return Err(match error {
+                    Error::Execution { .. } => self
+                        .stopped_gateway(bundle, store, document, cancel)
+                        .await
+                        .unwrap_or(error),
+                    error => error,
+                });
+            }
             let bytes = self
                 .tofu(bundle, store, document, &["show", "-json", name], cancel)
                 .await?;
@@ -151,6 +175,74 @@ impl Deployment {
             );
             replaced = true;
         }
+    }
+    /// Why a plan failed, when the managed Docker gateway's container is stopped.
+    ///
+    /// OpenTofu refreshes the gateway's objects through the gateway, and it
+    /// can't defer that refresh until apply starts the container
+    /// (https://github.com/opentofu/opentofu/issues/4697), so such a plan fails
+    /// with a transport error. Called only after a plan fails, a refresh of
+    /// the gateway container alone tells a stopped container apart from other
+    /// failures; any other observation keeps the original error.
+    async fn stopped_gateway(
+        &self,
+        bundle: &Bundle,
+        store: &Store,
+        document: &Document,
+        cancel: &CancellationToken,
+    ) -> Option<Error> {
+        const ADDRESS: &str = "docker_container.managed_gateway_runtime";
+        let gateway = document
+            .spec
+            .gateway
+            .as_managed()
+            .filter(|gateway| gateway.runtime.provider == ComputeDriver::Docker)?;
+        let environment = self
+            .provider_environment(document, &store.directory, false)
+            .ok()?;
+        let target = format!("-target={ADDRESS}");
+        let refreshed = crate::process::run(
+            &store.directory,
+            &bundle.tofu(),
+            &[
+                "plan",
+                "-refresh-only",
+                "-input=false",
+                "-no-color",
+                "-out=gateway.plan",
+                &target,
+            ],
+            &environment,
+            cancel,
+        )
+        .await;
+        let shown = match refreshed {
+            Ok(_) => crate::process::run(
+                &store.directory,
+                &bundle.tofu(),
+                &["show", "-json", "gateway.plan"],
+                &crate::state::schema_environment(&store.directory),
+                cancel,
+            )
+            .await
+            .ok(),
+            Err(_) => None,
+        };
+        let _ = fs::remove_file(store.directory.join("gateway.plan"));
+        let plan: Value = serde_json::from_slice(&shown?).ok()?;
+        let values = &plan["prior_state"]["values"]["root_module"]["resources"]
+            .as_array()?
+            .iter()
+            .find(|resource| resource["address"] == ADDRESS)?["values"];
+        // The Docker provider refreshes a stopped container as must_run=false.
+        if values["must_run"] != false {
+            return None;
+        }
+        let name = values["name"].as_str()?;
+        Some(Error::GatewayStopped {
+            name: name.into(),
+            start: format!("docker --host {} start {name}", gateway.engine),
+        })
     }
     pub(super) fn provider_environment(
         &self,
