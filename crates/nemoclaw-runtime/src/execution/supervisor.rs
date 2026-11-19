@@ -66,3 +66,33 @@ pub(crate) async fn terminate(child: &mut dyn ChildWrapper) {
     // process; select by this established group, never a process name.
     let _ = child.start_kill();
 }
+
+/// Supervise the backend while the filter serves its published port. The filter
+/// stops only by failing, which leaves the backend unreachable, so the backend
+/// stops too; when supervision ends first, the filter stops before this returns.
+pub(crate) async fn with_filter(
+    policy: Policy,
+    child: &mut dyn ChildWrapper,
+    monitors: Monitors<'_>,
+    cancel: &CancellationToken,
+    mut filter: tokio::task::JoinHandle<std::convert::Infallible>,
+) -> Result<(), Error> {
+    let supervised = tokio::select! {
+        result = supervise(policy, &mut *child, monitors, cancel) => Some(result),
+        _ = &mut filter => None,
+    };
+    match supervised {
+        Some(result) => {
+            filter.abort();
+            // Cancellation completes once the listener and connections close.
+            let _ = filter.await;
+            result
+        }
+        None => {
+            terminate(child).await;
+            Err(Error::Conflict(
+                "inference route filter failed; managed service stopped; reapply required",
+            ))
+        }
+    }
+}

@@ -4,6 +4,7 @@
 //! Package-specific service installers.
 
 pub mod container;
+mod inference;
 pub mod ollama;
 pub mod vllm;
 
