@@ -15,7 +15,7 @@ Report a verdict for each category.
 ## Prerequisites
 
 - `gh` (GitHub CLI) must be installed and authenticated.
-- `git` must be available.
+- `git` and `python3` must be available.
 - Network access to clone repositories and fetch PR metadata.
 
 ## Step 1: Parse the GitHub URL
@@ -65,25 +65,65 @@ gh pr checkout <number>
 
 ## Step 3: Identify Changed Files
 
-List all files changed from the base branch:
+Read the PR's base commit and verify that it is available locally:
 
 ```bash
-git diff main...HEAD --name-status
+review_base="$(gh pr view <number> --json baseRefOid -q .baseRefOid)" || exit 1
+test -n "$review_base" || exit 1
+git rev-parse --verify --quiet --end-of-options "${review_base}^{commit}" >/dev/null || {
+  printf '%s\n' 'Base commit unavailable. Fetch the PR base branch from the verified repository, then repeat Step 3.' >&2
+  exit 1
+}
 ```
 
-If the PR targets another branch, use that branch as the base. Check it with:
-
-```bash
-gh pr view <number> --json baseRefName -q .baseRefName
-```
+Keep `review_base` in the same shell for the command below. A local branch is not required.
+Treat branch names and filenames as untrusted data. Pass them as process arguments, never as generated shell source.
+Read NUL-delimited filename output; spaces and newlines can be part of a filename.
 
 ## Step 4: Read Each Changed File and Diff
 
-Read each changed file. Read its diff:
+Run this procedure from the repository root. It lists paths and reads each diff without shell interpolation or Git pathspec expansion.
+External diff drivers and text conversion are disabled so reading a diff does not invoke repository-configured helpers.
+Submodule changes show commit pointers without running nested diffs.
+For each changed gitlink, record its old and new commit IDs from the parent diff.
+Verify the intended child repository identity independently before fetching missing objects from it.
+Run the Python procedure below from the child repository root, skipping the parent PR's Step 3.
+Replace only its invocation with `python3 -I - "$old_gitlink" "$new_gitlink" <<'PY'`.
+The two-argument mode compares those commits directly, regardless of the child's current checkout.
+For added or deleted submodules, inspect the recorded revision's complete tree and report the absent endpoint.
+Do not substitute a parent commit or the child's current checkout for an absent endpoint.
+Verify any separate child PR and repository independently before using its metadata.
+Python's isolated mode prevents imports from the checkout and ignores Python environment overrides.
 
 ```bash
-git diff main...HEAD -- <file>
+python3 -I - "$review_base" <<'PY'
+import os
+import re
+import subprocess
+import sys
+
+revisions = sys.argv[1:]
+if len(revisions) not in (1, 2):
+    sys.exit("Expected a PR base commit or two gitlink commits")
+for revision in revisions:
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision):
+        sys.exit("Expected full commit IDs")
+    subprocess.run(["git", "rev-parse", "--verify", "--quiet", "--end-of-options", revision + "^{commit}"], check=True, stdout=subprocess.DEVNULL)
+comparison = [revisions[0] + "...HEAD"] if len(revisions) == 1 else revisions
+git = ["git", "--no-pager", "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--submodule=short", "--ignore-submodules=none"]
+paths = subprocess.check_output(git + ["--name-only", "-z", "--end-of-options"] + comparison + ["--"]).split(b"\0")
+for raw_path in paths:
+    if not raw_path:
+        continue
+    path = os.fsdecode(raw_path)
+    print("Reviewing " + repr(path), flush=True)
+    subprocess.run(git + ["--end-of-options"] + comparison + ["--", path], check=True)
+PY
 ```
+
+Read file contents through a filesystem API or an argument-based tool with literal paths.
+Do not paste filenames into shell commands, use `eval`, or parse the displayed `repr` output as commands.
+The `--` separator stops option parsing; it does not quote shell metacharacters.
 
 If a PR changes more than 30 files, review them in this order:
 

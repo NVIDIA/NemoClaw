@@ -45,7 +45,7 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery
 COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs
 
 FROM scratch AS managed-startup-runtime-builder
-COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs
+COPY agents/hermes/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs
 
 FROM scratch AS hermes-npm-patch-payload
 
@@ -79,6 +79,7 @@ COPY agents/hermes/generate-config.ts agents/hermes/check-native-credentials.ts 
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
 COPY agents/hermes/qualify-switchyard-judge.py /opt/nemoclaw-hermes-config/qualify-switchyard-judge.py
+COPY agents/hermes/switchyard-preflight.py agents/hermes/install-switchyard.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-mcp-http-proxy.py /opt/nemoclaw-hermes-config/patch-mcp-http-proxy.py
@@ -136,7 +137,6 @@ FROM scratch AS hermes-wrapper-payload
 COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 COPY agents/hermes/validate-cli-adapter.py /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py
 COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json
-
 
 # Fetch the managed capability wheels outside RUN instructions so
 # both the standard build and the protected --network none rebuild install the
@@ -860,7 +860,8 @@ COPY --from=hermes-wrapper-payload / /
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }; \
     /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py compatibility-retirement
+        /opt/nemoclaw-hermes-config/image-build-probes.py compatibility-retirement \
+    && install -o root -g root -m 0444 /dev/null /usr/local/share/nemoclaw/hermes-switchyard.lock
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \

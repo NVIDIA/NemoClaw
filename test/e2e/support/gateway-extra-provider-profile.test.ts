@@ -29,15 +29,19 @@ function probe(exitCode: number, stdout = "", stderr = ""): ShellProbeResult {
   };
 }
 
-function matchingExport(): string {
+function matchingExport(purpose?: "switchyard-peer"): string {
   const source = fs.readFileSync(
-    new URL("../fixtures/provider-profiles/nemoclaw-e2e-extra-provider-v1.yaml", import.meta.url),
+    new URL(
+      `../fixtures/provider-profiles/nemoclaw-e2e-${purpose === "switchyard-peer" ? "switchyard-peer" : "extra-provider"}-v1.yaml`,
+      import.meta.url,
+    ),
     "utf8",
   );
   return JSON.stringify(YAML.parse(source));
 }
 
-function gateway(steps: Step[]) {
+function gateway(steps: Step[], purpose?: "switchyard-peer") {
+  const tokenEnv = purpose === "switchyard-peer" ? "NEMOCLAW_E2E_SWITCHYARD_PEER_TOKEN" : TOKEN_ENV;
   const remaining = [...steps];
   const events: string[] = [];
   const command = vi.fn<HostCliClient["command"]>(
@@ -46,7 +50,7 @@ function gateway(steps: Step[]) {
       expect(args).toEqual(expect.arrayContaining(["-g", "nemoclaw", step.operation]));
       expect(args.join(" ")).not.toContain(TOKEN);
       expect(options.redactionValues).toContain(TOKEN);
-      expect(options.env?.[TOKEN_ENV]).toBe(step.operation === "create" ? TOKEN : undefined);
+      expect(options.env?.[tokenEnv]).toBe(step.operation === "create" ? TOKEN : undefined);
       events.push(step.operation);
       return step.result;
     },
@@ -58,25 +62,50 @@ function gateway(steps: Step[]) {
   const create = () =>
     createExtraGatewayProvider(host, "e2e-extra-provider", {
       artifactName: "extra-provider",
-      env: { [TOKEN_ENV]: TOKEN },
+      env: { [tokenEnv]: TOKEN },
+      purpose,
     });
   return { command, create, events, remaining };
 }
 
 describe("E2E extra-provider profile", () => {
-  it("imports and verifies the restricted profile before provider creation (#12940)", async () => {
-    const fixture = gateway([
-      { operation: "import", result: probe(0) },
-      { operation: "export", result: probe(0, matchingExport()) },
-      { operation: "create", result: probe(0) },
-    ]);
-    await fixture.create();
-    expect(fixture.events).toEqual(["import", "export", "create"]);
-    expect(fixture.remaining).toEqual([]);
-    const createArgs = fixture.command.mock.calls[2][1]!;
-    expect(createArgs[createArgs.indexOf("--type") + 1]).toBe(PROFILE_ID);
-    expect(createArgs[createArgs.indexOf("--credential") + 1]).toBe(TOKEN_ENV);
-  });
+  it.each([undefined, "switchyard-peer"] as const)(
+    "imports and verifies profile %s before provider creation (#13865)",
+    async (purpose) => {
+      expect(JSON.parse(matchingExport(purpose))).toMatchObject({
+        credentials: [
+          {
+            env_vars: [
+              purpose === "switchyard-peer" ? "NEMOCLAW_E2E_SWITCHYARD_PEER_TOKEN" : TOKEN_ENV,
+            ],
+            auth_style: "header",
+            header_name: "Authorization",
+          },
+        ],
+        endpoints: [],
+        binaries: [],
+        inference_capable: false,
+      });
+      const fixture = gateway(
+        [
+          { operation: "import", result: probe(0) },
+          { operation: "export", result: probe(0, matchingExport(purpose)) },
+          { operation: "create", result: probe(0) },
+        ],
+        purpose,
+      );
+      await fixture.create();
+      expect(fixture.events).toEqual(["import", "export", "create"]);
+      expect(fixture.remaining).toEqual([]);
+      const createArgs = fixture.command.mock.calls[2][1]!;
+      expect(createArgs[createArgs.indexOf("--type") + 1]).toBe(
+        purpose === "switchyard-peer" ? "nemoclaw-e2e-switchyard-peer-v1" : PROFILE_ID,
+      );
+      expect(createArgs[createArgs.indexOf("--credential") + 1]).toBe(
+        purpose === "switchyard-peer" ? "NEMOCLAW_E2E_SWITCHYARD_PEER_TOKEN" : TOKEN_ENV,
+      );
+    },
+  );
 
   it("reuses a matching imported profile before provider creation (#12940)", async () => {
     const fixture = gateway([

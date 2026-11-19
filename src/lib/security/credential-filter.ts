@@ -139,17 +139,60 @@ function textWithoutSafeCredentialFixtures(value: string): string {
   );
 }
 
-/** Detect standalone and context-anchored credentials in opaque file content. */
-export function textContainsCredential(
-  value: string,
-  options: { opaqueAssignments?: boolean; privateKeyHeader?: boolean } = {},
+function isSqlBindParameter(
+  text: string,
+  assignment: RegExpExecArray,
+  scannedPrefixLength: number,
 ): boolean {
+  const candidate = /^\?\)*(?:$|(['"])\)*(?:[.!?]['"]?)?)$/u.exec(assignment[4] ?? "");
+  if (candidate === null) return false;
+  if (!/=[ \t]*\?/u.test(assignment[0])) return false;
+  // A bind marker carries no credential. Keep context bounded and within its quote.
+  const query = /(['"])(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|EXPLAIN)\b[^'"\r\n\0]*$/iu.exec(
+    text.slice(Math.max(0, assignment.index - 1_024), assignment.index),
+  );
+  return (
+    (query !== null && (candidate[1] === undefined || candidate[1] === query[1])) ||
+    // A complete marker already passed with its original context. Values
+    // reaching the old chunk boundary must still be inspected with new bytes.
+    assignment.index + assignment[0].length < scannedPrefixLength
+  );
+}
+
+type CredentialScanOptions = {
+  opaqueAssignments?: boolean;
+  privateKeyHeader?: boolean;
+  /** Only for Deep Agents session content, including database sidecars. */
+  sqlBindParameters?: boolean;
+  /** Prefix already checked successfully with the same options in a preceding chunk. */
+  scannedPrefixLength?: number;
+};
+
+export type CredentialFindingRule =
+  | "credential-fingerprint"
+  | "bearer-authorization"
+  | "credential-assignment";
+
+/** Return a fixed rule identifier without retaining the matching value. */
+export function credentialFindingRule(
+  value: string,
+  options: CredentialScanOptions = {},
+): CredentialFindingRule | null {
   const withoutPlaceholders = textWithoutSafeCredentialFixtures(value);
-  if (textContainsHighConfidenceCredential(withoutPlaceholders, options)) return true;
+  if (textContainsHighConfidenceCredential(withoutPlaceholders, options))
+    return "credential-fingerprint";
   const authorization =
     /\b(?:Proxy-)?Authorization["']?[ \t]*[:=][ \t]*["']?Bearer[ \t]+([A-Za-z0-9_.+/=-]{10,})/gimu;
-  if (authorization.test(withoutPlaceholders)) return true;
-  if (options.opaqueAssignments === false) return false;
+  if (authorization.test(withoutPlaceholders)) return "bearer-authorization";
+  if (options.opaqueAssignments === false) return null;
+  // Fixture normalization can shorten the input. Reuse decisions only within
+  // an identical normalized prefix, never at raw offsets in transformed text.
+  const scannedPrefix = options.sqlBindParameters
+    ? textWithoutSafeCredentialFixtures(value.slice(0, options.scannedPrefixLength ?? 0))
+    : "";
+  const scannedPrefixLength = withoutPlaceholders.startsWith(scannedPrefix)
+    ? scannedPrefix.length
+    : 0;
   const assignment =
     /(?<![A-Za-z0-9_.-])["']?([_A-Za-z][_A-Za-z0-9.-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}]+))/gu;
   for (;;) {
@@ -160,15 +203,27 @@ export function textContainsCredential(
     if (
       !/^(?:module\.)?exports\./u.test(field) &&
       isCredentialField(field) &&
-      !isSafeCredentialPlaceholder(candidate)
+      !isSafeCredentialPlaceholder(candidate) &&
+      !(
+        options.sqlBindParameters === true &&
+        isSqlBindParameter(withoutPlaceholders, match, scannedPrefixLength)
+      )
     ) {
-      return true;
+      return "credential-assignment";
     }
     // A non-credential outer JSON key can contain a nested credential key.
     // Advance one character so the bounded scan considers that inner object.
     assignment.lastIndex = match.index + 1;
   }
-  return false;
+  return null;
+}
+
+/** Detect standalone and context-anchored credentials in opaque file content. */
+export function textContainsCredential(
+  value: string,
+  options: CredentialScanOptions = {},
+): boolean {
+  return credentialFindingRule(value, options) !== null;
 }
 
 /** Detect npm registry credential directives even when their values are opaque. */
