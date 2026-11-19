@@ -24,7 +24,7 @@ import { startFakeMcpHttpsServer, startPublicMcpHttpsTunnel } from "./mcp-bridge
 
 type Address = { address: string; family: number };
 
-/** Control the add process's DNS input without replacing policy or provider operations. */
+/** Control a CLI process's DNS input without replacing policy or provider operations. */
 export async function withMcpDnsAnswers<T>(
   hostname: string,
   addresses: readonly Address[],
@@ -53,9 +53,9 @@ dns.lookup = async (hostname, options) => {
       { mode: 0o600 },
     );
     const result = await run(`--require=${JSON.stringify(preload)}`);
-    // An unused preload cannot establish that the real add saw the intended DNS input.
+    // An unused preload cannot establish that the CLI command saw the intended DNS input.
     if (fs.readFileSync(observed, "utf8") !== JSON.stringify(addresses)) {
-      throw new Error("MCP add did not consume the controlled DNS answers");
+      throw new Error("MCP command did not consume the controlled DNS answers");
     }
     return result;
   } finally {
@@ -148,21 +148,24 @@ export async function assertSharedHostMcpComposition(options: {
     cleanup.add(`remove shared-host MCP registration and provider ${entry.server}`, run);
     return run;
   });
-  for (const entry of entries) {
-    await withMcpDnsAnswers(hostname, entry.answers, (addNodeOptions) =>
-      addBridgeAndReadStatus(host, sandbox, {
-        sandboxName,
-        mcpUrl: `${tunnel.origin}${entry.pathname}`,
-        expectedAdapter: adapter,
-        artifactPrefix: entry.server,
-        serverName: entry.server,
-        credentialEnvName: entry.key,
-        credential: entry.secret,
-        applyHostPolicyEdit: false,
-        addNodeOptions,
-      }),
-    );
-  }
+  await withMcpDnsAnswers(hostname, answers, async (statusNodeOptions) => {
+    for (const entry of entries) {
+      await withMcpDnsAnswers(hostname, entry.answers, (addNodeOptions) =>
+        addBridgeAndReadStatus(host, sandbox, {
+          sandboxName,
+          mcpUrl: `${tunnel.origin}${entry.pathname}`,
+          expectedAdapter: adapter,
+          artifactPrefix: entry.server,
+          serverName: entry.server,
+          credentialEnvName: entry.key,
+          credential: entry.secret,
+          applyHostPolicyEdit: false,
+          addNodeOptions,
+          statusNodeOptions,
+        }),
+      );
+    }
+  });
   for (const entry of entries) {
     const captured = await captureManagedMcpPolicy(sandbox, {
       sandboxName,

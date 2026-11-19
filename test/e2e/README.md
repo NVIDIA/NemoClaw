@@ -1126,6 +1126,7 @@ depend on an external DNS rotation happening during the test. A failed step rest
 policy before normal sandbox cleanup.
 
 The shared-host MCP scenario sends each provider placeholder to both configured paths for OpenClaw, Hermes, and Deep Agents Code.
+The fixture gives status the first DNS answer set and gives the second add a subset, keeping status independent of later live DNS changes.
 Its own path must authenticate; the peer must reject it without receiving the foreign raw credential.
 The probe requires HTTP 401 or 403, and the server observation rejects a credential leak even when authentication fails.
 Transport, TLS, timeout, and unrelated HTTP failures cannot establish credential withholding.

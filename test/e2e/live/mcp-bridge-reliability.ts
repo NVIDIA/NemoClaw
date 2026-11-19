@@ -57,6 +57,7 @@ export async function addBridgeAndReadStatus(
     credentialEnvName?: string;
     applyHostPolicyEdit?: boolean;
     addNodeOptions?: string;
+    statusNodeOptions?: string;
   },
 ): Promise<string> {
   await (options.applyHostPolicyEdit === false
@@ -92,6 +93,7 @@ export async function addBridgeAndReadStatus(
     artifactName: `${options.artifactPrefix}-mcp-status-json`,
     env: {
       ...buildAvailabilityProbeEnv(),
+      ...(options.statusNodeOptions ? { NODE_OPTIONS: options.statusNodeOptions } : {}),
       [credentialEnvName]: credential,
     },
     redactionValues: [credential],

@@ -71,6 +71,104 @@ it("rejects an unused DNS preload and removes it when the add fails", async () =
   expect(fs.existsSync(directory)).toBe(false);
 });
 
+function lookupSharedHostAnswers(nodeOptions: string): Array<{ address: string; family: number }> {
+  return JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        "-e",
+        'require("node:dns/promises").lookup("shared.example.test", { all: true }).then(answers => process.stdout.write(JSON.stringify(answers)))',
+      ],
+      { env: { ...process.env, NODE_OPTIONS: nodeOptions }, encoding: "utf8", timeout: 10_000 },
+    ),
+  );
+}
+
+it.each(["shared-one", "shared-two"])(
+  "holds status DNS steady when live answers change for %s",
+  async (driftingServer) => {
+    type Options = Parameters<typeof assertSharedHostMcpComposition>[0];
+    const firstAnswers = [
+      { address: "104.16.230.132", family: 4 },
+      { address: "104.16.231.132", family: 4 },
+    ];
+    const liveAnswers = [
+      ...firstAnswers,
+      { address: "2606:4700::6810:e684", family: 6 },
+      { address: "2606:4700::6810:e784", family: 6 },
+    ];
+    const observations: Array<{ server: string; command: string; answers: typeof firstAnswers }> =
+      [];
+    vi.spyOn(adminScope, "approveOpenClawAdminScope").mockResolvedValue();
+    vi.spyOn(servers, "startFakeMcpHttpsServer").mockResolvedValue({
+      close: vi.fn(),
+    } as unknown as Awaited<ReturnType<typeof servers.startFakeMcpHttpsServer>>);
+    vi.spyOn(servers, "startPublicMcpHttpsTunnel").mockResolvedValue({
+      origin: "https://shared.example.test",
+    } as Awaited<ReturnType<typeof servers.startPublicMcpHttpsTunnel>>);
+    vi.spyOn(dns, "lookup").mockResolvedValue(firstAnswers as never);
+    const stop = new Error("stop after controlled DNS handoff");
+    vi.spyOn(sandboxProbes, "captureManagedMcpPolicy").mockRejectedValue(stop);
+    const host = {
+      nemoclaw: vi.fn(async (args: string[], options: { env: NodeJS.ProcessEnv }) => {
+        const [, , command, server] = args;
+        const nodeOptions = options.env.NODE_OPTIONS;
+        const answers = nodeOptions
+          ? lookupSharedHostAnswers(nodeOptions)
+          : server === driftingServer
+            ? liveAnswers
+            : firstAnswers;
+        observations.push({ server, command, answers });
+        const pins = answers.map((entry) => entry.address);
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: JSON.stringify({
+            server,
+            url: `https://shared.example.test${server === "shared-one" ? "/mcp" : "/mcp-peer"}`,
+            support: { adapter: "openclaw-config" },
+            env: {
+              names: [server === "shared-one" ? "SHARED_ONE_MCP_SECRET" : "SHARED_TWO_MCP_SECRET"],
+              ready: true,
+            },
+            provider: {
+              name: `alpha-mcp-${server}`,
+              present: true,
+              attached: true,
+              state: "configured",
+            },
+            policy: { name: `mcp-bridge-${server}`, present: true, state: "configured" },
+            adapter: { registered: true },
+            warnings:
+              pins.join(",") === firstAnswers.map((entry) => entry.address).join(",")
+                ? []
+                : [
+                    "Public DNS answers differ from the recorded pins. Run mcp update <server> --refresh-public-pins to refresh the live policy.",
+                  ],
+          }),
+        };
+      }),
+    } as unknown as Options["host"];
+    await expect(
+      assertSharedHostMcpComposition({
+        adapter: "openclaw-config",
+        host,
+        sandbox: {} as Options["sandbox"],
+        cleanup: { add: vi.fn() } as unknown as Options["cleanup"],
+        artifacts: { writeJson: vi.fn() } as unknown as Options["artifacts"],
+        progress: {} as Options["progress"],
+        sandboxName: "alpha",
+      }),
+    ).rejects.toThrow(stop.message);
+    expect(observations).toEqual([
+      { server: "shared-one", command: "add", answers: firstAnswers },
+      { server: "shared-one", command: "status", answers: firstAnswers },
+      { server: "shared-two", command: "add", answers: firstAnswers.slice(1) },
+      { server: "shared-two", command: "status", answers: firstAnswers },
+    ]);
+  },
+);
+
 it("authenticates each MCP path with its own credential through real HTTPS", async () => {
   const server = await startFakeMcpHttpsServer({
     secret: "first",
@@ -268,14 +366,8 @@ it.each([
     ] as never);
     vi.spyOn(reliability, "addBridgeAndReadStatus").mockImplementation(
       async (_host, _sandbox, options) => {
-        execFileSync(
-          process.execPath,
-          ["-e", 'require("node:dns/promises").lookup("shared.example.test", { all: true })'],
-          {
-            env: { ...process.env, NODE_OPTIONS: options.addNodeOptions },
-            timeout: 10_000,
-          },
-        );
+        lookupSharedHostAnswers(options.addNodeOptions!);
+        lookupSharedHostAnswers(options.statusNodeOptions!);
         return "";
       },
     );
