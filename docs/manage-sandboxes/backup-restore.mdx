@@ -29,14 +29,18 @@ Most lifecycle operations do not need a backup or restore step. When `$$nemoclaw
 3. Clear the replacement's fresh native home/workspace and restore the complete archive.
 4. Validate the replacement before retiring the temporary handoff.
 
+For a managed LangChain Deep Agents Code sandbox recreated for a verified provider or model change, the restore keeps the replacement's newly generated `.deepagents/config.toml` instead of the archived copy. The backup keeps the previous file. Reapply any direct edits to it after recreation; refer to [Understand Sandbox State](understand-sandbox-state).
+
 <AgentOnly variant="openclaw">
 
 NemoClaw checks restored OpenClaw state before running the pinned `2026.9.5` and `2026.9.7` migration runtimes.
 It runs each runtime only when the database schemas and recorded writer version are compatible with that runtime.
 It skips an intermediate runtime when the restored state is too new for it.
+
 If legacy JSON sessions coexist with populated SQLite sessions, restoration stops and keeps the gateway stopped.
 Before checking eligibility for the `2026.9.7` migration runtime, NemoClaw inspects retired Telegram state.
 Incompatible retained Telegram state stops restoration and keeps the gateway stopped, even when that runtime would be skipped.
+
 The original backup remains available for recovery.
 Restore a consistent backup or reconcile the incompatible state before retrying.
 Keep the original host backup until you verify the restored sandbox.
@@ -87,7 +91,29 @@ If restore or validation fails, NemoClaw reports failure and retains the backup.
 Preserve that backup and inspect the reported cause before another mutation; repeating a failed rebuild is not a general recovery procedure.
 </AgentOnly>
 
-Hermes PID and lock receipts, OpenClaw's post-upgrade doctor marker, warm-up sessions, and transient SQLite write-ahead-log, shared-memory, and rollback-journal companions, and NemoClaw's configuration and blueprint cache are replacement-owned or generation-local. The replacement keeps its fresh copies instead of restoring the retired sandbox's values. NemoClaw sanitizes machine-local authority from the durable OpenClaw database copy and rejects an archive that still contains one of those database companions, because replaying it could restore removed authority. For Deep Agents Code, NemoClaw scans `sessions.db-journal`, `sessions.db-shm`, and `sessions.db-wal` for credential material before it publishes a backup. A detected credential or scan that exceeds the backup deadline stops the backup and identifies the affected sidecar. Unknown agent paths transfer when their archive paths and link targets have no line breaks and their content is inspectable and credential-free. For a line break in a path or link target, [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) explains how to rename the path or recreate the link. A restore failure happens after the replacement is created; NemoClaw retains the backup for manual recovery and does not publish the replacement as successful. Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
+Hermes PID and lock receipts, OpenClaw's post-upgrade doctor marker, warm-up sessions, and transient SQLite write-ahead-log, shared-memory, and rollback-journal companions, and NemoClaw's configuration and blueprint cache are replacement-owned or generation-local.
+The replacement keeps its fresh copies instead of restoring the retired sandbox's values.
+NemoClaw sanitizes machine-local authority from the durable OpenClaw database copy and rejects an archive that still contains one of those database companions, because replaying it could restore removed authority.
+
+For Deep Agents Code, NemoClaw scans `sessions.db-journal`, `sessions.db-shm`, and `sessions.db-wal` for credential material before it publishes a backup.
+A detected credential or scan that exceeds the backup deadline stops the backup and identifies the affected sidecar.
+
+<AgentOnly variant="deepagents">
+
+Before retrying a Deep Agents Code backup, follow [Resolve a Deep Agents Code Backup Refusal](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#resolve-a-deep-agents-code-backup-refusal).
+Credential bytes can remain in `sessions.db-wal` after you delete conversation content.
+Do not edit SQLite rows or remove the session database to bypass the refusal.
+
+</AgentOnly>
+
+If a backup credential scan detects credential material, move credentials into supported OpenShell credential storage or bindings.
+Remove them from the native home.
+Then retry the backup.
+
+Unknown agent paths transfer when their archive paths and link targets have no line breaks and their content is inspectable and credential-free.
+For a line break in a path or link target, [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) explains how to rename the path or recreate the link.
+
+A restore failure happens after the replacement is created; NemoClaw retains the backup for manual recovery and does not publish the replacement as successful.
 
 Credential sanitization can increase the size of a structured configuration.
 NemoClaw expands only the private archive copy and leaves the live configuration unchanged.

@@ -318,7 +318,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "verifies changed Hugging Face catalog references without credentials",
+      "test": "routes security guidance and model references through credential-free checks",
       "category": "security"
     },
     {

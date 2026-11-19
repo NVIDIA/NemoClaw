@@ -118,9 +118,27 @@ it.each([
     nextMode: "ui",
     finalMode: "ui",
   },
+  {
+    profile: "TUI after CLI pairing",
+    clientId: "openclaw-tui",
+    initialMode: "ui",
+    scopes: [...TUI_SCOPES, "operator.pairing"],
+    tokenScopes: [...TUI_SCOPES, "operator.pairing"],
+    authScopes: TUI_SCOPES,
+    nextMode: "ui",
+    finalMode: "ui",
+  },
 ])(
   "keeps a published $profile lease accepted until its pairing state changes (#13100, #13668)",
-  async ({ clientId, initialMode, scopes, tokenScopes, nextMode, finalMode }) => {
+  async ({
+    clientId,
+    initialMode,
+    scopes,
+    tokenScopes,
+    authScopes = tokenScopes,
+    nextMode,
+    finalMode,
+  }) => {
     const fixture = createOpenClawPairingFixture();
     try {
       const pairedPath = path.join(fixture.stateDirectory, "devices", "paired.json");
@@ -133,7 +151,7 @@ it.each([
       fs.writeFileSync(pairedPath, JSON.stringify(paired));
       const authPath = path.join(fixture.stateDirectory, "identity", "device-auth.json");
       const auth = JSON.parse(fs.readFileSync(authPath, "utf8"));
-      auth.tokens.operator.scopes = [...tokenScopes];
+      auth.tokens.operator.scopes = [...authScopes];
       fs.writeFileSync(authPath, JSON.stringify(auth));
       let published: LaunchReadinessLease | null = null;
       const deps: LaunchReadinessDeps = {

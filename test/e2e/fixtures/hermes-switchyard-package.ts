@@ -9,7 +9,6 @@ import {
   type HermesSwitchyardRoutingIntent,
   createHermesSwitchyardRoutingIntent,
   HERMES_RELAY_PLUGINS_FILE,
-  HERMES_RELAY_PLUGIN_STATE_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_FILE,
   serializeHermesSwitchyardRouting,
 } from "../../../src/lib/hermes-switchyard-routing.ts";
@@ -435,6 +434,7 @@ export function hermesSwitchyardRoutedFixture(
 set -euo pipefail
 exec /opt/hermes/.venv/bin/python -I - <<'PY'
 import base64
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -461,15 +461,16 @@ try:
     directory.mkdir(exist_ok=True)
     directory.chmod(0o755)
     os.chown(directory, 0, 0)
-    for path, content in (
-        ('${HERMES_RELAY_PLUGINS_FILE}', base64.b64decode('${relayPluginsBase64}').decode('utf-8')),
-        ('${HERMES_RELAY_PLUGIN_STATE_FILE}', base64.b64decode('${relayPluginStateBase64}').decode('utf-8')),
-        ('${HERMES_SWITCHYARD_DEPLOYMENT_FILE}', deployment),
-    ):
-        target = Path(path)
-        target.write_text(content, encoding='utf-8')
-        os.chown(target, 0, 0)
-        target.chmod(0o444)
+    files = {
+        'relayPluginsToml': base64.b64decode('${relayPluginsBase64}').decode('utf-8'),
+        'relayPluginStateJson': base64.b64decode('${relayPluginStateBase64}').decode('utf-8'),
+        'switchyardDeploymentToml': deployment,
+    }
+    spec = importlib.util.spec_from_file_location(
+        'switchyard_preflight', '/opt/nemoclaw-hermes-config/switchyard-preflight.py')
+    preflight = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preflight)
+    preflight.publish(files)
     # Provision the generated route and its policy before startup, as the image
     # builder does. Keep both integrity anchors consistent; do not bypass the guard.
     route = json.loads(base64.b64decode('${routedGatewayConfigBase64}'))
@@ -483,6 +484,7 @@ try:
     policy_path.write_text(json.dumps(policy))
     provision_config_hashes(config_path.parent, Path('/etc/nemoclaw/hermes.config-hash'))
     environment = dict(os.environ, HERMES_NEMO_RELAY_PLUGINS_TOML='${HERMES_RELAY_PLUGINS_FILE}')
+    environment[preflight.EXPECTED_ENV] = preflight.fingerprint(files)
     for key in ('NVIDIA_INFERENCE_API_KEY', 'OPENAI_API_KEY'):
         environment[key] = 'xapp-OPENSHELL-RESOLVE-ENV-' + key
     os.execve('/usr/local/bin/nemoclaw-start', ['/usr/local/bin/nemoclaw-start'], environment)

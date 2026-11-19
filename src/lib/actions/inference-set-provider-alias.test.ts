@@ -340,7 +340,7 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
 });
 
 describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
-  it("guides Deep Agents selection changes through a new name and default recovery", async () => {
+  it("guides Deep Agents selection changes through named recreation and default recovery", async () => {
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
       entry: { name: "dcode-sb", agent: "langchain-deepagents-code" },
@@ -352,17 +352,17 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("supports OpenClaw and Hermes sandboxes");
-    expect((error as Error).message).toContain("saved native preferences");
+    expect((error as Error).message).toContain("backup retains the previous config");
     expect((error as Error).message).toContain("record the current default");
     expect((error as Error).message).toContain(
-      "onboard --agent dcode --name <new-sandbox-name> --fresh",
+      "onboard --agent dcode --name <sandbox-name> --fresh --recreate-sandbox",
     );
     expect((error as Error).message).toContain("After any onboarding attempt");
     expect((error as Error).message).toContain("use <previous-default-sandbox-name>");
     expect((error as Error).message).toContain("After successful onboarding");
-    expect((error as Error).message).toContain("<new-sandbox-name> status");
-    expect((error as Error).message).toContain("<new-sandbox-name> inference get");
-    expect((error as Error).message).toContain("use <new-sandbox-name>");
+    expect((error as Error).message).toContain("<sandbox-name> status");
+    expect((error as Error).message).toContain("<sandbox-name> inference get");
+    expect((error as Error).message).toContain("use <sandbox-name>");
     expectNoInferenceMutation(deps.calls);
   });
 
@@ -379,7 +379,7 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
     ).rejects.toThrow(/supports OpenClaw and Hermes sandboxes; 'spark-sb' uses 'spark'\.$/);
   });
 
-  it("does not recommend replacing the existing Deep Agents sandbox to switch selections", async () => {
+  it("recommends explicit named recreation without mutating inference", async () => {
     const name = "dcode-sb";
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
@@ -390,7 +390,7 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
       deps,
     );
 
-    await expect(attempt).rejects.toThrow("--name <new-sandbox-name> --fresh");
+    await expect(attempt).rejects.toThrow("--name <sandbox-name> --fresh --recreate-sandbox");
     await expect(attempt).rejects.not.toThrow(`--name ${shellQuote(name)}`);
     await expect(attempt).rejects.not.toThrow(`--name ${name}`);
     expectNoInferenceMutation(deps.calls);
