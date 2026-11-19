@@ -152,6 +152,28 @@ impl RuntimeDataSource {
             },
         })
     }
+    pub(crate) fn llama_cpp() -> Result<Self, nemoclaw_tofu::shape::Unmappable> {
+        Ok(Self {
+            fields: nemoclaw_sdk::services::installers::llama_cpp::runtime_fields()?,
+            kind: "llamaCpp",
+            encode: |settings| {
+                Some(nemoclaw_runtime::RuntimeSpec::LlamaCpp(Box::new(
+                    serde_json::from_value(settings).ok()?,
+                )))
+            },
+        })
+    }
+    pub(crate) fn nim() -> Result<Self, nemoclaw_tofu::shape::Unmappable> {
+        Ok(Self {
+            fields: nemoclaw_sdk::services::installers::nim::runtime_fields()?,
+            kind: "nim",
+            encode: |settings| {
+                Some(nemoclaw_runtime::RuntimeSpec::Nim(Box::new(
+                    serde_json::from_value(settings).ok()?,
+                )))
+            },
+        })
+    }
     pub(crate) fn ollama() -> Result<Self, nemoclaw_tofu::shape::Unmappable> {
         Ok(Self {
             fields: nemoclaw_sdk::services::installers::ollama::runtime_fields()?,

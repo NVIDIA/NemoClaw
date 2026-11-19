@@ -5,6 +5,8 @@
 
 pub mod container;
 mod inference;
+pub mod llama_cpp;
+pub mod nim;
 pub mod ollama;
 pub mod vllm;
 
