@@ -6,8 +6,10 @@
 v1 is in development and has no release.
 This page lists what it does not do or has not tested, with the open GitHub issue that tracks each where one exists.
 Other pages state a limit where it affects a procedure and link the same issue.
+Remaining Classic parity work is tracked in [milestone 14](https://github.com/NVIDIA/NemoClaw/milestone/14); a limit here is not a delivery commitment.
+The [migration guide's scope questions](../get-started/migration.md#needs-scope-analysis) cover distributed inference, native memory search, and MCP credential rotation; those decisions or verifications remain unresolved.
 
-The **Last verified** column links the `v1` commit each row was last checked against, then what was checked.
+The **Last verified** column links the source commit each row was last checked against, then what was checked, or names an outstanding verification or dated scope decision.
 That commit's `versions.json` pins the upstream sources, and its `image/fabric/Dockerfile` pins the OpenClaw image:
 
 - **code**: NemoClaw's source, tests and E2E cases.
@@ -30,6 +32,7 @@ Release archives exist only on draft releases; there is no installer or publishe
 | The release executables are neither signed nor notarized for macOS or Windows | [#14621](https://github.com/NVIDIA/NemoClaw/issues/14621) | [`291723b`][v1-291723b]: code, issue |
 | The SDK and provider packages are not published | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | No support policy or enterprise deployment qualification | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) | [`cb8ef25`][v1-cb8ef25]: issue |
+| Complete Classic onboarding parity: the [onboarding flow](../../crates/nemoclaw-onboarding/README.md) writes YAML, but the remaining Classic setup journeys still need an agreed inventory and verification | [#14606](https://github.com/NVIDIA/NemoClaw/issues/14606) | [`e7e1857`][v1-e7e1857]: docs; tracker scope checked 2026-11-19 |
 
 ## Platforms, Models, and Placement
 
@@ -60,6 +63,7 @@ Accepted platform and model declarations are not a tested matrix; verify the exa
 | Tool use through managed Ollama, managed Ollama with harnesses other than Hermes, and managed Ollama on GPUs and hosts other than CI's Linux AMD64 [GPU runner](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | A tested matrix of harness, model, provider and platform combinations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: issue |
+| Generic [application containers](../build-deploy/container-services.md) on Podman, Kubernetes, or a remote engine: this path supports managed local Docker only | By design: [container contract](../build-deploy/container-services.md) | [`e7e1857`][v1-e7e1857]: docs |
 
 ## Inference
 
@@ -84,6 +88,7 @@ Select the adapter and image together, then verify its integrations and native r
 | Messaging channels | [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037) | [`cb8ef25`][v1-cb8ef25]: code, Fabric, issue |
 | Managed MCP servers: NemoClaw passes the agent's `mcp` section to Fabric, but doesn't run the servers or grant them network access or credentials | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
 | Hermes OAuth and managed tools | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
+| Automatic third-party skill acquisition, installation, upgrade, or removal: the [skill configuration](../agents-inference/agents.md#skills-on-a-mounted-volume) loads supplied files; it does not provide a package-management workflow | Harness-owned; supply the required files and dependencies | [`e7e1857`][v1-e7e1857]: docs |
 | Agent interfaces are reached by Fabric's P0 conventions; runtime handles don't report them yet | [NVIDIA/NeMo-Fabric#565](https://github.com/NVIDIA/NeMo-Fabric/issues/565) | [`cb8ef25`][v1-cb8ef25]: Fabric, issue |
 | Interface tokens that the agent's own tools can't read, an interface health check, and exposed service URLs for Hermes's dashboard | [NVIDIA/NeMo-Fabric#566](https://github.com/NVIDIA/NeMo-Fabric/issues/566) | [`cb8ef25`][v1-cb8ef25]: issue |
 | Native tools and plugins from a mounted volume: no Fabric adapter field loads or enables them from a location you supply. NemoClaw doesn't download or install plugins | [NVIDIA/NeMo-Fabric#661](https://github.com/NVIDIA/NeMo-Fabric/issues/661), [NVIDIA/NeMo-Fabric#665](https://github.com/NVIDIA/NeMo-Fabric/issues/665) | [`cb8ef25`][v1-cb8ef25]: code, Fabric, issue |
@@ -93,6 +98,8 @@ Select the adapter and image together, then verify its integrations and native r
 | NemoClaw's invoke path can't send `acknowledge_recovery`, so after `session_recovery_required` an agent that keeps its state answers only a request sent with `fabric-agent-ctl invoke --request`; see [continue after session_recovery_required](../observability/troubleshooting.md#continue-after-session_recovery_required). Native interfaces aren't affected | No open issue | [`cb8ef25`][v1-cb8ef25]: code, Fabric |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
 | Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
+| A complete web-search parity workflow, including credentials, destination access, a real search result, and restart/export/reapply for each selected harness/provider | [#14607](https://github.com/NVIDIA/NemoClaw/issues/14607); existing OpenClaw gap: [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) | Not verified: needs the selected search workflows exercised end to end |
+| A common API for agent-specific runtime operations, such as a native gateway-process restart; the owning harness or component defines those operations. Supported desired-state deployment lifecycle operations remain available | Not planned: [upstream ownership](../../internal-docs/design/scope.md#upstream-boundaries) | [`e7e1857`][v1-e7e1857]: docs |
 | OpenShell refuses new connections to an address its policy DNS answered once the answer's TTL has passed, so a client that reconnects to the address it kept fails, as OpenClaw's Node.js does. For an OpenClaw agent, the model request fails and its runtime stops; the next apply starts a new runtime without the conversation | Fixed after OpenShell 0.1.9 by [NVIDIA/OpenShell#5650](https://github.com/NVIDIA/OpenShell/pull/5650) | [`cb8ef25`][v1-cb8ef25]: OpenShell |
 
 ## Access and Diagnostics
@@ -101,6 +108,8 @@ Access paths and diagnostic signals depend on the gateway and harness in use.
 
 | Limit | Issue | Last verified |
 |---|---|---|
+| A complete Relay activity workflow that correlates agent actions and access decisions at a destination with agreed retention and access controls; existing [Hermes trace artifacts](../agents-inference/agents.md#hermes-relay-tracing) do not establish that workflow | [#14609](https://github.com/NVIDIA/NemoClaw/issues/14609) | Not verified: needs the agreed events, destination, access controls, and lifecycle exercised |
+| A diagnostic archive for support that the user can inspect and share manually; existing error diagnostics do not provide the proposed bundle workflow | [#14618](https://github.com/NVIDIA/NemoClaw/issues/14618); product approval pending | [`e7e1857`][v1-e7e1857]: [CLI reference](../references/cli.md); tracker scope checked 2026-11-19 |
 | The [headless OpenClaw request](../agents-inference/agents.md#run-one-headless-openclaw-request) hasn't been rehearsed as written | No open issue | Not verified: needs the procedure run as written |
 | A live rehearsal against an external gateway that requires mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | An error holds at most 16 KiB of a command's OpenTofu diagnostics, such as several managed services' [stop details](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime): it lists the whole diagnostics that fit, then the next one's summary and a count of the rest; a diagnostic longer than 16 KiB keeps as much of its detail as fits | By design: bounds the error's size | [`cb8ef25`][v1-cb8ef25]: code |
@@ -116,6 +125,7 @@ Preserve state and native data before attempting a destructive operation.
 |---|---|---|
 | Native conversation continuity across runtime replacement | [Per-harness limits](../build-deploy/state.md#choose-what-to-retain-for-each-harness); depends on Fabric and the selected harness | [`cb8ef25`][v1-cb8ef25]: docs |
 | Backup, restore, snapshots and transfer of mounted agent data | [Platform-owned storage](../build-deploy/state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command | [`cb8ef25`][v1-cb8ef25]: code, docs |
+| Durable data for generic application containers: their writable volume is disposable, and replacement or destroy can lose it. This differs from caller-supplied volumes mounted in an agent sandbox | By design: [application storage](../build-deploy/container-services.md#decide-whether-the-image-fits) | [`e7e1857`][v1-e7e1857]: docs |
 | A documented path from the earlier product's configuration export to a v1 deployment | [#14580](https://github.com/NVIDIA/NemoClaw/issues/14580) | [`cb8ef25`][v1-cb8ef25]: issue |
 | Moving data from the earlier product to v1 and back | No NemoClaw procedure; native data belongs to the harness and moving its storage to the platform ([migration](../get-started/migration.md)) | [`cb8ef25`][v1-cb8ef25]: docs |
 | Keeping a sandbox across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: once the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`, and the next apply replaces it, which deletes its files outside mounted volumes and its conversation history. A graceful restart, such as `docker restart`, keeps the sandbox | [#13953](https://github.com/NVIDIA/NemoClaw/issues/13953), [NVIDIA/OpenShell#4910](https://github.com/NVIDIA/OpenShell/issues/4910) | [`291723b`][v1-291723b]: issue; on a DGX Spark, 9 of 9 SIGKILLed gateways lost their Hermes sandbox and 12 of 12 graceful restarts kept it |
@@ -134,6 +144,8 @@ Sandbox policy and credential routing depend on OpenShell and the host's control
 | OAuth-refresh credentials have no NemoClaw YAML wrapper; use [operator-managed OpenShell providers](../agents-inference/oauth-refresh.md), with separate sandbox attachments | No open issue | [`cb8ef25`][v1-cb8ef25]: code, docs |
 | Interactive network-request approval and explaining policy to an agent; OpenShell's policy advisor owns both | Not planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)) | [`cb8ef25`][v1-cb8ef25]: issue |
 | Named policy presets; named [`grants`](../security/sandbox-network.md#choose-a-policy) extend the isolated preset instead | Not planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)) | [`cb8ef25`][v1-cb8ef25]: code, issue |
+| Protected secret delivery through generic application-container `environment` and `files`: these are literal inputs that enter configuration, plans, or state | By design: [application credentials](../build-deploy/container-services.md#protect-application-credentials) | [`e7e1857`][v1-e7e1857]: docs |
+| The historical Shields interface for post-provisioning agent-state immutability | Not planned in core: [scope decision #10696](https://github.com/NVIDIA/NemoClaw/issues/10696) | Decision checked 2026-11-19; does not remove OpenShell sandbox policy or isolation |
 
 ## SDK and Provider
 
@@ -142,6 +154,7 @@ Keep the SDK, bundled providers, and their state format matched when integrating
 | Limit | Issue | Last verified |
 |---|---|---|
 | Configuration or state migration between releases | Not during alpha; see [compatibility](../references/compatibility.md) | [`cb8ef25`][v1-cb8ef25]: code, docs |
+| Compatibility with the Classic imperative CLI and TypeScript lifecycle API; use the [migration task mapping](../get-started/migration.md#map-the-user-task) to choose a desired-state CLI, Rust SDK, or OpenTofu workflow | Not planned: [migration guidance](../get-started/migration.md) | [`20c5142`][pr-20c5142]: docs |
 | A hosted Rust API reference | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 | `tofu import`, adoption, and remote state for CLI and SDK deployments | Not supported; see [compatibility](../references/compatibility.md) | [`cb8ef25`][v1-cb8ef25]: code, docs |
 
@@ -159,3 +172,5 @@ Select the v1 guide explicitly and match its source revision to the bundle befor
 [v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9
 [v1-5223fdc]: https://github.com/NVIDIA/NemoClaw/tree/5223fdc0b6c9a7ec0b7d86b9c11699eb3de1a206
 [v1-ffe5406]: https://github.com/NVIDIA/NemoClaw/tree/ffe5406498c6a27c068ad52a56ddcfb1cb37b904
+[v1-e7e1857]: https://github.com/NVIDIA/NemoClaw/tree/e7e1857514f4bed9269eeaf6786bcdb2d6d0ade3
+[pr-20c5142]: https://github.com/NVIDIA/NemoClaw/tree/20c514235c273fd13a6df5fb56f18ef15ae7c740
