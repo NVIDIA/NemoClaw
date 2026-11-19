@@ -737,6 +737,7 @@ Do not restart it solely to retry revocation if you need it to remain stopped.
 
 The backup diagnostic distinguishes credential-shaped content from extraction, SQLite inspection,
 and deadline failures. Credential-shaped content can include ordinary conversation examples.
+A quoted SQL `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `WITH`, or `EXPLAIN` statement that uses an unquoted `?` bind parameter does not by itself cause a credential refusal.
 The diagnostic reports a fixed rule identifier without printing matched text.
 When the first finding belongs to a known native session row with a validated thread identifier,
 it also reports that conversation identifier. Other findings report that conversation identification
