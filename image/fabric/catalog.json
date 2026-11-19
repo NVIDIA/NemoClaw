@@ -867,6 +867,7 @@
             "models.max_tokens",
             "instructions.system",
             "runtime.max_turns",
+            "tools.definitions",
             "tools.enabled",
             "tools.blocked",
             "mcp",
@@ -1166,6 +1167,29 @@
                   "default": {},
                   "description": "Mapping of Deep Agents tool names to human-in-the-loop interrupt policies; omitted tools run without an interrupt."
                 },
+                "middleware": {
+                  "default": [],
+                  "description": "Custom LangChain middleware for the main agent, applied in list order before NeMo Fabric's tool policy and telemetry middleware.",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "ref": {
+                        "description": "Import path of an installed LangChain AgentMiddleware subclass, as package.module:Class.",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "settings": {
+                        "description": "Keyword arguments passed to the middleware class constructor.",
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "ref"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
                 "subagents": {
                   "default": [],
                   "description": "Caller-defined declarative or asynchronous subagents; the built-in general-purpose subagent remains available by default.",
@@ -1201,6 +1225,40 @@
           "required": [],
           "type": "object"
         },
+        "skills": {
+          "directory_loading": {
+            "discovery": {
+              "depth_limit": {
+                "kind": "fixed",
+                "levels": 1
+              },
+              "nested_skills": "stop_at_skill",
+              "traversal": "immediate_children"
+            },
+            "parsing": {
+              "frontmatter_errors": "reject",
+              "name_fallback": "none",
+              "required_frontmatter_fields": [
+                "name",
+                "description"
+              ]
+            },
+            "skill_file": "SKILL.md",
+            "supported_entries": [
+              "skill",
+              "folder"
+            ]
+          },
+          "duplicates": {
+            "name_source": "frontmatter",
+            "native": "Each entry is a Deep Agents skills source and the later source wins, so the copy from the later entry loads.",
+            "supported_policies": [
+              "reject",
+              "first_wins",
+              "last_wins"
+            ]
+          }
+        },
         "telemetry": {
           "providers": {
             "native": {
@@ -1217,6 +1275,30 @@
               ]
             }
           }
+        },
+        "tool_definition_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "python",
+              "description": "A tool implemented in an installed Python package."
+            },
+            "ref": {
+              "description": "Import path of a LangChain BaseTool instance or BaseTool subclass, as package.module:attribute.",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "settings": {
+              "description": "Keyword arguments passed to a BaseTool subclass constructor; must be empty for a BaseTool instance.",
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "ref"
+          ],
+          "type": "object"
         }
       },
       "provenance": [
@@ -1558,6 +1640,7 @@
             ]
           },
           "service": true,
+          "session_resume": true,
           "streaming": false,
           "updates": false
         },
@@ -1569,6 +1652,7 @@
             "models.top_p",
             "models.max_tokens",
             "instructions.system",
+            "runtime.keep_state",
             "tools.enabled",
             "tools.blocked",
             "mcp",
@@ -1580,6 +1664,30 @@
         },
         "contract_version": "fabric.adapter/v1alpha2",
         "extension_schemas": {
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "api": {
+                "description": "OpenClaw's request adapter for the custom provider at base_url, written as models.providers.<provider>.api. Requires base_url; when omitted, the custom provider uses openai-completions.",
+                "enum": [
+                  "openai-completions",
+                  "openai-responses",
+                  "openai-chatgpt-responses",
+                  "anthropic-messages",
+                  "google-generative-ai",
+                  "google-interactions",
+                  "google-vertex",
+                  "github-copilot",
+                  "bedrock-converse-stream",
+                  "ollama",
+                  "pi-messages",
+                  "azure-openai-responses"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
           "usage": {
             "additionalProperties": false,
             "properties": {
@@ -1680,7 +1788,8 @@
         },
         "requirements": {},
         "runner": {
-          "module": "nemo_fabric_adapters.openclaw.adapter"
+          "module": "nemo_fabric_adapters.openclaw.adapter",
+          "stop_timeout_seconds": 30
         },
         "settings_schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1795,7 +1904,7 @@
               "properties": {
                 "dashboard": {
                   "additionalProperties": false,
-                  "description": "OpenClaw's Control UI. After the Gateway starts, the adapter writes its sign-in token to <artifact root>/.fabric/openclaw/runtimes/<runtime-id>/interfaces/dashboard.token.",
+                  "description": "OpenClaw's Control UI. After the Gateway starts, the adapter writes its sign-in token to <state_dir>/interfaces/dashboard.token with runtime.keep_state, or <artifact root>/.fabric/openclaw/runtimes/<runtime-id>/interfaces/dashboard.token for ephemeral state.",
                   "properties": {
                     "enabled": {
                       "default": true,
@@ -1906,7 +2015,7 @@
             },
             "shutdown_timeout_seconds": {
               "default": 15,
-              "description": "Maximum graceful Gateway shutdown time before forced termination. Fabric allows 30 seconds for the complete adapter stop; leave time for cleanup within that limit.",
+              "description": "Maximum graceful Gateway shutdown time before forced termination. NeMo Fabric allows 30 seconds for the complete adapter stop. Leave time for cleanup within that limit.",
               "exclusiveMinimum": 0,
               "type": "number"
             },
@@ -1938,6 +2047,32 @@
                 "toolSearch": {
                   "description": "Whether OpenClaw compacts large tool catalogs behind search tools.",
                   "type": "boolean"
+                },
+                "web": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "fetch": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "ssrfPolicy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "allowIpv6UniqueLocalRange": {
+                              "description": "Whether web_fetch, image, and pdf may connect to addresses in fc00::/7. Set it only behind a fake-IP proxy that owns that range and enforces its own destination policy.",
+                              "type": "boolean"
+                            },
+                            "allowRfc2544BenchmarkRange": {
+                              "description": "Whether web_fetch, image, and pdf may connect to addresses in 198.18.0.0/15. Set it only behind a fake-IP proxy that owns that range and enforces its own destination policy.",
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
                 }
               },
               "type": "object"
@@ -2649,8 +2784,8 @@
       ]
     }
   ],
-  "fabric_revision": "5245a4ceccf6852316e496ba85c678067c42d2f1",
+  "fabric_revision": "56a4207b3c7edacd6e0cceea0af7815d2df274ca",
   "schema_version": 2,
-  "source_sha256": "b311df3be51a97ffc2d928b76a2ef476c71e0aa8b68e3b5553171924f26df02f",
+  "source_sha256": "f66e2623690b9cf60e1c94fdd08504267748946936cf84139661c80798fa089c",
   "targets": []
 }

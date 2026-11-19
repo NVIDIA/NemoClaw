@@ -151,15 +151,12 @@ NemoClaw uses it to read the endpoint's model catalog.
 The harness name does not change these defaults.
 
 Agents use the protocol their harness's adapter selects for the provider transport.
-An agent uses another protocol only when its adapter's Fabric descriptor declares a model `api`, as [Pi model selection](agents.md#pi-model-selection) shows; otherwise an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent.
+An agent uses another protocol only when its adapter's Fabric descriptor declares a model `api`, as Pi's and OpenClaw's do (see [Pi model selection](agents.md#pi-model-selection)); otherwise an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent.
 Fabric validates the rest of its configuration when the agent is configured.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
 The provider's key under `inferenceProviders` is the local name routes reference; it does not select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
-
-OpenClaw can't use an `anthropic` provider yet: Fabric's OpenClaw adapter selects `openai-completions` for every route with a base URL, so OpenClaw sends the key in an `Authorization` bearer header, and OpenShell 0.1.8 and later refuse it with `403` `credential_placement_mismatch` because an `anthropic` provider places its key in `x-api-key`.
-NemoClaw doesn't check the combination, so plan and apply succeed; for an endpoint that accepts OpenAI chat completions, use `provider: openai` ([current limits](../resources/limits.md#inference)).
 
 ### Point Hermes at an Anthropic Endpoint
 
@@ -173,7 +170,7 @@ OpenShell refuses those connections, because the provider grants only its own en
 NemoClaw doesn't check the endpoint, so plan and apply succeed.
 
 Use an endpoint whose path ends in `/anthropic` or `/anthropic/v1`, or an `openai` provider when the endpoint also serves OpenAI's API.
-The `docker-openclaw-hermes-interfaces` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) gets a Hermes reply through an `anthropic` provider at an `/anthropic/v1` endpoint.
+The `docker-openclaw-hermes-interfaces` [live case](../../internal-docs/contributing/live-tests.md#hcl-e2e-scenarios) gets OpenClaw and Hermes replies through an `anthropic` provider at an `/anthropic/v1` endpoint.
 Fabric's Hermes adapter would need to configure Hermes to use the endpoint whatever its path ([current limits](../resources/limits.md#inference)).
 
 ### Prepare an External Endpoint
@@ -399,7 +396,7 @@ When memory protection stops the server, the runtime exits. Choose a restart pol
 
 Run the proxy on the same Linux Docker host as the existing Ollama daemon and installed model.
 With a managed Docker gateway, the proxy inherits `gateway.engine`.
-With an external gateway, declare the proxy service's `engine` as an explicit local Docker Unix socket and make its published endpoint reachable from OpenShell.
+With an external gateway, declare the proxy service's `engine` as an explicit local Docker engine, a Unix socket or on Windows a named pipe, and make its published endpoint reachable from OpenShell.
 Ollama must listen only on a loopback address.
 NemoClaw observes its model inventory and never installs, stops, or deletes the daemon or model.
 The proxy exposes `openai-completions`; its service contract does not restrict the harness identifier.
@@ -619,7 +616,11 @@ The menu keeps an authored model selected, including a custom identifier.
 You can choose **Type another model**; generic OpenAI-compatible and Anthropic-compatible endpoints have no vendor catalog.
 Changing a vendor or endpoint recomputes the recommendations and membership check for the selected route.
 
-Endpoint discovery can add advertised identifiers without changing the curated list.
+The endpoint's own list of models is read to check the selected model.
+It does not widen the menu: a vendor with a curated list offers only the curated models the endpoint lists, plus **Type another model**.
+A curated model the endpoint leaves out is not offered; if the endpoint lists none of them, the menu offers the models it does list instead. A model you type that the endpoint does not list is noted on the review screen.
+Keys you press while the list is being read are discarded when it arrives, so they cannot select from the narrowed menu.
+Generic OpenAI-compatible and Anthropic-compatible endpoints have no curated list, so they offer the models their endpoint lists.
 A missing catalog credential leaves offline recommendations available and reports the missing credential; it does not allow bulk acceptance without the existing target and endpoint evidence.
 Catalog membership does not verify account access, current availability, API compatibility, tool support, or successful inference.
 Use an explicit request to qualify inference.

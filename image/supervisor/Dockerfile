@@ -28,7 +28,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
     tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner -cf - . \
       | gzip -n > /out/supervisor-source.tar.gz
 
-# Compile exactly the retained archive, offline, from its vendored sources.
+# Compile exactly the retained archive, offline, from its vendored sources, and
+# keep the notices of the Rust standard library the executable links.
 FROM ${RUST_IMAGE} AS build
 COPY --from=source /out/supervisor-source.tar.gz /out/supervisor-source.tar.gz
 RUN set -eu; \
@@ -36,7 +37,8 @@ RUN set -eu; \
     tar -xzf /out/supervisor-source.tar.gz -C /workspace; \
     cd /workspace; \
     cargo build --locked --offline --release -p nemoclaw-runtime --target-dir /target; \
-    install -m 0755 /target/release/nemoclaw-runtime /out/nemoclaw-runtime
+    install -m 0755 /target/release/nemoclaw-runtime /out/nemoclaw-runtime; \
+    install -m 0644 "$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html" /out/rust-COPYRIGHT-library.html
 
 # Keep the locked build inventory visible to image SBOM catalogers, which
 # cannot discover Rust dependencies from the stripped executable or tarball.

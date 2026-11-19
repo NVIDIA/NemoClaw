@@ -4,7 +4,7 @@
 # Stage a release from a semver tag such as v0.1.0-rc1 on the v1 branch. Promote
 # the images CI checked on the tagged history to v1/<image>:<tag>, build the runtime
 # images, and create a draft release listing every digest, with the CLI bundles
-# CI / Bundle built and checked at the tagged commit. The protected
+# CI / Bundle built and checked at the tag. The protected
 # publisher stays disabled until v1 signoff; no job changes package visibility.
 # Nothing pushes to a package an
 # administrator hasn't created as internal: packages a workflow creates inherit
@@ -125,7 +125,7 @@ jobs:
       # Bake reads them from .build/image-sources.
       - name: Fetch the pinned image sources
         run: cargo images fetch
-      - name: Build and push the vLLM and Ollama runtime images
+      - name: Build and push the runtime images
         env:
           GH_TOKEN: ${{ github.token }}
           PLATFORM: ${{ matrix.platform }}
@@ -144,23 +144,232 @@ jobs:
           output='type=image,push=true,rewrite-timestamp=true'
           docker buildx bake --builder runtimes runtimes \
             --set "vllm.tags=$CI_PACKAGE:vllm-$tag" --set "vllm.output=$output" \
-            --set "ollama.tags=$CI_PACKAGE:ollama-$tag" --set "ollama.output=$output"
+            --set "ollama.tags=$CI_PACKAGE:ollama-$tag" --set "ollama.output=$output" \
+            --set "llama-cpp.tags=$CI_PACKAGE:llama-cpp-$tag" --set "llama-cpp.output=$output"
           # A runtime image's digest only changes with its inputs, so its SBOM
           # is usually already recorded.
-          for name in vllm ollama; do
+          for name in vllm ollama llama-cpp; do
             sh .github/scripts/image-sbom.sh "$CI_PACKAGE:$name-$tag" "linux/${PLATFORM#linux_}"
           done
           docker logout ghcr.io
+  bundles:
+    name: Find the CLI bundles CI checked
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.find.outputs.run }}
+      source: ${{ steps.find.outputs.source }}
+      ids: ${{ steps.find.outputs.ids }}
+      darwin_arm64: ${{ steps.find.outputs.darwin_arm64 }}
+      windows_amd64: ${{ steps.find.outputs.windows_amd64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Find the CLI bundles CI checked at the tag
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/find-cli-bundles.sh
+  # Signing runs only for the platforms a repository administrator lists in the
+  # RELEASE_SIGNING repository variable, such as `windows_amd64`: a job's if:
+  # can't see an environment's variables. A listed platform's signing job must
+  # pass for staging to continue, and a final release needs both platforms
+  # signed unless RELEASE_UNSIGNED_EXCEPTION names it (record-cli-signing.sh).
+  sign-windows:
+    name: Sign the Windows CLI
+    needs: [bundles, security-controller]
+    if: contains(vars.RELEASE_SIGNING, 'windows_amd64')
+    runs-on: windows-2025
+    timeout-minutes: 30
+    # Secure Signing's federated credential trusts this environment, whose
+    # deployment rule admits only release tags.
+    environment: release-signing
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      # Only the v1 controller's files run with signing access; the tag's
+      # bundle is data.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.security-controller.outputs.revision }}
+          persist-credentials: false
+      - name: Require the signing configuration
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          AZURE_ARTIFACT_SIGNING_PROFILE: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+        run: |
+          $missing = @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID',
+            'AZURE_ARTIFACT_SIGNING_ENDPOINT', 'AZURE_ARTIFACT_SIGNING_ACCOUNT', 'AZURE_ARTIFACT_SIGNING_PROFILE') |
+            Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) }
+          if ($missing) {
+            Write-Output "::error::The release-signing environment has no $($missing -join ', ') variable."
+            exit 1
+          }
+      - name: Download the bundle CI checked at the tag
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.bundles.outputs.windows_amd64 }}
+          run-id: ${{ needs.bundles.outputs.run }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/ci
+      - name: Unpack the bundle
+        run: tar -xf "$env:RUNNER_TEMP/ci/bundle.tar" -C "$env:RUNNER_TEMP"
+      # NVIDIA signs only the programs it builds on Windows; OpenTofu and the
+      # Docker provider stay as upstream ships them, and the Helm provider keeps
+      # HashiCorp's signature. The signing action reads paths relative to its
+      # catalog, which stays outside the uploaded bundle.
+      - name: Select the programs NVIDIA signs
+        shell: bash
+        run: |
+          bash .github/scripts/signing-inventory.sh "$RUNNER_TEMP/dist/windows_amd64" windows_amd64 > "$RUNNER_TEMP/inventory.tsv"
+          awk -F'\t' '$1 == "nvidia" { print "windows_amd64/" $2 }' "$RUNNER_TEMP/inventory.tsv" | tr '/' '\134' > "$RUNNER_TEMP/dist/nvidia.txt"
+          test -s "$RUNNER_TEMP/dist/nvidia.txt"
+      - name: Sign in to Azure
+        uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign NVIDIA's programs
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          files-catalog: ${{ runner.temp }}\dist\nvidia.txt
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      # Check NVIDIA's signatures and HashiCorp's on the Helm provider. /tw
+      # fails an untimestamped signature, which stops verifying when its
+      # certificate expires. The output, which names each signer, is the
+      # release's evidence.
+      - name: Verify the signatures
+        run: |
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+          $log = "$env:RUNNER_TEMP\windows_amd64.verification.txt"
+          $checked = 0
+          $failed = $false
+          foreach ($line in Get-Content "$env:RUNNER_TEMP\inventory.tsv") {
+            $signer, $path = $line -split "`t", 2
+            if ($signer -eq 'none') { continue }
+            $checked++
+            $file = Join-Path "$env:RUNNER_TEMP\dist\windows_amd64" $path
+            & $signtool.FullName verify /pa /all /tw /v $file | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) {
+              Write-Output "::error::$path has no valid timestamped signature from $signer."
+              $failed = $true
+            }
+          }
+          if ($checked -eq 0) {
+            Write-Output '::error::The Windows bundle holds no signed programs.'
+            exit 1
+          }
+          if ($failed) { exit 1 }
+      - name: Upload the signed bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-cli-windows_amd64
+          path: ${{ runner.temp }}/dist/windows_amd64
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the signature checks
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signing-verification-windows_amd64
+          path: ${{ runner.temp }}/windows_amd64.verification.txt
+          if-no-files-found: error
+          retention-days: 7
+  # Product Security decides whether Secure Signing signs and notarizes the
+  # macOS executables or this job does with NVIDIA's Developer ID (#14621); the
+  # signing step lands with that decision. Until then, listing darwin_arm64 in
+  # RELEASE_SIGNING stops staging here: only the Helm provider is notarized.
+  sign-macos:
+    name: Sign the macOS CLI
+    needs: [bundles, security-controller]
+    if: contains(vars.RELEASE_SIGNING, 'darwin_arm64')
+    runs-on: macos-15
+    timeout-minutes: 30
+    environment: release-signing
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      # Only the v1 controller's files run with signing access; the tag's
+      # bundle is data.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.security-controller.outputs.revision }}
+          persist-credentials: false
+      - name: Require the signing configuration
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_TEAM_ID" ]; then
+            echo '::error::The release-signing environment has no APPLE_TEAM_ID variable.'
+            exit 1
+          fi
+      - name: Download the bundle CI checked at the tag
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.bundles.outputs.darwin_arm64 }}
+          run-id: ${{ needs.bundles.outputs.run }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/ci
+      - name: Unpack the bundle
+        run: tar -xf "$RUNNER_TEMP/ci/bundle.tar" -C "$RUNNER_TEMP"
+      - name: Verify every signature
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          set -o pipefail
+          bash .github/scripts/verify-macos-signatures.sh "$RUNNER_TEMP/dist/darwin_arm64" "$APPLE_TEAM_ID" 2>&1 |
+            tee "$RUNNER_TEMP/darwin_arm64.verification.txt"
+      - name: Upload the signed bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-cli-darwin_arm64
+          path: ${{ runner.temp }}/dist/darwin_arm64
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the signature checks
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signing-verification-darwin_arm64
+          path: ${{ runner.temp }}/darwin_arm64.verification.txt
+          if-no-files-found: error
+          retention-days: 7
   stage:
     name: Stage the release
     outputs:
       inventory_sha256: ${{ steps.draft.outputs.inventory_sha256 }}
       sboms_sha256: ${{ steps.draft.outputs.sboms_sha256 }}
-    needs: [select, build, runtimes, security-controller]
+      cli_checksums: ${{ steps.pack.outputs.checksums }}
+    needs: [select, build, runtimes, security-controller, bundles, sign-windows, sign-macos]
     if: >-
       !cancelled() && needs.security-controller.result == 'success' &&
       needs.select.result == 'success' && needs.runtimes.result == 'success' &&
-      (needs.build.result == 'success' || needs.build.result == 'skipped')
+      (needs.build.result == 'success' || needs.build.result == 'skipped') &&
+      needs.bundles.result == 'success' &&
+      (needs.sign-windows.result == 'success' ||
+        (needs.sign-windows.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'windows_amd64'))) &&
+      (needs.sign-macos.result == 'success' ||
+        (needs.sign-macos.result == 'skipped' && !contains(vars.RELEASE_SIGNING, 'darwin_arm64')))
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -198,43 +407,56 @@ jobs:
           required: "true"
           token: ${{ github.token }}
       # The CLI bundles CI / Bundle built and checked at the tag, as it uploaded
-      # them. Push and manual runs build the commit itself; a pull request run
-      # builds a merge commit, so its bundles are another commit's.
+      # them, each in a directory named after its artifact.
       - name: Download the CLI bundles CI checked at the tag
-        id: cli
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.bundles.outputs.ids }}
+          run-id: ${{ needs.bundles.outputs.run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/ci-bundles
+      - name: Download the signed Windows bundle
+        if: needs.sign-windows.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-cli-windows_amd64
+          path: ${{ runner.temp }}/signed/windows_amd64
+      - name: Download the signed macOS bundle
+        if: needs.sign-macos.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-cli-darwin_arm64
+          path: ${{ runner.temp }}/signed/darwin_arm64
+      - name: Download the signature checks
+        if: needs.sign-windows.result == 'success' || needs.sign-macos.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: signing-verification-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/signed
+      # Resealing hashes the bundle with the SDK, which needs the pinned protoc.
+      - name: Install the pinned build tools
+        run: cargo ci tools
+      # A final release fails here, before it pushes anything, unless its macOS
+      # and Windows executables are signed or RELEASE_UNSIGNED_EXCEPTION names it.
+      - name: Pack the CLI archives and record their signing
+        id: pack
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_UNSIGNED_EXCEPTION: ${{ vars.RELEASE_UNSIGNED_EXCEPTION }}
         run: |
+          cargo build --locked -q -p nemoclaw-build
+          mkdir -p "$RUNNER_TEMP/signed"
           cli="$RUNNER_TEMP/cli-bundles"
-          mkdir "$cli"
-          retry="Run CI / Bundle at the tag with 'gh workflow run rust.yml --ref $GITHUB_REF_NAME', and rerun this workflow once it passes."
-          found=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow rust.yml --commit "$GITHUB_SHA" \
-            --json databaseId,event,conclusion,url --jq '[.[] | select(.conclusion == "success"
-              and (.event == "push" or .event == "workflow_dispatch"))][0] // empty | "\(.databaseId) \(.url)"')
-          if [ -z "$found" ]; then
-            echo "::error::CI / Bundle hasn't passed at $GITHUB_SHA, so no checked bundles exist to stage. $retry"
-            exit 1
-          fi
-          read -r run source <<< "$found"
-          missing=
-          for platform in linux_arm64 linux_amd64 darwin_arm64 windows_amd64; do
-            # gh skips expired artifacts. A rerun bundle job uploads its own
-            # attempt's bundle; take the latest.
-            download="$RUNNER_TEMP/bundle-$platform"
-            if gh run download "$run" --repo "$GITHUB_REPOSITORY" --pattern "bundle-$platform-$GITHUB_SHA-*" --dir "$download"; then
-              bundle=$(printf '%s\n' "$download"/*/bundle.tar | sort -V | tail -n 1)
-              gzip -n < "$bundle" > "$cli/nemoclaw-$GITHUB_REF_NAME-$platform.tar.gz"
-              rm -r "$download"
-            else
-              missing="$missing $platform"
-            fi
-          done
-          if [ -n "$missing" ]; then
-            echo "::error::$source no longer has the bundle for:$missing. CI keeps a v1 commit's bundles for 7 days. $retry"
-            exit 1
-          fi
-          (cd "$cli" && sha256sum -- * > SHA256SUMS)
-          echo "source=$source" >> "$GITHUB_OUTPUT"
+          PATH="$PWD/target/debug:$PATH" bash .github/scripts/pack-cli-bundles.sh \
+            "$RUNNER_TEMP/ci-bundles" "$RUNNER_TEMP/signed" "$cli"
+          bash .github/scripts/record-cli-signing.sh "$RUNNER_TEMP/signed" "$cli" "$RUNNER_TEMP/cli-signing.md"
+          # A final release attests these digests.
+          {
+            echo 'checksums<<CHECKSUMS'
+            cat "$cli/SHA256SUMS"
+            (cd "$cli" && sha256sum SHA256SUMS)
+            echo CHECKSUMS
+          } >> "$GITHUB_OUTPUT"
       - name: Join each image's platforms and draft the release
         id: draft
         env:
@@ -242,7 +464,7 @@ jobs:
           AGENTS: ${{ steps.images.outputs.agents }}
           GH_TOKEN: ${{ github.token }}
           SOURCE: ${{ needs.select.outputs.source }}
-          CLI_SOURCE: ${{ steps.cli.outputs.source }}
+          CLI_SOURCE: ${{ needs.bundles.outputs.source }}
           TAG: ${{ github.ref_name }}
           PACKAGE: ${{ env.CI_PACKAGE }}
           SYFT: ${{ steps.syft.outputs.cmd }}
@@ -267,6 +489,8 @@ jobs:
               echo "| \`$archive\` | \`$sum\` |"
             done < "$cli/SHA256SUMS"
             echo
+            cat "$RUNNER_TEMP/cli-signing.md"
+            echo
             echo '## Images'
             echo
             echo "A Kubernetes sandbox names its agent image's metadata bundle in \`image.metadata\`; each one is attached to this release."
@@ -276,7 +500,7 @@ jobs:
           } > "$notes"
           for image in $NAMES; do
             case "$image" in
-              vllm|ollama) from=$GITHUB_SHA ;;
+              vllm|ollama|llama-cpp) from=$GITHUB_SHA ;;
               *) from=$SOURCE ;;
             esac
             target="$RELEASE_NAMESPACE/$image:$TAG"
@@ -345,7 +569,7 @@ jobs:
               --title "NemoClaw $TAG" --notes-file "$notes"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$bundles"/*.metadata.json
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$cli"/nemoclaw-* "$cli/SHA256SUMS"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$cli"/nemoclaw-* "$cli/SHA256SUMS" "$cli/release-evidence.json"
           cp "$inventory" "$sboms/inventory.json"
           echo "inventory_sha256=$(sha256sum "$inventory" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "sboms_sha256=$(sha256sum "$sboms/sboms.json" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
@@ -557,7 +781,7 @@ jobs:
   # candidates and internal packages stay private (#13521).
   attest:
     name: Attest
-    needs: assess
+    needs: [stage, assess]
     if: >-
       !cancelled() && needs.assess.result == 'success'
     permissions:
@@ -568,6 +792,7 @@ jobs:
     uses: ./.github/workflows/release-attest.yml
     with:
       images: ${{ needs.assess.outputs.images }}
+      checksums: ${{ needs.stage.outputs.cli_checksums }}
   release:
     name: Publish the release
     needs: [assess, attest]
@@ -575,8 +800,33 @@ jobs:
       !cancelled() && needs.assess.result == 'success' && needs.attest.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
+      attestations: read
       contents: write
     steps:
+      # The draft's archives and SHA256SUMS must be the attested ones; the
+      # checks' output joins the release's evidence.
+      - name: Verify the CLI archives' attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+          cli="$RUNNER_TEMP/cli"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$cli" \
+            --pattern 'nemoclaw-*' --pattern SHA256SUMS --pattern release-evidence.json
+          cd "$cli"
+          sha256sum --check --strict SHA256SUMS
+          for file in nemoclaw-*.tar.gz SHA256SUMS; do
+            if ! gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" --format json > "$RUNNER_TEMP/attestation.json"; then
+              echo "::error::$file has no valid build provenance attestation from this repository."
+              exit 1
+            fi
+            echo "$file: attestation verified"
+            jq --arg command "gh attestation verify $file --repo $GITHUB_REPOSITORY --format json" --slurpfile output "$RUNNER_TEMP/attestation.json" \
+              '.verification += [{command: $command, output: $output[0]}]' release-evidence.json > evidence.next
+            mv evidence.next release-evidence.json
+          done
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber release-evidence.json
       - name: Publish the draft
         env:
           GH_TOKEN: ${{ github.token }}

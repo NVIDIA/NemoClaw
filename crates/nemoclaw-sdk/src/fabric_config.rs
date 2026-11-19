@@ -209,6 +209,30 @@ pub fn projection(
             }
         }
     }
+    // OpenShell's policy DNS answers every name in a sandbox from
+    // 198.18.0.0/15 and decides each connection itself. OpenClaw's fetch tools
+    // refuse that range unless told it belongs to such a proxy, so an adapter
+    // that declares OpenClaw's setting gets it unless the harness sets it.
+    // A value of the wrong type is left for Fabric's schema to reject.
+    let fetch_policy = "/settings_schema/properties/tools/properties/web/properties/fetch/properties/ssrfPolicy/properties";
+    if descriptor.is_some_and(|descriptor| {
+        descriptor
+            .pointer(&format!("{fetch_policy}/{FAKE_IP_RANGE}"))
+            .is_some()
+    }) {
+        let mut section = result["harness"]["settings"].as_object_mut();
+        for key in ["tools", "web", "fetch", "ssrfPolicy"] {
+            section = section.and_then(|section| {
+                section
+                    .entry(key)
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+            });
+        }
+        if let Some(policy) = section {
+            policy.entry(FAKE_IP_RANGE).or_insert(true.into());
+        }
+    }
     // The harness and the agent each author their own Fabric sections; the
     // deployment's values fill in around them and must not be contradicted.
     let agent = &sandbox.agent;
@@ -255,6 +279,7 @@ pub fn projection(
 }
 
 const TRUSTED_HTTP_HOSTS: &str = "insecure_http_model_hosts";
+const FAKE_IP_RANGE: &str = "allowRfc2544BenchmarkRange";
 
 /// The host of a plain-HTTP endpoint that Fabric would refuse without trust:
 /// not loopback, and spelled as the setting's hostname pattern allows.

@@ -5,12 +5,7 @@
 
 mod api;
 mod capabilities;
-// A managed gateway needs a local engine, which only Unix clients reach.
-#[cfg(unix)]
 mod gateway_installation;
 mod gateway_readiness;
-// Managed gateway resources take only a local engine socket, which only Unix
-// clients reach.
-#[cfg(unix)]
 mod gateway_storage;
 mod standalone;

@@ -4,10 +4,77 @@
 //! Package-neutral runtime entry point. Package dispatch remains inside the
 //! service component alongside each installer's implementation.
 
+pub(crate) mod authentication;
+pub(crate) mod output;
 pub(super) mod supervisor;
 
 use crate::{CancellationToken, Error};
 use std::path::Path;
+
+/// Open the lock file at `path` and take its exclusive writer lock, which the
+/// returned file holds until it is dropped.
+pub(crate) fn lock(
+    path: &Path,
+    open_error: &'static str,
+    busy_error: &'static str,
+) -> Result<std::fs::File, Error> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|_| Error::State(open_error))?;
+    file.try_lock().map_err(|_| Error::Conflict(busy_error))?;
+    Ok(file)
+}
+
+/// Monitor the owned backend, then close its tasks and explain its final output.
+pub(crate) async fn serve<F, R>(
+    child: &mut dyn process_wrap::tokio::ChildWrapper,
+    policy: supervisor::Policy,
+    output: output::Output,
+    readiness: F,
+    filter: Option<tokio::task::JoinHandle<std::convert::Infallible>>,
+    cancel: &CancellationToken,
+    trip: &CancellationToken,
+) -> Result<(), Error>
+where
+    F: FnOnce(tokio::sync::mpsc::Sender<bool>) -> R,
+    R: std::future::Future<Output = Result<(), Error>> + Send + 'static,
+{
+    let (samples_tx, samples) = tokio::sync::mpsc::channel(1);
+    let sampler = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            if samples_tx
+                .send(crate::hardware::linux::memory())
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let (ready_tx, ready) = tokio::sync::mpsc::channel(1);
+    let health = tokio::spawn(readiness(ready_tx));
+    let monitors = supervisor::Monitors {
+        samples,
+        ready,
+        trip: trip.clone(),
+        report: &report,
+    };
+    let result = match filter {
+        Some(filter) => supervisor::with_filter(policy, child, monitors, cancel, filter).await,
+        None => supervisor::supervise(policy, child, monitors, cancel).await,
+    };
+    sampler.abort();
+    health.abort();
+    output.explain(result).await
+}
 
 pub async fn run(cancel: &CancellationToken, trip: &CancellationToken) -> Result<(), Error> {
     let text = match std::env::var("NEMOCLAW_RUNTIME_SPEC") {
@@ -57,6 +124,29 @@ fn report_at(root: &Path, phase: &str, detail: &str, pid: u32) -> Result<(), Err
 
 #[cfg(test)]
 mod status_tests {
+    #[test]
+    fn writer_ownership_is_exclusive_until_the_holder_releases_it() {
+        // Other test threads fork backend children; isolate descriptor ownership.
+        const CHILD: &str = "NEMOCLAW_WRITER_LOCK_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "execution::status_tests::writer_ownership_is_exclusive_until_the_holder_releases_it", "--nocapture"])
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime.lock");
+        let acquire = || super::lock(&path, "cannot open test lock", "test lock held");
+        let owner = acquire().unwrap();
+        assert!(acquire().is_err());
+        drop(owner);
+        assert!(acquire().is_ok());
+    }
     #[test]
     fn status_replaces_the_previous_phase_and_preserves_it_when_directory_is_missing() {
         let root = tempfile::tempdir().unwrap();

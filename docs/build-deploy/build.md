@@ -171,8 +171,11 @@ Selecting this artifact does not qualify GPU inference on the host.
 
 A model that needs preparation tools or patches uses an image its recipe's authors build; see [inline recipes](../agents-inference/recipes.md).
 
-`docker buildx bake ollama` builds the [managed Ollama](../agents-inference/inference.md#run-managed-ollama) image, and `docker buildx bake runtimes` builds both.
-Run `cargo images fetch` first: it places the Ollama license that the image retains, as `versions.json` pins it.
+`docker buildx bake ollama` builds the [managed Ollama](../agents-inference/inference.md#run-managed-ollama) image.
+`docker buildx bake llama-cpp` builds the llama.cpp image: llama.cpp's CUDA 13.5 server image with the supervisor added, which no service runs yet.
+Its CUDA 13.5, like the vLLM image's CUDA 13.0, needs NVIDIA driver 580 or newer.
+`docker buildx bake runtimes` builds all three.
+Run `cargo images fetch` first: it places the Ollama and llama.cpp licenses that the images retain, as `versions.json` pins them.
 Use the `NAME@sha256:DIGEST` reference that `docker image inspect` prints for `spec.services.<name>.image`.
 Builds use fixed timestamps, so rebuilding the same sources keeps the same digest.
 Do not substitute a mutable tag or a digest copied from another build.
@@ -185,7 +188,7 @@ The archive contains the runtime crate, its standalone workspace manifest and pr
 It excludes the SDK, provider, OpenShell, Fabric, onboarding, and agent images.
 Each runtime image retains the archive, the license, its own Dockerfile and notice, and the supervisor's Dockerfile under `/opt/nemoclaw/source/`.
 
-The [vLLM notice](../../image/vllm/NOTICE.md) and [Ollama notice](../../image/ollama/NOTICE.md) identify retained sources and licenses.
+The [vLLM notice](../../image/vllm/NOTICE.md), [Ollama notice](../../image/ollama/NOTICE.md), and [llama.cpp notice](../../image/llama-cpp/NOTICE.md) identify retained sources and licenses.
 
 Generated bundles, build inputs, and images are ignored by Git.
 Model snapshots and prepared data belong to the deployment’s persistent volume, outside the build context.

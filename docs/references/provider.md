@@ -295,7 +295,7 @@ These types name the engine or cluster they use instead of taking a gateway `ref
 `openshell_gateway_storage` and `openshell_podman_gateway` take the gateway's `name`, `compute_driver` (`docker` or `podman`), `engine`, `image`, and `network_cidr`, optional `owner` and `generation`, generated during apply when omitted and kept in state, and optional `image_pull_policy`:
 
 - `name` is `nc-`, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
-- `engine` is a local Unix engine socket; Podman requires its API service socket.
+- `engine` is a local engine's Unix socket or, on Windows, its named pipe, such as `npipe:////./pipe/docker_engine`; Podman requires its API service socket, or its machine's pipe or macOS socket.
 - `image` must be the bundle's gateway image pin, which generated graphs supply; documents do not name it.
 - `network_cidr` is a private IPv4 `/24`.
 
@@ -624,7 +624,7 @@ Reads have a five-second total bound and limits on response size, models, and pa
 The observation identifies control-host reachability, catalog authentication, and advertised model identifiers.
 It does not establish sandbox reachability or generation, streaming, tool-calling, or model-loading behavior; `api_verified` remains false.
 Authentication denial is distinguished from a missing or unsupported model-list endpoint.
-Onboarding adds observed identifiers to model suggestions while preserving manual model entry and accepted choices.
+Onboarding offers the observed identifiers as model suggestions for an endpoint with no curated list, and uses them to narrow a vendor's curated list, preserving manual model entry and accepted choices.
 
 Credentials remain a direct SDK concern: `observe_credentials` reports whether each selected reference resolves, separately from remote authentication.
 Gateway and resource discovery reuse their existing strict lifecycle reads below, preserving bindings when refresh fails.
@@ -780,7 +780,7 @@ The gateway reads its configuration and database under `data_path` and listens o
 Generated graphs also run the container as `0:0` and give it:
 
 - the storage's volume mounted at `data_path`;
-- the engine socket mounted at `/var/run/docker.sock`;
+- the engine's socket mounted at `/var/run/docker.sock`: a Unix socket's own path, or `/var/run/docker.sock` in the Linux VM behind a named pipe or, on macOS, behind Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's default socket;
 - the endpoint's port published on the endpoint's address;
 - the storage's bridge network, at the second host address of `network_cidr`;
 - the restart policy `unless-stopped`, so the engine starts the gateway again after the gateway or the host restarts, while a gateway stopped with `docker stop` stays stopped.

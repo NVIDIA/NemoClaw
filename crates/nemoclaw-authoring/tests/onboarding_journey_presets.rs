@@ -230,49 +230,245 @@ fn every_named_vendor_offers_its_default_and_catalog_alternatives() {
     }
 }
 
-#[test]
-fn endpoint_discovery_supplements_the_curated_menu_without_duplicates() {
+const MODEL: &str = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
+
+/// The state's observations of an endpoint that answered with `models`.
+fn listing(
+    state: &nemoclaw_authoring::JourneyState,
+    models: &[&str],
+) -> nemoclaw_sdk::discovery::DiscoveryObservations {
     use nemoclaw_sdk::{
         discovery::{
             DiscoveryObservation, DiscoveryObservations, DiscoveryQuery, ObservationStatus,
         },
         inference_discovery::{AuthenticationStatus, EndpointObservation},
     };
-    let capabilities = Capabilities::available();
-    let state = choose_preset(ProviderPreset::OpenAi);
-    let resolution = state.resolve(&capabilities).unwrap();
+    let resolution = state.resolve(&Capabilities::available()).unwrap();
     let request = nemoclaw_authoring::inference_request_for_document(
         resolution.assessment().document().unwrap(),
         state.current_route(),
     )
     .unwrap()
     .unwrap();
-    let observations = DiscoveryObservations::new().with(
+    DiscoveryObservations::new().with(
         DiscoveryQuery::Inference(request),
         DiscoveryObservation::Inference(EndpointObservation {
             status: ObservationStatus::Available,
             reachable: Some(true),
             authentication: AuthenticationStatus::Accepted,
-            models: vec!["gpt-5.4-mini".into(), "vendor/new-model".into()],
+            models: models.iter().map(|model| (*model).into()).collect(),
             reason: None,
             source: "fixture".into(),
             api_verified: false,
         }),
+    )
+}
+
+#[test]
+fn a_vendor_offers_only_its_recommended_models_from_the_endpoint_list() {
+    let capabilities = Capabilities::available();
+    let state = choose_preset(ProviderPreset::NvidiaEndpoints);
+    // The endpoint lists the whole catalog, models that cannot drive an agent
+    // included, and leaves out one recommended model.
+    let observations = listing(
+        &state,
+        &[
+            "adept/fuyu-8b",
+            "bigcode/starcoder2-15b",
+            "google/deplot",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        ],
     );
     let resolution = state
         .resolve_with_observations(&capabilities, &observations)
         .unwrap();
-    let question = resolution
-        .question("/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model")
+    let question = resolution.question(MODEL).unwrap();
+    assert_eq!(
+        question.choices(),
+        [
+            json!("nvidia/nemotron-3.5-super-vl-120b-a12b"),
+            json!("nvidia/nemotron-3-ultra-550b-a55b"),
+        ]
+    );
+    assert!(question.allows_custom_answer());
+}
+
+#[test]
+fn a_recommended_default_the_endpoint_does_not_list_is_not_suggested() {
+    let capabilities = Capabilities::available();
+    let state = choose_preset(ProviderPreset::NvidiaEndpoints);
+    let observations = listing(&state, &["nvidia/nemotron-3-ultra-550b-a55b"]);
+    let resolution = state
+        .resolve_with_observations(&capabilities, &observations)
         .unwrap();
-    assert!(question.choices().contains(&json!("gpt-5.4-nano")));
-    assert!(question.choices().contains(&json!("vendor/new-model")));
-    let unique = question
-        .choices()
-        .iter()
-        .map(Value::to_string)
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(unique.len(), question.choices().len());
+    let question = resolution.question(MODEL).unwrap();
+    assert_eq!(
+        question.choices(),
+        [json!("nvidia/nemotron-3-ultra-550b-a55b")]
+    );
+    assert_eq!(
+        question.suggestion(),
+        Some(&json!("nvidia/nemotron-3-ultra-550b-a55b"))
+    );
+}
+
+#[test]
+fn a_list_that_names_no_recommended_model_offers_the_models_it_lists() {
+    let capabilities = Capabilities::available();
+    for preset in [ProviderPreset::OpenAi, ProviderPreset::Nous] {
+        let state = choose_preset(preset);
+        let observations = listing(&state, &["vendor/alpha", "vendor/beta"]);
+        let resolution = state
+            .resolve_with_observations(&capabilities, &observations)
+            .unwrap();
+        let question = resolution.question(MODEL).unwrap();
+        assert_eq!(
+            question.choices(),
+            [json!("vendor/alpha"), json!("vendor/beta")],
+            "{}",
+            preset.id()
+        );
+        assert_eq!(question.suggestion(), None, "{}", preset.id());
+        assert!(question.allows_custom_answer());
+    }
+}
+
+#[test]
+fn an_empty_endpoint_list_does_not_remove_the_recommendations() {
+    let capabilities = Capabilities::available();
+    let state = choose_preset(ProviderPreset::OpenAi);
+    let observations = listing(&state, &[]);
+    let resolution = state
+        .resolve_with_observations(&capabilities, &observations)
+        .unwrap();
+    let question = resolution.question(MODEL).unwrap();
+    for model in ProviderPreset::OpenAi.recommended_models() {
+        assert!(question.choices().contains(&json!(model)), "{model}");
+    }
+    assert!(resolution.information().is_empty());
+}
+
+#[test]
+fn a_supplied_custom_model_stays_offered_beside_the_recommended_ones() {
+    let capabilities = Capabilities::available();
+    let mut state = choose_preset(ProviderPreset::OpenAi);
+    state
+        .answer(&capabilities, MODEL, Some(json!("custom/model")))
+        .unwrap();
+    let supplied = nemoclaw_authoring::JourneyDefinition::new(
+        "supplied",
+        PartialDocument::from_yaml(&serde_json::to_vec(state.values()).unwrap()).unwrap(),
+    )
+    .ask([JourneyScope::RouteModels])
+    .start(&capabilities)
+    .unwrap();
+    let observations = listing(&supplied, &["gpt-5.4-mini", "vendor/new-model"]);
+    let resolution = supplied
+        .resolve_with_observations(&capabilities, &observations)
+        .unwrap();
+    let question = resolution.question(MODEL).unwrap();
+    assert_eq!(question.suggestion(), Some(&json!("custom/model")));
+    assert_eq!(
+        question.choices(),
+        [json!("custom/model"), json!("gpt-5.4-mini")]
+    );
+}
+
+#[test]
+fn generic_endpoints_keep_offering_the_models_they_list() {
+    let capabilities = Capabilities::available();
+    for preset in [
+        ProviderPreset::OpenAiCompatible,
+        ProviderPreset::AnthropicCompatible,
+    ] {
+        let mut state = choose_preset(preset);
+        state
+            .answer(
+                &capabilities,
+                "/spec/inferenceProviders/nvidia-prod/endpoint",
+                Some(json!("https://private.example/v1")),
+            )
+            .unwrap();
+        state
+            .answer(&capabilities, MODEL, Some(json!("private/custom")))
+            .unwrap();
+        // Reopen the model question on the authored document.
+        let supplied = nemoclaw_authoring::JourneyDefinition::new(
+            "supplied",
+            PartialDocument::from_yaml(&serde_json::to_vec(state.values()).unwrap()).unwrap(),
+        )
+        .ask([JourneyScope::RouteModels])
+        .start(&capabilities)
+        .unwrap();
+        let observations = listing(&supplied, &["private/alpha", "private/beta"]);
+        let resolution = supplied
+            .resolve_with_observations(&capabilities, &observations)
+            .unwrap();
+        assert_eq!(
+            resolution.question(MODEL).unwrap().choices(),
+            [
+                json!("private/custom"),
+                json!("private/alpha"),
+                json!("private/beta")
+            ],
+            "{}",
+            preset.id()
+        );
+    }
+}
+
+#[test]
+fn a_model_the_endpoint_does_not_list_is_reported_without_echoing_it() {
+    let capabilities = Capabilities::available();
+    let mut state = choose_preset(ProviderPreset::OpenAi);
+    let observations = listing(&state, &["gpt-5.4", "gpt-5.4-mini"]);
+    let pending = state
+        .resolve_with_observations(&capabilities, &observations)
+        .unwrap();
+    // The model is still being asked, so nothing is reported yet.
+    assert!(pending.question(MODEL).is_some());
+    assert!(pending.information().is_empty());
+    for (model, reported) in [
+        ("gpt-5.4-mini", false),
+        ("PRIVATE_SENTINEL/typed-model", true),
+    ] {
+        state
+            .answer(&capabilities, MODEL, Some(json!(model)))
+            .unwrap();
+        let resolution = state
+            .resolve_with_observations(&capabilities, &observations)
+            .unwrap();
+        let information = resolution.information().join(" ");
+        assert_eq!(
+            information.contains("does not include the selected model"),
+            reported,
+            "{information}"
+        );
+        assert!(!information.contains("PRIVATE_SENTINEL"));
+        assert_eq!(state.values().pointer(MODEL), Some(&json!(model)));
+    }
+}
+
+#[test]
+fn every_vendor_default_is_one_of_its_recommended_models() {
+    for preset in ProviderPreset::ALL
+        .into_iter()
+        .filter(|preset| !preset.recommended_models().is_empty())
+    {
+        let state = choose_preset(preset);
+        let model = state
+            .values()
+            .pointer(MODEL)
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(
+            preset.recommended_models().contains(&model),
+            "{}",
+            preset.id()
+        );
+        assert_eq!(preset.recommended_models()[0], model, "{}", preset.id());
+    }
 }
 
 #[test]

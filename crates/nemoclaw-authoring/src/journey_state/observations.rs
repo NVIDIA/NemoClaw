@@ -5,7 +5,8 @@ use super::*;
 
 impl JourneyState {
     /// Resolve questions and readiness against the observations gathered so far.
-    /// Endpoint models remain suggestions, while target observations can block
+    /// A vendor's recommended models, narrowed to those its endpoint lists,
+    /// are the model suggestions, while target observations can block
     /// readiness. Credential availability is the review's to report; an empty
     /// sheet leaves compatibility unverified.
     pub fn resolve_with_observations(
@@ -101,24 +102,72 @@ impl JourneyState {
         let Some(path) = self.route_model_path() else {
             return Ok(resolution);
         };
+        // A list with no usable entry says nothing about what the endpoint offers.
+        let listed: Vec<&str> = observed
+            .models
+            .iter()
+            .map(String::as_str)
+            .filter(|model| {
+                !model.is_empty() && model.len() <= 512 && !model.chars().any(char::is_control)
+            })
+            .collect();
+        // A vendor with recommendations offers only those the endpoint lists,
+        // since its full catalog holds models that cannot drive an agent.
+        // Endpoints without recommendations offer what they list, and so does
+        // a vendor whose endpoint lists none of its recommendations, rather
+        // than leaving the user with an empty menu.
+        let vendor = self.catalog_preset().filter(|_| !listed.is_empty());
         if let Some(question) = resolution
             .questions
             .iter_mut()
             .find(|question| question.id == path)
         {
-            if let Some(suggestion) = question.suggestion.clone()
-                && !question.choices.contains(&suggestion)
-            {
-                question.choices.push(suggestion);
+            let mut offer_listed = true;
+            if let Some(preset) = vendor {
+                let recommended = preset.recommended_models();
+                let missing = |value: &Value| {
+                    value.as_str().is_some_and(|model| {
+                        recommended.contains(&model) && !listed.contains(&model)
+                    })
+                };
+                question.choices.retain(|choice| !missing(choice));
+                if question.suggestion.as_ref().is_some_and(missing) {
+                    question.suggestion = question.choices.first().cloned();
+                }
+                offer_listed = !question.choices.iter().any(|choice| {
+                    choice
+                        .as_str()
+                        .is_some_and(|model| recommended.contains(&model))
+                });
             }
-            for model in &observed.models {
-                if !model.is_empty() && model.len() <= 512 && !model.chars().any(char::is_control) {
-                    let value = Value::String(model.clone());
+            if offer_listed {
+                if let Some(suggestion) = question.suggestion.clone()
+                    && !question.choices.contains(&suggestion)
+                {
+                    question.choices.push(suggestion);
+                }
+                for model in &listed {
+                    let value = Value::String((*model).into());
                     if !question.choices.contains(&value) {
                         question.choices.push(value);
                     }
                 }
             }
+        }
+        // The endpoint's list also checks a model the user typed. Say so only
+        // once the model is settled, and never echo it: it may be sensitive.
+        if !listed.is_empty()
+            && !resolution
+                .questions
+                .iter()
+                .any(|question| question.id == path)
+            && let Some(model) = self.authored.values.pointer(&path).and_then(Value::as_str)
+            && !listed.contains(&model)
+        {
+            resolution.information.push(
+                "The endpoint's model list does not include the selected model. Check the identifier before you deploy."
+                    .into(),
+            );
         }
         Ok(resolution)
     }

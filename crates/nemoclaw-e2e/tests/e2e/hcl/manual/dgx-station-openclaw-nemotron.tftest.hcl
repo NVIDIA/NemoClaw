@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# OpenClaw and Nemotron 3.5 Super VL on the manual Colossus GB300 runner.
+# OpenClaw and Nemotron 3.5 Super VL on the Colossus GB300 runner.
 # Reuses the GTC Station example with the bound 3.5 model and candidate images.
 # The caller independently verifies cleanup; integration tests cover unchanged
 # reconciliation without reserving a GPU.

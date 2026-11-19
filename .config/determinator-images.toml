@@ -8,8 +8,8 @@
 # Rules apply in order, before determinator's defaults. Keep them aligned with the
 # .dockerignore allowlist and with files the image commands read at runtime.
 
-# Runtime images build outside CI / Images; the live suites and the bundle
-# cover them.
+# Of the runtime images, CI / Images builds only llama.cpp's; the live suites
+# and the bundle cover the vLLM and Ollama images and the supervisor.
 [[path-rule]]
 globs = ["image/ollama/**", "image/supervisor/**", "image/vllm/**"]
 mark-changed = []

@@ -120,7 +120,7 @@ The `capabilities` tests check gateway preconditions, saved-plan rechecks, and c
 The `failures/standalone` tests apply `hcl/standalone/main.tf` through lost create and delete replies, foreign objects, a missing workspace, failed observations, and deferred bootstrap endpoints.
 The `failures/api` tests check that invalid API bindings and foreign or substituted credentials stop planning, and that a failed readback recovers; the `sandbox` test checks that settings changed outside OpenTofu replace the sandbox.
 The fake gateway refuses to delete a referenced profile or an attached provider, as the pinned API does.
-On Unix, the `gateway_storage` test checks Docker gateway storage against a fake engine.
+The `gateway_storage` test checks Docker gateway storage against a fake engine.
 The `gateway_readiness` test checks managed-gateway exit diagnostics, bootstrap state kept after failure, corrected retry, unchanged-apply rechecks, and teardown without the readiness data source.
 The `kubernetes_lifecycle` tests apply, refresh, and tear down the managed Kubernetes resources against the in-memory API in `crates/test-support/kube_api.rs`; they write and delete the objects Helm would, and the live Kind suite runs the chart itself.
 `every_type_has_a_contract_test` requires a module or test for every OpenShell type, and `every_compiled_type_has_a_fixture` a generated fixture for every type the SDK compiles.
@@ -168,7 +168,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `multi_agent` | Three OpenClaw agents: one agent's rejected start is reported alone and its retry replaces only it, and another owner's label on one sandbox stops every operation before it changes anything |
 | `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed. These tests are not ignored and run with the unit tests |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
-| `container_service` | On Unix, `kind: container` services behind a managed Docker gateway, with the bundle's Docker provider against a fake engine that keeps what it creates: apply waits for HTTP, runtime-status, and Docker HEALTHCHECK readiness and leaves nothing observing the engine; an unchanged apply changes nothing; unhealthy, unknown, timed-out, and interrupted setups fail with the provider's reason, and a retry creates no second container; a changed application replaces only its container and keeps its volume; apply refuses to remove a service; destroy deletes the application containers and volumes, keeps the gateway's storage and another owner's objects, and the deployment applies again |
+| `container_service` | On Unix, `kind: container` services behind a managed Docker gateway, with the bundle's Docker provider against a fake engine that keeps what it creates: apply waits for HTTP, runtime-status, and Docker HEALTHCHECK readiness and leaves nothing observing the engine; an unchanged apply changes nothing; unhealthy, unknown, timed-out, and interrupted setups fail with the provider's reason, and a retry creates no second container; a changed application replaces only its container and keeps its volume; apply refuses to remove a service; destroy deletes the application containers and volumes, keeps the gateway's storage and another owner's objects, and the deployment applies again; with the gateway's container stopped, plan, apply, and destroy fail naming it and its `docker start` command, while a transport failure from a gateway whose container runs keeps its error |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures and cancellation; see [below](#helm-release-recovery) |
 | `hcl_integration` | Each scenario in `crates/nemoclaw-e2e/tests/integration/hcl/tests` under `tofu test`; see [`tofu test` cases](#tofu-test-cases) |
 
@@ -378,7 +378,7 @@ The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibi
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/5245a4ceccf6852316e496ba85c678067c42d2f1/tests), alongside the implementation.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/56a4207b3c7edacd6e0cceea0af7815d2df274ca/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 

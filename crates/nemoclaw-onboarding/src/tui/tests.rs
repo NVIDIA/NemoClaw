@@ -1252,16 +1252,25 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
             source: "fixture".into(),
             reachable: Some(true),
             authentication: AuthenticationStatus::Accepted,
-            models: vec!["vendor/discovered".into()],
+            models: vec![
+                "nvidia/nemotron-3-ultra-550b-a55b".into(),
+                "vendor/discovered".into(),
+            ],
             api_verified: false,
         }),
     );
     let question = wizard.question().unwrap().unwrap();
-    assert!(
-        question
-            .choices()
-            .contains(&serde_json::json!("vendor/discovered"))
+    // The endpoint lists a model that is not recommended, so only the
+    // recommended model it lists is offered.
+    assert_eq!(
+        question.choices(),
+        [serde_json::json!("nvidia/nemotron-3-ultra-550b-a55b")]
     );
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+    terminal.draw(|frame| wizard.render(frame)).unwrap();
+    let screen = terminal.backend().to_string();
+    assert!(!screen.contains("vendor/discovered"), "{screen}");
+    assert!(screen.contains("Type another model"), "{screen}");
     wizard.selected = question.choices().len();
     wizard.selection_changed = true;
     wizard.advance();
@@ -1272,6 +1281,75 @@ fn discovered_model_menu_keeps_a_custom_text_answer() {
         wizard.state().values().pointer(question.id()),
         Some(&serde_json::json!("private/custom"))
     );
+}
+
+#[tokio::test]
+async fn a_key_typed_while_the_model_catalog_is_read_does_not_choose_from_the_resolved_menu() {
+    let capabilities = Capabilities::available();
+    let state = load_defaults(&capabilities);
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    for _ in 0..12 {
+        if wizard
+            .question()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|question| question.allows_custom_answer())
+        {
+            break;
+        }
+        wizard.advance();
+    }
+    let query = model_catalog_probe(&wizard).unwrap();
+    let shown = wizard.question().unwrap().unwrap().suggestion().cloned();
+    // The endpoint answers slowly and lists only a model other than the
+    // suggestion on screen, so the resolved menu suggests a different one.
+    let document = wizard
+        .state()
+        .resolve(&wizard.capabilities)
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let request = inference_request_for_document(&document, wizard.state().current_route())
+        .unwrap()
+        .unwrap();
+    let read = {
+        let request = request.clone();
+        async move |_: Vec<DiscoveryQuery>, _: &CancellationToken| {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            Ok(DiscoveryObservations::new().with(
+                DiscoveryQuery::Inference(request),
+                DiscoveryObservation::Inference(EndpointObservation {
+                    status: ObservationStatus::Available,
+                    reason: None,
+                    source: "fixture".into(),
+                    reachable: Some(true),
+                    authentication:
+                        nemoclaw_sdk::inference_discovery::AuthenticationStatus::Accepted,
+                    models: vec!["nvidia/nemotron-3-ultra-550b-a55b".into()],
+                    api_verified: false,
+                }),
+            ))
+        }
+    };
+    let enter = crossterm::event::Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let mut queue = std::collections::VecDeque::new();
+    assert!(
+        ask_target(
+            &mut wizard,
+            read,
+            vec![query],
+            &CancellationToken::new(),
+            &mut queue,
+            || Ok(Some(enter.clone())),
+        )
+        .await
+        .unwrap()
+    );
+    let resolved = wizard.question().unwrap().unwrap();
+    assert_ne!(resolved.suggestion().cloned(), shown);
+    assert!(queue.is_empty(), "{queue:?}");
 }
 
 #[test]
