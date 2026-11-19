@@ -346,7 +346,7 @@ describe("configGet parsing for manifest-declared formats (#6548)", () => {
     expect(error.message).not.toContain(sourceLine);
   });
 
-  it("rejects Deep Agents config writes and explains new-name selection recovery", async () => {
+  it("rejects Deep Agents config writes and explains named recreation and selection recovery", async () => {
     delete require.cache[configModulePath];
     const { configSet } = require(configModulePath) as {
       configSet: (name: string, opts: { key: string; value: string }) => Promise<void>;
@@ -360,17 +360,17 @@ describe("configGet parsing for manifest-declared formats (#6548)", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("config set is not available");
-    expect((error as Error).message).toContain("saved native preferences");
+    expect((error as Error).message).toContain("backup retains the previous config");
     expect((error as Error).message).toContain("record the current default");
     expect((error as Error).message).toContain(
-      "onboard --agent dcode --name <new-sandbox-name> --fresh",
+      "onboard --agent dcode --name <sandbox-name> --fresh --recreate-sandbox",
     );
     expect((error as Error).message).toContain("After any onboarding attempt");
     expect((error as Error).message).toContain("use <previous-default-sandbox-name>");
     expect((error as Error).message).toContain("After successful onboarding");
-    expect((error as Error).message).toContain("<new-sandbox-name> status");
-    expect((error as Error).message).toContain("<new-sandbox-name> inference get");
-    expect((error as Error).message).toContain("use <new-sandbox-name>");
+    expect((error as Error).message).toContain("<sandbox-name> status");
+    expect((error as Error).message).toContain("<sandbox-name> inference get");
+    expect((error as Error).message).toContain("use <sandbox-name>");
     expect((error as Error).message).not.toContain("--name 'dcode-sb'");
     expect(capture).not.toHaveBeenCalled();
   });

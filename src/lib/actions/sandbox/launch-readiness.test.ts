@@ -173,7 +173,7 @@ describe("launch readiness validation", () => {
   async function switchyardReadinessFixture() {
     const fixture = await createSwitchyardReadinessFixture(GATEWAY_NAME, SANDBOX);
     sandbox = fixture.routedEntry;
-    const currentDeps = { ...deps(), switchyardProviderAdapter: fixture.f.input.adapter };
+    const currentDeps = { ...deps(), switchyardPreflight: fixture.observe };
     return { ...fixture, currentDeps };
   }
 

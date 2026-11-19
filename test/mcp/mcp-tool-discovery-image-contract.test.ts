@@ -84,6 +84,17 @@ function runSwitchyardBundleInstall(transformDeployment = (deployment: string) =
       const runtime = require(bundle);
       runtime.installHermesSwitchyardRoutingFiles(
         JSON.parse(environment), JSON.parse(paths), { uid: 0, gid: 0 },
+        (files) => {
+          const targets = JSON.parse(paths);
+          for (const [key, target] of Object.entries({
+            relayPluginsToml: targets.relayPluginsTarget,
+            relayPluginStateJson: targets.relayPluginStateTarget,
+            switchyardDeploymentToml: targets.switchyardDeploymentTarget,
+          })) {
+            fs.unlinkSync(target);
+            fs.writeFileSync(target, files[key], {mode: 0o444});
+          }
+        },
       );
       runtime.verifyHermesSwitchyardRoutingFiles(JSON.parse(environment), JSON.parse(paths));
     } catch (error) {
@@ -303,7 +314,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "cdb60ae442f7807fee0540e5386c500fbbee645879039d73fda1cb8e23995653",
+      expectedHash: "4aee80a4f4ff3e8731fc9d33df61779609e7d66e7a102b2b5ab8bbfbf3d46035",
       relativePath: "managed-startup-direct-image-runtime.bundle",
     },
     {

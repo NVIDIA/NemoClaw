@@ -2774,9 +2774,24 @@ hermes_dashboard_healthy() {
 }
 
 # Supervised recovery keeps this entrypoint alive, so each gateway launch must qualify.
+unset HERMES_SWITCHYARD_LOCK_FD
 qualify_hermes_switchyard_judge() {
-  if [ ! -e /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
+  # Keep the shared lock in this supervisor and its children. A root publisher
+  # cannot replace routing inputs while this startup/recovery lifecycle is live.
+  # Reuse the descriptor on recovery; never accumulate descriptors per launch.
+  if [ -z "${HERMES_SWITCHYARD_LOCK_FD:-}" ]; then
+    exec {HERMES_SWITCHYARD_LOCK_FD}</usr/local/share/nemoclaw/hermes-switchyard.lock || return 1
+    if ! flock --shared --nonblock "$HERMES_SWITCHYARD_LOCK_FD"; then
+      exec {HERMES_SWITCHYARD_LOCK_FD}<&-
+      unset HERMES_SWITCHYARD_LOCK_FD
+      return 1
+    fi
+  fi
+  if [ -z "${NEMOCLAW_HERMES_SWITCHYARD_SHA256:-}" ] \
+    && [ ! -e /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
     && [ ! -L /usr/local/share/nemoclaw/hermes-relay-plugins.toml ] \
+    && [ ! -e /usr/local/share/nemoclaw/.dynamic-plugins.json ] \
+    && [ ! -L /usr/local/share/nemoclaw/.dynamic-plugins.json ] \
     && [ ! -e /usr/local/share/nemoclaw/hermes-switchyard-v1.toml ] \
     && [ ! -L /usr/local/share/nemoclaw/hermes-switchyard-v1.toml ]; then
     return 0
@@ -2786,7 +2801,7 @@ qualify_hermes_switchyard_judge() {
   if ! HERMES_HOME="${HERMES_DIR}" HOME=/sandbox \
     "${prefix[@]}" "$_HERMES_PYTHON" -I \
     /opt/nemoclaw-hermes-config/qualify-switchyard-judge.py >/dev/null 2>&1; then
-    echo "[gateway] Switchyard judge qualification failed. Routing remains stopped. Check model access or select a supported judge in --switchyard-config and onboard with a new sandbox name." >&2
+    echo "[gateway] Switchyard preflight or judge qualification failed. Routing remains stopped. Check the installed routing inputs and model access before retrying." >&2
     return 1
   fi
 }

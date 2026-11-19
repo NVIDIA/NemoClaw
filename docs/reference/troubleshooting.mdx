@@ -146,6 +146,24 @@ sudo systemctl start docker
 
 On macOS with Docker Desktop, open the Docker Desktop application and wait for it to finish starting before retrying.
 
+### Docker Readiness Probe Does Not Respond
+
+If onboarding reports that the selected Docker authority did not answer `docker info` or `docker version` within 15 seconds, NemoClaw cannot determine whether the daemon stopped.
+The diagnostic includes the validated selected Docker endpoint when available.
+Confirm that the selected endpoint responds, then restart its Docker runtime if needed.
+
+```bash
+docker info
+```
+
+Rerun onboarding after the command succeeds.
+If the diagnostic does not name an endpoint, check the active Docker context and daemon before you retry.
+
+```bash
+docker context show
+docker info
+```
+
 ### Docker permission denied on Linux
 
 On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group. The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically. Add your user and activate the group in the current shell:
@@ -1891,13 +1909,15 @@ nemo-deepagents <name> rebuild
 Reconnect and run `dcode status` again to verify the route and provider identity.
 Check model and endpoint values against the saved native config.
 
-Fresh named recreation also restores the saved `config.toml` and can stop if its selection conflicts with the requested provider or model:
+For a managed image, named recreation for a verified provider or model change keeps the replacement's generated `config.toml`.
+The backup retains the previous file for manual recovery of custom settings.
+For unchanged or unverifiable selections, or custom images, recreation restores the saved configuration and can stop if it conflicts with the requested selection:
 
 ```bash
 nemo-deepagents onboard --fresh --name <name> --recreate-sandbox
 ```
 
-To validate a different selection without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+Follow [Recreate a Deep Agents Sandbox](../inference/manage-inference/switch-providers#recreate-a-deep-agents-sandbox) to change the selection.
 
 ### Trusted route-probe helper is missing
 
