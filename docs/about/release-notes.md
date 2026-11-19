@@ -28,6 +28,11 @@ Agents:
 - OpenClaw's `web_fetch` reaches hosts that the sandbox's network policy allows ([#14537](https://github.com/NVIDIA/NemoClaw/issues/14537)).
 - OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does; see [agent files](../build-deploy/state.md#agent-files).
 
+Installation:
+
+- [Install the CLI](../get-started/install.md) covers installing, upgrading, and uninstalling a release's CLI from its `nemoclaw-TAG-PLATFORM.tar.gz` archive, checked against `SHA256SUMS`.
+- The [support matrix](#support-matrix) lists the platforms, gateway runtimes, model services, harnesses, and GPUs, and what CI runs on each.
+
 Gateways:
 
 - [Current limits](../resources/limits.md#data-and-cleanup) list a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: it leaves its sandboxes in `Error`, and the next apply replaces them ([#13953](https://github.com/NVIDIA/NemoClaw/issues/13953)).
@@ -299,6 +304,66 @@ These changes before the `v0.1.0-rc9` tag affect existing deployments:
 - `spec.gateway.image` is removed: the SDK pins the managed gateway image, and defaulted and exported documents no longer name it.
   - Remove the field from documents; the parser rejects it as an unknown field.
   - In the Rust SDK, `ManagedGateway` has no `image` field; `managed::Spec.image` carries the managed gateway's pin.
+
+## Support Matrix
+
+These tables describe `v1` as of these notes: what it accepts, and what CI runs it on; a configuration without an automated run is accepted but untested.
+They aren't a support statement: v1 has [no support policy yet](../resources/limits.md#installation-and-releases).
+[Current limits](../resources/limits.md) lists what v1 doesn't do or hasn't tested, and [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) tracks a tested matrix of harness, model, provider, and platform combinations.
+
+### Client Platforms
+
+Each release attaches the CLI for these platforms; [install the CLI](../get-started/install.md) lists each archive's requirements, and [current limits](../resources/limits.md#installation-and-releases) what the executables lack.
+[CI / Bundle](../../.github/workflows/rust.yml) runs the unit, contract, and integration tests on each one.
+
+| Platform | Archive | Deploys | Live tests in CI |
+|---|---|---|---|
+| Linux ARM64 | `linux_arm64` | Yes | Docker and kind suites |
+| Linux AMD64 | `linux_amd64` | Yes | Docker and kind suites, the cases on NVIDIA hosted inference, and the GPU cases |
+| macOS ARM64 | `darwin_arm64` | Yes | None |
+| Windows AMD64 | `windows_amd64` | No: [deployment planning requires a Unix client](../build-deploy/usage.md) | None |
+
+The builder also accepts `darwin_amd64`, but no release attaches it and CI doesn't build it.
+
+### Gateway Runtimes
+
+Sandboxes and model services run on Linux engines or clusters; the agent and runtime images are built for `linux/arm64` and `linux/amd64`.
+
+| `spec.gateway.runtime.provider` | Accepted | Live tests in CI |
+|---|---|---|
+| `docker` | Managed or external gateway; managed vLLM, Ollama, and container services | Docker suite, the cases on NVIDIA hosted inference, and the GPU cases |
+| `podman` | Managed rootless gateway on a local Linux engine, or external gateway; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |
+| `kubernetes` | Managed or external gateway, with external inference endpoints | kind suite |
+| `openshift` | Managed or external gateway, with external inference endpoints | None; [run by hand](../../internal-docs/contributing/live-tests.md#openshift-gateway) on OpenShift Local |
+
+### Model Services
+
+| Service | Live tests in CI |
+|---|---|
+| External endpoint, such as NVIDIA hosted inference | OpenClaw and Hermes on NVIDIA hosted inference, on Linux AMD64; stub endpoints in the Docker and kind suites |
+| Managed vLLM | OpenClaw on the GPU runner, and Nemotron on DGX Station by manual dispatch |
+| Managed Ollama | Hermes on the GPU runner |
+| External Ollama through a managed proxy | None; contract and integration tests run it against fixtures |
+
+### Harnesses
+
+The image workflow builds and checks an image for each harness in the [Fabric harness table](../references/fabric-harnesses.md): OpenClaw, Hermes, Deep Agents, Claude, Codex, Mini SWE Agent, Nooa, Nooa Bench, Remote Agent, Pi, and OpenCode.
+The live tests deploy OpenClaw and Hermes; no live test deploys the others.
+Onboarding offers OpenClaw and Hermes.
+
+### GPUs
+
+Managed vLLM and Ollama check the GPU against the deployment's [hardware profile](../agents-inference/models.md#choose-a-hardware-profile), such as `dgx-spark`, `dgx-station`, `h100`, or `rtx-pro-6000-blackwell`.
+Accepting a profile doesn't qualify that GPU.
+
+| GPU host | Live tests |
+|---|---|
+| NVIDIA RTX PRO 6000 Blackwell, Linux AMD64 | The GPU cases, on CI's GPU runner, on `v1` pushes and manual runs |
+| DGX Station (GB300), Linux ARM64 | One case, by manual dispatch of Live / HCL |
+| DGX Spark (GB10), Linux ARM64 | None |
+| Other GPUs, Windows/WSL, and macOS | None |
+
+Serving one model on several GPUs isn't supported ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)).
 
 ## Qualification and Known Issues
 

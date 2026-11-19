@@ -35,6 +35,11 @@
           "slug": "prerequisites"
         },
         {
+          "title": "Install the CLI",
+          "source": "docs/get-started/install.md",
+          "slug": "install"
+        },
+        {
           "title": "Deploy Your First OpenClaw Agent",
           "source": "docs/get-started/first-deployment.md",
           "slug": "get-started"
