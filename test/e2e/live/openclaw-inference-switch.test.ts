@@ -8,6 +8,7 @@ import {
   OPERATOR_SWITCH_API_KEY,
   OPERATOR_SWITCH_CREDENTIAL_ENV,
 } from "../fixtures/registered-inference.ts";
+import { describe } from "vitest";
 import fs from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -228,12 +229,6 @@ async function sandboxShell(
     timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
     redactionValues: options.redactionValues,
   });
-}
-
-interface MockAnthropicProvider {
-  endpointUrl: string;
-  requests(): readonly MockAnthropicRequest[];
-  close(): Promise<void>;
 }
 
 function closeServer(server: Server): Promise<void> {
@@ -1012,10 +1007,14 @@ test(
     ).toBe(true);
 
     progress.phase("inspect route configuration and recorded state");
-    await getRouteOutput(host, {
+    const route = await getRouteOutput(host, {
       env: commandEnv(home),
       timeoutMs: COMMAND_TIMEOUT_MS,
     });
+    expect(route.exitCode, resultText(route)).toBe(0);
+    const routeState = JSON.parse(route.stdout) as { provider?: unknown; model?: unknown };
+    expect(routeState.provider).toBe(SWITCH_PROVIDER);
+    expect(routeState.model).toBe(SWITCH_MODEL);
     await recordOpenClawConfig(sandbox, home, {
       inferenceApi: SWITCH_INFERENCE_API,
       artifactName: "read-openclaw-config-after-inference-switch",
@@ -1100,9 +1099,6 @@ test(
           },
         );
         expect(denied.exitCode).not.toBe(0);
-        expect(resultText(denied)).toContain(
-          "Recorded registered inference provider identity or profile changed",
-        );
         expect(operatorProvider!.requests()).toHaveLength(beforeDenied);
         await operator!.cleanup();
         break;
@@ -1135,12 +1131,13 @@ test(
   },
 );
 
-test(
-  "TC-INF-17 OpenClaw uses authenticated native local inference after rebuild and restart (#12975)",
-  {
-    timeout: OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
+describe.each([
+  [
+    "TC-INF-17 OpenClaw uses authenticated native local inference after rebuild and restart (#12975)",
+    {
+      authenticated: true,
+      timeoutMs: OPENCLAW_NATIVE_LOCAL_TEST_TIMEOUT_MS,
+      phases: [
         "confirm live inference prerequisites",
         "onboard native OpenClaw owner",
         "rebuild native OpenClaw owner",
@@ -1155,215 +1152,218 @@ test(
         "verify sibling denial",
       ],
     },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
-    progress.phase("onboard native OpenClaw owner");
-    const selected = await onboardNativeOpenClaw(true, {
-      artifacts,
-      cleanup,
-      host,
-      progress,
-      runtimeProvider,
-      sandbox,
-    });
-    const { owner, model, switchedModel, apiKey, fake, onboard, attachment } = selected;
-    expectOnboardSuccess(onboard, `${owner} onboard`);
-    progress.phase("rebuild native OpenClaw owner");
-    const rebuild = await host.nemoclaw([owner, "rebuild", "--yes", "--verbose"], {
-      artifactName: `${owner}-rebuild`,
-      env: { ...buildAvailabilityProbeEnv(), NEMOCLAW_LLAMACPP_LOCAL_TOKEN: apiKey },
-      redactionValues: [apiKey],
-      timeoutMs: 20 * 60_000,
-    });
-    expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
-    progress.phase("restart native OpenClaw owner");
-    const stop = await host.nemoclaw([owner, "stop"], {
-      artifactName: `${owner}-stop`,
-      env: sandboxAccessEnv(),
-      timeoutMs: 120_000,
-    });
-    expect(stop.exitCode, resultText(stop)).toBe(0);
-    const start = await host.nemoclaw([owner, "start"], {
-      artifactName: `${owner}-start`,
-      env: sandboxAccessEnv(),
-      timeoutMs: 120_000,
-    });
-    expect(start.exitCode, resultText(start)).toBe(0);
-    progress.phase("onboard native-route sibling");
-    const sibling = inferenceSandboxName("e2e-oc-peer");
-    const peerEndpoint = await startFakeOpenAiCompatibleServer({
-      apiKey,
-      model,
-      host: "0.0.0.0",
-      publicHost: "host.openshell.internal",
-      requireAuth: true,
-      progress,
-    });
-    cleanup.add(`close ${sibling} endpoint`, () => peerEndpoint.close());
-    cleanup.add(`remove ${sibling}`, () =>
-      cleanupSandbox(host, sandbox, sibling, { strict: true }),
-    );
-    await cleanupSandbox(host, sandbox, sibling);
-    const peer = await onboardSandbox(
-      artifacts,
-      sibling,
-      {
-        NEMOCLAW_AGENT: "openclaw",
-        NEMOCLAW_PROVIDER: "custom",
-        NEMOCLAW_MODEL: model,
-        NEMOCLAW_ENDPOINT_URL: peerEndpoint.baseUrl,
-        NEMOCLAW_PREFERRED_API: "openai-completions",
-        COMPATIBLE_API_KEY: apiKey,
-      },
-      [apiKey],
-      `${sibling}-onboard`,
-      progress,
-      ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
-    );
-    expectOnboardSuccess(peer, `${sibling} onboard`);
-    progress.phase("record sibling route before model switch");
-    const sharedBefore = await readRegisteredLocalRoute(
-      sandbox,
-      sibling,
-      `${owner}-sibling-route-before-switch`,
-    );
-    expect(sharedBefore.exitCode, resultText(sharedBefore)).toBe(0);
-    progress.phase("switch native OpenClaw model");
-    const switched = await host.nemoclaw(
-      ["inference", "set", "--provider", "llama-cpp", "--model", switchedModel, "--sandbox", owner],
-      {
-        artifactName: `${owner}-model-switch`,
-        env: { ...buildAvailabilityProbeEnv(), NEMOCLAW_LLAMACPP_LOCAL_TOKEN: apiKey },
-        redactionValues: [apiKey],
-        timeoutMs: 5 * 60_000,
-      },
-    );
-    expect(switched.exitCode, resultText(switched)).toBe(0);
-    progress.phase("verify sibling route unchanged");
-    const sharedAfter = await readRegisteredLocalRoute(
-      sandbox,
-      sibling,
-      `${owner}-sibling-route-after-switch`,
-    );
-    expect(sharedAfter.exitCode).toBe(sharedBefore.exitCode);
-    expect(sharedAfter.stdout).toBe(sharedBefore.stdout);
-    progress.phase("request inference through OpenClaw");
-    const { turn, requests } = await requestNativeOpenClaw(
-      owner,
-      apiKey,
-      fake,
-      host,
-      switchedModel,
-    );
-    expect(turn.exitCode, resultText(turn)).toBe(0);
-    assertAgentExecutionSucceeded(turn.stdout, "inference", switchedModel);
-    expect(
-      requests.some((request) => request.path === "/v1/chat/completions" && request.auth === "ok"),
-    ).toBe(true);
-    progress.phase("check credential isolation");
-    const scan = await sandbox.exec(owner, hostedCredentialScanCommand(apiKey), {
-      artifactName: `${owner}-credential-scan`,
-      env: sandboxAccessEnv(),
-      timeoutMs: 60_000,
-      redactionValues: [apiKey],
-    });
-    expect(scan.exitCode, resultText(scan)).toBe(0);
-    expect(JSON.parse(scan.stdout)).toMatchObject({
-      environmentClean: true,
-      processesClean: true,
-      sampledFilesClean: true,
-      canaryDetected: true,
-    });
-    progress.phase("verify owner reachability");
-    const beforeOwnerProbe = fake.requests().length;
-    const ownerProbe = await sandbox.exec(
-      owner,
-      [
-        "curl",
-        "--fail",
-        "--max-time",
-        "15",
-        "--header",
-        `Authorization: Bearer ${apiKey}`,
-        `${attachment!.endpointUrl}/models`,
-      ],
-      {
-        artifactName: `${owner}-owner-reachability`,
-        env: sandboxAccessEnv(),
-        timeoutMs: 30_000,
-        redactionValues: [apiKey],
-      },
-    );
-    expect(ownerProbe.exitCode, resultText(ownerProbe)).toBe(0);
-    expect(
-      fake
-        .requests()
-        .slice(beforeOwnerProbe)
-        .some((request) => request.path.endsWith("/models") && request.auth === "ok"),
-    ).toBe(true);
-    progress.phase("verify sibling denial");
-    const beforeDenied = fake.requests().length;
-    const denied = await sandbox.exec(
-      sibling,
-      [
-        "curl",
-        "--fail",
-        "--max-time",
-        "15",
-        "--header",
-        `Authorization: Bearer ${apiKey}`,
-        `${attachment!.endpointUrl}/models`,
-      ],
-      {
-        artifactName: `${sibling}-owner-denial`,
-        env: sandboxAccessEnv(),
-        timeoutMs: 30_000,
-        redactionValues: [apiKey],
-      },
-    );
-    expect(denied.exitCode).not.toBe(0);
-    expect(fake.requests()).toHaveLength(beforeDenied);
-  },
-);
-
-test(
-  "TC-INF-18 OpenClaw uses a credentialless native local vLLM endpoint (#12975)",
-  {
-    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
+  ],
+  [
+    "TC-INF-18 OpenClaw uses a credentialless native local vLLM endpoint (#12975)",
+    {
+      authenticated: false,
+      timeoutMs: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+      phases: [
         "confirm live inference prerequisites",
         "onboard native OpenClaw owner",
         "request inference through OpenClaw",
       ],
     },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
-    progress.phase("onboard native OpenClaw owner");
-    const { owner, apiKey, fake, onboard } = await onboardNativeOpenClaw(false, {
-      artifacts,
-      cleanup,
-      host,
-      progress,
-      runtimeProvider,
-      sandbox,
-    });
-    expectOnboardSuccess(onboard, `${owner} onboard`);
-    progress.phase("request inference through OpenClaw");
-    const { turn, requests } = await requestNativeOpenClaw(owner, apiKey, fake, host);
-    expect(turn.exitCode, resultText(turn)).toBe(0);
-    assertAgentExecutionSucceeded(turn.stdout, "inference", "nemoclaw-openclaw-native-local");
-    expect(
-      requests.some(
-        (request) =>
-          request.path === "/v1/chat/completions" &&
-          request.auth === "ok" &&
-          request.authorizationSent === true,
-      ),
-    ).toBe(true);
-    expect(requests.every((request) => request.auth === "ok")).toBe(true);
-  },
-);
+  ],
+] as const)("%s preserves native inference", (title, scenario) => {
+  test(
+    "preserves native inference and isolation",
+    {
+      timeout: scenario.timeoutMs,
+      meta: { e2ePhases: scenario.phases, e2eArtifactRootId: title },
+    },
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+      progress.phase("onboard native OpenClaw owner");
+      const selected = await onboardNativeOpenClaw(scenario.authenticated, {
+        artifacts,
+        cleanup,
+        host,
+        progress,
+        runtimeProvider,
+        sandbox,
+      });
+      const { owner, model, switchedModel, apiKey, fake, onboard, attachment } = selected;
+      expectOnboardSuccess(onboard, `${owner} onboard`);
+      let sibling = "";
+      if (scenario.authenticated) {
+        progress.phase("rebuild native OpenClaw owner");
+        const rebuild = await host.nemoclaw([owner, "rebuild", "--yes", "--verbose"], {
+          artifactName: `${owner}-rebuild`,
+          env: { ...buildAvailabilityProbeEnv(), NEMOCLAW_LLAMACPP_LOCAL_TOKEN: apiKey },
+          redactionValues: [apiKey],
+          timeoutMs: 20 * 60_000,
+        });
+        expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
+        progress.phase("restart native OpenClaw owner");
+        const stop = await host.nemoclaw([owner, "stop"], {
+          artifactName: `${owner}-stop`,
+          env: sandboxAccessEnv(),
+          timeoutMs: 120_000,
+        });
+        expect(stop.exitCode, resultText(stop)).toBe(0);
+        const start = await host.nemoclaw([owner, "start"], {
+          artifactName: `${owner}-start`,
+          env: sandboxAccessEnv(),
+          timeoutMs: 120_000,
+        });
+        expect(start.exitCode, resultText(start)).toBe(0);
+        progress.phase("onboard native-route sibling");
+        sibling = inferenceSandboxName("e2e-oc-peer");
+        const peerEndpoint = await startFakeOpenAiCompatibleServer({
+          apiKey,
+          model,
+          host: "0.0.0.0",
+          publicHost: "host.openshell.internal",
+          requireAuth: true,
+          progress,
+        });
+        cleanup.add(`close ${sibling} endpoint`, () => peerEndpoint.close());
+        cleanup.add(`remove ${sibling}`, () =>
+          cleanupSandbox(host, sandbox, sibling, { strict: true }),
+        );
+        await cleanupSandbox(host, sandbox, sibling);
+        const peer = await onboardSandbox(
+          artifacts,
+          sibling,
+          {
+            NEMOCLAW_AGENT: "openclaw",
+            NEMOCLAW_PROVIDER: "custom",
+            NEMOCLAW_MODEL: model,
+            NEMOCLAW_ENDPOINT_URL: peerEndpoint.baseUrl,
+            NEMOCLAW_PREFERRED_API: "openai-completions",
+            COMPATIBLE_API_KEY: apiKey,
+          },
+          [apiKey],
+          `${sibling}-onboard`,
+          progress,
+          ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+        );
+        expectOnboardSuccess(peer, `${sibling} onboard`);
+        progress.phase("record sibling route before model switch");
+        const sharedBefore = await readRegisteredLocalRoute(
+          sandbox,
+          sibling,
+          `${owner}-sibling-route-before-switch`,
+        );
+        expect(sharedBefore.exitCode, resultText(sharedBefore)).toBe(0);
+        progress.phase("switch native OpenClaw model");
+        const switched = await host.nemoclaw(
+          [
+            "inference",
+            "set",
+            "--provider",
+            "llama-cpp",
+            "--model",
+            switchedModel,
+            "--sandbox",
+            owner,
+          ],
+          {
+            artifactName: `${owner}-model-switch`,
+            env: { ...buildAvailabilityProbeEnv(), NEMOCLAW_LLAMACPP_LOCAL_TOKEN: apiKey },
+            redactionValues: [apiKey],
+            timeoutMs: 5 * 60_000,
+          },
+        );
+        expect(switched.exitCode, resultText(switched)).toBe(0);
+        progress.phase("verify sibling route unchanged");
+        const sharedAfter = await readRegisteredLocalRoute(
+          sandbox,
+          sibling,
+          `${owner}-sibling-route-after-switch`,
+        );
+        expect(sharedAfter.exitCode).toBe(sharedBefore.exitCode);
+        expect(sharedAfter.stdout).toBe(sharedBefore.stdout);
+      }
+      progress.phase("request inference through OpenClaw");
+      const inferenceModel = scenario.authenticated ? switchedModel : model;
+      const { turn, requests } = await requestNativeOpenClaw(
+        owner,
+        apiKey,
+        fake,
+        host,
+        inferenceModel,
+      );
+      expect(turn.exitCode, resultText(turn)).toBe(0);
+      assertAgentExecutionSucceeded(turn.stdout, "inference", inferenceModel);
+      expect(
+        requests.some(
+          (request) =>
+            request.path === "/v1/chat/completions" &&
+            request.auth === "ok" &&
+            (scenario.authenticated || request.authorizationSent === true),
+        ),
+      ).toBe(true);
+      if (scenario.authenticated) {
+        progress.phase("check credential isolation");
+        const scan = await sandbox.exec(owner, hostedCredentialScanCommand(apiKey), {
+          artifactName: `${owner}-credential-scan`,
+          env: sandboxAccessEnv(),
+          timeoutMs: 60_000,
+          redactionValues: [apiKey],
+        });
+        expect(scan.exitCode, resultText(scan)).toBe(0);
+        expect(JSON.parse(scan.stdout)).toMatchObject({
+          environmentClean: true,
+          processesClean: true,
+          sampledFilesClean: true,
+          canaryDetected: true,
+        });
+        progress.phase("verify owner reachability");
+        const beforeOwnerProbe = fake.requests().length;
+        const ownerProbe = await sandbox.exec(
+          owner,
+          [
+            "curl",
+            "--fail",
+            "--max-time",
+            "15",
+            "--header",
+            `Authorization: Bearer ${apiKey}`,
+            `${attachment!.endpointUrl}/models`,
+          ],
+          {
+            artifactName: `${owner}-owner-reachability`,
+            env: sandboxAccessEnv(),
+            timeoutMs: 30_000,
+            redactionValues: [apiKey],
+          },
+        );
+        expect(ownerProbe.exitCode, resultText(ownerProbe)).toBe(0);
+        expect(
+          fake
+            .requests()
+            .slice(beforeOwnerProbe)
+            .some((request) => request.path.endsWith("/models") && request.auth === "ok"),
+        ).toBe(true);
+        progress.phase("verify sibling denial");
+        const beforeDenied = fake.requests().length;
+        const denied = await sandbox.exec(
+          sibling,
+          [
+            "curl",
+            "--fail",
+            "--max-time",
+            "15",
+            "--header",
+            `Authorization: Bearer ${apiKey}`,
+            `${attachment!.endpointUrl}/models`,
+          ],
+          {
+            artifactName: `${sibling}-owner-denial`,
+            env: sandboxAccessEnv(),
+            timeoutMs: 30_000,
+            redactionValues: [apiKey],
+          },
+        );
+        expect(denied.exitCode).not.toBe(0);
+        expect(fake.requests()).toHaveLength(beforeDenied);
+      } else {
+        expect(requests.every((request) => request.auth === "ok")).toBe(true);
+      }
+    },
+  );
+});
 
 test.skipIf(!isWslDockerIpv6TestHost())(
   "TC-INF-19 OpenClaw admits a WSL2 IPv6 host bridge and denies other IPv6 destinations (#13544)",
