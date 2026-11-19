@@ -1,0 +1,147 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Automation / Label v1 Pull Requests
+
+# Adds the v1 label to PRs into v1 and to PRs stacked on them. GitHub runs
+# pull_request_target from the default branch's copy of a workflow whatever the
+# PR's base, so this file must live on main to act on v1 PRs.
+# pull_request_target runs in the base repo context, giving the token write
+# access even for fork PRs. This workflow is safe because it only reads PR
+# metadata and adds labels. Do NOT add a checkout step or run PR-sourced code
+# here.
+on:
+  pull_request_target:
+    types: [opened, reopened, edited]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  label-v1-prs:
+    # Among edits, only a base change can move a PR onto v1. PRs into the
+    # default branch can't reach v1.
+    if: ${{ (github.event.action != 'edited' || github.event.changes.base != null) && github.event.pull_request.base.ref != github.event.repository.default_branch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Label PRs whose base chain reaches v1
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const LABEL = 'v1';
+            const TARGET_BRANCH = 'v1';
+            const MAX_DEPTH = 10;
+            const { owner, repo } = context.repo;
+            const defaultBranch = context.payload.repository?.default_branch;
+            const pullRequest = context.payload.pull_request;
+            if (!Number.isInteger(pullRequest?.number) || pullRequest.number <= 0) {
+              throw new Error('Invalid pull_request_target payload: pull request number is missing');
+            }
+            if (typeof pullRequest.base?.ref !== 'string' || pullRequest.base.ref === '') {
+              throw new Error(`Invalid pull_request_target payload: PR #${pullRequest.number} has no base`);
+            }
+
+            // Base branches live in this repository, so only a PR whose head is in
+            // this repository can be the PR behind a base branch.
+            const headInThisRepo = (pull) =>
+              pull.head?.repo?.full_name === `${owner}/${repo}`;
+            const hasLabel = (pull) =>
+              (pull.labels ?? []).some((label) => label?.name === LABEL);
+
+            // The open PR, or else the latest merged PR, whose head is the branch.
+            async function pullWithHead(branch) {
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                owner,
+                repo,
+                state: 'all',
+                head: `${owner}:${branch}`,
+                per_page: 100,
+              });
+              const candidates = pulls.filter(
+                (pull) =>
+                  pull.head?.ref === branch &&
+                  headInThisRepo(pull) &&
+                  (pull.state === 'open' || pull.merged_at),
+              );
+              return (
+                candidates.find((pull) => pull.state === 'open') ??
+                candidates.sort((a, b) => Date.parse(b.merged_at) - Date.parse(a.merged_at))[0]
+              );
+            }
+
+            // Follows base branches through the PRs that own them, up to MAX_DEPTH PRs.
+            async function reachesTarget(baseRef) {
+              const visited = new Set();
+              let branch = baseRef;
+              for (let lookups = 0; ; lookups += 1) {
+                if (branch === TARGET_BRANCH) return true;
+                if (branch === defaultBranch || visited.has(branch)) return false;
+                if (lookups === MAX_DEPTH) {
+                  core.warning(`Stopped after ${MAX_DEPTH} stacked PRs at ${branch}; no label added`);
+                  return false;
+                }
+                visited.add(branch);
+                const parent = await pullWithHead(branch);
+                if (!parent) {
+                  core.info(`${branch} is not the head of an open or merged PR`);
+                  return false;
+                }
+                core.info(`${branch} is the head of PR #${parent.number}, based on ${parent.base.ref}`);
+                branch = parent.base.ref;
+              }
+            }
+
+            async function addLabel(pull) {
+              if (hasLabel(pull)) {
+                core.info(`PR #${pull.number} already has the ${LABEL} label`);
+                return;
+              }
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: pull.number,
+                labels: [LABEL],
+              });
+              core.info(`Added the ${LABEL} label to PR #${pull.number}`);
+            }
+
+            // A PR retargeted onto the chain brings the open PRs stacked on it.
+            async function labelStackedPulls(root) {
+              const visited = new Set([root.number]);
+              let level = [root];
+              for (let depth = 0; depth < MAX_DEPTH && level.length > 0; depth += 1) {
+                const next = [];
+                for (const parent of level) {
+                  const branch = parent.head?.ref;
+                  if (!headInThisRepo(parent) || branch === defaultBranch || branch === TARGET_BRANCH) {
+                    continue;
+                  }
+                  const children = await github.paginate(github.rest.pulls.list, {
+                    owner,
+                    repo,
+                    state: 'open',
+                    base: branch,
+                    per_page: 100,
+                  });
+                  for (const child of children) {
+                    if (visited.has(child.number)) continue;
+                    visited.add(child.number);
+                    await addLabel(child);
+                    next.push(child);
+                  }
+                }
+                level = next;
+              }
+            }
+
+            if (!(await reachesTarget(pullRequest.base.ref))) {
+              core.info(`PR #${pullRequest.number} does not lead to ${TARGET_BRANCH}; no label added`);
+              return;
+            }
+            await addLabel(pullRequest);
+            await labelStackedPulls(pullRequest);
