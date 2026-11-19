@@ -1514,22 +1514,6 @@ function validatePolicyIdentity(snapshot: QualifiedExportSnapshot): ExportFindin
   return findings;
 }
 
-function validateTargetPolicy(snapshot: QualifiedExportSnapshot): ExportFinding[] {
-  if (snapshot.policy.kind !== "verified") return [];
-  const policy = snapshot.policy.canonical;
-  const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
-  const findings: ExportFinding[] = [];
-  if (!filesystem)
-    findings.push(
-      finding(
-        "spec.sandboxes[].network.policy.explicit.filesystem_policy",
-        "unsupported",
-        "An explicit filesystem policy is required to grant the v1 Fabric runtime roots.",
-      ),
-    );
-  return findings;
-}
-
 function validateAgreement(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
@@ -1546,7 +1530,6 @@ function validateAgreement(
     ...validateCredentialReference(snapshot),
     ...validateHermesAuthentication(snapshot),
     ...validatePolicyIdentity(snapshot),
-    ...validateTargetPolicy(snapshot),
   ];
 }
 

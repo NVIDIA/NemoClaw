@@ -156,6 +156,22 @@ describe("effective policy export (#12148)", () => {
     },
   );
 
+  it("exports a source without a filesystem policy, with nothing to report for it (#14580)", async () => {
+    const sourcePolicy = YAML.parse(policy);
+    delete sourcePolicy.filesystem_policy;
+    const baseline = snapshot();
+    const observed = {
+      ...baseline,
+      policy: { ...baseline.policy, document: YAML.stringify(sourcePolicy) },
+    };
+
+    // filesystem_policy is not exported, so its absence no longer blocks migration.
+    const result = await exportSnapshots([observed]);
+    expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
+    const raw = result.writeStdout.mock.calls[0]![0];
+    expect(raw).not.toContain("# omitted network.policy.explicit.filesystem_policy");
+  });
+
   it("exports a source whose process principal v1 cannot use, and reports it (#14580)", async () => {
     const sourcePolicy = YAML.parse(policy);
     sourcePolicy.process = { run_as_user: "daemon", run_as_group: "daemon" };
