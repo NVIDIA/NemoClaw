@@ -26,6 +26,22 @@ impl Deployment {
         cancel: &CancellationToken,
     ) -> Result<(), Error> {
         self.prepare(bundle, store, graph)?;
+        // Init installs exactly this bundle's providers. OpenTofu keeps a
+        // provider version that it installed or locked before, even when this
+        // bundle's copy has other bytes, such as after signing. Bundle::open
+        // checked every provider against the manifest, and the bundle is the
+        // only installation source, so the lock file adds no check.
+        for removed in [
+            fs::remove_dir_all(store.directory.join(".terraform/providers")),
+            fs::remove_file(store.directory.join(".terraform.lock.hcl")),
+        ] {
+            match removed {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(Error::State("cannot remove the installed providers"));
+                }
+                _ => {}
+            }
+        }
         self.timed(
             "tofu.init",
             crate::process::run(
