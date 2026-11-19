@@ -177,8 +177,11 @@ Report a line that isn't in this table to the user unchanged, without guessing a
   Check each path in the v1 image without starting the agent:
 
   ```sh
-  docker run --rm --network none --entrypoint /bin/sh IMAGE -c 'for p in "$@"; do ls -d $p >/dev/null 2>&1 && echo "found $p" || echo "missing $p"; done' sh PATH...
+  printf '%s\n' PATH... | docker run --rm -i --network none --entrypoint /bin/sh IMAGE \
+    -c 'while read -r p; do if ls -d $p >/dev/null 2>&1; then echo "found $p"; else echo "missing $p"; fi; done'
   ```
+
+  Quote each path on the host, as `printf` does here, so that patterns such as `/usr/bin/python3*` expand inside the image and not on the host.
 
   A rule grants access only to the executables it names ([sandbox network](../../../docs/security/sandbox-network.md)), so a rule whose paths are all missing doesn't serve the v1 agent. Show the user each missing path and the image's executable of the same name, if any, and change it only when they agree.
   An older export also carries entries whose key starts with `_provider_`; remove them and tell the user.
@@ -196,7 +199,9 @@ nemoclaw plan --state-dir STATE deployment.yaml
 A diagnostic names the field to fix; fix it in `deployment.yaml` and plan again.
 Finish every edit in steps 3 to 6 before the first apply, even when `plan` succeeds without them.
 If OpenShell rejects a resource during the first apply, the state can refuse both a corrected apply and `destroy`, and the user must then remove that deployment's containers, network, and volumes by hand.
-A plan with deferred work exits 0, so check that it reports a complete plan; a fresh managed gateway defers its OpenShell resources until apply, as [usage](../../../docs/build-deploy/usage.md) explains.
+A plan with deferred work exits 0, so read its deferred items.
+Before a managed gateway's first apply, expect two: the gateway's version and compute-driver check, and the image's Fabric capabilities, which apply checks once the gateway runs; see [usage](../../../docs/build-deploy/usage.md).
+Resolve any other deferred item, such as a missing credential, before apply.
 
 When the plan is complete, give the user:
 
@@ -212,7 +217,9 @@ Apply only when the user asks.
 These migrations were run with this skill.
 A harness not listed is unproven; say so with the result.
 
-| Harness | V0 export from | v1 revision | Host | Date | Result |
+| Harness | Export shape and exporter | v1 revision | Host | Date | Result |
 |---|---|---|---|---|---|
-| OpenClaw | v0.0.144 sandbox, exported by `9e6033585f` | `37d85995d6` | DGX Spark, managed Docker | 2026-11-18 | Plan, apply, agent reply, and unchanged plan |
-| Hermes | v0.0.144 sandbox, exported by `9e6033585f` | `37d85995d6` | DGX Spark, managed Docker | 2026-11-18 | Plan, apply, agent reply, and unchanged plan |
+| OpenClaw | Policy sections reported, from v0.0.144 sandbox by `56fb96ebac` | `37d85995d6` | DGX Spark, managed Docker | 2026-11-19 | Plan, apply, agent reply, and unchanged plan |
+| Hermes | Policy sections reported, from v0.0.144 sandbox by `56fb96ebac` | `37d85995d6` | DGX Spark, managed Docker | 2026-11-19 | Plan |
+| OpenClaw | Policy sections carried, from v0.0.144 sandbox by `9e6033585f` | `37d85995d6` | DGX Spark, managed Docker | 2026-11-18 | Plan, apply, agent reply, and unchanged plan; plan again on 2026-11-19 after the step 6 changes |
+| Hermes | Policy sections carried, from v0.0.144 sandbox by `9e6033585f` | `37d85995d6` | DGX Spark, managed Docker | 2026-11-18 | Plan, apply, agent reply, and unchanged plan; plan again on 2026-11-19 after the step 6 changes |
