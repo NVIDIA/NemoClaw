@@ -125,6 +125,17 @@ The SBOM lists Bun without a license, and Bun's image carries no license file.
 - cuBLAS, cuBLASLt, and the CUDA runtime in `/usr/lib/ollama/cuda_*`, which the SBOM doesn't list: NVIDIA's license terms, outside OSRB.
 - The Go modules compiled into `ollama` are MIT, BSD, Apache-2.0, or ISC; the upstream image keeps the Go, llama.cpp, and cpp-httplib licenses in `/usr/lib/ollama` but not the Go modules' notices.
 
+#### llama.cpp Image
+
+`v0.1.0-rc10` didn't stage this image, so its first release review classifies its SBOM.
+Beyond the Ubuntu packages, these need attention:
+
+- FFmpeg 6.1.1 from Ubuntu, with x264 and x265, which the base image installs: GPL source terms.
+- The CUDA 13.5 libraries: NVIDIA's license terms, outside OSRB; the image keeps the CUDA EULA at `/usr/local/cuda-13.5/EULA.txt`.
+- The JavaScript packages that the web interface built into `llama-server` bundles: notices not checked.
+
+llama.cpp and the other libraries its server compiles in are MIT, BSD-2-Clause, MIT-0, or public domain.
+
 #### Rust Executables
 
 The proxy's and the supervisor's crates are permissive; [`deny.toml`](../../deny.toml) allows only permissive licenses for the workspace, and deps.dev confirms each crate in the SBOMs.
@@ -141,6 +152,7 @@ The supervisor's source archive keeps its crates' license files.
 | [Hermes image source](../../image/fabric/HERMES-NOTICE.md) | `/opt/hermes` keeps Hermes's MIT license, and the Switchyard bundle keeps its own | None |
 | No notice | The proxy keeps only its own license and `Cargo.lock`, not the notices of the crates, Rust standard library, and musl it links | The proxy keeps each locked crate's license files and manifest under `/usr/share/doc/nemoclaw-ollama-proxy/dependencies`, and Rust's library notices, which include musl's, in `rust-COPYRIGHT-library.html` beside them |
 | [vLLM runtime](../../image/vllm/NOTICE.md), [Ollama runtime](../../image/ollama/NOTICE.md) | The supervisor archive keeps its crates' notices but not the Rust standard library's | Both images keep `/opt/nemoclaw/source/rust-COPYRIGHT-library.html` |
+| [llama.cpp runtime](../../image/llama-cpp/NOTICE.md) | llama.cpp's image omits llama.cpp's MIT license and the licenses of the libraries its server compiles in | The `llama-cpp` image keeps them in `/opt/nemoclaw/source/`, and the supervisor's Rust library notices |
 
 ## Limits of This Review
 

@@ -39,6 +39,12 @@ Installation:
 - [Install the CLI](../get-started/install.md) covers installing, upgrading, and uninstalling a release's CLI from its `nemoclaw-TAG-PLATFORM.tar.gz` archive, checked against `SHA256SUMS`.
 - The [support matrix](#support-matrix) lists the platforms, gateway runtimes, model services, harnesses, and GPUs, and what CI runs on each.
 
+Images:
+
+- Releases stage a llama.cpp runtime image, `llama-cpp`, beside the vLLM and Ollama images; no service runs it yet.
+  It adds the supervisor to llama.cpp's CUDA 13.5 server image from release b12375, whose ARM64 and AMD64 builds carry kernels for GB300 (`sm_103`) and GB10 (`sm_121a`).
+  CUDA 13.5 needs NVIDIA driver 580 or newer; see [build a runtime image](../build-deploy/build.md#build-a-runtime-image).
+
 Gateways:
 
 - [Current limits](../resources/limits.md#data-and-cleanup) list a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: it leaves its sandboxes in `Error`, and the next apply replaces them ([#13953](https://github.com/NVIDIA/NemoClaw/issues/13953)).

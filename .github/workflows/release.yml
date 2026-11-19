@@ -125,7 +125,7 @@ jobs:
       # Bake reads them from .build/image-sources.
       - name: Fetch the pinned image sources
         run: cargo images fetch
-      - name: Build and push the vLLM and Ollama runtime images
+      - name: Build and push the runtime images
         env:
           GH_TOKEN: ${{ github.token }}
           PLATFORM: ${{ matrix.platform }}
@@ -144,10 +144,11 @@ jobs:
           output='type=image,push=true,rewrite-timestamp=true'
           docker buildx bake --builder runtimes runtimes \
             --set "vllm.tags=$CI_PACKAGE:vllm-$tag" --set "vllm.output=$output" \
-            --set "ollama.tags=$CI_PACKAGE:ollama-$tag" --set "ollama.output=$output"
+            --set "ollama.tags=$CI_PACKAGE:ollama-$tag" --set "ollama.output=$output" \
+            --set "llama-cpp.tags=$CI_PACKAGE:llama-cpp-$tag" --set "llama-cpp.output=$output"
           # A runtime image's digest only changes with its inputs, so its SBOM
           # is usually already recorded.
-          for name in vllm ollama; do
+          for name in vllm ollama llama-cpp; do
             sh .github/scripts/image-sbom.sh "$CI_PACKAGE:$name-$tag" "linux/${PLATFORM#linux_}"
           done
           docker logout ghcr.io
@@ -441,7 +442,7 @@ jobs:
           } > "$notes"
           for image in $NAMES; do
             case "$image" in
-              vllm|ollama) from=$GITHUB_SHA ;;
+              vllm|ollama|llama-cpp) from=$GITHUB_SHA ;;
               *) from=$SOURCE ;;
             esac
             target="$RELEASE_NAMESPACE/$image:$TAG"

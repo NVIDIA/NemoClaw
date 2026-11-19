@@ -3,6 +3,10 @@
 #[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("nemoclaw-runtime {}", env!("CARGO_PKG_VERSION"));
+        return std::process::ExitCode::SUCCESS;
+    }
     use nemoclaw_runtime::{CancellationToken, Error};
     let cancel = CancellationToken::new();
     let trip = CancellationToken::new();

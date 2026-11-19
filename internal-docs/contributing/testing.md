@@ -361,7 +361,7 @@ Documentation previews publish only for PRs targeting `v1`.
 | Workflow | Checks |
 |---|---|
 | CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; each platform's jobs start with their test layer, such as `linux_amd64 / Contract tests 1 of 1` or `linux_amd64 / E2E / E2E Docker tests` |
-| CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
+| CI / Images | `Build / linux_arm64`, `Build / linux_amd64`; beside them, `Build / llama.cpp runtime / linux_arm64` and `Build / llama.cpp runtime / linux_amd64` build the llama.cpp runtime image and run its server's and supervisor's version commands |
 | CI / Dependencies | `Policy`, `Python scripts` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
