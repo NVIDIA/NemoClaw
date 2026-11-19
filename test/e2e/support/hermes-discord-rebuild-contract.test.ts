@@ -139,7 +139,7 @@ describe("Hermes Discord rebuild evidence", () => {
     expect(exec.mock.calls[1]![1]).toContain("-z");
   });
 
-  it("retains the captured NVIDIA command limits and damaged-state reservation", async () => {
+  it("reserves the NVIDIA, custom rebuild, and workflow cleanup budgets", async () => {
     const { command, exec } = await runPhase();
     const target = catalogueTarget("hermes-inference-switch");
     vi.stubEnv("NEMOCLAW_TEST_TIMEOUT", target.environment.NEMOCLAW_TEST_TIMEOUT ?? "");
@@ -156,9 +156,15 @@ describe("Hermes Discord rebuild evidence", () => {
     ]);
     expect(damagedTimeout).toBe(25.5 * 60_000);
     expect(phaseTimeout).toBe(53 * 60_000);
-    // This inherited reservation includes the healthy rebuild and other original
-    // phases. It is not a sum of every retained subprocess's failure limit.
-    expect(timeout).toBeGreaterThanOrEqual(45 * 60_000 + damagedTimeout);
+    // The inherited reservation includes the healthy rebuild and original phases.
+    // The custom helper's command sum is checked by hermes-custom-rebuild-contract.
+    const customRebuildTimeout = 13 * 60_000;
+    // Six verified-package commands allow two minutes each. Three tunnel attempts,
+    // including readiness probes, retry delays and graceful shutdown, fit three minutes.
+    const customFixtureSetupTimeout = (6 * 2 + 3) * 60_000;
+    expect(timeout).toBeGreaterThanOrEqual(
+      45 * 60_000 + damagedTimeout + customFixtureSetupTimeout + customRebuildTimeout,
+    );
     expect(target.timeoutMinutes * 60_000 - timeout).toBeGreaterThanOrEqual(10 * 60_000);
   });
 

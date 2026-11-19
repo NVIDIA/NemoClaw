@@ -537,22 +537,19 @@ This live check owns the replacement process's use of the archived custom refere
 The existing `hermes-inference-switch` selector runs it when the archive sanitizer or managed route writer changes; no new target or matrix entry is added.
 In the native NVIDIA branch, each of the two native-local probes and two custom hosted probes makes one attempt.
 After verified tunnel setup, the custom sequence permits 30 seconds for deletion, 150 seconds for onboarding, five minutes for rebuild, and 150 seconds per turn.
-Those command limits total 780 seconds; they do not establish a worst-case bound for the whole test.
-The retained NVIDIA/Discord phase permits two 15-minute rebuilds, two six-minute status checks, two three-minute inference probes, three minutes for enrollment, and four 30-second state probes, totaling 53 minutes of subprocess limits.
-The damaged-state portion accounts for 25.5 minutes of those limits.
-
-For planning, [main run 44424076043](https://github.com/NVIDIA/NemoClaw/actions/runs/44424076043/job/135225804921) at `4dbd3349dcfba54b9d1a09f77d382678680f5e2c` ran the retained scenario and both NVIDIA rebuilds with the same scenario, helper, and catalogue files as `694957f29ddb0623dabb620afea7c863da31a4f9`.
-Its phase receipt records 547.155 seconds including cleanup; the complete job took 620 seconds, including setup and artifact handling.
-Adding the full custom allowance to those observations gives 22 minutes 37.155 seconds for the scenario and 23 minutes 50 seconds for the job.
-No retry savings are subtracted from the measured run.
-The 75-minute test and 85-minute workflow deadlines are unchanged.
-These observations support planning; the expanded candidate still needs its own passing phase, cleanup, and workflow receipts after publication.
+Those command limits total 13 minutes, checked by `support/hermes-custom-rebuild-contract.test.ts`.
+Verified binary preparation adds six two-minute command allowances; three minutes cover the existing bounded tunnel attempts.
+The native NVIDIA target reserves those 28 added minutes alongside the inherited 75-minute flow budget, for a 103-minute test and 113-minute workflow.
+`support/hermes-discord-rebuild-contract.test.ts` checks that the original 45-minute reservation, 25.5-minute damaged-state allowance and complete custom fixture allowance fit, with ten minutes outside the test for workflow setup, diagnostics, cleanup and artifact upload.
+Manual PR runs build their matrix from the trusted workflow revision, including its catalogue job timeout.
+That revision must contain the 113-minute reservation before it can qualify this expanded scenario; changing the candidate catalogue alone is insufficient.
+The expanded candidate still requires its own passing phase, cleanup and workflow receipts after publication.
 
 ### Hermes NVIDIA Stripped-State Recovery
 
 The native NVIDIA branch of `live/hermes-inference-switch.test.ts` owns the real registered rebuild boundary for #14094.
-Its catalogue entry provides a 75-minute test budget and an 85-minute workflow budget.
-The extra test time covers the damaged-state rebuild and its probes; ten minutes remain for workflow setup, diagnostics, and cleanup.
+Its catalogue entry provides a 103-minute test budget and a 113-minute workflow budget, including the custom-route proof described above.
+The damaged-state rebuild retains its existing allowance; ten minutes remain outside the test for workflow setup, diagnostics, cleanup and artifact upload.
 It keeps the healthy Discord-state rebuild, then tests a separate damaged-state rebuild in the same disposable sandbox.
 The missing coverage dimension is recovery when all three managed NVIDIA credential fields already contain `[STRIPPED_BY_MIGRATION]`.
 

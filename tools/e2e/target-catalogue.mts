@@ -987,7 +987,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; native NVIDIA Endpoints provider",
     profile: "nvidia-api",
-    timeoutMinutes: 85,
+    timeoutMinutes: 113,
     installMode: "authenticated",
     installNonInteractive: true,
     restoreCli: true,
@@ -1013,8 +1013,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SWITCH_PROVIDER: "nvidia-prod",
       NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3.5-super-vl-120b-a12b",
       NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
-      // Reserve the added damaged-state rebuild and keep ten minutes for job cleanup.
-      NEMOCLAW_TEST_TIMEOUT: String(75 * 60_000),
+      // Retain 75 minutes for the existing flow, add 28 for the verified custom
+      // fixture and rebuild, and keep ten more minutes for workflow finalization.
+      NEMOCLAW_TEST_TIMEOUT: String(103 * 60_000),
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
