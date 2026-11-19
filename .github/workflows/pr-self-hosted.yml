@@ -20,9 +20,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
+      eligible: ${{ steps.pr.outputs.eligible }}
       gpu: ${{ steps.select.outputs.gpu }}
       station: ${{ steps.select.outputs.station }}
       cases: ${{ steps.select.outputs.cases }}
+      recommendations: ${{ steps.select.outputs.recommendations }}
     steps:
       - name: Resolve the admitted PR revision
         id: pr
@@ -56,6 +58,7 @@ jobs:
           selection=$(cat "$RUNNER_TEMP/hardware-cases.json")
           {
             echo "cases=$(jq -c '{runners,nvidia_key}' <<< "$selection")"
+            echo "recommendations=$(jq -c '{commit,cases,runners}' <<< "$selection")"
             echo "gpu=$(jq '.runners.gpu | length > 0' <<< "$selection")"
             echo "station=$(jq '.runners["dgx-station"] | length > 0' <<< "$selection")"
           } >> "$GITHUB_OUTPUT"
@@ -70,6 +73,72 @@ jobs:
       hosted: false
       cases: ${{ needs.plan.outputs.cases }}
     secrets: inherit
+
+  recommendations:
+    needs: plan
+    if: needs.plan.result == 'success' && needs.plan.outputs.eligible == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: v1-e2e-recommendations-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      pull-requests: write
+    steps:
+      # The publisher consumes data only, with no candidate checkout or executable.
+      - name: Post public E2E recommendations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOMMENDATIONS: ${{ needs.plan.outputs.recommendations }}
+        shell: bash
+        run: |
+          [[ $GITHUB_REF_NAME =~ ^pull-request/([1-9][0-9]*)$ ]] || exit 1
+          number=${BASH_REMATCH[1]}
+          [[ $GITHUB_SHA =~ ^[a-f0-9]{40}$ ]] || exit 1
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+          if ! jq -e --arg sha "$GITHUB_SHA" '
+            .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
+          ' <<< "$pr" > /dev/null; then exit 0; fi
+
+          # Raw reasons can contain diagnostics. Only fixed reason text is public.
+          jq -er --arg sha "$GITHUB_SHA" '
+            def public_reason:
+              if startswith("could not analyze changes") then "Conservative selection: impact analysis could not narrow the cases."
+              elif startswith("every case runs:") then "Shared validation inputs changed."
+              elif . == "every case selected with --all" then "All cases were requested."
+              elif . == "requested with --add" then "Requested as an additional case."
+              elif endswith(", an input of a runtime image this case runs") then "A runtime image input changed."
+              elif endswith(" changed") then "The case definition or scenario changed."
+              else "Selected by changed-file rules." end;
+            if .commit == $sha and (.cases | type) == "object" and
+              (.runners.gpu | type) == "array" and (.runners["dgx-station"] | type) == "array"
+            then . else error("Invalid recommendation plan") end |
+            . as $plan | (.runners.gpu + .runners["dgx-station"] | unique | sort) as $ids |
+            if all($ids[]; if type == "string" then test("^[a-z0-9-]+$") else false end) and
+              all($ids[]; $plan.cases[.].run == true and ($plan.cases[.].reason | type) == "string")
+            then ["<!-- nemoclaw-v1-e2e-recommendations -->", "## Recommended hardware E2Es", "", "Commit: `\($sha)`", "",
+              (if $ids == [] then "No hardware E2Es selected by changed-file rules."
+               else $ids[] as $id | "- `\($id)`: \($plan.cases[$id].reason | public_reason)" end)] | join("\n")
+            else error("Invalid recommendation cases") end
+          ' <<< "$RECOMMENDATIONS" > "$RUNNER_TEMP/recommendations.md"
+          jq -n --rawfile body "$RUNNER_TEMP/recommendations.md" '{body: $body}' > "$RUNNER_TEMP/recommendations.json"
+
+          id=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$number/comments?per_page=100" |
+            jq -r '[.[][] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") |
+              select((.body // "") | startswith("<!-- nemoclaw-v1-e2e-recommendations -->"))] |
+              if length > 1 then error("Multiple recommendation comments require reconciliation")
+              else .[0].id // empty end')
+          # Selection and comment pagination take time; bind the write to the head again.
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+          if ! jq -e --arg sha "$GITHUB_SHA" '
+            .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
+          ' <<< "$pr" > /dev/null; then exit 0; fi
+          if [[ -n $id ]]; then
+            [[ $id =~ ^[1-9][0-9]*$ ]] || exit 1
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" --input "$RUNNER_TEMP/recommendations.json" > /dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$number/comments" --input "$RUNNER_TEMP/recommendations.json" > /dev/null
+          fi
 
   station:
     needs: plan

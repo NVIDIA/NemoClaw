@@ -163,12 +163,16 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 
 These runs report failures in a separate workflow; they are not added as merge requirements. Running jobs are not automatically cancelled. Hardware jobs recheck PR eligibility after queueing and before deployment. GitLab/Colorunner continues to own leases and replacement; CI does not provision hosts.
 
+The workflow refreshes one PR recommendation comment for the analyzed commit, including when no hardware case is selected. It lists only case IDs and fixed selection reasons. Execution links, outcomes, timing, artifacts, runner identities and raw diagnostics stay out of that comment; Actions evidence retains its existing visibility. Comment-write permission belongs to a separate job that neither checks out candidate code nor runs its executables.
+
 Operators can dispatch **Live / HCL** on `v1`, or on a current, non-draft v1 PR's bot-admitted `pull-request/<number>` branch. The optional `jobs` input selects individual comma-separated case IDs on the target; unknown or misplaced IDs fail before hardware jobs queue. An empty input selects every case on that target:
 
 ```bash
 gh workflow run hcl-e2e.yml --ref v1 -f target=dgx-station -f hosted=false \
   -f jobs=dgx-station-openclaw-nemotron
 ```
+
+For a reviewer-requested extra case, dispatch on the PR's current admitted `pull-request/<number>` branch with that case ID in `jobs`. This starts an additional selection and leaves automatic selections intact. To preview an additive selection locally, use `changes cases --base origin/v1 --add CASE`; reviewed additions do not require an Advisor service.
 
 Build, inference, and cleanup failures fail the run visibly. An offline runner leaves its hardware job queued. A queued PR revision that becomes draft, closes, or is superseded cannot deploy when it reaches a runner.
 
