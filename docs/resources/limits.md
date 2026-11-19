@@ -115,6 +115,7 @@ Preserve state and native data before attempting a destructive operation.
 | Backup, restore, snapshots and transfer of mounted agent data | [Platform-owned storage](../build-deploy/state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command | [`cb8ef25`][v1-cb8ef25]: code, docs |
 | A documented path from the earlier product's configuration export to a v1 deployment | [#14580](https://github.com/NVIDIA/NemoClaw/issues/14580) | [`cb8ef25`][v1-cb8ef25]: issue |
 | Moving data from the earlier product to v1 and back | No NemoClaw procedure; native data belongs to the harness and moving its storage to the platform ([migration](../get-started/migration.md)) | [`cb8ef25`][v1-cb8ef25]: docs |
+| Keeping a sandbox across a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: once the gateway runs again, the sandbox refuses the supervisor that OpenShell starts for it and goes to `Error` with `StartFailed`, and the next apply replaces it, which deletes its files outside mounted volumes and its conversation history. A graceful restart, such as `docker restart`, keeps the sandbox | [#13953](https://github.com/NVIDIA/NemoClaw/issues/13953), [NVIDIA/OpenShell#4910](https://github.com/NVIDIA/OpenShell/issues/4910) | [`291723b`][v1-291723b]: issue; on a DGX Spark, 9 of 9 SIGKILLed gateways lost their Hermes sandbox and 12 of 12 graceful restarts kept it |
 
 ## Security
 
@@ -152,3 +153,4 @@ Select the v1 guide explicitly and match its source revision to the bundle befor
 | Packaged installation of the documentation skill for assistant clients | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 
 [v1-cb8ef25]: https://github.com/NVIDIA/NemoClaw/tree/cb8ef25252ffffbca051787adb4711c96ebfcf28
+[v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9
