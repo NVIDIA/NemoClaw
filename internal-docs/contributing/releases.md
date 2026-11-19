@@ -37,7 +37,7 @@ git push origin v0.1.0-rc1
 The [staging workflow](../../.github/workflows/release.yml):
 
 1. Finds the latest commit in the tag's `v1` history with per-commit images, and checks with `nemoclaw-build changes images` that nothing since could change them; otherwise it builds and checks the images at the tag.
-2. Builds the vLLM and Ollama runtime images on each native platform; their builds are reproducible.
+2. Builds the vLLM, Ollama, and llama.cpp runtime images on each native platform; their builds are reproducible.
 3. Joins each image's ARM64 and AMD64 images into one index at `ghcr.io/nvidia/nemoclaw/v1/<image>:<tag>`, without rebuilding.
 4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches the [CLI bundles](#cli-bundles) and each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
 
@@ -45,24 +45,33 @@ Only users with push access see a draft release, and the `v1` packages stay inte
 
 ## CLI Bundles
 
-Staging attaches each platform's bundle as the latest passing push or manual run of [CI / Bundle](../../.github/workflows/rust.yml) at the tagged commit built and checked it, gzipped without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
+Pushing the tag also starts [CI / Bundle](../../.github/workflows/rust.yml) at the tag, and staging waits for it.
+Staging attaches each platform's bundle as the latest push or manual run of CI / Bundle at the tag built and checked it, without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
 `SHA256SUMS` lists their SHA-256 checksums.
-Pull request runs build a merge commit, so they don't count.
-The executables are neither signed nor notarized.
+A bundle built from a clean checkout of a version tag reports the tag without its `v` as its version, in `nemoclaw --version` and its `manifest.json`, so the bundles of a run at the same commit without the tag don't count.
+Any other bundle reports `0.1.0-dev.<hash>`, where the hash names its source files.
+The executables are neither signed nor notarized yet ([#14621](https://github.com/NVIDIA/NemoClaw/issues/14621)).
 
-CI keeps the bundles of a `v1` push or manual run for 7 days.
-Before tagging a commit, check that CI / Bundle passed at it in a `push` or `workflow_dispatch` run within that window:
-
-```sh
-gh run list --workflow rust.yml --commit <full commit hash> --status success
-```
-
-Without such a run, staging fails before it pushes release images or drafts the release, and names the missing platforms.
-Run CI / Bundle at the tag, and rerun the staging workflow once it passes:
+If CI / Bundle fails at the tag, staging fails before it pushes release images or drafts the release; rerun the failed jobs, then the staging workflow.
+CI keeps a run's bundles for 7 days; after that, staging names the missing platforms.
+Run CI / Bundle at the tag again, and rerun the staging workflow once it passes:
 
 ```sh
 gh workflow run rust.yml --ref v0.1.0-rc1
 ```
+
+### Signing
+
+Staging signs a platform's executables only when a repository administrator lists the platform in the `RELEASE_SIGNING` repository variable, such as `windows_amd64`.
+A job's `if:` can't read an environment's variables, so the repository variable turns signing on; the signing jobs run in the `release-signing` environment and read its variables.
+
+| Platform | Signing job |
+|---|---|
+| `windows_amd64` | Signs every `.exe` through Azure Artifact Signing, appending NVIDIA's signature to the Helm provider's HashiCorp signature, and checks each with `signtool verify /pa /all /tw`. Needs the environment's `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_ARTIFACT_SIGNING_ENDPOINT`, `AZURE_ARTIFACT_SIGNING_ACCOUNT`, and `AZURE_ARTIFACT_SIGNING_PROFILE` variables. |
+| `darwin_arm64` | Checks that every executable is notarized and signed by the Apple team in the environment's `APPLE_TEAM_ID` variable, or by HashiCorp's team `D38WU7D763` for the Helm provider. It doesn't sign yet, so listing `darwin_arm64` stops staging until the signing step lands. |
+
+Staging puts the signed executables in their bundles with the bundles' file modes, records their new hashes in `manifest.json` with `nemoclaw-build reseal`, and then writes `SHA256SUMS`.
+When a listed platform's signing job fails, staging stops before it drafts the release.
 
 ## Test a Staged Release
 
@@ -79,7 +88,7 @@ The workflow publishes a final release's draft without an approval step, once a 
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
 Publishing a draft by hand and package-administrator privileges bypass the workflow.
 An administrator handles package visibility changes; making a package public cannot be undone.
-Before pushing a final tag, complete the license review ([#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+Before pushing a final tag, complete the [license review](image-licenses.md) of every image the release publishes.
 
 ## Verify Provenance
 
@@ -99,7 +108,7 @@ Platform manifests have no attestation of their own: verify the index that lists
 
 ## SBOM Assets
 
-Each image is scanned by the job that pushes it, with Syft 1.57.1: the image workflow scans each agent and proxy image it pushes on `v1`, and staging's runtime jobs scan the vLLM and Ollama images they build.
+Each image is scanned by the job that pushes it, with Syft 1.57.1: the image workflow scans each agent and proxy image it pushes on `v1`, and staging's runtime jobs scan the vLLM, Ollama, and llama.cpp images they build.
 Each scan reads the pushed platform manifest from the registry, so the SPDX document's subject is that manifest's digest; `v1-ci` keeps the document as `sbom-DIGEST`, and an unchanged image is never scanned again.
 Staging copies each release platform's document from there.
 It scans an image only when no recorded document names its digest, and records the result.

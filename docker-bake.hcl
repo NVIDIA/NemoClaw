@@ -110,6 +110,7 @@ target "ollama" {
 
 target "llama-cpp" {
   inherits = ["_runtime"]
+  contexts = { supervisor = "target:supervisor", sources = ".build/image-sources/llama-cpp" }
   dockerfile = "image/llama-cpp/Dockerfile"
   tags = ["nc-prototype-llama-cpp:rust-v1"]
 }

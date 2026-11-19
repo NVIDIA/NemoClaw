@@ -43,22 +43,34 @@ impl Engine {
         if endpoint.starts_with("ssh://") {
             return crate::ssh::connect(endpoint);
         }
+        let configured = |api: Result<bollard::Docker, bollard::errors::Error>| {
+            api.map(|api| Self::new(api, endpoint))
+                .map_err(|_| Error::State("cannot configure Docker engine client"))
+        };
         #[cfg(unix)]
-        {
-            let api =
-                bollard::Docker::connect_with_unix(endpoint, 120, bollard::API_DEFAULT_VERSION)
-                    .map_err(|_| Error::State("cannot configure Docker engine client"))?;
-            Ok(Self::new(api, endpoint))
+        if endpoint.starts_with("unix://") {
+            return configured(bollard::Docker::connect_with_unix(
+                endpoint,
+                120,
+                bollard::API_DEFAULT_VERSION,
+            ));
         }
-        #[cfg(not(unix))]
-        {
-            Err(Error::Conflict(
-                "local container-engine connections are unsupported on this platform",
-            ))
+        #[cfg(windows)]
+        if endpoint.starts_with("npipe://") {
+            return configured(bollard::Docker::connect_with_named_pipe(
+                endpoint,
+                120,
+                bollard::API_DEFAULT_VERSION,
+            ));
         }
+        Err(Error::Conflict(if endpoint.starts_with("unix://") {
+            "a Unix-socket engine requires a Unix client"
+        } else {
+            "a named-pipe engine requires a Windows client"
+        }))
     }
 
-    /// An engine client reached at `endpoint`: a local socket on Unix, or SSH.
+    /// An engine client reached at `endpoint`: a Unix socket, a Windows named pipe, or SSH.
     pub fn new(api: bollard::Docker, endpoint: &str) -> Self {
         Self {
             api,

@@ -102,6 +102,13 @@ enum Action {
         #[arg(long)]
         prebuilt: bool,
     },
+    /// Record the hashes of a bundle's files in its manifest after signing
+    /// changed them, leaving the rest of the manifest as it was.
+    #[cfg(feature = "sdk")]
+    Reseal {
+        /// The bundle directory, such as `dist/PLATFORM`.
+        directory: PathBuf,
+    },
     /// Run this platform's `CI / Bundle` steps, or one named step.
     ///
     /// Build this command without default features (`cargo ci`), so it can
@@ -400,7 +407,12 @@ fn target(platform: &str) -> Result<&'static str> {
 /// resolves features for every bundle package either way, so that a part of
 /// the bundle compiles its dependencies as the whole bundle does and reuses
 /// their cached builds.
-fn build(executables: &[&str], target: &str, configure: &dyn Fn(&mut Command)) -> Result<()> {
+fn build(
+    executables: &[&str],
+    target: &str,
+    version: &str,
+    configure: &dyn Fn(&mut Command),
+) -> Result<()> {
     let root = std::env::current_dir()?;
     let mut command = cargo();
     configure(&mut command);
@@ -421,6 +433,7 @@ fn build(executables: &[&str], target: &str, configure: &dyn Fn(&mut Command)) -
     command
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env("CARGO_TARGET_DIR", root.join("target"))
+        .env("NEMOCLAW_BUNDLE_VERSION", version)
         .env(
             "RUSTFLAGS",
             format!("--remap-path-prefix={}=/workspace", root.display()),
@@ -460,13 +473,14 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
             .ok_or("missing Helm provider platform pin")?,
     )
     .await?;
-    let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
-    nemoclaw_build::verify_source_version(&version, &sources()?)?;
+    let source = nemoclaw_build::BUILDER_SOURCE_VERSION;
+    nemoclaw_build::verify_source_version(source, &sources()?)?;
+    let version = nemoclaw_build::bundle_version(Path::new("."), source);
     let target = target(platform)?;
     if !prebuilt {
-        build(&[], target, &|_| {})?;
+        build(&[], target, &version, &|_| {})?;
     }
-    nemoclaw_build::verify_source_version(&version, &sources()?)?;
+    nemoclaw_build::verify_source_version(source, &sources()?)?;
     fs::create_dir_all("dist")?;
     let temporary = tempfile::tempdir_in("dist")?;
     let root = temporary.path();
@@ -567,7 +581,7 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
             platform,
         )?);
     nemoclaw_build::schema::add_to_bundle(root, &mut manifest)?;
-    nemoclaw_build::verify_source_version(&version, &sources()?)?;
+    nemoclaw_build::verify_source_version(source, &sources()?)?;
     fs::write(
         root.join("manifest.json"),
         serde_json::to_vec_pretty(&manifest)?,
@@ -581,6 +595,18 @@ async fn bundle(pins: &Pins, platform: &str, prebuilt: bool) -> Result<()> {
         "Verified inputs assembled at {} ({version})",
         destination.display()
     );
+    Ok(())
+}
+/// Signing changes a bundle's executables, and `Bundle::open` refuses files
+/// whose hashes differ from the manifest's.
+#[cfg(feature = "sdk")]
+fn reseal(directory: &Path) -> Result<()> {
+    let path = directory.join("manifest.json");
+    let mut manifest: Manifest = serde_json::from_slice(&fs::read(&path)?)?;
+    for (name, digest) in &mut manifest.files {
+        *digest = bundle::hash_file(&directory.join(name))?;
+    }
+    fs::write(&path, serde_json::to_vec_pretty(&manifest)?)?;
     Ok(())
 }
 #[tokio::main]
@@ -688,6 +714,10 @@ async fn main() -> Result<()> {
             FernAction::Public => fern::public(root, &fern::Release::from_environment()),
         }
         .map_err(Into::into);
+    }
+    #[cfg(feature = "sdk")]
+    if let Action::Reseal { directory } = &cli.command {
+        return reseal(directory);
     }
     #[cfg(feature = "sdk")]
     if let Action::Schema { check } = cli.command {
@@ -963,6 +993,8 @@ async fn main() -> Result<()> {
         Action::Schema { .. } | Action::Docs { .. } | Action::Fern { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
+        #[cfg(feature = "sdk")]
+        Action::Reseal { .. } => unreachable!("resealing returned before build tool checks"),
         Action::Ci { .. }
         | Action::ReleaseGate(..)
         | Action::ReleaseVerifyPromotion { .. }

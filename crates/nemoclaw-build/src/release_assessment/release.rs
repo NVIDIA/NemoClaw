@@ -85,6 +85,7 @@ pub fn catalog(
                     | "ollama-proxy"
                     | "vllm"
                     | "ollama"
+                    | "llama-cpp"
                     | "supervisor"
                     | "lint"
                     | "unit-tests"
@@ -103,7 +104,7 @@ pub fn catalog(
         .iter()
         .cloned()
         .chain(
-            ["ollama-proxy", "vllm", "ollama"]
+            ["ollama-proxy", "vllm", "ollama", "llama-cpp"]
                 .into_iter()
                 .map(str::to_string),
         )
@@ -440,7 +441,14 @@ mod tests {
         assert_eq!(result.agents, ["candidate-only", "hermes"]);
         assert_eq!(
             result.images,
-            ["candidate-only", "hermes", "ollama-proxy", "vllm", "ollama"]
+            [
+                "candidate-only",
+                "hermes",
+                "ollama-proxy",
+                "vllm",
+                "ollama",
+                "llama-cpp"
+            ]
         );
         for changed in [
             {
