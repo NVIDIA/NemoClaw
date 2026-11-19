@@ -73,9 +73,6 @@ A job's `if:` can't read an environment's variables, so the repository variable 
 Staging puts the signed executables in their bundles with the bundles' file modes, records their new hashes in `manifest.json` with `nemoclaw-build reseal`, and then writes `SHA256SUMS`.
 When a listed platform's signing job fails, staging stops before it drafts the release.
 
-Don't list a platform before [#14628](https://github.com/NVIDIA/NemoClaw/issues/14628) is fixed: signing changes the bytes of providers whose versions stay the same, such as the Docker provider, and a deployment created with an unsigned bundle then fails on its dependency lock file.
-
-
 ## Test a Staged Release
 
 Use [image assessment](image-assessment.md) to evaluate the saved SPDX inventories.

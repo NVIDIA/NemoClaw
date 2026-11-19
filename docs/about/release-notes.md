@@ -38,6 +38,8 @@ Installation:
 
 - [Install the CLI](../get-started/install.md) covers installing, upgrading, and uninstalling a release's CLI from its `nemoclaw-TAG-PLATFORM.tar.gz` archive, checked against `SHA256SUMS`.
 - The [support matrix](#support-matrix) lists the platforms, gateway runtimes, model services, harnesses, and GPUs, and what CI runs on each.
+- Each operation installs the providers of the bundle that runs it, replacing `.terraform/providers` and `.terraform.lock.hcl` in the state directory.
+  Before, with a bundle whose providers had the same versions but other bytes, such as a signed build of the same commit, a deployment kept running the previous bundle's providers while that bundle existed; once it was gone, plan, apply, and destroy failed because the providers didn't match the checksums in the dependency lock file ([#14628](https://github.com/NVIDIA/NemoClaw/issues/14628)).
 
 Windows clients:
 
