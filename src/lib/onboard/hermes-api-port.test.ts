@@ -104,6 +104,10 @@ describe("readHermesApiPort", () => {
     expect(readHermesApiPort({})).toBe(8642);
   });
 
+  it.each(["", " ", "	"])("treats the blank value %j as unset", (value) => {
+    expect(readHermesApiPort({ [HERMES_API_PORT_ENV]: value })).toBe(8642);
+  });
+
   it.each(["8641", "8653", "9000", "08642", "²"])(
     "rejects %s outside the allocated Hermes API-port range",
     (value) => {
