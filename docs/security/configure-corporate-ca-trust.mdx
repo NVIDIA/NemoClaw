@@ -19,7 +19,7 @@ NemoClaw imports a bounded corporate CA chain without replacing the OpenShell tr
 Point NemoClaw at a PEM bundle that contains your corporate root and any required intermediates.
 
 <Warning>
-With OpenShell `0.1.7`, NemoClaw also configures these roots for destination TLS verification by the gateway's network supervisors.
+With OpenShell `0.1.9`, NemoClaw also configures these roots for destination TLS verification by the gateway's network supervisors.
 This trust applies across that gateway, rather than only to one MCP endpoint or sandbox.
 Import only CA roots approved for every sandbox that uses the gateway.
 Network policy, destination pins, and TLS hostname checks still apply.
@@ -42,7 +42,7 @@ It also installs each validated certificate as a separate operating-system trust
 Sandbox TLS clients can use these anchors.
 OpenShell verifies destination TLS in a separate network supervisor.
 Installing a CA in the workload image alone does not establish supervisor trust.
-For OpenShell `0.1.7`, NemoClaw supplies the validated bundle through `openshell.supervisor.network.additional_ca_bundle` in the managed gateway configuration.
+For OpenShell `0.1.9`, NemoClaw supplies the validated bundle through `openshell.supervisor.network.additional_ca_bundle` in the managed gateway configuration.
 Private-CA MCP runtime qualification remains pending.
 
 <AgentOnly variant="openclaw">
