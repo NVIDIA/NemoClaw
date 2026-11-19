@@ -41,6 +41,7 @@ Accepted platform and model declarations are not a tested matrix; verify the exa
 | Managed Ollama with OpenClaw on DGX Station | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | [Nemotron on an AMD64 GPU host](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host): its runtime image and GPU inference | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, docs, issue |
 | A deployment from a Windows client on Docker Desktop or a Podman machine, with a managed or an external gateway: no Windows host has run one, and CI tests the Windows client against fake engines on named pipes | [#14639](https://github.com/NVIDIA/NemoClaw/issues/14639) | [`5223fdc`][v1-5223fdc]: code, docs, issue |
+| A managed gateway from a macOS client on Docker Desktop, Colima, Rancher Desktop, or a Podman machine: no macOS host has run one; the gateway binds `/var/run/docker.sock` in the engine's VM, from each engine's documentation. An engine at another socket, such as a Lima instance's, binds the client's socket path, which its VM may not serve | [#14640](https://github.com/NVIDIA/NemoClaw/issues/14640) | [`ffe5406`][v1-ffe5406]: code, docs, issue |
 | Local GPU deployment on Windows/WSL or macOS | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | A model service on a separate physical SSH host | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Serving one model across several GPUs on one host: `container.gpuDevices` takes one entry, so vLLM refuses a [parallel layout](../agents-inference/models.md#set-the-parallel-layout) larger than one GPU | [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) | [`cb8ef25`][v1-cb8ef25]: code, issue |
@@ -157,3 +158,4 @@ Select the v1 guide explicitly and match its source revision to the bundle befor
 [v1-cb8ef25]: https://github.com/NVIDIA/NemoClaw/tree/cb8ef25252ffffbca051787adb4711c96ebfcf28
 [v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9
 [v1-5223fdc]: https://github.com/NVIDIA/NemoClaw/tree/5223fdc0b6c9a7ec0b7d86b9c11699eb3de1a206
+[v1-ffe5406]: https://github.com/NVIDIA/NemoClaw/tree/ffe5406498c6a27c068ad52a56ddcfb1cb37b904

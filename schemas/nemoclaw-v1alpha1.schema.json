@@ -723,7 +723,7 @@
             },
             "engine": {
               "default": "unix:///var/run/docker.sock",
-              "description": "Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM. Excluded by kubernetes.",
+              "description": "Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket. Excluded by kubernetes.",
               "type": "string",
               "x-nemoclaw-default-rule": "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
             },
@@ -3306,10 +3306,10 @@
               "type": "string"
             },
             "engine": {
-              "description": "Local Docker Unix socket. Omission uses the managed gateway engine.",
-              "pattern": "^unix:///[^?#\\x00]*$",
+              "description": "Local Docker engine: a Unix socket, or on Windows a named pipe such as `npipe:////./pipe/docker_engine`. Omission uses the managed gateway engine.",
+              "pattern": "^(unix:///[^?#\\x00]*|npipe:////\\./pipe/[A-Za-z0-9._-]+)$",
               "type": "string",
-              "x-nemoclaw-error": "proxy engine must be a local Unix socket"
+              "x-nemoclaw-error": "proxy engine must be a local Unix socket or named pipe"
             },
             "image": {
               "description": "Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host.",

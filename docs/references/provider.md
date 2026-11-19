@@ -295,7 +295,7 @@ These types name the engine or cluster they use instead of taking a gateway `ref
 `openshell_gateway_storage` and `openshell_podman_gateway` take the gateway's `name`, `compute_driver` (`docker` or `podman`), `engine`, `image`, and `network_cidr`, optional `owner` and `generation`, generated during apply when omitted and kept in state, and optional `image_pull_policy`:
 
 - `name` is `nc-`, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
-- `engine` is a local engine's Unix socket or, on Windows, its named pipe, such as `npipe:////./pipe/docker_engine`; Podman requires its API service socket or its machine's pipe.
+- `engine` is a local engine's Unix socket or, on Windows, its named pipe, such as `npipe:////./pipe/docker_engine`; Podman requires its API service socket, or its machine's pipe or macOS socket.
 - `image` must be the bundle's gateway image pin, which generated graphs supply; documents do not name it.
 - `network_cidr` is a private IPv4 `/24`.
 
@@ -777,7 +777,7 @@ The gateway reads its configuration and database under `data_path` and listens o
 Generated graphs also run the container as `0:0` and give it:
 
 - the storage's volume mounted at `data_path`;
-- the engine socket mounted at `/var/run/docker.sock`;
+- the engine's socket mounted at `/var/run/docker.sock`: a Unix socket's own path, or `/var/run/docker.sock` in the Linux VM behind a named pipe or, on macOS, behind Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's default socket;
 - the endpoint's port published on the endpoint's address;
 - the storage's bridge network, at the second host address of `network_cidr`;
 - the restart policy `unless-stopped`, so the engine starts the gateway again after the gateway or the host restarts, while a gateway stopped with `docker stop` stays stopped.
