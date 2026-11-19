@@ -56,11 +56,14 @@ Delete retained data separately only when it is no longer needed.
 The `kind: nim` implementation under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) remains a candidate.
 Its lifecycle qualification covers native NIM 2.0.12 on AMD64 L40S and ARM64 GB10 Spark with OpenShell 0.1.9, using the case's Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
 The qualified scope includes authenticated inventory/inference, private-network isolation, export/reapply, credential-preserving restart recovery and retained-storage teardown.
-General OpenClaw task completion remains unqualified: earlier L40S runs returned unrelated session text to an arithmetic request while direct authenticated inference answered correctly.
+Earlier L40S runs returned unrelated session text to an arithmetic request while direct authenticated inference answered correctly; later bounded tests below passed after configuring template placement and agent tools.
 Native tool-call acceptance and successful transport do not establish reliable agent tool use.
 The maintained NIM case selects a read/write file assistant, disables bundled skills and native tool search/Code Mode, and requests deterministic sampling with a 2048-token output limit.
-With the native template arguments below, three fresh Spark runtimes answered arithmetic before and after a hidden-file copy, copied its exact bytes and returned a different arithmetic answer correctly.
-Those bounded results do not qualify the full tool inventory: it exceeded 32K even with 2048 output tokens; at 64K the model repeated OpenClaw's appended session-status context instead of completing file requests.
+With the native template arguments below, three fresh Spark runtimes and three fresh L40S runtimes answered arithmetic before and after a hidden-file copy, copied its exact bytes and returned a different arithmetic answer correctly.
+A final-source Spark recheck at `5d2fd42657b2c9f763e58a694569b331f482854d` also passed arithmetic, exact hidden-file copy, inference authentication, unchanged plan/reapply and teardown.
+Those bounded results do not qualify general task reliability or the full tool inventory.
+Earlier full-inventory experiments exceeded 32K even with 2048 output tokens; at 64K the model repeated OpenClaw's appended session-status context instead of completing file requests.
+Those experiments predate the Fabric pin update and have not been repeated with the final pin; they identify an observed limit, not a proven cause for every agent failure.
 The default 8K NIM agent case remains unqualified: on Spark, OpenClaw's prompt plus the requested output exceeded that window, including when output was reduced from 4096 to 1024 tokens.
 That context failure is separate from the unrelated L40S response.
 The pinned FP8 and NVFP4 TP1/PP1 profiles also passed the five-step Spark agent lifecycle at 32K with the same 40 GiB budget; their native checkpoint formats are experimental, and they do not inherit BF16's separate recovery and tool checks.
