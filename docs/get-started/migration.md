@@ -30,7 +30,7 @@ Choose the current owner of the task rather than translating earlier CLI command
 | Use Okta/Entra runtime identity and OAuth refresh | [Register an OpenShell OAuth-refresh provider](../agents-inference/oauth-refresh.md); its manual attachments and refresh material are outside exported deployment YAML |
 | Snapshot, restore, upload/download, or transfer history | The platform owns backup and transfer of [mounted agent-data volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes); native conversation continuity has harness-specific limits |
 | Manage messaging, MCP servers, or arbitrary plugins | Messaging: [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037); NemoClaw doesn't manage MCP servers; see [additional agent integrations](../agents-inference/agents.md#additional-agent-integrations) |
-| Provision a model router, managed NIM/llama.cpp, or distributed inference | Managed NIM and llama.cpp: [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); NemoClaw has no Model Router |
+| Provision a model router, managed NIM/llama.cpp, or distributed inference | Managed [llama.cpp](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp) and [native NIM candidate with qualification limits](../agents-inference/models.md#native-nim-candidate): [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556); distributed inference: [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641); NemoClaw has no Model Router |
 | Install a telemetry collector or reuse Deep Agents trace-export setup | NemoClaw doesn't provision collectors or export Deep Agents traces; [Hermes Relay tracing](../agents-inference/agents.md#hermes-relay-tracing) writes trace artifacts in the sandbox |
 
 ## Needs Scope Analysis
@@ -94,3 +94,6 @@ The [combined staging site](https://nvidia-preview-nemoclaw-v1.docs.buildwithfer
 The main snapshot is pinned by the [documentation build](../../internal-docs/contributing/documentation-build.md#sources-and-outputs); its label does not qualify those procedures for v1.
 Use the earlier deployment's actual version when selecting commands or assessing historical qualification.
 Publishing the combined site and checking its legacy routes are tracked in [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644).
+
+For Classic llama.cpp users, [the managed GGUF contract](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp) carries repository/revision/file/SHA-256 identity into v1.
+Revalidate each model, host and required agent task against the [qualified configuration and its limits](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp).

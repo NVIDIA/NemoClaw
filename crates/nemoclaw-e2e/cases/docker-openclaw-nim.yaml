@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Compilation fixture; these placeholder image digests are not deployable images.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: nim-local
+  uid: b238c8a1-dd46-43e9-89c1-f5d9d4f34e4d
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17695
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.30.121.0/24
+  services:
+    local-nim:
+      kind: nim
+      backend: vllm
+      backendNetworkCIDR: 172.30.122.0/24
+      ngcCredential:
+        file: /etc/nemoclaw/secrets/ngc-key-v1
+      image: nc-nim@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      hardware:
+        architecture: amd64
+        minComputeCapability: 89
+        minDriverMajor: 580
+        minGpuMemoryBytes: 42949672960
+      authentication: bearer
+      model:
+        name: meta/llama-3.1-8b-instruct
+        profile: 092ed4213624e774d24cdaf84e3b6222839bab2008a21d3c214ab46626366f90
+        toolParser: llama3_json
+        chatTemplateKwargs:
+          tools_in_user_message: false
+        minGpuMemoryBytes: 33000000000
+        cacheBytes: 34359738368
+      serving:
+        contextTokens: 32768
+      memory:
+        gpuMemoryGiB: 40
+  inferenceProviders:
+    local-nim:
+      provider: openai
+      serviceRef: local-nim
+  sandboxes:
+    assistant:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+        settings:
+          tools:
+            toolSearch: false
+            codeMode: false
+      agent:
+        name: assistant
+        # This candidate qualifies a file assistant, not the full native tool inventory.
+        tools:
+          enabled: [read, write]
+        skills:
+          bundled:
+            enabled: false
+        inference:
+          routes:
+            - name: primary
+              providerRef: local-nim
+              overrides:
+                model: meta/llama-3.1-8b-instruct
+                maxTokens: 2048
+                temperature: 0
