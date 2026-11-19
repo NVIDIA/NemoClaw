@@ -41,29 +41,53 @@ export interface V1ParseEvidence {
   document: Record<string, any>;
 }
 
+/** Extract the pinned v1 revision with the consumer example into `consumer`, which must not exist. */
+function extractConsumer(consumer: string, archive: string): void {
+  execFileSync(
+    "git",
+    ["-C", REPO_ROOT, "archive", "--format=tar", `--output=${archive}`, V1ALPHA1_CHECKED_REVISION],
+    { stdio: "pipe", timeout: 30_000 },
+  );
+  fs.mkdirSync(consumer);
+  execFileSync("tar", ["-xf", archive, "-C", consumer], { stdio: "pipe", timeout: 30_000 });
+  const examples = path.join(consumer, "crates/nemoclaw-sdk/examples");
+  fs.mkdirSync(examples, { recursive: true });
+  fs.copyFileSync(CONSUMER_SOURCE, path.join(examples, "config_export_compatibility.rs"));
+}
+
+/**
+ * With NEMOCLAW_V1_CONSUMER_CACHE_DIR set (CI), every consumer in the process tree shares one
+ * extraction per revision and one Cargo target directory, so the v1 SDK builds once; Cargo's
+ * build lock serializes concurrent first builds. The directory is never removed here.
+ */
+function prepareSharedWorkspace(root: string) {
+  fs.mkdirSync(root, { recursive: true });
+  const consumer = path.join(root, `consumer-${V1ALPHA1_CHECKED_REVISION}`);
+  if (!fs.existsSync(consumer)) {
+    const staging = fs.mkdtempSync(path.join(root, "extract-"));
+    try {
+      extractConsumer(path.join(staging, "consumer"), path.join(staging, "consumer.tar"));
+      try {
+        fs.renameSync(path.join(staging, "consumer"), consumer);
+      } catch (error) {
+        // Another worker published the same extraction first.
+        if (!fs.existsSync(consumer)) throw error;
+      }
+    } finally {
+      fs.rmSync(staging, { force: true, recursive: true });
+    }
+  }
+  return { root, consumer, shared: true };
+}
+
 function prepareWorkspace() {
+  const cache = process.env.NEMOCLAW_V1_CONSUMER_CACHE_DIR;
+  if (cache) return prepareSharedWorkspace(cache);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-v1-parse-"));
-  const consumer = path.join(root, "consumer");
-  const archive = path.join(root, "consumer.tar");
   try {
-    execFileSync(
-      "git",
-      [
-        "-C",
-        REPO_ROOT,
-        "archive",
-        "--format=tar",
-        `--output=${archive}`,
-        V1ALPHA1_CHECKED_REVISION,
-      ],
-      { stdio: "pipe", timeout: 30_000 },
-    );
-    fs.mkdirSync(consumer);
-    execFileSync("tar", ["-xf", archive, "-C", consumer], { stdio: "pipe", timeout: 30_000 });
-    const examples = path.join(consumer, "crates/nemoclaw-sdk/examples");
-    fs.mkdirSync(examples, { recursive: true });
-    fs.copyFileSync(CONSUMER_SOURCE, path.join(examples, "config_export_compatibility.rs"));
-    return { root, consumer };
+    const consumer = path.join(root, "consumer");
+    extractConsumer(consumer, path.join(root, "consumer.tar"));
+    return { root, consumer, shared: false };
   } catch (error) {
     fs.rmSync(root, { force: true, recursive: true });
     throw error;
@@ -136,7 +160,7 @@ export function createV1ParseConsumer() {
     },
     dispose(): void {
       if (workspace) {
-        fs.rmSync(workspace.root, { force: true, recursive: true });
+        if (!workspace.shared) fs.rmSync(workspace.root, { force: true, recursive: true });
         workspace = undefined;
       }
     },

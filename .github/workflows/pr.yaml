@@ -185,6 +185,8 @@ jobs:
       - name: Verify config exports with the pinned v1 consumer
         env:
           NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
+          # One v1 extraction and Cargo build shared by every test file in this step.
+          NEMOCLAW_V1_CONSUMER_CACHE_DIR: ${{ runner.temp }}/v1-consumer
           RUSTUP_TOOLCHAIN: 1.98.1
         run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts src/lib/domain/config/verify-export-observability.test.ts src/lib/domain/config/export-v1-current.test.ts src/lib/domain/config/verify-export-policy.test.ts src/lib/adapters/config/live-export-source-vllm.test.ts src/lib/adapters/config/live-export-source-ollama.test.ts
 
