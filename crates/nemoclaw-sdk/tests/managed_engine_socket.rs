@@ -96,9 +96,17 @@ fn a_managed_gateway_binds_the_engine_socket_of_the_macos_vm_behind_its_unix_soc
     let macos = cfg!(target_os = "macos");
     for (driver, engine, in_vm) in [
         ("docker", "unix:///Users/me/.docker/run/docker.sock", macos),
-        ("docker", "unix:///Users/me/.colima/default/docker.sock", macos),
+        (
+            "docker",
+            "unix:///Users/me/.colima/default/docker.sock",
+            macos,
+        ),
         ("docker", "unix:///Users/me/.colima/docker.sock", macos),
-        ("docker", "unix:///Users/me/.config/colima/work/docker.sock", macos),
+        (
+            "docker",
+            "unix:///Users/me/.config/colima/work/docker.sock",
+            macos,
+        ),
         ("docker", "unix:///Users/me/.rd/docker.sock", macos),
         (
             "podman",
@@ -106,8 +114,16 @@ fn a_managed_gateway_binds_the_engine_socket_of_the_macos_vm_behind_its_unix_soc
             macos,
         ),
         ("docker", "unix:///var/run/docker.sock", false),
-        ("docker", "unix:///Users/me/.lima/docker/sock/docker.sock", false),
-        ("docker", "unix:///home/me/.docker/desktop/docker.sock", false),
+        (
+            "docker",
+            "unix:///Users/me/.lima/docker/sock/docker.sock",
+            false,
+        ),
+        (
+            "docker",
+            "unix:///home/me/.docker/desktop/docker.sock",
+            false,
+        ),
         ("podman", "unix:///run/user/501/podman/podman.sock", false),
     ] {
         let own = engine.strip_prefix("unix://").unwrap();
