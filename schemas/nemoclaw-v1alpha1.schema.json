@@ -670,7 +670,7 @@
                     "const": ""
                   },
                   {
-                    "pattern": "^unix:///"
+                    "pattern": "^(unix:///|npipe:////\\./pipe/)"
                   }
                 ],
                 "default": "unix:///var/run/docker.sock"
@@ -723,7 +723,7 @@
             },
             "engine": {
               "default": "unix:///var/run/docker.sock",
-              "description": "Managed local gateway Unix engine socket; Podman requires its API service socket. Excluded by kubernetes.",
+              "description": "Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM. Excluded by kubernetes.",
               "type": "string",
               "x-nemoclaw-default-rule": "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
             },
