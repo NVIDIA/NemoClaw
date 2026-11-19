@@ -39,6 +39,8 @@ $$nemoclaw onboard
 ```
 
 If you enter `back` at the NVIDIA API key prompt, the wizard returns to provider selection without loading the model catalog.
+If setup stops while you select NVIDIA Endpoints, `$$nemoclaw onboard --resume` retains the selection and any selected model.
+An explicit provider or model selection overrides the saved selection.
 The wizard validates a manual model entry against the catalog before it continues.
 If the live catalog is unavailable or does not contain safe model IDs, the wizard warns you and uses the bundled fallback list.
 
@@ -61,6 +63,10 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 NemoClaw validates NVIDIA Endpoints through `/v1/chat/completions` only.
 It skips `/v1/responses` because NVIDIA Build does not expose that route.
 During onboarding or resume, host-side validation uses NVIDIA's native endpoint when saved endpoint metadata is `inference.local` or absent.
+During authorized `--resume` recovery, NemoClaw can reuse the credential stored in the recorded native provider when `NVIDIA_INFERENCE_API_KEY` is absent from the host shell.
+It verifies the recorded provider and gateway and, when OpenShell reports the sandbox present, its attachment before reuse.
+If OpenShell confirms that exact sandbox is absent, recovery can use the recorded attachment for later recreation.
+If verification fails, onboarding stops without changing the provider.
 Readiness sends the same request from inside the sandbox through the attached OpenShell provider.
 The wizard retries transient upstream failures before it reports a provider failure.
 
