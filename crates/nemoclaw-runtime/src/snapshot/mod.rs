@@ -186,6 +186,9 @@ pub struct Client {
 }
 impl Client {
     pub fn new() -> Result<Self, Error> {
+        Self::at("https://huggingface.co")
+    }
+    pub(crate) fn at(origin: &str) -> Result<Self, Error> {
         let http = reqwest::Client::builder()
             .no_proxy()
             .connect_timeout(Duration::from_secs(60))
@@ -206,7 +209,7 @@ impl Client {
             .build()
             .map_err(|_| failure("cannot initialize model transport"))?;
         Ok(Self {
-            base_url: "https://huggingface.co".into(),
+            base_url: origin.into(),
             http,
         })
     }

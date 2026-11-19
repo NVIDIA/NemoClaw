@@ -172,7 +172,7 @@ Selecting this artifact does not qualify GPU inference on the host.
 A model that needs preparation tools or patches uses an image its recipe's authors build; see [inline recipes](../agents-inference/recipes.md).
 
 `docker buildx bake ollama` builds the [managed Ollama](../agents-inference/inference.md#run-managed-ollama) image.
-`docker buildx bake llama-cpp` builds the llama.cpp image: llama.cpp's CUDA 13.5 server image with the supervisor added, which no service runs yet.
+`docker buildx bake llama-cpp` builds the [managed llama.cpp](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp) image: llama.cpp's CUDA 13.5 server image with the supervisor added.
 Its CUDA 13.5, like the vLLM image's CUDA 13.0, needs NVIDIA driver 580 or newer.
 `docker buildx bake runtimes` builds all three.
 Run `cargo images fetch` first: it places the Ollama and llama.cpp licenses that the images retain, as `versions.json` pins them.

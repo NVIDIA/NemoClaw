@@ -10,6 +10,89 @@ The fields below belong to that named service.
 There is no repository allowlist.
 For Ollama registry models, use [managed Ollama](inference.md#run-managed-ollama); it shares the `service` hardware, placement, memory, and lifecycle contract described here.
 
+## Serve a Pinned GGUF with llama.cpp
+
+Use `kind: llamaCpp` for a public GGUF model.
+Set `model.repository`, its exact 40-character `revision`, a safe relative `.gguf` `file`, lowercase `sha256`, and `sizeBytes`.
+Set `serving.modelName` to the alias the agent route uses.
+The runtime downloads only that file and checks its size and hash before publication.
+Warm starts check the verified snapshot's size and modification time without rereading the weights; a retained cache without a verification record is hashed once.
+A failed acquisition cannot become an accepted cache entry; a changed size or modification time causes refusal and retains the cache for inspection.
+
+Build the `llama-cpp` Bake target and use its resulting immutable digest as the service `image`.
+It adds the v1 supervisor to llama.cpp's digest-pinned CUDA 13.5 server image from release b12375; see [build a runtime image](../build-deploy/build.md#build-a-runtime-image).
+No image is published by this operation.
+
+The [Qwen3-4B case](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) shows the complete desired-state shape with a pinned 2.50 GB Q4_K_M GGUF, 32768 context tokens and a 12 GiB GPU budget.
+Its image references are CI placeholders and must be replaced with candidate-built digests.
+Use a Linux host with GPU-enabled Docker, an NVIDIA driver compatible with the pinned image, and a kernel that passes OpenShell's sandbox capability checks.
+Match the service's hardware and memory requirements to the selected host.
+The [qualification record in #14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) identifies tested source revisions, images and host configurations.
+Other GGUFs, general tool use, cross-host restoration and Classic host settings need separate qualification.
+
+The first implementation serves one model on one CUDA GPU, with full GPU-layer offload requested, one slot, f16 KV, embedded Jinja and no multimodal projector.
+`serving.batchTokens` and `microBatchTokens` control batching; `reasoningStrength` optionally supplies the native template argument.
+There are no arbitrary launch flags or CPU-fallback controls.
+A GPU budget is admission accounting, not a hard limit on llama.cpp's allocator: measure the chosen context, batching and model on the actual host.
+Host memory pressure protection remains active.
+
+With `authentication: bearer`, the runtime generates and retains a key in separate credential storage and passes it to llama-server through a private file.
+Plans and exported configuration carry the managed credential reference.
+The child receives no key in argv.
+The pinned native server deliberately leaves `/models`, `/v1/models` and health public, even with a key configured; bearer authentication protects inference requests, not inventory confidentiality.
+Readiness requires health and the declared model, using the configured credential.
+
+The service uses the existing managed Docker placement and `Preserve`/`Recreate` update policy.
+Unchanged apply keeps the running service; explicit recreation allows downtime.
+Destroy retains its model and credential volumes.
+Delete retained data separately only when it is no longer needed.
+
+## Native NIM candidate
+
+The `kind: nim` implementation under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) remains a candidate.
+The maintained configuration uses native NIM 2.0.12, a Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
+The maintained NIM case selects a read/write file assistant, disables bundled skills and native tool search/Code Mode, and requests deterministic sampling with a 2048-token output limit.
+The [qualification record in #14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) contains the source-specific results and investigation.
+General task reliability, the full tool inventory, the default 8K context, other model/profile combinations and cross-host restoration remain unqualified.
+Native tool-call acceptance and successful transport do not establish reliable agent tool use.
+The pinned FP8 and NVFP4 checkpoint formats are experimental and do not inherit BF16's recovery or tool qualification.
+The pinned OpenClaw may also request its default OpenAI utility model, which a single-model local endpoint does not serve.
+OpenClaw documents `utilityModel` for those auxiliary requests, but the pinned Fabric adapter's settings schema rejects it ([NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679)); do not patch the native image or substitute a model alias to hide that mismatch.
+Other NIM engines and distributed inference are unsupported; distributed inference is outside V0 parity scope.
+
+Build the opt-in `nim` Bake target and select its resulting immutable image digest. It adds the supervisor to NIM 2.0.12 without modifying native scripts or nginx. NGC image access and model entitlement remain operator prerequisites. The [NIM integration case](../../crates/nemoclaw-e2e/cases/docker-openclaw-nim.yaml) describes the fields; its placeholder image digests are not deployable.
+
+Each service requires `backend: vllm`, an embedded `model.profile` identifier, profile memory and cache allowances, and a dedicated `backendNetworkCIDR` (canonical private IPv4 /24). The backend subnet must differ from gateway, publication, and other model networks on that engine, and must not contain a publication host address. Native NIM has no published host ports. Only the route-filter container joins both networks and publishes inference. Docker bridge filtering must remain enabled; host administrators and Docker operators are trusted. IPv4 and IPv6 forwarding are disabled inside the route-filter container.
+
+For agents that send tools with `tool_choice: auto`, select a native parser compatible with the model and pinned image using `model.toolParser`.
+A nonempty value forwards NIM's supported `--enable-auto-tool-choice --tool-call-parser <name>` options; omission leaves native defaults.
+The candidate case selects `llama3_json`.
+Without those options, the pinned native server rejects auto-tool requests with HTTP 400.
+Parser acceptance does not establish reliable tool use or instruction following.
+
+`model.chatTemplateKwargs` supplies native vLLM default chat-template arguments through `--default-chat-template-kwargs`.
+Native request-level arguments take precedence; omitting this field retains the image's defaults.
+The pinned Llama 3.1 template otherwise adds an instruction requesting a function call to the first user message whenever tools are present, including questions that need no tool.
+To place the tool definitions in the native system message instead, configure:
+
+```yaml
+model:
+  # Keep the model name, profile and capacity fields for the selected image.
+  toolParser: llama3_json
+  chatTemplateKwargs:
+    tools_in_user_message: false
+```
+
+Qualify the resulting agent configuration with answer and tool-result checks; template selection alone does not establish task reliability.
+
+Set `ngcCredential.file` to an existing regular file on the Docker engine host, readable by container UID 1000. The file is mounted read-only at `/run/nemoclaw/ngc-api-key`; its value is passed only to the native child process, and is excluded from plans, state, exports, and container configuration. The operator owns the file's permissions, lifetime, and removal. Rotate by selecting a new versioned path and setting `updatePolicy: Recreate` for an explicit apply. Changing file contents alone does not update the running process.
+
+With `authentication: bearer`, the runtime retains its generated inference key in separate credential storage and supplies it through native `VLLM_API_KEY`. OpenShell reads that key through the existing managed-service credential source. Readiness checks both native status and the published proxy's exact authenticated model list; an unauthenticated list rejects an authenticated configuration. The provider running the probe must be able to reach the publication endpoint; qualify sandbox reachability for each deployment topology.
+
+Destroy removes disposable model/proxy containers and their private network, retains model/cache and credential storage, and leaves the operator's NGC file untouched.
+Startup conservatively requires `model.cacheBytes` plus 16 GiB free disk even when a cache exists.
+Same-host cache reuse is within the qualified configuration; restoring the retained cache on a new host and other model/platform combinations remain unqualified.
+
 ## Choose a Model and Capacity
 
 Check the model's identity and serving requirements against the selected host before applying.

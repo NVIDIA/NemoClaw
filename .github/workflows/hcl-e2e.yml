@@ -182,10 +182,10 @@ jobs:
             echo "runtimes=$runtimes"
           } >> "$GITHUB_OUTPUT"
           "$tool" images fetch
-          # Only the Ollama image has sources; vllm has none. Tar keeps the
-          # mode and time that images fetch gave them, which the image's layers
-          # retain and artifact transfer drops.
-          tar -cf "$RUNNER_TEMP/image-sources.tar" .build/image-sources/ollama
+          # Only the Ollama and llama.cpp images have sources; vllm has none.
+          # Tar keeps the mode and time that images fetch gave them, which the
+          # images' layers retain and artifact transfer drops.
+          tar -cf "$RUNNER_TEMP/image-sources.tar" .build/image-sources/ollama .build/image-sources/llama-cpp
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.SOURCES }}
@@ -410,6 +410,7 @@ jobs:
           sed -i "${bindings[@]}" -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id nc-fabric:openclaw)#" \
             -e "s#nc-fabric-hermes@sha256:0\{64\}#nc-fabric@$(id nc-fabric:hermes)#" \
             -e "s#nc-prototype-vllm@sha256:0\{64\}#nc-prototype-vllm@$(id nc-prototype-vllm:rust-v1)#" \
+            -e "s#nc-prototype-llama-cpp@sha256:0\{64\}#nc-prototype-llama-cpp@$(id nc-prototype-llama-cpp:rust-v1)#" \
             -e "s#nc-prototype-ollama@sha256:a\{64\}#nc-prototype-ollama@$(id nc-prototype-ollama:rust-v1)#" \
             -e "s#^  uid: .*#  uid: $(cat /proc/sys/kernel/random/uuid)#" \
             "$document"
