@@ -25,15 +25,10 @@ No image is published by this operation.
 
 The [Qwen3-4B case](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) shows the complete desired-state shape with a pinned 2.50 GB Q4_K_M GGUF, 32768 context tokens and a 12 GiB GPU budget.
 Its image references are CI placeholders and must be replaced with candidate-built digests.
-On ARM64 GB10 Spark with OpenShell 0.1.9 and the b12375 image, Qwen answered a routed arithmetic request correctly and passed missing/wrong-key inference refusal, authenticated inference, unchanged plan/reapply and teardown.
-That Spark run used a 32 GiB host reserve.
-The AMD64 L40S case was separately qualified with its 12 GiB GPU budget and 28 GiB host reserve: the maintained lifecycle scenario passed, and a fresh deployment answered exactly `FOUR`, rejected missing/wrong inference keys, accepted the correct key, and passed unchanged plan/reapply with preserved agent identity and teardown.
-The tested L40S host used OpenShell 0.1.9, Linux 6.8, Docker 29.10 with the containerd image store and NVIDIA's proprietary 580.178.04 kernel module.
-On that VM, the 580 open-module configuration failed CUDA initialization even outside Docker; Docker 27 separately failed OpenShell's numeric UID/GID archive upload. Those configurations do not inherit the successful qualification.
-The earlier Muse configuration has lifecycle qualification on AMD64/L40S and ARM64/GB10 Spark with OpenShell 0.1.9, 32768 context tokens, one slot and a 32 GiB serving budget.
-That historical qualification used an image built on Classic NemoClaw's llama-server image, llama.cpp revision `8e7f22b67ef4667b4ddd50230771287f328cfb3f`, and doesn't cover the b12375 image or Qwen case.
-Classic's experimental Spark recipe does not qualify this case.
-The historical Muse scope includes export/reapply, inference-key refusal and restart recovery; other GGUFs, general tool use and Classic settings need separate qualification.
+Use a Linux host with GPU-enabled Docker, an NVIDIA driver compatible with the pinned image, and a kernel that passes OpenShell's sandbox capability checks.
+Match the service's hardware and memory requirements to the selected host.
+The [qualification record in #14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) identifies tested source revisions, images and host configurations.
+Other GGUFs, general tool use, cross-host restoration and Classic host settings need separate qualification.
 
 The first implementation serves one model on one CUDA GPU, with full GPU-layer offload requested, one slot, f16 KV, embedded Jinja and no multimodal projector.
 `serving.batchTokens` and `microBatchTokens` control batching; `reasoningStrength` optionally supplies the native template argument.
@@ -46,8 +41,6 @@ Plans and exported configuration carry the managed credential reference.
 The child receives no key in argv.
 The pinned native server deliberately leaves `/models`, `/v1/models` and health public, even with a key configured; bearer authentication protects inference requests, not inventory confidentiality.
 Readiness requires health and the declared model, using the configured credential.
-Qualification separately checks that missing-key and wrong-key inference requests return 401.
-Those refusal probes use an empty request and generate no tokens; a successful authenticated completion and agent reply remain live qualification gates.
 
 The service uses the existing managed Docker placement and `Preserve`/`Recreate` update policy.
 Unchanged apply keeps the running service; explicit recreation allows downtime.
@@ -57,23 +50,14 @@ Delete retained data separately only when it is no longer needed.
 ## Native NIM candidate
 
 The `kind: nim` implementation under [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) remains a candidate.
-Its lifecycle qualification covers native NIM 2.0.12 on AMD64 L40S and ARM64 GB10 Spark with OpenShell 0.1.9, using the case's Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
-The qualified scope includes authenticated inventory/inference, private-network isolation, export/reapply, credential-preserving restart recovery and retained-storage teardown.
-Earlier L40S runs returned unrelated session text to an arithmetic request while direct authenticated inference answered correctly; later bounded tests below passed after configuring template placement and agent tools.
-Native tool-call acceptance and successful transport do not establish reliable agent tool use.
+The maintained configuration uses native NIM 2.0.12, a Llama 3.1 8B BF16 vLLM profile, `llama3_json`, a 32K context and a 40 GiB GPU budget.
 The maintained NIM case selects a read/write file assistant, disables bundled skills and native tool search/Code Mode, and requests deterministic sampling with a 2048-token output limit.
-With the native template arguments below, three fresh Spark runtimes and three fresh L40S runtimes answered arithmetic before and after a hidden-file copy, copied its exact bytes and returned a different arithmetic answer correctly.
-A final-source Spark recheck at `5d2fd42657b2c9f763e58a694569b331f482854d` also passed arithmetic, exact hidden-file copy, inference authentication, unchanged plan/reapply and teardown.
-Those bounded results do not qualify general task reliability or the full tool inventory.
-Earlier full-inventory experiments exceeded 32K even with 2048 output tokens; at 64K the model repeated OpenClaw's appended session-status context instead of completing file requests.
-Those experiments predate the Fabric pin update and have not been repeated with the final pin; they identify an observed limit, not a proven cause for every agent failure.
-The default 8K NIM agent case remains unqualified: on Spark, OpenClaw's prompt plus the requested output exceeded that window, including when output was reduced from 4096 to 1024 tokens.
-That context failure is separate from the unrelated L40S response.
-The pinned FP8 and NVFP4 TP1/PP1 profiles also passed the five-step Spark agent lifecycle at 32K with the same 40 GiB budget; their native checkpoint formats are experimental, and they do not inherit BF16's separate recovery and tool checks.
+The [qualification record in #14556](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) contains the source-specific results and investigation.
+General task reliability, the full tool inventory, the default 8K context, other model/profile combinations and cross-host restoration remain unqualified.
+Native tool-call acceptance and successful transport do not establish reliable agent tool use.
+The pinned FP8 and NVFP4 checkpoint formats are experimental and do not inherit BF16's recovery or tool qualification.
 The pinned OpenClaw may also request its default OpenAI utility model, which a single-model local endpoint does not serve.
 OpenClaw documents `utilityModel` for those auxiliary requests, but the pinned Fabric adapter's settings schema rejects it ([NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679)); do not patch the native image or substitute a model alias to hide that mismatch.
-Exposing that setting alone would not establish reliable tool-task completion or fix the separate 8K context failure.
-The maintained [agent lifecycle case](../../crates/nemoclaw-e2e/tests/e2e/hcl/manual/docker-openclaw-nim.tftest.hcl) requires the arithmetic answer `FOUR`, unchanged reconciliation and teardown with storage retained; an unrelated nonempty reply fails its answer gate.
 Other NIM engines and distributed inference are unsupported; distributed inference is outside V0 parity scope.
 
 Build the opt-in `nim` Bake target and select its resulting immutable image digest. It adds the supervisor to NIM 2.0.12 without modifying native scripts or nginx. NGC image access and model entitlement remain operator prerequisites. The [NIM integration case](../../crates/nemoclaw-e2e/cases/docker-openclaw-nim.yaml) describes the fields; its placeholder image digests are not deployable.
