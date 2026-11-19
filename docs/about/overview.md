@@ -3,7 +3,10 @@
 
 # Overview
 
-NemoClaw Agent Configs manages agent deployments from YAML. You can preview and apply deployment changes with its CLI, or integrate the same operations into a Rust application. It combines OpenShell sandbox isolation and inference routing with Fabric-managed agent runtimes. Keeping deployment state lets you check changes and recover interrupted operations; it does not back up agent files or conversations.
+NemoClaw Agent Configs manages agent deployments from YAML.
+You can preview and apply deployment changes with its CLI, or integrate the same operations into a Rust application.
+It combines NVIDIA OpenShell sandbox isolation and inference routing with agent runtimes managed by NVIDIA NeMo Fabric.
+Deployment state lets you check changes and recover interrupted operations, but it does not back up agent files or conversations.
 
 ## What You Can Do
 

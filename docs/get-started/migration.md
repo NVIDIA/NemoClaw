@@ -7,7 +7,8 @@ The desired-state SDK, schema, and state format do not promise compatibility wit
 The current CLI has no general state adoption or migration command; [#14580](https://github.com/NVIDIA/NemoClaw/issues/14580) tracks a documented path from the earlier product's configuration export to a v1 deployment.
 Keep the earlier deployment's tooling, configuration, and state while evaluating a separate NemoClaw Agent Configs deployment.
 Track remaining Classic parity work in [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
-The separate [GTC DC readiness milestone](https://github.com/NVIDIA/NemoClaw/milestone/12) tracks broader release preparation; milestone placement or issue closure does not establish support for a complete user workflow.
+The separate [Roadmap: GTC DC 2026](https://github.com/NVIDIA/NemoClaw/milestone/12) milestone tracks broader release preparation.
+Milestone placement or issue closure does not establish support for a complete user workflow.
 
 NemoClaw has no upgrade, native-data transfer or rollback procedure: native data belongs to the harness, and moving its storage belongs to the platform.
 The evaluation steps below create a separate deployment.
@@ -36,12 +37,13 @@ Choose the current owner of the task rather than translating earlier CLI command
 
 ## Needs Scope Analysis
 
-These questions remain unresolved; they establish neither a parity commitment nor a permanent exclusion.
-Use the parity milestone above for agreed work.
+These questions remain unresolved.
+They establish neither a parity commitment nor a permanent exclusion.
+Track agreed work in [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
 
-| Workflow | Existing context | Decision or verification needed |
+| Workflow | Existing Context | Decision or Verification Needed |
 |---|---|---|
-| Run one model across multiple machines | Classic implements managed distributed vLLM on [two DGX Sparks](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/inference/set-up-vllm-on-two-dgx-sparks.mdx), marked Experimental with physical two-machine E2E qualification pending. Its [two-DGX-Station Ray/vLLM path](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/inference/set-up-vllm-on-two-dgx-stations.mdx) is a Deferred evaluation. | Decide whether Agent Configs should provision and manage the multi-machine server lifecycle or connect to an operator-managed endpoint. The earlier parity discussion assumed Classic had no implementation; that premise needs correction. [#14608](https://github.com/NVIDIA/NemoClaw/issues/14608) leaves multi-machine serving outside agreed parity; [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) covers multiple GPUs on one host. |
+| Run one model across multiple machines | Classic implements managed distributed vLLM on [two NVIDIA DGX Sparks](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/inference/set-up-vllm-on-two-dgx-sparks.mdx), marked Experimental with physical two-machine E2E qualification pending. Its [two-DGX-Station Ray and vLLM path](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/inference/set-up-vllm-on-two-dgx-stations.mdx) is a Deferred evaluation. | Decide whether Agent Configs should provision and manage the multi-machine server lifecycle or connect to an operator-managed endpoint. The earlier parity discussion assumed Classic had no implementation, so that premise needs correction. [#14608](https://github.com/NVIDIA/NemoClaw/issues/14608) leaves multi-machine serving outside agreed parity. [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) covers multiple GPUs on one host. |
 | Use native memory search | Classic documents [embedding-backed memory search](https://github.com/NVIDIA/NemoClaw/blob/6f36feffb7a0f448194eafef3042e7ad47faa0de/docs/configure-agents/configure-memory-search.mdx). | Confirm which native harness indexing and search behavior must carry over, then verify that path. Excluding a separate NemoClaw memory subsystem does not exclude native memory features. |
 | Rotate MCP credentials | The [credential rotation guide](../security/credential-rotation.md) describes replacement and revocation, including credentials held by running processes. | Verify the MCP credential path with a running agent, including replacement, restart, and revocation. Documented steps alone do not establish live qualification. |
 

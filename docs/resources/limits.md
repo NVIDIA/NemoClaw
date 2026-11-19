@@ -6,17 +6,19 @@
 v1 is in development and has no release.
 This page separates excluded product responsibilities from current technical and qualification limits.
 Other pages state a limit where it affects a procedure and link the same issue.
-Review planned Classic parity work in [milestone 14](https://github.com/NVIDIA/NemoClaw/milestone/14); its feature list is maintained there rather than repeated here.
-The [migration guide's scope questions](../get-started/migration.md#needs-scope-analysis) cover distributed inference, native memory search, and MCP credential rotation; those decisions or verifications remain unresolved.
+Review planned Classic parity work in [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
+The milestone maintains its feature list, so this page does not repeat it.
+The [migration guide's scope questions](../get-started/migration.md#needs-scope-analysis) cover distributed inference, native memory search, and MCP credential rotation.
+Those decisions and verifications remain unresolved.
 
 ## Outside v1 Scope
 
 These are deliberate product exclusions, not features waiting for parity work.
-The owning harness, platform, or upstream component may provide an alternative.
+The owning harness, platform, or upstream component might provide an alternative.
 
-| Excluded responsibility or interface | Owner or decision | Evidence |
+| Excluded Responsibility or Interface | Owner or Decision | Evidence |
 |---|---|---|
-| Backup, restore, snapshots and transfer of mounted agent data | [Platform-owned storage](../build-deploy/state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command | [`cb8ef25`][v1-cb8ef25]: code, docs |
+| Backup, restore, snapshots, and transfer of mounted agent data | [Platform-owned storage](../build-deploy/state.md#keep-agent-files-on-mounted-volumes); no NemoClaw command | [`cb8ef25`][v1-cb8ef25]: code, docs |
 | A common API for agent-specific runtime operations, such as a native gateway-process restart; the owning harness or component defines those operations. Supported desired-state deployment lifecycle operations remain available | Not planned: [upstream ownership](../../internal-docs/design/scope.md#upstream-boundaries) | [`e7e1857`][v1-e7e1857]: docs |
 | Compatibility with the Classic imperative CLI and TypeScript lifecycle API; use the [migration task mapping](../get-started/migration.md#map-the-user-task) to choose a desired-state CLI, Rust SDK, or OpenTofu workflow | Not planned: [migration guidance](../get-started/migration.md) | [`20c5142`][pr-20c5142]: docs |
 | Interactive network-request approval and explaining policy to an agent; OpenShell's policy advisor owns both | Not planned ([#12651](https://github.com/NVIDIA/NemoClaw/issues/12651)) | [`cb8ef25`][v1-cb8ef25]: issue |
@@ -26,8 +28,9 @@ The owning harness, platform, or upstream component may provide an alternative.
 
 ## Current Technical and Qualification Limits
 
-The sections below describe present constraints and unverified configurations; they are not permanent exclusions.
-Review the parity milestone above as well before deciding whether to migrate.
+The following sections describe present constraints and unverified configurations.
+They are not permanent exclusions.
+Before deciding whether to migrate, also review [Roadmap: Bring agreed Classic features to v1](https://github.com/NVIDIA/NemoClaw/milestone/14).
 
 The **Last verified** column links the source commit each row was last checked against, then what was checked, or names an outstanding verification or dated scope decision.
 That commit's `versions.json` pins the upstream sources, and its `image/fabric/Dockerfile` pins the OpenClaw image:

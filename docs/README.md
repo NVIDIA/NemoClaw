@@ -3,7 +3,11 @@
 
 # Documentation Index
 
-These guides describe NemoClaw Agent Configs, developed on the `v1` branch. They reflect the implementation inspected at `origin/v1` revision `637bdb6276309ea71d1f1fcb68fff518fe2db926`; use a matched checkout and bundle when following them. The [field reference](reference/configuration.md) and its JSON Schema are generated from this checkout's SDK. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
+These guides describe NemoClaw Agent Configs, developed on the `v1` branch.
+They reflect the implementation inspected at `origin/v1` revision `637bdb6276309ea71d1f1fcb68fff518fe2db926`.
+Use a matched checkout and bundle when following them.
+The [field reference](reference/configuration.md) and its JSON Schema are generated from this checkout's SDK.
+For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
 [Current limits](resources/limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
 
 ## About
