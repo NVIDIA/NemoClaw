@@ -10,7 +10,6 @@ pub use constraints::{GATEWAY_ENGINE, GPU_DEVICE};
 pub use engine_endpoint::{engine_socket, validate_engine_endpoint};
 mod integrations;
 pub use integrations::*;
-pub use nemoclaw_openshell::search::search_policy;
 mod inference;
 mod providers;
 pub(crate) mod references;

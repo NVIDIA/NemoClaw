@@ -359,7 +359,7 @@ agent:
 
 Use `provider: tavily` for Tavily; the [web search example](../../examples/web-search.yaml) shows two agents sharing one definition.
 Set the referenced variable on the applying host through your secret-management mechanism.
-NemoClaw creates a workspace-scoped provider profile and credential-bearing provider in OpenShell.
+NemoClaw registers the search API as an [`openshell_api`](../references/provider.md#api-credentials) credential: a workspace-scoped provider profile and credential-bearing provider in OpenShell.
 The sandbox receives a placeholder, `BRAVE_API_KEY` or `TAVILY_API_KEY` even when the host reference has another name, and OpenShell substitutes the real key for authorized requests to the search API.
 Set `sandboxEnv` when the harness reads the key under another name; Hermes's Brave plugin, for example, reads `BRAVE_SEARCH_API_KEY`:
 
@@ -376,8 +376,8 @@ Exported YAML and OpenTofu state retain the host reference, not its value.
 Destroy removes the owned provider and profile without revoking the upstream key.
 Unchanged apply does not rotate a changed value behind an unchanged reference; follow [credential retirement](../security/security.md#credentials-and-authentication) when replacing or revoking the key.
 
-The reserved `nemoclaw-brave` and `nemoclaw-tavily` policy rules permit the search API's paths for the harness's executables.
-Explicit policy cannot reuse those names, and inference provider names cannot use the reserved `brave-search` or `tavily-search` registration prefixes.
+The profile admits only the search requests the harness's executables make: Brave's `GET /res/v1/web/search`, or Tavily's `POST /search` and `POST /extract`.
+Inference provider names cannot use the reserved `brave-search` or `tavily-search` registration prefixes.
 Unused definitions create no resources or credentials.
 
 OpenShell supplies the credential and the network grant; the agent's own tools make the search requests.

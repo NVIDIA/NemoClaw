@@ -721,8 +721,12 @@ impl Lifecycle {
         type Drift = fn(&mut nemoclaw_e2e::openshell::State, &str);
         let drifts: [(&str, Drift); 4] = [
             ("search profile without endpoints", |state, _| {
+                // A web search registers an API profile named after it.
                 for profile in state.profiles.values_mut() {
-                    if nemoclaw_sdk::config::SearchProvider::from_profile(&profile.id).is_some() {
+                    if ["nemoclaw-api-brave-search-", "nemoclaw-api-tavily-search-"]
+                        .iter()
+                        .any(|prefix| profile.id.starts_with(prefix))
+                    {
                         profile.endpoints.clear();
                     }
                 }

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Endpoint-bound credentials for APIs that are not inference or web search.
+//! Endpoint-bound credentials for APIs other than inference.
 use nemoclaw_backend::ObservationError;
 use openshell_sdk::raw::proto;
 use serde_json::json;
@@ -16,12 +16,62 @@ pub fn endpoints(json: &str) -> Result<Vec<String>, ObservationError> {
 /// Row field for an API's optional MCP policy.
 pub const MCP_POLICY: &str = "mcp_json";
 
+/// Row field for an API's optional REST policy.
+pub const REST_POLICY: &str = "rest_json";
+
 /// An enforced MCP policy for the API's exact path.
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpPolicy {
     /// The only MCP requests this endpoint admits.
     rules: Vec<crate::policy::PolicyAllowRule>,
+}
+
+/// An enforced REST policy for the API's host.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RestPolicy {
+    /// The only requests this endpoint admits.
+    rules: Vec<RestRule>,
+}
+
+/// One allowed REST request.
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RestRule {
+    /// Request matcher.
+    allow: RestMatcher,
+}
+
+/// A request's method and path.
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RestMatcher {
+    /// HTTP method, such as GET.
+    method: String,
+    /// HTTP path glob, matched against the whole request path.
+    path: String,
+}
+
+/// What an API's endpoints admit: full access to each URL's path subtree, or
+/// the requests one policy lists, as JSON. A policy takes exactly one endpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rules<'a> {
+    Subtree,
+    Mcp(&'a str),
+    Rest(&'a str),
+}
+
+impl<'a> Rules<'a> {
+    /// The rules a row's policy fields select; at most one may be set.
+    pub fn from_fields(mcp: &'a str, rest: &'a str) -> Result<Self, ObservationError> {
+        match (mcp.is_empty(), rest.is_empty()) {
+            (true, true) => Ok(Self::Subtree),
+            (false, true) => Ok(Self::Mcp(mcp)),
+            (true, false) => Ok(Self::Rest(rest)),
+            (false, false) => Err(ObservationError::Query),
+        }
+    }
 }
 
 /// The variable a sandbox sees an API's key in when none is chosen: a stable
@@ -34,9 +84,10 @@ pub fn credential_key(name: &str) -> String {
 }
 
 /// Project a declared API into OpenShell's profile: one credential, sent to
-/// each endpoint's host, port and path subtree. OpenShell owns credential
-/// injection and destination authorization when the sandbox connects, and
-/// rejects two providers on one sandbox that claim the same variable.
+/// each endpoint's host, port and path subtree, or only with the requests
+/// `rules` admit. OpenShell owns credential injection and destination
+/// authorization when the sandbox connects, and rejects two providers on one
+/// sandbox that claim the same variable.
 /// `sandbox_env` names the variable the sandbox sees the key in; empty
 /// selects a name derived from `name`.
 pub fn definition(
@@ -44,17 +95,16 @@ pub fn definition(
     endpoints: &[String],
     auth_style: &str,
     header_name: &str,
-    mcp_policy: &str,
+    rules: Rules<'_>,
     sandbox_env: &str,
 ) -> Result<proto::ProviderProfile, ObservationError> {
     if !crate::valid_name(name) || endpoints.is_empty() {
         return Err(ObservationError::Query);
     }
-    // NemoClaw's MCP projection enforces one tool allowlist on one path.
-    if !mcp_policy.is_empty() && endpoints.len() != 1 {
+    // A policy lists the requests of one endpoint.
+    if rules != Rules::Subtree && endpoints.len() != 1 {
         return Err(ObservationError::Query);
     }
-    // NemoClaw's MCP projection enforces one tool allowlist on one path.
     let (auth_style, header_name) = match (auth_style, header_name) {
         ("" | "bearer", "") => ("bearer", "Authorization"),
         ("" | "bearer", header) => ("bearer", header),
@@ -72,7 +122,7 @@ pub fn definition(
     let id = format!("nemoclaw-api-{name}");
     let policy_endpoints = endpoints
         .iter()
-        .map(|endpoint| policy_endpoint(endpoint, mcp_policy))
+        .map(|endpoint| policy_endpoint(endpoint, rules))
         .collect::<Result<Vec<_>, _>>()?;
     let policy = openshell_policy::parse_sandbox_policy(
         &json!({"version": 1, "network_policies": {&id: {
@@ -103,11 +153,12 @@ pub fn definition(
     })
 }
 
-/// One endpoint's policy rule: the URL's path subtree, or with an MCP policy
-/// its exact path and allowed requests.
+/// One endpoint's policy rule: the URL's path subtree, with an MCP policy its
+/// exact path and allowed requests, or with a REST policy its host's allowed
+/// requests.
 fn policy_endpoint(
     endpoint: &str,
-    mcp_policy: &str,
+    rules: Rules<'_>,
 ) -> Result<serde_json::Value, ObservationError> {
     nemoclaw_backend::validate_endpoint_url(endpoint).map_err(|_| ObservationError::Query)?;
     let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
@@ -129,12 +180,35 @@ fn policy_endpoint(
         .filter(|port| *port != 0)
         .ok_or(ObservationError::Query)?;
     let mut policy_endpoint = json!({ "host": host, "port": port, "allowed_ips": allowed_ips });
-    if mcp_policy.is_empty() {
-        policy_endpoint["path"] = json!(format!("{}/**", url.path().trim_end_matches('/')));
-        policy_endpoint["protocol"] = json!("rest");
-        policy_endpoint["access"] = json!("full");
-        return Ok(policy_endpoint);
-    }
+    let mcp_policy = match rules {
+        Rules::Subtree => {
+            policy_endpoint["path"] = json!(format!("{}/**", url.path().trim_end_matches('/')));
+            policy_endpoint["protocol"] = json!("rest");
+            policy_endpoint["access"] = json!("full");
+            return Ok(policy_endpoint);
+        }
+        Rules::Rest(rest_policy) => {
+            // The rules name whole request paths, so the URL names only a host.
+            if !matches!(url.path(), "" | "/") || url.query().is_some() {
+                return Err(ObservationError::Query);
+            }
+            let rest: RestPolicy =
+                serde_json::from_str(rest_policy).map_err(|_| ObservationError::Query)?;
+            if rest.rules.is_empty()
+                || rest
+                    .rules
+                    .iter()
+                    .any(|rule| rule.allow.method.is_empty() || rule.allow.path.is_empty())
+            {
+                return Err(ObservationError::Query);
+            }
+            policy_endpoint["protocol"] = json!("rest");
+            policy_endpoint["enforcement"] = json!("enforce");
+            policy_endpoint["rules"] = json!(rest.rules);
+            return Ok(policy_endpoint);
+        }
+        Rules::Mcp(mcp_policy) => mcp_policy,
+    };
     let path = url.path();
     // OpenShell matches the selector against the canonical request path.
     // Reject paths it would rewrite or refuse instead of installing an unusable rule.
@@ -176,12 +250,38 @@ mod tests {
     fn mcp_rules_reject_two_selectors_for_the_same_tool_name() {
         let policy = r#"{"rules":[{"allow":{"method":"tools/call","tool":"get_quote","params":{"name":"*"}}}]}"#;
         let url = "https://booking.example.com/mcp";
-        assert!(definition("booking", &[url.to_string()], "", "", policy, "").is_err());
+        assert!(
+            definition(
+                "booking",
+                &[url.to_string()],
+                "",
+                "",
+                Rules::Mcp(policy),
+                ""
+            )
+            .is_err()
+        );
 
         let policy =
             r#"{"rules":[{"allow":{"method":"tools/call","params":{"name":"get_quote"}}}]}"#;
-        let explicit_name = definition("booking", &[url.to_string()], "", "", policy, "").unwrap();
-        let tool = definition("booking", &[url.to_string()], "", "", MCP_RULE, "").unwrap();
+        let explicit_name = definition(
+            "booking",
+            &[url.to_string()],
+            "",
+            "",
+            Rules::Mcp(policy),
+            "",
+        )
+        .unwrap();
+        let tool = definition(
+            "booking",
+            &[url.to_string()],
+            "",
+            "",
+            Rules::Mcp(MCP_RULE),
+            "",
+        )
+        .unwrap();
         assert_eq!(explicit_name.endpoints, tool.endpoints);
     }
 
@@ -197,19 +297,42 @@ mod tests {
         ] {
             let url = format!("https://booking.example.com{path}");
             assert!(
-                definition("booking", std::slice::from_ref(&url), "", "", MCP_RULE, "").is_err(),
+                definition(
+                    "booking",
+                    std::slice::from_ref(&url),
+                    "",
+                    "",
+                    Rules::Mcp(MCP_RULE),
+                    ""
+                )
+                .is_err(),
                 "{url}"
             );
             assert!(
-                definition("booking", std::slice::from_ref(&url), "", "", "", "").is_ok(),
+                definition(
+                    "booking",
+                    std::slice::from_ref(&url),
+                    "",
+                    "",
+                    Rules::Subtree,
+                    ""
+                )
+                .is_ok(),
                 "{url}"
             );
         }
 
         for path in ["/", "/mcp", "/mcp/", "/team/mcp"] {
             let url = format!("https://booking.example.com{path}");
-            let profile =
-                definition("booking", std::slice::from_ref(&url), "", "", MCP_RULE, "").unwrap();
+            let profile = definition(
+                "booking",
+                std::slice::from_ref(&url),
+                "",
+                "",
+                Rules::Mcp(MCP_RULE),
+                "",
+            )
+            .unwrap();
             assert_eq!(profile.endpoints[0].path, path);
         }
     }
@@ -236,7 +359,8 @@ mod tests {
                 vec![],
             ),
         ] {
-            let profile = definition("booking", &[url.to_string()], "", "", "", "").unwrap();
+            let profile =
+                definition("booking", &[url.to_string()], "", "", Rules::Subtree, "").unwrap();
             assert_eq!(profile.endpoints.len(), 1);
             let endpoint = &profile.endpoints[0];
             assert_eq!(endpoint.host, host);
@@ -251,7 +375,15 @@ mod tests {
             "https://integrate.api.nvidia.com/v1".to_string(),
             "https://ai.api.nvidia.com/v1".to_string(),
         ];
-        let profile = definition("nvidia", &endpoints, "", "", "", "NVIDIA_API_KEY").unwrap();
+        let profile = definition(
+            "nvidia",
+            &endpoints,
+            "",
+            "",
+            Rules::Subtree,
+            "NVIDIA_API_KEY",
+        )
+        .unwrap();
         let bound: Vec<_> = profile
             .endpoints
             .iter()
@@ -274,23 +406,84 @@ mod tests {
         assert_eq!(profile.credentials.len(), 1, "one key for every endpoint");
         assert_eq!(profile.credentials[0].env_vars, ["NVIDIA_API_KEY"]);
 
-        let derived = definition("nvidia", &endpoints, "", "", "", "").unwrap();
+        let derived = definition("nvidia", &endpoints, "", "", Rules::Subtree, "").unwrap();
         assert_eq!(
             derived.credentials[0].env_vars,
             ["NEMOCLAW_API_NVIDIA_KEY"],
             "without a chosen name the sandbox sees the derived one"
         );
         assert!(
-            definition("nvidia", &[], "", "", "", "").is_err(),
+            definition("nvidia", &[], "", "", Rules::Subtree, "").is_err(),
             "an API needs an endpoint"
         );
+    }
+
+    const REST_RULES: &str = r#"{"rules":[{"allow":{"method":"POST","path":"/search"}},{"allow":{"method":"POST","path":"/extract"}}]}"#;
+
+    #[test]
+    fn rest_rules_enforce_only_the_listed_requests_on_the_endpoint_host() {
+        let profile = definition(
+            "search",
+            &["https://api.tavily.com".to_string()],
+            "",
+            "",
+            Rules::Rest(REST_RULES),
+            "TAVILY_API_KEY",
+        )
+        .unwrap();
+        assert_eq!(profile.endpoints.len(), 1);
+        let endpoint = &profile.endpoints[0];
+        assert_eq!(endpoint.host, "api.tavily.com");
+        assert_eq!(endpoint.port, 443);
+        assert_eq!(endpoint.protocol, "rest");
+        assert_eq!(
+            endpoint.enforcement,
+            proto::NetworkEnforcementMode::Enforce as i32
+        );
+        assert_eq!(
+            endpoint.access,
+            proto::NetworkAccessPreset::Unspecified as i32,
+            "rules replace full access"
+        );
+        assert_eq!(endpoint.path, "", "the rules carry the request paths");
+        let allowed: Vec<_> = endpoint
+            .rules
+            .iter()
+            .map(|rule| {
+                let allow = rule.allow.as_ref().unwrap();
+                (allow.method.as_str(), allow.path.as_str())
+            })
+            .collect();
+        assert_eq!(allowed, [("POST", "/search"), ("POST", "/extract")]);
+    }
+
+    #[test]
+    fn rest_rules_need_one_host_endpoint_and_method_and_path_selectors() {
+        let host = ["https://api.tavily.com".to_string()];
+        let rest = |rules: &str| definition("search", &host, "", "", Rules::Rest(rules), "");
+        assert!(rest(REST_RULES).is_ok());
+        for rules in [
+            r#"{"rules":[]}"#,
+            r#"{"rules":[{"allow":{"method":"POST"}}]}"#,
+            r#"{"rules":[{"allow":{"path":"/search"}}]}"#,
+            r#"{"rules":[{"allow":{"method":"","path":"/search"}}]}"#,
+            r#"{"rules":[{"allow":{"method":"POST","path":"/search","tool":"x"}}]}"#,
+            r#"{"rules":[{"allow":{"method":"POST","path":"/search","params":{"name":"x"}}}]}"#,
+        ] {
+            assert!(rest(rules).is_err(), "{rules}");
+        }
+        // The rules name request paths, so the endpoint names only a host.
+        let pathed = ["https://api.tavily.com/v1".to_string()];
+        assert!(definition("search", &pathed, "", "", Rules::Rest(REST_RULES), "").is_err());
+        let two = [host[0].clone(), "https://api.example.com".to_string()];
+        assert!(definition("search", &two, "", "", Rules::Rest(REST_RULES), "").is_err());
     }
 
     #[test]
     fn an_mcp_policy_takes_exactly_one_endpoint() {
         let one = ["https://booking.example.com/mcp".to_string()];
-        assert!(definition("booking", &one, "", "", MCP_RULE, "").is_ok());
+        assert!(definition("booking", &one, "", "", Rules::Mcp(MCP_RULE), "").is_ok());
         let two = [one[0].clone(), "https://quotes.example.com/mcp".to_string()];
-        assert!(definition("booking", &two, "", "", MCP_RULE, "").is_err());
+        assert!(definition("booking", &two, "", "", Rules::Mcp(MCP_RULE), "").is_err());
     }
 }

@@ -502,7 +502,7 @@ fn reconstructible_recreation_uses_opentofu_state_after_refresh_only() {
 
 #[test]
 fn reconstructible_resources_support_removal_replacement_and_confirmed_absence() {
-    for kind in ["inference", "web_search", "agent"] {
+    for kind in ["inference", "api", "agent"] {
         let address = format!("{}.example", crate::compile::resource_type(kind));
         let expected = [(address.clone(), Row::new())].into();
         let bindings = [(
@@ -575,7 +575,7 @@ fn reconstructible_resource_plans_keep_scope_without_rechecking_provider_identit
 fn teardown_delegates_reconstructible_and_disposable_recovery_to_opentofu() {
     for address in [
         "openshell_inference.example",
-        "openshell_web_search.example",
+        "openshell_api.example",
         "fabric_agent.example",
         "docker_container.runtime",
     ] {

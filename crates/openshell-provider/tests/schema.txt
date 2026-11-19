@@ -46,6 +46,15 @@ resource openshell_api (version 2)
             > Nonempty list of nonempty glob strings.
           value: string, optional
             > The value itself, instead of the other attributes.
+  block rest: optional
+    block rules: list
+      > The only requests this endpoint admits.
+      block allow: single
+        > Request matcher.
+        method: string, required
+          > HTTP method, such as GET.
+        path: string, required
+          > HTTP path glob, matched against the whole request path.
 
 resource openshell_gateway_storage (version 0)
   compute_driver: string, required
@@ -374,20 +383,6 @@ resource openshell_sandbox (version 2)
       > Service name within the sandbox; empty is OpenShell's unnamed endpoint.
     target_port: number, required
       > Loopback TCP port the service listens on inside the sandbox.
-
-resource openshell_web_search (version 2)
-  binaries: list(string), optional
-  credential_env: string, optional, computed
-  gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required
-  generation: string, optional, computed
-  id: string, computed
-  name: string, required
-  policy_authority: string, optional, computed
-  provider_type: string, required
-  ref: object({ generation = string, id = string, name = string, owner = string, registration = string, type = string, workspace = string }), computed
-  registration: string, computed
-  sandbox_env: string, optional, computed
-  workspace: object({ name = string, owner = string, type = string }), required
 
 resource openshell_workspace (version 2)
   gateway: object({ credential_env = string, endpoint = string, kubernetes = string, tls_ca_env = string, tls_certificate_env = string, tls_key_env = string, type = string }), required

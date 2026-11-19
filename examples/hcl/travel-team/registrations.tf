@@ -36,17 +36,51 @@ resource "openshell_inference" "frontier" {
   binaries  = local.model_binaries.frontier
 }
 
+locals {
+  # Each search API's host, how it takes the key, and the only requests the
+  # researchers' search tools make.
+  search_apis = {
+    brave = {
+      endpoint    = "https://api.search.brave.com"
+      auth_style  = "header"
+      header_name = "X-Subscription-Token"
+      rules       = [{ method = "GET", path = "/res/v1/web/search" }]
+    }
+    tavily = {
+      endpoint    = "https://api.tavily.com"
+      auth_style  = "bearer"
+      header_name = null
+      rules       = [{ method = "POST", path = "/search" }, { method = "POST", path = "/extract" }]
+    }
+  }
+  search_api = local.search_apis[var.search.provider]
+}
+
 # Web search, attached to researchers only.
-resource "openshell_web_search" "research" {
+resource "openshell_api" "research" {
   gateway        = local.gateway
   workspace      = openshell_workspace.team.ref
   name           = "research"
-  provider_type  = var.search.provider
+  endpoints      = [local.search_api.endpoint]
   credential_env = var.search.credential_env
+  auth_style     = local.search_api.auth_style
+  header_name    = local.search_api.header_name
   # The researchers run Hermes, whose Brave plugin reads its key from
-  # BRAVE_SEARCH_API_KEY rather than the default BRAVE_API_KEY.
-  sandbox_env = var.search.provider == "brave" ? "BRAVE_SEARCH_API_KEY" : null
+  # BRAVE_SEARCH_API_KEY.
+  sandbox_env = var.search.provider == "brave" ? "BRAVE_SEARCH_API_KEY" : "TAVILY_API_KEY"
   binaries    = local.search_binaries
+
+  rest {
+    dynamic "rules" {
+      for_each = local.search_api.rules
+      content {
+        allow {
+          method = rules.value.method
+          path   = rules.value.path
+        }
+      }
+    }
+  }
 }
 
 locals {

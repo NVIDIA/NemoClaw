@@ -83,7 +83,7 @@ impl Ui {
         let resource = match kind {
             Some("openshell_workspace") => "workspace",
             Some("openshell_sandbox") => "sandbox",
-            Some("openshell_web_search") => "web search",
+            Some("openshell_api") => "API credential",
             Some("openshell_inference") => "inference provider",
             Some("openshell_podman_gateway") => "gateway",
             Some("openshell_gateway_storage") => "gateway storage",

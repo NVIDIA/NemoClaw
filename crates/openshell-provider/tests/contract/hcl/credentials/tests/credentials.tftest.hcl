@@ -1,16 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Web search and API credentials: each resource owns a profile and the
+# API credentials, with REST or MCP rules: each resource owns a profile and the
 # registration that holds the key, and recovers either one without replacing
 # the sandbox that attaches it.
 
 run "deploy" {
   assert {
-    condition = [
-      for registration in local.openshell.created_providers : keys(registration.credentials)
-      if startswith(registration.type, "nemoclaw-brave")
-    ] == [["BRAVE_SEARCH_API_KEY"]]
-    error_message = "The web search registration must take a Brave profile and hold the key under the variable sandboxes see."
+    condition = local.openshell.profiles["nemoclaw-api-search"] == {
+      inference_capable = false
+      credentials       = [{ env_vars = ["BRAVE_SEARCH_API_KEY"], auth_style = "header", header_name = "X-Subscription-Token" }]
+      endpoints         = ["api.search.brave.com:443"]
+      binaries          = ["/usr/bin/curl"]
+    }
+    error_message = "The search profile must send its key in Brave's header to the host its rules restrict."
+  }
+  assert {
+    condition     = local.openshell.registration_credentials["search"] == { BRAVE_SEARCH_API_KEY = "env:NEMOCLAW_TEST_BRAVE_KEY" }
+    error_message = "The search registration must hold the key under the variable sandboxes see."
   }
   assert {
     condition = local.openshell.profiles["nemoclaw-api-booking"] == {

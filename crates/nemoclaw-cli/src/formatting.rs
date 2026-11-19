@@ -228,11 +228,15 @@ pub(crate) fn resource_label(address: &str) -> String {
         "openshell_gateway_storage.runtime" => "gateway storage".to_owned(),
         "openshell_workspace.deployment" => "OpenShell workspace".to_owned(),
         _ => {
-            // Web search addresses carry an image scope and credential reference
-            // to distinguish them in state. The default label names the search
-            // provider; verbose retains the address.
-            if let Some(rest) = address.strip_prefix("openshell_web_search.") {
-                let provider = rest.split('_').next().unwrap_or_default();
+            // A web search is an API credential registered as
+            // `<provider>-search-<credential hash>-<image scope>`. The default
+            // label names the search provider; verbose retains the address.
+            if let Some(provider) = address
+                .strip_prefix("openshell_api.")
+                .and_then(|name| name.split_once("_search_"))
+                .map(|(provider, _)| provider)
+                .filter(|provider| ["brave", "tavily"].contains(provider))
+            {
                 return terminal_text(&format!("web search/{provider}"));
             }
             if let Some(name) = address
@@ -1272,7 +1276,7 @@ mod tests {
             {"resource":"fabric_agent.host", "actions":["update"]},
             {"resource":"terraform_data.agent_host", "actions":["update"]},
             {"resource":"openshell_inference.inference_local-1234", "actions":["update"]},
-            {"resource":"openshell_web_search.tavily_1234_search_key", "actions":["create"]},
+            {"resource":"openshell_api.tavily_search_0a0b0c0d0e0f_abcdefabcdef", "actions":["create"]},
             {"resource":"vllm_credential_storage.inference_tiny_auth", "actions":["create"]},
             {"resource":"docker_container.ollama_proxy_local", "actions":["create"]},
             {"resource":"ollama_proxy_credential_storage.local", "actions":["create"]}

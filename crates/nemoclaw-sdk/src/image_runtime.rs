@@ -16,27 +16,6 @@ pub fn policy_input(
     let network = document.sandbox_network(sandbox)?;
     let explicit = network.explicit.cloned();
     let mut managed = BTreeMap::new();
-    if let Some(search) = document.web_search(sandbox)? {
-        if explicit.as_ref().is_some_and(|policy| {
-            policy.network_policies.keys().any(|name| {
-                name == search.provider.profile()
-                    || name.starts_with(&format!("{}-", search.provider.profile()))
-            })
-        }) {
-            return Err(ConfigError::new(
-                "the managed search policy name is reserved for web search",
-            ));
-        }
-        let mut rule = crate::config::search_policy(search.provider);
-        rule.name = nemoclaw_openshell::search::web_search_names(
-            search.provider,
-            &search.credential.env,
-            &document.image_scope(sandbox)?,
-        )
-        .0;
-        rule.binaries.clear();
-        managed.insert(rule.name.clone(), rule);
-    }
     for provider in document.sandbox_inference_providers(sandbox)? {
         let connection = document.provider_connection(provider.definition)?;
         let profile = crate::config::inference_profile(
@@ -68,7 +47,7 @@ pub fn policy_input(
     for (name, grant) in network.grants {
         if managed.contains_key(name) {
             return Err(ConfigError::new(
-                "a network grant name is reserved for inference or web search",
+                "a network grant name is reserved for inference",
             ));
         }
         managed.insert(
@@ -86,7 +65,7 @@ pub fn policy_input(
             .any(|name| policy.network_policies.contains_key(name))
     }) {
         return Err(ConfigError::new(
-            "managed inference and search policy names are reserved",
+            "managed inference policy names are reserved",
         ));
     }
     Ok(PolicyInput {

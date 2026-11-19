@@ -12,17 +12,26 @@ fn registration(target: &nemoclaw_sdk::compile::Target) -> String {
     nemoclaw_openshell::registration_name(&target.kind, &target.values).unwrap()
 }
 
-/// The OpenShell profile a web search target owns.
-fn profile_name(target: &nemoclaw_sdk::compile::Target) -> String {
-    let provider =
-        nemoclaw_openshell::search::SearchProvider::from_name(&target.values["provider_type"])
-            .unwrap();
-    nemoclaw_openshell::search::web_search_names(
-        provider,
-        &target.values["credential_env"],
-        &target.values["name"],
-    )
-    .0
+/// Whether a target is the `openshell_api` resource a web search compiles to.
+fn is_search(target: &nemoclaw_sdk::compile::Target) -> bool {
+    target.kind == "api"
+        && ["brave-search-", "tavily-search-"]
+            .iter()
+            .any(|prefix| target.values["name"].starts_with(prefix))
+}
+
+/// Whether a sandbox's managed policy grants a search API itself.
+fn grants_search_in_sandbox_policy(policy: &Value) -> bool {
+    policy["managed"].as_array().unwrap().iter().any(|rule| {
+        rule["endpoints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|endpoint| {
+                ["api.search.brave.com", "api.tavily.com"]
+                    .contains(&endpoint["host"].as_str().unwrap())
+            })
+    })
 }
 
 fn input() -> Value {
@@ -51,17 +60,34 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
         .into();
     let rows = targets(&doc, &generations).unwrap();
     assert_eq!(rows.len(), 6);
-    let search = rows.iter().find(|r| r.kind == "web_search").unwrap();
+    // Search compiles to an API credential: Brave's host, its key header, the
+    // one request it serves, and the variable Brave's tools read.
+    let search = rows.iter().find(|r| is_search(r)).unwrap();
     assert_eq!(search.values["credential_env"], "SEARCH_KEY");
-    assert_eq!(search.values["provider_type"], "brave");
+    assert_eq!(
+        search.values["endpoints_json"],
+        r#"["https://api.search.brave.com"]"#
+    );
+    assert_eq!(search.values["auth_style"], "header");
+    assert_eq!(search.values["header_name"], "X-Subscription-Token");
+    assert_eq!(search.values["sandbox_env"], "BRAVE_API_KEY");
+    assert_eq!(
+        serde_json::from_str::<Value>(&search.values["rest_json"]).unwrap(),
+        json!({"rules":[{"allow":{"method":"GET","path":"/res/v1/web/search"}}]})
+    );
+    assert!(search.address.starts_with("openshell_api.brave_search_"));
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
+    assert!(graph["resource"].get("openshell_web_search").is_none());
     assert!(
         provider_scope::resource(&graph["resource"]["openshell_inference"], "local").is_object()
     );
     // One resource owns the search profile and registration. Its executables
     // come from the sandbox's harness, and its owner from its workspace.
-    let resource =
-        &graph["resource"]["openshell_web_search"][search.address.split_once('.').unwrap().1];
+    let resource = &graph["resource"]["openshell_api"][search.address.split_once('.').unwrap().1];
+    assert_eq!(
+        resource["rest"],
+        json!({"rules":[{"allow":{"method":"GET","path":"/res/v1/web/search"}}]})
+    );
     assert_eq!(
         resource["binaries"],
         json!("${jsondecode(data.fabric_harnesses.sandbox_assistant.binaries_json)}")
@@ -137,33 +163,21 @@ fn shared_integration_references_grant_only_the_selected_agents() {
         ])
     );
     let rows = targets(&doc, &generations).unwrap();
-    assert_eq!(
-        rows.iter().filter(|row| row.kind == "web_search").count(),
-        1
-    );
+    assert_eq!(rows.iter().filter(|row| is_search(row)).count(), 1);
     for row in rows.iter().filter(|row| row.kind == "sandbox") {
         let policy: Value = serde_json::from_str(&row.values["policy_json"]).unwrap();
         let providers: Vec<String> =
             serde_json::from_str(&row.values["provider_names_json"]).unwrap();
+        // The registration's profile grants the search API; the sandbox's
+        // policy does not.
+        assert!(!grants_search_in_sandbox_policy(&policy));
         if row.values["name"] == "reader" {
-            assert!(!policy["managed"].as_array().unwrap().iter().any(|rule| {
-                rule["name"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("nemoclaw-brave-")
-            }));
             assert!(
                 !providers
                     .iter()
                     .any(|name| name.starts_with("brave-search-"))
             );
         } else {
-            assert!(policy["managed"].as_array().unwrap().iter().any(|rule| {
-                rule["name"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("nemoclaw-brave-")
-            }));
             assert!(
                 providers
                     .iter()
@@ -327,22 +341,13 @@ fn sandboxes_share_search_registration_only_for_the_same_credential() {
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
     let resources = targets(&doc, &generations).unwrap();
-    assert_eq!(
-        resources
-            .iter()
-            .filter(|row| row.kind == "web_search")
-            .count(),
-        1
-    );
+    assert_eq!(resources.iter().filter(|row| is_search(row)).count(), 1);
     assert_eq!(doc.credential_names(), vec!["SEARCH_KEY"]);
     value["spec"]["sandboxes"]["other"]["integrations"]["search"]["credential"]["env"] =
         json!("OTHER_KEY");
     let doc = Document::parse(value.to_string().as_bytes()).unwrap();
     let resources = targets(&doc, &generations).unwrap();
-    let search: Vec<_> = resources
-        .iter()
-        .filter(|r| r.kind == "web_search")
-        .collect();
+    let search: Vec<_> = resources.iter().filter(|r| is_search(r)).collect();
     assert_eq!(search.len(), 2);
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
     for (sandbox, credential) in [("assistant", "SEARCH_KEY"), ("other", "OTHER_KEY")] {
@@ -417,47 +422,33 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
             .map(|key| (key.into(), "a".repeat(32)))
             .into();
         let rows = targets(&doc, &generations).unwrap();
-        let provider = rows
-            .iter()
-            .find(|row| row.kind == "web_search" && row.values["provider_type"] == "tavily")
-            .unwrap();
+        let provider = rows.iter().find(|row| is_search(row)).unwrap();
         assert_eq!(provider.values["credential_env"], "SEARCH_KEY");
         assert!(registration(provider).starts_with("tavily-search-"));
-        let profile = profile_name(provider);
-        assert!(profile.starts_with("nemoclaw-tavily-"));
+        // Tavily takes its key as a bearer token, for search and extract only.
+        assert_eq!(
+            provider.values["endpoints_json"],
+            r#"["https://api.tavily.com"]"#
+        );
+        assert_eq!(provider.values["auth_style"], "bearer");
+        assert!(!provider.values.contains_key("header_name"));
+        assert_eq!(provider.values["sandbox_env"], "TAVILY_API_KEY");
+        assert_eq!(
+            serde_json::from_str::<Value>(&provider.values["rest_json"]).unwrap(),
+            json!({"rules":[
+                {"allow":{"method":"POST","path":"/search"}},
+                {"allow":{"method":"POST","path":"/extract"}}
+            ]})
+        );
         let sandbox = rows.iter().find(|row| row.kind == "sandbox").unwrap();
         let providers: Vec<String> =
             serde_json::from_str(&sandbox.values["provider_names_json"]).unwrap();
         assert!(providers.contains(&registration(provider)));
         let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
-        assert!(!policy["managed"].as_array().unwrap().iter().any(|rule| {
-            rule["name"]
-                .as_str()
-                .unwrap()
-                .starts_with("nemoclaw-brave-")
-        }));
-        let grant = policy["managed"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|rule| rule["name"] == profile.as_str())
-            .unwrap();
-        assert_eq!(grant["binaries"], json!([]));
-        let endpoint = &grant["endpoints"][0];
-        assert_eq!(endpoint["host"], "api.tavily.com");
-        assert_ne!(endpoint["request_body_credential_rewrite"], true);
-        assert!(endpoint.get("tls").is_none());
-        assert_eq!(endpoint["enforcement"], "enforce");
-        assert_eq!(
-            endpoint["rules"],
-            json!([
-                {"allow":{"method":"POST","path":"/search"}},
-                {"allow":{"method":"POST","path":"/extract"}}
-            ])
-        );
+        assert!(!grants_search_in_sandbox_policy(&policy));
         let graph = compile(&doc, &generations, "0.1.0").unwrap();
         assert!(
-            graph["resource"]["openshell_web_search"][provider.address.split_once('.').unwrap().1]
+            graph["resource"]["openshell_api"][provider.address.split_once('.').unwrap().1]
                 .is_object()
         );
     }
@@ -506,7 +497,7 @@ fn different_search_providers_keep_distinct_bindings_for_the_same_credential_ref
     }
     let providers: Vec<_> = rows
         .iter()
-        .filter(|row| row.kind == "web_search" && row.values["credential_env"] == "SEARCH_KEY")
+        .filter(|row| is_search(row) && row.values["credential_env"] == "SEARCH_KEY")
         .collect();
     assert_eq!(providers.len(), 2);
     assert_ne!(providers[0].address, providers[1].address);
@@ -530,7 +521,7 @@ fn native_search_constraints_are_forwarded_for_fabric_validation() {
 }
 
 #[test]
-fn tavily_rejects_collisions_with_managed_profile_and_provider_names() {
+fn search_registration_names_stay_reserved_and_policy_names_are_free() {
     for name in ["tavily-search", "tavily-search-custom"] {
         let mut value = input();
         value["spec"]["sandboxes"]["assistant"]["integrations"]["search"]["provider"] =
@@ -555,14 +546,15 @@ fn tavily_rejects_collisions_with_managed_profile_and_provider_names() {
     }});
     value["spec"]["sandboxes"]["assistant"]["network"] = json!({"policy": {"explicit": policy}});
     Document::parse(value.to_string().as_bytes()).expect("non-colliding policy must be valid");
+    // The search grant lives in its registration's profile, so no policy
+    // rule name is reserved for it.
     let rules = value["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"]
         .as_object_mut()
         .unwrap();
     let mut rule = rules.remove("custom-search").unwrap();
     rule["name"] = json!("nemoclaw-tavily");
     rules.insert("nemoclaw-tavily".into(), rule);
-    let error = Document::parse(value.to_string().as_bytes()).unwrap_err();
-    assert!(error.0.contains("reserved for web search"), "{error}");
+    Document::parse(value.to_string().as_bytes()).expect("policy names are not reserved");
 }
 
 #[test]
@@ -584,23 +576,22 @@ fn search_sets_the_key_variable_the_sandbox_sees() {
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
-    // Without sandboxEnv, the sandbox sees the credential's own variable.
+    // Without sandboxEnv, the sandbox sees the provider's own variable.
     let doc = Document::parse(input().to_string().as_bytes()).unwrap();
     let rows = targets(&doc, &generations).unwrap();
-    let search = rows.iter().find(|r| r.kind == "web_search").unwrap();
-    assert!(!search.values.contains_key("sandbox_env"));
+    let search = rows.iter().find(|r| is_search(r)).unwrap();
+    assert_eq!(search.values["sandbox_env"], "BRAVE_API_KEY");
 
     let mut value = input();
     value["spec"]["sandboxes"]["assistant"]["integrations"]["search"]["sandboxEnv"] =
         json!("BRAVE_SEARCH_API_KEY");
     let doc = Document::parse(value.to_string().as_bytes()).expect("sandboxEnv must parse");
     let rows = targets(&doc, &generations).unwrap();
-    let search = rows.iter().find(|r| r.kind == "web_search").unwrap();
+    let search = rows.iter().find(|r| is_search(r)).unwrap();
     assert_eq!(search.values["sandbox_env"], "BRAVE_SEARCH_API_KEY");
     assert_eq!(search.values["credential_env"], "SEARCH_KEY");
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
-    let resource =
-        &graph["resource"]["openshell_web_search"][search.address.split_once('.').unwrap().1];
+    let resource = &graph["resource"]["openshell_api"][search.address.split_once('.').unwrap().1];
     assert_eq!(resource["sandbox_env"], "BRAVE_SEARCH_API_KEY");
 
     // The name must be an environment variable name.

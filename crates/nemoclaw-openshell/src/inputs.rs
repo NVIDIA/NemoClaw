@@ -70,6 +70,7 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
     match kind {
         "api" => {
             let mcp = schemars::schema_for!(crate::api::McpPolicy).to_value();
+            let rest = schemars::schema_for!(crate::api::RestPolicy).to_value();
             vec![
                 input("binaries", "binaries_json", strings()),
                 input("endpoints", "endpoints_json", strings()),
@@ -81,9 +82,17 @@ pub fn structured_inputs(kind: &str) -> Vec<Structured> {
                             .expect("the API's MCP policy maps to OpenTofu"),
                     ),
                 ),
+                input(
+                    "rest",
+                    crate::api::REST_POLICY,
+                    Shape::Object(
+                        nemoclaw_tofu::shape::fields(&rest, &[])
+                            .expect("the API's REST policy maps to OpenTofu"),
+                    ),
+                ),
             ]
         }
-        "web_search" | "inference" => {
+        "inference" => {
             vec![input("binaries", "binaries_json", strings())]
         }
         "sandbox" => vec![
@@ -111,7 +120,7 @@ pub fn export(kind: &str) -> Option<Export> {
     let fields: &[&'static str] = match kind {
         "workspace" => &["name", "owner", "generation", "id"],
         // Registrations name what sandboxes attach: `registration`.
-        "web_search" | "inference" | "api" => &[
+        "inference" | "api" => &[
             "workspace",
             "name",
             "registration",
@@ -187,8 +196,8 @@ fn object_references(kind: &str) -> Vec<Reference> {
         list: false,
     };
     match kind {
-        // A web search registration belongs to its workspace's owner.
-        "web_search" | "api" => vec![Reference {
+        // An API registration belongs to its workspace's owner.
+        "api" => vec![Reference {
             attribute: "workspace",
             kind: "openshell_workspace",
             fields: vec![("name", "workspace"), ("owner", "owner")],
