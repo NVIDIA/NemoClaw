@@ -96,25 +96,19 @@ export async function proveStoppedDockerAgentRecovery(
   const writeMarkers = `umask 077; printf '%s' ${shellQuote(marker)} > ${shellQuote(markerPath)} && printf '%s' ${shellQuote(unknownRootMarker)} > ${shellQuote(unknownRootMarkerPath)}`;
   // #11165: retain agent-owned state while the managed login profile is broken.
   // The ordinary healthy rebuild above this proof remains a separate control.
-  const prepared =
+  const breakProfile =
     agentName === "langchain-deepagents-code"
-      ? await runtime.execSandboxAsRoot(
-          sandboxName,
-          [
-            "/bin/sh",
-            "-c",
-            `${writeMarkers} && chown --reference=/sandbox/.deepagents/.state ${shellQuote(markerPath)} ${shellQuote(unknownRootMarkerPath)} && rm -f /sandbox/.bash_profile && ln -s /sandbox/hostile-env.sh /sandbox/.bash_profile && sync`,
-          ],
-          {
-            artifactName: `${artifactPrefix}-write-marker`,
-            sanitizeEnvironment: true,
-            timeoutMs: 10_000,
-          },
-        )
-      : await sandbox.exec(sandboxName, ["sh", "-c", `${writeMarkers} && sync`], {
-          artifactName: `${artifactPrefix}-write-marker`,
-          env,
-        });
+      ? " && rm -f /sandbox/.bash_profile && ln -s /sandbox/hostile-env.sh /sandbox/.bash_profile"
+      : "";
+  const prepared = await sandbox.exec(
+    sandboxName,
+    ["sh", "-c", `${writeMarkers}${breakProfile} && sync`],
+    {
+      artifactName: `${artifactPrefix}-write-marker`,
+      env,
+      ...(agentName === "langchain-deepagents-code" ? { timeoutMs: 10_000 } : {}),
+    },
+  );
   assertExitZero(prepared, "prepare the stopped-recovery source and marker");
   const transitionResult =
     sourceTransition === "openshell-stop-not-ready"
