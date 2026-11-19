@@ -431,7 +431,7 @@ export async function runMcpProviderRewriteProbe(
   sandboxName: string,
   targetUrl: string,
   method: string,
-  expectation: "allow" | "deny" | "deny-strict",
+  expectation: "allow" | "deny" | "deny-strict" | "withhold",
   artifactName: string,
   credentialKey = "FAKE_MCP_SECRET",
   toolName?: string,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import vm from "node:vm";
+import { EventEmitter } from "node:events";
 
 import { describe, expect, it } from "vitest";
 
@@ -87,4 +88,67 @@ describe("managed MCP provider rewrite probe", () => {
       new RegExp(buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET"), "u"),
     );
   });
+});
+
+function runRewriteProbe(expectation: string, status: number, error?: string): number {
+  let exitCode = -1;
+  const request = Object.assign(new EventEmitter(), { end: () => {} });
+  const response = Object.assign(new EventEmitter(), {
+    statusCode: status,
+    setEncoding: () => {},
+  });
+  new vm.Script(MCP_PROVIDER_REWRITE_PROBE_SOURCE).runInNewContext({
+    require: () => ({
+      request: (_options: unknown, respond: (response: unknown) => void) => {
+        request.end = error
+          ? () => {
+              request.emit("error", new Error(error));
+            }
+          : () => {
+              respond(response);
+              response.emit("data", '{"result":{}}');
+              response.emit("end");
+            };
+        return request;
+      },
+    }),
+    process: {
+      argv: [
+        "node",
+        "-",
+        "https://shared.example.test/mcp-peer",
+        "tools/list",
+        expectation,
+        "SOURCE_TOKEN",
+      ],
+      env: { SOURCE_TOKEN: "openshell:resolve:env:v1_SOURCE_TOKEN" },
+      exit: (code: number) => {
+        exitCode = code;
+      },
+    },
+    Buffer,
+    URL,
+    console: { log: () => {}, error: () => {} },
+  });
+  return exitCode;
+}
+
+it.each([
+  [401, undefined, 0],
+  [403, undefined, 0],
+  [0, "HTTP/1.1 403 Forbidden", 0],
+  [200, undefined, 1],
+  [404, undefined, 1],
+  [500, undefined, 1],
+  [0, "ECONNRESET", 1],
+  [0, "ETIMEDOUT", 1],
+  [0, "certificate has expired", 1],
+])("requires explicit credential rejection for peer status %s / %s", (status, error, expected) => {
+  expect(runRewriteProbe("withhold", status, error)).toBe(expected);
+});
+
+it("keeps strict route denial separate from credential withholding", () => {
+  expect(runRewriteProbe("deny-strict", 401)).toBe(1);
+  expect(runRewriteProbe("allow", 401)).toBe(1);
+  expect(runRewriteProbe("deny-strict", 0, "ECONNRESET")).toBe(1);
 });

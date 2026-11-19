@@ -59,13 +59,13 @@ const req = https.request({
   res.on("end", () => {
     console.log(JSON.stringify({ status: res.statusCode, body: data }));
     const allowed = res.statusCode === 200 && data.includes('"result"');
-    const denied = res.statusCode === 403;
+    const denied = res.statusCode === 403 || (expectation === "withhold" && res.statusCode === 401);
     process.exit(expectation === "allow" ? (allowed ? 0 : 1) : (denied ? 0 : 1));
   });
 });
 req.on("error", (error) => {
   console.error(error.message);
-  const strictDenied = expectation === "deny-strict" && /HTTP\\/1\\.[01] 403 Forbidden/.test(error.message);
+  const strictDenied = (expectation === "deny-strict" || expectation === "withhold") && /HTTP\\/1\\.[01] 403 Forbidden/.test(error.message);
   strictDenied && console.log(JSON.stringify({ status: 403, error: error.message }));
   process.exit(expectation === "deny" || strictDenied ? 0 : 1);
 });

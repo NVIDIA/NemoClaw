@@ -16,6 +16,9 @@ import * as bridgeCleanup from "../live/mcp-bridge-cleanup.ts";
 import * as reliability from "../live/mcp-bridge-reliability.ts";
 import * as servers from "../live/mcp-bridge-servers.ts";
 import * as adminScope from "../live/openclaw-admin-scope.ts";
+import * as sandboxProbes from "../live/mcp-bridge-sandbox.ts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { startFakeMcpHttpsServer } from "../live/mcp-bridge-servers.ts";
 
 const { tls, close } = createMcpFixtureTls();
@@ -181,3 +184,151 @@ it.each([
   expect(execShell.mock.calls[0][1]).toContain(runtime);
   expect(execShell.mock.calls[0][1]).toContain("SHARED_ONE_MCP_SECRET");
 });
+
+it.each([
+  ["withheld", "SHARED_ONE_MCP_SECRET", "success", 2],
+  ["gateway-rejection", "SHARED_ONE_MCP_SECRET", "success", 2],
+  ["foreign-credential", "SHARED_ONE_MCP_SECRET", "failure", 1],
+  ["foreign-credential", "SHARED_TWO_MCP_SECRET", "failure", 2],
+  ["peer-credential", "SHARED_ONE_MCP_SECRET", "failure", 1],
+  ["peer-credential", "SHARED_TWO_MCP_SECRET", "failure", 2],
+  ["transport-failure", "SHARED_ONE_MCP_SECRET", "failure", 1],
+] as const)(
+  "requires configured-peer withholding for %s at %s",
+  async (behavior, affectedKey, expected, count) => {
+    type Options = Parameters<typeof assertSharedHostMcpComposition>[0];
+    const requests: Array<{ path: string; auth: string; responseStatus: number }> = [];
+    const peerCalls: string[] = [];
+    vi.spyOn(adminScope, "approveOpenClawAdminScope").mockResolvedValue();
+    vi.spyOn(servers, "startFakeMcpHttpsServer").mockResolvedValue({
+      requests,
+      close: vi.fn(),
+    } as unknown as Awaited<ReturnType<typeof servers.startFakeMcpHttpsServer>>);
+    vi.spyOn(servers, "startPublicMcpHttpsTunnel").mockResolvedValue({
+      origin: "https://shared.example.test",
+    } as Awaited<ReturnType<typeof servers.startPublicMcpHttpsTunnel>>);
+    vi.spyOn(dns, "lookup").mockResolvedValue([
+      { address: "8.8.8.8", family: 4 },
+      { address: "8.8.4.4", family: 4 },
+    ] as never);
+    vi.spyOn(reliability, "addBridgeAndReadStatus").mockImplementation(
+      async (_host, _sandbox, options) => {
+        execFileSync(
+          process.execPath,
+          ["-e", 'require("node:dns/promises").lookup("shared.example.test", { all: true })'],
+          {
+            env: { ...process.env, NODE_OPTIONS: options.addNodeOptions },
+            timeout: 10_000,
+          },
+        );
+        return "";
+      },
+    );
+    vi.spyOn(sandboxProbes, "captureManagedMcpPolicy").mockResolvedValue({
+      policy: { endpoints: [{ allowed_ips: ["8.8.4.4", "8.8.8.8"] }] },
+    } as unknown as Awaited<ReturnType<typeof sandboxProbes.captureManagedMcpPolicy>>);
+    const result = (exitCode = 0): ShellProbeResult => ({
+      command: [],
+      exitCode,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      timedOut: false,
+      artifacts: { stdout: "", stderr: "", result: "" },
+    });
+    const entries = [
+      {
+        key: "SHARED_ONE_MCP_SECRET",
+        own: "/mcp",
+        peer: "/mcp-peer",
+        secret: MCP_BRIDGE_TEST_CREDENTIALS.host,
+        peerSecret: MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost,
+      },
+      {
+        key: "SHARED_TWO_MCP_SECRET",
+        own: "/mcp-peer",
+        peer: "/mcp",
+        secret: MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost,
+        peerSecret: MCP_BRIDGE_TEST_CREDENTIALS.host,
+      },
+    ];
+    type Plan = { requests: typeof requests; peer: boolean; result: ShellProbeResult };
+    const plans = new Map(
+      entries.flatMap<[string, Plan]>((entry) => {
+        const selected = entry.key === affectedKey ? behavior : "withheld";
+        const peerAuth = {
+          withheld: `Bearer openshell:resolve:env:v1_${entry.key}`,
+          "gateway-rejection": "",
+          "foreign-credential": `Bearer ${entry.secret}`,
+          "peer-credential": `Bearer ${entry.peerSecret}`,
+          "transport-failure": "",
+        }[selected];
+        return [
+          [
+            `${entry.key}:${entry.own}`,
+            {
+              requests: [{ path: entry.own, auth: `Bearer ${entry.secret}`, responseStatus: 200 }],
+              peer: false,
+              result: result(),
+            },
+          ],
+          [
+            `${entry.key}:${entry.peer}`,
+            {
+              requests: peerAuth
+                ? [
+                    {
+                      path: entry.peer,
+                      auth: peerAuth,
+                      responseStatus: selected === "peer-credential" ? 200 : 401,
+                    },
+                  ]
+                : [],
+              peer: true,
+              result: result(selected === "transport-failure" ? 1 : 0),
+            },
+          ],
+          [`${entry.key}:/unconfigured`, { requests: [], peer: false, result: result() }],
+        ];
+      }),
+    );
+    vi.spyOn(reliability, "runMcpProviderRewriteProbe").mockImplementation(
+      async (_sandbox, _name, url, _method, expectation, _artifact, key) => {
+        const pathname = new URL(url).pathname;
+        const plan = plans.get(`${key}:${pathname}`)!;
+        requests.push(...plan.requests);
+        peerCalls.push(...(plan.peer ? [`${key}:${pathname}:${expectation}`] : []));
+        return plan.result;
+      },
+    );
+    vi.spyOn(bridgeCleanup, "cleanupMcpBridge").mockResolvedValue();
+    const host = {
+      command: vi.fn(async (_command: string, args: string[]) =>
+        args[1] === "get" ? { ...result(1), stderr: "NOT_FOUND" } : result(),
+      ),
+      nemoclaw: vi.fn(async () => ({ ...result(), stdout: '{"bridges":[]}' })),
+      openshellCommandPath: "openshell",
+    } as unknown as Options["host"];
+    const run = assertSharedHostMcpComposition({
+      adapter: "openclaw-config",
+      host,
+      sandbox: {} as Options["sandbox"],
+      cleanup: { add: vi.fn() } as unknown as Options["cleanup"],
+      artifacts: { writeJson: vi.fn() } as unknown as Options["artifacts"],
+      progress: {} as Options["progress"],
+      sandboxName: "alpha",
+    });
+    await expect(
+      run.then(
+        () => "success",
+        () => "failure",
+      ),
+    ).resolves.toBe(expected);
+    expect(peerCalls).toEqual(
+      ["SHARED_ONE_MCP_SECRET:/mcp-peer:withhold", "SHARED_TWO_MCP_SECRET:/mcp:withhold"].slice(
+        0,
+        count,
+      ),
+    );
+  },
+);

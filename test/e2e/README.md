@@ -1125,6 +1125,12 @@ except `allowed_ips`. This live step proves that OpenShell enforces the refreshe
 depend on an external DNS rotation happening during the test. A failed step restores the captured
 policy before normal sandbox cleanup.
 
+The shared-host MCP scenario sends each provider placeholder to both configured paths for OpenClaw, Hermes, and Deep Agents Code.
+Its own path must authenticate; the peer must reject it without receiving the foreign raw credential.
+The probe requires HTTP 401 or 403, and the server observation rejects a credential leak even when authentication fails.
+Transport, TLS, timeout, and unrelated HTTP failures cannot establish credential withholding.
+Support tests validate these oracles; candidate-bound MCP jobs must establish OpenShell enforcement.
+
 The pin-recovery proof stays within the existing assertion budget by retiring fixture-detail checks:
 the probe's fixed HTTP method and JSON-RPC fields, and the removed proxy's `enc:v1:` and `proxy.pid`
 markers. `test/mcp/mcp-bridge-servers.test.ts` owns the fake server's protocol behavior, and

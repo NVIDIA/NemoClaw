@@ -196,7 +196,29 @@ export async function assertSharedHostMcpComposition(options: {
     ).toBe(true);
   }
   const requestOffset = endpoint.requests.length;
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
+    const peer = entries[1 - index];
+    const peerRequestOffset = endpoint.requests.length;
+    const withheld = await runMcpProviderRewriteProbe(
+      sandbox,
+      sandboxName,
+      `${tunnel.origin}${peer.pathname}`,
+      "tools/list",
+      "withhold",
+      `${entry.server}-credential-at-${peer.server}`,
+      entry.key,
+      undefined,
+      adapter,
+    );
+    assertExitZero(withheld, `${entry.server} credential cannot authorize ${peer.server}`);
+    const peerRequests = endpoint.requests
+      .slice(peerRequestOffset)
+      .filter((request) => request.path === peer.pathname);
+    expect(
+      peerRequests.every(
+        (request) => !request.auth.includes(entry.secret) && request.responseStatus === 401,
+      ),
+    ).toBe(true);
     const denied = await runMcpProviderRewriteProbe(
       sandbox,
       sandboxName,
