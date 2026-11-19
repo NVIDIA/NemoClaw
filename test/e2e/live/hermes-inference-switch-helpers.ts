@@ -942,39 +942,43 @@ export async function rebuildHermesCustomBaseline({
   progress: Pick<TestProgress, "phase">;
   artifacts: InferenceSwitchRetryArtifactSink;
 }): Promise<void> {
-  progress.phase("register and exercise the custom Hermes hosted route");
-  // The caller supplies the verified HTTPS tunnel. Plaintext host-bridge
-  // requests can carry the unresolved credential placeholder to the fixture.
+  progress.phase("onboard and exercise the custom Hermes hosted route");
+  // Match the archive regression: start with a custom hosted route. Child
+  // gateway restarts after inference set retain the entrypoint's old provider
+  // environment, so switching the preceding NVIDIA sandbox tests another path.
+  const destroyed = await host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "hermes-custom-previous-sandbox-destroy",
+    env: env(),
+    redactionValues,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(destroyed, "remove the preceding NVIDIA sandbox before custom onboarding");
   const configured = await host.command(
     "node",
     [
       CLI,
-      "inference",
-      "set",
-      "--sandbox",
-      SANDBOX_NAME,
-      "--provider",
-      "compatible-endpoint",
-      "--model",
-      model,
-      "--endpoint-url",
-      endpointUrl,
-      "--credential-env",
-      "COMPATIBLE_API_KEY",
-      "--inference-api",
-      "openai-completions",
-      "--no-verify",
+      "onboard",
+      "--fresh",
+      "--non-interactive",
+      "--yes",
+      "--yes-i-accept-third-party-software",
     ],
     {
       artifactName: "hermes-custom-hosted-route",
       env: env(undefined, {
         COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_COMPAT_MODEL: model,
+        NEMOCLAW_ENDPOINT_URL: endpointUrl,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_POLICY_TIER: "balanced",
       }),
       redactionValues,
-      timeoutMs: 180_000,
+      timeoutMs: 150_000,
     },
   );
-  expectExitZero(configured, "register the custom hosted route before rebuild");
+  expectExitZero(configured, "onboard the custom hosted route before rebuild");
   await expectHermesEndpointTurn({
     sandbox,
     endpoint,

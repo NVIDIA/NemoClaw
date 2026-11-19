@@ -521,11 +521,11 @@ selecting a shipped-agent catalog does not qualify Pi.
 ### Hermes Custom-Route Rebuild
 
 The native NVIDIA branch of `live/hermes-inference-switch.test.ts` retains its native-local startup and model-switch probes.
-After the NVIDIA switch and both Discord-state rebuild checks, it exposes the same authenticated fixture through a verified Cloudflare HTTPS tunnel and registers that endpoint through `inference set`.
-The recorded NVIDIA attachment admits this transition to a custom hosted route.
+After the NVIDIA switch and both Discord-state rebuild checks, it exposes the same authenticated fixture through a verified Cloudflare HTTPS tunnel.
+It destroys the preceding owned sandbox and onboards Hermes with that custom endpoint, so OpenShell supplies the hosted credential when the entrypoint starts.
 That endpoint uses the hosted `${COMPATIBLE_API_KEY}` reference.
 OpenShell resolves it at the HTTPS interception boundary; a plaintext fixture would receive the unresolved placeholder.
-Registration retains the endpoint admission and DNS pinning checks.
+Onboarding retains the endpoint admission and DNS pinning checks.
 After a baseline Hermes turn, the test rebuilds without a host `COMPATIBLE_API_KEY` and makes one native Hermes API request.
 Both turns must return `PONG`, and the endpoint must record each selected-model request with successful authentication.
 No route or credential rewrite occurs between rebuild and the first replacement request.
@@ -536,7 +536,7 @@ Archive and route source tests own reference preservation and rejection.
 This live check owns the replacement process's use of the archived custom reference.
 The existing `hermes-inference-switch` selector runs it when the archive sanitizer or managed route writer changes; no new target or matrix entry is added.
 In the native NVIDIA branch, each of the two native-local probes and two custom hosted probes makes one attempt.
-After verified tunnel setup, the custom sequence permits three minutes for registration, five minutes for rebuild, and 150 seconds per turn.
+After verified tunnel setup, the custom sequence permits 30 seconds for deletion, 150 seconds for onboarding, five minutes for rebuild, and 150 seconds per turn.
 Those command limits total 780 seconds; they do not establish a worst-case bound for the whole test.
 The retained NVIDIA/Discord phase permits two 15-minute rebuilds, two six-minute status checks, two three-minute inference probes, three minutes for enrollment, and four 30-second state probes, totaling 53 minutes of subprocess limits.
 The damaged-state portion accounts for 25.5 minutes of those limits.

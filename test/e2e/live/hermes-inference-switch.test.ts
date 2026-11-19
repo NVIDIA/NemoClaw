@@ -82,7 +82,7 @@ test(
         "run Hermes CLI adapter forms against switched provider",
         "reapply Hermes inference after CLI and verify integrity",
         "verify NVIDIA inference after Discord state rebuild",
-        "register and exercise the custom Hermes hosted route",
+        "onboard and exercise the custom Hermes hosted route",
         "rebuild the custom Hermes route without a host credential",
         "prove split provider/model credential resolution",
       ],

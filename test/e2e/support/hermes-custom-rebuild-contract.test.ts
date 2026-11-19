@@ -3,13 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { isNativeInferenceSelection } from "../../../src/lib/actions/inference-set/native.ts";
-import type { InferenceSetDeps } from "../../../src/lib/actions/inference-set.ts";
-import type { SandboxEntry } from "../../../src/lib/state/registry.ts";
-import {
-  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-  NVIDIA_HOSTED_NATIVE_PROVIDER,
-} from "../../../src/lib/inference/native-nvidia/contract.ts";
+import { usesCustomNativeOnboarding } from "../../../src/lib/inference/native-provider/custom-setup.ts";
 import { applyHermesManagedRoute } from "../../../src/lib/hermes-managed-route.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
@@ -51,6 +45,7 @@ const authenticatedRequest = {
 function harness(
   options: {
     endpointUrl?: string;
+    destroy?: ShellProbeResult;
     configure?: ShellProbeResult;
     rebuild?: ShellProbeResult;
     requests?: FakeOpenAiCompatibleRequest[];
@@ -60,9 +55,13 @@ function harness(
   const requests: FakeOpenAiCompatibleRequest[] = [];
   const operations: string[] = [];
   const command = vi.fn<HostCliClient["command"]>(async (_binary, args = []) => {
-    const rebuild = args.includes("rebuild");
-    operations.push(rebuild ? "rebuild" : "configure");
-    return (rebuild ? options.rebuild : options.configure) ?? result();
+    const operation = args.includes("destroy")
+      ? "destroy"
+      : args.includes("rebuild")
+        ? "rebuild"
+        : "configure";
+    operations.push(operation);
+    return options[operation] ?? result();
   });
   const exec = vi.fn<SandboxClient["exec"]>(async () =>
     result(0, "172.19.0.1 STREAM host.openshell.internal\n"),
@@ -71,8 +70,31 @@ function harness(
     .fn<SandboxClient["execShell"]>()
     .mockImplementationOnce(async () => {
       operations.push("baseline");
-      requests.push(authenticatedRequest);
-      return result();
+      // The CLI route probe can authenticate without refreshing the running
+      // entrypoint. Only onboarding starts this fixture with its custom key.
+      const startup = command.mock.calls.at(-1);
+      const startupHasCustomCredential =
+        startup?.[1]?.includes("onboard") && startup[2]?.env?.COMPATIBLE_API_KEY === "fixture-key";
+
+      requests.push({
+        ...authenticatedRequest,
+        auth: startupHasCustomCredential ? "ok" : "missing",
+      });
+      return startupHasCustomCredential
+        ? result()
+        : result(
+            0,
+            JSON.stringify({
+              model: "custom-model",
+              choices: [
+                {
+                  message: { content: "HTTP 401: missing bearer <REDACTED>" },
+                  finish_reason: "error",
+                },
+              ],
+              hermes: { completed: false, failed: true, error_code: "agent_error" },
+            }),
+          );
     })
     .mockImplementationOnce(async () => {
       operations.push("post");
@@ -104,66 +126,49 @@ function harness(
 }
 
 describe("Hermes custom hosted rebuild evidence", () => {
-  it("selects the hosted reference and requires authenticated turns around an unassisted rebuild", async () => {
+  it("starts the custom credential with the entrypoint before an unassisted rebuild", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "ambient-key-must-not-repair-restore");
     const h = harness();
     await h.run();
-    expect(h.operations).toEqual(["configure", "baseline", "rebuild", "post"]);
-    const [binary, args, setup] = h.command.mock.calls[0]!;
+    expect(h.operations).toEqual(["destroy", "configure", "baseline", "rebuild", "post"]);
+    expect(h.command.mock.calls[0]!.slice(0, 2)).toEqual([
+      "node",
+      [CLI, SANDBOX_NAME, "destroy", "--yes"],
+    ]);
+    const [binary, args, setup] = h.command.mock.calls[1]!;
     expect(binary).toBe("node");
     expect(args).toEqual([
       CLI,
-      "inference",
-      "set",
-      "--sandbox",
-      SANDBOX_NAME,
-      "--provider",
-      "compatible-endpoint",
-      "--model",
-      "custom-model",
-      "--endpoint-url",
-      "https://custom-fixture.example/v1",
-      "--credential-env",
-      "COMPATIBLE_API_KEY",
-      "--inference-api",
-      "openai-completions",
-      "--no-verify",
+      "onboard",
+      "--fresh",
+      "--non-interactive",
+      "--yes",
+      "--yes-i-accept-third-party-software",
     ]);
     expect(setup!.env).toMatchObject({
       COMPATIBLE_API_KEY: "fixture-key",
+      NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_MODEL: "custom-model",
+      NEMOCLAW_COMPAT_MODEL: "custom-model",
+      NEMOCLAW_ENDPOINT_URL: "https://custom-fixture.example/v1",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NEMOCLAW_POLICY_TIER: "balanced",
     });
-    const recorded = {
-      provider: "nvidia-prod",
-      nativeNvidiaProviderAttachment: {
-        schemaVersion: 1,
-        profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-        providerId: "verified-live-attachment",
-      },
-    } as SandboxEntry;
-    const endpointUrl = args![args!.indexOf("--endpoint-url") + 1]!;
+    const endpointUrl = setup!.env!.NEMOCLAW_ENDPOINT_URL!;
     expect(
-      isNativeInferenceSelection(
+      usesCustomNativeOnboarding(
         "compatible-endpoint",
-        recorded,
         endpointUrl,
-        "nemoclaw",
-        {} as InferenceSetDeps,
+        SANDBOX_NAME,
+        null,
+        setup!.env!.NEMOCLAW_POLICY_TIER,
       ),
     ).toBe(true);
-    expect(
-      isNativeInferenceSelection(
-        "compatible-endpoint",
-        { provider: "compatible-endpoint" } as SandboxEntry,
-        endpointUrl,
-        "nemoclaw",
-        {} as InferenceSetDeps,
-      ),
-    ).toBe(false);
     const config: Record<string, unknown> = {};
     applyHermesManagedRoute(config, {
       model: "custom-model",
-      baseUrl: args![args!.indexOf("--endpoint-url") + 1]!,
+      baseUrl: endpointUrl,
       upstreamProvider: "compatible-endpoint",
       inferenceApi: "openai-completions",
     });
@@ -172,11 +177,11 @@ describe("Hermes custom hosted rebuild evidence", () => {
       config.providers["compatible-endpoint"].api_key,
       config.custom_providers[0]!.api_key,
     ]).toEqual(Array(3).fill("${COMPATIBLE_API_KEY}"));
-    expect(h.command.mock.calls[1]!.slice(0, 2)).toEqual([
+    expect(h.command.mock.calls[2]!.slice(0, 2)).toEqual([
       "node",
       [CLI, SANDBOX_NAME, "rebuild", "--yes"],
     ]);
-    expect(h.command.mock.calls[1]![2]!.env).not.toHaveProperty("COMPATIBLE_API_KEY");
+    expect(h.command.mock.calls[2]![2]!.env).not.toHaveProperty("COMPATIBLE_API_KEY");
     expect(h.execShell.mock.calls).toHaveLength(2);
     expect(h.execShell.mock.calls[0]![2]!.env).not.toHaveProperty("COMPATIBLE_API_KEY");
     expect(h.execShell.mock.calls[1]![2]!.env).not.toHaveProperty("COMPATIBLE_API_KEY");
@@ -190,7 +195,7 @@ describe("Hermes custom hosted rebuild evidence", () => {
     expect(addedBudget).toBe(780_000);
   });
 
-  it.each([{ configure: result(1) }, { rebuild: result(1) }])(
+  it.each([{ destroy: result(1) }, { configure: result(1) }, { rebuild: result(1) }])(
     "rejects unsuccessful setup or replacement before a post-rebuild turn: %j",
     async (options) => {
       const h = harness(options);
@@ -209,7 +214,7 @@ describe("Hermes custom hosted rebuild evidence", () => {
     async ({ requests }) => {
       const h = harness({ requests });
       await expect(h.run()).rejects.toThrow();
-      expect(h.operations).toEqual(["configure", "baseline", "rebuild", "post"]);
+      expect(h.operations).toEqual(["destroy", "configure", "baseline", "rebuild", "post"]);
     },
   );
 
