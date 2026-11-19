@@ -61,8 +61,7 @@ The archived provider must be the provider registered for the sandbox, and the r
 - NVIDIA Endpoints, OpenAI, Anthropic, Gemini, and OpenRouter use their fixed endpoint and credential variable. For NVIDIA Endpoints the reference is `${NVIDIA_INFERENCE_API_KEY}` and the endpoint is `https://integrate.api.nvidia.com/v1`.
 - Hermes Provider uses `${OPENAI_API_KEY}`. The endpoint is its default endpoint, or the endpoint returned by authenticated login when that is the endpoint registered for the sandbox.
 - Other OpenAI-compatible and Anthropic-compatible endpoints use `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}`.
-  Without a recorded provider binding, the archived endpoint must match the registered route.
-  With a validated binding, it must match the binding's agent endpoint.
+  The archived endpoint must match the agent endpoint generated from the registered route and API, or its validated provider binding.
   Hermes uses the OpenAI-compatible surface of an Anthropic-compatible endpoint: registration keeps the logical endpoint, such as `https://host.example/team`, while the binding and agent configuration use `https://host.example/team/v1`.
   If registration conflicts with the binding's logical endpoint, API, or credential variable, NemoClaw strips the reference.
   It must not use `localhost`, `127.0.0.1`, `[::1]`, or `inference.local`.

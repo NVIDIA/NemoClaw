@@ -5,6 +5,7 @@ import {
   HOSTED_NATIVE_PROVIDERS,
   nativeHostedAgentConfig,
 } from "./inference/native-provider/agent-config.ts";
+import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "./inference/anthropic/openai-surface.ts";
 import { customNativeProviderForSelection } from "./inference/native-provider/custom.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./inference/native-nvidia/contract.ts";
 import { NVIDIA_INFERENCE_PLACEHOLDER } from "./inference-credential.ts";
@@ -37,9 +38,16 @@ export function hermesRegisteredRoute(
       !nativeHostedAgentConfig(provider, selection.endpointUrl)
     )
       return { provider, endpointUrl: null };
-    const endpoints = (
-      custom ? [custom.endpointUrl] : [selection.endpointUrl, attachment?.endpointUrl]
-    )
+    // Legacy selections have no custom binding. Compare their logical endpoint
+    // through the same API projection that writes the agent configuration.
+    const agentEndpoint =
+      provider === "compatible-anthropic-endpoint" &&
+      selection.endpointUrl &&
+      selection.preferredInferenceApi &&
+      selection.preferredInferenceApi !== "anthropic-messages"
+        ? getCompatibleAnthropicOpenAiSurfaceBaseUrl(selection.endpointUrl)
+        : selection.endpointUrl;
+    const endpoints = (custom ? [custom.endpointUrl] : [agentEndpoint, attachment?.endpointUrl])
       .filter((endpoint): endpoint is string => endpoint !== null && endpoint !== undefined)
       .map(hermesArchiveEndpoint);
     const endpointUrl = endpoints[0];

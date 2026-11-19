@@ -47,7 +47,12 @@ afterAll(() => {
 function writeSandboxRegistry(
   sandboxName: string,
   agent: "hermes" | null = null,
-  route: { provider: string; endpointUrl: string; attachmentEndpointUrl?: string } = {
+  route: {
+    provider: string;
+    endpointUrl: string;
+    attachmentEndpointUrl?: string;
+    preferredInferenceApi?: string | null;
+  } = {
     provider: "p",
     endpointUrl: "",
   },
@@ -63,7 +68,9 @@ function writeSandboxRegistry(
         : customNativeProvider({
             provider: route.provider,
             endpointUrl: route.attachmentEndpointUrl,
-            api: resolveAgentInferenceApi(agent, route.provider, "openai-completions"),
+            api:
+              route.preferredInferenceApi ??
+              resolveAgentInferenceApi(agent, route.provider, "openai-completions"),
             credentialEnv: CUSTOM_CREDENTIAL_ENVS[route.provider as keyof typeof CUSTOM_ENDPOINTS],
             allowedIps: ["8.8.8.8"],
           });
@@ -79,6 +86,9 @@ function writeSandboxRegistry(
           model: "m",
           provider: route.provider,
           ...(route.endpointUrl ? { endpointUrl: route.endpointUrl } : {}),
+          ...(route.preferredInferenceApi
+            ? { preferredInferenceApi: route.preferredInferenceApi }
+            : {}),
           ...(definition?.custom
             ? {
                 preferredInferenceApi: definition.custom.api,
@@ -483,9 +493,18 @@ describe("complete native-home machine authority", () => {
   );
 
   describe.each([
-    ...CUSTOM_PROVIDERS.map((provider) => ({ provider, baseUrl: CUSTOM_ENDPOINTS[provider] })),
-    { provider: "hermes-provider", baseUrl: "https://portal.example.test/v1" },
-  ])("$provider registered endpoint authorities", ({ provider, baseUrl }) => {
+    ...CUSTOM_PROVIDERS.map((provider) => ({
+      provider,
+      baseUrl: CUSTOM_ENDPOINTS[provider],
+      api: null as string | null,
+    })),
+    { provider: "hermes-provider", baseUrl: "https://portal.example.test/v1", api: null },
+    ...["openai-completions", "openai-responses"].map((api) => ({
+      provider: "compatible-anthropic-endpoint",
+      baseUrl: CUSTOM_ENDPOINTS["compatible-anthropic-endpoint"],
+      api,
+    })),
+  ])("$provider $api registered endpoint authorities", ({ provider, baseUrl, api }) => {
     it.each([
       {
         name: "conflicting attachment",
@@ -540,12 +559,12 @@ describe("complete native-home machine authority", () => {
         fs.mkdirSync(path.join(nativeRoot, ".hermes"), { recursive: true });
         const config: Record<string, unknown> = { settings: { max_turns: 12 } };
         const agentRoute =
-          attachment === undefined
+          attachment === undefined && api === null
             ? null
             : getSandboxInferenceConfig(
                 "m",
                 provider,
-                resolveAgentInferenceApi("hermes", provider, "openai-completions"),
+                api ?? resolveAgentInferenceApi("hermes", provider, "openai-completions"),
                 true,
                 baseUrl,
                 "hermes",
@@ -563,6 +582,7 @@ describe("complete native-home machine authority", () => {
           provider,
           endpointUrl: route,
           attachmentEndpointUrl: attachment,
+          preferredInferenceApi: api,
         });
         const backup = sandboxState.backupSandboxState("hermes-authorities", {
           nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
