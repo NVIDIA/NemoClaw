@@ -26,6 +26,8 @@ import {
   switchyardBoundaryProbe,
   SWITCHYARD_BOUNDARY_ANSWER,
   SWITCHYARD_BOUNDARY_CREDENTIAL_ENV,
+  SWITCHYARD_PEER_CREDENTIAL_ENV,
+  SWITCHYARD_BODY_CANARY,
 } from "../fixtures/hermes-switchyard-boundary.ts";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
 import {
@@ -920,10 +922,12 @@ test(
     }
 
     // Exercise packaged native Switchyard through OpenShell, not a loopback-only transport.
-    // This standard sandbox retains inference.local; hosted adaptive onboarding is a separate owner.
+    // Hosted adaptive onboarding is a separate owner; this phase uses native provider endpoints.
     progress.phase("validate Switchyard credential and egress boundaries");
     const boundary = await startSwitchyardBoundaryUpstream();
     const boundaryProvider = `sy-boundary-${process.pid}-${Date.now()}`;
+    const peerProvider = `${boundaryProvider}-peer`;
+    let peer: Awaited<ReturnType<typeof startSwitchyardBoundaryUpstream>> | undefined;
     const boundaryOptions = {
       artifactName: "switchyard-boundary",
       env: commandEnv(),
@@ -936,6 +940,8 @@ test(
     let detachBoundaryProvider: () => Promise<unknown> = () => Promise.resolve();
     let deleteBoundaryProvider: () => Promise<unknown> = () => Promise.resolve();
     let removeBoundaryPolicyDirectory: () => Promise<unknown> = () => Promise.resolve();
+    let detachPeerProvider: () => Promise<unknown> = () => Promise.resolve();
+    let deletePeerProvider: () => Promise<unknown> = () => Promise.resolve();
     const boundaryCommand = async (args: string[], name: string) => {
       const result = await sandbox.openshell(
         scopeGatewayOpenshellArgs(args, boundaryOptions.env.OPENSHELL_GATEWAY ?? "nemoclaw"),
@@ -948,13 +954,19 @@ test(
       expect(result.exitCode, resultText(result)).toBe(0);
       return result;
     };
-    const boundaryProbe = async (url: string, name: string) => {
-      const result = await sandbox.exec(SANDBOX_NAME, switchyardBoundaryProbe(url), {
+    const boundaryProbe = async (
+      url: string,
+      name: string,
+      options: Parameters<typeof switchyardBoundaryProbe>[1] = {},
+    ) => {
+      const result = await sandbox.exec(SANDBOX_NAME, switchyardBoundaryProbe(url, options), {
         ...boundaryOptions,
         artifactName: `switchyard-${name}`,
         timeoutMs: 155_000,
+        captureLimitBytes: 4096,
       });
       expect(result.exitCode, resultText(result)).toBe(0);
+      expect(resultText(result)).not.toContain(SWITCHYARD_BODY_CANARY);
       return JSON.parse(result.stdout.trim());
     };
     try {
@@ -1024,22 +1036,103 @@ test(
       const redirected = await boundaryProbe(boundary.baseUrl, "redirect");
       expect(redirected.failed).toBe(true);
       expect(redirected.passthrough).toBe(false);
-      expect(redirected.answer).toBeNull();
       expect(boundary.evidence.redirects).toBeGreaterThan(0);
       boundary.redirect(false);
       const denied = await boundaryProbe(boundary.forbiddenUrl, "denied-destination");
       expect(denied.failed).toBe(true);
       expect(denied.passthrough).toBe(false);
-      expect(denied.answer).toBeNull();
       const recovered = await boundaryProbe(boundary.baseUrl, "recovery");
       expect(recovered.failed).toBe(false);
       expect(recovered.passthrough).toBe(false);
       expect(recovered.answer).toBe(SWITCHYARD_BOUNDARY_ANSWER);
       expect(boundary.evidence.judge).toBe(2);
       expect(boundary.evidence.answer).toBe(2);
+
+      // A separately issued, attached credential must work only at its own bound endpoint.
+      peer = await startSwitchyardBoundaryUpstream();
+      boundaryOptions.redactionValues.push(peer.credential);
+      await createExtraGatewayProvider(host, peerProvider, {
+        artifactName: "switchyard-peer-provider-create",
+        purpose: "switchyard-peer",
+        env: { ...commandEnv(), [SWITCHYARD_PEER_CREDENTIAL_ENV]: peer.credential },
+      });
+      deletePeerProvider = () =>
+        boundaryCommand(["provider", "delete", peerProvider], "peer-provider-delete");
+      detachPeerProvider = () =>
+        boundaryCommand(
+          ["sandbox", "provider", "detach", SANDBOX_NAME, peerProvider],
+          "peer-detach",
+        );
+      await boundaryCommand(
+        ["sandbox", "provider", "attach", SANDBOX_NAME, peerProvider],
+        "peer-attach",
+      );
+      await applyFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
+        ...boundaryOptions,
+        providerName: peerProvider,
+        endpoint: { port: peer.port },
+        protocol: "rest",
+        rewrite: "request-body-credential-rewrite",
+        allowedBinaries: [pythonPath.stdout.trim()],
+        restMethods: ["POST"],
+      });
+      const peerApproved = await boundaryProbe(peer.baseUrl, "peer-approved", {
+        credentialEnv: SWITCHYARD_PEER_CREDENTIAL_ENV,
+      });
+      expect(peerApproved.failed).toBe(false);
+      expect(peerApproved.answer).toBe(SWITCHYARD_BOUNDARY_ANSWER);
+      const beforeWrongHandle = boundary.evidence.requests;
+      const wrongHandle = await boundaryProbe(boundary.baseUrl, "wrong-peer-handle", {
+        credentialEnv: SWITCHYARD_PEER_CREDENTIAL_ENV,
+      });
+      expect(wrongHandle.failed).toBe(true);
+      expect(boundary.evidence.requests).toBe(beforeWrongHandle);
+      const beforeWrongPrimary = peer.evidence.requests;
+      const wrongPrimary = await boundaryProbe(peer.baseUrl, "wrong-primary-handle");
+      expect(wrongPrimary.failed).toBe(true);
+      expect(peer.evidence.requests).toBe(beforeWrongPrimary);
+
+      // Routing can be unavailable or unmatched. OpenShell must enforce both continuations.
+      const unmanaged = await boundaryProbe(boundary.baseUrl, "unmanaged-approved", {
+        mode: "unmanaged",
+      });
+      expect(unmanaged.active).toBe(false);
+      expect(unmanaged.answer).toBe(SWITCHYARD_BOUNDARY_ANSWER);
+      const unmanagedBlocked = await boundaryProbe(boundary.forbiddenUrl, "unmanaged-forbidden", {
+        mode: "unmanaged",
+      });
+      expect(unmanagedBlocked.passthrough).toBe(true);
+      expect(unmanagedBlocked.callback_status).toBe(403);
+      const beforeWrongCallbackHandle = boundary.evidence.requests;
+      const wrongCallbackHandle = await boundaryProbe(boundary.baseUrl, "unmanaged-wrong-handle", {
+        mode: "unmanaged",
+        credentialEnv: SWITCHYARD_PEER_CREDENTIAL_ENV,
+      });
+      expect(wrongCallbackHandle.callback_status).toBe(403);
+      expect(boundary.evidence.requests).toBe(beforeWrongCallbackHandle);
+
+      const unmatched = await boundaryProbe(boundary.baseUrl, "unmatched-approved", {
+        mode: "unmatched",
+      });
+      expect(unmatched.passthrough).toBe(true);
+      expect(unmatched.answer).toBe(SWITCHYARD_BOUNDARY_ANSWER);
+      const unmatchedBlocked = await boundaryProbe(boundary.forbiddenUrl, "unmatched-forbidden", {
+        mode: "unmatched",
+      });
+      expect(unmatchedBlocked.passthrough).toBe(true);
+      expect(unmatchedBlocked.callback_status).toBe(403);
+      boundary.respondWithError(true);
+      const beforeProviderError = boundary.evidence.errors;
+      const providerFailed = await boundaryProbe(boundary.baseUrl, "provider-failure");
+      expect(providerFailed.failed).toBe(true);
+      expect(boundary.evidence.errors).toBe(beforeProviderError + 1);
+      boundary.respondWithError(false);
+      const afterFailure = await boundaryProbe(boundary.baseUrl, "provider-failure-recovery");
+      expect(afterFailure.answer).toBe(SWITCHYARD_BOUNDARY_ANSWER);
       expect(boundary.evidence.forbidden).toBe(0);
       expect(boundary.evidence.badAuth).toBe(0);
       expect(boundary.evidence.callerLeaked).toBe(false);
+      expect(peer.evidence.badAuth).toBe(0);
       const scan = await sandbox.exec(
         SANDBOX_NAME,
         hostedCredentialScanCommand(boundary.credential),
@@ -1056,6 +1149,21 @@ test(
       expect(observed.sampledFilesClean).toBe(true);
       // The scanner reports false when process inspection is unavailable; that is not isolation proof.
       expect(observed.processesClean).toBe(observed.processesAvailable);
+      const peerScan = await sandbox.exec(
+        SANDBOX_NAME,
+        hostedCredentialScanCommand(peer.credential),
+        {
+          ...boundaryOptions,
+          artifactName: "switchyard-peer-credential-scan",
+          timeoutMs: 30_000,
+        },
+      );
+      expect(peerScan.exitCode, resultText(peerScan)).toBe(0);
+      const peerObserved = JSON.parse(peerScan.stdout.trim());
+      expect(peerObserved.canaryDetected).toBe(true);
+      expect(peerObserved.environmentClean).toBe(true);
+      expect(peerObserved.sampledFilesClean).toBe(true);
+      expect(peerObserved.processesClean).toBe(peerObserved.processesAvailable);
     } finally {
       // Attempt every owned cleanup even if a preceding cleanup fails.
       const failures: unknown[] = [];
@@ -1063,9 +1171,12 @@ test(
         failures.push(error);
       };
       await restoreBoundaryPolicy().catch(recordCleanupFailure);
+      await detachPeerProvider().catch(recordCleanupFailure);
+      await deletePeerProvider().catch(recordCleanupFailure);
       await detachBoundaryProvider().catch(recordCleanupFailure);
       await deleteBoundaryProvider().catch(recordCleanupFailure);
       await boundary.close().catch(recordCleanupFailure);
+      await peer?.close().catch(recordCleanupFailure);
       await removeBoundaryPolicyDirectory().catch(recordCleanupFailure);
       expect(failures, "Switchyard boundary cleanup failed").toHaveLength(0);
     }

@@ -39,14 +39,24 @@ stored bot token. The rebuild still reads that token from its credential store.
 
 The `hermes-e2e` target also exercises the packaged native Switchyard plugin through real
 OpenShell credential injection and egress enforcement. A host-side HTTP fixture supplies a
-healthy provider and a separately listening forbidden destination. The test checks successful
-judge/answer routing, a forbidden redirect, direct destination denial, recovery, caller-auth
-non-disclosure, and a salted credential scan. It restores the fixture policy and removes its
-provider in `finally`. Only temporary child-process transport configuration changes; production
+healthy provider and a separately listening destination forbidden by the fixture's effective policy.
+Two attached providers have independent issued handles and endpoint bindings. Each handle works
+at its own endpoint; using it at the other healthy endpoint must fail before that peer sees a request.
+The test also checks successful judge/answer routing, a forbidden redirect, direct destination
+denial, provider failure and recovery, caller-auth non-disclosure, and salted scans for both credentials.
+Disabled managed execution and an unmatched model exercise the original-provider continuation
+against an allowed endpoint and the forbidden peer. These controlled callbacks qualify the native
+continuation and OpenShell boundary, not universal Hermes interception or the supervised adaptive journey.
+It restores the fixture policy and removes both providers in `finally`. Only temporary child-process transport configuration changes; production
 provider validation and protected startup files stay unchanged. This does not qualify hosted
 provider TLS, adaptive onboarding, or `inference.local` isolation in a routed sandbox. The
-standard Hermes sandbox still uses `inference.local`. Support tests own fixture responses,
-redacted evidence, and probe syntax; they are not live OpenShell evidence.
+standard Hermes sandbox can retain that legacy route on the current OpenShell 0.0.116 pin.
+This phase adds no shared-route control or new `inference.local` offering and imposes no policy tier restriction.
+Probe output contains only fixed answers, booleans, observed callback status and bounded failure categories.
+Relay 0.8.x can omit upstream details for unmatched routes; unobserved status stays unavailable rather
+than being reconstructed from provider bodies. Captured probe streams are capped at 4096 bytes.
+Support tests own fixture responses, redacted evidence, and probe syntax; they are not live OpenShell evidence.
+Judge-preflight tests distinguish a withheld probe from a sent request that failed and verify cleanup for both.
 
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
@@ -57,7 +67,8 @@ through the `switchyard` route and requires the classifier to select the efficie
 It then runs the shipped judge qualifier against native routing marks and separate
 judge/answer token accounting. The qualifier's deterministic tests own evidence rejection,
 cleanup, and both gateway launch gates. A separate routed-startup scenario installs the
-production-generated routing files at their root-owned production paths. It starts the real
+production-generated routing files through the production publisher, including its native
+request-free validation and lock. It passes the resulting expected-input fingerprint and starts the real
 entrypoint with resolver placeholders and local provider fixtures on a network-disabled
 container. It covers both a reused capable judge and an explicitly configured dedicated
 judge. Each mode requires the selected judge and answer calls before the gateway listens,
@@ -507,11 +518,40 @@ their own review. Historical upgrade fixtures keep their historical versions.
 Pi retains its separate candidate contract and qualification receipts below;
 selecting a shipped-agent catalog does not qualify Pi.
 
+### Hermes Custom-Route Rebuild
+
+The native NVIDIA branch of `live/hermes-inference-switch.test.ts` retains its native-local startup and model-switch probes.
+After the NVIDIA switch and both Discord-state rebuild checks, it resolves the same authenticated fixture's host alias from the sandbox and registers its literal IPv4 endpoint through `inference set`.
+The recorded NVIDIA attachment admits this transition to a custom hosted route.
+That endpoint uses the hosted `${COMPATIBLE_API_KEY}` reference; the host alias uses native-local credentials.
+Registration admits only the resolved fixture address through `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS`.
+After a baseline Hermes turn, the test rebuilds without a host `COMPATIBLE_API_KEY` and makes one native Hermes API request.
+Both turns must return `PONG`, and the endpoint must record each selected-model request with successful authentication.
+No route or credential rewrite occurs between rebuild and the first replacement request.
+
+The endpoint fixture owns the synthetic credential; OpenShell retains the provider binding across replacement.
+The test does not contact an additional hosted provider.
+Archive and route source tests own reference preservation and rejection.
+This live check owns the replacement process's use of the archived custom reference.
+The existing `hermes-inference-switch` selector runs it; no new target or matrix entry is added.
+In the native NVIDIA branch, each of the two native-local probes and two custom hosted probes makes one attempt.
+The custom sequence permits 30 seconds for address resolution, three minutes for registration, five minutes for rebuild, and 150 seconds per turn.
+Those command limits total 810 seconds; they do not establish a worst-case bound for the whole test.
+The retained NVIDIA/Discord phase permits two 15-minute rebuilds, two six-minute status checks, two three-minute inference probes, three minutes for enrollment, and four 30-second state probes, totaling 53 minutes of subprocess limits.
+The damaged-state portion accounts for 25.5 minutes of those limits.
+
+For planning, [main run 44424076043](https://github.com/NVIDIA/NemoClaw/actions/runs/44424076043/job/135225804921) at `4dbd3349dcfba54b9d1a09f77d382678680f5e2c` ran the retained scenario and both NVIDIA rebuilds with the same scenario, helper, and catalogue files as `694957f29ddb0623dabb620afea7c863da31a4f9`.
+Its phase receipt records 547.155 seconds including cleanup; the complete job took 620 seconds, including setup and artifact handling.
+Adding the full custom allowance to those observations gives 22 minutes 37.155 seconds for the scenario and 23 minutes 50 seconds for the job.
+No retry savings are subtracted from the measured run.
+The 75-minute test and 85-minute workflow deadlines are unchanged.
+These observations support planning; the expanded candidate still needs its own passing phase, cleanup, and workflow receipts after publication.
+
 ### Hermes NVIDIA Stripped-State Recovery
 
 The native NVIDIA branch of `live/hermes-inference-switch.test.ts` owns the real registered rebuild boundary for #14094.
 Its catalogue entry provides a 75-minute test budget and an 85-minute workflow budget.
-The extra test time covers the second rebuild and its probes; ten minutes remain for workflow setup, diagnostics, and cleanup.
+The extra test time covers the damaged-state rebuild and its probes; ten minutes remain for workflow setup, diagnostics, and cleanup.
 It keeps the healthy Discord-state rebuild, then tests a separate damaged-state rebuild in the same disposable sandbox.
 The missing coverage dimension is recovery when all three managed NVIDIA credential fields already contain `[STRIPPED_BY_MIGRATION]`.
 

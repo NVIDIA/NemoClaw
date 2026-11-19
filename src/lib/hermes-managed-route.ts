@@ -283,9 +283,7 @@ export function hermesManagedRouteReference(
   if (typeof baseUrl !== "string") return null;
   if (registered !== undefined && !registered.endpointUrls?.includes(baseUrl)) return null;
   try {
-    // The function that writes the reference decides whether this provider and
-    // endpoint have one: an unknown provider, a loopback endpoint and a
-    // shared-route endpoint do not.
+    // Reuse the writer's provider and endpoint restrictions.
     const hosted = nativeHostedAgentConfig(provider, baseUrl);
     return hosted ? { endpoint: baseUrl, template: `\${${hosted.credentialEnv}}` } : null;
   } catch {

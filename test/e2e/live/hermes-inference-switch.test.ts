@@ -16,7 +16,7 @@ import {
   env,
   envHash,
   expectAuthenticatedBaselineInventoryRequest,
-  expectNativeLocalHermesTurn,
+  expectHermesEndpointTurn,
   expectAuthenticatedProxyResolutionRequests,
   expectOpenAiProvider,
   hasAuthenticatedProxyResolutionRequest,
@@ -38,6 +38,7 @@ import {
   registryState,
   runHermesCliPongWithRetry,
   runHermesNvidiaDiscordRebuild,
+  rebuildHermesCustomBaseline,
   runHermesInferenceSetWithRetry,
   runHermesPongWithRetry,
   SANDBOX_NAME,
@@ -79,6 +80,8 @@ test(
         "run Hermes CLI adapter forms against switched provider",
         "reapply Hermes inference after CLI and verify integrity",
         "verify NVIDIA inference after Discord state rebuild",
+        "register and exercise the custom Hermes hosted route",
+        "rebuild the custom Hermes route without a host credential",
         "prove split provider/model credential resolution",
       ],
     },
@@ -189,10 +192,11 @@ test(
     });
     progress.phase("prove native local Hermes startup and model switch");
     mockBaseline &&
-      (await expectNativeLocalHermesTurn({
+      (await expectHermesEndpointTurn({
         sandbox,
         endpoint: mockBaseline,
         model: MOCK_BASELINE_MODEL,
+        attempts: publicApiKey ? 1 : undefined,
         artifactName: "hermes-native-local-startup",
         redactionValues,
         onEvidence: async (evidence) => {
@@ -225,9 +229,10 @@ test(
       ));
     localSwitch && expect(localSwitch.exitCode, resultText(localSwitch)).toBe(0);
     mockBaseline &&
-      (await expectNativeLocalHermesTurn({
+      (await expectHermesEndpointTurn({
         sandbox,
         endpoint: mockBaseline,
+        attempts: publicApiKey ? 1 : undefined,
         model: localModel,
         artifactName: "hermes-native-local-after-model-switch",
         redactionValues,
@@ -529,6 +534,19 @@ test(
       publicApiKey,
       redactionValues,
     });
+
+    mockBaseline &&
+      publicApiKey &&
+      (await rebuildHermesCustomBaseline({
+        host,
+        sandbox,
+        endpoint: mockBaseline,
+        apiKey,
+        model: localModel,
+        redactionValues,
+        progress,
+        artifacts,
+      }));
 
     progress.phase("prove split provider/model credential resolution");
     const { model: proxyResolutionModel, requestOffset } = await prepareProxyResolutionRoute({

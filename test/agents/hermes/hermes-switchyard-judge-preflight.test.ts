@@ -43,6 +43,7 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 case = json.loads(sys.argv[2])
 if case.get("configuration_failure"):
+    module.preflight = lambda: None
     def fail_read(path): raise ValueError("sk-test-private-configuration")
     module.read_configuration = fail_read
     print(json.dumps({"result": module.main()}))
@@ -154,9 +155,9 @@ describe("Switchyard judge startup qualification", () => {
           [
             "-c",
             [
-              "set -euo pipefail",
+              "set -euo pipefail; HERMES_SWITCHYARD_LOCK_FD=9",
               `PROBES=${bashPrintfQ(probes)}; LAUNCHES=${bashPrintfQ(launches)}`,
-              "HERMES_DIR=/unused; _HERMES_PYTHON=judge_python; HERMES_RESTART_SEALED=1",
+              "HERMES_SWITCHYARD_LOCK_FD=9; HERMES_DIR=/unused; _HERMES_PYTHON=judge_python; HERMES_RESTART_SEALED=1",
               "HERMES=fake_gateway; HERMES_SANDBOX_LAZY_INSTALL_TARGET=/unused; INTERNAL_PORT=3000",
               "STEP_DOWN_PREFIX_GATEWAY=(env); _HERMES_SWITCHYARD_JUDGE_QUALIFIED=0",
               `HERMES_GATEWAY_RECOVERY_WAITING_FILE=${bashPrintfQ(path.join(directory, "absent-marker"))}`,
@@ -192,8 +193,8 @@ describe("Switchyard judge startup qualification", () => {
       [
         "-c",
         [
-          "set -euo pipefail",
-          "HERMES_DIR=/unused; _HERMES_PYTHON=judge_python",
+          "set -euo pipefail; HERMES_SWITCHYARD_LOCK_FD=9",
+          "HERMES_SWITCHYARD_LOCK_FD=9; HERMES_DIR=/unused; _HERMES_PYTHON=judge_python",
           "id() { printf 1000; }",
           // The file-presence boundary is enabled without creating system routing files.
           '[() { if [[ "$3" == /usr/local/share/nemoclaw/hermes-* ]]; then return 1; fi; builtin [ "$@"; }',
@@ -278,6 +279,7 @@ describe("Switchyard judge startup qualification", () => {
   ])("keeps routing stopped after %s evidence and cleans the probe (#13863)", (failure) => {
     expect(runFixture({ failure })).toMatchObject({
       result: "rejected",
+      requests: failure === "disabled" ? 0 : 1,
       shutdown: 1,
       deregister: 1,
       subscriber_removed: true,
@@ -306,7 +308,7 @@ describe("Switchyard judge startup qualification", () => {
           [
             "-c",
             [
-              "set -euo pipefail",
+              "set -euo pipefail; HERMES_SWITCHYARD_LOCK_FD=9",
               "HERMES_RESTART_SEALED=1",
               `HERMES_GATEWAY_RECOVERY_WAITING_FILE=${JSON.stringify(path.join(directory, "absent-marker"))}`,
               "cleanup_stale_hermes_gateway_runtime() { :; }",

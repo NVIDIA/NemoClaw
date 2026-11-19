@@ -139,13 +139,25 @@ describe("Hermes Discord rebuild evidence", () => {
     expect(exec.mock.calls[1]![1]).toContain("-z");
   });
 
-  it("reserves the damaged rebuild budget and workflow cleanup time", async () => {
+  it("retains the captured NVIDIA command limits and damaged-state reservation", async () => {
     const { command, exec } = await runPhase();
     const target = catalogueTarget("hermes-inference-switch");
     vi.stubEnv("NEMOCLAW_TEST_TIMEOUT", target.environment.NEMOCLAW_TEST_TIMEOUT ?? "");
     const timeout = testTimeout(45 * 60_000);
     const damagedCommands = [...command.mock.calls.slice(3), ...exec.mock.calls.slice(2)];
     const damagedTimeout = damagedCommands.reduce((total, call) => total + call[2]!.timeoutMs!, 0);
+    const phaseTimeout = [...command.mock.calls, ...exec.mock.calls].reduce(
+      (total, call) => total + call[2]!.timeoutMs!,
+      0,
+    );
+    expect([command.mock.calls[1]![2]!.timeoutMs, command.mock.calls[3]![2]!.timeoutMs]).toEqual([
+      15 * 60_000,
+      15 * 60_000,
+    ]);
+    expect(damagedTimeout).toBe(25.5 * 60_000);
+    expect(phaseTimeout).toBe(53 * 60_000);
+    // This inherited reservation includes the healthy rebuild and other original
+    // phases. It is not a sum of every retained subprocess's failure limit.
     expect(timeout).toBeGreaterThanOrEqual(45 * 60_000 + damagedTimeout);
     expect(target.timeoutMinutes * 60_000 - timeout).toBeGreaterThanOrEqual(10 * 60_000);
   });

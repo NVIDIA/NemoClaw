@@ -3,12 +3,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
-import type {
-  FakeOpenAiCompatibleRequest,
-  FakeOpenAiCompatibleServer,
-} from "../fixtures/fake-openai-compatible.ts";
+import type { FakeOpenAiCompatibleRequest } from "../fixtures/fake-openai-compatible.ts";
 import { runManagedActivationAgentTurn } from "../live/managed-image-activation-e2e-helpers.ts";
-import { expectNativeLocalHermesTurn } from "../live/hermes-inference-switch-helpers.ts";
+import { expectHermesEndpointTurn } from "../live/hermes-inference-switch-helpers.ts";
 
 const authenticated = {
   auth: "ok",
@@ -41,7 +38,7 @@ function evidenceFixture(
     onEvidence,
     options: {
       sandbox: { execShell } as unknown as SandboxClient,
-      endpoint: { requests } as unknown as FakeOpenAiCompatibleServer,
+      endpoint: { requests },
       model: "selected-model",
       artifactName: "native-local-turn",
       redactionValues: [],
@@ -53,7 +50,7 @@ function evidenceFixture(
 describe("Hermes native local live evidence", () => {
   it("requires a new authenticated upstream request and matching Hermes response", async () => {
     const fixture = evidenceFixture([authenticated]);
-    await expect(expectNativeLocalHermesTurn(fixture.options)).resolves.toBeUndefined();
+    await expect(expectHermesEndpointTurn(fixture.options)).resolves.toBeUndefined();
     expect(fixture.execShell).toHaveBeenCalledOnce();
     expect(fixture.onEvidence).toHaveBeenCalled();
   });
@@ -65,13 +62,13 @@ describe("Hermes native local live evidence", () => {
     { name: "inventory only", requests: [{ ...authenticated, method: "GET", path: "/v1/models" }] },
   ])("rejects $name despite a successful Hermes response", async ({ requests }) => {
     const fixture = evidenceFixture(requests);
-    await expect(expectNativeLocalHermesTurn(fixture.options)).rejects.toThrow();
+    await expect(expectHermesEndpointTurn(fixture.options)).rejects.toThrow();
     expect(fixture.execShell).toHaveBeenCalledOnce();
   });
 
   it("rejects a stale Hermes response even when the selected upstream receives a request", async () => {
     const fixture = evidenceFixture([authenticated], "previous-model");
-    await expect(expectNativeLocalHermesTurn(fixture.options)).rejects.toThrow();
+    await expect(expectHermesEndpointTurn(fixture.options)).rejects.toThrow();
     expect(fixture.execShell).toHaveBeenCalledOnce();
   });
 });

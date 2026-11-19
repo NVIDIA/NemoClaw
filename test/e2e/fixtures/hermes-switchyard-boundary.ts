@@ -13,6 +13,8 @@ import {
 export const SWITCHYARD_BOUNDARY_ANSWER = "switchyard-boundary-ok";
 export const SWITCHYARD_CALLER_CANARY = "switchyard-caller-must-not-leave-sandbox";
 export const SWITCHYARD_BOUNDARY_CREDENTIAL_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
+export const SWITCHYARD_PEER_CREDENTIAL_ENV = "NEMOCLAW_E2E_SWITCHYARD_PEER_TOKEN";
+export const SWITCHYARD_BODY_CANARY = "switchyard-provider-body-must-not-enter-diagnostics";
 
 async function listen(server: Server, host: string): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -35,20 +37,24 @@ function close(server: Server): Promise<void> {
 export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
   const credential = `sy-boundary-${randomUUID()}`;
   const evidence = {
+    requests: 0,
     judge: 0,
     answer: 0,
     redirects: 0,
+    errors: 0,
     forbidden: 0,
     badAuth: 0,
     callerLeaked: false,
   };
   let redirect = false;
+  let fail = false;
   const forbidden = createServer((_request, response) => {
     evidence.forbidden++;
     response.writeHead(200).end(SWITCHYARD_BOUNDARY_ANSWER);
   });
   const forbiddenPort = await listen(forbidden, bindHost);
   const upstream = createServer(async (request, response) => {
+    evidence.requests++;
     // Retain only counts/booleans, never headers, bodies, or credentials in evidence.
     let text = "";
     try {
@@ -80,6 +86,13 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
           location: `http://host.openshell.internal:${forbiddenPort}/v1/chat/completions`,
         })
         .end();
+      return;
+    }
+    if (fail) {
+      evidence.errors++;
+      response
+        .writeHead(500, { "content-type": "application/json" })
+        .end(JSON.stringify({ error: { message: `${SWITCHYARD_BODY_CANARY}:${credential}` } }));
       return;
     }
     let body: { model?: string; response_format?: unknown };
@@ -123,6 +136,9 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
       redirect: (enabled: boolean) => {
         redirect = enabled;
       },
+      respondWithError: (enabled: boolean) => {
+        fail = enabled;
+      },
       close: () => Promise.all([close(upstream), close(forbidden)]),
     };
   } catch (error) {
@@ -132,7 +148,13 @@ export async function startSwitchyardBoundaryUpstream(bindHost = "0.0.0.0") {
 }
 
 /** Localize only transport in temporary files; never modify protected startup configuration. */
-export function switchyardBoundaryProbe(baseUrl: string): string[] {
+export function switchyardBoundaryProbe(
+  baseUrl: string,
+  options: {
+    mode?: "unmanaged" | "unmatched";
+    credentialEnv?: typeof SWITCHYARD_PEER_CREDENTIAL_ENV;
+  } = {},
+): string[] {
   const intent = createHermesSwitchyardRoutingIntent({
     efficient: { provider: "nvidia-prod", model: "fixture-efficient" },
     capable: { provider: "openai-api", model: "fixture-capable" },
@@ -146,6 +168,9 @@ export function switchyardBoundaryProbe(baseUrl: string): string[] {
       deployment,
       plugins: routing.relayPluginsToml,
       state: routing.relayPluginStateJson,
+      mode: options.mode ?? "matched",
+      credentialEnv: options.credentialEnv ?? SWITCHYARD_BOUNDARY_CREDENTIAL_ENV,
+      baseUrl,
     }),
   ).toString("base64");
   return [
@@ -153,7 +178,8 @@ export function switchyardBoundaryProbe(baseUrl: string): string[] {
     "-I",
     "-c",
     String.raw`
-import asyncio, base64, json, os, signal, sys
+import asyncio, base64, json, os, signal, ssl, sys
+import urllib.error, urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import nemo_relay
@@ -167,35 +193,79 @@ with TemporaryDirectory(prefix='switchyard-boundary-') as directory:
     deployment = root / 'deployment.toml'
     deployment.write_text(payload['deployment'])
     config = root / 'plugins.toml'
-    config.write_text(payload['plugins'].replace('${HERMES_SWITCHYARD_DEPLOYMENT_FILE}', str(deployment)))
+    config.write_text('' if payload['mode'] == 'unmanaged' else
+        payload['plugins'].replace('${HERMES_SWITCHYARD_DEPLOYMENT_FILE}', str(deployment)))
     (root / '.dynamic-plugins.json').write_text(payload['state'])
-    os.environ[relay_runtime.RELAY_PLUGINS_CONFIG_ENV] = str(config)
+    if payload['mode'] == 'unmanaged':
+        # Hermes treats even an empty selected config as activation consent.
+        os.environ.pop(relay_runtime.RELAY_PLUGINS_CONFIG_ENV, None)
+    else:
+        os.environ[relay_runtime.RELAY_PLUGINS_CONFIG_ENV] = str(config)
     for key in ('NVIDIA_INFERENCE_API_KEY', 'OPENAI_API_KEY'):
-        os.environ[key] = os.environ['${SWITCHYARD_BOUNDARY_CREDENTIAL_ENV}']
+        os.environ[key] = os.environ[payload['credentialEnv']]
     runtime = relay_runtime.RelayRuntime()
-    outcome = {'active': False, 'failed': False, 'passthrough': False, 'answer': None}
+    outcome = {'active': False, 'failed': False, 'passthrough': False, 'answer': None,
+        'callback_status': None, 'failure_category': None}
     try:
         outcome['active'] = runtime.managed_execution_enabled()
-        if not outcome['active']:
+        if not outcome['active'] and payload['mode'] != 'unmanaged':
             raise RuntimeError('Native Switchyard did not activate')
-        async def reject_passthrough(_request):
+        async def provider_callback(_request):
             outcome['passthrough'] = True
-            raise RuntimeError('Unexpected provider passthrough')
+            if payload['mode'] == 'matched':
+                raise RuntimeError('Unexpected provider passthrough')
+            # Exercise the original-provider continuation independently of managed routing.
+            request = urllib.request.Request(payload['baseUrl'] + '/chat/completions',
+                data=json.dumps({'model': 'fixture-efficient',
+                    'messages': [{'role': 'user', 'content': 'Say OK.'}]}).encode(),
+                headers={'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + os.environ[payload['credentialEnv']]})
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            try:
+                with urllib.request.urlopen(request, timeout=20, context=context) as response:
+                    outcome['callback_status'] = response.status
+                    return json.loads(response.read(65537))
+            except urllib.error.HTTPError as error:
+                outcome['callback_status'] = error.code
+                error.close()
+                outcome['failure_category'] = 'http_error'
+                raise RuntimeError('Provider callback failed') from None
+            except urllib.error.URLError as error:
+                if 'tunnel connection failed: 403' in str(error.reason).lower():
+                    outcome['callback_status'] = 403
+                    outcome['failure_category'] = 'proxy_connect_denied'
+                else:
+                    outcome['failure_category'] = 'transport_error'
+                raise RuntimeError('Provider callback failed') from None
         async def execute():
+            if not outcome['active']:
+                return await provider_callback(None)
             return await nemo_relay.llm.execute('openai.chat_completions', nemo_relay.LLMRequest({
                 'authorization': 'Bearer ${SWITCHYARD_CALLER_CANARY}',
                 'x-api-key': '${SWITCHYARD_CALLER_CANARY}',
                 'x-switchyard-session-id': 'boundary',
-            }, {'model': 'switchyard', 'messages': [{'role': 'user', 'content': 'Say OK.'}]}), reject_passthrough)
+            }, {'model': 'unmatched-boundary' if payload['mode'] == 'unmatched' else 'switchyard',
+                'messages': [{'role': 'user', 'content': 'Say OK.'}]}), provider_callback)
         try:
             result = asyncio.run(execute())
-            outcome['answer'] = result.get('choices', [{}])[0].get('message', {}).get('content')
+            answer = result.get('choices', [{}])[0].get('message', {}).get('content')
+            outcome['answer'] = '${SWITCHYARD_BOUNDARY_ANSWER}' if answer == '${SWITCHYARD_BOUNDARY_ANSWER}' else None
             outcome['failed'] = bool(result.get('error'))
+            if outcome['failed'] and outcome['failure_category'] is None:
+                outcome['failure_category'] = 'upstream_details_unavailable'
         except Exception:
             # Do not print upstream errors: they might contain credentials on a regression.
             outcome['failed'] = True
+            if outcome['failure_category'] is None:
+                # Relay 0.8.x may omit upstream details for unmatched routes.
+                outcome['failure_category'] = 'upstream_details_unavailable'
     finally:
-        runtime.shutdown()
+        try:
+            runtime.shutdown()
+        except Exception:
+            raise RuntimeError('Native Switchyard shutdown failed') from None
     print(json.dumps(outcome))
 signal.alarm(0)
 `,

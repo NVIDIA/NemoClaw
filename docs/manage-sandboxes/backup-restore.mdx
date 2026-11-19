@@ -60,7 +60,9 @@ The archived provider must be the provider registered for the sandbox, and the r
 
 - NVIDIA Endpoints, OpenAI, Anthropic, Gemini, and OpenRouter use their fixed endpoint and credential variable. For NVIDIA Endpoints the reference is `${NVIDIA_INFERENCE_API_KEY}` and the endpoint is `https://integrate.api.nvidia.com/v1`.
 - Hermes Provider uses `${OPENAI_API_KEY}`. The endpoint is its default endpoint, or the endpoint returned by authenticated login when that is the endpoint registered for the sandbox.
-- Other OpenAI-compatible and Anthropic-compatible endpoints use `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}`. The endpoint must be the one registered for the sandbox, and it must not be a local or `inference.local` address.
+- Other OpenAI-compatible and Anthropic-compatible endpoints use `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}`.
+  The endpoint must be the one registered for the sandbox.
+  It must not use `localhost`, `127.0.0.1`, `[::1]`, or `inference.local`.
 
 The route also needs matching model and provider metadata, and the reference must appear in all three managed fields:
 

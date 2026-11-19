@@ -2,14 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  SwitchyardProviderBindingError,
-  validateSwitchyardBindingState,
-} from "../../../hermes-switchyard-routing";
-import { verifySwitchyardProviderBindings } from "../../../onboard/switchyard/bindings";
-import {
-  decodeManagedStartupProfile,
-  ManagedStartupProfileError,
-} from "../../../onboard/managed-startup/profile";
+  observeSwitchyardPreflight,
+  switchyardStateForEntry,
+} from "../../../onboard/switchyard/preflight";
 import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
 
 import { normalizeNativeLocalProviderAttachment } from "../../../inference/native-local/contract";
@@ -20,7 +15,6 @@ import {
 } from "../inference-route-health";
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
-import { createCliOpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
 import {
   OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
@@ -84,6 +78,7 @@ export type LaunchReadinessObservationStage =
 
 export interface LaunchReadinessHealthDeps {
   switchyardProviderAdapter?: OpenShellProviderAdapter;
+  switchyardPreflight?: typeof observeSwitchyardPreflight;
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
   capture?: LaunchReadinessBoundCapture;
@@ -141,10 +136,10 @@ export function createBoundLaunchReadinessDeps(
         timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
       }),
     inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
-    switchyardProviderAdapter: createCliOpenShellProviderAdapter({
-      run: (args, options) => capture(args, options),
-      defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    }),
+    switchyardPreflight: (entry, sandboxName) =>
+      observeSwitchyardPreflight(entry, sandboxName, {
+        providerCommand: (args, options) => capture(args, options),
+      }),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
       isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, {
@@ -277,6 +272,14 @@ export function hasRecordedNativeNvidiaAttachment(entry: SandboxEntry): boolean 
   );
 }
 
+function launchSwitchyardState(entry: SandboxEntry) {
+  try {
+    return switchyardStateForEntry(entry);
+  } catch {
+    throw new LaunchReadinessObservationError("config");
+  }
+}
+
 export async function requireNativeInferenceHealth(input: {
   sandboxName: string;
   gatewayName: string;
@@ -284,59 +287,17 @@ export async function requireNativeInferenceHealth(input: {
   entry: SandboxEntry;
   deps: LaunchReadinessHealthDeps;
   allowTransientNvidiaInvocation?: boolean;
+  switchyardBaseline?: string;
 }): Promise<boolean> {
-  let profileSwitchyard = null;
-  if (
-    (input.agentName ?? input.entry.agent) === "hermes" &&
-    input.entry.workload?.kind === "managed-image"
-  ) {
-    let config: ReturnType<typeof decodeManagedStartupProfile>["agentConfig"];
-    try {
-      config = decodeManagedStartupProfile(input.entry.workload.encodedProfile).agentConfig;
-    } catch (error) {
-      if (
-        error instanceof ManagedStartupProfileError ||
-        error instanceof SwitchyardProviderBindingError
-      )
-        throw new LaunchReadinessObservationError("config");
-      throw error;
+  if (launchSwitchyardState(input.entry)) {
+    if (input.entry.gatewayName !== input.gatewayName) throw new LaunchReadinessEvidenceError();
+    const observe = input.deps.switchyardPreflight ?? observeSwitchyardPreflight;
+    const deps = { providerAdapter: input.deps.switchyardProviderAdapter };
+    const before =
+      input.switchyardBaseline ?? (await observe(input.entry, input.sandboxName, deps));
+    if ((await observe(input.entry, input.sandboxName, deps)) !== before) {
+      throw new LaunchReadinessObservationError("identity");
     }
-    if (config.agent === "hermes" && config.switchyardRouting)
-      profileSwitchyard = {
-        routing: config.switchyardRouting,
-        bindings: config.switchyardBindings,
-      };
-  }
-  if (input.entry.hermesSwitchyard || profileSwitchyard) {
-    let state: ReturnType<typeof validateSwitchyardBindingState>;
-    try {
-      state = validateSwitchyardBindingState(input.entry.hermesSwitchyard);
-    } catch (error) {
-      if (error instanceof SwitchyardProviderBindingError)
-        throw new LaunchReadinessObservationError("config");
-      throw error;
-    }
-    if (
-      (input.agentName ?? input.entry.agent) !== "hermes" ||
-      input.entry.gatewayName !== input.gatewayName ||
-      input.entry.provider !== state.routing.capable.provider ||
-      input.entry.model !== state.routing.capable.model ||
-      !profileSwitchyard ||
-      JSON.stringify(profileSwitchyard) !== JSON.stringify(state)
-    )
-      throw new LaunchReadinessEvidenceError();
-    await verifySwitchyardProviderBindings({
-      routing: state.routing,
-      expected: state.bindings,
-      sandboxName: input.sandboxName,
-      target: { kind: "named", gatewayName: input.gatewayName },
-      adapter:
-        input.deps.switchyardProviderAdapter ??
-        createCliOpenShellProviderAdapter({ defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS }),
-      providerNames: Object.fromEntries(
-        state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
-      ),
-    });
     return true;
   }
   if (input.entry.nativeLocalProviderAttachment !== undefined) {
@@ -446,6 +407,12 @@ export async function requireLaunchSemanticHealth(
   inferenceConfigured: boolean,
   deps: LaunchReadinessHealthDeps,
 ): Promise<void> {
+  const switchyardBaseline = launchSwitchyardState(entry)
+    ? await (deps.switchyardPreflight ?? observeSwitchyardPreflight)(entry, sandboxName, {
+        providerAdapter: deps.switchyardProviderAdapter,
+      })
+    : undefined;
+
   if (agentName === "langchain-deepagents-code" && !inferenceConfigured) {
     recordLaunchReadinessObservationFailure(deps, "inference-route");
     throw new LaunchReadinessEvidenceError();
@@ -533,6 +500,7 @@ export async function requireLaunchSemanticHealth(
           agentName,
           entry,
           deps,
+          switchyardBaseline,
         });
         if (native) return;
         fallbackToGeneric = true;

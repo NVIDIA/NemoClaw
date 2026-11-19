@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
+import { isIP, type AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -446,14 +446,15 @@ export async function runHermesPongWithRetry(
   throw new Error("Hermes live probe completed without an attempt result.");
 }
 
-/** Real Hermes gateway requests must cross the attached local provider boundary. */
-export async function expectNativeLocalHermesTurn(options: {
+/** Real Hermes gateway requests must reach the authenticated configured endpoint. */
+export async function expectHermesEndpointTurn(options: {
   sandbox: SandboxClient;
-  endpoint: FakeOpenAiCompatibleServer;
+  endpoint: Pick<FakeOpenAiCompatibleServer, "requests">;
   model: string;
   artifactName: string;
   redactionValues: string[];
   onEvidence: NonNullable<HermesProbeRetryOptions["onEvidence"]>;
+  attempts?: number;
 }): Promise<void> {
   const offset = options.endpoint.requests().length;
   const payload = JSON.stringify({
@@ -463,6 +464,7 @@ export async function expectNativeLocalHermesTurn(options: {
   });
   await runHermesPongWithRetry({
     expectedModel: options.model,
+    attempts: options.attempts,
     onEvidence: options.onEvidence,
     run: (attempt) =>
       options.sandbox.execShell(
@@ -916,6 +918,102 @@ export function sandboxInferenceCommand(payload: string): string {
 
 export function hermesApiCommand(payload: string): string {
   return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; curl -sS --fail-with-body --write-out '%{stderr}\\n__NEMOCLAW_HTTP_STATUS__=%{http_code}\\n' --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${quotePayload(payload)}'`;
+}
+
+/** Prove the archived hosted reference authenticates the first replacement turn. */
+export async function rebuildHermesCustomBaseline({
+  host,
+  sandbox,
+  endpoint,
+  apiKey,
+  model,
+  redactionValues,
+  progress,
+  artifacts,
+}: {
+  host: Pick<HostCliClient, "command">;
+  sandbox: SandboxClient;
+  endpoint: Pick<FakeOpenAiCompatibleServer, "baseUrl" | "requests">;
+  apiKey: string;
+  model: string;
+  redactionValues: string[];
+  progress: Pick<TestProgress, "phase">;
+  artifacts: InferenceSwitchRetryArtifactSink;
+}): Promise<void> {
+  progress.phase("register and exercise the custom Hermes hosted route");
+  const resolved = await sandbox.exec(
+    SANDBOX_NAME,
+    ["getent", "ahostsv4", "host.openshell.internal"],
+    { artifactName: "hermes-custom-endpoint-address", env: env(), timeoutMs: 30_000 },
+  );
+  expectExitZero(resolved, "resolve the authenticated endpoint from the sandbox");
+  const address = resolved.stdout.trim().split(/\s+/u)[0] ?? "";
+  expect(isIP(address), "the custom hosted fixture requires a literal IPv4 endpoint").toBe(4);
+  const endpointUrl = new URL(endpoint.baseUrl);
+  // The host alias selects native-local credentials; literal IPv4 selects the
+  // registered hosted COMPATIBLE_API_KEY reference that this rebuild must retain.
+  endpointUrl.hostname = address;
+  const configured = await host.command(
+    "node",
+    [
+      CLI,
+      "inference",
+      "set",
+      "--sandbox",
+      SANDBOX_NAME,
+      "--provider",
+      "compatible-endpoint",
+      "--model",
+      model,
+      "--endpoint-url",
+      endpointUrl.toString(),
+      "--credential-env",
+      "COMPATIBLE_API_KEY",
+      "--inference-api",
+      "openai-completions",
+      "--no-verify",
+    ],
+    {
+      artifactName: "hermes-custom-hosted-route",
+      env: env(undefined, {
+        COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: address,
+      }),
+      redactionValues,
+      timeoutMs: 180_000,
+    },
+  );
+  expectExitZero(configured, "register the custom hosted route before rebuild");
+  await expectHermesEndpointTurn({
+    sandbox,
+    endpoint,
+    model,
+    redactionValues,
+    attempts: 1,
+    artifactName: "hermes-custom-before-rebuild",
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson("retry/hermes-custom-before-rebuild.json", evidence);
+    },
+  });
+  progress.phase("rebuild the custom Hermes route without a host credential");
+  const rebuilt = await host.command("node", [CLI, SANDBOX_NAME, "rebuild", "--yes"], {
+    artifactName: "hermes-custom-baseline-rebuild",
+    env: env(),
+    redactionValues,
+    timeoutMs: 5 * 60_000,
+  });
+  expectExitZero(rebuilt, "rebuild Hermes custom route without a host credential");
+  await expectHermesEndpointTurn({
+    sandbox,
+    endpoint,
+    model,
+    redactionValues,
+    attempts: 1,
+    artifactName: "hermes-custom-after-rebuild",
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson("retry/hermes-custom-after-rebuild.json", evidence);
+    },
+  });
 }
 
 /** Prove that a native NVIDIA rebuild retains Discord settings and agent inference. */
