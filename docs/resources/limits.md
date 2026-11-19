@@ -41,6 +41,7 @@ Accepted platform and model declarations are not a tested matrix; verify the exa
 | Managed Ollama with OpenClaw on DGX Station | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | [Nemotron on an AMD64 GPU host](../agents-inference/models.md#configure-nemotron-on-an-amd64-gpu-host): its runtime image and GPU inference | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, docs, issue |
 | A deployment from a Windows client on Docker Desktop or a Podman machine, with a managed or an external gateway: no Windows host has run one, and CI tests the Windows client against fake engines on named pipes | [#14639](https://github.com/NVIDIA/NemoClaw/issues/14639) | [`5223fdc`][v1-5223fdc]: code, docs, issue |
+| A managed gateway from a macOS client on Colima, Rancher Desktop, or a Podman machine: no macOS host has run one; the gateway binds `/var/run/docker.sock` in the engine's VM, from each engine's documentation. Docker Desktop 4.94 on macOS 26 created a sandbox through that socket in [#14643](https://github.com/NVIDIA/NemoClaw/pull/14643). An engine at another socket, such as a Lima instance's, binds the client's socket path, which its VM may not serve | [#14640](https://github.com/NVIDIA/NemoClaw/issues/14640) | [`ffe5406`][v1-ffe5406]: code, docs, issue |
 | Local GPU deployment on Windows/WSL or macOS | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | A model service on a separate physical SSH host | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) | [`cb8ef25`][v1-cb8ef25]: code, issue |
 | Serving one model across several GPUs on one host: `container.gpuDevices` takes one entry, so vLLM refuses a [parallel layout](../agents-inference/models.md#set-the-parallel-layout) larger than one GPU | [#14384](https://github.com/NVIDIA/NemoClaw/issues/14384) | [`cb8ef25`][v1-cb8ef25]: code, issue |
@@ -68,7 +69,8 @@ A configured connection or ready container does not establish successful model r
 |---|---|---|
 | Hermes doesn't reject a managed Ollama window below its 64,000-token minimum; see [sizing the context for Hermes](../agents-inference/inference.md#size-the-context-for-hermes) | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) | [`cb8ef25`][v1-cb8ef25]: Hermes, issue |
 | Hermes with an `anthropic` provider whose endpoint's path doesn't end in `/anthropic` or `/anthropic/v1` and whose host isn't Anthropic's, Claude's or Azure's: Hermes sends the requests to `https://api.anthropic.com`, which OpenShell refuses; see [pointing Hermes at an Anthropic endpoint](../agents-inference/inference.md#point-hermes-at-an-anthropic-endpoint) | [#14538](https://github.com/NVIDIA/NemoClaw/issues/14538), [NVIDIA/NeMo-Fabric#666](https://github.com/NVIDIA/NeMo-Fabric/issues/666) | [`cb8ef25`][v1-cb8ef25]: Hermes, issue |
-| Managed llama.cpp and NVIDIA NIM services; use either as an external OpenAI-compatible endpoint | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) | [`cb8ef25`][v1-cb8ef25]: code, issue |
+| Native NIM's full tool inventory, default 8K context, general task reliability, cross-host cache restoration and other model/profile combinations remain unqualified; use the [bounded BF16 candidate configuration](../agents-inference/models.md#native-nim-candidate) | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556), [NVIDIA/NeMo-Fabric#679](https://github.com/NVIDIA/NeMo-Fabric/issues/679) | See the [source-specific qualification record](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) |
+| llama.cpp bearer authentication protects inference; native model inventory and health remain public. A key does not provide inventory confidentiality | [#14556](https://github.com/NVIDIA/NemoClaw/issues/14556) | See the [source-specific qualification record](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006) |
 | Model Router | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
 | A provider that uses Gemini's native API; onboarding's Google Gemini preset connects through Gemini's OpenAI-compatible endpoint | No open issue | [`cb8ef25`][v1-cb8ef25]: code |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | No open issue | [`cb8ef25`][v1-cb8ef25]: docs |
@@ -154,6 +156,10 @@ Select the v1 guide explicitly and match its source revision to the bundle befor
 | Search and docs MCP scoped to v1 | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 | Packaged installation of the documentation skill for assistant clients | [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) | [`cb8ef25`][v1-cb8ef25]: issue |
 
+Managed [llama.cpp](../agents-inference/models.md#serve-a-pinned-gguf-with-llamacpp) accepts pinned public GGUF files on one CUDA GPU.
+General tool use, multimodal input, other models and Classic host parity need separate qualification; see the [recorded scope](https://github.com/NVIDIA/NemoClaw/issues/14556#issuecomment-7016789006).
+
 [v1-cb8ef25]: https://github.com/NVIDIA/NemoClaw/tree/cb8ef25252ffffbca051787adb4711c96ebfcf28
 [v1-291723b]: https://github.com/NVIDIA/NemoClaw/tree/291723b41b77dbd502f5418b9b0a9b7c1a322dc9
 [v1-5223fdc]: https://github.com/NVIDIA/NemoClaw/tree/5223fdc0b6c9a7ec0b7d86b9c11699eb3de1a206
+[v1-ffe5406]: https://github.com/NVIDIA/NemoClaw/tree/ffe5406498c6a27c068ad52a56ddcfb1cb37b904

@@ -426,7 +426,7 @@ Managed Podman targets local rootless Linux; rootful, remote, and other platform
 |---|---|---|---|---|
 | `config` | any JSON value | No | — | OpenShell gateway settings in the OpenShell Helm chart's gatewayConfig format: each key names a TOML table, such as openshell.drivers.docker, and holds its fields; nested maps are inline tables, and a list of maps is an array of tables. Docker and Podman gateways write it into the configuration file of each new gateway container, so a change replaces the container and keeps its data; Kubernetes passes it to the chart's gatewayConfig. OpenShell validates the settings; keys NemoClaw manages are rejected. Must not contain secrets. |
 | `endpoint` | string | No | `"http://127.0.0.1:17681"` | Local engine gateways use an HTTP origin with an unprivileged loopback port. Kubernetes requires `https://HOST:PORT` with an explicit nonzero port and no trailing slash. Providers forward free local ports of their own to the owned gateway. Without `kubernetes.expose`, the host is `127.0.0.1` and this port is not bound. With it, the endpoint is the lowercase DNS name or IPv4 address and port other clients dial, and the gateway certificate names its host. Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS endpoint and port: 127.0.0.1 without kubernetes.expose, or the address clients dial with it. |
-| `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM. Excluded by kubernetes. With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes. |
+| `engine` | string | No | `"unix:///var/run/docker.sock"` | Managed local gateway engine: a Unix socket, or on Windows a local engine's named pipe such as `npipe:////./pipe/docker_engine`, in which case the gateway binds `/var/run/docker.sock` in the engine's VM, as it does on macOS for Docker Desktop's, Colima's, Rancher Desktop's, or a Podman machine's socket. Excluded by kubernetes. With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before local container creation. Docker accepts IfNotPresent (the default) or Never; Podman also accepts Always before creation or restart. Excluded by kubernetes. |
 | `kubernetes` | [ManagedKubernetes](#managedkubernetes) | No | — | Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"managed"`. |
@@ -448,6 +448,24 @@ An existing gateway managed outside this deployment.
 | `policyAuthority` | [PolicyAuthority](#policyauthority) | No | — | Who authors sandbox policy on this gateway; omission means NemoClaw does. |
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports. |
 | `tls` | [TLS](#tls) | No | — | Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS. |
+
+## GgufModel
+
+Exact immutable public artifact, independently hashed before serving.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.model`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `file` | string | Yes | — | Relative .gguf path at that commit; traversal, backslashes and reserved metadata paths are rejected. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._/-]*\.gguf$`; minimum characters 6; maximum characters 512. |
+| `repository` | string | Yes | — | Public Hugging Face owner/repository containing the GGUF. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$`; maximum characters 200. |
+| `revision` | string | Yes | — | Exact lowercase 40-character repository commit; branches and tags are rejected. Constraints: pattern `^[a-f0-9]{40}$`. |
+| `sha256` | string | Yes | — | Lowercase SHA-256 of the complete GGUF, checked on acquisition; warm starts observe verified size and modification time. Constraints: pattern `^[a-f0-9]{64}$`. |
+| `sizeBytes` | integer | Yes | — | Exact nonzero GGUF byte length, used to bound acquisition and disk requirements. Constraints: minimum 1; maximum 1099511627776. |
 
 ## Grant
 
@@ -714,6 +732,26 @@ Paths:
 | `route` | [ExposureRoute](#exposureroute) | No | — | The gateway chart's own OpenShift Route, which publishes the endpoint's host through the cluster's router and passes TLS through to the gateway by SNI, so TLS and client certificates reach the gateway unchanged. The endpoint's host is a DNS name, since clients send no SNI host name for an IP address, and its port is the one the router serves. Requires `runtime.provider: openshift`. |
 | `service` | [ExposureService](#exposureservice) | No | — | The gateway chart's own Service, which publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged. |
 
+## LlamaCppServing
+
+Explicit context and batching; full CUDA offload, one slot and f16 KV are fixed.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.serving`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `batchTokens` | integer | No | — | Maximum logical prompt batch size; omission selects 2048. Constraints: minimum 1; maximum 4096. |
+| `contextTokens` | integer | No | — | Context tokens for the single slot, from 8192 through 131072; actual fit needs qualification. Constraints: minimum 8192; maximum 131072. |
+| `microBatchTokens` | integer | No | — | Physical prompt microbatch, no larger than batchTokens; omission selects 512. Constraints: minimum 1; maximum 4096. |
+| `modelName` | string | No | — | Nonempty model alias advertised in inventory; the agent route must name it. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`; minimum characters 1. |
+| `port` | integer | No | — | Published inference port, from 1024 through 65535. Constraints: minimum 1024; maximum 65535. |
+| `reasoningStrength` | any JSON value | No | — | Optional low, medium or high reasoning_strength argument passed to the embedded Jinja template. Constraints: `"low"` or `"medium"` or `"high"`. |
+| `startupTimeoutSeconds` | integer | No | — | Seconds allowed for health and model inventory after launch; omission selects 1800. Constraints: minimum 60; maximum 3600. |
+
 ## ManagedKubernetes
 
 Existing-cluster target for a managed development gateway: an explicit kubeconfig and context, or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. `runtime.provider: openshift` selects the OpenShift profile.
@@ -820,6 +858,69 @@ Paths:
 | `policy` | [ExplicitPolicySelection](#explicitpolicyselection) | No | — | Complete authored OpenShell policy, replacing the isolated preset. Excludes tier and policyRef. |
 | `policyRef` | string | No | — | Name of a policy in spec.policies, applied as if written in policy.explicit. Excludes tier and policy. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `tier` | string | No | `"isolated"` | Isolated policy preset. Omit when declaring policy or policyRef; omitting all three selects isolated. Constraints: `""` or `"isolated"`. Omitted or empty selects isolated only without policy or policyRef. |
+
+## NgcCredential
+
+An operator-owned regular file on the Docker engine host. NemoClaw never copies its contents into configuration or state.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.ngcCredential`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `file` | string | Yes | — | Absolute file path. Rotate by selecting a versioned path and explicitly recreating the service; the operator retains and removes the file. Constraints: minimum characters 2; maximum characters 4096. |
+
+## NimBackend
+
+Native backend supported by the managed NIM authentication contract.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.backend`
+
+Accepted input: string.
+
+Constraints: `"vllm"`.
+
+## NimModel
+
+Native model profile, GPU memory floor, and cache allowance.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.model`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `cacheBytes` | integer | Yes | — | Full cache disk allowance in bytes, excluding 16 GiB of working headroom. Constraints: minimum 1; maximum 1099511627776. |
+| `chatTemplateKwargs` | object | No | — | Native vLLM default chat-template arguments, passed as JSON. Omission retains native defaults; request-level arguments take precedence. |
+| `minGpuMemoryBytes` | integer | Yes | — | Profile's upstream memory floor, in bytes; include activation headroom in the budget. Constraints: minimum 1; maximum 1099511627776. |
+| `name` | string | Yes | — | Exact name advertised by NIM and used by the inference route. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`; minimum characters 1; maximum characters 200. |
+| `profile` | string | Yes | — | Native profile identifier from this image's embedded manifest. Constraints: pattern `^[a-f0-9]{64}$`. |
+| `toolParser` | string | No | — | Native vLLM tool parser; a nonempty name enables auto tool choice. Omission leaves native defaults. Match the parser to the model and pinned image. Constraints: pattern `^[a-z0-9_]*$`; maximum characters 64. |
+
+## NimServing
+
+Native listener and generation settings; the public route filter uses the same serving port.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.serving`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `contextTokens` | integer | No | — | Maximum prompt plus generated token count. Constraints: minimum 1024; maximum 131072. |
+| `port` | integer | No | — | Native listener on the private model network; the next port is reserved for its backend. Constraints: minimum 1024; maximum 65534. |
+| `startupTimeoutSeconds` | integer | No | — | Maximum native startup wait in seconds, including profile/cache preparation. Constraints: minimum 60; maximum 7200. |
 
 ## OllamaMemory
 
@@ -1287,6 +1388,7 @@ Paths:
 |---|---|---|---|---|
 | `agent` | [Agent](#agent) | Yes | — | The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes. |
 | `driverConfig` | object | No | — | OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration. |
+| `gpus` | integer | No | — | GPUs OpenShell assigns to the sandbox's programs, as its resource_requirements.gpu.count; separate from inference services. OpenShell picks the devices unless driverConfig names them. Changing the count replaces the sandbox; omission requests none. Constraints: minimum 1. |
 | `harness` | [Harness](#harness) | No | — | Inline harness configuration. Exactly one of harness or harnessRef is required. The sandbox agent uses this harness implementation. |
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
@@ -1407,7 +1509,7 @@ Managed authentication proxy for an external Ollama daemon and model.
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `endpoint` | string | Yes | — | Private or loopback HTTP IPv4:port/v1 published by the proxy and reachable by OpenShell. |
-| `engine` | string | No | — | Local Docker Unix socket. Omission uses the managed gateway engine. Constraints: pattern `^unix:///[^?#\x00]*$`. |
+| `engine` | string | No | — | Local Docker engine: a Unix socket, or on Windows a named pipe such as `npipe:////./pipe/docker_engine`. Omission uses the managed gateway engine. Constraints: pattern `^(unix:///[^?#\x00]*\|npipe:////\./pipe/[A-Za-z0-9._-]+)$`. |
 | `image` | string | Yes | — | Immutable NemoClaw proxy image. The external daemon runs on the selected Docker host. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollamaProxy"`. |
@@ -1435,6 +1537,49 @@ Managed vLLM runtime and immutable model snapshot.
 | `updatePolicy` | [ServiceUpdatePolicy](#serviceupdatepolicy) | No | `"Preserve"` | Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed. |
 
 ### Alternative 4
+
+Managed llama.cpp runtime and immutable GGUF.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `authentication` | [ServiceAuthentication](#serviceauthentication) or null | No | — | Native bearer authentication using a platform-supplied key or retained generated credential. |
+| `container` | [ServiceContainer](#servicecontainer) | No | — | Container CPU and memory limits, GPU selection, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory. |
+| `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Execution hardware observed before acquisition and startup; one NVIDIA CUDA GPU is required. |
+| `image` | string | Yes | — | Immutable image containing llama-server and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"llamaCpp"`. |
+| `memory` | [SingleGpuMemory32](#singlegpumemory32) | No | — | Declared admission budget and resident host memory protection. |
+| `model` | [GgufModel](#ggufmodel) | Yes | — | One immutable public GGUF artifact; no model-source credential is resolved. |
+| `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
+| `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
+| `serving` | [LlamaCppServing](#llamacppserving) | No | — | Native llama-server context, batching, alias and readiness deadline. |
+| `updatePolicy` | [ServiceUpdatePolicy](#serviceupdatepolicy) | No | `"Preserve"` | Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed. |
+
+### Alternative 5
+
+Native vLLM-backed NIM behind a private Docker network and route filter.
+
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `authentication` | [ServiceAuthentication](#serviceauthentication) or null | No | — | Native vLLM bearer authentication; the published listener filters management routes. |
+| `backend` | [NimBackend](#nimbackend) | Yes | — | Explicit native backend; other NIM engines are unsupported. |
+| `backendNetworkCIDR` | string | Yes | — | Dedicated canonical private IPv4 /24, distinct from all other service and gateway networks on this engine. |
+| `container` | [ServiceContainer](#servicecontainer) or null | No | — | Docker execution limits and GPU selection, separate from native memory protection. |
+| `hardware` | [ServiceHardware](#servicehardware) | Yes | — | Required GPU and execution-host compatibility. |
+| `image` | string | Yes | — | Digest-pinned native NIM image containing the NemoClaw supervisor and nginx. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
+| `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) or null | No | — | IfNotPresent acquires a missing image; Never requires a locally installed image. Constraints: `"IfNotPresent"` or `"Never"`; . |
+| `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"nim"`. |
+| `memory` | [SingleGpuMemory40](#singlegpumemory40) | No | — | GPU budget and host memory protection. |
+| `model` | [NimModel](#nimmodel) | Yes | — | Exact native model and embedded profile. |
+| `ngcCredential` | [NgcCredential](#ngccredential) | Yes | — | Operator-owned NGC credential file on the selected Docker host, mounted read-only for native startup. |
+| `placement` | [ServicePlacement](#serviceplacement) or null | No | — | Explicit SSH Docker placement; pair with publication. Omission inherits a managed local Docker gateway. |
+| `publication` | [ServicePublication](#servicepublication) or null | No | — | Private published inference address reachable by OpenShell; pair with placement. |
+| `serving` | [NimServing](#nimserving) | No | — | Native ports, context length, and startup wait. |
+| `updatePolicy` | [ServiceUpdatePolicy](#serviceupdatepolicy) | No | `"Preserve"` | Preserve refuses model replacement; Recreate permits sequential replacement and downtime during explicit apply. |
+
+### Alternative 6
 
 Image-owned container with explicit launch settings and bounded readiness.
 
@@ -1599,6 +1744,44 @@ Paths:
 | `reasoningParser` | string | No | `""` | Native vLLM reasoning parser supplied by the runtime image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
 | `tensorParallelSize` | integer | No | — | vLLM's --tensor-parallel-size: how many GPUs split each layer. vLLM checks the layout against the GPUs it sees and the model when it starts. Constraints: minimum 1; maximum 16. Omission selects vLLM's default of 1. |
 | `toolParser` | string | No | `""` | Native vLLM tool parser supplied by the runtime image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
+
+## SingleGpuMemory32
+
+Single-GPU admission budget and continuous host memory thresholds.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.memory`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `consecutiveSamples` | integer | No | — | Consecutive low-memory observations required to stop native inference. Constraints: minimum 1; maximum 5. |
+| `freeGateGiB` | integer | No | — | Available-memory gate for the free-memory threshold, in GiB. Constraints: minimum 6; maximum 24. |
+| `gpuMemoryGiB` | integer | No | — | GPU budget in GiB; native allocation semantics depend on the backend. Constraints: minimum 4; maximum 512. |
+| `hostReserveGiB` | integer | No | — | Host memory reserved outside the native model allocation, in GiB. Constraints: minimum 28; maximum 64. |
+| `minAvailableGiB` | integer | No | — | Stop threshold for available host memory, in GiB. Constraints: minimum 6; maximum 16. |
+| `minFreeGiB` | integer | No | — | Stop threshold for free host memory, in GiB. Constraints: minimum 2; maximum 8. |
+
+## SingleGpuMemory40
+
+Single-GPU admission budget and continuous host memory thresholds.
+
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.services.{key}.memory`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `consecutiveSamples` | integer | No | — | Consecutive low-memory observations required to stop native inference. Constraints: minimum 1; maximum 5. |
+| `freeGateGiB` | integer | No | — | Available-memory gate for the free-memory threshold, in GiB. Constraints: minimum 6; maximum 24. |
+| `gpuMemoryGiB` | integer | No | — | GPU budget in GiB; native allocation semantics depend on the backend. Constraints: minimum 4; maximum 512. |
+| `hostReserveGiB` | integer | No | — | Host memory reserved outside the native model allocation, in GiB. Constraints: minimum 28; maximum 64. |
+| `minAvailableGiB` | integer | No | — | Stop threshold for available host memory, in GiB. Constraints: minimum 6; maximum 16. |
+| `minFreeGiB` | integer | No | — | Stop threshold for free host memory, in GiB. Constraints: minimum 2; maximum 8. |
 
 ## Spec
 
