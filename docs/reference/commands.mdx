@@ -311,7 +311,7 @@ With `--json` and file output, the version 1 result includes `sourceSandbox`, `o
 
 Each export starts with a comment block, the export report, whose first line is `# nemoclaw-export-report: 1`.
 The number changes only when the report format changes incompatibly.
-The report has one line for each setting the export left out, replaced with a placeholder, or rewrote:
+The report has one line for each setting the export left out, replaced with a placeholder, or rewrote, except retained corporate CA state, which is reported separately on standard error as described below:
 
 ```text
 # <kind> <field> [value=<json>] [before=<json> after=<json|omitted>]: <reason>

@@ -1811,6 +1811,21 @@ function validateSparkQualificationBoundary(errors: string[], workflow: Operatio
     }
 }
 
+/** The pinned v1 SDK build runs protoc, so every job that builds the v1 consumer installs it. */
+function validatePinnedV1Protoc(errors: string[], workflow: OperationsWorkflow): void {
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    const steps = job.steps ?? [];
+    const toolchain = steps.findIndex(
+      (step) => step.name === "Set up pinned v1 compatibility toolchain",
+    );
+    if (toolchain < 0) continue;
+    const protoc = steps.findIndex((step) => step.uses === "./.github/actions/setup-v1-protoc");
+    if (protoc <= toolchain) {
+      errors.push(`${name} must install the pinned v1 protoc after the pinned v1 toolchain`);
+    }
+  }
+}
+
 export function validateE2eOperationsWorkflow(workflow: OperationsWorkflow): string[] {
   const errors = validateStandardProfileWorkflowBoundary(
     workflow as unknown as Record<string, unknown>,
@@ -1826,6 +1841,7 @@ export function validateE2eOperationsWorkflow(workflow: OperationsWorkflow): str
   validateIssueRoutingRetirement(errors, workflow);
   validateScorecard(errors, workflow);
   validateTraceTiming(errors, workflow);
+  validatePinnedV1Protoc(errors, workflow);
   return errors;
 }
 

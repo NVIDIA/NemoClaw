@@ -3206,6 +3206,9 @@ jobs:
           cache: false
           rustflags: ""
 
+      - name: Set up the pinned v1 protoc
+        uses: ./.github/actions/setup-v1-protoc
+
       # Keep only the credential-bearing step anchored. Cleanup mappings stay
       # explicit because strict YAML decoders reject 100 or more aliases here.
       - &dockerhub-auth
@@ -5830,6 +5833,9 @@ jobs:
           toolchain: 1.98.1
           cache: false
           rustflags: ""
+
+      - name: Set up the pinned v1 protoc
+        uses: ./.github/actions/setup-v1-protoc
 
       - *dockerhub-auth
 

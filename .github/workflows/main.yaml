@@ -107,25 +107,14 @@ jobs:
           cache: false
           rustflags: ""
 
-      - name: Install the protoc pinned by v1
-        # The pinned v1 SDK build runs protoc from PATH; the consumer passes PATH but not PROTOC.
-        # This matches the linux_amd64 pin in v1 versions.json.
-        env:
-          PROTOC_URL: https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-linux-x86_64.zip
-          PROTOC_SHA256: 121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278
-        run: |
-          set -euo pipefail
-          archive="$RUNNER_TEMP/protoc.zip"
-          curl --proto '=https' --tlsv1.2 -fsSL "$PROTOC_URL" -o "$archive"
-          echo "$PROTOC_SHA256  $archive" | sha256sum -c --quiet -
-          unzip -q -o "$archive" -d "$RUNNER_TEMP/protoc"
-          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+      - name: Set up the pinned v1 protoc
+        uses: ./.github/actions/setup-v1-protoc
 
-      - name: Verify exported defaults with the pinned v1 consumer
+      - name: Verify config exports with the pinned v1 consumer
         env:
           NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
           RUSTUP_TOOLCHAIN: 1.98.1
-        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts src/lib/domain/config/verify-export-observability.test.ts
+        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts src/lib/domain/config/verify-export-observability.test.ts src/lib/domain/config/export-v1-current.test.ts src/lib/domain/config/verify-export-policy.test.ts src/lib/adapters/config/live-export-source-vllm.test.ts src/lib/adapters/config/live-export-source-ollama.test.ts
 
   compile-artifacts:
     permissions:
