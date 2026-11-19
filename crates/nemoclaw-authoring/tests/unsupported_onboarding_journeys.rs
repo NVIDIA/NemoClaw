@@ -49,12 +49,6 @@ fn an_author_can_select_multiple_messaging_channels() {
 }
 
 #[test]
-#[ignore = "V1 Runtime has no sandbox GPU-selection or host-mount fields"]
-fn an_author_can_choose_sandbox_gpu_access_and_read_only_host_mounts() {
-    panic!("missing V1 sandbox runtime resource contract");
-}
-
-#[test]
 #[ignore = "V1 cannot preserve trusted-private-host intent or endpoint qualification evidence"]
 fn an_author_can_trust_a_private_compatible_endpoint_after_validation() {
     panic!("missing V1 trusted-private-endpoint contract");

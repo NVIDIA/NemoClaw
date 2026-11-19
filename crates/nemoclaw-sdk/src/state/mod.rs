@@ -22,7 +22,7 @@ use std::{
 /// compatible transitions are validated in Store::load before the next save.
 pub(crate) const RECORD_FORMAT: (u32, &str) = (
     30,
-    "d8d71fdd16f5856547735d89c067be61c55529b0d95ba9bd5af7f1379029e1e1",
+    "01add29347858d3cec6899e67520ba110a95a8df13dc1b24aeb0079e4837a211",
 );
 pub(crate) const RECORD_VERSION: u32 = RECORD_FORMAT.0;
 
