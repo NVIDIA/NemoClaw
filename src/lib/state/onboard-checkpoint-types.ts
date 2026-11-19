@@ -126,7 +126,7 @@ export interface CheckpointSandboxRecreateTransaction {
   readonly sourceRegistryFingerprint: string;
   readonly sourceLiveIdentityFingerprint: string | null;
   readonly sourceWorkload: CheckpointSandboxRecreateSourceWorkload | null;
-  /** Apply an explicitly changed OpenClaw selection after native snapshot restore. */
+  /** Apply an explicitly changed OpenClaw or Deep Agents selection after native snapshot restore. */
   readonly reconcileOpenClawInference?: true;
   readonly targetIntentFingerprint: string;
   readonly targetGeneration: string;

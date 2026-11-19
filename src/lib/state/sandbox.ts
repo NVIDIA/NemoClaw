@@ -362,11 +362,14 @@ export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   targetAgentType: string;
   /** Exact OpenShell target frozen by the enclosing rebuild transaction. */
   runtimeSelection?: OpenShellRuntimeSelection;
+  /** Keep the replacement's generated Deep Agents config for a recorded selection change. */
+  keepReplacementDeepAgentsConfig?: true;
 }
 
 interface InternalRestoreOptions {
   targetAgentType: string;
   runtimeSelection?: OpenShellRuntimeSelection;
+  keepReplacementDeepAgentsConfig?: true;
   authority?: SnapshotRestoreAuthority;
   validateBeforeMutation?: () => void | Promise<void>;
 }
@@ -1736,7 +1739,7 @@ function scanNativeTarFilePayload(
   descriptor: number,
   position: number,
   size: number,
-  opaqueAssignments: boolean,
+  credentialOptions: { opaqueAssignments: boolean; sqlBindParameters: boolean },
   npmConfig: boolean,
   providerProfileSchema: boolean,
   openclawConfig: boolean,
@@ -1761,7 +1764,7 @@ function scanNativeTarFilePayload(
     let raw = overlap + chunk.subarray(0, count).toString("utf8");
     if (dcodeSidecar) raw = normalizeDcodeSessionDiagnostic(raw);
     // Carry normalized diagnostics so an overlap cannot retain only their token assignment.
-    overlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
+    const nextOverlap = raw.slice(-NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS);
     if (dcodeSidecar && remaining > count) {
       const diagnosticStart = raw.lastIndexOf("\0");
       if (diagnosticStart >= 0 && DCODE_QUICKJS_DIAGNOSTIC.startsWith(raw.slice(diagnosticStart))) {
@@ -1789,12 +1792,14 @@ function scanNativeTarFilePayload(
           : raw;
     if (
       textContainsCredential(credentialScanInput, {
-        opaqueAssignments,
+        ...credentialOptions,
         privateKeyHeader,
+        scannedPrefixLength: overlap.length,
       })
     ) {
       return true;
     }
+    overlap = nextOverlap;
     offset += count;
     remaining -= count;
   }
@@ -2230,8 +2235,12 @@ function nativeArchiveRawCredentialViolation(
           descriptor!,
           dataOffset,
           size,
-          dcodeSessionsDatabaseRole === "sidecar" ||
-            shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+          {
+            opaqueAssignments:
+              dcodeSessionsDatabaseRole === "sidecar" ||
+              shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+            sqlBindParameters: dcodeSessionsDatabaseRole === "sidecar",
+          },
           fileName === ".npmrc",
           providerProfileSchema,
           openclawConfig,
@@ -3434,6 +3443,9 @@ export async function restoreRecreatedSandboxState(
   return restoreSandboxStateInternal(sandboxName, backupPath, {
     targetAgentType: options.targetAgentType,
     ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+    ...(options.keepReplacementDeepAgentsConfig
+      ? { keepReplacementDeepAgentsConfig: true as const }
+      : {}),
     ...(options.authority ? { authority: options.authority } : {}),
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
@@ -3507,17 +3519,25 @@ async function restoreNativeSandboxState(
 
       const restoreScript = [
         "root=$1",
+        "keep_dcode_config=${2:-}",
         '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
         'stage="$(mktemp -d "$root/.nemoclaw-native-restore.XXXXXX")"',
         "trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
         'tar --no-same-owner -xf - -C "$stage"',
         'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
         'mkdir -p -- "$stage/.nemoclaw" "$stage/.openclaw/agents/main/sessions" "$stage/.hermes/runtime"',
+        'if [ "$keep_dcode_config" = 1 ]; then',
+        // The archive may contain standalone symlinks. Never remove a file through one.
+        '  if [ -L "$stage/.deepagents" ] || [ -L "$root/.deepagents" ]; then echo "cannot preserve Deep Agents config through a symbolic link" >&2; exit 23; fi',
+        '  mkdir -p -- "$stage/.deepagents"',
+        '  rm -f -- "$stage/.deepagents/config.toml"',
+        "fi",
         'uid="$(id -u)"',
         "preserve_replacement_path() {",
         '  case "$1" in',
         "    .nemoclaw/config.json|.nemoclaw/blueprints|.openclaw/.nemoclaw-post-upgrade-doctor|.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*|.hermes/gateway.pid|.hermes/runtime/gateway.pid|.hermes/runtime/gateway.lock) return 0 ;;",
         "  esac",
+        '  [ "$keep_dcode_config" = 1 ] && [ "$1" = .deepagents/config.toml ] && return 0',
         "  return 1",
         "}",
         "restore_dir() {",
@@ -3566,7 +3586,12 @@ async function restoreNativeSandboxState(
       // only the control-plane and generation-local paths excluded at capture;
       // replacement-only agent state is removed, while unsafe ownership or
       // writability conflicts fail instead of producing a mixed state tree.
-      const command = `bash -ceu ${shellQuote(restoreScript)} -- ${shellQuote(rootResult.root)}`;
+      const keepDcodeConfig =
+        options.keepReplacementDeepAgentsConfig &&
+        options.targetAgentType === "langchain-deepagents-code"
+          ? " 1"
+          : "";
+      const command = `bash -ceu ${shellQuote(restoreScript)} -- ${shellQuote(rootResult.root)}${keepDcodeConfig}`;
       const result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
         ...(selectedEnv ? { env: selectedEnv } : {}),
         stdio: [archiveFd, "pipe", "pipe"],
