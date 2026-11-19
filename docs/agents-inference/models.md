@@ -19,13 +19,13 @@ The runtime downloads only that file, checks its size and hash before publicatio
 A failed acquisition cannot become an accepted cache entry; changed cached bytes are retained for inspection.
 
 Build the `llama-cpp` Bake target and use its resulting immutable digest as the service `image`.
-It adds the v1 supervisor to Classic's digest-pinned CUDA llama-server image.
-That base retains llama.cpp revision `8e7f22b67ef4667b4ddd50230771287f328cfb3f`; the layer preserves its licenses and source metadata.
+It adds the v1 supervisor to llama.cpp's digest-pinned CUDA 13.5 server image from release b12375; see [build a runtime image](../build-deploy/build.md#build-a-runtime-image).
 No image is published by this operation.
 
 The [Muse Glimmer case](../../crates/nemoclaw-e2e/cases/docker-openclaw-llama-cpp.yaml) shows the complete desired-state shape.
 Its image references are CI placeholders and must be replaced with candidate-built digests.
 The pinned Muse configuration has lifecycle qualification on AMD64/L40S and ARM64/GB10 Spark with OpenShell 0.1.9, 32768 context tokens, one slot and a 32 GiB serving budget.
+That qualification used an earlier image built on Classic NemoClaw's llama-server image, llama.cpp revision `8e7f22b67ef4667b4ddd50230771287f328cfb3f`, and doesn't cover the b12375 image.
 Classic's experimental Spark recipe does not qualify this case.
 The case requests 32768 context tokens and low reasoning strength rather than copying Spark's 131072-token setting.
 Spark also requires a 32 GiB host reserve.

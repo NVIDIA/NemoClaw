@@ -137,7 +137,7 @@ async fn run_owned(
         .try_clone()
         .map_err(|_| Error::State("cannot clone inference output pipe"))?;
     let output = Output::start(reader, key.clone());
-    let mut command = CommandWrap::with_new("/usr/local/bin/llama-server", |cmd| {
+    let mut command = CommandWrap::with_new("/app/llama-server", |cmd| {
         cmd.args(args)
             .env_remove(crate::INFERENCE_KEY_ENV)
             .env_remove("HF_TOKEN")
