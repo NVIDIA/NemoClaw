@@ -156,28 +156,21 @@ describe("effective policy export (#12148)", () => {
     },
   );
 
-  it("refuses export when the source process principal cannot map to v1", async () => {
+  it("exports a source whose process principal v1 cannot use, and reports it (#14580)", async () => {
     const sourcePolicy = YAML.parse(policy);
-    sourcePolicy.process.run_as_user = "daemon";
+    sourcePolicy.process = { run_as_user: "daemon", run_as_group: "daemon" };
     const baseline = snapshot();
     const observed = {
       ...baseline,
       policy: { ...baseline.policy, document: YAML.stringify(sourcePolicy) },
     };
 
+    // process is not exported, so the source principal no longer blocks migration.
     const result = await exportSnapshots([observed]);
-    expect(result.outcome).toMatchObject({
-      ok: false,
-      failure: {
-        findings: [
-          expect.objectContaining({
-            field: "spec.sandboxes[].network.policy.explicit.process",
-            category: "unsupported",
-          }),
-        ],
-      },
-    });
-    expect(result.writeStdout).not.toHaveBeenCalled();
-    expect(result.publish).not.toHaveBeenCalled();
+    expect(result.outcome).toMatchObject({ ok: true, completion: { kind: "stdout" } });
+    const raw = result.writeStdout.mock.calls[0]![0];
+    expect(raw).toContain(
+      '\n# omitted network.policy.explicit.process value={"run_as_group":"daemon","run_as_user":"daemon"}: ',
+    );
   });
 });

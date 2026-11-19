@@ -1517,21 +1517,8 @@ function validatePolicyIdentity(snapshot: QualifiedExportSnapshot): ExportFindin
 function validateTargetPolicy(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   if (snapshot.policy.kind !== "verified") return [];
   const policy = snapshot.policy.canonical;
-  const process = policy.process as Record<string, unknown> | undefined;
   const filesystem = policy.filesystem_policy as Record<string, unknown> | undefined;
   const findings: ExportFinding[] = [];
-  if (
-    !process ||
-    !["sandbox", "1000"].includes(String(process.run_as_user)) ||
-    !["sandbox", "1000"].includes(String(process.run_as_group))
-  )
-    findings.push(
-      finding(
-        "spec.sandboxes[].network.policy.explicit.process",
-        "unsupported",
-        "The source process principal cannot be projected to the v1 Fabric 1000:1000 principal.",
-      ),
-    );
   if (!filesystem)
     findings.push(
       finding(
