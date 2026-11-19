@@ -116,9 +116,17 @@ function timeoutError(sandboxName: string, ownerPid: number | null): Error {
   );
 }
 
-function writeStderrNotice(message: string): void {
-  // A terminal stderr write blocks the main thread. fs.write runs on the libuv pool instead.
-  fs.write(STDERR_FD, message, () => {});
+function createStderrNoticeWriter(): (message: string) => void {
+  let pending = false;
+  // A terminal stderr write blocks the main thread. fs.write runs on the libuv pool instead,
+  // with one write in flight so a stalled reader holds at most one pool worker.
+  return (message) => {
+    if (pending) return;
+    pending = true;
+    fs.write(STDERR_FD, message, () => {
+      pending = false;
+    });
+  };
 }
 
 function createWaitNotifier(
@@ -126,9 +134,10 @@ function createWaitNotifier(
   lockPath: string,
   options: McpLifecycleLockOptions,
   monotonicNow: () => number,
+  stderrNotice: (message: string) => void,
 ): (observation: LockObservation, decision: McpLifecycleLockDecision) => void {
   const noticeAfterMs = positiveInteger(options.waitNoticeMs, DEFAULT_WAIT_NOTICE_MS);
-  const writeNotice = options.writeNotice ?? writeStderrNotice;
+  const writeNotice = options.writeNotice ?? stderrNotice;
   let waitingOn: string | null = null;
   let waitStartedAt = 0;
   let announced = false;
@@ -241,8 +250,21 @@ async function acquireMcpLifecycleLock(
   const corruptReaperTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
   const reaperPath = `${lockPath}.reaper`;
-  const notifyWaiting = createWaitNotifier(sandboxName, lockPath, options, monotonicNow);
-  const notifyReaperWaiting = createWaitNotifier(sandboxName, reaperPath, options, monotonicNow);
+  const stderrNotice = createStderrNoticeWriter();
+  const notifyWaiting = createWaitNotifier(
+    sandboxName,
+    lockPath,
+    options,
+    monotonicNow,
+    stderrNotice,
+  );
+  const notifyReaperWaiting = createWaitNotifier(
+    sandboxName,
+    reaperPath,
+    options,
+    monotonicNow,
+    stderrNotice,
+  );
   const assertBeforeTimeout = () => {
     if (monotonicNow() >= deadline) throw timeoutError(sandboxName, lastOwnerPid);
   };
@@ -352,8 +374,21 @@ function acquireMcpLifecycleLockSync(
   const corruptReaperTracker: CorruptGenerationState = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
   const reaperPath = `${lockPath}.reaper`;
-  const notifyWaiting = createWaitNotifier(sandboxName, lockPath, options, monotonicNow);
-  const notifyReaperWaiting = createWaitNotifier(sandboxName, reaperPath, options, monotonicNow);
+  const stderrNotice = createStderrNoticeWriter();
+  const notifyWaiting = createWaitNotifier(
+    sandboxName,
+    lockPath,
+    options,
+    monotonicNow,
+    stderrNotice,
+  );
+  const notifyReaperWaiting = createWaitNotifier(
+    sandboxName,
+    reaperPath,
+    options,
+    monotonicNow,
+    stderrNotice,
+  );
   const assertBeforeTimeout = () => {
     if (monotonicNow() >= deadline) throw timeoutError(sandboxName, lastOwnerPid);
   };

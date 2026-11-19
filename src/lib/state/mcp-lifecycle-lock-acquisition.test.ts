@@ -335,6 +335,25 @@ describe("sandbox mutation lock acquisition", () => {
     }
   });
 
+  it.each(lockers)("keeps one stderr write in flight (%s)", async (_name, run) => {
+    writeForeignLock(4242);
+    const write = vi.spyOn(fs, "write").mockImplementation((() => {
+      writeForeignLock(4343);
+    }) as unknown as typeof fs.write);
+    try {
+      const clock = steppedClock(1_000);
+      await expect(
+        run({
+          ...options({ timeoutMs: 30_000, waitNoticeMs: 1_000 }),
+          monotonicNow: clock.monotonicNow,
+        }),
+      ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+      expect(write).toHaveBeenCalledTimes(1);
+    } finally {
+      write.mockRestore();
+    }
+  });
+
   it("reclaims a continuously corrupt main generation after the grace period", async () => {
     const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
