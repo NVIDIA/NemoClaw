@@ -165,10 +165,10 @@ Station runs only through a manual **Live / HCL** dispatch. It does not run on P
 gh workflow run hcl-e2e.yml --ref <branch> -f target=dgx-station -f hosted=false
 ```
 
-Spark uses the same workflow and persistent-runner path, with the `colossus-gb10` label. It accepts only a manual dispatch on canonical `v1`, without CI / Bundle artifacts:
+Spark uses the same workflow and persistent-runner path, with the fixed `colossus-gb10` label. Like Station, it accepts a manual dispatch from a candidate branch, without CI / Bundle artifacts:
 
 ```bash
-gh workflow run hcl-e2e.yml --repo NVIDIA/NemoClaw --ref v1 -f target=dgx-spark -f hosted=false
+gh workflow run hcl-e2e.yml --repo NVIDIA/NemoClaw --ref <branch> -f target=dgx-spark -f hosted=false
 ```
 
 Build, inference, and cleanup failures fail that manual run. An offline runner leaves its hardware job queued.

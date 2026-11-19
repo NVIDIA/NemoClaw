@@ -104,7 +104,7 @@ jobs:
               [[ -z $TESTS && $GITHUB_EVENT_NAME == workflow_dispatch ]] || exit 1
               runner=colossus-gb300 platform=linux_arm64 persistent=true ;;
             dgx-spark)
-              [[ -z $TESTS && $GITHUB_EVENT_NAME == workflow_dispatch && $GITHUB_REF == refs/heads/v1 ]] || exit 1
+              [[ -z $TESTS && $GITHUB_EVENT_NAME == workflow_dispatch ]] || exit 1
               runner=colossus-gb10 platform=linux_arm64 persistent=true ;;
             *) echo "Unknown target: $TARGET" >&2; exit 1 ;;
           esac
