@@ -758,14 +758,15 @@ function bridgeProviderName(sandboxName: string, channelName: string, envKey: st
 
 // Detect whether another sandbox already uses one of this channel's
 // credentials. Mirrors the onboard.ts conflict check. Returns true if the
-// caller should PROCEED with the add, false if it should abort. Never logs
-// credential values. Conflict-detection errors fail closed unless --force is set.
+// caller should PROCEED with the add, "forced" if it proceeds only because
+// --force overrode a conflict, false if it should abort. Never logs credential
+// values. Conflict-detection errors fail closed unless --force is set.
 async function checkChannelAddConflict(
   sandboxName: string,
   channelName: string,
   acquired: Record<string, string>,
   force: boolean,
-): Promise<boolean> {
+): Promise<boolean | "forced"> {
   // Build credential hashes from the manifest's declared providerEnvKey values.
   // This scopes the lookup to the channel's known credential keys, mirroring
   // what planToConflictChannelRequests() produces from bindings. QR-only
@@ -796,7 +797,7 @@ async function checkChannelAddConflict(
     console.error(`  Could not verify messaging channel conflicts for ${channelName}: ${message}`);
     if (force) {
       console.log("  --force: proceeding without a completed messaging channel conflict check.");
-      return true;
+      return "forced";
     }
     console.error(
       `  Aborting: resolve the messaging channel conflict check for ${channelName} or re-run with --force.`,
@@ -822,7 +823,7 @@ async function checkChannelAddConflict(
 
   if (force) {
     console.log(`  --force: proceeding despite the messaging channel conflict above.`);
-    return true;
+    return "forced";
   }
   console.error(
     `  Aborting: resolve the messaging channel conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
@@ -839,7 +840,7 @@ async function checkMessagingPreEnableHooks(
   plan: SandboxMessagingPlan,
   force: boolean,
   injectedHookRegistry?: MessagingHookRegistry,
-): Promise<boolean> {
+): Promise<boolean | "forced"> {
   const requests = MessagingSetupApplier.listPreEnableChecks(plan);
   if (requests.length === 0) return true;
   const abortOnFailure = requests.some((request) => (request.onFailure ?? "abort") === "abort");
@@ -857,7 +858,7 @@ async function checkMessagingPreEnableHooks(
       process.exit(1);
     }
     console.log(`  ${YW}⚠${R} Could not verify messaging pre-enable checks: ${message}`);
-    return true;
+    return "forced";
   }
 
   const hookRegistry =
@@ -910,7 +911,7 @@ async function checkMessagingPreEnableHooks(
     }
     if (force) {
       console.log("  --force: proceeding despite the messaging pre-enable conflict above.");
-      return true;
+      return "forced";
     }
     if (isNonInteractive()) {
       console.error(
@@ -919,7 +920,7 @@ async function checkMessagingPreEnableHooks(
       process.exit(1);
     }
     const answer = (await askPrompt("  Continue anyway? [y/N]: ")).trim().toLowerCase();
-    if (answer === "y" || answer === "yes") return true;
+    if (answer === "y" || answer === "yes") return "forced";
     console.log("  Aborting channel add.");
     return false;
   }
@@ -1181,8 +1182,19 @@ async function applyChannelRemoveToGatewayAndRegistry(
   return { ok: residual.length === 0, residual };
 }
 
-async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<boolean> {
+async function promptAndRebuild(
+  sandboxName: string,
+  actionDesc: string,
+  rebuildRefused = false,
+): Promise<boolean> {
   recordConfigurationResult(sandboxName, "completed", "pending");
+  if (rebuildRefused) {
+    console.log("");
+    console.log(
+      `  Rebuild stops on the conflict that --force overrode. Resolve it, then run '${CLI_NAME} ${sandboxName} rebuild' to apply (${actionDesc}).`,
+    );
+    return false;
+  }
   if (isNonInteractive()) {
     console.log("");
     console.log(
@@ -1525,24 +1537,26 @@ async function addSandboxChannelUnlocked(
       ? await loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add", messagingConfig)
       : initialDisclosedPresetState;
   const acquired = collectManifestCredentials(manifest);
-  if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
+  const credentialCheck = await checkChannelAddConflict(sandboxName, canonical, acquired, force);
+  if (!credentialCheck) {
     recordConfigurationResult(sandboxName, "cancelled", "unchanged");
     return; // user aborted; nothing registered or widened
   }
   // Credential axis passed; now channel-owned pre-enable hooks can catch
   // channel-specific conflicts before provider/policy mutation.
-  if (
-    !(await checkMessagingPreEnableHooks(
-      sandboxName,
-      canonical,
-      plan,
-      force,
-      dependencies.preEnableHookRegistry,
-    ))
-  ) {
+  const hookCheck = await checkMessagingPreEnableHooks(
+    sandboxName,
+    canonical,
+    plan,
+    force,
+    dependencies.preEnableHookRegistry,
+  );
+  if (!hookCheck) {
     recordConfigurationResult(sandboxName, "cancelled", "unchanged");
     return; // user aborted; nothing registered or widened
   }
+  // Rebuild has no conflict override, so it would refuse what the add overrode.
+  const rebuildRefused = credentialCheck === "forced" || hookCheck === "forced";
   assertAddChannelPlanActive(sandboxName, manifest, plan);
 
   // QR-paired channels that own their session inside the sandbox have no
@@ -1582,7 +1596,7 @@ async function addSandboxChannelUnlocked(
     for (const line of manifest.enrollmentNotes ?? []) {
       console.log(`  ${line}`);
     }
-    const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
+    const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`, rebuildRefused);
     if (rebuilt) {
       if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
         throw new Error(
@@ -1665,7 +1679,7 @@ async function addSandboxChannelUnlocked(
     return await exitConfigurationFailure(sandboxName);
   }
 
-  const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
+  const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`, rebuildRefused);
   if (rebuilt) {
     if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
       throw new Error(

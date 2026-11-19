@@ -917,7 +917,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   // Scenario 10
-  it("never prints raw credential material in the --force conflict path", async () => {
+  it("keeps raw credentials out of the --force path and skips the refused rebuild", async () => {
     arrangeRegistry({
       current: makeEmptyEntry("alpha"),
       others: [
@@ -933,6 +933,8 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(text).toContain("same telegram credential"); // sanity
     expect(text).not.toContain(TELEGRAM_TOKEN); // no raw secret
     expect(text).not.toContain(TELEGRAM_HASH); // hash not in conflict output
+    expect(rebuildSandboxMock).not.toHaveBeenCalled(); // rebuild would refuse the conflict
+    expect(text).toContain("nemoclaw alpha rebuild");
   });
 
   it("non-interactive abort path also keeps the raw token out of output", async () => {
