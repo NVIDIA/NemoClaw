@@ -45,10 +45,25 @@ Only users with push access see a draft release, and the `v1` packages stay inte
 
 ## CLI Bundles
 
-Staging attaches each platform's bundle as the latest passing push or manual run of [CI / Bundle](../../.github/workflows/rust.yml) at the tagged commit built and checked it, gzipped without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
+Staging attaches each platform's bundle as the latest passing push or manual run of [CI / Bundle](../../.github/workflows/rust.yml) at the tagged commit built and checked it, without rebuilding: `nemoclaw-<tag>-<platform>.tar.gz` for `linux_arm64`, `linux_amd64`, `darwin_arm64`, and `windows_amd64`, which extracts to `dist/<platform>`.
 `SHA256SUMS` lists their SHA-256 checksums.
 Pull request runs build a merge commit, so they don't count.
-The executables are neither signed nor notarized.
+The executables are neither signed nor notarized yet ([#14621](https://github.com/NVIDIA/NemoClaw/issues/14621)).
+
+### Signing
+
+Staging signs a platform's executables only when a repository administrator lists the platform in the `RELEASE_SIGNING` repository variable, such as `windows_amd64`.
+A job's `if:` can't read an environment's variables, so the repository variable turns signing on; the signing jobs run in the `release-signing` environment and read its variables.
+
+| Platform | Signing job |
+|---|---|
+| `windows_amd64` | Signs every `.exe` through Azure Artifact Signing, appending NVIDIA's signature to the Helm provider's HashiCorp signature, and checks each with `signtool verify /pa /all /tw`. Needs the environment's `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_ARTIFACT_SIGNING_ENDPOINT`, `AZURE_ARTIFACT_SIGNING_ACCOUNT`, and `AZURE_ARTIFACT_SIGNING_PROFILE` variables. |
+| `darwin_arm64` | Checks that every executable is notarized and signed by the Apple team in the environment's `APPLE_TEAM_ID` variable, or by HashiCorp's team `D38WU7D763` for the Helm provider. It doesn't sign yet, so listing `darwin_arm64` stops staging until the signing step lands. |
+
+Staging puts the signed executables in their bundles with the bundles' file modes, records their new hashes in `manifest.json` with `nemoclaw-build reseal`, and then writes `SHA256SUMS`.
+When a listed platform's signing job fails, staging stops before it drafts the release.
+
+Don't list a platform before [#14628](https://github.com/NVIDIA/NemoClaw/issues/14628) is fixed: signing changes the bytes of providers whose versions stay the same, such as the Docker provider, and a deployment created with an unsigned bundle then fails on its dependency lock file.
 
 CI keeps the bundles of a `v1` push or manual run for 7 days.
 Before tagging a commit, check that CI / Bundle passed at it in a `push` or `workflow_dispatch` run within that window:
@@ -79,7 +94,7 @@ The workflow publishes a final release's draft without an approval step, once a 
 Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
 Publishing a draft by hand and package-administrator privileges bypass the workflow.
 An administrator handles package visibility changes; making a package public cannot be undone.
-Before pushing a final tag, complete the license review ([#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+Before pushing a final tag, complete the [license review](image-licenses.md) of every image the release publishes.
 
 ## Verify Provenance
 

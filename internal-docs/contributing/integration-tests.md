@@ -168,7 +168,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `multi_agent` | Three OpenClaw agents: one agent's rejected start is reported alone and its retry replaces only it, and another owner's label on one sandbox stops every operation before it changes anything |
 | `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed. These tests are not ignored and run with the unit tests |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
-| `container_service` | On Unix, `kind: container` services behind a managed Docker gateway, with the bundle's Docker provider against a fake engine that keeps what it creates: apply waits for HTTP, runtime-status, and Docker HEALTHCHECK readiness and leaves nothing observing the engine; an unchanged apply changes nothing; unhealthy, unknown, timed-out, and interrupted setups fail with the provider's reason, and a retry creates no second container; a changed application replaces only its container and keeps its volume; apply refuses to remove a service; destroy deletes the application containers and volumes, keeps the gateway's storage and another owner's objects, and the deployment applies again |
+| `container_service` | On Unix, `kind: container` services behind a managed Docker gateway, with the bundle's Docker provider against a fake engine that keeps what it creates: apply waits for HTTP, runtime-status, and Docker HEALTHCHECK readiness and leaves nothing observing the engine; an unchanged apply changes nothing; unhealthy, unknown, timed-out, and interrupted setups fail with the provider's reason, and a retry creates no second container; a changed application replaces only its container and keeps its volume; apply refuses to remove a service; destroy deletes the application containers and volumes, keeps the gateway's storage and another owner's objects, and the deployment applies again; with the gateway's container stopped, plan, apply, and destroy fail naming it and its `docker start` command, while a transport failure from a gateway whose container runs keeps its error |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures and cancellation; see [below](#helm-release-recovery) |
 | `hcl_integration` | Each scenario in `crates/nemoclaw-e2e/tests/integration/hcl/tests` under `tofu test`; see [`tofu test` cases](#tofu-test-cases) |
 
@@ -378,7 +378,7 @@ The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibi
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/135147a0fe6ce6bc2ebf21fa1068d1bd5af71780/tests), alongside the implementation.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/56a4207b3c7edacd6e0cceea0af7815d2df274ca/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 

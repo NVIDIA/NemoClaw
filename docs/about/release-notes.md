@@ -12,9 +12,40 @@ The workspace package version alone does not establish that a release has been p
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
 Refer to [the overview](overview.md) for implemented boundaries and [the CLI reference](../references/cli.md) for commands.
 
-### Changes Since v0.1.0-rc10
+### Changes Since v0.1.0-rc11
 
-These changes reached `v1` after the `v0.1.0-rc10` tag; [breaking changes](#breaking-changes-since-v010-rc10) are listed separately.
+These changes reached `v1` after the `v0.1.0-rc11` tag; [breaking changes](#breaking-changes-since-v010-rc11) are listed separately.
+
+Onboarding:
+
+- At the model question for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research, `nemoclaw onboard` offers the recommended models the endpoint lists and **Type another model**, instead of the endpoint's whole catalog, which can include models that cannot drive an agent.
+  The review notes a typed model that the endpoint does not list.
+  See [onboarding model catalogs](../agents-inference/inference.md#onboarding-model-catalogs).
+
+Agents:
+
+- OpenClaw works with `anthropic` providers ([#14529](https://github.com/NVIDIA/NemoClaw/issues/14529)).
+- OpenClaw's `web_fetch` reaches hosts that the sandbox's network policy allows ([#14537](https://github.com/NVIDIA/NemoClaw/issues/14537)).
+- OpenClaw keeps its native home in `/sandbox/artifacts`, as Hermes does; see [agent files](../build-deploy/state.md#agent-files).
+
+Installation:
+
+- [Install the CLI](../get-started/install.md) covers installing, upgrading, and uninstalling a release's CLI from its `nemoclaw-TAG-PLATFORM.tar.gz` archive, checked against `SHA256SUMS`.
+- The [support matrix](#support-matrix) lists the platforms, gateway runtimes, model services, harnesses, and GPUs, and what CI runs on each.
+
+Gateways:
+
+- [Current limits](../resources/limits.md#data-and-cleanup) list a managed Docker gateway that stops without a graceful shutdown, such as after a SIGKILL: it leaves its sandboxes in `Error`, and the next apply replaces them ([#13953](https://github.com/NVIDIA/NemoClaw/issues/13953)).
+- While a managed Docker gateway's container is stopped, plan, apply, and destroy fail with an error that names the container and the `docker start` command that starts it, instead of `observation transport failed`; see [troubleshooting](../observability/troubleshooting.md#identify-the-failure) ([#14626](https://github.com/NVIDIA/NemoClaw/issues/14626)).
+- `spec.gateway.target` selects where a gateway runs, with exactly one of `docker`, `podman`, `kubernetes` and `openshift`, each holding only the settings NemoClaw uses there; omitting it selects Docker with its defaults.
+  Editors offer only the selected target's fields, and an invalid field reports that target's rule.
+  A managed `kubernetes` or `openshift` gateway without `expose` names no address or port: each command forwards a free local port to the gateway pod, and plan and apply report the gateway as `not published`.
+  The `openshift` target takes the fields of `kubernetes`, and only it takes [`expose.route`](../build-deploy/kubernetes.md#through-an-openshift-route), which publishes the gateway at `expose.endpoint`.
+  See [adapting a document to another target](../build-deploy/usage.md#adapt-a-document-to-another-target) and the [breaking change](#breaking-changes-since-v010-rc11).
+
+### Changes in v0.1.0-rc11
+
+These changes reached `v1` between the `v0.1.0-rc10` and `v0.1.0-rc11` tags; [breaking changes](#breaking-changes-in-v010-rc11) are listed separately.
 
 Agents and interfaces:
 
@@ -31,12 +62,15 @@ Agents and interfaces:
   See [Hermes's terminal UI](../agents-inference/interfaces.md#hermess-terminal-ui).
 - Apply stops an agent's failed Fabric runtime before it starts another in the sandbox.
   After provider errors, Fabric marks a runtime failed but leaves its processes running; before, every later apply failed with `state_in_use` for an agent that keeps state until someone ran `fabric-agent-ctl stop`, and without kept state, the next start failed because OpenClaw's Gateway still held its ports, after which Fabric refused every start until the sandbox was replaced.
+- Agent errors keep the codes Fabric uses when it refuses to start or stop a runtime, instead of reporting `fabric_configuration_failed`.
+  `start_uncertain` says to replace the sandbox and apply again, `state_in_use` means another runtime still holds the agent's kept state, and `runtime_busy` means the agent was handling a request, so its runtime is unchanged.
+  See [identifying the failure](../observability/troubleshooting.md#identify-the-failure).
+- A Hermes agent whose route uses an `anthropic` inference provider starts; before, apply failed with `start_failed` because the Hermes image lacked the Anthropic SDK.
+  Hermes sends the requests to the provider's endpoint only when its path ends in `/anthropic` or `/anthropic/v1` or its host is Anthropic's, Claude's, or Azure's; see [pointing Hermes at an Anthropic endpoint](../agents-inference/inference.md#point-hermes-at-an-anthropic-endpoint).
 
 Onboarding:
 
-- At the model question for NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and Nous Research, `nemoclaw onboard` offers the recommended models the endpoint lists and **Type another model**, instead of the endpoint's whole catalog, which can include models that cannot drive an agent.
-  The review notes a typed model that the endpoint does not list.
-  See [onboarding model catalogs](../agents-inference/inference.md#onboarding-model-catalogs).
+- The `nemoclaw onboard` review opens with a summary of the agent, model, API key, web search, where the deployment runs, image, network access, and output file; the saved YAML follows, collapsed until you press Tab.
 - At the image question, `nemoclaw onboard` suggests by digest the newest image on the gateway's engine that installs the chosen harness, or else links the [agent image build instructions](../build-deploy/build.md#build-agent-images).
 
 Sandbox policy:
@@ -53,15 +87,15 @@ Inference and models:
 
 Kubernetes and OpenShift:
 
-- `spec.gateway.target` selects where a gateway runs, with exactly one of `docker`, `podman`, `kubernetes` and `openshift`, each holding only the settings NemoClaw uses there; omitting it selects Docker with its defaults.
-  Editors offer only the selected target's fields, and an invalid field reports that target's rule.
-  A managed `kubernetes` or `openshift` gateway without `expose` names no address or port: each command forwards a free local port to the gateway pod, and plan and apply report the gateway as `not published`.
-  The `openshift` target takes the fields of `kubernetes`.
-  See [adapting a document to another target](../build-deploy/usage.md#adapt-a-document-to-another-target) and the [breaking change](#breaking-changes-since-v010-rc10).
-- On the `openshift` target, `expose.route` publishes a managed gateway at `expose.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI; its optional `annotations` reach the Route.
+- `gateway.kubernetes.expose.route` publishes a managed OpenShift gateway at `gateway.endpoint` through the OpenShell chart's pass-through Route, for clients such as the OpenShell CLI; its optional `annotations` reach the Route.
   The gateway certificate names the endpoint's host, and NemoClaw's own commands keep their port forward.
-  Plan refuses `expose.route` on the `kubernetes` target or with an endpoint whose host isn't a DNS name.
+  Plan refuses `expose.route` unless `gateway.runtime.provider` is `openshift` and the endpoint's host is a DNS name.
   See [publishing through an OpenShift Route](../build-deploy/kubernetes.md#through-an-openshift-route).
+
+Plan and apply:
+
+- An apply that OpenTofu completes no longer fails with `invalid or unsupported OpenTofu UI stream` when a message in OpenTofu's UI stream is longer than 1 MiB: NemoClaw skips such a message.
+  OpenTofu's final `outputs` message passed 1 MiB at about 87 OpenClaw sandboxes on a Kubernetes or OpenShift gateway.
 
 Examples and builds:
 
@@ -188,15 +222,11 @@ Examples and builds:
 Earlier CLI commands, schemas, and state formats have no compatibility guarantees.
 See [migration](../get-started/migration.md) for where each earlier task lives now, and [state](../build-deploy/state.md) for data preservation.
 
-### Breaking Changes Since v0.1.0-rc10
+### Breaking Changes Since v0.1.0-rc11
 
-These changes since the `v0.1.0-rc10` tag affect existing deployments or documents:
+These changes since the `v0.1.0-rc11` tag affect existing deployments or documents:
 
-- A `kind: api` integration takes `endpoints`, a list of URLs, instead of `endpoint`, and `openshell_api` takes `endpoints` instead of `endpoint`; the parser rejects `endpoint`.
-  Write `endpoint: https://bookings.example.com/mcp` as `endpoints: [https://bookings.example.com/mcp]`.
-  An `openshell_api` with an `mcp` block takes exactly one URL.
-
-- The intent record is now version 26, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
+- The intent record is now version 26, so this release refuses any deployment that `v0.1.0-rc11` or an earlier build of this branch created, without changing its state.
   Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - `spec.gateway.target` replaces `spec.gateway.runtime` and the gateway's flat settings; the parser rejects the old fields, and plan refuses a changed target on an existing deployment.
   A managed Docker or Podman gateway takes an integer `port`, 17681 by default, instead of `endpoint`, with `engine`, `networkCIDR` and `imagePullPolicy` beside it.
@@ -264,10 +294,19 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
   - JSON results omit `connection.gatewayEndpoint` for a managed Kubernetes or OpenShift gateway without `expose`.
   - In hand-written HCL, `openshell_kubernetes_storage`, `openshell_kubernetes_auth` and `openshell_kubernetes_gateway` take no `endpoint`, and `openshell_gateway` takes `kubernetes` without `endpoint`, with `target` in the specification's `settings`, as in [the Kubernetes HCL example](../../examples/kubernetes/hosted-nvidia.tf).
   - In the Rust SDK, `ManagedGateway` and `ExternalGateway` hold `target`, a `ManagedTarget` or an `ExternalTarget`, `Runtime` is removed, and `ManagedKubernetes` has no `image_pull_secrets`.
+
+### Breaking Changes in v0.1.0-rc11
+
+These changes between the `v0.1.0-rc10` and `v0.1.0-rc11` tags affect existing deployments or documents:
+
+- A `kind: api` integration takes `endpoints`, a list of URLs, instead of `endpoint`, and `openshell_api` takes `endpoints` instead of `endpoint`; the parser rejects `endpoint`.
+  Write `endpoint: https://bookings.example.com/mcp` as `endpoints: [https://bookings.example.com/mcp]`.
+  An `openshell_api` with an `mcp` block takes exactly one URL.
+- The intent record is now version 25, so this release refuses any deployment that `v0.1.0-rc10` or an earlier build of this branch created, without changing its state.
+  Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - `harness.config` is removed. Move each Fabric section to the agent or the harness, unchanged; the parser rejects `config` as an unknown field.
   `instructions`, `tools`, `skills`, `mcp`, and `workflow` move to the sandbox's `agent`; `runtime`, `environment`, `discovery`, `telemetry`, and `relay` stay on the harness, one level up.
   Before:
-
   ```yaml
   harness:
     kind: nvidia.fabric.hermes
@@ -278,9 +317,7 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
   agent:
     name: flights
   ```
-
   After:
-
   ```yaml
   harness:
     kind: nvidia.fabric.hermes
@@ -290,11 +327,8 @@ These changes since the `v0.1.0-rc10` tag affect existing deployments or documen
     instructions: {system: {mode: replace, content: "Research flights."}}
     skills: {directories: [{folder: /sandbox/skills}], duplicates: reject}
   ```
-
 - `harness.execution` is removed. Set Fabric's `runtime.timeout_seconds` on the harness instead: replace `harness: {kind: nvidia.fabric.openclaw, execution: {timeoutSeconds: 600}}` with `harness: {kind: nvidia.fabric.openclaw, runtime: {timeout_seconds: 600}}`.
-
 - `agent.tools` is Fabric's tools section, and its `allow` list is removed. Rename `allow` to Fabric's `enabled`, so `tools: {allow: [read, write]}` becomes `tools: {enabled: [read, write]}`; `blocked` and `definitions` are now available too.
-
 - In the Rust SDK, `AgentExecution` and `AgentTools` are removed: `Harness` and `Agent` hold each Fabric section as a JSON object, and `Network` has `grant_refs` and a `NetworkPolicy::Reference` variant.
   Use `Document::sandbox_network` to read a sandbox's resolved policy and grants.
 - Every sandbox must set `image.ref` to an agent image pinned by digest, on Docker and Podman as on Kubernetes.
@@ -344,6 +378,66 @@ These changes before the `v0.1.0-rc9` tag affect existing deployments:
 - `spec.gateway.image` is removed: the SDK pins the managed gateway image, and defaulted and exported documents no longer name it.
   - Remove the field from documents; the parser rejects it as an unknown field.
   - In the Rust SDK, `ManagedGateway` has no `image` field; `managed::Spec.image` carries the managed gateway's pin.
+
+## Support Matrix
+
+These tables describe `v1` as of these notes: what it accepts, and what CI runs it on; a configuration without an automated run is accepted but untested.
+They aren't a support statement: v1 has [no support policy yet](../resources/limits.md#installation-and-releases).
+[Current limits](../resources/limits.md) lists what v1 doesn't do or hasn't tested, and [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) tracks a tested matrix of harness, model, provider, and platform combinations.
+
+### Client Platforms
+
+Each release attaches the CLI for these platforms; [install the CLI](../get-started/install.md) lists each archive's requirements, and [current limits](../resources/limits.md#installation-and-releases) what the executables lack.
+[CI / Bundle](../../.github/workflows/rust.yml) runs the unit, contract, and integration tests on each one.
+
+| Platform | Archive | Deploys | Live tests in CI |
+|---|---|---|---|
+| Linux ARM64 | `linux_arm64` | Yes | Docker and kind suites |
+| Linux AMD64 | `linux_amd64` | Yes | Docker and kind suites, the cases on NVIDIA hosted inference, and the GPU cases |
+| macOS ARM64 | `darwin_arm64` | Yes | None |
+| Windows AMD64 | `windows_amd64` | No: [deployment planning requires a Unix client](../build-deploy/usage.md) | None |
+
+The builder also accepts `darwin_amd64`, but no release attaches it and CI doesn't build it.
+
+### Gateway Runtimes
+
+Sandboxes and model services run on Linux engines or clusters; the agent and runtime images are built for `linux/arm64` and `linux/amd64`.
+
+| `spec.gateway.target` | Accepted | Live tests in CI |
+|---|---|---|
+| `docker` | Managed or external gateway; managed vLLM, Ollama, and container services | Docker suite, the cases on NVIDIA hosted inference, and the GPU cases |
+| `podman` | Managed rootless gateway on a local Linux engine, or external gateway; model services only on a Docker host through [SSH placement](../agents-inference/remote-service.md) | None |
+| `kubernetes` | Managed or external gateway, with external inference endpoints | kind suite |
+| `openshift` | Managed or external gateway, with external inference endpoints | None; [run by hand](../../internal-docs/contributing/live-tests.md#openshift-gateway) on OpenShift Local |
+
+### Model Services
+
+| Service | Live tests in CI |
+|---|---|
+| External endpoint, such as NVIDIA hosted inference | OpenClaw and Hermes on NVIDIA hosted inference, on Linux AMD64; stub endpoints in the Docker and kind suites |
+| Managed vLLM | OpenClaw on the GPU runner, and Nemotron on DGX Station by manual dispatch |
+| Managed Ollama | Hermes on the GPU runner |
+| External Ollama through a managed proxy | None; contract and integration tests run it against fixtures |
+
+### Harnesses
+
+The image workflow builds and checks an image for each harness in the [Fabric harness table](../references/fabric-harnesses.md): OpenClaw, Hermes, Deep Agents, Claude, Codex, Mini SWE Agent, Nooa, Nooa Bench, Remote Agent, Pi, and OpenCode.
+The live tests deploy OpenClaw and Hermes; no live test deploys the others.
+Onboarding offers OpenClaw and Hermes.
+
+### GPUs
+
+Managed vLLM and Ollama check the GPU against the deployment's [hardware profile](../agents-inference/models.md#choose-a-hardware-profile), such as `dgx-spark`, `dgx-station`, `h100`, or `rtx-pro-6000-blackwell`.
+Accepting a profile doesn't qualify that GPU.
+
+| GPU host | Live tests |
+|---|---|
+| NVIDIA RTX PRO 6000 Blackwell, Linux AMD64 | The GPU cases, on CI's GPU runner, on `v1` pushes and manual runs |
+| DGX Station (GB300), Linux ARM64 | One case, by manual dispatch of Live / HCL |
+| DGX Spark (GB10), Linux ARM64 | None |
+| Other GPUs, Windows/WSL, and macOS | None |
+
+Serving one model on several GPUs isn't supported ([#14384](https://github.com/NVIDIA/NemoClaw/issues/14384)).
 
 ## Qualification and Known Issues
 

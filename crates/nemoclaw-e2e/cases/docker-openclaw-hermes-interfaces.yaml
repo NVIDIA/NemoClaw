@@ -5,9 +5,9 @@
 # Docker gateway, on a stub model that answers every chat completion and
 # Anthropic Messages request with the same reply, followed by the skills whose
 # markers the request holds, and refuses any request without the run's key.
-# A second Hermes agent, in hermes-messages, reaches the stub through an
-# anthropic provider: Hermes calls the Messages API, and the provider places
-# the key in x-api-key. Apply reports each interface; a person reaches it with
+# The OpenClaw agent, in claw, and a second Hermes agent, in hermes-messages,
+# reach the stub through an anthropic provider: they call the Messages API,
+# and the provider places the key in x-api-key. Apply reports each interface; a person reaches it with
 # the pinned OpenShell CLI's forward and the token apply names. cargo ci
 # live-docker gives each run a fresh identity, gateway port and subnet, stub
 # address, volume names, and agent images. Only claw grants python3 the
@@ -110,7 +110,7 @@ spec:
         inference:
           routes:
             - name: primary
-              providerRef: model
+              providerRef: messages
               overrides:
                 model: fixture-model
     hermes:

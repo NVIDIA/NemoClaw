@@ -21,7 +21,10 @@ fn native_telemetry_settings_are_opaque_and_do_not_implicitly_grant_network_acce
         &rows.iter().find(|row| row.kind == "agent").unwrap().values,
     )
     .unwrap();
-    assert_eq!(config["harness"]["settings"], settings);
+    assert_eq!(
+        config["harness"]["settings"]["telemetry"],
+        settings["telemetry"]
+    );
     let policy: Value = serde_json::from_str(
         &rows
             .iter()

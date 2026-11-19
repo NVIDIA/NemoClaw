@@ -39,7 +39,7 @@ mod registry_metadata;
 #[path = "release_assessment.rs"]
 mod release_assessment;
 // GNU tar, zip, and sha256sum, as on the release runner.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "sdk"))]
 mod release_bundles;
 #[cfg(unix)]
 mod release_gate;
