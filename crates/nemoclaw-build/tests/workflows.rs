@@ -465,16 +465,15 @@ while (( $# )); do
 done
 if [[ $method != GET ]]; then
   jq -cn --arg method "$method" --arg endpoint "$endpoint" --slurpfile payload "$input" \
-    '{method: $method, endpoint: $endpoint, body: $payload[0].body}' >> "$MUTATIONS"
+    '{method: $method, endpoint: $endpoint, body: $payload[0].body}' >> mutations
   echo '{}'
 elif [[ $endpoint == repos/NVIDIA/NemoClaw/pulls/42 ]]; then
-  if [[ -e $SEEN ]]; then cat "$NEXT_PR"; else touch "$SEEN"; cat "$PR"; fi
+  if [[ -e seen ]]; then cat next-pr; else touch seen; cat pr; fi
 elif [[ $endpoint == 'repos/NVIDIA/NemoClaw/issues/42/comments?per_page=100' ]]; then
-  if [[ $paginate == true ]]; then
-    if [[ $slurp == true ]]; then cat "$COMMENTS"; else jq '.[]' "$COMMENTS"; fi
-  else
-    if [[ $slurp == true ]]; then jq '.[0:1]' "$COMMENTS"; else jq '.[0]' "$COMMENTS"; fi
-  fi
+  filter='.[0]'
+  [[ $paginate != true ]] || filter='.[]'
+  [[ $slurp != true ]] || filter="[$filter]"
+  jq "$filter" comments
 else
   echo 'Unexpected fixture request' >&2; exit 2
 fi
@@ -513,7 +512,7 @@ fi
             pr: Value,
             comments: Value,
             next_pr: Option<Value>,
-        ) -> (std::process::Output, Vec<Value>) {
+        ) -> Result<Vec<Value>, (std::process::Output, Vec<Value>)> {
             let root = self.directory.path();
             for (name, value) in [
                 ("pr", pr.clone()),
@@ -542,11 +541,7 @@ fi
                 .env("GITHUB_SHA", &self.sha)
                 .env("GH_TOKEN", "fixture")
                 .env("RECOMMENDATIONS", selection.to_string())
-                .env("PR", root.join("pr"))
-                .env("NEXT_PR", root.join("next-pr"))
-                .env("COMMENTS", root.join("comments"))
-                .env("SEEN", root.join("seen"))
-                .env("MUTATIONS", root.join("mutations"))
+                .current_dir(root)
                 .output()
                 .unwrap();
             let writes = fs::read_to_string(root.join("mutations"))
@@ -554,24 +549,25 @@ fi
                 .lines()
                 .map(|line| serde_json::from_str(line).unwrap())
                 .collect();
-            (output, writes)
+            if output.status.success() {
+                Ok(writes)
+            } else {
+                Err((output, writes))
+            }
         }
     }
 
     #[test]
     fn current_pr_receives_only_public_case_recommendations() {
         let fixture = Fixture::new();
-        let (output, writes) = fixture.publish(
-            fixture.selection(),
-            fixture.pr(),
-            serde_json::json!([[]]),
-            None,
-        );
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let writes = fixture
+            .publish(
+                fixture.selection(),
+                fixture.pr(),
+                serde_json::json!([[]]),
+                None,
+            )
+            .unwrap();
         assert_eq!(
             writes.len(),
             1,
@@ -607,12 +603,9 @@ fi
         let human =
             serde_json::json!({"id":12,"user":{"login":"reviewer","type":"User"},"body":MARKER});
         let comments = serde_json::json!([[human], [own_comment()]]);
-        let (output, writes) = fixture.publish(fixture.selection(), fixture.pr(), comments, None);
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let writes = fixture
+            .publish(fixture.selection(), fixture.pr(), comments, None)
+            .unwrap();
         assert_eq!(writes.len(), 1, "Refresh one bot-owned comment");
         assert_eq!(writes[0]["method"], "PATCH");
         assert_eq!(
@@ -627,17 +620,14 @@ fi
         let mut selection = fixture.selection();
         selection["runners"]["gpu"] = serde_json::json!([]);
         selection["runners"]["dgx-station"] = serde_json::json!([]);
-        let (output, writes) = fixture.publish(
-            selection,
-            fixture.pr(),
-            serde_json::json!([[own_comment()]]),
-            None,
-        );
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let writes = fixture
+            .publish(
+                selection,
+                fixture.pr(),
+                serde_json::json!([[own_comment()]]),
+                None,
+            )
+            .unwrap();
         assert_eq!(writes.len(), 1);
         let body = writes[0]["body"].as_str().unwrap();
         assert!(body.contains(&fixture.sha));
@@ -657,13 +647,9 @@ fi
             let mut ineligible = fixture.pr();
             ineligible[field] = value;
             for (pr, next) in [(ineligible.clone(), None), (fixture.pr(), Some(ineligible))] {
-                let (output, writes) =
-                    fixture.publish(fixture.selection(), pr, serde_json::json!([[]]), next);
-                assert!(
-                    output.status.success(),
-                    "{field}: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
+                let writes = fixture
+                    .publish(fixture.selection(), pr, serde_json::json!([[]]), next)
+                    .unwrap();
                 assert!(
                     writes.is_empty(),
                     "Do not publish for an ineligible {field}, including after pagination"
@@ -682,9 +668,9 @@ fi
         let mut unselected = fixture.selection();
         unselected["cases"]["gpu-one"]["run"] = serde_json::json!(false);
         for selection in [wrong_commit, unsafe_id, unselected] {
-            let (output, writes) =
-                fixture.publish(selection, fixture.pr(), serde_json::json!([[]]), None);
-            assert!(!output.status.success(), "Invalid input must fail closed");
+            let (output, writes) = fixture
+                .publish(selection, fixture.pr(), serde_json::json!([[]]), None)
+                .unwrap_err();
             assert!(writes.is_empty());
             assert!(!String::from_utf8_lossy(&output.stderr).contains("PRIVATE-SENTINEL"));
         }

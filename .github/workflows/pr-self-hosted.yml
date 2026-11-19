@@ -95,10 +95,13 @@ jobs:
           [[ $GITHUB_REF_NAME =~ ^pull-request/([1-9][0-9]*)$ ]] || exit 1
           number=${BASH_REMATCH[1]}
           [[ $GITHUB_SHA =~ ^[a-f0-9]{40}$ ]] || exit 1
+          is_current_pr() {
+            jq -e --arg sha "$GITHUB_SHA" '
+              .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
+            ' > /dev/null
+          }
           pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
-          if ! jq -e --arg sha "$GITHUB_SHA" '
-            .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
-          ' <<< "$pr" > /dev/null; then exit 0; fi
+          is_current_pr <<< "$pr" || exit 0
 
           # Raw reasons can contain diagnostics. Only fixed reason text is public.
           jq -er --arg sha "$GITHUB_SHA" '
@@ -130,9 +133,7 @@ jobs:
               else .[0].id // empty end')
           # Selection and comment pagination take time; bind the write to the head again.
           pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
-          if ! jq -e --arg sha "$GITHUB_SHA" '
-            .state == "open" and .draft == false and .base.ref == "v1" and .head.sha == $sha
-          ' <<< "$pr" > /dev/null; then exit 0; fi
+          is_current_pr <<< "$pr" || exit 0
           if [[ -n $id ]]; then
             [[ $id =~ ^[1-9][0-9]*$ ]] || exit 1
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" --input "$RUNNER_TEMP/recommendations.json" > /dev/null
