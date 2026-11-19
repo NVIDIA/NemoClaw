@@ -135,6 +135,8 @@ data vllm_nim_runtime (version 0)
     > Exact native model and embedded profile.
     cache_bytes: number, required
       > Full cache disk allowance in bytes, excluding 16 GiB of working headroom.
+    chat_template_kwargs: string, optional
+      > Native vLLM default chat-template arguments, passed as JSON. Omission retains native defaults; request-level arguments take precedence.
     min_gpu_memory_bytes: number, required
       > Profile's upstream memory floor, in bytes; include activation headroom in the budget.
     name: string, required
