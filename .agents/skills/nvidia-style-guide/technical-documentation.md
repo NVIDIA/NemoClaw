@@ -60,7 +60,7 @@ A style guide tends to be more specific, focusing on consistent application of c
 ### Where's the Style Guide?
 
 Our corporate style guide is adapted in [SKILL.md](SKILL.md).
-Its [Technical Content](SKILL.md#technical-content) section replaces our former style guide, so ensure to use it if you have any style guide questions.
+Its [Technical Content](technical-content.md#technical-content) section replaces our former style guide, so ensure to use it if you have any style guide questions.
 
 ## The Writing Process
 
@@ -566,7 +566,7 @@ Put the punctuation **outside** the closing quotation marks if the punctuation a
 ### Dashes
 
 When using dashes, it is essential to use the correct one because they serve different purposes.
-For em dash and en dash rules, refer to [Dashes and hyphens](SKILL.md#dashes-and-hyphens--) in SKILL.md; in technical documentation, use commas or parentheses instead of em dashes.
+For em dash and en dash rules, refer to [Dashes and hyphens](punctuation.md#dashes-and-hyphens--) in SKILL.md; in technical documentation, use commas or parentheses instead of em dashes.
 
 To type the dashes:
 
